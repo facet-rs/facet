@@ -3,7 +3,7 @@ members = ["shapely", "shapely-core", "shapely-derive", "shapely-json", "shapely
 resolver = "3"
 
 [workspace.package]
-version = "2.0.1"
+version = "2.0.2"
 authors = ["Amos Wenger <amos@bearcove.eu>"]
 edition = "2024"
 rust-version = "1.85"
@@ -22,9 +22,9 @@ keywords = [
 categories = ["encoding", "parsing", "development-tools", "data-structures"]
 
 [workspace.dependencies]
-shapely = { version = "2.0.1", path = "shapely" }
-shapely-core = { version = "2.0.1", path = "shapely-core" }
-shapely-derive = { version = "2.0.1", path = "shapely-derive" }
-shapely-pretty = { version = "2.0.1", path = "shapely-pretty" }
+shapely = { version = "2.0.2", path = "shapely" }
+shapely-core = { version = "2.0.2", path = "shapely-core" }
+shapely-derive = { version = "2.0.2", path = "shapely-derive" }
+shapely-pretty = { version = "2.0.2", path = "shapely-pretty" }
 unsynn = "0.0.25"
 form_urlencoded = "1.2.1"

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.2](https://github.com/bearcove/shapely/compare/shapely-v2.0.1...shapely-v2.0.2) - 2025-03-11
+
+### Other
+
+- Fix doc tests in README.md
+- Document how to write your deserializer a little better
+
 ## [2.0.0](https://github.com/bearcove/shapely/compare/shapely-v1.0.0...shapely-v2.0.0) - 2025-03-11
 
 ### Other

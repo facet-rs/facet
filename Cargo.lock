@@ -85,7 +85,7 @@ checksum = "b985e394ee53f8e4c547d5c6fa75b83b243ab6f51563a0323f1475fc8abc8e7f"
 
 [[package]]
 name = "shapely"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "shapely-core",
  "shapely-derive",
@@ -93,11 +93,11 @@ dependencies = [
 
 [[package]]
 name = "shapely-core"
-version = "2.0.1"
+version = "2.0.2"
 
 [[package]]
 name = "shapely-derive"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "shapely-core",
  "unsynn",
@@ -105,14 +105,14 @@ dependencies = [
 
 [[package]]
 name = "shapely-json"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "shapely",
 ]
 
 [[package]]
 name = "shapely-msgpack"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "shapely",
  "shapely-core",
@@ -121,7 +121,7 @@ dependencies = [
 
 [[package]]
 name = "shapely-pretty"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "shapely",
  "shapely-core",
@@ -129,7 +129,7 @@ dependencies = [
 
 [[package]]
 name = "shapely-urlencoded"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "form_urlencoded",
  "shapely",
@@ -137,7 +137,7 @@ dependencies = [
 
 [[package]]
 name = "shapely-yaml"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "shapely",
  "shapely-core",

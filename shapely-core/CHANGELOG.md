@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.2](https://github.com/bearcove/shapely/compare/shapely-core-v2.0.1...shapely-core-v2.0.2) - 2025-03-11
+
+### Other
+
+- Remove unreachable wildcard pattern in ScalarContents::get_contents
+- non exhaustive
+- mh
+- Add scalar contents tests and improvements
+
 ## [2.0.0](https://github.com/bearcove/shapely/compare/shapely-core-v1.0.0...shapely-core-v2.0.0) - 2025-03-11
 
 ### Other
