@@ -98,7 +98,7 @@ impl Shape {
             Innards::Scalar(_scalar) => {
                 // let's not duplicate `u64 => U64` for example
             }
-            Innards::Enum { variants } => {
+            Innards::Enum { variants, repr: _ } => {
                 writeln!(
                     f,
                     "{:indent$}\x1b[1;36mEnum with {} variants:\x1b[0m",

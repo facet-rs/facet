@@ -135,7 +135,9 @@ impl PrettyPrinter {
             Innards::Transparent(inner_shape) => {
                 self.format_transparent(ptr, shape, *inner_shape, f, depth, visited)
             }
-            Innards::Enum { variants } => self.format_enum(ptr, shape, variants, f, depth, visited),
+            Innards::Enum { variants, repr: _ } => {
+                self.format_enum(ptr, shape, variants, f, depth, visited)
+            }
         }
     }
 

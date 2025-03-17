@@ -158,7 +158,10 @@ impl Partial<'_> {
                     );
                 }
             }
-            crate::Innards::Enum { variants: _ } => {
+            crate::Innards::Enum {
+                variants: _,
+                repr: _,
+            } => {
                 // Check if a variant has been selected (bit 0)
                 if !self.init_set.is_set(0) {
                     panic!(
@@ -170,7 +173,7 @@ impl Partial<'_> {
                 // Get the selected variant
                 if let Some(variant_index) = self.selected_variant_index() {
                     let shape = self.shape.get();
-                    if let crate::Innards::Enum { variants } = &shape.innards {
+                    if let crate::Innards::Enum { variants, repr } = &shape.innards {
                         let variant = &variants[variant_index];
 
                         // Check if all fields of the selected variant are initialized
@@ -262,7 +265,10 @@ impl Partial<'_> {
             Innards::Transparent(_) => return Err(FieldError::NoStaticFields),
             Innards::Scalar(_) => return Err(FieldError::NoStaticFields),
             Innards::Array(_) => return Err(FieldError::NoStaticFields),
-            Innards::Enum { .. } => {
+            Innards::Enum {
+                variants: _,
+                repr: _,
+            } => {
                 // Enum variants aren't supported yet for slot_by_name
                 Err(FieldError::NotAStruct)
             }
@@ -330,7 +336,7 @@ impl Partial<'_> {
         std::mem::forget(self);
     }
 
-    /// Build that partial into the completed shape.
+    /// Builds a value of type `T` from the partial representation.
     ///
     /// # Panics
     ///
@@ -341,9 +347,135 @@ impl Partial<'_> {
         self.assert_all_fields_initialized();
         self.assert_matching_shape::<T>();
 
-        // SAFETY: We've verified that all fields are initialized and that the shape matches T.
-        // For zero-sized types, all pointer values are valid.
-        // See https://doc.rust-lang.org/stable/std/ptr/index.html#safety for more details.
+        let shape = self.shape.get();
+
+        // Special handling for enums to ensure the correct variant is built
+        if let crate::Innards::Enum { variants, repr } = &shape.innards {
+            if !self.init_set.is_set(0) {
+                panic!("Enum variant not selected");
+            }
+
+            if let Some(variant_idx) = self.selected_variant_index() {
+                // Create a properly initialized result with the correct variant
+                let mut result_mem = std::mem::MaybeUninit::<T>::uninit();
+
+                unsafe {
+                    // Zero out memory first for safety
+                    std::ptr::write_bytes(
+                        result_mem.as_mut_ptr() as *mut u8,
+                        0,
+                        std::mem::size_of::<T>(),
+                    );
+
+                    // Get the variant info
+                    let variant = &variants[variant_idx];
+
+                    // Set discriminant value - this is the key part for fixing the enum issue
+                    let discriminant_value = match &variant.discriminant {
+                        Some(disc) => *disc,
+                        None => variant_idx as i64,
+                    };
+
+                    // Write the discriminant value based on the representation
+                    match repr {
+                        crate::EnumRepr::U8 => {
+                            let tag_ptr = result_mem.as_mut_ptr() as *mut u8;
+                            *tag_ptr = discriminant_value as u8;
+                        }
+                        crate::EnumRepr::U16 => {
+                            let tag_ptr = result_mem.as_mut_ptr() as *mut u16;
+                            *tag_ptr = discriminant_value as u16;
+                        }
+                        crate::EnumRepr::U32 => {
+                            let tag_ptr = result_mem.as_mut_ptr() as *mut u32;
+                            *tag_ptr = discriminant_value as u32;
+                        }
+                        crate::EnumRepr::U64 => {
+                            let tag_ptr = result_mem.as_mut_ptr() as *mut u64;
+                            *tag_ptr = discriminant_value as u64;
+                        }
+                        crate::EnumRepr::USize => {
+                            let tag_ptr = result_mem.as_mut_ptr() as *mut usize;
+                            *tag_ptr = discriminant_value as usize;
+                        }
+                        crate::EnumRepr::I8 => {
+                            let tag_ptr = result_mem.as_mut_ptr() as *mut i8;
+                            *tag_ptr = discriminant_value as i8;
+                        }
+                        crate::EnumRepr::I16 => {
+                            let tag_ptr = result_mem.as_mut_ptr() as *mut i16;
+                            *tag_ptr = discriminant_value as i16;
+                        }
+                        crate::EnumRepr::I32 => {
+                            let tag_ptr = result_mem.as_mut_ptr() as *mut i32;
+                            *tag_ptr = discriminant_value as i32;
+                        }
+                        crate::EnumRepr::I64 => {
+                            let tag_ptr = result_mem.as_mut_ptr() as *mut i64;
+                            *tag_ptr = discriminant_value as i64;
+                        }
+                        crate::EnumRepr::ISize => {
+                            let tag_ptr = result_mem.as_mut_ptr() as *mut isize;
+                            *tag_ptr = discriminant_value as isize;
+                        }
+                        crate::EnumRepr::Default => {
+                            // Use a heuristic based on the number of variants
+                            if variants.len() <= 256 {
+                                // Can fit in a u8
+                                let tag_ptr = result_mem.as_mut_ptr() as *mut u8;
+                                *tag_ptr = discriminant_value as u8;
+                            } else if variants.len() <= 65536 {
+                                // Can fit in a u16
+                                let tag_ptr = result_mem.as_mut_ptr() as *mut u16;
+                                *tag_ptr = discriminant_value as u16;
+                            } else {
+                                // Default to u32
+                                let tag_ptr = result_mem.as_mut_ptr() as *mut u32;
+                                *tag_ptr = discriminant_value as u32;
+                            }
+                        }
+                    }
+
+                    // For non-unit variants, copy the initialized fields
+                    match &variant.kind {
+                        crate::VariantKind::Tuple { fields } => {
+                            // Copy the fields from our partial to the result
+                            for field in fields.iter() {
+                                let src_ptr = (self.addr.as_ptr() as *const u8).add(field.offset);
+                                let dst_ptr =
+                                    (result_mem.as_mut_ptr() as *mut u8).add(field.offset);
+                                // Access the layout from the shape field
+                                let size = field.shape.get().layout.size();
+                                std::ptr::copy_nonoverlapping(src_ptr, dst_ptr, size);
+                            }
+                        }
+                        crate::VariantKind::Struct { fields } => {
+                            // Copy the fields from our partial to the result
+                            for field in fields.iter() {
+                                let src_ptr = (self.addr.as_ptr() as *const u8).add(field.offset);
+                                let dst_ptr =
+                                    (result_mem.as_mut_ptr() as *mut u8).add(field.offset);
+                                // Access the layout from the shape field
+                                let size = field.shape.get().layout.size();
+                                std::ptr::copy_nonoverlapping(src_ptr, dst_ptr, size);
+                            }
+                        }
+                        crate::VariantKind::Unit => {
+                            // Nothing to copy for unit variants, just the discriminant is enough
+                        }
+                    }
+
+                    // Return the completed enum
+                    let result = result_mem.assume_init();
+                    trace!("Built \x1b[1;33m{}\x1b[0m successfully", T::shape());
+                    self.deallocate();
+                    std::mem::forget(self);
+                    return result;
+                }
+            }
+        }
+
+        // For non-enum types, use the original implementation
         let result = unsafe {
             let ptr = self.addr.as_ptr() as *const T;
             std::ptr::read(ptr)
@@ -423,7 +555,7 @@ impl Partial<'_> {
     pub fn set_variant_by_name(&mut self, variant_name: &str) -> Result<(), crate::FieldError> {
         let shape = self.shape.get();
 
-        if let crate::Innards::Enum { variants } = &shape.innards {
+        if let crate::Innards::Enum { variants, repr: _ } = &shape.innards {
             let variant_index = variants
                 .iter()
                 .enumerate()
@@ -447,17 +579,88 @@ impl Partial<'_> {
     pub fn set_variant_by_index(&mut self, variant_index: usize) -> Result<(), crate::FieldError> {
         let shape = self.shape.get();
 
-        if let crate::Innards::Enum { variants } = &shape.innards {
+        if let crate::Innards::Enum { variants, repr } = &shape.innards {
             if variant_index >= variants.len() {
                 return Err(crate::FieldError::IndexOutOfBounds);
             }
 
-            // Store the variant index in the first byte of the memory block
+            // Get the current variant info
+            let variant = &variants[variant_index];
+
+            // Prepare memory for the enum
             unsafe {
-                // Safe to cast the pointer to a usize ptr and dereference because we know the
-                // memory allocation is big enough to hold this value
-                let ptr = self.addr.as_ptr() as *mut usize;
-                *ptr = variant_index;
+                // Zero out the memory first to ensure clean state
+                std::ptr::write_bytes(self.addr.as_ptr(), 0, shape.layout.size());
+
+                // Set up the discriminant (tag)
+                // For enums in Rust, the first bytes contain the discriminant
+                // By default, we should use the smallest type that can represent all variants
+                let discriminant_value = match &variant.discriminant {
+                    // If we have an explicit discriminant, use it
+                    Some(discriminant) => *discriminant,
+                    // Otherwise, use the variant index directly
+                    None => variant_index as i64,
+                };
+
+                // Write the discriminant value based on the representation
+                match repr {
+                    crate::EnumRepr::U8 => {
+                        let tag_ptr = self.addr.as_ptr() as *mut u8;
+                        *tag_ptr = discriminant_value as u8;
+                    }
+                    crate::EnumRepr::U16 => {
+                        let tag_ptr = self.addr.as_ptr() as *mut u16;
+                        *tag_ptr = discriminant_value as u16;
+                    }
+                    crate::EnumRepr::U32 => {
+                        let tag_ptr = self.addr.as_ptr() as *mut u32;
+                        *tag_ptr = discriminant_value as u32;
+                    }
+                    crate::EnumRepr::U64 => {
+                        let tag_ptr = self.addr.as_ptr() as *mut u64;
+                        *tag_ptr = discriminant_value as u64;
+                    }
+                    crate::EnumRepr::USize => {
+                        let tag_ptr = self.addr.as_ptr() as *mut usize;
+                        *tag_ptr = discriminant_value as usize;
+                    }
+                    crate::EnumRepr::I8 => {
+                        let tag_ptr = self.addr.as_ptr() as *mut i8;
+                        *tag_ptr = discriminant_value as i8;
+                    }
+                    crate::EnumRepr::I16 => {
+                        let tag_ptr = self.addr.as_ptr() as *mut i16;
+                        *tag_ptr = discriminant_value as i16;
+                    }
+                    crate::EnumRepr::I32 => {
+                        let tag_ptr = self.addr.as_ptr() as *mut i32;
+                        *tag_ptr = discriminant_value as i32;
+                    }
+                    crate::EnumRepr::I64 => {
+                        let tag_ptr = self.addr.as_ptr() as *mut i64;
+                        *tag_ptr = discriminant_value as i64;
+                    }
+                    crate::EnumRepr::ISize => {
+                        let tag_ptr = self.addr.as_ptr() as *mut isize;
+                        *tag_ptr = discriminant_value as isize;
+                    }
+                    crate::EnumRepr::Default => {
+                        // Use a heuristic based on the number of variants
+                        if variants.len() <= 256 {
+                            // Can fit in a u8
+                            let tag_ptr = self.addr.as_ptr() as *mut u8;
+                            *tag_ptr = discriminant_value as u8;
+                        } else if variants.len() <= 65536 {
+                            // Can fit in a u16
+                            let tag_ptr = self.addr.as_ptr() as *mut u16;
+                            *tag_ptr = discriminant_value as u16;
+                        } else {
+                            // Default to u32
+                            let tag_ptr = self.addr.as_ptr() as *mut u32;
+                            *tag_ptr = discriminant_value as u32;
+                        }
+                    }
+                }
             }
 
             // Mark the variant as selected (bit 0)
@@ -481,13 +684,93 @@ impl Partial<'_> {
             return None;
         }
 
-        // Read the variant index from the first byte of the memory block
-        unsafe {
-            // Safe to cast the pointer to a usize ptr and dereference because we know the
-            // memory allocation is big enough to hold this value
-            let ptr = self.addr.as_ptr() as *const usize;
-            Some(*ptr)
+        let shape = self.shape.get();
+
+        // We need to read the discriminant and map it back to the variant index
+        if let crate::Innards::Enum { variants, repr } = &shape.innards {
+            unsafe {
+                // Attempt to read the tag based on the representation
+                let discriminant_value = match repr {
+                    crate::EnumRepr::U8 => {
+                        let tag_ptr = self.addr.as_ptr() as *const u8;
+                        *tag_ptr as i64
+                    }
+                    crate::EnumRepr::U16 => {
+                        let tag_ptr = self.addr.as_ptr() as *const u16;
+                        *tag_ptr as i64
+                    }
+                    crate::EnumRepr::U32 => {
+                        let tag_ptr = self.addr.as_ptr() as *const u32;
+                        *tag_ptr as i64
+                    }
+                    crate::EnumRepr::U64 => {
+                        let tag_ptr = self.addr.as_ptr() as *const u64;
+                        *tag_ptr as i64
+                    }
+                    crate::EnumRepr::USize => {
+                        let tag_ptr = self.addr.as_ptr() as *const usize;
+                        *tag_ptr as i64
+                    }
+                    crate::EnumRepr::I8 => {
+                        let tag_ptr = self.addr.as_ptr() as *const i8;
+                        *tag_ptr as i64
+                    }
+                    crate::EnumRepr::I16 => {
+                        let tag_ptr = self.addr.as_ptr() as *const i16;
+                        *tag_ptr as i64
+                    }
+                    crate::EnumRepr::I32 => {
+                        let tag_ptr = self.addr.as_ptr() as *const i32;
+                        *tag_ptr as i64
+                    }
+                    crate::EnumRepr::I64 => {
+                        let tag_ptr = self.addr.as_ptr() as *const i64;
+                        *tag_ptr as i64
+                    }
+                    crate::EnumRepr::ISize => {
+                        let tag_ptr = self.addr.as_ptr() as *const isize;
+                        *tag_ptr as i64
+                    }
+                    crate::EnumRepr::Default => {
+                        // Use a heuristic based on the number of variants
+                        if variants.len() <= 256 {
+                            // Likely a u8 discriminant
+                            let tag_ptr = self.addr.as_ptr() as *const u8;
+                            *tag_ptr as i64
+                        } else if variants.len() <= 65536 {
+                            // Likely a u16 discriminant
+                            let tag_ptr = self.addr.as_ptr() as *const u16;
+                            *tag_ptr as i64
+                        } else {
+                            // Default to u32
+                            let tag_ptr = self.addr.as_ptr() as *const u32;
+                            *tag_ptr as i64
+                        }
+                    }
+                };
+
+                // Find the variant with this discriminant or index
+                // Try matching by discriminant first
+                for (idx, variant) in variants.iter().enumerate() {
+                    if let Some(disc) = variant.discriminant {
+                        if disc == discriminant_value {
+                            return Some(idx);
+                        }
+                    } else if idx as i64 == discriminant_value {
+                        // Fallback to index-based match
+                        return Some(idx);
+                    }
+                }
+
+                // If we couldn't find a match, but we know a variant is selected,
+                // assume it's the variant at the discriminant index if in bounds
+                if (discriminant_value as usize) < variants.len() {
+                    return Some(discriminant_value as usize);
+                }
+            }
         }
+
+        None
     }
 
     /// Get a slot for a field in the currently selected variant.
@@ -508,7 +791,7 @@ impl Partial<'_> {
             .ok_or(crate::FieldError::NotAStruct)?; // Using NotAStruct as a stand-in for "no variant selected"
 
         let shape = self.shape.get();
-        if let crate::Innards::Enum { variants } = &shape.innards {
+        if let crate::Innards::Enum { variants, repr: _ } = &shape.innards {
             let variant = &variants[variant_index];
 
             // Find the field in the variant

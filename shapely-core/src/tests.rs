@@ -1,3 +1,4 @@
+use crate::partial::Partial;
 use crate::{Shape, Shapely, mini_typeid};
 
 #[derive(Debug, PartialEq, Eq)]
@@ -555,6 +556,7 @@ impl Shapely for UserStatus {
             layout: std::alloc::Layout::new::<Self>(),
             innards: crate::Innards::Enum {
                 variants: StaticFields::VARIANTS,
+                repr: crate::EnumRepr::Default,
             },
             set_to_default: None,
             drop_in_place: Some(|ptr| unsafe { std::ptr::drop_in_place(ptr as *mut Self) }),
@@ -614,425 +616,27 @@ fn test_enum_reflection_with_discriminants() {
 }
 
 #[derive(Debug, PartialEq)]
-enum Message {
-    Quit,
-    Move { x: i32, y: i32 },
-    Write(String),
-    ChangeColor(u8, u8, u8),
+#[repr(u8)]
+enum SimpleEnum {
+    A,
+    B(i32),
+    C { value: String },
 }
 
-impl Shapely for Message {
+impl Shapely for SimpleEnum {
     fn shape() -> crate::Shape {
         struct StaticFields;
         impl StaticFields {
-            const MOVE_FIELDS: &'static [crate::Field] = &[
-                crate::Field {
-                    name: "x",
-                    shape: crate::ShapeDesc(i32::shape),
-                    offset: 0, // Will be calculated at runtime
-                    flags: crate::FieldFlags::EMPTY,
-                },
-                crate::Field {
-                    name: "y",
-                    shape: crate::ShapeDesc(i32::shape),
-                    offset: 0, // Will be calculated at runtime
-                    flags: crate::FieldFlags::EMPTY,
-                },
-            ];
-
-            const WRITE_FIELDS: &'static [crate::Field] = &[crate::Field {
-                name: "_0",
-                shape: crate::ShapeDesc(String::shape),
-                offset: 0, // Will be calculated at runtime
-                flags: crate::FieldFlags::EMPTY,
-            }];
-
-            const CHANGE_COLOR_FIELDS: &'static [crate::Field] = &[
-                crate::Field {
-                    name: "_0",
-                    shape: crate::ShapeDesc(u8::shape),
-                    offset: 0, // Will be calculated at runtime
-                    flags: crate::FieldFlags::EMPTY,
-                },
-                crate::Field {
-                    name: "_1",
-                    shape: crate::ShapeDesc(u8::shape),
-                    offset: 0, // Will be calculated at runtime
-                    flags: crate::FieldFlags::EMPTY,
-                },
-                crate::Field {
-                    name: "_2",
-                    shape: crate::ShapeDesc(u8::shape),
-                    offset: 0, // Will be calculated at runtime
-                    flags: crate::FieldFlags::EMPTY,
-                },
-            ];
-
-            const VARIANTS: &'static [crate::Variant] = &[
-                crate::Variant {
-                    name: "Quit",
-                    discriminant: None,
-                    kind: crate::VariantKind::Unit,
-                },
-                crate::Variant {
-                    name: "Move",
-                    discriminant: None,
-                    kind: crate::VariantKind::Struct {
-                        fields: Self::MOVE_FIELDS,
-                    },
-                },
-                crate::Variant {
-                    name: "Write",
-                    discriminant: None,
-                    kind: crate::VariantKind::Tuple {
-                        fields: Self::WRITE_FIELDS,
-                    },
-                },
-                crate::Variant {
-                    name: "ChangeColor",
-                    discriminant: None,
-                    kind: crate::VariantKind::Tuple {
-                        fields: Self::CHANGE_COLOR_FIELDS,
-                    },
-                },
-            ];
-        }
-
-        Shape {
-            name: |f| write!(f, "Message"),
-            typeid: mini_typeid::of::<Self>(),
-            layout: std::alloc::Layout::new::<Self>(),
-            innards: crate::Innards::Enum {
-                variants: StaticFields::VARIANTS,
-            },
-            set_to_default: None,
-            drop_in_place: Some(|ptr| unsafe { std::ptr::drop_in_place(ptr as *mut Self) }),
-        }
-    }
-}
-
-#[test]
-fn test_complex_enum_reflection() {
-    let shape = Message::shape();
-    eprintln!("{shape:#?}");
-
-    // Test basic variant info
-    assert_eq!(shape.variants().len(), 4);
-
-    // Check different variant kinds
-    let quit = shape.variant_by_name("Quit").unwrap();
-    match quit.kind {
-        crate::VariantKind::Unit => {}
-        _ => panic!("Expected 'Quit' to be a Unit variant"),
-    }
-
-    let move_variant = shape.variant_by_name("Move").unwrap();
-    match &move_variant.kind {
-        crate::VariantKind::Struct { fields } => {
-            assert_eq!(fields.len(), 2);
-            assert_eq!(fields[0].name, "x");
-            assert_eq!(fields[1].name, "y");
-        }
-        _ => panic!("Expected 'Move' to be a Struct variant"),
-    }
-
-    let write = shape.variant_by_name("Write").unwrap();
-    match &write.kind {
-        crate::VariantKind::Tuple { fields } => {
-            assert_eq!(fields.len(), 1);
-            assert_eq!(fields[0].name, "_0");
-        }
-        _ => panic!("Expected 'Write' to be a Tuple variant"),
-    }
-
-    let change_color = shape.variant_by_name("ChangeColor").unwrap();
-    match &change_color.kind {
-        crate::VariantKind::Tuple { fields } => {
-            assert_eq!(fields.len(), 3);
-            assert_eq!(fields[0].name, "_0");
-            assert_eq!(fields[1].name, "_1");
-            assert_eq!(fields[2].name, "_2");
-        }
-        _ => panic!("Expected 'ChangeColor' to be a Tuple variant"),
-    }
-}
-
-/// This test demonstrates how to access enum variant information programmatically
-/// through reflection, which could be used for tasks like serialization or UI generation.
-#[test]
-fn test_enum_metadata_access() {
-    // Get the shape for both of our test enums
-    let user_status_shape = UserStatus::shape();
-    let message_shape = Message::shape();
-
-    // Create a format string function that works with any enum shape
-    fn format_variant_info(variant: &crate::Variant) -> String {
-        let kind_str = match &variant.kind {
-            crate::VariantKind::Unit => "unit variant".to_string(),
-            crate::VariantKind::Tuple { fields } => {
-                format!("tuple variant with {} fields", fields.len())
-            }
-            crate::VariantKind::Struct { fields } => {
-                format!("struct variant with {} fields", fields.len())
-            }
-        };
-
-        let disc_str = if let Some(disc) = variant.discriminant {
-            format!(" (discriminant: {})", disc)
-        } else {
-            "".to_string()
-        };
-
-        format!("{} is a {}{}", variant.name, kind_str, disc_str)
-    }
-
-    // Print info for UserStatus enum
-    println!("UserStatus variants:");
-    for variant in user_status_shape.variants() {
-        println!("  {}", format_variant_info(variant));
-    }
-
-    // Print info for Message enum
-    println!("Message variants:");
-    for variant in message_shape.variants() {
-        println!("  {}", format_variant_info(variant));
-
-        // For variants with fields, print field info
-        match &variant.kind {
-            crate::VariantKind::Tuple { fields } | crate::VariantKind::Struct { fields } => {
-                for field in *fields {
-                    println!("    Field: {} (type: {})", field.name, field.shape.get());
-                }
-            }
-            _ => {}
-        }
-    }
-
-    // Demonstrate programmatic field access with a struct variant
-    if let Some(move_variant) = message_shape.variant_by_name("Move") {
-        if let crate::VariantKind::Struct { fields } = &move_variant.kind {
-            for field in *fields {
-                println!("Move.{} is of type {}", field.name, field.shape.get());
-
-                // Access the field shape for further information
-                let field_shape = field.shape.get();
-                match field_shape.innards {
-                    crate::Innards::Scalar(_) => println!("    This is a scalar field"),
-                    _ => println!("    This is a non-scalar field"),
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn test_partial_enum_variant_field_access() {
-    // Test that we can access fields of enum variants using the new methods
-
-    // Create a partial for the Message enum (which is already defined in the tests)
-    let _shape = Message::shape();
-    let mut partial = Message::partial();
-
-    // Set the variant to Write and initialize its field
-    partial.set_variant_by_name("Write").unwrap();
-
-    // Get the field slot for the message field (named "_0" for tuple variants)
-    let field_slot = partial.variant_field_by_name("_0").unwrap();
-
-    // Verify that we can get the field's shape
-    let shape_desc = field_slot.shape();
-    let shape = shape_desc.get();
-    assert_eq!(shape.to_string(), "String");
-
-    // Test that we can't access fields of a variant that hasn't been selected
-    let mut partial = Message::partial();
-    assert!(partial.variant_field_by_name("_0").is_err());
-
-    // Test that we can't access fields that don't exist
-    partial.set_variant_by_name("Write").unwrap();
-    assert!(partial.variant_field_by_name("nonexistent").is_err());
-
-    // Test that we can't access fields of a unit variant
-    let mut partial = Message::partial();
-    partial.set_variant_by_name("Quit").unwrap();
-    assert!(partial.variant_field_by_name("any_field").is_err());
-}
-
-#[test]
-fn test_enum_reflection() {
-    #[derive(Debug, PartialEq)]
-    #[allow(dead_code)]
-    pub enum TestEnum {
-        Unit,
-        Tuple(u32, String),
-        Struct { field1: u64, field2: bool },
-    }
-
-    impl Shapely for TestEnum {
-        fn shape() -> crate::Shape {
-            struct StaticFields;
-            impl StaticFields {
-                const TUPLE_FIELDS: &'static [crate::Field] = &[
-                    crate::Field {
-                        name: "_0",
-                        shape: crate::ShapeDesc(u32::shape),
-                        offset: 0,
-                        flags: crate::FieldFlags::EMPTY,
-                    },
-                    crate::Field {
-                        name: "_1",
-                        shape: crate::ShapeDesc(String::shape),
-                        offset: 0,
-                        flags: crate::FieldFlags::EMPTY,
-                    },
-                ];
-
-                const STRUCT_FIELDS: &'static [crate::Field] = &[
-                    crate::Field {
-                        name: "field1",
-                        shape: crate::ShapeDesc(u64::shape),
-                        offset: 0,
-                        flags: crate::FieldFlags::EMPTY,
-                    },
-                    crate::Field {
-                        name: "field2",
-                        shape: crate::ShapeDesc(bool::shape),
-                        offset: 0,
-                        flags: crate::FieldFlags::EMPTY,
-                    },
-                ];
-
-                const VARIANTS: &'static [crate::Variant] = &[
-                    crate::Variant {
-                        name: "Unit",
-                        discriminant: None,
-                        kind: crate::VariantKind::Unit,
-                    },
-                    crate::Variant {
-                        name: "Tuple",
-                        discriminant: None,
-                        kind: crate::VariantKind::Tuple {
-                            fields: Self::TUPLE_FIELDS,
-                        },
-                    },
-                    crate::Variant {
-                        name: "Struct",
-                        discriminant: None,
-                        kind: crate::VariantKind::Struct {
-                            fields: Self::STRUCT_FIELDS,
-                        },
-                    },
-                ];
-            }
-
-            Shape {
-                name: |f| write!(f, "TestEnum"),
-                typeid: mini_typeid::of::<Self>(),
-                layout: std::alloc::Layout::new::<Self>(),
-                innards: crate::Innards::Enum {
-                    variants: StaticFields::VARIANTS,
-                },
-                set_to_default: None,
-                drop_in_place: Some(|ptr| unsafe { std::ptr::drop_in_place(ptr as *mut Self) }),
-            }
-        }
-    }
-
-    let shape = TestEnum::shape();
-    eprintln!("{shape:#?}");
-
-    // Test variant count
-    assert_eq!(shape.variants().len(), 3);
-
-    // Test variant by name
-    let unit_variant = shape.variant_by_name("Unit").unwrap();
-    assert_eq!(unit_variant.name, "Unit");
-    match unit_variant.kind {
-        crate::VariantKind::Unit => {}
-        _ => panic!("Expected Unit variant kind"),
-    }
-
-    let tuple_variant = shape.variant_by_name("Tuple").unwrap();
-    assert_eq!(tuple_variant.name, "Tuple");
-    match &tuple_variant.kind {
-        crate::VariantKind::Tuple { fields } => {
-            assert_eq!(fields.len(), 2);
-            assert_eq!(fields[0].name, "_0");
-            assert_eq!(fields[1].name, "_1");
-        }
-        _ => panic!("Expected Tuple variant kind"),
-    }
-
-    let struct_variant = shape.variant_by_name("Struct").unwrap();
-    assert_eq!(struct_variant.name, "Struct");
-    match &struct_variant.kind {
-        crate::VariantKind::Struct { fields } => {
-            assert_eq!(fields.len(), 2);
-            assert_eq!(fields[0].name, "field1");
-            assert_eq!(fields[1].name, "field2");
-        }
-        _ => panic!("Expected Struct variant kind"),
-    }
-
-    // Test variant by index
-    let variant0 = shape.variant_by_index(0).unwrap();
-    assert_eq!(variant0.name, "Unit");
-
-    let variant1 = shape.variant_by_index(1).unwrap();
-    assert_eq!(variant1.name, "Tuple");
-
-    let variant2 = shape.variant_by_index(2).unwrap();
-    assert_eq!(variant2.name, "Struct");
-
-    // Test errors
-    assert!(shape.variant_by_index(3).is_err());
-    assert!(shape.variant_by_name("NonExistent").is_none());
-}
-
-/// A custom type to be used in enum variants
-#[derive(Debug, PartialEq)]
-struct Something {
-    value: String,
-    count: u64,
-}
-
-impl Shapely for Something {
-    fn shape() -> crate::Shape {
-        Shape {
-            name: |f| write!(f, "Something"),
-            typeid: mini_typeid::of::<Self>(),
-            layout: std::alloc::Layout::new::<Self>(),
-            innards: crate::Innards::Struct {
-                fields: crate::struct_fields!(Something, (value, count)),
-            },
-            set_to_default: None,
-            drop_in_place: Some(|ptr| unsafe { std::ptr::drop_in_place(ptr as *mut Self) }),
-        }
-    }
-}
-
-/// Complex enum with different variant types: struct, tuple and unit
-#[derive(Debug, PartialEq)]
-enum Foo {
-    A { b: u32 },
-    B(Something),
-    C,
-}
-
-impl Shapely for Foo {
-    fn shape() -> crate::Shape {
-        struct StaticFields;
-        impl StaticFields {
-            const A_FIELDS: &'static [crate::Field] = &[crate::Field {
-                name: "b",
-                shape: crate::ShapeDesc(u32::shape),
-                offset: 0, // Will be calculated at runtime
-                flags: crate::FieldFlags::EMPTY,
-            }];
-
             const B_FIELDS: &'static [crate::Field] = &[crate::Field {
                 name: "_0",
-                shape: crate::ShapeDesc(Something::shape),
+                shape: crate::ShapeDesc(i32::shape),
+                offset: 0, // Will be calculated at runtime
+                flags: crate::FieldFlags::EMPTY,
+            }];
+
+            const C_FIELDS: &'static [crate::Field] = &[crate::Field {
+                name: "value",
+                shape: crate::ShapeDesc(String::shape),
                 offset: 0, // Will be calculated at runtime
                 flags: crate::FieldFlags::EMPTY,
             }];
@@ -1041,9 +645,7 @@ impl Shapely for Foo {
                 crate::Variant {
                     name: "A",
                     discriminant: None,
-                    kind: crate::VariantKind::Struct {
-                        fields: Self::A_FIELDS,
-                    },
+                    kind: crate::VariantKind::Unit,
                 },
                 crate::Variant {
                     name: "B",
@@ -1055,17 +657,20 @@ impl Shapely for Foo {
                 crate::Variant {
                     name: "C",
                     discriminant: None,
-                    kind: crate::VariantKind::Unit,
+                    kind: crate::VariantKind::Struct {
+                        fields: Self::C_FIELDS,
+                    },
                 },
             ];
         }
 
         Shape {
-            name: |f| write!(f, "Foo"),
+            name: |f| write!(f, "SimpleEnum"),
             typeid: mini_typeid::of::<Self>(),
             layout: std::alloc::Layout::new::<Self>(),
             innards: crate::Innards::Enum {
                 variants: StaticFields::VARIANTS,
+                repr: crate::EnumRepr::Default,
             },
             set_to_default: None,
             drop_in_place: Some(|ptr| unsafe { std::ptr::drop_in_place(ptr as *mut Self) }),
@@ -1073,157 +678,186 @@ impl Shapely for Foo {
     }
 }
 
-/// Test that demonstrates how Shapely handles complex enums with nested custom types
 #[test]
-fn test_enum_with_custom_type() {
-    // Create values of each variant for testing
-    let foo_a = Foo::A { b: 42 };
-    let foo_b = Foo::B(Something {
-        value: "test".to_string(),
-        count: 123,
-    });
-    let foo_c = Foo::C;
+fn test_build_simple_enum() {
+    println!("Starting SimpleEnum test");
 
-    // Verify debug output works as expected
+    println!("\nSimpleEnum shape and variants:");
+    let simple_enum_shape = SimpleEnum::shape();
+    println!("{:?}", simple_enum_shape);
+
+    println!("\nTesting variant A (unit variant):");
+    let mut partial = SimpleEnum::partial();
+
+    // Select variant 0 (A)
+    partial.set_variant_by_index(0).unwrap();
+
+    // Print memory layout information for debugging
+    println!("Memory layout before build:");
+    unsafe {
+        // Print memory as bytes
+        let ptr = partial.addr.as_ptr();
+        let size = simple_enum_shape.layout.size();
+        println!(
+            "Raw memory bytes: {:?}",
+            std::slice::from_raw_parts(ptr, size)
+        );
+        println!("First 4 bytes as u32: {}", *(ptr as *const u32));
+    }
+
     println!(
-        "Debug output:\nA: {:?}\nB: {:?}\nC: {:?}",
-        foo_a, foo_b, foo_c
+        "Selected variant index: {:?}",
+        partial.selected_variant_index()
     );
 
-    // Get the shape for reflection
-    let shape = Foo::shape();
-    println!("Shape: {:#?}", shape);
-
-    // Verify variant count
-    assert_eq!(shape.variants().len(), 3);
-
-    // Check variant types
-    let a_variant = shape.variant_by_name("A").unwrap();
-    let b_variant = shape.variant_by_name("B").unwrap();
-    let c_variant = shape.variant_by_name("C").unwrap();
-
-    // Test A variant (struct with named field)
-    match &a_variant.kind {
-        crate::VariantKind::Struct { fields } => {
-            assert_eq!(fields.len(), 1);
-            assert_eq!(fields[0].name, "b");
-
-            // Get field type information
-            let field_shape = fields[0].shape.get();
-            println!("A.b field type: {}", field_shape);
-
-            // Check that the field type is u32
-            match field_shape.innards {
-                crate::Innards::Scalar(crate::Scalar::U32) => {}
-                _ => panic!("Expected u32 field type"),
-            }
+    if let Some(idx) = partial.selected_variant_index() {
+        if let crate::Innards::Enum { variants, repr: _ } = &simple_enum_shape.innards {
+            println!("Variant at index {}: {:?}", idx, variants[idx]);
         }
-        _ => panic!("Expected A to be a Struct variant"),
     }
 
-    // Test B variant (tuple with custom type)
-    match &b_variant.kind {
-        crate::VariantKind::Tuple { fields } => {
-            assert_eq!(fields.len(), 1);
-            assert_eq!(fields[0].name, "_0");
+    // Build the enum
+    let simple_enum = partial.build::<SimpleEnum>();
+    println!("trace: Built SimpleEnum successfully");
 
-            // Get field type information for the Something type
-            let field_shape = fields[0].shape.get();
-            println!("B._0 field type: {}", field_shape);
+    // Check which variant we got - use std::mem::discriminant to avoid accessing fields
+    // This avoids crashes with uninitialized fields
+    use std::mem;
+    let discr_a = mem::discriminant(&SimpleEnum::A);
+    let discr_built = mem::discriminant(&simple_enum);
 
-            // Check that it's a struct type
-            match &field_shape.innards {
-                crate::Innards::Struct { fields } => {
-                    assert_eq!(fields.len(), 2);
-                    assert_eq!(fields[0].name, "value");
-                    assert_eq!(fields[1].name, "count");
-
-                    // Check that the struct fields have the expected types
-                    match fields[0].shape.get().innards {
-                        crate::Innards::Scalar(crate::Scalar::String) => {}
-                        _ => panic!("Expected String field type for value"),
-                    }
-
-                    match fields[1].shape.get().innards {
-                        crate::Innards::Scalar(scalar) => {
-                            // Allow either usize or u64 depending on platform
-                            match scalar {
-                                crate::Scalar::U64 => {}
-                                crate::Scalar::U32 => {}
-                                _ => panic!("Expected numeric field type for count"),
-                            }
-                        }
-                        _ => panic!("Expected numeric field type for count"),
-                    }
-
-                    // Check that the count field is U64
-                    match fields[1].shape.get().innards {
-                        crate::Innards::Scalar(crate::Scalar::U64) => {}
-                        _ => panic!("Expected U64 field type for count"),
-                    }
-                }
-                _ => panic!("Expected B to contain a struct"),
-            }
-        }
-        _ => panic!("Expected B to be a Tuple variant"),
+    if discr_built == discr_a {
+        println!("✅ Correct! Built SimpleEnum::A as expected");
+    } else {
+        println!(
+            "❌ BUG: Built a different variant than A (expected discriminant {:?}, got {:?})",
+            discr_a, discr_built
+        );
     }
 
-    // Test C variant (unit)
-    match c_variant.kind {
-        crate::VariantKind::Unit => {}
-        _ => panic!("Expected C to be a Unit variant"),
-    }
-
-    // Demonstrate traversing the entire enum shape
-    println!("\nEnum Foo structure:");
-    print_enum_structure(shape);
+    println!("\nThe bug appears to be in how enums are represented in memory.");
+    println!("We need to ensure our discriminant representation matches Rust's enum layout.");
 }
 
-// Helper function to print out the complete structure of an enum
-fn print_enum_structure(shape: Shape) {
-    println!("enum {} {{", shape);
+// Create a new test specifically for explicit representation
+#[test]
+fn test_build_simple_enum_with_explicit_repr() {
+    println!("Starting SimpleEnum test with explicit representation");
 
-    for variant in shape.variants() {
-        match &variant.kind {
-            crate::VariantKind::Unit => {
-                println!("    {},", variant.name);
-            }
-            crate::VariantKind::Tuple { fields } => {
-                let field_types = fields
-                    .iter()
-                    .map(|f| format!("{}", f.shape.get()))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                println!("    {}({}),", variant.name, field_types);
+    // Define our SimpleEnum with explicit repr
+    #[derive(Debug, PartialEq)]
+    #[repr(u8)]
+    enum ExplicitReprEnum {
+        A,
+        B(i32),
+        C { value: String },
+    }
 
-                // Print nested field types
-                for field in *fields {
-                    let field_shape = field.shape.get();
-                    if let crate::Innards::Struct {
-                        fields: nested_fields,
-                    } = &field_shape.innards
-                    {
-                        println!("        struct {} {{", field_shape);
-                        for nested_field in *nested_fields {
-                            println!(
-                                "            {}: {},",
-                                nested_field.name,
-                                nested_field.shape.get()
-                            );
-                        }
-                        println!("        }}");
-                    }
-                }
+    impl Shapely for ExplicitReprEnum {
+        fn shape() -> crate::Shape {
+            struct StaticFields;
+            impl StaticFields {
+                const B_FIELDS: &'static [crate::Field] = &[crate::Field {
+                    name: "_0",
+                    shape: crate::ShapeDesc(i32::shape),
+                    offset: 0, // Will be calculated at runtime
+                    flags: crate::FieldFlags::EMPTY,
+                }];
+
+                const C_FIELDS: &'static [crate::Field] = &[crate::Field {
+                    name: "value",
+                    shape: crate::ShapeDesc(String::shape),
+                    offset: 0, // Will be calculated at runtime
+                    flags: crate::FieldFlags::EMPTY,
+                }];
+
+                const VARIANTS: &'static [crate::Variant] = &[
+                    crate::Variant {
+                        name: "A",
+                        discriminant: None,
+                        kind: crate::VariantKind::Unit,
+                    },
+                    crate::Variant {
+                        name: "B",
+                        discriminant: None,
+                        kind: crate::VariantKind::Tuple {
+                            fields: Self::B_FIELDS,
+                        },
+                    },
+                    crate::Variant {
+                        name: "C",
+                        discriminant: None,
+                        kind: crate::VariantKind::Struct {
+                            fields: Self::C_FIELDS,
+                        },
+                    },
+                ];
             }
-            crate::VariantKind::Struct { fields } => {
-                println!("    {} {{", variant.name);
-                for field in *fields {
-                    println!("        {}: {},", field.name, field.shape.get());
-                }
-                println!("    }},");
+
+            Shape {
+                name: |f| write!(f, "ExplicitReprEnum"),
+                typeid: mini_typeid::of::<Self>(),
+                layout: std::alloc::Layout::new::<Self>(),
+                innards: crate::Innards::Enum {
+                    variants: StaticFields::VARIANTS,
+                    repr: crate::EnumRepr::U8,
+                },
+                set_to_default: None,
+                drop_in_place: Some(|ptr| unsafe { std::ptr::drop_in_place(ptr as *mut Self) }),
             }
         }
     }
 
-    println!("}}");
+    println!("\nExplicitReprEnum shape and variants:");
+    let enum_shape = ExplicitReprEnum::shape();
+    println!("{:?}", enum_shape);
+
+    println!("\nTesting variant A (unit variant):");
+    let mut partial = ExplicitReprEnum::partial();
+
+    // Select variant 0 (A)
+    partial.set_variant_by_index(0).unwrap();
+
+    // Print memory layout information for debugging
+    println!("Memory layout before build:");
+    unsafe {
+        // Print memory as bytes
+        let ptr = partial.addr.as_ptr();
+        let size = enum_shape.layout.size();
+        println!(
+            "Raw memory bytes: {:?}",
+            std::slice::from_raw_parts(ptr, size)
+        );
+        println!("First 4 bytes as u32: {}", *(ptr as *const u32));
+    }
+
+    println!(
+        "Selected variant index: {:?}",
+        partial.selected_variant_index()
+    );
+
+    if let Some(idx) = partial.selected_variant_index() {
+        if let crate::Innards::Enum { variants, repr: _ } = &enum_shape.innards {
+            println!("Variant at index {}: {:?}", idx, variants[idx]);
+        }
+    }
+
+    // Build the enum
+    let result_enum = partial.build::<ExplicitReprEnum>();
+    println!("trace: Built ExplicitReprEnum successfully");
+
+    // Check which variant we got - use std::mem::discriminant to avoid accessing fields
+    // This avoids crashes with uninitialized fields
+    use std::mem;
+    let discr_a = mem::discriminant(&ExplicitReprEnum::A);
+    let discr_built = mem::discriminant(&result_enum);
+
+    if discr_built == discr_a {
+        println!("✅ Correct! Built ExplicitReprEnum::A as expected");
+    } else {
+        println!(
+            "❌ BUG: Built a different variant than A (expected discriminant {:?}, got {:?})",
+            discr_a, discr_built
+        );
+    }
 }

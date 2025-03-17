@@ -116,7 +116,7 @@ impl Shape {
     /// Returns a slice of enum variants, if this shape represents an enum
     pub fn variants(&self) -> &'static [Variant] {
         match self.innards {
-            Innards::Enum { variants } => variants,
+            Innards::Enum { variants, repr: _ } => variants,
             _ => &[],
         }
     }
@@ -129,8 +129,18 @@ impl Shape {
     /// Returns a reference to a variant with the given index, if it exists
     pub fn variant_by_index(&self, index: usize) -> Result<&Variant, VariantError> {
         match self.innards {
-            Innards::Enum { variants } => variants.get(index).ok_or(VariantError::IndexOutOfBounds),
+            Innards::Enum { variants, repr: _ } => {
+                variants.get(index).ok_or(VariantError::IndexOutOfBounds)
+            }
             _ => Err(VariantError::NotAnEnum),
+        }
+    }
+
+    /// Returns the enum representation, if this shape represents an enum
+    pub fn enum_repr(&self) -> Option<EnumRepr> {
+        match self.innards {
+            Innards::Enum { variants: _, repr } => Some(repr),
+            _ => None,
         }
     }
 }
@@ -193,7 +203,10 @@ pub enum Innards {
     Scalar(Scalar),
 
     /// Enum with variants
-    Enum { variants: &'static [Variant] },
+    Enum {
+        variants: &'static [Variant],
+        repr: EnumRepr,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -416,6 +429,38 @@ pub enum VariantKind {
 
     /// Struct variant with named fields (e.g., `Struct { field: T }`)
     Struct { fields: &'static [Field] },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EnumRepr {
+    /// Default representation (compiler-dependent)
+    Default,
+    /// u8 representation (#[repr(u8)])
+    U8,
+    /// u16 representation (#[repr(u16)])
+    U16,
+    /// u32 representation (#[repr(u32)])
+    U32,
+    /// u64 representation (#[repr(u64)])
+    U64,
+    /// usize representation (#[repr(usize)])
+    USize,
+    /// i8 representation (#[repr(i8)])
+    I8,
+    /// i16 representation (#[repr(i16)])
+    I16,
+    /// i32 representation (#[repr(i32)])
+    I32,
+    /// i64 representation (#[repr(i64)])
+    I64,
+    /// isize representation (#[repr(isize)])
+    ISize,
+}
+
+impl Default for EnumRepr {
+    fn default() -> Self {
+        Self::Default
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
