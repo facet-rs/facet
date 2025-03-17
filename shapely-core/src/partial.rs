@@ -158,6 +158,46 @@ impl Partial<'_> {
                     );
                 }
             }
+            crate::Innards::Enum { variants: _ } => {
+                // Check if a variant has been selected (bit 0)
+                if !self.init_set.is_set(0) {
+                    panic!(
+                        "No enum variant was selected. Complete schema:\n{:?}",
+                        self.shape.get()
+                    );
+                }
+
+                // Get the selected variant
+                if let Some(variant_index) = self.selected_variant_index() {
+                    let shape = self.shape.get();
+                    if let crate::Innards::Enum { variants } = &shape.innards {
+                        let variant = &variants[variant_index];
+
+                        // Check if all fields of the selected variant are initialized
+                        match &variant.kind {
+                            crate::VariantKind::Unit => {
+                                // Unit variants don't have fields, so they're initialized if the variant is selected
+                            }
+                            crate::VariantKind::Tuple { fields }
+                            | crate::VariantKind::Struct { fields } => {
+                                // Check each field
+                                for (field_index, field) in fields.iter().enumerate() {
+                                    // Field init bits start at index 1 (index 0 is for variant selection)
+                                    let init_bit = field_index + 1;
+                                    if !self.init_set.is_set(init_bit) {
+                                        panic!(
+                                            "Field '{}' of variant '{}' was not initialized. Complete schema:\n{:?}",
+                                            field.name,
+                                            variant.name,
+                                            self.shape.get()
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -313,6 +353,7 @@ impl Partial<'_> {
         std::mem::forget(self);
         result
     }
+
     /// Build that partial into a boxed completed shape.
     ///
     /// # Panics
@@ -372,10 +413,163 @@ impl Partial<'_> {
         self.addr
     }
 
-    // TODO: Add support for enum variant instantiation:
-    // - Implement a variant_slot method on Partial to select a variant
-    // - Add support for filling variant fields based on the variant kind
-    // - Update the build method to properly construct enum instances
+    /// Sets the variant of an enum by name.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The shape doesn't represent an enum.
+    /// - No variant with the given name exists.
+    pub fn set_variant_by_name(&mut self, variant_name: &str) -> Result<(), crate::FieldError> {
+        let shape = self.shape.get();
+
+        if let crate::Innards::Enum { variants } = &shape.innards {
+            let variant_index = variants
+                .iter()
+                .enumerate()
+                .find(|(_, v)| v.name == variant_name)
+                .map(|(i, _)| i)
+                .ok_or(crate::FieldError::NoSuchStaticField)?;
+
+            self.set_variant_by_index(variant_index)
+        } else {
+            Err(crate::FieldError::NotAStruct) // Using NotAStruct as a stand-in for "not an enum"
+        }
+    }
+
+    /// Sets the variant of an enum by index.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The shape doesn't represent an enum.
+    /// - The index is out of bounds.
+    pub fn set_variant_by_index(&mut self, variant_index: usize) -> Result<(), crate::FieldError> {
+        let shape = self.shape.get();
+
+        if let crate::Innards::Enum { variants } = &shape.innards {
+            if variant_index >= variants.len() {
+                return Err(crate::FieldError::IndexOutOfBounds);
+            }
+
+            // Store the variant index in the first byte of the memory block
+            unsafe {
+                // Safe to cast the pointer to a usize ptr and dereference because we know the
+                // memory allocation is big enough to hold this value
+                let ptr = self.addr.as_ptr() as *mut usize;
+                *ptr = variant_index;
+            }
+
+            // Mark the variant as selected (bit 0)
+            self.init_set.set(0);
+
+            // Reset all field initialization bits (starting from bit 1)
+            // InitSet64 can hold 64 bits, so we'll clear bits 1-63
+            for i in 1..64 {
+                self.init_set.unset(i);
+            }
+
+            Ok(())
+        } else {
+            Err(crate::FieldError::NotAStruct) // Using NotAStruct as a stand-in for "not an enum"
+        }
+    }
+
+    /// Returns the currently selected variant index, if any.
+    pub fn selected_variant_index(&self) -> Option<usize> {
+        if !self.init_set.is_set(0) {
+            return None;
+        }
+
+        // Read the variant index from the first byte of the memory block
+        unsafe {
+            // Safe to cast the pointer to a usize ptr and dereference because we know the
+            // memory allocation is big enough to hold this value
+            let ptr = self.addr.as_ptr() as *const usize;
+            Some(*ptr)
+        }
+    }
+
+    /// Get a slot for a field in the currently selected variant.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The shape doesn't represent an enum.
+    /// - No variant has been selected yet.
+    /// - The field name doesn't exist in the selected variant.
+    /// - The selected variant is a unit variant (which has no fields).
+    pub fn variant_field_by_name<'s>(
+        &'s mut self,
+        name: &str,
+    ) -> Result<Slot<'s>, crate::FieldError> {
+        let variant_index = self
+            .selected_variant_index()
+            .ok_or(crate::FieldError::NotAStruct)?; // Using NotAStruct as a stand-in for "no variant selected"
+
+        let shape = self.shape.get();
+        if let crate::Innards::Enum { variants } = &shape.innards {
+            let variant = &variants[variant_index];
+
+            // Find the field in the variant
+            match &variant.kind {
+                crate::VariantKind::Unit => {
+                    // Unit variants have no fields
+                    return Err(crate::FieldError::NoSuchStaticField);
+                }
+                crate::VariantKind::Tuple { fields } => {
+                    // For tuple variants, find the field by name
+                    let (field_index, field) = fields
+                        .iter()
+                        .enumerate()
+                        .find(|(_, f)| f.name == name)
+                        .ok_or(crate::FieldError::NoSuchStaticField)?;
+
+                    // The field's initialization bit is offset by 1 (since bit 0 is used for variant selection)
+                    let init_bit = field_index + 1;
+
+                    // Get the field's address
+                    let field_addr = unsafe {
+                        // The actual offset may depend on the variant's layout, but we use the field index for now
+                        // This is technically incorrect, as it assumes a simple layout where offsets are contiguous
+                        self.addr.byte_add(field.offset)
+                    };
+
+                    Ok(Slot::for_ptr(
+                        field_addr,
+                        field.shape,
+                        self.init_set.field(init_bit),
+                    ))
+                }
+                crate::VariantKind::Struct { fields } => {
+                    // For struct variants, find the field by name
+                    let (field_index, field) = fields
+                        .iter()
+                        .enumerate()
+                        .find(|(_, f)| f.name == name)
+                        .ok_or(crate::FieldError::NoSuchStaticField)?;
+
+                    // The field's initialization bit is offset by 1 (since bit 0 is used for variant selection)
+                    let init_bit = field_index + 1;
+
+                    // Get the field's address
+                    let field_addr = unsafe {
+                        // The actual offset may depend on the variant's layout, but we use the field index for now
+                        // This is technically incorrect, as it assumes a simple layout where offsets are contiguous
+                        self.addr.byte_add(field.offset)
+                    };
+
+                    Ok(Slot::for_ptr(
+                        field_addr,
+                        field.shape,
+                        self.init_set.field(init_bit),
+                    ))
+                }
+            }
+        } else {
+            Err(crate::FieldError::NotAStruct)
+        }
+    }
 }
 
 /// A bit array to keep track of which fields were initialized, up to 64 fields
