@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::ptr::NonNull;
 
-use crate::{trace, InitMark, ShapeDesc, Shapely};
+use crate::{InitMark, ShapeDesc, Shapely, trace};
 
 /// Where to write the value
 enum Destination<'s> {
@@ -79,13 +79,20 @@ impl<'s> Slot<'s> {
                     }
                 }
 
-                trace!("Filling struct field at address: \x1b[33m{:?}\x1b[0m with type: \x1b[33m{}\x1b[0m", ptr, T::shape());
+                trace!(
+                    "Filling struct field at address: \x1b[33m{:?}\x1b[0m with type: \x1b[33m{}\x1b[0m",
+                    ptr,
+                    T::shape()
+                );
                 unsafe { std::ptr::write(ptr.as_ptr() as *mut T, value) };
                 init_mark.set();
             }
             Destination::HashMap { map, key } => {
                 let map = unsafe { &mut *(map.as_ptr() as *mut HashMap<String, T>) };
-                trace!("Inserting value of type: \x1b[33m{}\x1b[0m into HashMap with key: \x1b[33m{key}\x1b[0m", T::shape());
+                trace!(
+                    "Inserting value of type: \x1b[33m{}\x1b[0m into HashMap with key: \x1b[33m{key}\x1b[0m",
+                    T::shape()
+                );
                 map.insert(key, value);
             }
         }

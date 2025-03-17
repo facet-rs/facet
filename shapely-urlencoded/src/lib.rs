@@ -1,5 +1,5 @@
 #[doc = include_str!("../README.md")]
-use shapely::{error, trace, warn, Partial};
+use shapely::{Partial, error, trace, warn};
 
 #[cfg(test)]
 mod tests;

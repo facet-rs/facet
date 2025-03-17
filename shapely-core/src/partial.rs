@@ -1,4 +1,4 @@
-use crate::{trace, FieldError, ShapeDesc, Shapely, Slot};
+use crate::{FieldError, Innards, ShapeDesc, Shapely, Slot, trace};
 use std::{alloc, ptr::NonNull};
 
 /// Origin of the partial — did we allocate it? Or is it borrowed?
@@ -196,8 +196,9 @@ impl Partial<'_> {
 
     /// Returns a slot for initializing a field in the shape.
     pub fn slot_by_name<'s>(&'s mut self, name: &str) -> Result<Slot<'s>, FieldError> {
-        let slot = match self.shape.get().innards {
-            crate::Innards::Struct { fields } => {
+        let shape = self.shape.get();
+        match shape.innards {
+            Innards::Struct { fields } => {
                 let (index, field) = fields
                     .iter()
                     .enumerate()
@@ -209,16 +210,23 @@ impl Partial<'_> {
                     // The resulting pointer is properly aligned and within the bounds of the allocated memory.
                     self.addr.byte_add(field.offset)
                 };
-                Slot::for_ptr(field_addr, field.shape, self.init_set.field(index))
+                Ok(Slot::for_ptr(
+                    field_addr,
+                    field.shape,
+                    self.init_set.field(index),
+                ))
             }
-            crate::Innards::HashMap { value_shape } => {
-                Slot::for_hash_map(self.addr, name.to_string(), value_shape)
+            Innards::HashMap { value_shape } => {
+                Ok(Slot::for_hash_map(self.addr, name.to_string(), value_shape))
             }
-            crate::Innards::Array(_shape) => return Err(FieldError::NoStaticFields),
-            crate::Innards::Transparent(_shape) => return Err(FieldError::NoStaticFields),
-            crate::Innards::Scalar(_scalar) => return Err(FieldError::NoStaticFields),
-        };
-        Ok(slot)
+            Innards::Transparent(_) => return Err(FieldError::NoStaticFields),
+            Innards::Scalar(_) => return Err(FieldError::NoStaticFields),
+            Innards::Array(_) => return Err(FieldError::NoStaticFields),
+            Innards::Enum { .. } => {
+                // Enum variants aren't supported yet for slot_by_name
+                Err(FieldError::NotAStruct)
+            }
+        }
     }
 
     /// Returns a slot for initializing a field in the shape by index.
@@ -242,8 +250,7 @@ impl Partial<'_> {
 
             panic!(
                 "This is a partial \x1b[1;34m{}\x1b[0m, you can't build a \x1b[1;32m{}\x1b[0m out of it",
-                partial_shape,
-                target_shape,
+                partial_shape, target_shape,
             );
         }
     }
@@ -364,6 +371,11 @@ impl Partial<'_> {
     pub fn addr(&self) -> NonNull<u8> {
         self.addr
     }
+
+    // TODO: Add support for enum variant instantiation:
+    // - Implement a variant_slot method on Partial to select a variant
+    // - Add support for filling variant fields based on the variant kind
+    // - Update the build method to properly construct enum instances
 }
 
 /// A bit array to keep track of which fields were initialized, up to 64 fields

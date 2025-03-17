@@ -1,4 +1,4 @@
-use super::{Innards, Shape};
+use super::{Innards, Shape, VariantKind};
 use std::{collections::HashSet, fmt::Formatter};
 
 impl Shape {
@@ -97,6 +97,116 @@ impl Shape {
             }
             Innards::Scalar(_scalar) => {
                 // let's not duplicate `u64 => U64` for example
+            }
+            Innards::Enum { variants } => {
+                writeln!(
+                    f,
+                    "{:indent$}\x1b[1;36mEnum with {} variants:\x1b[0m",
+                    "",
+                    variants.len(),
+                    indent = indent + Self::INDENT
+                )?;
+
+                for variant in *variants {
+                    match &variant.kind {
+                        VariantKind::Unit => {
+                            let disc_str = if let Some(disc) = variant.discriminant {
+                                format!(" = {}", disc)
+                            } else {
+                                String::new()
+                            };
+                            writeln!(
+                                f,
+                                "{:indent$}\x1b[1;32m{}{}\x1b[0m",
+                                "",
+                                variant.name,
+                                disc_str,
+                                indent = indent + Self::INDENT * 2
+                            )?;
+                        }
+                        VariantKind::Tuple { fields } => {
+                            writeln!(
+                                f,
+                                "{:indent$}\x1b[1;32m{}\x1b[0m({})",
+                                "",
+                                variant.name,
+                                (0..fields.len())
+                                    .map(|_| "_")
+                                    .collect::<Vec<_>>()
+                                    .join(", "),
+                                indent = indent + Self::INDENT * 2
+                            )?;
+
+                            // Print field details
+                            for field in *fields {
+                                write!(
+                                    f,
+                                    "{:indent$}\x1b[1;34m{:>4}\x1b[0m \x1b[1;32m{}\x1b[0m ",
+                                    "",
+                                    field.offset,
+                                    field.name,
+                                    indent = indent + Self::INDENT * 3
+                                )?;
+                                if field.flags.is_sensitive() {
+                                    write!(f, "(sensitive) ")?;
+                                }
+                                if let Innards::Scalar(_) = field.shape.get().innards {
+                                    field.shape.get().pretty_print_recursive_internal(
+                                        f,
+                                        printed_schemas,
+                                        indent + Self::INDENT * 4,
+                                    )?;
+                                } else {
+                                    writeln!(f)?;
+                                    field.shape.get().pretty_print_recursive_internal(
+                                        f,
+                                        printed_schemas,
+                                        indent + Self::INDENT * 4,
+                                    )?;
+                                }
+                            }
+                        }
+                        VariantKind::Struct { fields } => {
+                            writeln!(
+                                f,
+                                "{:indent$}\x1b[1;32m{}\x1b[0m {{ {} }}",
+                                "",
+                                variant.name,
+                                fields.iter().map(|f| f.name).collect::<Vec<_>>().join(", "),
+                                indent = indent + Self::INDENT * 2
+                            )?;
+
+                            // Print field details
+                            for field in *fields {
+                                write!(
+                                    f,
+                                    "{:indent$}\x1b[1;34m{:>4}\x1b[0m \x1b[1;32m{}\x1b[0m ",
+                                    "",
+                                    field.offset,
+                                    field.name,
+                                    indent = indent + Self::INDENT * 3
+                                )?;
+                                if field.flags.is_sensitive() {
+                                    write!(f, "(sensitive) ")?;
+                                }
+                                if let Innards::Scalar(_) = field.shape.get().innards {
+                                    field.shape.get().pretty_print_recursive_internal(
+                                        f,
+                                        printed_schemas,
+                                        indent + Self::INDENT * 4,
+                                    )?;
+                                } else {
+                                    writeln!(f)?;
+                                    field.shape.get().pretty_print_recursive_internal(
+                                        f,
+                                        printed_schemas,
+                                        indent + Self::INDENT * 4,
+                                    )?;
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 

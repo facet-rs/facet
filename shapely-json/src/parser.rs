@@ -50,7 +50,7 @@ impl std::fmt::Display for JsonParseError {
             JsonParseErrorKind::ExpectedOpeningQuote => "Expected opening quote for string",
             JsonParseErrorKind::UnterminatedString => "Unterminated string",
             JsonParseErrorKind::InvalidEscapeSequence(ch) => {
-                return write!(f, "Invalid escape sequence: \\{}", ch)
+                return write!(f, "Invalid escape sequence: \\{}", ch);
             }
             JsonParseErrorKind::IncompleteUnicodeEscape => "Incomplete Unicode escape sequence",
             JsonParseErrorKind::InvalidUnicodeEscape => "Invalid Unicode escape sequence",
@@ -61,7 +61,7 @@ impl std::fmt::Display for JsonParseError {
             JsonParseErrorKind::InvalidValue => "Invalid value",
             JsonParseErrorKind::ExpectedClosingBrace => "Expected closing brace for object",
             JsonParseErrorKind::UnknownField(field) => {
-                return write!(f, "Unknown field: {}", field)
+                return write!(f, "Unknown field: {}", field);
             }
             JsonParseErrorKind::Custom(msg) => msg,
         };
@@ -142,7 +142,7 @@ impl<'a> JsonParser<'a> {
                     _ => {
                         return Err(
                             self.make_error(JsonParseErrorKind::InvalidEscapeSequence(ch as char))
-                        )
+                        );
                     }
                 }
                 escaped = false;

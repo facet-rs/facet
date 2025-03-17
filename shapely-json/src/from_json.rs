@@ -1,5 +1,5 @@
 use crate::parser::{JsonParseErrorKind, JsonParseErrorWithContext, JsonParser};
-use shapely::{error, trace, warn, Partial};
+use shapely::{Partial, error, trace, warn};
 
 pub fn from_json<'input>(
     partial: &mut Partial,

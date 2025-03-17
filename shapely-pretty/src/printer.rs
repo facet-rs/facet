@@ -135,6 +135,7 @@ impl PrettyPrinter {
             Innards::Transparent(inner_shape) => {
                 self.format_transparent(ptr, shape, *inner_shape, f, depth, visited)
             }
+            Innards::Enum { variants } => self.format_enum(ptr, shape, variants, f, depth, visited),
         }
     }
 
@@ -350,6 +351,48 @@ impl PrettyPrinter {
 
         // Closing parenthesis
         write!(f, "{}", self.style_punctuation(")"))
+    }
+
+    /// Formats an enum value
+    fn format_enum(
+        &self,
+        _ptr: *mut u8,
+        shape: Shape,
+        _variants: &'static [shapely_core::Variant],
+        f: &mut impl Write,
+        depth: usize,
+        _visited: &mut HashSet<*mut u8>,
+    ) -> fmt::Result {
+        // Basic enum rendering for now - just show the type name with {} placeholder
+        // since we don't have runtime variant/field access implemented yet
+        self.write_type_name(f, &format!("{}", shape))?;
+        writeln!(f, " {{")?;
+        if let Some(max_depth) = self.max_depth {
+            if depth >= max_depth {
+                writeln!(
+                    f,
+                    "{}{}",
+                    " ".repeat(self.indent_size),
+                    self.style_comment("// Enum contents omitted due to depth limit")
+                )?;
+                writeln!(f, "}}")?;
+                return Ok(());
+            }
+        }
+        writeln!(
+            f,
+            "{}{}",
+            " ".repeat(self.indent_size),
+            self.style_comment(
+                format!(
+                    "// Enum with {} variants (variant access not yet implemented)",
+                    _variants.len()
+                )
+                .as_str()
+            )
+        )?;
+        writeln!(f, "}}")?;
+        Ok(())
     }
 
     /// Write styled type name to formatter

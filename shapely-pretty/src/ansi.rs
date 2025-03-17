@@ -55,11 +55,11 @@ mod tests {
         let mut out = String::new();
         write_rgb(&mut out, 255, 0, 0).unwrap();
         assert_eq!(out, "\x1b[38;2;255;0;0m");
-        
+
         let mut out = String::new();
         write_rgb(&mut out, 0, 255, 0).unwrap();
         assert_eq!(out, "\x1b[38;2;0;255;0m");
-        
+
         let mut out = String::new();
         write_rgb(&mut out, 0, 0, 255).unwrap();
         assert_eq!(out, "\x1b[38;2;0;0;255m");
@@ -70,26 +70,26 @@ mod tests {
         let mut out = String::new();
         write_rgb_bg(&mut out, 255, 0, 0).unwrap();
         assert_eq!(out, "\x1b[48;2;255;0;0m");
-        
+
         let mut out = String::new();
         write_rgb_bg(&mut out, 0, 255, 0).unwrap();
         assert_eq!(out, "\x1b[48;2;0;255;0m");
-        
+
         let mut out = String::new();
         write_rgb_bg(&mut out, 0, 0, 255).unwrap();
         assert_eq!(out, "\x1b[48;2;0;0;255m");
     }
-    
+
     #[test]
     fn test_write_formatting() {
         let mut out = String::new();
         write_bold(&mut out).unwrap();
         assert_eq!(out, "\x1b[1m");
-        
+
         let mut out = String::new();
         write_dim(&mut out).unwrap();
         assert_eq!(out, "\x1b[2m");
-        
+
         let mut out = String::new();
         write_reset(&mut out).unwrap();
         assert_eq!(out, "\x1b[0m");
