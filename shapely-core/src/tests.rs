@@ -1107,43 +1107,11 @@ fn test_build_enum_with_struct_variant() {
         let active_slot = partial.variant_field_by_name("active").unwrap();
         active_slot.fill(true);
 
-        // Debug: print the memory layout before building
-        unsafe {
-            let ptr = partial.addr.as_ptr();
-            let size = std::mem::size_of::<StructEnum>();
-            println!("Debug - Memory layout before building:");
-            println!(
-                "  First 12 bytes: {:?}",
-                std::slice::from_raw_parts(ptr, 12.min(size))
-            );
-            let id_value = *(ptr.add(4) as *const u32);
-            println!("  id value at offset 4: {}", id_value);
-            let active_value = *(ptr.add(8) as *const u8); // bool is u8 size
-            println!(
-                "  active value at offset 8: {} (1=true, 0=false)",
-                active_value
-            );
-        }
+        println!("Debug - Values about to be built:");
+        println!("  id value: 123");
+        println!("  active value: true");
 
         let result = partial.build::<StructEnum>();
-
-        // Debug: print the memory of the built enum
-        let result_ptr = &result as *const _ as *const u8;
-        unsafe {
-            let size = std::mem::size_of::<StructEnum>();
-            println!("Debug - Memory layout after building:");
-            println!(
-                "  First 12 bytes: {:?}",
-                std::slice::from_raw_parts(result_ptr, 12.min(size))
-            );
-            let id_value = *(result_ptr.add(4) as *const u32);
-            println!("  id value at offset 4: {}", id_value);
-            let active_value = *(result_ptr.add(8) as *const u8);
-            println!(
-                "  active value at offset 8: {} (1=true, 0=false)",
-                active_value
-            );
-        }
 
         // Check that it built correctly
         match result {
@@ -1265,7 +1233,7 @@ fn test_complex_nested_recursive_enums() {
                 const TEXT_FIELDS: &'static [crate::Field] = &[crate::Field {
                     name: "_0",
                     shape: crate::ShapeDesc(String::shape),
-                    offset: 1, // Offset after the discriminant
+                    offset: 8, // Proper alignment for String (8-byte aligned)
                     flags: crate::FieldFlags::EMPTY,
                 }];
 
@@ -1498,14 +1466,11 @@ fn test_complex_nested_recursive_enums() {
         let result = partial.build::<ComplexEnum>();
         println!("DIAGNOSTIC: Built ComplexEnum successfully");
 
-        // Use std::mem::forget to prevent automatic dropping
-        if let ComplexEnum::Nested(NestedData::Text(_)) = &result {
+        // Compare the variant structure
+        if let ComplexEnum::Nested(NestedData::Text(text)) = &result {
             println!("DIAGNOSTIC: Pattern match on result succeeded");
+            assert_eq!(text, "test", "Text content should match what we set");
             println!("✅ Successfully built Nested variant with Text structure");
-
-            // Prevent the Drop impl from being called
-            println!("DIAGNOSTIC: Using mem::forget to avoid segfault");
-            std::mem::forget(result);
         } else {
             panic!(
                 "Expected ComplexEnum::Nested(NestedData::Text), but got {:?}",
@@ -1735,18 +1700,14 @@ fn test_nightmare_reflection() {
     let result = outer_partial.build::<OuterData>();
     println!("✅ Successfully built OuterData::Structured");
 
-    // Basic verification
+    // Verify the result matches expected content
     if let OuterData::Structured { id, name, value } = &result {
-        println!("  - id: {}", id);
-        println!("  - name: {}", name);
-
-        if let InnerData::Text(text) = value {
-            println!("  - value: {}", text);
-        }
+        assert_eq!(*id, 42u32);
+        assert_eq!(name, "Structured Value");
+        assert!(matches!(value, InnerData::Text(text) if text == "Hello Reflection!"));
+    } else {
+        panic!("Result is not the expected OuterData::Structured variant");
     }
-
-    // Use std::mem::forget to prevent any drop issues
-    std::mem::forget(result);
 
     println!("🏆 Complex reflection test completed successfully!");
 }
@@ -1836,46 +1797,55 @@ fn test_struct_with_enum_field() {
 
     println!("Building the User struct with enum field");
     let mut user_partial = User::partial();
-    
+
     // Set basic fields
     user_partial.slot_by_name("id").unwrap().fill(42u32);
-    user_partial.slot_by_name("name").unwrap().fill(String::from("John Doe"));
+    user_partial
+        .slot_by_name("name")
+        .unwrap()
+        .fill(String::from("John Doe"));
     user_partial.slot_by_name("score").unwrap().fill(100i32);
-    
+
     // Set the enum field
     user_partial.slot_by_name("status").unwrap().fill(status);
-    
+
     // Build the User struct
     let user = user_partial.build::<User>();
-    
+
     // Verify the result
     assert_eq!(user.id, 42u32);
     assert_eq!(user.name, "John Doe");
     assert_eq!(user.status, Status::Active);
     assert_eq!(user.score, 100i32);
-    
+
     println!("✅ Successfully built User with Status::Active");
-    
+
     // Build another user with a different status
     println!("Building another User with Status::Pending");
     let mut status_partial = Status::partial();
     status_partial.set_variant_by_name("Pending").unwrap();
     let pending_status = status_partial.build::<Status>();
-    
+
     let mut user_partial = User::partial();
     user_partial.slot_by_name("id").unwrap().fill(43u32);
-    user_partial.slot_by_name("name").unwrap().fill(String::from("Jane Smith"));
-    user_partial.slot_by_name("status").unwrap().fill(pending_status);
+    user_partial
+        .slot_by_name("name")
+        .unwrap()
+        .fill(String::from("Jane Smith"));
+    user_partial
+        .slot_by_name("status")
+        .unwrap()
+        .fill(pending_status);
     user_partial.slot_by_name("score").unwrap().fill(75i32);
-    
+
     let user2 = user_partial.build::<User>();
-    
+
     // Verify the second user
     assert_eq!(user2.id, 43u32);
     assert_eq!(user2.name, "Jane Smith");
     assert_eq!(user2.status, Status::Pending);
     assert_eq!(user2.score, 75i32);
-    
+
     println!("✅ Successfully built User with Status::Pending");
     println!("🏆 Struct with enum field test completed successfully!");
 }
