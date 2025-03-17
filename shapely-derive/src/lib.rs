@@ -111,6 +111,18 @@ pub fn shapely_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream
     if let Ok(parsed) = enum_result {
         let enum_name = parsed.name.to_string();
 
+        // Check for explicit repr attribute
+        let has_repr = parsed
+            .attributes
+            .iter()
+            .any(|attr| attr.body.content.name.to_string() == "repr");
+
+        if !has_repr {
+            return r#"compile_error!("Enums must have an explicit representation (e.g. #[repr(u8)]) to be used with Shapely")"#
+                .into_token_stream()
+                .into();
+        }
+
         // Process each variant
         let variants = parsed
             .body
@@ -160,6 +172,31 @@ pub fn shapely_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream
             .collect::<Vec<String>>()
             .join(", ");
 
+        // Extract the repr type
+        let mut repr_type = "Default"; // Default fallback
+        for attr in &parsed.attributes {
+            if attr.body.content.name.to_string() == "repr" {
+                // Access the Vec directly from the attr.body.content.attr.content field
+                let attrs = &attr.body.content.attr.content;
+                if !attrs.is_empty() {
+                    repr_type = match attrs[0].to_string().as_str() {
+                        "u8" => "U8",
+                        "u16" => "U16",
+                        "u32" => "U32",
+                        "u64" => "U64",
+                        "usize" => "USize",
+                        "i8" => "I8",
+                        "i16" => "I16",
+                        "i32" => "I32",
+                        "i64" => "I64",
+                        "isize" => "ISize",
+                        _ => "Default", // Unknown repr type
+                    };
+                }
+                break;
+            }
+        }
+
         // Generate the impl
         let output = format!(
             r#"
@@ -171,6 +208,7 @@ pub fn shapely_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream
                         layout: std::alloc::Layout::new::<Self>(),
                         innards: shapely::Innards::Enum {{
                             variants: shapely::enum_variants!({enum_name}, [{variants}]),
+                            repr: shapely::EnumRepr::{repr_type},
                         }},
                         set_to_default: None,
                         drop_in_place: Some(|ptr| unsafe {{ std::ptr::drop_in_place(ptr as *mut Self) }}),

@@ -173,7 +173,7 @@ impl Partial<'_> {
                 // Get the selected variant
                 if let Some(variant_index) = self.selected_variant_index() {
                     let shape = self.shape.get();
-                    if let crate::Innards::Enum { variants, repr } = &shape.innards {
+                    if let crate::Innards::Enum { variants, repr: _ } = &shape.innards {
                         let variant = &variants[variant_index];
 
                         // Check if all fields of the selected variant are initialized
@@ -353,6 +353,13 @@ impl Partial<'_> {
         if let crate::Innards::Enum { variants, repr } = &shape.innards {
             if !self.init_set.is_set(0) {
                 panic!("Enum variant not selected");
+            }
+
+            // Check if explicit enum representation is used
+            if let crate::EnumRepr::Default = repr {
+                panic!(
+                    "Enum must have an explicit representation (e.g. #[repr(u8)]). Default representation is not supported."
+                );
             }
 
             if let Some(variant_idx) = self.selected_variant_index() {

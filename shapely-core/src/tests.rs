@@ -515,6 +515,7 @@ fn test_partial_build_transparent() {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+#[repr(u8)]
 enum UserStatus {
     Offline = 0,
     Online = 1,
@@ -556,7 +557,7 @@ impl Shapely for UserStatus {
             layout: std::alloc::Layout::new::<Self>(),
             innards: crate::Innards::Enum {
                 variants: StaticFields::VARIANTS,
-                repr: crate::EnumRepr::Default,
+                repr: crate::EnumRepr::U8,
             },
             set_to_default: None,
             drop_in_place: Some(|ptr| unsafe { std::ptr::drop_in_place(ptr as *mut Self) }),
@@ -670,7 +671,7 @@ impl Shapely for SimpleEnum {
             layout: std::alloc::Layout::new::<Self>(),
             innards: crate::Innards::Enum {
                 variants: StaticFields::VARIANTS,
-                repr: crate::EnumRepr::Default,
+                repr: crate::EnumRepr::U8,
             },
             set_to_default: None,
             drop_in_place: Some(|ptr| unsafe { std::ptr::drop_in_place(ptr as *mut Self) }),
@@ -860,4 +861,364 @@ fn test_build_simple_enum_with_explicit_repr() {
             discr_a, discr_built
         );
     }
+}
+
+// Test for enum with non-zero/non-sequential discriminants
+#[test]
+fn test_build_enum_with_custom_discriminants() {
+    #[derive(Debug, PartialEq)]
+    #[repr(i32)]
+    enum CustomDiscEnum {
+        First = 10,
+        Second = 20,
+        Third = 30,
+    }
+
+    impl Shapely for CustomDiscEnum {
+        fn shape() -> crate::Shape {
+            struct StaticFields;
+            impl StaticFields {
+                const VARIANTS: &'static [crate::Variant] = &[
+                    crate::Variant {
+                        name: "First",
+                        discriminant: Some(10),
+                        kind: crate::VariantKind::Unit,
+                    },
+                    crate::Variant {
+                        name: "Second",
+                        discriminant: Some(20),
+                        kind: crate::VariantKind::Unit,
+                    },
+                    crate::Variant {
+                        name: "Third",
+                        discriminant: Some(30),
+                        kind: crate::VariantKind::Unit,
+                    },
+                ];
+            }
+
+            Shape {
+                name: |f| write!(f, "CustomDiscEnum"),
+                typeid: mini_typeid::of::<Self>(),
+                layout: std::alloc::Layout::new::<Self>(),
+                innards: crate::Innards::Enum {
+                    variants: StaticFields::VARIANTS,
+                    repr: crate::EnumRepr::I32,
+                },
+                set_to_default: None,
+                drop_in_place: Some(|ptr| unsafe { std::ptr::drop_in_place(ptr as *mut Self) }),
+            }
+        }
+    }
+
+    println!("Testing enum with custom discriminants");
+    let mut partial = CustomDiscEnum::partial();
+
+    // Select variant 1 (Second) with discriminant 20
+    partial.set_variant_by_index(1).unwrap();
+
+    // Build the enum
+    let result = partial.build::<CustomDiscEnum>();
+
+    // Verify correctness using discriminant
+    use std::mem;
+    let expected_discriminant = mem::discriminant(&CustomDiscEnum::Second);
+    let actual_discriminant = mem::discriminant(&result);
+
+    assert_eq!(
+        expected_discriminant, actual_discriminant,
+        "Expected CustomDiscEnum::Second (discriminant 20), but got a different variant"
+    );
+
+    println!("✅ Successfully built enum with custom discriminant");
+}
+
+// Let's add a simpler test for enum variants with data
+#[test]
+fn test_build_enum_with_simple_variant() {
+    #[derive(Debug, PartialEq)]
+    #[repr(u8)]
+    enum SimpleVariantEnum {
+        NoData,
+        WithData(u32),
+    }
+
+    impl Shapely for SimpleVariantEnum {
+        fn shape() -> crate::Shape {
+            struct StaticFields;
+            impl StaticFields {
+                const DATA_FIELDS: &'static [crate::Field] = &[crate::Field {
+                    name: "_0",
+                    shape: crate::ShapeDesc(u32::shape),
+                    offset: 4, // This is a guess, we'll see if it works
+                    flags: crate::FieldFlags::EMPTY,
+                }];
+
+                const VARIANTS: &'static [crate::Variant] = &[
+                    crate::Variant {
+                        name: "NoData",
+                        discriminant: None,
+                        kind: crate::VariantKind::Unit,
+                    },
+                    crate::Variant {
+                        name: "WithData",
+                        discriminant: None,
+                        kind: crate::VariantKind::Tuple {
+                            fields: Self::DATA_FIELDS,
+                        },
+                    },
+                ];
+            }
+
+            Shape {
+                name: |f| write!(f, "SimpleVariantEnum"),
+                typeid: mini_typeid::of::<Self>(),
+                layout: std::alloc::Layout::new::<Self>(),
+                innards: crate::Innards::Enum {
+                    variants: StaticFields::VARIANTS,
+                    repr: crate::EnumRepr::U8,
+                },
+                set_to_default: None,
+                drop_in_place: Some(|ptr| unsafe { std::ptr::drop_in_place(ptr as *mut Self) }),
+            }
+        }
+    }
+
+    println!("Testing enum with simple data variant");
+
+    // Test building NoData variant first
+    {
+        let mut partial = SimpleVariantEnum::partial();
+        partial.set_variant_by_index(0).unwrap();
+        let result = partial.build::<SimpleVariantEnum>();
+        assert_eq!(
+            result,
+            SimpleVariantEnum::NoData,
+            "Should build NoData variant"
+        );
+        println!("✅ Successfully built NoData variant");
+    }
+
+    // Test building WithData variant
+    {
+        let mut partial = SimpleVariantEnum::partial();
+        partial.set_variant_by_index(1).unwrap();
+
+        // Set the data value
+        let slot = partial.variant_field_by_name("_0").unwrap();
+        slot.fill(42u32);
+
+        let result = partial.build::<SimpleVariantEnum>();
+        assert_eq!(
+            result,
+            SimpleVariantEnum::WithData(42),
+            "Should build WithData variant"
+        );
+        println!("✅ Successfully built WithData variant");
+    }
+}
+
+// Test for enum with struct variant
+#[test]
+fn test_build_enum_with_struct_variant() {
+    #[derive(Debug, PartialEq)]
+    #[repr(u32)]
+    enum StructEnum {
+        NoData,
+        Person { id: u32, active: bool },
+    }
+
+    impl Shapely for StructEnum {
+        fn shape() -> crate::Shape {
+            struct StaticFields;
+            impl StaticFields {
+                const PERSON_FIELDS: &'static [crate::Field] = &[
+                    crate::Field {
+                        name: "id",
+                        shape: crate::ShapeDesc(u32::shape),
+                        offset: 4, // This is a guess
+                        flags: crate::FieldFlags::EMPTY,
+                    },
+                    crate::Field {
+                        name: "active",
+                        shape: crate::ShapeDesc(bool::shape),
+                        offset: 8, // Updated offset
+                        flags: crate::FieldFlags::EMPTY,
+                    },
+                ];
+
+                const VARIANTS: &'static [crate::Variant] = &[
+                    crate::Variant {
+                        name: "NoData",
+                        discriminant: None,
+                        kind: crate::VariantKind::Unit,
+                    },
+                    crate::Variant {
+                        name: "Person",
+                        discriminant: None,
+                        kind: crate::VariantKind::Struct {
+                            fields: Self::PERSON_FIELDS,
+                        },
+                    },
+                ];
+            }
+
+            Shape {
+                name: |f| write!(f, "StructEnum"),
+                typeid: mini_typeid::of::<Self>(),
+                layout: std::alloc::Layout::new::<Self>(),
+                innards: crate::Innards::Enum {
+                    variants: StaticFields::VARIANTS,
+                    repr: crate::EnumRepr::U32,
+                },
+                set_to_default: None,
+                drop_in_place: Some(|ptr| unsafe { std::ptr::drop_in_place(ptr as *mut Self) }),
+            }
+        }
+    }
+
+    println!("Testing enum with struct variant");
+
+    // Test building NoData variant
+    {
+        let mut partial = StructEnum::partial();
+        partial.set_variant_by_index(0).unwrap();
+        let result = partial.build::<StructEnum>();
+        assert_eq!(result, StructEnum::NoData, "Should build NoData variant");
+        println!("✅ Successfully built NoData variant");
+    }
+
+    // Test building Person variant
+    {
+        let mut partial = StructEnum::partial();
+        partial.set_variant_by_index(1).unwrap();
+
+        // Set the struct fields
+        let id_slot = partial.variant_field_by_name("id").unwrap();
+        id_slot.fill(123u32);
+
+        let active_slot = partial.variant_field_by_name("active").unwrap();
+        active_slot.fill(true);
+
+        // Debug: print the memory layout before building
+        unsafe {
+            let ptr = partial.addr.as_ptr();
+            let size = std::mem::size_of::<StructEnum>();
+            println!("Debug - Memory layout before building:");
+            println!(
+                "  First 12 bytes: {:?}",
+                std::slice::from_raw_parts(ptr, 12.min(size))
+            );
+            let id_value = *(ptr.add(4) as *const u32);
+            println!("  id value at offset 4: {}", id_value);
+            let active_value = *(ptr.add(8) as *const u8); // bool is u8 size
+            println!(
+                "  active value at offset 8: {} (1=true, 0=false)",
+                active_value
+            );
+        }
+
+        let result = partial.build::<StructEnum>();
+
+        // Debug: print the memory of the built enum
+        let result_ptr = &result as *const _ as *const u8;
+        unsafe {
+            let size = std::mem::size_of::<StructEnum>();
+            println!("Debug - Memory layout after building:");
+            println!(
+                "  First 12 bytes: {:?}",
+                std::slice::from_raw_parts(result_ptr, 12.min(size))
+            );
+            let id_value = *(result_ptr.add(4) as *const u32);
+            println!("  id value at offset 4: {}", id_value);
+            let active_value = *(result_ptr.add(8) as *const u8);
+            println!(
+                "  active value at offset 8: {} (1=true, 0=false)",
+                active_value
+            );
+        }
+
+        // Check that it built correctly
+        match result {
+            StructEnum::Person { id, active } => {
+                assert_eq!(id, 123, "id should be 123");
+                assert_eq!(active, true, "active should be true");
+                println!("✅ Successfully built Person variant with id=123, active=true");
+            }
+            _ => panic!("Expected Person variant but got something else"),
+        }
+    }
+}
+
+// Test for enum without explicit representation
+#[test]
+#[should_panic(expected = "Enum must have an explicit representation")]
+fn test_enum_without_repr() {
+    enum NoReprEnum {
+        A,
+        B(i32),
+        C { value: String },
+    }
+
+    impl Shapely for NoReprEnum {
+        fn shape() -> crate::Shape {
+            struct StaticFields;
+            impl StaticFields {
+                const B_FIELDS: &'static [crate::Field] = &[crate::Field {
+                    name: "_0",
+                    shape: crate::ShapeDesc(i32::shape),
+                    offset: 0,
+                    flags: crate::FieldFlags::EMPTY,
+                }];
+
+                const C_FIELDS: &'static [crate::Field] = &[crate::Field {
+                    name: "value",
+                    shape: crate::ShapeDesc(String::shape),
+                    offset: 0,
+                    flags: crate::FieldFlags::EMPTY,
+                }];
+
+                const VARIANTS: &'static [crate::Variant] = &[
+                    crate::Variant {
+                        name: "A",
+                        discriminant: None,
+                        kind: crate::VariantKind::Unit,
+                    },
+                    crate::Variant {
+                        name: "B",
+                        discriminant: None,
+                        kind: crate::VariantKind::Tuple {
+                            fields: Self::B_FIELDS,
+                        },
+                    },
+                    crate::Variant {
+                        name: "C",
+                        discriminant: None,
+                        kind: crate::VariantKind::Struct {
+                            fields: Self::C_FIELDS,
+                        },
+                    },
+                ];
+            }
+
+            Shape {
+                name: |f| write!(f, "NoReprEnum"),
+                typeid: mini_typeid::of::<Self>(),
+                layout: std::alloc::Layout::new::<Self>(),
+                innards: crate::Innards::Enum {
+                    variants: StaticFields::VARIANTS,
+                    repr: crate::EnumRepr::Default,
+                },
+                set_to_default: None,
+                drop_in_place: Some(|ptr| unsafe { std::ptr::drop_in_place(ptr as *mut Self) }),
+            }
+        }
+    }
+
+    // Create a partial and try to build it
+    let mut partial = NoReprEnum::partial();
+    partial.set_variant_by_index(0).unwrap();
+
+    // This should panic with a meaningful error message about representation
+    let _result = partial.build::<NoReprEnum>();
 }
