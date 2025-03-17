@@ -954,3 +954,242 @@ fn test_enum_metadata_access() {
         }
     }
 }
+
+/// A custom type to be used in enum variants
+#[derive(Debug, PartialEq)]
+struct Something {
+    value: String,
+    count: u64,
+}
+
+impl Shapely for Something {
+    fn shape() -> crate::Shape {
+        Shape {
+            name: |f| write!(f, "Something"),
+            typeid: mini_typeid::of::<Self>(),
+            layout: std::alloc::Layout::new::<Self>(),
+            innards: crate::Innards::Struct {
+                fields: crate::struct_fields!(Something, (value, count)),
+            },
+            set_to_default: None,
+            drop_in_place: Some(|ptr| unsafe { std::ptr::drop_in_place(ptr as *mut Self) }),
+        }
+    }
+}
+
+/// Complex enum with different variant types: struct, tuple and unit
+#[derive(Debug, PartialEq)]
+enum Foo {
+    A { b: u32 },
+    B(Something),
+    C,
+}
+
+impl Shapely for Foo {
+    fn shape() -> crate::Shape {
+        struct StaticFields;
+        impl StaticFields {
+            const A_FIELDS: &'static [crate::Field] = &[crate::Field {
+                name: "b",
+                shape: crate::ShapeDesc(u32::shape),
+                offset: 0, // Will be calculated at runtime
+                flags: crate::FieldFlags::EMPTY,
+            }];
+
+            const B_FIELDS: &'static [crate::Field] = &[crate::Field {
+                name: "_0",
+                shape: crate::ShapeDesc(Something::shape),
+                offset: 0, // Will be calculated at runtime
+                flags: crate::FieldFlags::EMPTY,
+            }];
+
+            const VARIANTS: &'static [crate::Variant] = &[
+                crate::Variant {
+                    name: "A",
+                    discriminant: None,
+                    kind: crate::VariantKind::Struct {
+                        fields: Self::A_FIELDS,
+                    },
+                },
+                crate::Variant {
+                    name: "B",
+                    discriminant: None,
+                    kind: crate::VariantKind::Tuple {
+                        fields: Self::B_FIELDS,
+                    },
+                },
+                crate::Variant {
+                    name: "C",
+                    discriminant: None,
+                    kind: crate::VariantKind::Unit,
+                },
+            ];
+        }
+
+        Shape {
+            name: |f| write!(f, "Foo"),
+            typeid: mini_typeid::of::<Self>(),
+            layout: std::alloc::Layout::new::<Self>(),
+            innards: crate::Innards::Enum {
+                variants: StaticFields::VARIANTS,
+            },
+            set_to_default: None,
+            drop_in_place: Some(|ptr| unsafe { std::ptr::drop_in_place(ptr as *mut Self) }),
+        }
+    }
+}
+
+/// Test that demonstrates how Shapely handles complex enums with nested custom types
+#[test]
+fn test_enum_with_custom_type() {
+    // Create values of each variant for testing
+    let foo_a = Foo::A { b: 42 };
+    let foo_b = Foo::B(Something {
+        value: "test".to_string(),
+        count: 123,
+    });
+    let foo_c = Foo::C;
+
+    // Verify debug output works as expected
+    println!(
+        "Debug output:\nA: {:?}\nB: {:?}\nC: {:?}",
+        foo_a, foo_b, foo_c
+    );
+
+    // Get the shape for reflection
+    let shape = Foo::shape();
+    println!("Shape: {:#?}", shape);
+
+    // Verify variant count
+    assert_eq!(shape.variants().len(), 3);
+
+    // Check variant types
+    let a_variant = shape.variant_by_name("A").unwrap();
+    let b_variant = shape.variant_by_name("B").unwrap();
+    let c_variant = shape.variant_by_name("C").unwrap();
+
+    // Test A variant (struct with named field)
+    match &a_variant.kind {
+        crate::VariantKind::Struct { fields } => {
+            assert_eq!(fields.len(), 1);
+            assert_eq!(fields[0].name, "b");
+
+            // Get field type information
+            let field_shape = fields[0].shape.get();
+            println!("A.b field type: {}", field_shape);
+
+            // Check that the field type is u32
+            match field_shape.innards {
+                crate::Innards::Scalar(crate::Scalar::U32) => {}
+                _ => panic!("Expected u32 field type"),
+            }
+        }
+        _ => panic!("Expected A to be a Struct variant"),
+    }
+
+    // Test B variant (tuple with custom type)
+    match &b_variant.kind {
+        crate::VariantKind::Tuple { fields } => {
+            assert_eq!(fields.len(), 1);
+            assert_eq!(fields[0].name, "_0");
+
+            // Get field type information for the Something type
+            let field_shape = fields[0].shape.get();
+            println!("B._0 field type: {}", field_shape);
+
+            // Check that it's a struct type
+            match &field_shape.innards {
+                crate::Innards::Struct { fields } => {
+                    assert_eq!(fields.len(), 2);
+                    assert_eq!(fields[0].name, "value");
+                    assert_eq!(fields[1].name, "count");
+
+                    // Check that the struct fields have the expected types
+                    match fields[0].shape.get().innards {
+                        crate::Innards::Scalar(crate::Scalar::String) => {}
+                        _ => panic!("Expected String field type for value"),
+                    }
+
+                    match fields[1].shape.get().innards {
+                        crate::Innards::Scalar(scalar) => {
+                            // Allow either usize or u64 depending on platform
+                            match scalar {
+                                crate::Scalar::U64 => {}
+                                crate::Scalar::U32 => {}
+                                _ => panic!("Expected numeric field type for count"),
+                            }
+                        }
+                        _ => panic!("Expected numeric field type for count"),
+                    }
+
+                    // Check that the count field is U64
+                    match fields[1].shape.get().innards {
+                        crate::Innards::Scalar(crate::Scalar::U64) => {}
+                        _ => panic!("Expected U64 field type for count"),
+                    }
+                }
+                _ => panic!("Expected B to contain a struct"),
+            }
+        }
+        _ => panic!("Expected B to be a Tuple variant"),
+    }
+
+    // Test C variant (unit)
+    match c_variant.kind {
+        crate::VariantKind::Unit => {}
+        _ => panic!("Expected C to be a Unit variant"),
+    }
+
+    // Demonstrate traversing the entire enum shape
+    println!("\nEnum Foo structure:");
+    print_enum_structure(shape);
+}
+
+// Helper function to print out the complete structure of an enum
+fn print_enum_structure(shape: Shape) {
+    println!("enum {} {{", shape);
+
+    for variant in shape.variants() {
+        match &variant.kind {
+            crate::VariantKind::Unit => {
+                println!("    {},", variant.name);
+            }
+            crate::VariantKind::Tuple { fields } => {
+                let field_types = fields
+                    .iter()
+                    .map(|f| format!("{}", f.shape.get()))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                println!("    {}({}),", variant.name, field_types);
+
+                // Print nested field types
+                for field in *fields {
+                    let field_shape = field.shape.get();
+                    if let crate::Innards::Struct {
+                        fields: nested_fields,
+                    } = &field_shape.innards
+                    {
+                        println!("        struct {} {{", field_shape);
+                        for nested_field in *nested_fields {
+                            println!(
+                                "            {}: {},",
+                                nested_field.name,
+                                nested_field.shape.get()
+                            );
+                        }
+                        println!("        }}");
+                    }
+                }
+            }
+            crate::VariantKind::Struct { fields } => {
+                println!("    {} {{", variant.name);
+                for field in *fields {
+                    println!("        {}: {},", field.name, field.shape.get());
+                }
+                println!("    }},");
+            }
+        }
+    }
+
+    println!("}}");
+}
