@@ -262,9 +262,9 @@ impl Partial<'_> {
             Innards::HashMap { value_shape } => {
                 Ok(Slot::for_hash_map(self.addr, name.to_string(), value_shape))
             }
-            Innards::Transparent(_) => return Err(FieldError::NoStaticFields),
-            Innards::Scalar(_) => return Err(FieldError::NoStaticFields),
-            Innards::Array(_) => return Err(FieldError::NoStaticFields),
+            Innards::Transparent(_) => Err(FieldError::NoStaticFields),
+            Innards::Scalar(_) => Err(FieldError::NoStaticFields),
+            Innards::Array(_) => Err(FieldError::NoStaticFields),
             Innards::Enum {
                 variants: _,
                 repr: _,
@@ -419,7 +419,7 @@ impl Partial<'_> {
                         }
                         crate::EnumRepr::I64 => {
                             let tag_ptr = result_mem.as_mut_ptr() as *mut i64;
-                            *tag_ptr = discriminant_value as i64;
+                            *tag_ptr = discriminant_value;
                         }
                         crate::EnumRepr::ISize => {
                             let tag_ptr = result_mem.as_mut_ptr() as *mut isize;
@@ -645,7 +645,7 @@ impl Partial<'_> {
                     }
                     crate::EnumRepr::I64 => {
                         let tag_ptr = self.addr.as_ptr() as *mut i64;
-                        *tag_ptr = discriminant_value as i64;
+                        *tag_ptr = discriminant_value;
                     }
                     crate::EnumRepr::ISize => {
                         let tag_ptr = self.addr.as_ptr() as *mut isize;
@@ -732,7 +732,7 @@ impl Partial<'_> {
                     }
                     crate::EnumRepr::I64 => {
                         let tag_ptr = self.addr.as_ptr() as *const i64;
-                        *tag_ptr as i64
+                        *tag_ptr
                     }
                     crate::EnumRepr::ISize => {
                         let tag_ptr = self.addr.as_ptr() as *const isize;
@@ -805,7 +805,7 @@ impl Partial<'_> {
             match &variant.kind {
                 crate::VariantKind::Unit => {
                     // Unit variants have no fields
-                    return Err(crate::FieldError::NoSuchStaticField);
+                    Err(crate::FieldError::NoSuchStaticField)
                 }
                 crate::VariantKind::Tuple { fields } => {
                     // For tuple variants, find the field by name

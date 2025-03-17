@@ -1149,7 +1149,7 @@ fn test_build_enum_with_struct_variant() {
         match result {
             StructEnum::Person { id, active } => {
                 assert_eq!(id, 123, "id should be 123");
-                assert_eq!(active, true, "active should be true");
+                assert!(active, "active should be true");
                 println!("✅ Successfully built Person variant with id=123, active=true");
             }
             _ => panic!("Expected Person variant but got something else"),
@@ -1749,4 +1749,133 @@ fn test_nightmare_reflection() {
     std::mem::forget(result);
 
     println!("🏆 Complex reflection test completed successfully!");
+}
+
+// Test for building a struct with an enum field
+#[test]
+fn test_struct_with_enum_field() {
+    println!("🔥 Testing struct with enum field 🔥");
+
+    // Define a simple enum for status
+    #[derive(Debug, PartialEq, Eq)]
+    #[allow(dead_code)]
+    #[repr(u8)]
+    enum Status {
+        Active = 1,
+        Inactive = 2,
+        Pending = 3,
+    }
+
+    // Define a struct that contains the enum
+    #[derive(Debug, PartialEq, Eq)]
+    struct User {
+        id: u32,
+        name: String,
+        status: Status,
+        score: i32,
+    }
+
+    impl Shapely for Status {
+        fn shape() -> crate::Shape {
+            struct StaticFields;
+            impl StaticFields {
+                const VARIANTS: &'static [crate::Variant] = &[
+                    crate::Variant {
+                        name: "Active",
+                        discriminant: Some(1),
+                        kind: crate::VariantKind::Unit,
+                    },
+                    crate::Variant {
+                        name: "Inactive",
+                        discriminant: Some(2),
+                        kind: crate::VariantKind::Unit,
+                    },
+                    crate::Variant {
+                        name: "Pending",
+                        discriminant: Some(3),
+                        kind: crate::VariantKind::Unit,
+                    },
+                ];
+            }
+
+            Shape {
+                name: |f| write!(f, "Status"),
+                typeid: mini_typeid::of::<Self>(),
+                layout: std::alloc::Layout::new::<Self>(),
+                innards: crate::Innards::Enum {
+                    variants: StaticFields::VARIANTS,
+                    repr: crate::EnumRepr::U8,
+                },
+                set_to_default: None,
+                drop_in_place: None,
+            }
+        }
+    }
+
+    impl Shapely for User {
+        fn shape() -> crate::Shape {
+            Shape {
+                name: |f| write!(f, "User"),
+                typeid: mini_typeid::of::<Self>(),
+                layout: std::alloc::Layout::new::<Self>(),
+                innards: crate::Innards::Struct {
+                    fields: crate::struct_fields!(User, (id, name, status, score)),
+                },
+                set_to_default: None,
+                drop_in_place: Some(|ptr| unsafe { std::ptr::drop_in_place(ptr as *mut Self) }),
+            }
+        }
+    }
+
+    println!("Building the Status enum first");
+    let mut status_partial = Status::partial();
+    status_partial.set_variant_by_name("Active").unwrap();
+    let status = status_partial.build::<Status>();
+    assert_eq!(status, Status::Active);
+    println!("✅ Successfully built Status::Active");
+
+    println!("Building the User struct with enum field");
+    let mut user_partial = User::partial();
+    
+    // Set basic fields
+    user_partial.slot_by_name("id").unwrap().fill(42u32);
+    user_partial.slot_by_name("name").unwrap().fill(String::from("John Doe"));
+    user_partial.slot_by_name("score").unwrap().fill(100i32);
+    
+    // Set the enum field
+    user_partial.slot_by_name("status").unwrap().fill(status);
+    
+    // Build the User struct
+    let user = user_partial.build::<User>();
+    
+    // Verify the result
+    assert_eq!(user.id, 42u32);
+    assert_eq!(user.name, "John Doe");
+    assert_eq!(user.status, Status::Active);
+    assert_eq!(user.score, 100i32);
+    
+    println!("✅ Successfully built User with Status::Active");
+    
+    // Build another user with a different status
+    println!("Building another User with Status::Pending");
+    let mut status_partial = Status::partial();
+    status_partial.set_variant_by_name("Pending").unwrap();
+    let pending_status = status_partial.build::<Status>();
+    
+    let mut user_partial = User::partial();
+    user_partial.slot_by_name("id").unwrap().fill(43u32);
+    user_partial.slot_by_name("name").unwrap().fill(String::from("Jane Smith"));
+    user_partial.slot_by_name("status").unwrap().fill(pending_status);
+    user_partial.slot_by_name("score").unwrap().fill(75i32);
+    
+    let user2 = user_partial.build::<User>();
+    
+    // Verify the second user
+    assert_eq!(user2.id, 43u32);
+    assert_eq!(user2.name, "Jane Smith");
+    assert_eq!(user2.status, Status::Pending);
+    assert_eq!(user2.score, 75i32);
+    
+    println!("✅ Successfully built User with Status::Pending");
+    println!("🏆 Struct with enum field test completed successfully!");
 }

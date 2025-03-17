@@ -115,7 +115,7 @@ pub fn shapely_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream
         let has_repr = parsed
             .attributes
             .iter()
-            .any(|attr| attr.body.content.name.to_string() == "repr");
+            .any(|attr| attr.body.content.name == "repr");
 
         if !has_repr {
             return r#"compile_error!("Enums must have an explicit representation (e.g. #[repr(u8)]) to be used with Shapely")"#
@@ -175,7 +175,7 @@ pub fn shapely_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream
         // Extract the repr type
         let mut repr_type = "Default"; // Default fallback
         for attr in &parsed.attributes {
-            if attr.body.content.name.to_string() == "repr" {
+            if attr.body.content.name == "repr" {
                 // Access the Vec directly from the attr.body.content.attr.content field
                 let attrs = &attr.body.content.attr.content;
                 if !attrs.is_empty() {
