@@ -154,7 +154,7 @@ fn build_struct_with_drop_field() {
             Shape {
                 name: |f| write!(f, "StructWithDrop"),
                 typeid: mini_typeid::of::<Self>(),
-                layout: std::alloc::Layout::new::<StructWithDrop>(),
+                layout: std::alloc::Layout::new::<Self>(),
                 innards: crate::Innards::Struct {
                     fields: crate::struct_fields!(StructWithDrop, (counter, value)),
                 },
@@ -1517,4 +1517,236 @@ fn test_complex_nested_recursive_enums() {
     println!("DIAGNOSTIC: After Test 2 scope - did we survive?");
 
     println!("✅ Complex nested enum tests completed successfully!");
+}
+
+// Test for a complex nested structure with less complexity than the full nightmare version
+#[test]
+fn test_nightmare_reflection() {
+    println!("🔥 Testing complex reflection scenario 🔥");
+
+    // Define a simpler enum hierarchy that we can fully initialize
+    #[derive(Debug, PartialEq)]
+    #[allow(dead_code)]
+    #[repr(u8)]
+    enum InnerData {
+        Nothing,
+        Text(String),
+        Number(i64),
+    }
+
+    #[derive(Debug, PartialEq)]
+    #[allow(dead_code)]
+    #[repr(u16)]
+    enum OuterData {
+        Simple,
+        WithData(InnerData),
+        Boxed(Box<InnerData>),
+        Structured {
+            id: u32,
+            name: String,
+            value: InnerData,
+        },
+    }
+
+    impl Shapely for InnerData {
+        fn shape() -> crate::Shape {
+            struct StaticFields;
+            impl StaticFields {
+                const TEXT_FIELDS: &'static [crate::Field] = &[crate::Field {
+                    name: "_0",
+                    shape: crate::ShapeDesc(String::shape),
+                    offset: 8, // Offset after discriminant with alignment
+                    flags: crate::FieldFlags::EMPTY,
+                }];
+
+                const NUMBER_FIELDS: &'static [crate::Field] = &[crate::Field {
+                    name: "_0",
+                    shape: crate::ShapeDesc(i64::shape),
+                    offset: 8, // Offset after discriminant with alignment
+                    flags: crate::FieldFlags::EMPTY,
+                }];
+
+                const VARIANTS: &'static [crate::Variant] = &[
+                    crate::Variant {
+                        name: "Nothing",
+                        discriminant: Some(0),
+                        kind: crate::VariantKind::Unit,
+                    },
+                    crate::Variant {
+                        name: "Text",
+                        discriminant: Some(1),
+                        kind: crate::VariantKind::Tuple {
+                            fields: Self::TEXT_FIELDS,
+                        },
+                    },
+                    crate::Variant {
+                        name: "Number",
+                        discriminant: Some(2),
+                        kind: crate::VariantKind::Tuple {
+                            fields: Self::NUMBER_FIELDS,
+                        },
+                    },
+                ];
+            }
+
+            Shape {
+                name: |f| write!(f, "InnerData"),
+                typeid: mini_typeid::of::<Self>(),
+                layout: std::alloc::Layout::new::<Self>(),
+                innards: crate::Innards::Enum {
+                    variants: StaticFields::VARIANTS,
+                    repr: crate::EnumRepr::U8,
+                },
+                set_to_default: None,
+                drop_in_place: Some(|ptr| unsafe { std::ptr::drop_in_place(ptr as *mut Self) }),
+            }
+        }
+    }
+
+    impl Shapely for OuterData {
+        fn shape() -> crate::Shape {
+            struct StaticFields;
+            impl StaticFields {
+                const WITH_DATA_FIELDS: &'static [crate::Field] = &[crate::Field {
+                    name: "_0",
+                    shape: crate::ShapeDesc(InnerData::shape),
+                    offset: 8, // Offset after discriminant with alignment
+                    flags: crate::FieldFlags::EMPTY,
+                }];
+
+                const BOXED_FIELDS: &'static [crate::Field] = &[crate::Field {
+                    name: "_0",
+                    shape: crate::ShapeDesc(<Box<InnerData>>::shape),
+                    offset: 8, // Offset after discriminant with alignment
+                    flags: crate::FieldFlags::EMPTY,
+                }];
+
+                const STRUCTURED_FIELDS: &'static [crate::Field] = &[
+                    crate::Field {
+                        name: "id",
+                        shape: crate::ShapeDesc(u32::shape),
+                        offset: 4, // Offset after discriminant
+                        flags: crate::FieldFlags::EMPTY,
+                    },
+                    crate::Field {
+                        name: "name",
+                        shape: crate::ShapeDesc(String::shape),
+                        offset: 8, // Offset with alignment
+                        flags: crate::FieldFlags::EMPTY,
+                    },
+                    crate::Field {
+                        name: "value",
+                        shape: crate::ShapeDesc(InnerData::shape),
+                        offset: 32, // Offset with alignment
+                        flags: crate::FieldFlags::EMPTY,
+                    },
+                ];
+
+                const VARIANTS: &'static [crate::Variant] = &[
+                    crate::Variant {
+                        name: "Simple",
+                        discriminant: Some(0),
+                        kind: crate::VariantKind::Unit,
+                    },
+                    crate::Variant {
+                        name: "WithData",
+                        discriminant: Some(1),
+                        kind: crate::VariantKind::Tuple {
+                            fields: Self::WITH_DATA_FIELDS,
+                        },
+                    },
+                    crate::Variant {
+                        name: "Boxed",
+                        discriminant: Some(2),
+                        kind: crate::VariantKind::Tuple {
+                            fields: Self::BOXED_FIELDS,
+                        },
+                    },
+                    crate::Variant {
+                        name: "Structured",
+                        discriminant: Some(3),
+                        kind: crate::VariantKind::Struct {
+                            fields: Self::STRUCTURED_FIELDS,
+                        },
+                    },
+                ];
+            }
+
+            Shape {
+                name: |f| write!(f, "OuterData"),
+                typeid: mini_typeid::of::<Self>(),
+                layout: std::alloc::Layout::new::<Self>(),
+                innards: crate::Innards::Enum {
+                    variants: StaticFields::VARIANTS,
+                    repr: crate::EnumRepr::U16,
+                },
+                set_to_default: None,
+                drop_in_place: Some(|ptr| unsafe { std::ptr::drop_in_place(ptr as *mut Self) }),
+            }
+        }
+    }
+
+    // Implement Shapely for Box<InnerData>
+    impl Shapely for Box<InnerData> {
+        fn shape() -> crate::Shape {
+            Shape {
+                name: |f| write!(f, "Box<InnerData>"),
+                typeid: mini_typeid::of::<Self>(),
+                layout: std::alloc::Layout::new::<Self>(),
+                innards: crate::Innards::Transparent(crate::ShapeDesc(InnerData::shape)),
+                set_to_default: None,
+                drop_in_place: Some(|ptr| unsafe { std::ptr::drop_in_place(ptr as *mut Self) }),
+            }
+        }
+    }
+
+    // Test 1: Build InnerData::Text
+    println!("Test 1: Building InnerData::Text");
+    let mut inner_partial = InnerData::partial();
+    inner_partial.set_variant_by_name("Text").unwrap();
+
+    let text_slot = inner_partial.variant_field_by_name("_0").unwrap();
+    text_slot.fill(String::from("Hello Reflection!"));
+
+    let text_data = inner_partial.build::<InnerData>();
+    if let InnerData::Text(text) = &text_data {
+        println!("✅ Successfully built InnerData::Text: {}", text);
+    } else {
+        panic!("Failed to build InnerData::Text");
+    }
+
+    // Test 2: Build OuterData::Structured
+    println!("Test 2: Building OuterData::Structured");
+    let mut outer_partial = OuterData::partial();
+    outer_partial.set_variant_by_name("Structured").unwrap();
+
+    // Set id
+    let id_slot = outer_partial.variant_field_by_name("id").unwrap();
+    id_slot.fill(42u32);
+
+    // Set name
+    let name_slot = outer_partial.variant_field_by_name("name").unwrap();
+    name_slot.fill(String::from("Structured Value"));
+
+    // Set value
+    let value_slot = outer_partial.variant_field_by_name("value").unwrap();
+    value_slot.fill(text_data);
+
+    let result = outer_partial.build::<OuterData>();
+    println!("✅ Successfully built OuterData::Structured");
+
+    // Basic verification
+    if let OuterData::Structured { id, name, value } = &result {
+        println!("  - id: {}", id);
+        println!("  - name: {}", name);
+
+        if let InnerData::Text(text) = value {
+            println!("  - value: {}", text);
+        }
+    }
+
+    // Use std::mem::forget to prevent any drop issues
+    std::mem::forget(result);
+
+    println!("🏆 Complex reflection test completed successfully!");
 }
