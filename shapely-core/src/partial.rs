@@ -612,7 +612,7 @@ impl Partial<'_> {
                 // Write the discriminant value based on the representation
                 match repr {
                     crate::EnumRepr::U8 => {
-                        let tag_ptr = self.addr.as_ptr() as *mut u8;
+                        let tag_ptr = self.addr.as_ptr();
                         *tag_ptr = discriminant_value as u8;
                     }
                     crate::EnumRepr::U16 => {
@@ -655,7 +655,7 @@ impl Partial<'_> {
                         // Use a heuristic based on the number of variants
                         if variants.len() <= 256 {
                             // Can fit in a u8
-                            let tag_ptr = self.addr.as_ptr() as *mut u8;
+                            let tag_ptr = self.addr.as_ptr();
                             *tag_ptr = discriminant_value as u8;
                         } else if variants.len() <= 65536 {
                             // Can fit in a u16
