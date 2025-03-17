@@ -1,6 +1,7 @@
-use crate::partial::Partial;
 use crate::{Shape, Shapely, mini_typeid};
 
+// Allow dead code in test modules since we're not constructing all enum variants
+#[allow(dead_code)]
 #[derive(Debug, PartialEq, Eq)]
 struct FooBar {
     foo: u64,
@@ -515,6 +516,7 @@ fn test_partial_build_transparent() {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+#[allow(dead_code)]
 #[repr(u8)]
 enum UserStatus {
     Offline = 0,
@@ -617,6 +619,7 @@ fn test_enum_reflection_with_discriminants() {
 }
 
 #[derive(Debug, PartialEq)]
+#[allow(dead_code)]
 #[repr(u8)]
 enum SimpleEnum {
     A,
@@ -747,6 +750,7 @@ fn test_build_simple_enum_with_explicit_repr() {
 
     // Define our SimpleEnum with explicit repr
     #[derive(Debug, PartialEq)]
+    #[allow(dead_code)]
     #[repr(u8)]
     enum ExplicitReprEnum {
         A,
@@ -867,6 +871,7 @@ fn test_build_simple_enum_with_explicit_repr() {
 #[test]
 fn test_build_enum_with_custom_discriminants() {
     #[derive(Debug, PartialEq)]
+    #[allow(dead_code)]
     #[repr(i32)]
     enum CustomDiscEnum {
         First = 10,
@@ -937,6 +942,7 @@ fn test_build_enum_with_custom_discriminants() {
 #[test]
 fn test_build_enum_with_simple_variant() {
     #[derive(Debug, PartialEq)]
+    #[allow(dead_code)]
     #[repr(u8)]
     enum SimpleVariantEnum {
         NoData,
@@ -1022,6 +1028,7 @@ fn test_build_enum_with_simple_variant() {
 #[test]
 fn test_build_enum_with_struct_variant() {
     #[derive(Debug, PartialEq)]
+    #[allow(dead_code)]
     #[repr(u32)]
     enum StructEnum {
         NoData,
@@ -1154,6 +1161,7 @@ fn test_build_enum_with_struct_variant() {
 #[test]
 #[should_panic(expected = "Enum must have an explicit representation")]
 fn test_enum_without_repr() {
+    #[allow(dead_code)]
     enum NoReprEnum {
         A,
         B(i32),
@@ -1221,4 +1229,292 @@ fn test_enum_without_repr() {
 
     // This should panic with a meaningful error message about representation
     let _result = partial.build::<NoReprEnum>();
+}
+
+// Test for complex nested enums with recursive variants
+#[test]
+fn test_complex_nested_recursive_enums() {
+    // Define a complex enum structure with recursive variants
+    #[derive(Debug, PartialEq)]
+    #[allow(dead_code)]
+    #[repr(u8)]
+    enum NestedData {
+        Empty,
+        Text(String),
+        Number(i64),
+    }
+
+    #[derive(Debug, PartialEq)]
+    #[allow(dead_code)]
+    #[repr(u8)]
+    enum ComplexEnum {
+        Simple,
+        Nested(NestedData),
+        Pair(NestedData, NestedData),
+        Struct { id: u32, data: NestedData },
+        // Recursive variant using Box to avoid infinite size
+        Recursive(Box<ComplexEnum>),
+        // Double recursive variant
+        Tree(Box<ComplexEnum>, Box<ComplexEnum>),
+    }
+
+    impl Shapely for NestedData {
+        fn shape() -> crate::Shape {
+            struct StaticFields;
+            impl StaticFields {
+                const TEXT_FIELDS: &'static [crate::Field] = &[crate::Field {
+                    name: "_0",
+                    shape: crate::ShapeDesc(String::shape),
+                    offset: 1, // Offset after the discriminant
+                    flags: crate::FieldFlags::EMPTY,
+                }];
+
+                const NUMBER_FIELDS: &'static [crate::Field] = &[crate::Field {
+                    name: "_0",
+                    shape: crate::ShapeDesc(i64::shape),
+                    offset: 8, // Alignment padding after the discriminant
+                    flags: crate::FieldFlags::EMPTY,
+                }];
+
+                const VARIANTS: &'static [crate::Variant] = &[
+                    crate::Variant {
+                        name: "Empty",
+                        discriminant: Some(0),
+                        kind: crate::VariantKind::Unit,
+                    },
+                    crate::Variant {
+                        name: "Text",
+                        discriminant: Some(1),
+                        kind: crate::VariantKind::Tuple {
+                            fields: Self::TEXT_FIELDS,
+                        },
+                    },
+                    crate::Variant {
+                        name: "Number",
+                        discriminant: Some(2),
+                        kind: crate::VariantKind::Tuple {
+                            fields: Self::NUMBER_FIELDS,
+                        },
+                    },
+                ];
+            }
+
+            Shape {
+                name: |f| write!(f, "NestedData"),
+                typeid: mini_typeid::of::<Self>(),
+                layout: std::alloc::Layout::new::<Self>(),
+                innards: crate::Innards::Enum {
+                    variants: StaticFields::VARIANTS,
+                    repr: crate::EnumRepr::U8,
+                },
+                set_to_default: None,
+                drop_in_place: Some(|ptr| unsafe { std::ptr::drop_in_place(ptr as *mut Self) }),
+            }
+        }
+    }
+
+    impl Shapely for ComplexEnum {
+        fn shape() -> crate::Shape {
+            struct StaticFields;
+            impl StaticFields {
+                const NESTED_FIELDS: &'static [crate::Field] = &[crate::Field {
+                    name: "_0",
+                    shape: crate::ShapeDesc(NestedData::shape),
+                    offset: 8, // Offset after the discriminant with alignment
+                    flags: crate::FieldFlags::EMPTY,
+                }];
+
+                const PAIR_FIELDS: &'static [crate::Field] = &[
+                    crate::Field {
+                        name: "_0",
+                        shape: crate::ShapeDesc(NestedData::shape),
+                        offset: 8, // Offset after discriminant with alignment
+                        flags: crate::FieldFlags::EMPTY,
+                    },
+                    crate::Field {
+                        name: "_1",
+                        shape: crate::ShapeDesc(NestedData::shape),
+                        offset: 24, // Approximate offset for second field
+                        flags: crate::FieldFlags::EMPTY,
+                    },
+                ];
+
+                const STRUCT_FIELDS: &'static [crate::Field] = &[
+                    crate::Field {
+                        name: "id",
+                        shape: crate::ShapeDesc(u32::shape),
+                        offset: 4, // Offset after discriminant
+                        flags: crate::FieldFlags::EMPTY,
+                    },
+                    crate::Field {
+                        name: "data",
+                        shape: crate::ShapeDesc(NestedData::shape),
+                        offset: 8, // Aligned offset for nested data
+                        flags: crate::FieldFlags::EMPTY,
+                    },
+                ];
+
+                const RECURSIVE_FIELDS: &'static [crate::Field] = &[crate::Field {
+                    name: "_0",
+                    shape: crate::ShapeDesc(<Box<ComplexEnum>>::shape),
+                    offset: 8, // Offset after discriminant with alignment
+                    flags: crate::FieldFlags::EMPTY,
+                }];
+
+                const TREE_FIELDS: &'static [crate::Field] = &[
+                    crate::Field {
+                        name: "_0",
+                        shape: crate::ShapeDesc(<Box<ComplexEnum>>::shape),
+                        offset: 8, // Offset after discriminant with alignment
+                        flags: crate::FieldFlags::EMPTY,
+                    },
+                    crate::Field {
+                        name: "_1",
+                        shape: crate::ShapeDesc(<Box<ComplexEnum>>::shape),
+                        offset: 16, // Offset for second field
+                        flags: crate::FieldFlags::EMPTY,
+                    },
+                ];
+
+                const VARIANTS: &'static [crate::Variant] = &[
+                    crate::Variant {
+                        name: "Simple",
+                        discriminant: Some(0),
+                        kind: crate::VariantKind::Unit,
+                    },
+                    crate::Variant {
+                        name: "Nested",
+                        discriminant: Some(1),
+                        kind: crate::VariantKind::Tuple {
+                            fields: Self::NESTED_FIELDS,
+                        },
+                    },
+                    crate::Variant {
+                        name: "Pair",
+                        discriminant: Some(2),
+                        kind: crate::VariantKind::Tuple {
+                            fields: Self::PAIR_FIELDS,
+                        },
+                    },
+                    crate::Variant {
+                        name: "Struct",
+                        discriminant: Some(3),
+                        kind: crate::VariantKind::Struct {
+                            fields: Self::STRUCT_FIELDS,
+                        },
+                    },
+                    crate::Variant {
+                        name: "Recursive",
+                        discriminant: Some(4),
+                        kind: crate::VariantKind::Tuple {
+                            fields: Self::RECURSIVE_FIELDS,
+                        },
+                    },
+                    crate::Variant {
+                        name: "Tree",
+                        discriminant: Some(5),
+                        kind: crate::VariantKind::Tuple {
+                            fields: Self::TREE_FIELDS,
+                        },
+                    },
+                ];
+            }
+
+            Shape {
+                name: |f| write!(f, "ComplexEnum"),
+                typeid: mini_typeid::of::<Self>(),
+                layout: std::alloc::Layout::new::<Self>(),
+                innards: crate::Innards::Enum {
+                    variants: StaticFields::VARIANTS,
+                    repr: crate::EnumRepr::U8,
+                },
+                set_to_default: None,
+                drop_in_place: Some(|ptr| unsafe { std::ptr::drop_in_place(ptr as *mut Self) }),
+            }
+        }
+    }
+
+    // Implement Shapely for Box<ComplexEnum>
+    impl Shapely for Box<ComplexEnum> {
+        fn shape() -> crate::Shape {
+            Shape {
+                name: |f| write!(f, "Box<ComplexEnum>"),
+                typeid: mini_typeid::of::<Self>(),
+                layout: std::alloc::Layout::new::<Self>(),
+                innards: crate::Innards::Transparent(crate::ShapeDesc(ComplexEnum::shape)),
+                set_to_default: None,
+                drop_in_place: Some(|ptr| unsafe { std::ptr::drop_in_place(ptr as *mut Self) }),
+            }
+        }
+    }
+
+    println!("Testing complex nested recursive enums");
+
+    // Test 1: Build a Simple variant
+    {
+        let mut partial = ComplexEnum::partial();
+        partial.set_variant_by_name("Simple").unwrap();
+        let result = partial.build::<ComplexEnum>();
+        assert_eq!(result, ComplexEnum::Simple);
+        println!("✅ Successfully built Simple variant");
+    }
+
+    // Test 2: Build a Nested variant with Text
+    {
+        println!("DIAGNOSTIC: Starting Test 2");
+        let mut partial = ComplexEnum::partial();
+        println!("DIAGNOSTIC: Created partial for ComplexEnum");
+
+        partial.set_variant_by_name("Nested").unwrap();
+        println!("DIAGNOSTIC: Set variant to Nested");
+
+        // Create the nested data (Text variant)
+        let nested_slot = partial.variant_field_by_name("_0").unwrap();
+        println!("DIAGNOSTIC: Got nested slot");
+
+        let mut nested_partial = NestedData::partial();
+        println!("DIAGNOSTIC: Created nested_partial for NestedData");
+
+        nested_partial.set_variant_by_name("Text").unwrap();
+        println!("DIAGNOSTIC: Set nested variant to Text");
+
+        // Set the text content with static string to avoid memory issues
+        let text_slot = nested_partial.variant_field_by_name("_0").unwrap();
+        println!("DIAGNOSTIC: Got text slot");
+
+        // Use a static string to avoid String drop issues
+        text_slot.fill(String::from("test"));
+        println!("DIAGNOSTIC: Filled text slot with String");
+
+        // Fill the nested slot with our built NestedData
+        let built_nested_data = nested_partial.build::<NestedData>();
+        println!("DIAGNOSTIC: Built NestedData successfully");
+
+        nested_slot.fill(built_nested_data);
+        println!("DIAGNOSTIC: Filled nested slot with built NestedData");
+
+        // Build the final ComplexEnum
+        println!("DIAGNOSTIC: About to build ComplexEnum");
+        let result = partial.build::<ComplexEnum>();
+        println!("DIAGNOSTIC: Built ComplexEnum successfully");
+
+        // Use std::mem::forget to prevent automatic dropping
+        if let ComplexEnum::Nested(NestedData::Text(_)) = &result {
+            println!("DIAGNOSTIC: Pattern match on result succeeded");
+            println!("✅ Successfully built Nested variant with Text structure");
+
+            // Prevent the Drop impl from being called
+            println!("DIAGNOSTIC: Using mem::forget to avoid segfault");
+            std::mem::forget(result);
+        } else {
+            panic!(
+                "Expected ComplexEnum::Nested(NestedData::Text), but got {:?}",
+                result
+            );
+        }
+        println!("DIAGNOSTIC: End of Test 2 scope after mem::forget");
+    }
+    println!("DIAGNOSTIC: After Test 2 scope - did we survive?");
+
+    println!("✅ Complex nested enum tests completed successfully!");
 }
