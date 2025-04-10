@@ -77,7 +77,7 @@ Additionally:
 
 ### Example usage
 
-[facet-json](../facet-json/src/lib.rs) is the one that gets updated first — look at it.
+[facet-json](https://github.com/facet-rs/facet/tree/main/facet-json) is the one that gets updated first — look at it.
 
 
 ## License
