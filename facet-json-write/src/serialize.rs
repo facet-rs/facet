@@ -1,7 +1,53 @@
 use facet_core::ShapeExt as _;
 use facet_poke::{Peek, PeekValue};
+use log::trace;
 use std::collections::VecDeque;
 use std::io::{self, Write};
+
+fn peek_value_to_json<W: Write>(pv: PeekValue, writer: &mut W) -> io::Result<()> {
+    if pv.shape().is_type::<()>() {
+        write!(writer, "null")?;
+    } else if pv.shape().is_type::<bool>() {
+        let value = unsafe { pv.data().as_ref::<bool>() };
+        write!(writer, "{}", value)?;
+    } else if pv.shape().is_type::<u8>() {
+        let value = unsafe { pv.data().as_ref::<u8>() };
+        write!(writer, "{}", value)?;
+    } else if pv.shape().is_type::<u16>() {
+        let value = unsafe { pv.data().as_ref::<u16>() };
+        write!(writer, "{}", value)?;
+    } else if pv.shape().is_type::<u32>() {
+        let value = unsafe { pv.data().as_ref::<u32>() };
+        write!(writer, "{}", value)?;
+    } else if pv.shape().is_type::<u64>() {
+        let value = unsafe { pv.data().as_ref::<u64>() };
+        write!(writer, "{}", value)?;
+    } else if pv.shape().is_type::<u128>() {
+        let value = unsafe { pv.data().as_ref::<u128>() };
+        write!(writer, "{}", value)?;
+    } else if pv.shape().is_type::<i8>() {
+        let value = unsafe { pv.data().as_ref::<i8>() };
+        write!(writer, "{}", value)?;
+    } else if pv.shape().is_type::<i16>() {
+        let value = unsafe { pv.data().as_ref::<i16>() };
+        write!(writer, "{}", value)?;
+    } else if pv.shape().is_type::<i32>() {
+        let value = unsafe { pv.data().as_ref::<i32>() };
+        write!(writer, "{}", value)?;
+    } else if pv.shape().is_type::<i64>() {
+        let value = unsafe { pv.data().as_ref::<i64>() };
+        write!(writer, "{}", value)?;
+    } else if pv.shape().is_type::<i128>() {
+        let value = unsafe { pv.data().as_ref::<i128>() };
+        write!(writer, "{}", value)?;
+    } else if pv.shape().is_type::<String>() {
+        let value = unsafe { pv.data().as_ref::<String>() };
+        write!(writer, "\"{}\"", value.escape_debug())?;
+    } else {
+        write!(writer, "\"<unsupported type>\"")?;
+    }
+    Ok(())
+}
 
 /// Serializes any Facet type to JSON
 pub fn to_json<W: Write>(peek: Peek<'_>, writer: &mut W, indent: bool) -> io::Result<()> {
@@ -50,21 +96,7 @@ pub fn to_json<W: Write>(peek: Peek<'_>, writer: &mut W, indent: bool) -> io::Re
             StackItem::Value { peek, level } => {
                 match peek {
                     Peek::Value(pv) => {
-                        if pv.shape().is_type::<()>() {
-                            write!(writer, "null")?;
-                        } else if pv.shape().is_type::<bool>() {
-                            let value = unsafe { pv.data().as_ref::<bool>() };
-                            write!(writer, "{}", value)?;
-                        } else if pv.shape().is_type::<u64>() {
-                            let value = unsafe { pv.data().as_ref::<u64>() };
-                            write!(writer, "{}", value)?;
-                        } else if pv.shape().is_type::<String>() {
-                            let value = unsafe { pv.data().as_ref::<String>() };
-                            write!(writer, "\"{}\"", value.escape_debug())?;
-                        } else {
-                            // For other types, we'll use a placeholder
-                            write!(writer, "\"<unsupported type>\"")?;
-                        }
+                        peek_value_to_json(pv, writer)?;
                     }
                     Peek::Struct(ps) => {
                         write!(writer, "{{")?;
@@ -235,20 +267,8 @@ pub fn to_json<W: Write>(peek: Peek<'_>, writer: &mut W, indent: bool) -> io::Re
                     match temp_item {
                         StackItem::Value { peek, level: _ } => match peek {
                             Peek::Value(pv) => {
-                                if pv.shape().is_type::<()>() {
-                                    write!(&mut temp_writer, "null")?;
-                                } else if pv.shape().is_type::<bool>() {
-                                    let value = unsafe { pv.data().as_ref::<bool>() };
-                                    write!(&mut temp_writer, "{}", value)?;
-                                } else if pv.shape().is_type::<u64>() {
-                                    let value = unsafe { pv.data().as_ref::<u64>() };
-                                    write!(&mut temp_writer, "{}", value)?;
-                                } else if pv.shape().is_type::<String>() {
-                                    let value = unsafe { pv.data().as_ref::<String>() };
-                                    write!(&mut temp_writer, "\"{}\"", value.escape_debug())?;
-                                } else {
-                                    write!(&mut temp_writer, "\"<unsupported type>\"")?;
-                                }
+                                trace!("{:?}", pv.shape());
+                                peek_value_to_json(pv, &mut temp_writer)?;
                             }
                             _ => {
                                 write!(&mut temp_writer, "\"<complex_key>\"")?;
