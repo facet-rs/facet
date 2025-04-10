@@ -40,6 +40,12 @@ fn peek_value_to_json<W: Write>(pv: PeekValue, writer: &mut W) -> io::Result<()>
     } else if pv.shape().is_type::<i128>() {
         let value = unsafe { pv.data().as_ref::<i128>() };
         write!(writer, "{}", value)?;
+    } else if pv.shape().is_type::<f32>() {
+        let value = unsafe { pv.data().as_ref::<f32>() };
+        write!(writer, "{}", value)?;
+    } else if pv.shape().is_type::<f64>() {
+        let value = unsafe { pv.data().as_ref::<f64>() };
+        write!(writer, "{}", value)?;
     } else if pv.shape().is_type::<String>() {
         let value = unsafe { pv.data().as_ref::<String>() };
         write!(writer, "\"{}\"", value.escape_debug())?;

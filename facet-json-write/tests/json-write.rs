@@ -23,21 +23,21 @@ fn test_to_json() {
     #[derive(Debug, PartialEq, Clone, Facet)]
     struct LinearFunction {
         variable: String,
-        slope: i32,
-        intercept: u32,
+        slope: f32,
+        intercept: i32,
     }
 
     let test_struct = LinearFunction {
         variable: "x".to_string(),
-        slope: -3,
-        intercept: 5,
+        slope: -3.5,
+        intercept: -5,
     };
 
-    let _expected_json = r#"{"variable":"x","slope":-3,"intercept":5}"#;
+    let _expected_json = r#"{"variable":"x","slope":-3.5,"intercept":-5}"#;
     let expected_json_indented = r#"{
   "variable": "x",
-  "slope": -3,
-  "intercept": 5
+  "slope": -3.5,
+  "intercept": -5
 }"#;
 
     let mut buffer = Vec::new();
