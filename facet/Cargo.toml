@@ -1,6 +1,6 @@
 [package]
 name = "facet"
-version = "0.1.9"
+version = "0.1.10"
 authors.workspace = true
 edition.workspace = true
 rust-version.workspace = true

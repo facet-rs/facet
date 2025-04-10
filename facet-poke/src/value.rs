@@ -1,4 +1,4 @@
-use facet_core::{Opaque, OpaqueConst, OpaqueUninit, Shape, TryFromError, ValueVTable};
+use facet_core::{Facet, Opaque, OpaqueConst, OpaqueUninit, Shape, TryFromError, ValueVTable};
 use facet_peek::Peek;
 
 /// Lets you write to a value (implements write-only [`ValueVTable`] proxies)
@@ -92,15 +92,31 @@ impl<'mem> PokeValue<'mem> {
     ///
     /// Also, `source` is moved out of after this function is called, so it cannot be used
     /// anymore — it should be deallocated, but it should not be "dropped" anymore.
-    pub unsafe fn put<'src>(self, source: OpaqueConst<'src>) -> Opaque<'mem> {
+    pub unsafe fn write<'src>(self, source: OpaqueConst<'src>) -> Opaque<'mem> {
         unsafe {
             core::ptr::copy_nonoverlapping(
                 source.as_ptr(),
-                self.data.as_mut_ptr(),
+                self.data.as_mut_bytes(),
                 self.shape.layout.size(),
             );
             self.data.assume_init()
         }
+    }
+
+    /// Place a value in the space provided
+    ///
+    /// This function places a value of type T into the destination space,
+    /// checking that T exactly matches the expected shape.
+    pub fn put<'src, T>(self, source: T) -> Opaque<'mem>
+    where
+        T: Facet + 'src,
+    {
+        self.shape.assert_type::<T>();
+
+        let source_as_const = OpaqueConst::new(&raw const source);
+        let result = unsafe { self.write(source_as_const) };
+        core::mem::forget(source);
+        result
     }
 
     /// Attempts to set the value to its default

@@ -1,4 +1,3 @@
-use facet_core::Facet;
 use facet_derive::Facet;
 
 // this makes the derives work.. dirty but oh well.

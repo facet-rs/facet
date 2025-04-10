@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.7](https://github.com/facet-rs/facet/compare/facet-peek-v0.2.6...facet-peek-v0.2.7) - 2025-04-10
+
+### Other
+
+- Do away with from_ref
+- Merge facet-opaque, facet-spez, facet-types and facet-trait back into facet-core, to allow implementing Facet for Shape
+
 ## [0.2.6](https://github.com/facet-rs/facet/compare/facet-peek-v0.2.5...facet-peek-v0.2.6) - 2025-04-10
 
 ### Other

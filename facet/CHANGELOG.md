@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.10](https://github.com/facet-rs/facet/compare/facet-v0.1.9...facet-v0.1.10) - 2025-04-10
+
+### Fixed
+
+- typo in README.md
+
+### Other
+
+- Merge branch 'main' into from-ptr
+- Update doc tests, too
+- peek & poke are not reexported by the main crate
+- Make tests pass on stable for now...
+- Add an empty test (failing on rust stable)
+- Merge branch 'main' into patch-1
+- Fixed doc tests
+- Merge facet-opaque, facet-spez, facet-types and facet-trait back into facet-core, to allow implementing Facet for Shape
+
+### Other
+
+- Removed `Facet::ARCHETYPE` in favor of new `SpezEmpty` type wrapper
+
 ## [0.1.9](https://github.com/facet-rs/facet/compare/facet-v0.1.8...facet-v0.1.9) - 2025-04-10
 
 ### Other

@@ -60,7 +60,7 @@ impl<'mem> Poke<'mem> {
         let data = S::SHAPE.allocate();
         let layout = Layout::new::<S>();
         let guard = Guard {
-            ptr: data.as_mut_ptr(),
+            ptr: data.as_mut_bytes(),
             layout,
             shape: S::SHAPE,
         };
@@ -73,7 +73,7 @@ impl<'mem> Poke<'mem> {
         let data = shape.allocate();
         let layout = shape.layout;
         let guard = Guard {
-            ptr: data.as_mut_ptr(),
+            ptr: data.as_mut_bytes(),
             layout,
             shape,
         };

@@ -1,5 +1,5 @@
 use crate::from_str;
-use facet_core::{self as facet, Facet};
+use facet_core::{self as facet};
 use facet_derive::Facet;
 
 #[derive(Debug, Facet, PartialEq)]

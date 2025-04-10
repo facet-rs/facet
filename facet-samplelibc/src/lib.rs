@@ -8,7 +8,7 @@ unsafe extern "C" {
 }
 
 pub fn get_foo_and_shape() -> (Opaque<'static>, &'static Shape) {
-    (unsafe { Opaque::new_unchecked(get_foo()) }, Foo::SHAPE)
+    (unsafe { Opaque::new(get_foo()) }, Foo::SHAPE)
 }
 
 pub fn print_global_foo() {

@@ -224,12 +224,12 @@ let (poke, guard) = Poke::alloc::<FooBar>();
     // inner code: all we have is a `poke` — our function is not generic,
     // `Poke` is not generic.
     let mut poke = poke.into_struct();
-    poke.set_by_name("foo", OpaqueConst::from_ref(&42u64))
+    poke.set_by_name("foo", OpaqueConst::new(&42u64))
         .unwrap();
 
     {
         let bar = String::from("Hello, World!");
-        poke.set_by_name("bar", OpaqueConst::from_ref(&bar))
+        poke.set_by_name("bar", OpaqueConst::new(&bar))
             .unwrap();
         // bar has been moved out of
         core::mem::forget(bar);

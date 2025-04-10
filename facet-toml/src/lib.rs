@@ -65,15 +65,15 @@ fn deserialize_item<'mem>(poke: Poke<'mem>, value: &Item) -> Result<Opaque<'mem>
                     .as_value()
                     .ok_or_else(|| format!("Expected value, got: {}", value.type_name()))?;
                 let u = toml_to_u64(v)?;
-                let opaque = OpaqueConst::from_ref(&u);
-                unsafe { ps.put(opaque) }
+                let opaque = OpaqueConst::new(&u);
+                unsafe { ps.write(opaque) }
             } else if ps.shape().is_type::<String>() {
                 let s = value
                     .as_str()
                     .ok_or_else(|| AnyErr(format!("Expected string, got: {}", value.type_name())))?
                     .to_string();
-                let opaque = OpaqueConst::from_ref(&s);
-                let res = unsafe { ps.put(opaque) };
+                let opaque = OpaqueConst::new(&s);
+                let res = unsafe { ps.write(opaque) };
                 core::mem::forget(s);
                 res
             } else {

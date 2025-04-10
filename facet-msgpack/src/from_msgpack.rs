@@ -99,12 +99,12 @@ pub fn from_slice_opaque<'mem>(
                 trace!("Deserializing scalar");
                 if pv.shape().is_type::<String>() {
                     let s = decoder.decode_string()?;
-                    let data = unsafe { pv.put(OpaqueConst::from_ref(&s)) };
+                    let data = unsafe { pv.write(OpaqueConst::new(&s)) };
                     core::mem::forget(s);
                     data
                 } else if pv.shape().is_type::<u64>() {
                     let n = decoder.decode_u64()?;
-                    unsafe { pv.put(OpaqueConst::from_ref(&n)) }
+                    unsafe { pv.write(OpaqueConst::new(&n)) }
                 } else {
                     todo!("Unsupported scalar type: {}", pv.shape())
                 }

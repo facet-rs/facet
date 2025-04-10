@@ -1,6 +1,6 @@
 [package]
 name = "facet-peek"
-version = "0.2.6"
+version = "0.2.7"
 authors.workspace = true
 edition.workspace = true
 rust-version.workspace = true

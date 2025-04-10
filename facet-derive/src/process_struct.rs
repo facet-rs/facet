@@ -12,17 +12,6 @@ use super::*;
 pub(crate) fn process_struct(parsed: Struct) -> proc_macro::TokenStream {
     let struct_name = parsed.name.to_string();
 
-    // Generate dummy fields
-    let dummy_fields = parsed
-        .body
-        .content
-        .0
-        .iter()
-        .map(|field| field.value.name.to_string())
-        .map(|field| format!("{field}: Facet::ARCHETYPE"))
-        .collect::<Vec<String>>()
-        .join(", ");
-
     // Generate field definitions
     let field_definitions = parsed
         .body
@@ -88,10 +77,6 @@ pub(crate) fn process_struct(parsed: Struct) -> proc_macro::TokenStream {
         r#"
 #[automatically_derived]
 unsafe impl facet::Facet for {struct_name} {{
-    const ARCHETYPE: Self = Self {{
-        {dummy_fields}
-    }};
-
     const SHAPE: &'static facet::Shape = &const {{
         static FIELDS: &[facet::Field] = &[
             {field_definitions}

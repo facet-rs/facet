@@ -73,7 +73,7 @@ impl<'mem> PokeEnumNoVariant<'mem> {
         // Prepare memory for the enum
         unsafe {
             // Zero out the memory first to ensure clean state
-            core::ptr::write_bytes(self.data.as_mut_ptr(), 0, self.shape.layout.size());
+            core::ptr::write_bytes(self.data.as_mut_bytes(), 0, self.shape.layout.size());
 
             // Set up the discriminant (tag)
             // For enums in Rust, the first bytes contain the discriminant
@@ -87,58 +87,58 @@ impl<'mem> PokeEnumNoVariant<'mem> {
             // Write the discriminant value based on the representation
             match self.def.repr {
                 EnumRepr::U8 => {
-                    let tag_ptr = self.data.as_mut_ptr();
+                    let tag_ptr = self.data.as_mut_bytes();
                     *tag_ptr = discriminant_value as u8;
                 }
                 EnumRepr::U16 => {
-                    let tag_ptr = self.data.as_mut_ptr() as *mut u16;
+                    let tag_ptr = self.data.as_mut_bytes() as *mut u16;
                     *tag_ptr = discriminant_value as u16;
                 }
                 EnumRepr::U32 => {
-                    let tag_ptr = self.data.as_mut_ptr() as *mut u32;
+                    let tag_ptr = self.data.as_mut_bytes() as *mut u32;
                     *tag_ptr = discriminant_value as u32;
                 }
                 EnumRepr::U64 => {
-                    let tag_ptr = self.data.as_mut_ptr() as *mut u64;
+                    let tag_ptr = self.data.as_mut_bytes() as *mut u64;
                     *tag_ptr = discriminant_value as u64;
                 }
                 EnumRepr::USize => {
-                    let tag_ptr = self.data.as_mut_ptr() as *mut usize;
+                    let tag_ptr = self.data.as_mut_bytes() as *mut usize;
                     *tag_ptr = discriminant_value as usize;
                 }
                 EnumRepr::I8 => {
-                    let tag_ptr = self.data.as_mut_ptr() as *mut i8;
+                    let tag_ptr = self.data.as_mut_bytes() as *mut i8;
                     *tag_ptr = discriminant_value as i8;
                 }
                 EnumRepr::I16 => {
-                    let tag_ptr = self.data.as_mut_ptr() as *mut i16;
+                    let tag_ptr = self.data.as_mut_bytes() as *mut i16;
                     *tag_ptr = discriminant_value as i16;
                 }
                 EnumRepr::I32 => {
-                    let tag_ptr = self.data.as_mut_ptr() as *mut i32;
+                    let tag_ptr = self.data.as_mut_bytes() as *mut i32;
                     *tag_ptr = discriminant_value as i32;
                 }
                 EnumRepr::I64 => {
-                    let tag_ptr = self.data.as_mut_ptr() as *mut i64;
+                    let tag_ptr = self.data.as_mut_bytes() as *mut i64;
                     *tag_ptr = discriminant_value;
                 }
                 EnumRepr::ISize => {
-                    let tag_ptr = self.data.as_mut_ptr() as *mut isize;
+                    let tag_ptr = self.data.as_mut_bytes() as *mut isize;
                     *tag_ptr = discriminant_value as isize;
                 }
                 EnumRepr::Default => {
                     // Use a heuristic based on the number of variants
                     if self.def.variants.len() <= 256 {
                         // Can fit in a u8
-                        let tag_ptr = self.data.as_mut_ptr();
+                        let tag_ptr = self.data.as_mut_bytes();
                         *tag_ptr = discriminant_value as u8;
                     } else if self.def.variants.len() <= 65536 {
                         // Can fit in a u16
-                        let tag_ptr = self.data.as_mut_ptr() as *mut u16;
+                        let tag_ptr = self.data.as_mut_bytes() as *mut u16;
                         *tag_ptr = discriminant_value as u16;
                     } else {
                         // Default to u32
-                        let tag_ptr = self.data.as_mut_ptr() as *mut u32;
+                        let tag_ptr = self.data.as_mut_bytes() as *mut u32;
                         *tag_ptr = discriminant_value as u32;
                     }
                 }
@@ -298,7 +298,7 @@ impl<'mem> PokeEnum<'mem> {
         self.assert_matching_shape::<T>();
 
         let result = unsafe {
-            let ptr = self.data.as_ptr() as *const T;
+            let ptr = self.data.as_bytes() as *const T;
             core::ptr::read(ptr)
         };
         core::mem::forget(self);
@@ -316,7 +316,7 @@ impl<'mem> PokeEnum<'mem> {
         self.assert_all_fields_initialized();
         self.assert_matching_shape::<T>();
 
-        let boxed = unsafe { Box::from_raw(self.data.as_mut_ptr() as *mut T) };
+        let boxed = unsafe { Box::from_raw(self.data.as_mut_bytes() as *mut T) };
         core::mem::forget(self);
         boxed
     }
@@ -333,7 +333,7 @@ impl<'mem> PokeEnum<'mem> {
         self.assert_all_fields_initialized();
         unsafe {
             core::ptr::copy_nonoverlapping(
-                self.data.as_mut_ptr(),
+                self.data.as_mut_bytes(),
                 target.as_ptr(),
                 self.shape.layout.size(),
             );

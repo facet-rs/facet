@@ -57,7 +57,7 @@ impl<'mem> Peek<'mem> {
     pub fn new<S: Facet>(s: &'mem S) -> Self {
         // This is safe because we're creating an Opaque pointer to read-only data
         // The pointer will be valid for the lifetime 'mem
-        let data = OpaqueConst::from_ref(s);
+        let data = OpaqueConst::new(s);
         unsafe { Self::unchecked_new(data, S::SHAPE) }
     }
 

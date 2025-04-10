@@ -218,7 +218,7 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
 name = "facet"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "facet-core",
  "facet-derive",
@@ -257,7 +257,7 @@ dependencies = [
 
 [[package]]
 name = "facet-derive"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "facet-core",
  "unsynn",
@@ -314,7 +314,7 @@ dependencies = [
 
 [[package]]
 name = "facet-peek"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "facet-core",
 ]

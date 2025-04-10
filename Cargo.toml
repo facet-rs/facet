@@ -28,9 +28,9 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/facet-rs/facet"
 
 [workspace.dependencies]
-facet = { version = "0.1.9", path = "facet" }
-facet-derive = { version = "0.1.9", path = "facet-derive" }
-facet-peek = { version = "0.2.6", path = "facet-peek" }
+facet = { version = "0.1.10", path = "facet" }
+facet-derive = { version = "0.1.10", path = "facet-derive" }
+facet-peek = { version = "0.2.7", path = "facet-peek" }
 facet-poke = { version = "0.2.3", path = "facet-poke" }
 facet-core = { version = "0.2.5", path = "facet-core" }
 facet-samplelibc = { version = "0.1.5", path = "facet-samplelibc" }

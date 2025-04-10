@@ -1,4 +1,3 @@
-use facet_core::Facet;
 use facet_derive::Facet;
 use facet_json_write::to_json;
 use facet_poke::Peek;

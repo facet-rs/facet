@@ -93,3 +93,16 @@ absolve:
     cargo tree -i syn -e features
     exit 1
     fi
+
+ship:
+    #!/usr/bin/env -S /bin/bash -eux
+    release-plz update
+    git add .
+    git commit
+    git push
+    just release
+
+release:
+    # This works around a bug in release-plz: it does not publish dev dependencies in the right order.
+    cargo publish -p facet-samplelibc || true
+    release-plz release --backend github --git-token $(gh auth token)

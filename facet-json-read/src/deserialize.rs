@@ -97,51 +97,51 @@ fn deserialize_value<'input, 'mem>(
                         trace!("Deserializing \x1b[1;36mscalar\x1b[0m");
                         let opaque = if pv.shape().is_type::<String>() {
                             let s = parser.parse_string()?;
-                            let data = unsafe { pv.put(OpaqueConst::from_ref(&s)) };
+                            let data = unsafe { pv.write(OpaqueConst::new(&s)) };
                             core::mem::forget(s);
                             data
                         } else if pv.shape().is_type::<bool>() {
                             let b = parser.parse_bool()?;
-                            unsafe { pv.put(OpaqueConst::from_ref(&b)) }
+                            unsafe { pv.write(OpaqueConst::new(&b)) }
                         // Unsigned integers
                         } else if pv.shape().is_type::<u8>() {
                             let n = parser.parse_u64()? as u8;
-                            unsafe { pv.put(OpaqueConst::from_ref(&n)) }
+                            unsafe { pv.write(OpaqueConst::new(&n)) }
                         } else if pv.shape().is_type::<u16>() {
                             let n = parser.parse_u64()? as u16;
-                            unsafe { pv.put(OpaqueConst::from_ref(&n)) }
+                            unsafe { pv.write(OpaqueConst::new(&n)) }
                         } else if pv.shape().is_type::<u32>() {
                             let n = parser.parse_u64()? as u32;
-                            unsafe { pv.put(OpaqueConst::from_ref(&n)) }
+                            unsafe { pv.write(OpaqueConst::new(&n)) }
                         } else if pv.shape().is_type::<u64>() {
                             let n = parser.parse_u64()?;
-                            unsafe { pv.put(OpaqueConst::from_ref(&n)) }
+                            unsafe { pv.write(OpaqueConst::new(&n)) }
                         } else if pv.shape().is_type::<u128>() {
                             let n = parser.parse_u64()? as u128;
-                            unsafe { pv.put(OpaqueConst::from_ref(&n)) }
+                            unsafe { pv.write(OpaqueConst::new(&n)) }
                         // Signed integers
                         } else if pv.shape().is_type::<i8>() {
                             let n = parser.parse_i64()? as i8;
-                            unsafe { pv.put(OpaqueConst::from_ref(&n)) }
+                            unsafe { pv.write(OpaqueConst::new(&n)) }
                         } else if pv.shape().is_type::<i16>() {
                             let n = parser.parse_i64()? as i16;
-                            unsafe { pv.put(OpaqueConst::from_ref(&n)) }
+                            unsafe { pv.write(OpaqueConst::new(&n)) }
                         } else if pv.shape().is_type::<i32>() {
                             let n = parser.parse_i64()? as i32;
-                            unsafe { pv.put(OpaqueConst::from_ref(&n)) }
+                            unsafe { pv.write(OpaqueConst::new(&n)) }
                         } else if pv.shape().is_type::<i64>() {
                             let n = parser.parse_i64()?;
-                            unsafe { pv.put(OpaqueConst::from_ref(&n)) }
+                            unsafe { pv.write(OpaqueConst::new(&n)) }
                         } else if pv.shape().is_type::<i128>() {
                             let n = parser.parse_i64()? as i128;
-                            unsafe { pv.put(OpaqueConst::from_ref(&n)) }
+                            unsafe { pv.write(OpaqueConst::new(&n)) }
                         // Floating point
                         } else if pv.shape().is_type::<f32>() {
                             let n = parser.parse_f64()? as f32;
-                            unsafe { pv.put(OpaqueConst::from_ref(&n)) }
+                            unsafe { pv.write(OpaqueConst::new(&n)) }
                         } else if pv.shape().is_type::<f64>() {
                             let n = parser.parse_f64()?;
-                            unsafe { pv.put(OpaqueConst::from_ref(&n)) }
+                            unsafe { pv.write(OpaqueConst::new(&n)) }
                         } else {
                             panic!("Unknown scalar shape: {}", pv.shape());
                         };
@@ -303,7 +303,7 @@ fn deserialize_value<'input, 'mem>(
                     StackItem::FinishMap { pm } => pm,
                     _ => unreachable!(),
                 };
-                let key_data = Opaque::from_ref(&mut key);
+                let key_data = Opaque::new(&mut key);
                 let value = unsafe { value.assume_init() };
                 unsafe {
                     pm.insert(key_data, value);

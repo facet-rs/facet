@@ -206,7 +206,7 @@ impl<'mem> PeekValue<'mem> {
     pub fn hash<H: core::hash::Hasher>(&self, hasher: &mut H) -> bool {
         unsafe {
             if let Some(hash_fn) = self.shape.vtable.hash {
-                let hasher_opaque = Opaque::from_ref(hasher);
+                let hasher_opaque = Opaque::new(hasher);
                 hash_fn(self.data, hasher_opaque, |opaque, bytes| {
                     opaque.as_mut::<H>().write(bytes)
                 });

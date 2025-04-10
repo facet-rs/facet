@@ -6,9 +6,6 @@ The `Facet` trait is the cornerstone of our reflection system. It provides a way
 
 ```rust,ignore
 pub unsafe trait Facet: 'static {
-    /// A sample value of this type, used for compile-time type information
-    const ARCHETYPE: Self;
-
     /// A static reference to a Shape describing this type
     const SHAPE: &'static Shape;
 }
@@ -21,16 +18,6 @@ The `Facet` trait allows any implementing type to expose its structural informat
 ## Specialization via Auto-Deref
 
 Facet uses a technique called "auto-deref-based specialization" to enable trait-like specialization on stable Rust. This approach allows us to conditionally implement functionality based on what traits a type implements, all without requiring the unstable `specialization` feature.
-
-### The ARCHETYPE Value
-
-The `ARCHETYPE` constant in the `Facet` trait might seem strange at first glance. It's important to understand that:
-
-1. The `ARCHETYPE` value is never actually read at runtime
-2. It only exists to enable the specialization pattern
-3. It just needs to not trigger undefined behavior if it were to be constructed
-
-This is used in conjunction with our specialization system in the `spez.rs` module.
 
 ### How Auto-Deref Specialization Works
 
@@ -106,8 +93,8 @@ fn create_array_shape<T: Facet>() {
                 let b = unsafe { b.as_ref::<[T; 1]>() };
                 unsafe {
                     (T::SHAPE.vtable.partial_ord.unwrap_unchecked())(
-                        OpaqueConst::from_ref(&a[0]),
-                        OpaqueConst::from_ref(&b[0]),
+                        OpaqueConst::new(&a[0]),
+                        OpaqueConst::new(&b[0]),
                     )
                 }
             })

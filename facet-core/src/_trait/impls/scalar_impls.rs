@@ -3,7 +3,6 @@ use crate::*;
 use core::alloc::Layout;
 
 unsafe impl Facet for () {
-    const ARCHETYPE: Self = ();
     const SHAPE: &'static Shape = &const {
         Shape::builder()
             .layout(Layout::new::<Self>())
@@ -16,7 +15,6 @@ unsafe impl Facet for () {
 }
 
 unsafe impl Facet for String {
-    const ARCHETYPE: Self = String::new();
     const SHAPE: &'static Shape = &const {
         Shape::builder()
             .layout(Layout::new::<Self>())
@@ -31,7 +29,6 @@ unsafe impl Facet for String {
 }
 
 unsafe impl Facet for &str {
-    const ARCHETYPE: Self = "";
     const SHAPE: &'static Shape = &const {
         Shape::builder()
             .layout(Layout::new::<Self>())
@@ -48,7 +45,6 @@ unsafe impl Facet for &str {
 // FIXME: That's wrong. This is an enum, so it should be treated as an enum.
 #[cfg(feature = "std")]
 unsafe impl Facet for std::borrow::Cow<'_, str> {
-    const ARCHETYPE: Self = std::borrow::Cow::Borrowed("");
     const SHAPE: &'static Shape = &const {
         Shape::builder()
             .layout(Layout::new::<Self>())
@@ -66,7 +62,6 @@ unsafe impl Facet for std::borrow::Cow<'_, str> {
 }
 
 unsafe impl Facet for bool {
-    const ARCHETYPE: Self = false;
     const SHAPE: &'static Shape = &const {
         Shape::builder()
             .layout(Layout::new::<Self>())
@@ -83,7 +78,6 @@ unsafe impl Facet for bool {
 macro_rules! impl_facet_for_integer {
     ($type:ty) => {
         unsafe impl Facet for $type {
-            const ARCHETYPE: Self = 0;
             const SHAPE: &'static Shape = &const {
                 Shape::builder()
                     .layout(Layout::new::<Self>())
@@ -118,7 +112,6 @@ impl_facet_for_integer!(core::primitive::isize);
 macro_rules! impl_facet_for_float {
     ($type:ty) => {
         unsafe impl Facet for $type {
-            const ARCHETYPE: Self = 0.0;
             const SHAPE: &'static Shape = &const {
                 Shape::builder()
                     .layout(Layout::new::<Self>())
@@ -142,10 +135,6 @@ impl_facet_for_float!(core::primitive::f64);
 
 #[cfg(feature = "std")]
 unsafe impl Facet for std::net::SocketAddr {
-    const ARCHETYPE: Self = std::net::SocketAddr::V4(std::net::SocketAddrV4::new(
-        std::net::Ipv4Addr::new(0, 0, 0, 0),
-        0,
-    ));
     const SHAPE: &'static Shape = &const {
         Shape::builder()
             .layout(Layout::new::<Self>())

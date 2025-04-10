@@ -29,14 +29,14 @@ fn build_foobar_through_reflection() {
     let (poke, guard) = Poke::alloc::<FooBar>();
     let mut poke = poke.into_struct();
     unsafe {
-        poke.unchecked_set_by_name("foo", OpaqueConst::from_ref(&42u64))
+        poke.unchecked_set_by_name("foo", OpaqueConst::new(&42u64))
             .unwrap();
     }
 
     {
         let bar = String::from("Hello, World!");
         unsafe {
-            poke.unchecked_set_by_name("bar", OpaqueConst::from_ref(&bar))
+            poke.unchecked_set_by_name("bar", OpaqueConst::new(&bar))
                 .unwrap();
         }
         // bar has been moved out of
@@ -64,7 +64,7 @@ fn build_foobar_incomplete() {
     let (poke, guard) = Poke::alloc::<FooBar>();
     let mut poke = poke.into_struct();
     unsafe {
-        poke.unchecked_set_by_name("foo", OpaqueConst::from_ref(&42u64))
+        poke.unchecked_set_by_name("foo", OpaqueConst::new(&42u64))
             .unwrap();
     }
 
@@ -98,7 +98,7 @@ fn build_foobar_after_default() {
     {
         let bar = String::from("Hello, World!");
         unsafe {
-            poke.unchecked_set_by_name("bar", OpaqueConst::from_ref(&bar))
+            poke.unchecked_set_by_name("bar", OpaqueConst::new(&bar))
                 .unwrap();
         }
         // bar has been moved out of
@@ -880,7 +880,7 @@ fn build_u64_properly() {
 
     let (poke, _guard) = Poke::alloc::<u64>();
     let poke = poke.into_scalar();
-    let data = unsafe { poke.put(OpaqueConst::from_ref(&42u64)) };
+    let data = unsafe { poke.write(OpaqueConst::new(&42u64)) };
     let value = unsafe { data.read::<u64>() };
 
     // Verify the value was set correctly

@@ -10,6 +10,8 @@ pub struct OpaqueUninit<'mem>(*mut u8, PhantomData<&'mem mut ()>);
 
 impl<'mem> OpaqueUninit<'mem> {
     /// Create a new opaque pointer from a mutable pointer
+    ///
+    /// This is safe because it's generic over T
     pub fn new<T>(ptr: *mut T) -> Self {
         Self(ptr as *mut u8, PhantomData)
     }
@@ -17,6 +19,8 @@ impl<'mem> OpaqueUninit<'mem> {
     /// Creates a new opaque pointer from a reference to a MaybeUninit<T>
     ///
     /// The pointer will point to the potentially uninitialized contents
+    ///
+    /// This is safe because it's generic over T
     pub fn from_maybe_uninit<T>(borrow: &'mem mut core::mem::MaybeUninit<T>) -> Self {
         Self(borrow.as_mut_ptr() as *mut u8, PhantomData)
     }
@@ -45,12 +49,12 @@ impl<'mem> OpaqueUninit<'mem> {
     }
 
     /// Returns the underlying raw pointer as a byte pointer
-    pub fn as_mut_ptr(self) -> *mut u8 {
+    pub fn as_mut_bytes(self) -> *mut u8 {
         self.0
     }
 
     /// Returns the underlying raw pointer as a const byte pointer
-    pub fn as_ptr(self) -> *const u8 {
+    pub fn as_bytes(self) -> *const u8 {
         self.0
     }
 
@@ -86,18 +90,15 @@ impl<'mem> OpaqueUninit<'mem> {
 pub struct OpaqueConst<'mem>(NonNull<u8>, PhantomData<&'mem ()>);
 
 impl<'mem> OpaqueConst<'mem> {
-    /// Create a new opaque const pointer from a reference
-    pub fn from_ref<T>(r: &'mem T) -> Self {
-        Self(NonNull::from(r).cast(), PhantomData)
-    }
-
     /// Create a new opaque const pointer from a raw pointer
     ///
     /// # Safety
     ///
-    /// The pointer must be valid, aligned, and point to initialized memory
+    /// The pointer must be non-null, valid, aligned, and point to initialized memory
     /// of the correct type, and be valid for lifetime `'mem`.
-    pub unsafe fn new_unchecked<T>(ptr: *const T) -> Self {
+    ///
+    /// It's encouraged to take the address of something with `&raw const x`, rather than `&x`
+    pub fn new<T>(ptr: *const T) -> Self {
         unsafe { Self(NonNull::new_unchecked(ptr as *mut u8), PhantomData) }
     }
 
@@ -153,18 +154,15 @@ impl<'mem> OpaqueConst<'mem> {
 pub struct Opaque<'mem>(NonNull<u8>, PhantomData<&'mem mut ()>);
 
 impl<'mem> Opaque<'mem> {
-    /// Create a new opaque pointer from a mutable reference
-    pub fn from_ref<T>(r: &'mem mut T) -> Self {
-        Self(NonNull::from(r).cast(), PhantomData)
-    }
-
     /// Create a new opaque pointer from a raw pointer
     ///
     /// # Safety
     ///
     /// The pointer must be valid, aligned, and point to initialized memory
     /// of the correct type, and be valid for lifetime `'mem`.
-    pub unsafe fn new_unchecked<T>(ptr: *mut T) -> Self {
+    ///
+    /// It's encouraged to take the address of something with `&raw mut x`, rather than `&x`
+    pub fn new<T>(ptr: *mut T) -> Self {
         Self(
             unsafe { NonNull::new_unchecked(ptr as *mut u8) },
             PhantomData,
@@ -204,6 +202,10 @@ impl<'mem> Opaque<'mem> {
     /// # Safety
     ///
     /// `T` must be the _actual_ underlying type. You're downcasting with no guardrails.
+    /// You must respect AXM (aliasing xor mutability). Holding onto the borrow while
+    /// calling as_mut is UB.
+    ///
+    /// Basically this is UB land. Careful.
     pub unsafe fn as_ref<'borrow: 'mem, T>(self) -> &'borrow T {
         unsafe { &*(self.0.as_ptr() as *const T) }
     }

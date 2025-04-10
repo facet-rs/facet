@@ -5,7 +5,6 @@ fn init_backtrace() {
     color_backtrace::install();
 }
 
-use facet_core::Facet;
 use facet_derive::Facet;
 use facet_msgpack::to_vec;
 

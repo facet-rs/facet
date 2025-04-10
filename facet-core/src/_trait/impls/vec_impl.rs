@@ -5,7 +5,6 @@ unsafe impl<T> Facet for Vec<T>
 where
     T: Facet,
 {
-    const ARCHETYPE: Self = Vec::new(); // oh this is const, fantastic
     const SHAPE: &'static Shape = &const {
         Shape::builder()
             .layout(Layout::new::<Vec<T>>())
@@ -37,7 +36,7 @@ where
                                 }
                                 unsafe {
                                     (T::SHAPE.vtable.debug.unwrap_unchecked())(
-                                        OpaqueConst::from_ref(item),
+                                        OpaqueConst::new(item),
                                         f,
                                     )?;
                                 }
@@ -55,8 +54,8 @@ where
                             }
                             for (item_a, item_b) in a.iter().zip(b.iter()) {
                                 if !(T::SHAPE.vtable.eq.unwrap_unchecked())(
-                                    OpaqueConst::from_ref(item_a),
-                                    OpaqueConst::from_ref(item_b),
+                                    OpaqueConst::new(item_a),
+                                    OpaqueConst::new(item_b),
                                 ) {
                                     return false;
                                 }
@@ -73,7 +72,7 @@ where
                             let mut hasher = HasherProxy::new(hasher_this, hasher_write_fn);
                             vec.len().hash(&mut hasher);
                             for item in vec {
-                                (t_hash)(OpaqueConst::from_ref(item), hasher_this, hasher_write_fn);
+                                (t_hash)(OpaqueConst::new(item), hasher_this, hasher_write_fn);
                             }
                         });
                     }
@@ -118,7 +117,7 @@ where
                                     "Index out of bounds: the len is {len} but the index is {index}"
                                 );
                             }
-                            OpaqueConst::new_unchecked(vec.as_ptr().add(index))
+                            OpaqueConst::new(vec.as_ptr().add(index))
                         })
                         .build()
                         },

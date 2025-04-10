@@ -90,7 +90,7 @@ impl<'mem> PokeStruct<'mem> {
         }
 
         let result = unsafe {
-            let ptr = this.data.as_mut_ptr() as *const T;
+            let ptr = this.data.as_mut_bytes() as *const T;
             core::ptr::read(ptr)
         };
         guard.take(); // dealloc
@@ -109,7 +109,7 @@ impl<'mem> PokeStruct<'mem> {
         self.assert_all_fields_initialized();
         self.shape.assert_type::<T>();
 
-        let boxed = unsafe { Box::from_raw(self.data.as_mut_ptr() as *mut T) };
+        let boxed = unsafe { Box::from_raw(self.data.as_mut_bytes() as *mut T) };
         core::mem::forget(self);
         boxed
     }
@@ -130,7 +130,7 @@ impl<'mem> PokeStruct<'mem> {
 
         unsafe {
             core::ptr::copy_nonoverlapping(
-                self.data.as_mut_ptr(),
+                self.data.as_mut_bytes(),
                 target.as_ptr(),
                 self.shape.layout.size(),
             );
@@ -197,7 +197,7 @@ impl<'mem> PokeStruct<'mem> {
         unsafe {
             core::ptr::copy_nonoverlapping(
                 value.as_ptr(),
-                self.data.field_uninit(field.offset).as_mut_ptr(),
+                self.data.field_uninit(field.offset).as_mut_bytes(),
                 field_shape.layout.size(),
             );
             self.iset.set(index);
@@ -251,7 +251,7 @@ impl<'mem> PokeStruct<'mem> {
         field_shape.assert_type::<T>();
 
         unsafe {
-            let opaque = OpaqueConst::from_ref(&value);
+            let opaque = OpaqueConst::new(&value);
             let result = self.unchecked_set(index, opaque);
             if result.is_ok() {
                 core::mem::forget(value);

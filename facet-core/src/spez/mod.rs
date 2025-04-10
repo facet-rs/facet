@@ -7,6 +7,7 @@
 use crate::types::ParseError;
 pub use ::impls::impls;
 use core::fmt::{self, Debug};
+use std::marker::PhantomData;
 
 use crate::opaque::{Opaque, OpaqueUninit};
 
@@ -19,6 +20,22 @@ use crate::opaque::{Opaque, OpaqueUninit};
 /// It wraps a value and is used in conjunction with trait implementations that leverage
 /// Rust's method resolution rules to select different implementations based on available traits.
 pub struct Spez<T>(pub T);
+
+/// A wrapper type used for auto-deref specialization.
+///
+/// This struct is a core part of the auto-deref-based specialization technique which allows
+/// conditionally implementing functionality based on what traits a type implements, without
+/// requiring the unstable `specialization` feature.
+///
+/// Unlike [`Spez`], [`SpezEmpty`] wraps a type instead of a value. It is used in conjunction with
+/// trait implementations that leverage Rust's method resolution rules to select different
+/// implementations based on available traits.
+pub struct SpezEmpty<T>(PhantomData<fn(T) -> T>);
+
+impl<T> SpezEmpty<T> {
+    /// An instance of [`SpezEmpty`].
+    pub const SPEZ: Self = Self(PhantomData);
+}
 
 //////////////////////////////////////////////////////////////////////////////////////
 // Debug 🐛🔍
@@ -101,7 +118,7 @@ pub trait SpezDefaultInPlaceYes {
     /// has sufficient space allocated for type `T`.
     unsafe fn spez_default_in_place<'mem>(&self, target: OpaqueUninit<'mem>) -> Opaque<'mem>;
 }
-impl<T: Default> SpezDefaultInPlaceYes for &Spez<T> {
+impl<T: Default> SpezDefaultInPlaceYes for &SpezEmpty<T> {
     unsafe fn spez_default_in_place<'mem>(&self, target: OpaqueUninit<'mem>) -> Opaque<'mem> {
         unsafe { target.write(<T as Default>::default()) }
     }
@@ -120,7 +137,7 @@ pub trait SpezDefaultInPlaceNo {
     /// but it should never be reachable in practice.
     unsafe fn spez_default_in_place<'mem>(&self, _target: OpaqueUninit<'mem>) -> Opaque<'mem>;
 }
-impl<T> SpezDefaultInPlaceNo for Spez<T> {
+impl<T> SpezDefaultInPlaceNo for SpezEmpty<T> {
     unsafe fn spez_default_in_place<'mem>(&self, _target: OpaqueUninit<'mem>) -> Opaque<'mem> {
         unreachable!()
     }
@@ -185,7 +202,7 @@ pub trait SpezParseYes {
     /// has sufficient space allocated for type `T`.
     unsafe fn spez_parse(&self, s: &str, target: OpaqueUninit) -> Result<(), ParseError>;
 }
-impl<T: core::str::FromStr> SpezParseYes for &Spez<T> {
+impl<T: core::str::FromStr> SpezParseYes for &SpezEmpty<T> {
     unsafe fn spez_parse(&self, s: &str, target: OpaqueUninit) -> Result<(), ParseError> {
         match <T as core::str::FromStr>::from_str(s) {
             Ok(value) => {
@@ -212,7 +229,7 @@ pub trait SpezParseNo {
     /// but it should never be reachable in practice.
     unsafe fn spez_parse(&self, _s: &str, _target: OpaqueUninit) -> Result<(), ParseError>;
 }
-impl<T> SpezParseNo for Spez<T> {
+impl<T> SpezParseNo for SpezEmpty<T> {
     unsafe fn spez_parse(&self, _s: &str, _target: OpaqueUninit) -> Result<(), ParseError> {
         unreachable!()
     }

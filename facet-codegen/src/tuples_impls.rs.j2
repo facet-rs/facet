@@ -63,9 +63,6 @@ unsafe impl<{{ type_list }}> Facet for {{ type_name }}
 where
     {{ where_predicates }}
 {
-    const ARCHETYPE: Self = (
-        {% for i in range(n) %}T{{ i }}::ARCHETYPE,{% endfor %}
-    );
     const SHAPE: &'static Shape = &const {
         fn type_name<{{ type_list }}>(
             f: &mut fmt::Formatter,
@@ -90,8 +87,9 @@ where
                         write!(f, "(")?;
                         {% for i in range(n) %}{% if i > 0 %}write!(f, ", ")?;
                         {% endif %}unsafe {
+                            let ptr = &value.{{ i }} as *const T{{ i }};
                             (T{{ i }}::SHAPE.vtable.debug.unwrap_unchecked())(
-                                OpaqueConst::from_ref(&value.{{ i }}),
+                                OpaqueConst::new(ptr),
                                 f,
                             )
                         }?;{% endfor %}
@@ -103,20 +101,22 @@ where
                         let b = unsafe { b.as_ref::<{{ type_name }}>() };
 
                         {% for i in range(n) %}{% if i < n-1 %}// Compare element {{ i }}
-                        if !unsafe {
-                            (T{{ i }}::SHAPE.vtable.eq.unwrap_unchecked())(
-                                OpaqueConst::from_ref(&a.{{ i }}),
-                                OpaqueConst::from_ref(&b.{{ i }}),
-                            )
-                        } {
-                            return false;
+                        unsafe {
+                            let a_ptr = &a.{{ i }} as *const T{{ i }};
+                            let b_ptr = &b.{{ i }} as *const T{{ i }};
+                            if !(T{{ i }}::SHAPE.vtable.eq.unwrap_unchecked())(
+                                OpaqueConst::new(a_ptr),
+                                OpaqueConst::new(b_ptr),
+                            ) {
+                                return false;
+                            }
                         }
 
                         {% elif i == n-1 %}// Compare last element
                         unsafe {
                             (T{{ i }}::SHAPE.vtable.eq.unwrap_unchecked())(
-                                OpaqueConst::from_ref(&a.{{ i }}),
-                                OpaqueConst::from_ref(&b.{{ i }}),
+                                OpaqueConst::new(&a.{{ i }} as *const T{{ i }}),
+                                OpaqueConst::new(&b.{{ i }} as *const T{{ i }}),
                             )
                         }{% endif %}{% endfor %}
                     });

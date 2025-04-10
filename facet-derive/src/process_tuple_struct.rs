@@ -23,17 +23,11 @@ pub(crate) fn process_tuple_struct(parsed: TupleStruct) -> proc_macro::TokenStre
     // Create the fields string for struct_fields! macro
     let fields_str = fields.join(", ");
 
-    let dummy_fields = (0..parsed.body.content.0.len())
-        .map(|_| String::from("Facet::ARCHETYPE"))
-        .collect::<Vec<String>>()
-        .join(", ");
-
     // Generate the impl
     let output = format!(
         r#"
 #[automatically_derived]
 unsafe impl facet::Facet for {struct_name} {{
-    const ARCHETYPE: Self = Self({dummy_fields});
     const SHAPE: &'static facet::Shape = &const {{
         facet::Shape::builder()
             .layout(core::alloc::Layout::new::<Self>())

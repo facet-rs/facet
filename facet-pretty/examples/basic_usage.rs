@@ -1,5 +1,4 @@
 use facet_core as facet;
-use facet_core::Facet;
 use facet_derive::Facet;
 
 use facet_pretty::FacetPretty;

@@ -80,15 +80,15 @@ fn deserialize_value<'mem>(poke: Poke<'mem>, value: &Yaml) -> Result<Opaque<'mem
         Poke::Scalar(ps) => {
             if ps.shape().is_type::<u64>() {
                 let u = yaml_to_u64(value)?;
-                let opaque = OpaqueConst::from_ref(&u);
-                unsafe { ps.put(opaque) }
+                let opaque = OpaqueConst::new(&u);
+                unsafe { ps.write(opaque) }
             } else if ps.shape().is_type::<String>() {
                 let s = value
                     .as_str()
                     .ok_or_else(|| AnyErr(format!("Expected string, got: {}", yaml_type(value))))?
                     .to_string();
-                let opaque = OpaqueConst::from_ref(&s);
-                let res = unsafe { ps.put(opaque) };
+                let opaque = OpaqueConst::new(&s);
+                let res = unsafe { ps.write(opaque) };
                 core::mem::forget(s);
                 res
             } else {
