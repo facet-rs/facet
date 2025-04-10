@@ -280,8 +280,7 @@ impl<'a> JsonParser<'a> {
         }
     }
 
-    /// Expects the start of an array and returns whether there's a first element.
-    /// Returns true if the array has an element, false if the array is empty.
+    /// Expects the start of an array.
     pub fn expect_array_start(&mut self) -> Result<(), JsonParseErrorWithContext<'a>> {
         self.skip_whitespace();
         if self.position >= self.input.len() || self.input.as_bytes()[self.position] != b'[' {
