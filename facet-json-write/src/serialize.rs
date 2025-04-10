@@ -317,6 +317,7 @@ pub fn to_json<W: Write>(peek: Peek<'_>, writer: &mut W, indent: bool) -> io::Re
 ///
 /// ```rust
 /// use facet::Facet;
+/// use facet_json_write::to_json_string;
 /// use facet_peek::Peek;
 ///
 /// #[derive(facet::Facet)]
@@ -331,7 +332,7 @@ pub fn to_json<W: Write>(peek: Peek<'_>, writer: &mut W, indent: bool) -> io::Re
 /// };
 /// let foo = Peek::new(&foo);
 ///
-/// println!("{}", foo);
+/// println!("{}", to_json_string(foo, true));
 /// ```
 pub fn to_json_string(peek: Peek<'_>, indent: bool) -> String {
     let mut buffer = Vec::new();
