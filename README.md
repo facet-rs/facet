@@ -292,6 +292,83 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
      Summary [   0.005s] 1 test run: 1 passed, 66 skipped
 ```
 
+## Use cases: augmenting static analysis/debuggers
+
+By default the `Facet` derive macro creates and exports
+a global static variable `{UPPER_CASE_NAME}_SHAPE` referencing the
+`Shape` of the derived `Facet` trait.
+
+Furthermore, `Shape` and all nested fields are `#[repr(C)]`.
+
+This information can be used by external processes (like debuggers) to access the
+layout and vtable data.
+
+For example, suppose we have:
+
+```rust,ignore
+#[derive(Debug, Facet)]
+struct TestStruct {
+    field: &'static str,
+}
+
+static STATIC_TEST_STRUCT: TestStruct = TestStruct {
+    field: "some field I would like to see",
+};
+```
+
+By default, printing this in `lldb` returns the lengthy:
+
+```bash
+(lldb) p STATIC_TEST_STRUCT
+(simple_test::TestStruct) {
+  field = "some field I would like to see" {
+    [0] = 's'
+    [1] = 'o'
+    [2] = 'm'
+    [3] = 'e'
+    [4] = ' '
+    [5] = 'f'
+    [6] = 'i'
+    [7] = 'e'
+    [8] = 'l'
+    [9] = 'd'
+
+  ... (and so on)
+}
+```
+
+However, the `TestStruct::SHAPE` constant is available at `TEST_STRUCT_SHAPE`:
+
+```bash
+(lldb) p TEST_STRUCT_SHAPE
+(facet_core::types::Shape *) 0x00000001000481c8
+```
+
+And so we can instead build a simple helper function that takes in a pointer
+to the object and it's debug fn and prints out the `Debug` representation:
+
+```bash
+(lldb)  p debug_print_object(&STATIC_TEST_STRUCT, &TEST_STRUCT_SHAPE->vtable->debug)
+TestStruct {
+    field: "some field I would like to see",
+}
+```
+
+In this case, `debug_print_object` is needed because the `debug` function requires a `Formatter`
+which cannot be constructed externally. But for other operations like `Eq`, you can resolve it
+without needing external methods (but with some additional shenanigans to make `lldb` happy):
+
+```bash
+(lldb) p TEST_STRUCT_SHAPE->vtable->eq
+(core::option::Option<unsafe fn(facet_core::opaque::OpaqueConst, facet_core::opaque::OpaqueConst) -> bool>) {
+  value = {
+    0 = 0x0000000100002538
+  }
+}
+(lldb) p (*((bool (**)(simple_test::TestStruct* , simple_test::TestStruct*))(&TEST_STRUCT_SHAPE->vtable->eq)))(&STATIC_TEST_STRUCT, &STATIC_TEST_STRUCT)
+(bool) true
+```
+
 ## Use cases: beyond
 
 This could be extended to allow RPC, there could be an analoguous derive for traits,
