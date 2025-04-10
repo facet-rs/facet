@@ -282,21 +282,13 @@ impl<'a> JsonParser<'a> {
 
     /// Expects the start of an array and returns whether there's a first element.
     /// Returns true if the array has an element, false if the array is empty.
-    pub fn expect_array_start(&mut self) -> Result<bool, JsonParseErrorWithContext<'a>> {
+    pub fn expect_array_start(&mut self) -> Result<(), JsonParseErrorWithContext<'a>> {
         self.skip_whitespace();
         if self.position >= self.input.len() || self.input.as_bytes()[self.position] != b'[' {
             return Err(self.make_error(JsonParseErrorKind::ExpectedOpeningBracket));
         }
         self.position += 1;
-        self.skip_whitespace();
-
-        // Check if array is immediately closed
-        if self.position < self.input.len() && self.input.as_bytes()[self.position] == b']' {
-            self.position += 1;
-            return Ok(false); // Empty array
-        }
-
-        Ok(true) // Array has at least one element
+        Ok(())
     }
 
     /// Expects the end of an array or a comma followed by the next element.

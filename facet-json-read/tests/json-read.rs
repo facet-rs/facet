@@ -34,6 +34,18 @@ fn json_read_simple_struct() {
 }
 
 #[test]
+fn json_read_empty_struct() {
+    #[derive(Facet)]
+    struct TestStruct {}
+    let json = r#"{}"#;
+
+    let _: TestStruct = match from_str(json) {
+        Ok(s) => s,
+        Err(e) => panic!("Error deserializing JSON: {}", e),
+    };
+}
+
+#[test]
 fn json_read_vec() {
     let json = r#"[1, 2, 3, 4, 5]"#;
 
@@ -42,6 +54,17 @@ fn json_read_vec() {
         Err(e) => panic!("Error deserializing JSON: {}", e),
     };
     assert_eq!(v, vec![1, 2, 3, 4, 5]);
+}
+
+#[test]
+fn json_read_empty_vec() {
+    let json = r#"[]"#;
+
+    let v: Vec<i32> = match from_str(json) {
+        Ok(v) => v,
+        Err(e) => panic!("Error deserializing JSON: {}", e),
+    };
+    assert_eq!(v, vec![]);
 }
 
 #[test]
