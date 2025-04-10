@@ -312,6 +312,27 @@ pub fn to_json<W: Write>(peek: Peek<'_>, writer: &mut W, indent: bool) -> io::Re
 }
 
 /// Serializes any Facet type to JSON and returns it as a String
+///
+/// # Example
+///
+/// ```rust
+/// use facet::Facet;
+/// use facet_peek::Peek;
+///
+/// #[derive(facet::Facet)]
+/// struct Foo {
+///   bar: String,
+///   baz: u32,
+/// }
+///
+/// let foo = Foo {
+///   bar: "Hello, World!".to_string(),
+///   baz: 42,
+/// };
+/// let foo = Peek::new(&foo);
+///
+/// println!("{}", foo);
+/// ```
 pub fn to_json_string(peek: Peek<'_>, indent: bool) -> String {
     let mut buffer = Vec::new();
     to_json(peek, &mut buffer, indent).unwrap();

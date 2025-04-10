@@ -19,5 +19,7 @@ log = "0.4.27"
 color-backtrace = "0.7.0"
 ctor = "0.4.1"
 env_logger = "0.11.8"
+facet = { path = "../facet" }
 facet-derive.workspace = true
 facet-json-read = { path = "../facet-json-read" }
+facet-peek = { path = "../facet-peek" }

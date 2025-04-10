@@ -292,9 +292,11 @@ dependencies = [
  "color-backtrace",
  "ctor",
  "env_logger",
+ "facet",
  "facet-core",
  "facet-derive",
  "facet-json-read",
+ "facet-peek",
  "facet-poke",
  "log",
 ]
