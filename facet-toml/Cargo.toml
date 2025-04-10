@@ -1,0 +1,19 @@
+[package]
+name = "facet-toml"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TOML serialization and deserialization for Facet types"
+keywords = ["toml", "serialization", "deserialization", "reflection", "facet"]
+categories = ["encoding", "parsing", "data-structures"]
+
+[dependencies]
+toml_edit = { version = "0.22.24", default-features = false, features = ["parse"] }
+facet-trait.workspace = true
+facet-poke.workspace = true
+
+[dev-dependencies]
+facet-derive.workspace = true
