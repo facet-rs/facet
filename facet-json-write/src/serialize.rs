@@ -40,6 +40,25 @@ macro_rules! ints {
     };
 }
 
+macro_rules! string {
+    ($pv:expr, $writer:expr, $type:ty) => {
+        if $pv.shape().is_type::<$type>() {
+            let value = unsafe { $pv.data().as_ref::<$type>() };
+            return write!($writer, "\"{}\"", value.escape_debug());
+        }
+    };
+}
+
+macro_rules! strings {
+    ($pv:expr, $writer:expr, $type:ty, $($types:ty),*) => {
+        string!($pv, $writer, $type);
+        strings!($pv, $writer, $($types),*);
+    };
+    ($pv:expr, $writer:expr, $type:ty) => {
+        string!($pv, $writer, $type);
+    };
+}
+
 fn peek_value_to_json<W: Write>(pv: PeekValue, writer: &mut W) -> io::Result<()> {
     if pv.shape().is_type::<()>() {
         return write!(writer, "null");
@@ -48,10 +67,7 @@ fn peek_value_to_json<W: Write>(pv: PeekValue, writer: &mut W) -> io::Result<()>
     ints!(
         pv, writer, u8, i8, u16, i16, u32, i32, u64, i64, u128, i128, usize, isize
     );
-    if pv.shape().is_type::<String>() {
-        let value = unsafe { pv.data().as_ref::<String>() };
-        return write!(writer, "\"{}\"", value.escape_debug());
-    }
+    strings!(pv, writer, String, std::borrow::Cow<'_, str>, &str);
 
     write!(writer, "\"<unsupported type>\"")?;
     Ok(())
@@ -180,6 +196,13 @@ pub fn to_json<W: Write>(peek: Peek<'_>, writer: &mut W, indent: bool) -> io::Re
                                 level,
                                 is_first: i == 0,
                             });
+                        }
+                    }
+                    Peek::Option(popt) => {
+                        if let Some(p) = popt.value() {
+                            peek_value_to_json(p.as_value(), writer)?;
+                        } else {
+                            write!(writer, "null")?;
                         }
                     }
                     _ => todo!("unsupported peek type: {:?}", peek),

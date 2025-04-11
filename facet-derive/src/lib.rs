@@ -94,10 +94,17 @@ unsynn! {
     }
 
     enum Type {
+        Reference(ReferenceType),
         Path(PathType),
         Tuple(ParenthesisGroupContaining<CommaDelimitedVec<Box<Type>>>),
         Slice(BracketGroupContaining<Box<Type>>),
         Bare(BareType),
+    }
+
+    struct ReferenceType {
+        _and: And,
+        lifetime: Lifetime,
+        rest: Box<Type>,
     }
 
     struct PathType {
@@ -113,6 +120,7 @@ unsynn! {
 
     struct GenericParams {
         _lt: Lt,
+        lifetimes: CommaDelimitedVec<Lifetime>,
         params: CommaDelimitedVec<Type>,
         _gt: Gt,
     }
@@ -193,6 +201,9 @@ pub fn facet_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 impl core::fmt::Display for Type {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Type::Reference(reference) => {
+                write!(f, "&{} {}", reference.lifetime, reference.rest)
+            }
             Type::Path(path) => {
                 write!(f, "{}::{}", path.prefix, path.rest)
             }
