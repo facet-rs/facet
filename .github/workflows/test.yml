@@ -12,7 +12,7 @@ jobs:
     runs-on: arc-runners
 
     container:
-      image: rustlang/rust:1.86.0-slim
+      image: rust:1.86.0-slim
     steps:
       - uses: actions/checkout@v4
 
