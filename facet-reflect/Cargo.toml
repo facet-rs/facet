@@ -19,5 +19,9 @@ alloc = []
 facet-core = { path = "../facet-core", version = "0.5.0" }
 
 [dev-dependencies]
-facet-derive = { path = "../facet-derive", version = "0.1.17" }
+facet = { path = "../facet" }
+facet-ansi = { path = "../facet-ansi" }
+facet-pretty = { path = "../facet-pretty" }
+facet-samplelibc = { path = "../facet-samplelibc" }
+facet-testhelpers = { path = "../facet-testhelpers" }
 log = "0.4.27"

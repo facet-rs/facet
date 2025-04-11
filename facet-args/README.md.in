@@ -1,5 +1,3 @@
-{{ header("facet-args") }}
-
 Provides CLI argument parsing (WIP).
 
 ```rust
@@ -25,5 +23,3 @@ fn test_arg_parse() {
     eprintln!("args: {}", args.pretty());
 }
 ```
-
-{{ footer() }}

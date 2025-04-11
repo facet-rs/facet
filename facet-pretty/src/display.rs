@@ -3,7 +3,7 @@
 use core::fmt::{self, Display, Formatter};
 
 use crate::printer::PrettyPrinter;
-use facet::Facet;
+use facet_core::Facet;
 
 /// Display wrapper for any type that implements Facet
 pub struct PrettyDisplay<'a, T: Facet> {
@@ -45,9 +45,8 @@ impl<T: Facet> FacetPretty for T {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use facet::Facet;
-
     use core::fmt::Write;
+    use facet::Facet;
 
     // Use the derive macro from facet
     #[derive(Facet)]

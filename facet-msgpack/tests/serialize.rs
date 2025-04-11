@@ -1,15 +1,10 @@
-use ctor::ctor;
-
-#[ctor]
-fn init_backtrace() {
-    color_backtrace::install();
-}
-
 use facet::Facet;
 use facet_msgpack::to_vec;
 
 #[test]
 fn test_integers() {
+    facet_testhelpers::setup();
+
     #[derive(Debug, PartialEq, Clone, Facet)]
     struct IntegerTest {
         pos_fixint: u8, // 0-127
@@ -97,6 +92,8 @@ fn test_integers() {
 
 #[test]
 fn test_struct() {
+    facet_testhelpers::setup();
+
     #[derive(Debug, PartialEq, Clone, Facet)]
     struct TestStruct {
         name: String,

@@ -1,4 +1,5 @@
-use facet::{Facet, Peek};
+use facet_core::Facet;
+use facet_reflect::Peek;
 use log::trace;
 use std::io::{self, Write};
 

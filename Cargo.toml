@@ -13,6 +13,7 @@ members = [
     "facet-toml",
     "facet-urlencoded",
     "facet-yaml",
+    "facet-testhelpers", "facet-ansi",
 ]
 exclude = ["sample"]
 resolver = "3"

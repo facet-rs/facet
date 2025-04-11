@@ -12,11 +12,8 @@ keywords = ["code-generation", "templates"]
 categories = ["development-tools"]
 
 [dependencies]
-env_logger = "0.11.8"
+facet-ansi = { version = "0.1.0", path = "../facet-ansi" }
+facet-testhelpers = { version = "0.1.0", path = "../facet-testhelpers" }
 fs-err = "3.1.0"
 log = "0.4.27"
-minijinja = { version = "2.9.0", default-features = false, features = [
-    "builtins",
-] }
-owo-colors = "4.2.0"
 similar = { version = "2.4.0", features = ["inline"] }

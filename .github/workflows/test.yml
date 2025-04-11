@@ -9,12 +9,14 @@ on:
 
 jobs:
   code-quality:
-    runs-on: arc-runners
+    runs-on: depot-ubuntu-24.04-arm-16
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
 
       - name: Run code quality checks
         shell: bash
@@ -24,12 +26,14 @@ jobs:
           just absolve
 
   test:
-    runs-on: arc-runners
+    runs-on: depot-ubuntu-24.04-arm-16
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
 
       - name: Run tests
         shell: bash
@@ -37,12 +41,14 @@ jobs:
           just test
 
   nostd:
-    runs-on: arc-runners
+    runs-on: depot-ubuntu-24.04-arm-16
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
 
       - name: Run nostd tests
         shell: bash
@@ -50,12 +56,14 @@ jobs:
           just nostd
 
   clippy:
-    runs-on: arc-runners
+    runs-on: depot-ubuntu-24.04-arm-16
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
 
       - name: Run clippy
         shell: bash
@@ -63,12 +71,14 @@ jobs:
           just clippy
 
   doc-tests:
-    runs-on: arc-runners
+    runs-on: depot-ubuntu-24.04-arm-16
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
 
       - name: Run doc tests
         shell: bash
@@ -76,12 +86,14 @@ jobs:
           just doc-tests
 
   miri:
-    runs-on: arc-runners
+    runs-on: depot-ubuntu-24.04-arm-32
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-miri
     steps:
       - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
 
       - name: Run miri
         shell: bash

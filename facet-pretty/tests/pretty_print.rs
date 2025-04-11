@@ -1,6 +1,5 @@
-use facet::Facet;
-
 use core::fmt::Write;
+use facet::Facet;
 use facet_pretty::{FacetPretty, PrettyPrinter};
 
 #[derive(Debug, Facet)]

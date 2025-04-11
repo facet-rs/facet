@@ -1,5 +1,4 @@
 use facet::Facet;
-
 use facet_pretty::FacetPretty;
 
 #[derive(Debug, Facet)]

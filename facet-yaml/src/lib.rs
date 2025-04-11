@@ -1,12 +1,9 @@
 #![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 
-use facet::PokeUninit;
-use facet::{Facet, Opaque};
+use facet_core::{Facet, Opaque};
+use facet_reflect::PokeUninit;
 use yaml_rust2::{Yaml, YamlLoader};
-
-#[cfg(test)]
-mod tests;
 
 /// Deserializes a YAML string into a value of type `T` that implements `Facet`.
 pub fn from_str<T: Facet>(yaml: &str) -> Result<T, AnyErr> {

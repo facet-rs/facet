@@ -2,15 +2,15 @@ use std::io::Write;
 use std::path::Path;
 use std::process;
 
+mod gen_tuples_impls;
+mod readmes;
+
+use facet_ansi::Stylize as _;
 use log::{error, info, warn};
-use minijinja::Environment;
-use owo_colors::{OwoColorize, Style};
 use similar::{ChangeTag, TextDiff};
 
 fn main() {
-    env_logger::Builder::new()
-        .filter_level(log::LevelFilter::Info)
-        .init();
+    facet_testhelpers::setup();
 
     let opts = Options {
         check: std::env::args().any(|arg| arg == "--check"),
@@ -26,14 +26,38 @@ fn main() {
         panic!();
     }
 
-    // Generate tuple implementations
-    generate_tuple_impls(&mut has_diffs, &opts);
+    // Run all three code generation tasks in parallel
+    let opts_clone1 = opts.clone();
+    let tuple_impls_result = std::thread::spawn(move || {
+        let mut local_has_diffs = false;
+        generate_tuple_impls(&mut local_has_diffs, opts_clone1);
+        local_has_diffs
+    });
 
-    // Generate README files from templates
-    generate_readme_files(&mut has_diffs, &opts);
+    let opts_clone2 = opts.clone();
+    let readme_files_result = std::thread::spawn(move || {
+        let mut local_has_diffs = false;
+        readmes::generate_readme_files(&mut local_has_diffs, opts_clone2);
+        local_has_diffs
+    });
 
-    // Generate `facet-core/src/sample_generated_code.rs`
-    copy_cargo_expand_output(&mut has_diffs, &opts);
+    let opts_clone3 = opts.clone();
+    let sample_code_result = std::thread::spawn(move || {
+        let mut local_has_diffs = false;
+        copy_cargo_expand_output(&mut local_has_diffs, &opts_clone3);
+        local_has_diffs
+    });
+
+    // Collect results and update has_diffs
+    has_diffs |= tuple_impls_result
+        .join()
+        .expect("tuple_impls thread panicked");
+    has_diffs |= readme_files_result
+        .join()
+        .expect("readme_files thread panicked");
+    has_diffs |= sample_code_result
+        .join()
+        .expect("sample_code thread panicked");
 
     if opts.check && has_diffs {
         process::exit(1);
@@ -44,15 +68,13 @@ fn copy_cargo_expand_output(has_diffs: &mut bool, opts: &Options) {
     let workspace_dir = std::env::current_dir().unwrap();
     let sample_dir = workspace_dir.join("sample");
 
-    // Change to the sample directory
-    std::env::set_current_dir(&sample_dir).expect("Failed to change to sample directory");
-
     // Run cargo expand command and measure execution time
     let start_time = std::time::Instant::now();
 
     // Command 1: cargo rustc for expansion
     let cargo_expand_output = std::process::Command::new("cargo")
         .env("RUSTC_BOOTSTRAP", "1") // Necessary for -Z flags
+        .current_dir(&sample_dir) // Set working directory instead of changing it
         .arg("rustc")
         .arg("--target-dir")
         .arg("/tmp/facet-codegen-expand") // Use a temporary, less intrusive target dir
@@ -123,10 +145,6 @@ fn copy_cargo_expand_output(has_diffs: &mut bool, opts: &Options) {
     }
     let execution_time = start_time.elapsed();
 
-    // Change back to the workspace directory
-    std::env::set_current_dir(&workspace_dir)
-        .expect("Failed to change back to workspace directory");
-
     if !output.status.success() {
         error!("🚫 {}", "Cargo expand command failed".red());
         std::process::exit(1);
@@ -194,7 +212,7 @@ fn copy_cargo_expand_output(has_diffs: &mut bool, opts: &Options) {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Options {
     check: bool,
 }
@@ -243,11 +261,11 @@ fn check_diff(path: &Path, new_content: &[u8]) -> bool {
                 }
                 ChangeTag::Delete => {
                     equal_count = 0;
-                    info!("-{}", Style::new().red().style(change));
+                    info!("-{}", change.red());
                 }
                 ChangeTag::Insert => {
                     equal_count = 0;
-                    info!("+{}", Style::new().green().style(change));
+                    info!("+{}", change.green());
                 }
             }
 
@@ -273,34 +291,14 @@ fn write_if_different(path: &Path, content: Vec<u8>, check_mode: bool) -> bool {
     }
 }
 
-fn generate_tuple_impls(has_diffs: &mut bool, opts: &Options) {
-    // Initialize minijinja environment
-    let mut env = Environment::empty();
-    env.add_function("range", minijinja::functions::range);
+fn generate_tuple_impls(has_diffs: &mut bool, opts: Options) {
+    // Start timer to measure execution time
+    let start_time = std::time::Instant::now();
 
     // Define the base path and template path
     let base_path = Path::new("facet-core/src/_trait/impls/tuples_impls.rs");
-    let template_path = base_path.with_extension("rs.j2");
 
-    // Load the template from file
-    let template_content = fs_err::read_to_string(&template_path)
-        .unwrap_or_else(|_| panic!("Failed to read template file: {:?}", template_path));
-
-    // Add the template to the environment
-    env.add_template("tuples_impls", &template_content)
-        .expect("Failed to add template");
-
-    // Get the template
-    let template = env
-        .get_template("tuples_impls")
-        .expect("Failed to get template");
-
-    // Render the template with context
-    let output = template
-        .render(minijinja::context! {
-            max_tuple_size => 12
-        })
-        .expect("Failed to render template");
+    let output = gen_tuples_impls::generate_tuples_impls();
 
     // Format the generated code using rustfmt
     let mut fmt = std::process::Command::new("rustfmt")
@@ -321,6 +319,14 @@ fn generate_tuple_impls(has_diffs: &mut bool, opts: &Options) {
     // Get formatted output
     let formatted_output = fmt.wait_with_output().expect("Failed to wait for rustfmt");
     if !formatted_output.status.success() {
+        // Save the problematic output for inspection
+        let _ = std::fs::write("/tmp/output.rs", &output);
+        error!(
+            "🚫 {} {}",
+            "rustfmt failed to format the code.".red(),
+            "The unformatted output has been saved to /tmp/output.rs for inspection.".yellow(),
+        );
+
         error!(
             "🚫 {}",
             format!("rustfmt failed with exit code: {}", formatted_output.status).red()
@@ -329,189 +335,22 @@ fn generate_tuple_impls(has_diffs: &mut bool, opts: &Options) {
     }
 
     *has_diffs |= write_if_different(base_path, formatted_output.stdout, opts.check);
-}
 
-fn generate_readme_files(has_diffs: &mut bool, opts: &Options) {
-    // Get all crate directories in the workspace
-    let workspace_dir = std::env::current_dir().unwrap();
-    let entries = fs_err::read_dir(&workspace_dir).expect("Failed to read workspace directory");
+    // Calculate execution time
+    let execution_time = start_time.elapsed();
 
-    // Create a new MiniJinja environment for README templates
-    let mut env = Environment::empty();
-
-    // Add template functions
-    env.add_function("header", |crate_name: String| {
-        format!(r#"
-
-<h1>
-<picture>
-<source srcset="https://github.com/facet-rs/facet/raw/main/static/logo-v2/logo-only.webp">
-<img src="https://github.com/facet-rs/facet/raw/main/static/logo-v2/logo-only.png" height="35" alt="Facet logo - a reflection library for Rust">
-</picture> &nbsp; {0}
-</h1>
-
-[![experimental](https://img.shields.io/badge/status-experimental-yellow)](https://github.com/fasterthanlime/facet)
-[![free of syn](https://img.shields.io/badge/free%20of-syn-hotpink)](https://github.com/fasterthanlime/free-of-syn)
-[![crates.io](https://img.shields.io/crates/v/{0}.svg)](https://crates.io/crates/{0})
-[![documentation](https://docs.rs/{0}/badge.svg)](https://docs.rs/{0})
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/{0}.svg)](./LICENSE)
-
-_Logo by [Misiasart](https://misiasart.com/)_
-
-Thanks to all individual and corporate sponsors, without whom this work could not exist:
-
-<p> <a href="https://ko-fi.com/fasterthanlime">
-    <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v2/ko-fi-dark.svg">
-    <img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v2/ko-fi-light.svg" height="40" alt="Ko-fi">
-    </picture>
-</a> <a href="https://github.com/sponsors/fasterthanlime">
-    <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v2/github-dark.svg">
-    <img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v2/github-light.svg" height="40" alt="GitHub Sponsors">
-    </picture>
-</a> <a href="https://patreon.com/fasterthanlime">
-    <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v2/patreon-dark.svg">
-    <img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v2/patreon-light.svg" height="40" alt="Patreon">
-    </picture>
-</a> <a href="https://zed.dev">
-    <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v2/zed-dark.svg">
-    <img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v2/zed-light.svg" height="40" alt="Zed">
-    </picture>
-</a> </p>
-             "#,
-            crate_name
-        )
-    });
-
-    env.add_function("footer", || {
-        r#"
-## License
-
-Licensed under either of:
-
-- Apache License, Version 2.0 ([LICENSE-APACHE](https://github.com/facet-rs/facet/blob/main/LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0>)
-- MIT license ([LICENSE-MIT](https://github.com/facet-rs/facet/blob/main/LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
-
-at your option."#.to_string()
-    });
-
-    // Process each crate in the workspace
-    for entry in entries {
-        let entry = entry.expect("Failed to read directory entry");
-        let path = entry.path();
-
-        // Skip non-directories and entries starting with '.' or '_'
-        if !path.is_dir()
-            || path.file_name().is_some_and(|name| {
-                let name = name.to_string_lossy();
-                name.starts_with('.') || name.starts_with('_')
-            })
-        {
-            continue;
-        }
-
-        // Skip target directory and facet-codegen itself
-        let dir_name = path.file_name().unwrap().to_string_lossy();
-        if dir_name == "target" {
-            continue;
-        }
-
-        // Check if this is a crate directory (has a Cargo.toml)
-        let cargo_toml_path = path.join("Cargo.toml");
-        if !cargo_toml_path.exists() {
-            continue;
-        }
-
-        // Get crate name from directory name
-        let crate_name = dir_name.to_string();
-
-        // Special case for the main facet crate
-        let template_path = if crate_name == "facet" {
-            Path::new("README.md.j2").to_path_buf()
-        } else {
-            path.join("README.md.j2")
-        };
-        if template_path.exists() {
-            process_readme_template(&mut env, &path, &template_path, has_diffs, opts);
-        } else {
-            error!("🚫 Missing template: {}", template_path.display().red());
-            panic!();
-        }
-    }
-
-    // Generate workspace README, too (which is the same as the `facet` crate)
-    let workspace_template_path = workspace_dir.join("README.md.j2");
-    if !workspace_template_path.exists() {
-        error!(
-            "🚫 {}",
-            format!(
-                "Template file README.md.j2 not found for workspace. We looked at {}",
-                workspace_template_path.display()
-            )
-            .red()
-        );
-        panic!();
-    }
-
-    process_readme_template(
-        &mut env,
-        &workspace_dir,
-        &workspace_template_path,
-        has_diffs,
-        opts,
-    );
-}
-
-fn process_readme_template(
-    env: &mut Environment,
-    crate_path: &Path,
-    template_path: &Path,
-    has_diffs: &mut bool,
-    opts: &Options,
-) {
-    // Get crate name from directory name
-    let crate_name = crate_path
-        .file_name()
-        .unwrap()
-        .to_string_lossy()
-        .to_string();
-
-    // Read the template
-    let template_content = fs_err::read_to_string(template_path)
-        .unwrap_or_else(|_| panic!("Failed to read template file: {:?}", template_path));
-
-    // Create a template ID
-    let template_id = format!("{}_readme", crate_name);
-
-    // Add template to environment
-    env.add_template(
-        Box::leak(template_id.clone().into_boxed_str()),
-        Box::leak(template_content.into_boxed_str()),
-    )
-    .unwrap_or_else(|_| panic!("Failed to add template: {}", template_id));
-
-    // Get the template
-    let template = env
-        .get_template(&template_id)
-        .expect("Failed to get template");
-
-    // Render the template with context
-    let output = template
-        .render(minijinja::context! {
-            crate_name => crate_name
-        })
-        .expect("Failed to render template");
-
-    // Save the rendered content to README.md
-    let readme_path = crate_path.join("README.md");
-    *has_diffs |= write_if_different(&readme_path, output.into_bytes(), opts.check);
-
+    // Print success message with execution time
     if opts.check {
-        info!("✅ Checked README.md for {}", crate_name.blue());
+        info!(
+            "✅ Checked {} (took {:?})",
+            "tuple implementations".blue().green(),
+            execution_time
+        );
     } else {
-        info!("📝 Generated README.md for {}", crate_name.blue());
+        info!(
+            "🔧 Generated {} (took {:?})",
+            "tuple implementations".blue().green(),
+            execution_time
+        );
     }
 }

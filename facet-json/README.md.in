@@ -1,5 +1,3 @@
-{{ header("facet-json") }}
-
 JSON serialization and deserialization for [facet](https://crates.io/crates/facet).
 
 ## Usage
@@ -7,7 +5,8 @@ JSON serialization and deserialization for [facet](https://crates.io/crates/face
 ### Serialization Example
 
 ```rust
-use facet::{Facet, Peek};
+use facet::Facet;
+use facet_reflect::Peek;
 use facet_json::to_json_string;
 
 #[derive(facet::Facet)]
@@ -61,5 +60,3 @@ fn main() {
     // Output: Person { name: "Bob", age: 25 }
 }
 ```
-
-{{ footer() }}

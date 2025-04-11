@@ -2,8 +2,8 @@ use std::num::NonZero;
 
 use crate::parser::{JsonParseErrorKind, JsonParseErrorWithContext, JsonParser};
 
-use facet::{Facet, Opaque, OpaqueUninit, PokeList, PokeMap, PokeStruct};
-use facet::{PokeUninit, PokeValueUninit};
+use facet_core::{Facet, Opaque, OpaqueUninit};
+use facet_reflect::{PokeList, PokeMap, PokeStruct, PokeUninit, PokeValueUninit};
 use log::trace;
 
 /// Deserializes a JSON string into a value of type `T` that implements `Facet`.

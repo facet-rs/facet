@@ -1,4 +1,3 @@
-use super::*;
 use facet::Facet;
 
 #[derive(Debug, Facet, PartialEq)]
@@ -14,7 +13,7 @@ fn test_deserialize_person() {
             age: 30
         "#;
 
-    let person: Person = from_str(yaml).expect("Failed to parse YAML");
+    let person: Person = facet_yaml::from_str(yaml).expect("Failed to parse YAML");
     assert_eq!(
         person,
         Person {

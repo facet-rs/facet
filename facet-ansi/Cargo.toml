@@ -1,0 +1,13 @@
+[package]
+name = "facet-ansi"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["ansi", "terminal", "color", "formatting", "style"]
+categories = ["command-line-interface", "text-processing"]
+description = "A library for ANSI terminal formatting and styling, providing utilities to add colors and text effects to terminal output"
+
+[dependencies]

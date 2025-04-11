@@ -3,10 +3,6 @@
 //! For now it is extremely naive, it's just a proof of concept, it doesn't use SIMD or anything,
 //! it's not fast, it's nothing, it's just proving that we can use facet types to deserialize something.
 
-#![allow(dead_code)]
-
-use std::str::FromStr;
-
 #[derive(Debug)]
 pub struct JsonParseError {
     pub kind: JsonParseErrorKind,
@@ -52,304 +48,338 @@ impl JsonParseErrorWithContext<'_> {
     }
 }
 
-pub struct JsonParser<'input> {
-    input: &'input str,
-    position: usize,
+impl core::fmt::Display for JsonParseError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let error_message = match &self.kind {
+            JsonParseErrorKind::ExpectedOpeningQuote => "Expected opening quote for string",
+            JsonParseErrorKind::UnterminatedString => "Unterminated string",
+            JsonParseErrorKind::InvalidEscapeSequence(ch) => {
+                return write!(f, "Invalid escape sequence: \\{}", ch);
+            }
+            JsonParseErrorKind::IncompleteUnicodeEscape => "Incomplete Unicode escape sequence",
+            JsonParseErrorKind::InvalidUnicodeEscape => "Invalid Unicode escape sequence",
+            JsonParseErrorKind::ExpectedNumber => "Expected a number",
+            JsonParseErrorKind::InvalidNumberFormat => "Invalid number format",
+            JsonParseErrorKind::ExpectedOpeningBrace => "Expected opening brace for object",
+            JsonParseErrorKind::ExpectedOpeningBracket => "Expected opening bracket for array",
+            JsonParseErrorKind::ExpectedColon => "Expected ':' after object key",
+            JsonParseErrorKind::UnexpectedEndOfInput => "Unexpected end of input",
+            JsonParseErrorKind::InvalidValue => "Invalid value",
+            JsonParseErrorKind::ExpectedClosingBrace => "Expected closing brace for object",
+            JsonParseErrorKind::ExpectedClosingBracket => "Expected closing bracket for array",
+            JsonParseErrorKind::UnknownField(field) => {
+                return write!(f, "Unknown field: {}", field);
+            }
+            JsonParseErrorKind::Custom(msg) => msg,
+        };
+
+        write!(f, "{} at position {}", error_message, self.position)
+    }
 }
 
-impl<'input> JsonParser<'input> {
-    pub fn new(input: &'input str) -> Self {
+impl core::fmt::Display for JsonParseErrorWithContext<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let context_start = self.error.position.saturating_sub(20);
+        let context_end = (self.error.position + 20).min(self.input.len());
+        let context = &self.input[context_start..context_end];
+        let arrow_position = self.error.position - context_start;
+
+        writeln!(f, "{}", self.error)?;
+        writeln!(f, "\x1b[36m{}\x1b[0m", context)?;
+        write!(f, "{}\x1b[31m^\x1b[0m", " ".repeat(arrow_position))
+    }
+}
+
+impl core::error::Error for JsonParseError {}
+
+pub struct JsonParser<'input> {
+    pub input: &'input str,
+    pub position: usize,
+}
+
+impl<'a> JsonParser<'a> {
+    pub fn new(input: &'a str) -> Self {
         JsonParser { input, position: 0 }
     }
 
-    pub fn make_error(&self, kind: JsonParseErrorKind) -> JsonParseErrorWithContext<'input> {
+    pub fn make_error(&self, kind: JsonParseErrorKind) -> JsonParseErrorWithContext<'a> {
         JsonParseErrorWithContext {
             error: JsonParseError::new(kind, self.position),
             input: self.input,
         }
     }
 
-    fn peek_char(&self) -> Option<char> {
-        self.input[self.position..].chars().next()
-    }
-
-    fn next_char(&mut self) -> Option<char> {
-        let c = self.peek_char()?;
-        self.position += c.len_utf8();
-        Some(c)
-    }
-
-    fn skip_whitespace(&mut self) {
-        while let Some(c) = self.peek_char() {
-            if c.is_whitespace() {
-                self.next_char();
-            } else {
-                break;
-            }
-        }
-    }
-
-    pub fn parse_string(&mut self) -> Result<String, JsonParseErrorWithContext<'input>> {
+    pub fn parse_string(&mut self) -> Result<String, JsonParseErrorWithContext<'a>> {
         self.skip_whitespace();
-
-        if self.next_char() != Some('"') {
+        if self.position >= self.input.len() || self.input.as_bytes()[self.position] != b'"' {
             return Err(self.make_error(JsonParseErrorKind::ExpectedOpeningQuote));
         }
+        self.position += 1;
 
         let mut result = String::new();
-        loop {
-            match self.next_char() {
-                Some('"') => break,
-                Some('\\') => match self.next_char() {
-                    Some('"') => result.push('"'),
-                    Some('\\') => result.push('\\'),
-                    Some('/') => result.push('/'),
-                    Some('b') => result.push('\x08'),
-                    Some('f') => result.push('\x0C'),
-                    Some('n') => result.push('\n'),
-                    Some('r') => result.push('\r'),
-                    Some('t') => result.push('\t'),
-                    Some('u') => {
-                        let mut code_point = 0;
-                        for _ in 0..4 {
-                            let c = self.next_char().ok_or_else(|| {
+        let mut escaped = false;
+
+        while self.position < self.input.len() {
+            let ch = self.input.as_bytes()[self.position];
+            self.position += 1;
+
+            if escaped {
+                match ch {
+                    b'"' | b'\\' | b'/' => result.push(ch as char),
+                    b'b' => result.push('\x08'),
+                    b'f' => result.push('\x0C'),
+                    b'n' => result.push('\n'),
+                    b'r' => result.push('\r'),
+                    b't' => result.push('\t'),
+                    b'u' => {
+                        // Parse 4-digit hex code
+                        if self.position + 4 > self.input.len() {
+                            return Err(
                                 self.make_error(JsonParseErrorKind::IncompleteUnicodeEscape)
-                            })?;
-                            code_point = code_point * 16
-                                + c.to_digit(16).ok_or_else(|| {
-                                    self.make_error(JsonParseErrorKind::InvalidUnicodeEscape)
-                                })?;
+                            );
                         }
-                        result.push(char::from_u32(code_point).ok_or_else(|| {
-                            self.make_error(JsonParseErrorKind::InvalidUnicodeEscape)
-                        })?);
+                        let hex = &self.input[self.position..self.position + 4];
+                        self.position += 4;
+                        if let Ok(code) = u16::from_str_radix(hex, 16) {
+                            result.push(char::from_u32(code as u32).unwrap_or('\u{FFFD}'));
+                        } else {
+                            return Err(self.make_error(JsonParseErrorKind::InvalidUnicodeEscape));
+                        }
                     }
-                    Some(c) => {
-                        return Err(self.make_error(JsonParseErrorKind::InvalidEscapeSequence(c)));
+                    _ => {
+                        return Err(
+                            self.make_error(JsonParseErrorKind::InvalidEscapeSequence(ch as char))
+                        );
                     }
-                    None => return Err(self.make_error(JsonParseErrorKind::UnexpectedEndOfInput)),
-                },
-                Some(c) => result.push(c),
-                None => return Err(self.make_error(JsonParseErrorKind::UnterminatedString)),
+                }
+                escaped = false;
+            } else if ch == b'\\' {
+                escaped = true;
+            } else if ch == b'"' {
+                return Ok(result);
+            } else {
+                result.push(ch as char);
             }
         }
 
-        Ok(result)
+        Err(self.make_error(JsonParseErrorKind::UnterminatedString))
     }
 
-    pub fn parse_number<T: FromStr>(&mut self) -> Result<T, JsonParseErrorWithContext<'input>>
-    where
-        <T as FromStr>::Err: std::fmt::Debug,
-    {
+    pub fn parse_u64(&mut self) -> Result<u64, JsonParseErrorWithContext<'a>> {
         self.skip_whitespace();
+        let start = self.position;
+        while self.position < self.input.len()
+            && self.input.as_bytes()[self.position].is_ascii_digit()
+        {
+            self.position += 1;
+        }
+        if start == self.position {
+            return Err(self.make_error(JsonParseErrorKind::ExpectedNumber));
+        }
+        let num_str = &self.input[start..self.position];
+        num_str
+            .parse::<u64>()
+            .map_err(|_| self.make_error(JsonParseErrorKind::InvalidNumberFormat))
+    }
 
-        let start_position = self.position;
-        let mut end_position = start_position;
+    pub fn parse_i64(&mut self) -> Result<i64, JsonParseErrorWithContext<'a>> {
+        self.skip_whitespace();
+        let start = self.position;
 
-        // Check if it's a negative number
-        if self.peek_char() == Some('-') {
-            self.next_char();
-            end_position = self.position;
+        // Allow leading minus sign
+        if self.position < self.input.len() && self.input.as_bytes()[self.position] == b'-' {
+            self.position += 1;
         }
 
-        // Parse digits before decimal point
-        let mut has_digits = false;
-        while let Some(c) = self.peek_char() {
-            if c.is_ascii_digit() {
-                self.next_char();
-                end_position = self.position;
-                has_digits = true;
-            } else {
-                break;
-            }
+        // Parse digits
+        while self.position < self.input.len()
+            && self.input.as_bytes()[self.position].is_ascii_digit()
+        {
+            self.position += 1;
         }
 
-        if !has_digits {
+        if start == self.position
+            || (self.position == start + 1 && self.input.as_bytes()[start] == b'-')
+        {
+            // Handle case where only '-' was found or nothing was parsed
             return Err(self.make_error(JsonParseErrorKind::ExpectedNumber));
         }
 
-        // Parse decimal point and digits after it
-        if self.peek_char() == Some('.') {
-            self.next_char();
+        let num_str = &self.input[start..self.position];
+        num_str
+            .parse::<i64>()
+            .map_err(|_| self.make_error(JsonParseErrorKind::InvalidNumberFormat))
+    }
 
-            let mut has_decimal_digits = false;
-            while let Some(c) = self.peek_char() {
-                if c.is_ascii_digit() {
-                    self.next_char();
-                    end_position = self.position;
-                    has_decimal_digits = true;
-                } else {
-                    break;
-                }
-            }
-
-            if !has_decimal_digits {
-                return Err(self.make_error(JsonParseErrorKind::InvalidNumberFormat));
+    // Generic number parsing helper
+    fn parse_number<T>(&mut self) -> Result<T, JsonParseErrorWithContext<'a>>
+    where
+        T: core::str::FromStr,
+        <T as core::str::FromStr>::Err: core::fmt::Debug, // Ensure the error type can be debug printed
+    {
+        self.skip_whitespace();
+        let start = self.position;
+        // Allow leading minus sign
+        if self.position < self.input.len() && self.input.as_bytes()[self.position] == b'-' {
+            self.position += 1;
+        }
+        // Allow digits and decimal point
+        while self.position < self.input.len() {
+            let byte = self.input.as_bytes()[self.position];
+            if byte.is_ascii_digit() || byte == b'.' {
+                self.position += 1;
+            } else {
+                break;
             }
         }
 
-        // Parse exponent
-        if let Some(e) = self.peek_char() {
-            if e == 'e' || e == 'E' {
-                self.next_char();
-
-                // Check for sign
-                if let Some(sign) = self.peek_char() {
-                    if sign == '+' || sign == '-' {
-                        self.next_char();
-                    }
-                }
-
-                let mut has_exponent_digits = false;
-                while let Some(c) = self.peek_char() {
-                    if c.is_ascii_digit() {
-                        self.next_char();
-                        end_position = self.position;
-                        has_exponent_digits = true;
-                    } else {
-                        break;
-                    }
-                }
-
-                if !has_exponent_digits {
-                    return Err(self.make_error(JsonParseErrorKind::InvalidNumberFormat));
-                }
-            }
+        if start == self.position
+            || (self.position == start + 1 && self.input.as_bytes()[start] == b'-')
+        {
+            // Handle case where only '-' was found or nothing was parsed
+            return Err(self.make_error(JsonParseErrorKind::ExpectedNumber));
         }
 
-        let number_str = &self.input[start_position..end_position];
-        number_str
+        let num_str = &self.input[start..self.position];
+        num_str
             .parse::<T>()
             .map_err(|_| self.make_error(JsonParseErrorKind::InvalidNumberFormat))
     }
 
-    pub fn parse_i64(&mut self) -> Result<i64, JsonParseErrorWithContext<'input>> {
-        self.parse_number::<i64>()
+    pub fn parse_f64(&mut self) -> Result<f64, JsonParseErrorWithContext<'a>> {
+        self.parse_number()
     }
 
-    pub fn parse_u64(&mut self) -> Result<u64, JsonParseErrorWithContext<'input>> {
-        self.parse_number::<u64>()
-    }
-
-    pub fn parse_f64(&mut self) -> Result<f64, JsonParseErrorWithContext<'input>> {
-        self.parse_number::<f64>()
-    }
-
-    pub fn parse_bool(&mut self) -> Result<bool, JsonParseErrorWithContext<'input>> {
+    pub fn parse_bool(&mut self) -> Result<bool, JsonParseErrorWithContext<'a>> {
         self.skip_whitespace();
+        if self.position + 4 <= self.input.len()
+            && &self.input[self.position..self.position + 4] == "true"
+        {
+            self.position += 4;
+            return Ok(true);
+        }
+        if self.position + 5 <= self.input.len()
+            && &self.input[self.position..self.position + 5] == "false"
+        {
+            self.position += 5;
+            return Ok(false);
+        }
+        Err(self.make_error(JsonParseErrorKind::InvalidValue))
+    }
 
-        match self.peek_char() {
-            Some('t') => {
-                if self.position + 4 <= self.input.len()
-                    && &self.input[self.position..self.position + 4] == "true"
-                {
-                    self.position += 4;
-                    Ok(true)
-                } else {
-                    Err(self.make_error(JsonParseErrorKind::InvalidValue))
-                }
+    pub fn skip_whitespace(&mut self) {
+        while self.position < self.input.len() {
+            match self.input.as_bytes()[self.position] {
+                b' ' | b'\t' | b'\n' | b'\r' => self.position += 1,
+                _ => break,
             }
-            Some('f') => {
-                if self.position + 5 <= self.input.len()
-                    && &self.input[self.position..self.position + 5] == "false"
-                {
-                    self.position += 5;
-                    Ok(false)
-                } else {
-                    Err(self.make_error(JsonParseErrorKind::InvalidValue))
-                }
-            }
-            _ => Err(self.make_error(JsonParseErrorKind::InvalidValue)),
         }
     }
 
-    pub fn expect_object_start(
-        &mut self,
-    ) -> Result<Option<String>, JsonParseErrorWithContext<'input>> {
+    /// Expects the start of an array.
+    pub fn expect_array_start(&mut self) -> Result<(), JsonParseErrorWithContext<'a>> {
         self.skip_whitespace();
-
-        if self.next_char() != Some('{') {
-            return Err(self.make_error(JsonParseErrorKind::ExpectedOpeningBrace));
-        }
-
-        self.skip_whitespace();
-
-        // Check if it's an empty object
-        if self.peek_char() == Some('}') {
-            self.next_char();
-            return Ok(None);
-        }
-
-        // Parse the first key
-        let first_key = self.parse_string()?;
-
-        self.skip_whitespace();
-        if self.next_char() != Some(':') {
-            return Err(self.make_error(JsonParseErrorKind::ExpectedColon));
-        }
-
-        Ok(Some(first_key))
-    }
-
-    pub fn parse_object_key(
-        &mut self,
-    ) -> Result<Option<String>, JsonParseErrorWithContext<'input>> {
-        self.skip_whitespace();
-
-        if self.peek_char() == Some('}') {
-            self.next_char();
-            return Ok(None);
-        }
-
-        if self.next_char() != Some(',') {
-            return Err(self.make_error(JsonParseErrorKind::ExpectedClosingBrace));
-        }
-
-        self.skip_whitespace();
-        let key = self.parse_string()?;
-
-        self.skip_whitespace();
-        if self.next_char() != Some(':') {
-            return Err(self.make_error(JsonParseErrorKind::ExpectedColon));
-        }
-
-        Ok(Some(key))
-    }
-
-    pub fn expect_array_start(&mut self) -> Result<(), JsonParseErrorWithContext<'input>> {
-        self.skip_whitespace();
-
-        if self.next_char() != Some('[') {
+        if self.position >= self.input.len() || self.input.as_bytes()[self.position] != b'[' {
             return Err(self.make_error(JsonParseErrorKind::ExpectedOpeningBracket));
         }
-
+        self.position += 1;
         Ok(())
     }
 
-    /// Parse an array element
-    ///
-    /// Some(true) -> an element was found
-    /// Some(false) -> the end of the array was reached
-    /// None -> more elements are expected
-    pub fn parse_array_element(
-        &mut self,
-    ) -> Result<Option<bool>, JsonParseErrorWithContext<'input>> {
+    /// Expects the end of an array or a comma followed by the next element.
+    /// Returns Some(true) if there's another element, Some(false) if the array has ended,
+    /// or an error if the JSON is malformed.
+    pub fn parse_array_element(&mut self) -> Result<Option<bool>, JsonParseErrorWithContext<'a>> {
+        self.skip_whitespace();
+        if self.position >= self.input.len() {
+            return Err(self.make_error(JsonParseErrorKind::UnexpectedEndOfInput));
+        }
+
+        match self.input.as_bytes()[self.position] {
+            b',' => {
+                self.position += 1;
+                self.skip_whitespace();
+                Ok(Some(true)) // There's another element
+            }
+            b']' => {
+                self.position += 1;
+                Ok(Some(false)) // End of array
+            }
+            _ => {
+                // First element doesn't need a comma
+                Ok(Some(true))
+            }
+        }
+    }
+
+    /// Expects the start of an object and returns the first key if present.
+    /// Returns None if the object is empty.
+    pub fn expect_object_start(&mut self) -> Result<Option<String>, JsonParseErrorWithContext<'a>> {
+        self.skip_whitespace();
+        if self.position >= self.input.len() || self.input.as_bytes()[self.position] != b'{' {
+            return Err(self.make_error(JsonParseErrorKind::ExpectedOpeningBrace));
+        }
+        self.position += 1;
         self.skip_whitespace();
 
-        if self.peek_char() == Some(']') {
-            self.next_char();
-            return Ok(Some(false));
+        if self.position < self.input.len() && self.input.as_bytes()[self.position] == b'"' {
+            let key = self.parse_string()?;
+            self.skip_whitespace();
+            if self.position < self.input.len() && self.input.as_bytes()[self.position] == b':' {
+                self.position += 1;
+                Ok(Some(key))
+            } else {
+                Err(self.make_error(JsonParseErrorKind::ExpectedColon))
+            }
+        } else if self.position < self.input.len() && self.input.as_bytes()[self.position] == b'}' {
+            self.position += 1;
+            Ok(None)
+        } else {
+            Err(self.make_error(JsonParseErrorKind::InvalidValue))
         }
+    }
 
-        if self.position > 0 && self.input.as_bytes()[self.position - 1] == b'[' {
-            // First element
-            return Ok(Some(true));
+    /// Expects the end of an object or a comma followed by the next key.
+    /// Returns None if the object has ended, or Some(key) if there's another key-value pair.
+    ///
+    /// This function is used to parse the end of an object or to move to the next key-value pair.
+    /// It handles three cases:
+    /// 1. If it encounters a comma, it expects the next key-value pair and returns Some(key).
+    /// 2. If it encounters a closing brace, it returns None to indicate the end of the object.
+    /// 3. If it encounters anything else, it returns an error.
+    ///
+    /// The function also takes care of skipping whitespace before and after tokens.
+    /// If it reaches the end of input unexpectedly, it returns an appropriate error.
+    pub fn parse_object_key(&mut self) -> Result<Option<String>, JsonParseErrorWithContext<'a>> {
+        self.skip_whitespace();
+        if self.position >= self.input.len() {
+            return Err(self.make_error(JsonParseErrorKind::UnexpectedEndOfInput));
         }
-
-        if self.next_char() != Some(',') {
-            return Err(self.make_error(JsonParseErrorKind::ExpectedClosingBracket));
+        match self.input.as_bytes()[self.position] {
+            b',' => {
+                self.position += 1;
+                self.skip_whitespace();
+                if self.position < self.input.len() && self.input.as_bytes()[self.position] == b'"'
+                {
+                    let key = self.parse_string()?;
+                    self.skip_whitespace();
+                    if self.position < self.input.len()
+                        && self.input.as_bytes()[self.position] == b':'
+                    {
+                        self.position += 1;
+                        Ok(Some(key))
+                    } else {
+                        Err(self.make_error(JsonParseErrorKind::ExpectedColon))
+                    }
+                } else {
+                    Err(self.make_error(JsonParseErrorKind::InvalidValue))
+                }
+            }
+            b'}' => {
+                self.position += 1;
+                Ok(None)
+            }
+            _ => Err(self.make_error(JsonParseErrorKind::InvalidValue)),
         }
-
-        Ok(Some(true))
     }
 }
