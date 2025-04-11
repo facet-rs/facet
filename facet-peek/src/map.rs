@@ -26,6 +26,12 @@ impl<'mem> Iterator for PeekMapIter<'mem> {
     }
 }
 
+impl Drop for PeekMapIter<'_> {
+    fn drop(&mut self) {
+        unsafe { (self.map.def.vtable.iter_vtable.dealloc)(self.iter) }
+    }
+}
+
 impl<'mem> IntoIterator for &'mem PeekMap<'mem> {
     type Item = (Peek<'mem>, Peek<'mem>);
     type IntoIter = PeekMapIter<'mem>;
