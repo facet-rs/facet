@@ -1,4 +1,5 @@
-use facet::Facet;
+extern crate facet_core as facet;
+use facet_derive::Facet;
 use facet_pretty::FacetPretty;
 
 #[derive(Debug, Facet)]
