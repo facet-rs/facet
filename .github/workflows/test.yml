@@ -12,7 +12,7 @@ jobs:
     runs-on: arc-runners
 
     container:
-      image: rust:1.86.0-slim
+      image: rustlang/rust:1.86.0-slim
     steps:
       - uses: actions/checkout@v4
 
@@ -37,7 +37,7 @@ jobs:
     runs-on: arc-runners
 
     container:
-      image: rust:nightly-slim
+      image: rustlang/rust:nightly-slim
     steps:
       - uses: actions/checkout@v4
 
