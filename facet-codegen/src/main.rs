@@ -1,16 +1,14 @@
-use std::io::Write;
 use std::path::Path;
 use std::process;
+use std::{io::Write, time::Instant};
 
+use facet_ansi::Stylize as _;
 use log::{error, info, warn};
 use minijinja::Environment;
-use owo_colors::{OwoColorize, Style};
 use similar::{ChangeTag, TextDiff};
 
 fn main() {
-    env_logger::Builder::new()
-        .filter_level(log::LevelFilter::Info)
-        .init();
+    facet_testhelpers::setup();
 
     let opts = Options {
         check: std::env::args().any(|arg| arg == "--check"),
@@ -243,11 +241,11 @@ fn check_diff(path: &Path, new_content: &[u8]) -> bool {
                 }
                 ChangeTag::Delete => {
                     equal_count = 0;
-                    info!("-{}", Style::new().red().style(change));
+                    info!("-{}", change.red());
                 }
                 ChangeTag::Insert => {
                     equal_count = 0;
-                    info!("+{}", Style::new().green().style(change));
+                    info!("+{}", change.green());
                 }
             }
 
@@ -274,6 +272,9 @@ fn write_if_different(path: &Path, content: Vec<u8>, check_mode: bool) -> bool {
 }
 
 fn generate_tuple_impls(has_diffs: &mut bool, opts: &Options) {
+    // Start timer to measure execution time
+    let start_time = std::time::Instant::now();
+
     // Initialize minijinja environment
     let mut env = Environment::empty();
     env.add_function("range", minijinja::functions::range);
@@ -329,15 +330,38 @@ fn generate_tuple_impls(has_diffs: &mut bool, opts: &Options) {
     }
 
     *has_diffs |= write_if_different(base_path, formatted_output.stdout, opts.check);
+
+    // Calculate execution time
+    let execution_time = start_time.elapsed();
+
+    // Print success message with execution time
+    if opts.check {
+        info!(
+            "✅ Checked {} (took {:?})",
+            "tuple implementations".blue().green(),
+            execution_time
+        );
+    } else {
+        info!(
+            "🔧 Generated {} (took {:?})",
+            "tuple implementations".blue().green(),
+            execution_time
+        );
+    }
 }
 
 fn generate_readme_files(has_diffs: &mut bool, opts: &Options) {
+    let start = Instant::now();
+
     // Get all crate directories in the workspace
     let workspace_dir = std::env::current_dir().unwrap();
     let entries = fs_err::read_dir(&workspace_dir).expect("Failed to read workspace directory");
 
     // Create a new MiniJinja environment for README templates
     let mut env = Environment::empty();
+
+    // Keep track of all crates we generate READMEs for
+    let mut generated_crates = Vec::new();
 
     // Add template functions
     env.add_function("header", |crate_name: String| {
@@ -436,6 +460,7 @@ at your option."#.to_string()
         };
         if template_path.exists() {
             process_readme_template(&mut env, &path, &template_path, has_diffs, opts);
+            generated_crates.push(crate_name);
         } else {
             error!("🚫 Missing template: {}", template_path.display().red());
             panic!();
@@ -463,6 +488,25 @@ at your option."#.to_string()
         has_diffs,
         opts,
     );
+
+    // Add workspace to the list of generated READMEs
+    generated_crates.push("workspace".to_string());
+
+    // Print a comma-separated list of all crates we generated READMEs for
+    let execution_time = start.elapsed();
+    if opts.check {
+        info!(
+            "📚 Checked READMEs for: {} (took {:?})",
+            generated_crates.join(", ").blue(),
+            execution_time
+        );
+    } else {
+        info!(
+            "📚 Generated READMEs for: {} (took {:?})",
+            generated_crates.join(", ").blue(),
+            execution_time
+        );
+    }
 }
 
 fn process_readme_template(
@@ -508,10 +552,4 @@ fn process_readme_template(
     // Save the rendered content to README.md
     let readme_path = crate_path.join("README.md");
     *has_diffs |= write_if_different(&readme_path, output.into_bytes(), opts.check);
-
-    if opts.check {
-        info!("✅ Checked README.md for {}", crate_name.blue());
-    } else {
-        info!("📝 Generated README.md for {}", crate_name.blue());
-    }
 }
