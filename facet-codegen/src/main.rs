@@ -289,13 +289,50 @@ fn write_if_different(path: &Path, content: Vec<u8>, check_mode: bool) -> bool {
     }
 }
 
+// copied from https://docs.rs/minijinja/latest/src/minijinja/functions.rs.html#305-335
+fn range(
+    lower: u32,
+    upper: Option<u32>,
+    step: Option<u32>,
+) -> Result<minijinja::Value, minijinja::Error> {
+    fn to_result<I: ExactSizeIterator<Item = u32> + Send + Sync + Clone + 'static>(
+        i: I,
+    ) -> Result<minijinja::Value, minijinja::Error> {
+        if i.len() > 100000 {
+            Err(minijinja::Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                "range has too many elements",
+            ))
+        } else {
+            Ok(minijinja::Value::make_iterable(move || i.clone()))
+        }
+    }
+
+    let rng = match upper {
+        Some(upper) => lower..upper,
+        None => 0..lower,
+    };
+    if let Some(step) = step {
+        if step == 0 {
+            Err(minijinja::Error::new(
+                minijinja::ErrorKind::InvalidOperation,
+                "cannot create range with step of 0",
+            ))
+        } else {
+            to_result(rng.step_by(step as usize))
+        }
+    } else {
+        to_result(rng)
+    }
+}
+
 fn generate_tuple_impls(has_diffs: &mut bool, opts: Options) {
     // Start timer to measure execution time
     let start_time = std::time::Instant::now();
 
     // Initialize minijinja environment
     let mut env = Environment::empty();
-    env.add_function("range", minijinja::functions::range);
+    env.add_function("range", range);
 
     // Define the base path and template path
     let base_path = Path::new("facet-core/src/_trait/impls/tuples_impls.rs");
