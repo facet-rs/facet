@@ -19,6 +19,4 @@ facet = { path = "../facet", version = "0.1.18", features = [
     "reflect",
     "derive",
 ] }
-color-backtrace = "0.7.0"
-ctor = "0.4.1"
-env_logger = "0.11.8"
+facet-testhelpers = { version = "0.1.0", path = "../facet-testhelpers" }

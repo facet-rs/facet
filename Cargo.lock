@@ -273,10 +273,8 @@ dependencies = [
 name = "facet-json"
 version = "0.1.15"
 dependencies = [
- "color-backtrace",
- "ctor",
- "env_logger",
  "facet",
+ "facet-testhelpers",
  "log",
 ]
 
