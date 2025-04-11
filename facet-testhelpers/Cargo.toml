@@ -1,0 +1,18 @@
+[package]
+name = "facet-testhelpers"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["testing", "helpers", "utilities"]
+categories = ["development-tools::testing", "development-tools"]
+description = "A collection of testing helpers and utilities for Facet projects"
+
+[dependencies]
+color-backtrace = { version = "0.7.0", default-features = false, features = [
+    "use-btparse-crate",
+] }
+facet-ansi = { version = "0.1.0", path = "../facet-ansi" }
+log = { version = "0.4.27", features = ["std"] }

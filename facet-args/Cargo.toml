@@ -18,8 +18,6 @@ log = "0.4.27"
 facet = { version = "0.1.18", path = "../facet", features = ["reflect"] }
 
 [dev-dependencies]
-color-backtrace = "0.7.0"
-ctor = "0.4.1"
-env_logger = "0.11.8"
 facet = { path = "../facet", version = "0.1.18" }
 facet-pretty = { path = "../facet-pretty", version = "0.1.11" }
+facet-testhelpers = { version = "0.1.0", path = "../facet-testhelpers" }

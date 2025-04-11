@@ -409,9 +409,6 @@ impl PrettyPrinter {
 
                         let (_, field_name, field_value, field) = &fields[field_index];
 
-                        // Define consistent indentation
-                        let field_indent = "  "; // Use 2 spaces for all fields
-
                         // Field doc comment
                         if !field.doc.is_empty() {
                             // Only add new line if not the first field
@@ -421,15 +418,24 @@ impl PrettyPrinter {
                             // Hard-code consistent indentation for doc comments
                             for line in field.doc {
                                 // Use exactly the same indentation as fields (2 spaces)
-                                write!(f, "{}", field_indent)?;
+                                write!(
+                                    f,
+                                    "{:width$}",
+                                    "",
+                                    width = item.format_depth * self.indent_size
+                                )?;
                                 self.write_comment(f, &format!("///{}", line))?;
                                 writeln!(f)?;
                             }
-                            // Rewrite indentation after doc comments with consistent spacing
-                            write!(f, "{}", field_indent)?;
                         }
 
                         // Field name
+                        write!(
+                            f,
+                            "{:width$}",
+                            "",
+                            width = item.format_depth * self.indent_size
+                        )?;
                         self.write_field_name(f, field_name)?;
                         self.write_punctuation(f, ": ")?;
 
