@@ -72,7 +72,7 @@ pub(crate) fn process_enum(parsed: Enum) -> proc_macro::TokenStream {
                     .iter()
                     .enumerate()
                     .map(|(idx, field)| {
-                        let typ = field.value.typ.to_string();
+                        let typ = VerbatimDisplay(&field.value.typ).to_string();
                         format!("_{}: {}", idx, typ)
                     })
                     .collect::<Vec<String>>()
@@ -129,7 +129,7 @@ pub(crate) fn process_enum(parsed: Enum) -> proc_macro::TokenStream {
                     .iter()
                     .map(|field| {
                         let name = field.value.name.to_string();
-                        let typ = field.value.typ.to_string();
+                        let typ = VerbatimDisplay(&field.value.typ).to_string();
                         format!("{}: {}", name, typ)
                     })
                     .collect::<Vec<String>>()

@@ -26,7 +26,14 @@ operator! {
     DoubleSemicolon = "::";
 }
 
+/// Parses tokens and groups until `C` is found on the current token tree level.
+type VerbatimUntil<C> = Many<Cons<Except<C>, AngleTokenTree>>;
+
 unsynn! {
+    /// Parses either a `TokenTree` or `<...>` grouping (which is not a [`Group`] as far as proc-macros
+    /// are concerned).
+    struct AngleTokenTree(Either<Cons<Lt, Vec<Cons<Except<Gt>, AngleTokenTree>>, Gt>, TokenTree>);
+
     enum TypeDecl {
         Struct(Struct),
         Enum(Enum),
@@ -93,46 +100,6 @@ unsynn! {
         Integer(LiteralInteger),
     }
 
-    enum Type {
-        Reference(ReferenceType),
-        Path(PathType),
-        Tuple(ParenthesisGroupContaining<CommaDelimitedVec<Box<Type>>>),
-        Array(BracketGroupContaining<ArrayInner>),
-        Slice(BracketGroupContaining<Box<Type>>),
-        Bare(BareType),
-        NoneDelimited(NoneGroupContaining<Box<Type>>),
-    }
-
-    struct ArrayInner {
-        typ: Box<Type>,
-        _semicolon: Semicolon,
-        size: usize,
-    }
-
-    struct ReferenceType {
-        _and: And,
-        lifetime: Lifetime,
-        rest: Box<Type>,
-    }
-
-    struct PathType {
-        prefix: Ident,
-        _doublesemi: DoubleSemicolon,
-        rest: Box<Type>,
-    }
-
-    struct BareType {
-        name: Ident,
-        generic_params: Option<GenericParams>,
-    }
-
-    struct GenericParams {
-        _lt: Lt,
-        lifetimes: CommaDelimitedVec<Lifetime>,
-        params: CommaDelimitedVec<Type>,
-        _gt: Gt,
-    }
-
     enum ConstOrMut {
         Const(KConst),
         Mut(KMut),
@@ -143,13 +110,13 @@ unsynn! {
         _vis: Option<Vis>,
         name: Ident,
         _colon: Colon,
-        typ: Type,
+        typ: VerbatimUntil<Comma>,
     }
 
     struct TupleField {
         attributes: Vec<Attribute>,
         vis: Option<Vis>,
-        typ: Type,
+        typ: VerbatimUntil<Comma>,
     }
 
     struct Enum {
@@ -208,49 +175,31 @@ pub fn facet_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     }
 }
 
-impl core::fmt::Display for Type {
+impl core::fmt::Display for AngleTokenTree {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Type::Reference(reference) => {
-                write!(f, "&{} {}", reference.lifetime, reference.rest)
-            }
-            Type::Array(array) => {
-                write!(f, "[{}; {}]", array.content.typ, array.content.size)
-            }
-            Type::Path(path) => {
-                write!(f, "{}::{}", path.prefix, path.rest)
-            }
-            Type::Tuple(tuple) => {
-                write!(f, "(")?;
-                for (i, typ) in tuple.content.0.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}", typ.value)?;
+        match &self.0 {
+            Either::First(it) => {
+                write!(f, "<")?;
+                for it in it.second.iter() {
+                    write!(f, "{}", it.second)?;
                 }
-                write!(f, ")")
+                write!(f, ">")?;
             }
-            Type::Slice(slice) => {
-                write!(f, "[{}]", slice.content)
-            }
-            Type::Bare(ident) => {
-                write!(f, "{}", ident.name)?;
-                if let Some(generic_params) = &ident.generic_params {
-                    write!(f, "<")?;
-                    for (i, param) in generic_params.params.0.iter().enumerate() {
-                        if i > 0 {
-                            write!(f, ", ")?;
-                        }
-                        write!(f, "{}", param.value)?;
-                    }
-                    write!(f, ">")?;
-                }
-                Ok(())
-            }
-            Type::NoneDelimited(inner) => {
-                write!(f, "{}", inner.content)
-            }
+            Either::Second(it) => write!(f, "{}", it)?,
+            Either::Third(Invalid) => unreachable!(),
+            Either::Fourth(Invalid) => unreachable!(),
+        };
+        Ok(())
+    }
+}
+
+struct VerbatimDisplay<'a, C>(&'a VerbatimUntil<C>);
+impl<C> core::fmt::Display for VerbatimDisplay<'_, C> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        for tt in self.0.0.iter() {
+            write!(f, "{}", tt.value.second)?;
         }
+        Ok(())
     }
 }
 
