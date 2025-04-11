@@ -51,7 +51,7 @@ fn copy_cargo_expand_output(has_diffs: &mut bool, opts: &Options) {
     let start_time = std::time::Instant::now();
     let output = std::process::Command::new("sh")
         .arg("-c")
-        .arg("RUSTC_BOOTSTRAP=1 cargo rustc --target-dir /tmp/facet-codegen-expand --lib -- -Zunpretty=expanded | rustfmt --emit stdout")
+        .arg("RUSTC_BOOTSTRAP=1 cargo rustc --target-dir /tmp/facet-codegen-expand --lib -- -Zunpretty=expanded | rustfmt --edition 2024 --emit stdout")
         .output()
         .expect("Failed to execute cargo expand command");
     let execution_time = start_time.elapsed();
