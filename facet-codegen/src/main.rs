@@ -2,10 +2,16 @@ use std::io::Write;
 use std::path::Path;
 use std::process;
 
+use log::{error, info, warn};
 use minijinja::Environment;
+use owo_colors::{OwoColorize, Style};
 use similar::{ChangeTag, TextDiff};
 
 fn main() {
+    env_logger::Builder::new()
+        .filter_level(log::LevelFilter::Info)
+        .init();
+
     let opts = Options {
         check: std::env::args().any(|arg| arg == "--check"),
     };
@@ -16,9 +22,8 @@ fn main() {
     let cargo_toml_content =
         fs_err::read_to_string(cargo_toml_path).expect("Failed to read Cargo.toml");
     if !cargo_toml_content.contains("[workspace]") {
-        panic!(
-            "Cargo.toml does not contain [workspace] (you must run codegen from the workspace root)"
-        );
+        error!("🚫 {}", "Cargo.toml does not contain [workspace] (you must run codegen from the workspace root)".red());
+        panic!();
     }
 
     // Generate tuple implementations
@@ -42,19 +47,21 @@ fn copy_cargo_expand_output(has_diffs: &mut bool, opts: &Options) {
     // Change to the sample directory
     std::env::set_current_dir(&sample_dir).expect("Failed to change to sample directory");
 
-    // Run cargo expand command
+    // Run cargo expand command and measure execution time
+    let start_time = std::time::Instant::now();
     let output = std::process::Command::new("sh")
         .arg("-c")
-        .arg("RUSTC_BOOTSTRAP=1 cargo rustc --lib -- -Zunpretty=expanded | rustfmt --emit stdout")
+        .arg("RUSTC_BOOTSTRAP=1 cargo rustc --target-dir /tmp/facet-codegen-expand --lib -- -Zunpretty=expanded | rustfmt --emit stdout")
         .output()
         .expect("Failed to execute cargo expand command");
+    let execution_time = start_time.elapsed();
 
     // Change back to the workspace directory
     std::env::set_current_dir(&workspace_dir)
         .expect("Failed to change back to workspace directory");
 
     if !output.status.success() {
-        eprintln!("Cargo expand command failed");
+        error!("🚫 {}", "Cargo expand command failed".red());
         std::process::exit(1);
     }
 
@@ -70,9 +77,17 @@ fn copy_cargo_expand_output(has_diffs: &mut bool, opts: &Options) {
     *has_diffs |= write_if_different(&target_path, expanded_code.into_bytes(), opts.check);
 
     if opts.check {
-        println!("Checked sample_generated_code.rs");
+        info!(
+            "✅ Checked {} (took {:?})",
+            "sample_generated_code.rs".blue().green(),
+            execution_time
+        );
     } else {
-        println!("Generated sample_generated_code.rs");
+        info!(
+            "🔧 Generated {} (took {:?})",
+            "sample_generated_code.rs".blue().green(),
+            execution_time
+        );
     }
 }
 
@@ -83,7 +98,11 @@ struct Options {
 
 fn check_diff(path: &Path, new_content: &[u8]) -> bool {
     if !path.exists() {
-        eprintln!("{}: would create new file", path.display());
+        warn!(
+            "📁 {}: {}",
+            path.display(),
+            "would create new file".yellow()
+        );
         return true;
     }
 
@@ -93,14 +112,14 @@ fn check_diff(path: &Path, new_content: &[u8]) -> bool {
         let new_str = String::from_utf8_lossy(new_content);
 
         let diff = TextDiff::from_lines(&old_str, &new_str);
-        eprintln!("Diff for {}:", path.display());
+        info!("📝 {}", format!("Diff for {}:", path.display()).blue());
         for change in diff.iter_all_changes() {
-            let sign = match change.tag() {
-                ChangeTag::Delete => "-",
-                ChangeTag::Insert => "+",
-                ChangeTag::Equal => " ",
+            let (sign, style) = match change.tag() {
+                ChangeTag::Delete => ("-", Style::new().red()),
+                ChangeTag::Insert => ("+", Style::new().green()),
+                ChangeTag::Equal => (" ", Style::new()),
             };
-            eprint!("{}{}", sign, change);
+            info!("{}{}", sign, style.style(change));
         }
         return true;
     }
@@ -121,10 +140,13 @@ fn generate_tuple_impls(has_diffs: &mut bool, opts: &Options) {
     let mut env = Environment::empty();
     env.add_function("range", minijinja::functions::range);
 
+    // Define the base path and template path
+    let base_path = Path::new("facet-core/src/_trait/impls/tuples_impls.rs");
+    let template_path = base_path.with_extension("rs.j2");
+
     // Load the template from file
-    let template_path = "facet-codegen/src/tuples_impls.rs.j2";
-    let template_content =
-        fs_err::read_to_string(template_path).expect("Failed to read template file");
+    let template_content = fs_err::read_to_string(&template_path)
+        .unwrap_or_else(|_| panic!("Failed to read template file: {:?}", template_path));
 
     // Add the template to the environment
     env.add_template("tuples_impls", &template_content)
@@ -161,12 +183,14 @@ fn generate_tuple_impls(has_diffs: &mut bool, opts: &Options) {
     // Get formatted output
     let formatted_output = fmt.wait_with_output().expect("Failed to wait for rustfmt");
     if !formatted_output.status.success() {
-        eprintln!("rustfmt failed with exit code: {}", formatted_output.status);
+        error!(
+            "🚫 {}",
+            format!("rustfmt failed with exit code: {}", formatted_output.status).red()
+        );
         std::process::exit(1);
     }
 
-    let path = Path::new("facet-core/src/_trait/impls/tuples_impls.rs");
-    *has_diffs |= write_if_different(path, formatted_output.stdout, opts.check);
+    *has_diffs |= write_if_different(base_path, formatted_output.stdout, opts.check);
 }
 
 fn generate_readme_files(has_diffs: &mut bool, opts: &Options) {
@@ -253,7 +277,7 @@ at your option."#.to_string()
 
         // Skip target directory and facet-codegen itself
         let dir_name = path.file_name().unwrap().to_string_lossy();
-        if dir_name == "target" || dir_name == "facet-codegen" {
+        if dir_name == "target" {
             continue;
         }
 
@@ -263,48 +287,44 @@ at your option."#.to_string()
             continue;
         }
 
-        // Check if there's a template directory with a README.md.j2 file
-        let template_path = path.join("templates").join("README.md.j2");
+        // Get crate name from directory name
+        let crate_name = dir_name.to_string();
+
+        // Special case for the main facet crate
+        let template_path = if crate_name == "facet" {
+            Path::new("README.md.j2").to_path_buf()
+        } else {
+            path.join("README.md.j2")
+        };
         if template_path.exists() {
             process_readme_template(&mut env, &path, &template_path, has_diffs, opts);
         } else {
-            // Special case for the main facet crate
-            let crate_name = dir_name.to_string();
-            if crate_name == "facet" {
-                let alternative_template_path = Path::new("facet/templates/README.md.j2");
-                if alternative_template_path.exists() {
-                    process_readme_template(
-                        &mut env,
-                        &path,
-                        Path::new("facet/templates/README.md.j2"),
-                        has_diffs,
-                        opts,
-                    );
-                }
-            }
+            error!("🚫 Missing template: {}", template_path.display().red());
+            panic!();
         }
     }
 
-    // Also check for the special case where template is in facet/facet/templates
-    let facet_crate_path = workspace_dir.join("facet");
-    if facet_crate_path.exists() && facet_crate_path.is_dir() {
-        let template_path = facet_crate_path.join("templates").join("README.md.j2");
-        if template_path.exists() {
-            process_readme_template(&mut env, &facet_crate_path, &template_path, has_diffs, opts);
-        }
-    }
-
-    // Generate workspace README if template exists
-    let workspace_template_path = workspace_dir.join("templates").join("README.md.j2");
-    if workspace_template_path.exists() {
-        process_readme_template(
-            &mut env,
-            &workspace_dir,
-            &workspace_template_path,
-            has_diffs,
-            opts,
+    // Generate workspace README, too (which is the same as the `facet` crate)
+    let workspace_template_path = workspace_dir.join("README.md.j2");
+    if !workspace_template_path.exists() {
+        error!(
+            "🚫 {}",
+            format!(
+                "Template file README.md.j2 not found for workspace. We looked at {}",
+                workspace_template_path.display()
+            )
+            .red()
         );
+        panic!();
     }
+
+    process_readme_template(
+        &mut env,
+        &workspace_dir,
+        &workspace_template_path,
+        has_diffs,
+        opts,
+    );
 }
 
 fn process_readme_template(
@@ -314,8 +334,6 @@ fn process_readme_template(
     has_diffs: &mut bool,
     opts: &Options,
 ) {
-    println!("Processing template: {:?}", template_path);
-
     // Get crate name from directory name
     let crate_name = crate_path
         .file_name()
@@ -354,8 +372,8 @@ fn process_readme_template(
     *has_diffs |= write_if_different(&readme_path, output.into_bytes(), opts.check);
 
     if opts.check {
-        println!("Checked README.md for {}", crate_name);
+        info!("✅ Checked README.md for {}", crate_name.blue());
     } else {
-        println!("Generated README.md for {}", crate_name);
+        info!("📝 Generated README.md for {}", crate_name.blue());
     }
 }

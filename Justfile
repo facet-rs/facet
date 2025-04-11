@@ -69,7 +69,6 @@ doc-tests:
 codegen:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
-    cp templates/README.md.j2 facet/templates/README.md.j2
     cargo run -p facet-codegen
 
 codegen-check:

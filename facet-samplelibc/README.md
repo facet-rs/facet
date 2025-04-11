@@ -4,14 +4,14 @@
 <picture>
 <source srcset="https://github.com/facet-rs/facet/raw/main/static/logo-v2/logo-only.webp">
 <img src="https://github.com/facet-rs/facet/raw/main/static/logo-v2/logo-only.png" height="35" alt="Facet logo - a reflection library for Rust">
-</picture> &nbsp; facet-json-read
+</picture> &nbsp; facet-samplelibc
 </h1>
 
 [![experimental](https://img.shields.io/badge/status-experimental-yellow)](https://github.com/fasterthanlime/facet)
 [![free of syn](https://img.shields.io/badge/free%20of-syn-hotpink)](https://github.com/fasterthanlime/free-of-syn)
-[![crates.io](https://img.shields.io/crates/v/facet-json-read.svg)](https://crates.io/crates/facet-json-read)
-[![documentation](https://docs.rs/facet-json-read/badge.svg)](https://docs.rs/facet-json-read)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-json-read.svg)](./LICENSE)
+[![crates.io](https://img.shields.io/crates/v/facet-samplelibc.svg)](https://crates.io/crates/facet-samplelibc)
+[![documentation](https://docs.rs/facet-samplelibc/badge.svg)](https://docs.rs/facet-samplelibc)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-samplelibc.svg)](./LICENSE)
 
 _Logo by [Misiasart](https://misiasart.com/)_
 
@@ -40,7 +40,7 @@ Thanks to all individual and corporate sponsors, without whom this work could no
 </a> </p>
              
 
-Provides JSON serialization for any type that implements `Facet`.
+Sample C library that we can interact with from Facet.
 
 
 ## License
