@@ -85,13 +85,14 @@ rustfmt-fix:
 miri *args:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
+    echo -e "\033[1;31m🧪 Running tests under Miri...\033[0m"
+
     export CARGO_TARGET_DIR=target/miri
     if [[ -z "${CI:-}" ]]; then
         export RUSTUP_TOOLCHAIN=nightly-2025-04-05
+        rustup toolchain install
+        rustup component add miri rust-src
     fi
-    echo -e "\033[1;31m🧪 Running tests under Miri...\033[0m"
-    rustup toolchain install
-    rustup component add miri rust-src
     cargo miri nextest run {{args}}
 
 absolve:
@@ -134,6 +135,7 @@ docker-build-push:
     echo -e "\033[1;36m🔨 Building tests image with stable Rust...\033[0m"
     docker build \
         --build-arg BASE_IMAGE=rust:1.86-slim-bullseye \
+        --build-arg RUSTUP_TOOLCHAIN=stable \
         -t "${IMAGE_NAME}:${TAG}" \
         -t "${IMAGE_NAME}:latest" \
         -f Dockerfile \
@@ -143,6 +145,7 @@ docker-build-push:
     echo -e "\033[1;36m🔨 Building miri image with nightly Rust...\033[0m"
     docker build \
         --build-arg BASE_IMAGE=rustlang/rust:nightly-slim \
+        --build-arg RUSTUP_TOOLCHAIN=nightly \
         --build-arg ADDITIONAL_RUST_COMPONENTS="miri" \
         -t "${IMAGE_NAME}:${TAG}-miri" \
         -t "${IMAGE_NAME}:latest-miri" \

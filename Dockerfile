@@ -20,6 +20,9 @@ RUN apt-get update && apt-get install -y curl && \
 # Set environment variables
 ENV CARGO_INCREMENTAL=0
 
+ARG RUSTUP_TOOLCHAIN
+ENV RUSTUP_TOOLCHAIN=${RUSTUP_TOOLCHAIN}
+
 # Create a work directory
 WORKDIR /app
 
