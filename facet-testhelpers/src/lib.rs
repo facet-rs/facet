@@ -32,6 +32,7 @@ impl Log for SimpleLogger {
 }
 
 pub fn setup() {
+    #[cfg(not(miri))]
     color_backtrace::install();
     let logger = Box::new(SimpleLogger);
     log::set_boxed_logger(logger).unwrap();
