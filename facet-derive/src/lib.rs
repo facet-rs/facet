@@ -97,9 +97,16 @@ unsynn! {
         Reference(ReferenceType),
         Path(PathType),
         Tuple(ParenthesisGroupContaining<CommaDelimitedVec<Box<Type>>>),
+        Array(BracketGroupContaining<ArrayInner>),
         Slice(BracketGroupContaining<Box<Type>>),
         Bare(BareType),
         NoneDelimited(NoneGroupContaining<Box<Type>>),
+    }
+
+    struct ArrayInner {
+        typ: Box<Type>,
+        _semicolon: Semicolon,
+        size: usize,
     }
 
     struct ReferenceType {
@@ -206,6 +213,9 @@ impl core::fmt::Display for Type {
         match self {
             Type::Reference(reference) => {
                 write!(f, "&{} {}", reference.lifetime, reference.rest)
+            }
+            Type::Array(array) => {
+                write!(f, "[{}; {}]", array.content.typ, array.content.size)
             }
             Type::Path(path) => {
                 write!(f, "{}::{}", path.prefix, path.rest)

@@ -1,5 +1,5 @@
 use core::{fmt::Debug, mem::offset_of};
-use facet::{Def, Facet, FieldFlags, Shape, StructDef, StructKind, VariantKind};
+use facet::{Def, Facet, FieldFlags, OpaqueConst, Shape, StructDef, StructKind, VariantKind};
 
 #[test]
 fn unit_struct() {
@@ -399,6 +399,7 @@ fn macroed_type() {
 }
 
 #[test]
+#[allow(dead_code)]
 fn array_field() {
     /// Network packet types
     #[derive(Facet)]
@@ -406,5 +407,29 @@ fn array_field() {
     pub enum Packet {
         /// Array of bytes representing the header
         Header([u8; 4]),
+    }
+
+    let shape = Packet::SHAPE;
+    match shape.def {
+        Def::Enum(e) => {
+            let variant = &e.variants[0];
+            match &variant.kind {
+                VariantKind::Tuple { fields } => {
+                    let field = &fields[0];
+                    match field.shape.def {
+                        Def::List(ld) => {
+                            let len = unsafe {
+                                (ld.vtable.len)(OpaqueConst::new(std::ptr::dangling::<u8>()))
+                            };
+                            assert_eq!(len, 4);
+                            eprintln!("Shape {shape} looks correct");
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
+        _ => unreachable!(),
     }
 }
