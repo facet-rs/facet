@@ -2,6 +2,8 @@ use std::path::Path;
 use std::process;
 use std::{io::Write, time::Instant};
 
+mod gen_tuples_impls;
+
 use facet_ansi::Stylize as _;
 use log::{error, info, warn};
 use minijinja::Environment;
@@ -330,33 +332,10 @@ fn generate_tuple_impls(has_diffs: &mut bool, opts: Options) {
     // Start timer to measure execution time
     let start_time = std::time::Instant::now();
 
-    // Initialize minijinja environment
-    let mut env = Environment::empty();
-    env.add_function("range", range);
-
     // Define the base path and template path
     let base_path = Path::new("facet-core/src/_trait/impls/tuples_impls.rs");
-    let template_path = base_path.with_extension("rs.j2");
 
-    // Load the template from file
-    let template_content = fs_err::read_to_string(&template_path)
-        .unwrap_or_else(|_| panic!("Failed to read template file: {:?}", template_path));
-
-    // Add the template to the environment
-    env.add_template("tuples_impls", &template_content)
-        .expect("Failed to add template");
-
-    // Get the template
-    let template = env
-        .get_template("tuples_impls")
-        .expect("Failed to get template");
-
-    // Render the template with context
-    let output = template
-        .render(minijinja::context! {
-            max_tuple_size => 12
-        })
-        .expect("Failed to render template");
+    let output = gen_tuples_impls::generate_tuples_impls();
 
     // Format the generated code using rustfmt
     let mut fmt = std::process::Command::new("rustfmt")
@@ -377,6 +356,14 @@ fn generate_tuple_impls(has_diffs: &mut bool, opts: Options) {
     // Get formatted output
     let formatted_output = fmt.wait_with_output().expect("Failed to wait for rustfmt");
     if !formatted_output.status.success() {
+        // Save the problematic output for inspection
+        let _ = std::fs::write("/tmp/output.rs", &output);
+        error!(
+            "🚫 {} {}",
+            "rustfmt failed to format the code.".red(),
+            "The unformatted output has been saved to /tmp/output.rs for inspection.".yellow(),
+        );
+
         error!(
             "🚫 {}",
             format!("rustfmt failed with exit code: {}", formatted_output.status).red()
