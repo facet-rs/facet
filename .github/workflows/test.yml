@@ -20,6 +20,7 @@ jobs:
         shell: bash
         run: |
           just
+          echo "yay"
 
   miri:
     runs-on: arc-runners
