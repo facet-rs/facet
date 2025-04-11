@@ -133,7 +133,9 @@ dependencies = [
 name = "facet-msgpack"
 version = "0.1.11"
 dependencies = [
- "facet",
+ "facet-core",
+ "facet-derive",
+ "facet-reflect",
  "facet-testhelpers",
  "log",
 ]
