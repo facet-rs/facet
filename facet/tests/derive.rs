@@ -1,5 +1,5 @@
 use core::{fmt::Debug, mem::offset_of};
-use facet::{Def, Facet, FieldFlags, StructDef, StructKind, VariantKind};
+use facet::{Def, Facet, FieldFlags, Shape, StructDef, StructKind, VariantKind};
 
 #[test]
 fn unit_struct() {
@@ -360,6 +360,42 @@ fn derive_real_life_cub_config() {
         #[cfg_attr(feature = "testfeat", serde(default = "serde_defaults::mom_api_key"))]
         pub mom_api_key: String,
     }
+}
+
+#[test]
+fn macroed_type() {
+    fn validate_shape(shape: &Shape) {
+        match shape.def {
+            Def::Struct(sd) => {
+                assert_eq!(sd.fields.len(), 1);
+                let field = sd.fields[0];
+                let shape_name = format!("{}", field.shape);
+                assert_eq!(shape_name, "u32");
+                eprintln!("Shape {shape} looks correct");
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Manual {
+        // NOTICE type is variable here
+        value: u32,
+    }
+    validate_shape(Manual::SHAPE);
+
+    macro_rules! declare_struct {
+        ($type:ty) => {
+            #[derive(Debug, Facet, PartialEq)]
+            struct Macroed {
+                // NOTICE type is variable here
+                value: $type,
+            }
+        };
+    }
+
+    declare_struct!(u32);
+    validate_shape(Macroed::SHAPE);
 }
 
 // #[test]

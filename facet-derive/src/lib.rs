@@ -99,6 +99,7 @@ unsynn! {
         Tuple(ParenthesisGroupContaining<CommaDelimitedVec<Box<Type>>>),
         Slice(BracketGroupContaining<Box<Type>>),
         Bare(BareType),
+        NoneDelimited(NoneGroupContaining<Box<Type>>),
     }
 
     struct ReferenceType {
@@ -233,6 +234,9 @@ impl core::fmt::Display for Type {
                     write!(f, ">")?;
                 }
                 Ok(())
+            }
+            Type::NoneDelimited(inner) => {
+                write!(f, "{}", inner.content)
             }
         }
     }
