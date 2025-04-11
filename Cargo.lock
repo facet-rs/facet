@@ -83,8 +83,8 @@ version = "0.1.0"
 name = "facet-args"
 version = "0.1.11"
 dependencies = [
- "facet",
  "facet-core",
+ "facet-derive",
  "facet-pretty",
  "facet-reflect",
  "facet-testhelpers",
