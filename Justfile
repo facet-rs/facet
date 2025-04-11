@@ -60,11 +60,11 @@ test *args:
     cargo nextest run {{args}} < /dev/null
     echo -e "\033[1;33m✅ Good good!\033[0m"
 
-doc-tests:
+doc-tests *args:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
     echo -e "\033[1;36m📚 Running documentation tests...\033[0m"
-    cargo test --doc
+    cargo test --doc {{args}}
 
 codegen *args:
     #!/usr/bin/env -S bash -euo pipefail
