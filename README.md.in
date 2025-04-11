@@ -186,7 +186,7 @@ We can build it fully through reflection:
 #     bar: String,
 # }
 
-use facet::PokeUninit;
+use facet_reflect::PokeUninit;
 
 fn main() {
     // outer code: we know the type of `FooBar` — we pass `poke`
