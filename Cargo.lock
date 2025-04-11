@@ -271,34 +271,12 @@ dependencies = [
 name = "facet-json"
 version = "0.1.15"
 dependencies = [
- "facet-json-read",
- "facet-json-write",
-]
-
-[[package]]
-name = "facet-json-read"
-version = "0.1.14"
-dependencies = [
- "color-backtrace",
- "ctor",
- "env_logger",
- "facet-core",
- "facet-derive",
- "facet-poke",
- "log",
-]
-
-[[package]]
-name = "facet-json-write"
-version = "0.1.14"
-dependencies = [
  "color-backtrace",
  "ctor",
  "env_logger",
  "facet",
  "facet-core",
  "facet-derive",
- "facet-json-read",
  "facet-peek",
  "facet-poke",
  "log",

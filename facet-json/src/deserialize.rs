@@ -27,7 +27,7 @@ use log::trace;
 /// # #[derive(Facet)]
 /// # struct Person { name: String, age: u64 }
 /// let json = r#"{"name":"Alice","age":30}"#;
-/// let person: Person = facet_json_read::from_str(json).unwrap();
+/// let person: Person = facet_json::from_str(json).unwrap();
 /// ```
 pub fn from_str<T: Facet>(json: &str) -> Result<T, JsonParseErrorWithContext<'_>> {
     let (poke, _guard) = PokeUninit::alloc::<T>();
@@ -101,7 +101,7 @@ macro_rules! signeds {
 /// This function takes a JSON parser and a Poke object and deserializes the JSON
 /// into the Poke object. It uses an iterative approach with a stack to avoid
 /// recursion.
-fn deserialize_value<'input, 'mem>(
+pub(crate) fn deserialize_value<'input, 'mem>(
     parser: &mut JsonParser<'input>,
     root_poke: PokeUninit<'mem>,
 ) -> Result<Opaque<'mem>, JsonParseErrorWithContext<'input>> {

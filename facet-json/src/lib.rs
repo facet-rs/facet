@@ -1,8 +1,9 @@
 #![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 
-#[cfg(feature = "read")]
-pub use facet_json_read::*;
+mod deserialize;
+mod parser;
+mod serialize;
 
-#[cfg(feature = "write")]
-pub use facet_json_write::*;
+pub use deserialize::*;
+pub use serialize::*;

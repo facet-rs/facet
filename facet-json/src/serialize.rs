@@ -125,7 +125,7 @@ pub fn to_json<W: Write>(peek: Peek<'_>, writer: &mut W, indent: bool) -> io::Re
                     Peek::Struct(ps) => {
                         write!(writer, "{{")?;
                         if indent {
-                            writeln!(writer)?;
+                            writeln!(writer)?
                         }
 
                         let fields: Vec<_> = ps.fields().collect();
@@ -147,7 +147,7 @@ pub fn to_json<W: Write>(peek: Peek<'_>, writer: &mut W, indent: bool) -> io::Re
                     Peek::List(pl) => {
                         write!(writer, "[")?;
                         if indent {
-                            writeln!(writer)?;
+                            writeln!(writer)?
                         }
 
                         let mut items = Vec::new();
@@ -174,7 +174,7 @@ pub fn to_json<W: Write>(peek: Peek<'_>, writer: &mut W, indent: bool) -> io::Re
                     Peek::Map(pm) => {
                         write!(writer, "{{")?;
                         if indent {
-                            writeln!(writer)?;
+                            writeln!(writer)?
                         }
 
                         // Collect entries using the iterator and convert them to the format expected by MapEntry
@@ -200,9 +200,9 @@ pub fn to_json<W: Write>(peek: Peek<'_>, writer: &mut W, indent: bool) -> io::Re
                     }
                     Peek::Option(popt) => {
                         if let Some(p) = popt.value() {
-                            peek_value_to_json(p.as_value(), writer)?;
+                            peek_value_to_json(p.as_value(), writer)?
                         } else {
-                            write!(writer, "null")?;
+                            write!(writer, "null")?
                         }
                     }
                     _ => todo!("unsupported peek type: {:?}", peek),
@@ -217,16 +217,16 @@ pub fn to_json<W: Write>(peek: Peek<'_>, writer: &mut W, indent: bool) -> io::Re
                 if !is_first {
                     write!(writer, ",")?;
                     if indent {
-                        writeln!(writer)?;
+                        writeln!(writer)?
                     }
                 }
 
                 if indent {
-                    write!(writer, "{:indent$}", "", indent = (level + 1) * 2)?;
+                    write!(writer, "{:indent$}", "", indent = (level + 1) * 2)?
                 }
                 write!(writer, "\"{}\":", field_name)?;
                 if indent {
-                    write!(writer, " ")?;
+                    write!(writer, " ")?
                 }
 
                 stack.push_front(StackItem::Value {
@@ -237,9 +237,9 @@ pub fn to_json<W: Write>(peek: Peek<'_>, writer: &mut W, indent: bool) -> io::Re
             StackItem::StructEnd { level, had_fields } => {
                 if had_fields && indent {
                     writeln!(writer)?;
-                    write!(writer, "{:indent$}", "", indent = level * 2)?;
+                    write!(writer, "{:indent$}", "", indent = level * 2)?
                 }
-                write!(writer, "}}")?;
+                write!(writer, "}}")?
             }
             StackItem::ListItem {
                 peek,
@@ -249,12 +249,12 @@ pub fn to_json<W: Write>(peek: Peek<'_>, writer: &mut W, indent: bool) -> io::Re
                 if !is_first {
                     write!(writer, ",")?;
                     if indent {
-                        writeln!(writer)?;
+                        writeln!(writer)?
                     }
                 }
 
                 if indent {
-                    write!(writer, "{:indent$}", "", indent = (level + 1) * 2)?;
+                    write!(writer, "{:indent$}", "", indent = (level + 1) * 2)?
                 }
 
                 stack.push_front(StackItem::Value {
@@ -265,9 +265,9 @@ pub fn to_json<W: Write>(peek: Peek<'_>, writer: &mut W, indent: bool) -> io::Re
             StackItem::ListEnd { level, had_items } => {
                 if had_items && indent {
                     writeln!(writer)?;
-                    write!(writer, "{:indent$}", "", indent = level * 2)?;
+                    write!(writer, "{:indent$}", "", indent = level * 2)?
                 }
-                write!(writer, "]")?;
+                write!(writer, "]")?
             }
             StackItem::MapEntry {
                 key,
@@ -278,12 +278,12 @@ pub fn to_json<W: Write>(peek: Peek<'_>, writer: &mut W, indent: bool) -> io::Re
                 if !is_first {
                     write!(writer, ",")?;
                     if indent {
-                        writeln!(writer)?;
+                        writeln!(writer)?
                     }
                 }
 
                 if indent {
-                    write!(writer, "{:indent$}", "", indent = (level + 1) * 2)?;
+                    write!(writer, "{:indent$}", "", indent = (level + 1) * 2)?
                 }
 
                 // Process key first (inline with no indentation)
@@ -299,15 +299,13 @@ pub fn to_json<W: Write>(peek: Peek<'_>, writer: &mut W, indent: bool) -> io::Re
                         StackItem::Value { peek, level: _ } => match peek {
                             Peek::Value(pv) => {
                                 trace!("{:?}", pv.shape());
-                                peek_value_to_json(pv, &mut temp_writer)?;
+                                peek_value_to_json(pv, &mut temp_writer)?
                             }
-                            _ => {
-                                write!(&mut temp_writer, "\"<complex_key>\"")?;
-                            }
+                            _ => write!(&mut temp_writer, "\"<complex_key>\"")?,
                         },
                         _ => {
                             // This should not happen for simple key serialization
-                            write!(&mut temp_writer, "\"<invalid_key>\"")?;
+                            write!(&mut temp_writer, "\"<invalid_key>\"")?
                         }
                     }
                 }
@@ -316,7 +314,7 @@ pub fn to_json<W: Write>(peek: Peek<'_>, writer: &mut W, indent: bool) -> io::Re
                 write!(writer, "{}:", key_string)?;
 
                 if indent {
-                    write!(writer, " ")?;
+                    write!(writer, " ")?
                 }
 
                 stack.push_front(StackItem::Value {
@@ -327,9 +325,9 @@ pub fn to_json<W: Write>(peek: Peek<'_>, writer: &mut W, indent: bool) -> io::Re
             StackItem::MapEnd { level, had_entries } => {
                 if had_entries && indent {
                     writeln!(writer)?;
-                    write!(writer, "{:indent$}", "", indent = level * 2)?;
+                    write!(writer, "{:indent$}", "", indent = level * 2)?
                 }
-                write!(writer, "}}")?;
+                write!(writer, "}}")?
             }
         }
     }
@@ -343,8 +341,8 @@ pub fn to_json<W: Write>(peek: Peek<'_>, writer: &mut W, indent: bool) -> io::Re
 ///
 /// ```rust
 /// use facet::Facet;
-/// use facet_json_write::to_json_string;
-/// use facet_peek::Peek;
+/// use facet_json::to_json_string;
+/// use facet_poke::Peek;
 ///
 /// #[derive(facet::Facet)]
 /// struct Foo {
