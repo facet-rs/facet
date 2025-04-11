@@ -1,5 +1,3 @@
-{{ header("facet-core") }}
-
 Defines the core types adn traits used throughout the facet ecosystem for runtime reflection:
 
 * `Facet`: exposes a `SHAPE` associated const
@@ -8,5 +6,3 @@ Defines the core types adn traits used throughout the facet ecosystem for runtim
 * The `Def` tree, which describes type definitions (structs, enums, etc.)
 
 This crate is foundational to facet's reflection capabilities, providing the type system that enables runtime type manipulation.
-
-{{ footer() }}

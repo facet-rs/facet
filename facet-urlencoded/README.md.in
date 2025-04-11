@@ -1,5 +1,1 @@
-{{ header("facet-urlencoded") }}
-
 Provides URL-encoded form data deserialization for Facet types.
-
-{{ footer() }}

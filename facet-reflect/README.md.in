@@ -1,5 +1,3 @@
-{{ header("facet-args") }}
-
 The `facet-reflect` crate allows reading from and writing to shapes implementing the `Facet` trait. This crate combines the functionality of the former `facet-peek` and `facet-poke` crates, providing a unified interface for reflection and manipulation of `Facet` types.
 
 ## Features
@@ -14,5 +12,3 @@ The `facet-reflect` crate allows reading from and writing to shapes implementing
 This crate makes it trivial to write serializers and deserializers. It's used by crates like `facet-json`, `facet-yaml`, `facet-urlencoded`, etc.
 
 For more detailed usage examples, please refer to the crate documentation.
-
-{{ footer() }}

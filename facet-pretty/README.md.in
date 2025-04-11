@@ -1,5 +1,1 @@
-{{ header("facet-pretty") }}
-
 Provides pretty-printing capabilities for Facet types.
-
-{{ footer() }}

@@ -1,5 +1,3 @@
-{{ header("facet") }}
-
 facet provides "const fn" reflection for Rust.
 
 The `Facet` trait is meant to be derived for _every single type in the Rust
@@ -397,5 +395,3 @@ Additionally:
 
 - [facet-pretty](https://github.com/facet-rs/facet/tree/main/facet-pretty) is able to pretty-print Facet types.
 - [facet-codegen](https://github.com/facet-rs/facet/tree/main/facet-codegen) is internal and generates some of the code of `facet-core`
-
-{{ footer() }}

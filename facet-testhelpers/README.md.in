@@ -1,6 +1,2 @@
-{{ header("facet-testhelpers") }}
-
 Lightweight test helpers: a log facade that always does tracing (with colors),
 and color-backtrace using the btparse backend.
-
-{{ footer() }}
