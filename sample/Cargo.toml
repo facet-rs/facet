@@ -1,0 +1,7 @@
+[package]
+name = "sample"
+publish = false
+edition = "2024"
+
+[dependencies]
+facet = { version = "0.1.17", path = "../facet" }

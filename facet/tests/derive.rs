@@ -398,97 +398,13 @@ fn macroed_type() {
     validate_shape(Macroed::SHAPE);
 }
 
-// #[test]
-// fn struct_with_tuple() {
-//     #[derive(Debug, ::facet::Facet)]
-//     struct TupleContainer {
-//         data: (u32, String, bool),
-//     }
-
-//     if !cfg!(miri) {
-//         let shape = TupleContainer::SHAPE;
-
-//         assert_eq!(format!("{}", shape), "TupleContainer");
-
-//         if let Def::Struct(StructDef { fields }) = shape.def {
-//             assert_eq!(fields.len(), 1);
-
-//             let data_field = &fields[0];
-//             assert_eq!(data_field.name, "data");
-
-//             // Get the layout from the tuple type itself
-//             let tuple_layout = core::alloc::Layout::new::<(u32, String, bool)>();
-
-//             assert_eq!(data_field.shape.layout.size(), tuple_layout.size());
-//             assert_eq!(data_field.shape.layout.align(), tuple_layout.align());
-//             assert_eq!(data_field.offset, offset_of!(TupleContainer, data));
-//         } else {
-//             panic!("Expected Struct innards");
-//         }
-//     }
-// }
-
-// #[test]
-// fn struct_with_vec() {
-//     #[derive(Debug, ::facet::Facet)]
-//     struct VecContainer {
-//         data: Vec<u32>,
-//     }
-// }
-
-// // #[test]
-// // fn struct_with_generic() {
-// //     #[derive(Debug, ::facet::Facet)]
-// //     struct Generic<T> {
-// //         data: T,
-// //     }
-
-// //     let shape = Generic::<u32>::shape();
-// //     assert_eq!(format!("{}", shape), "Generic<u32>");
-// // }
-
-// // #[test]
-// // fn struct_with_lifetime() {
-// //     #[derive(Debug, ::facet::Facet)]
-// //     struct WithLifetime<'a> {
-// //         reference: &'a str,
-// //     }
-
-// //     let shape = WithLifetime::shape();
-// //     assert_eq!(format!("{}", shape), "WithLifetime");
-// // }
-
-// // // #[test]
-// // // fn struct_with_attributes() {
-// // //     #[derive(Debug, ::facet::Facet)]
-// // //     #[repr(C, packed)]
-// // //     struct Packed {
-// // //         a: u8,
-// // //         b: u32,
-// // //     }
-
-// // //     let shape = Packed::shape();
-// // //     assert_eq!(shape.layout.size(), 5);
-// // //     assert_eq!(shape.layout.align(), 1);
-// // // }
-
-// // // #[test]
-// // // fn enum_test() {
-// // //     #[derive(Debug, ::facet::Facet)]
-// // //     enum MyEnum {
-// // //         A,
-// // //         B(i32),
-// // //         C { x: f64, y: f64 },
-// // //     }
-
-// // //     let shape = MyEnum::shape();
-// // //     assert_eq!(format!("{}", shape), "MyEnum");
-// // //     if let facet::Innards::Enum { variants, .. } = shape.innards {
-// // //         assert_eq!(variants.len(), 3);
-// // //         assert_eq!(variants[0].name, "A");
-// // //         assert_eq!(variants[1].name, "B");
-// // //         assert_eq!(variants[2].name, "C");
-// // //     } else {
-// // //         panic!("Expected Enum innards");
-// // //     }
-// // // }
+#[test]
+fn array_field() {
+    /// Network packet types
+    #[derive(Facet)]
+    #[repr(u8)]
+    pub enum Packet {
+        /// Array of bytes representing the header
+        Header([u8; 4]),
+    }
+}

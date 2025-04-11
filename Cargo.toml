@@ -17,6 +17,7 @@ members = [
     "facet-urlencoded",
     "facet-yaml",
 ]
+exclude = ["sample"]
 resolver = "3"
 
 [workspace.package]
