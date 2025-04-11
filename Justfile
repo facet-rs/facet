@@ -29,6 +29,9 @@ nostd:
     cargo check --no-default-features -p facet
     cargo check --no-default-features -p facet-peek
     cargo check --no-default-features -p facet-poke
+    cargo check --no-default-features --features alloc -p facet-core
+    cargo check --no-default-features --features alloc -p facet
+    cargo check --no-default-features --features alloc -p facet-peek
 
 ci:
     #!/usr/bin/env -S bash -euo pipefail

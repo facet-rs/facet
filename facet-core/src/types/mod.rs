@@ -259,7 +259,7 @@ impl core::fmt::Display for Shape {
 
 impl Shape {
     /// Heap-allocate a value of this shape
-    #[cfg(feature = "std")]
+    #[cfg(feature = "alloc")]
     #[inline]
     pub fn allocate(&self) -> crate::opaque::OpaqueUninit<'static> {
         crate::opaque::OpaqueUninit::new(if self.layout.size() == 0 {

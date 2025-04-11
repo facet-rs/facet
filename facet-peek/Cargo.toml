@@ -14,5 +14,6 @@ categories = ["development-tools", "rust-patterns", "parsing"]
 facet-core.workspace = true
 
 [features]
-std = ["facet-core/std"]
+std = ["facet-core/std", "alloc"]
+alloc = ["facet-core/alloc"]
 default = ["std"]

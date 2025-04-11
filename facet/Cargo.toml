@@ -17,7 +17,8 @@ facet-derive.workspace = true
 [features]
 # Does nothing, only used for tests
 testfeat = []
-std = ["facet-core/std"]
+std = ["facet-core/std", "alloc"]
+alloc = ["facet-core/alloc"]
 default = ["std"]
 
 [dev-dependencies]

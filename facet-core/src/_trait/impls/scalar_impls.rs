@@ -35,11 +35,11 @@ unsafe impl Facet for () {
     };
 }
 
-#[cfg(feature = "std")]
+#[cfg(feature = "alloc")]
 unsafe impl Facet for alloc::string::String {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
-            .id(ConstTypeId::of::<String>())
+            .id(ConstTypeId::of::<alloc::string::String>())
             .layout(Layout::new::<Self>())
             .def(Def::Scalar(
                 ScalarDef::builder()
@@ -47,7 +47,10 @@ unsafe impl Facet for alloc::string::String {
                     .affinity(ScalarAffinity::string().max_inline_length(0).build())
                     .build(),
             ))
-            .vtable(value_vtable!(String, |f, _opts| write!(f, "String")))
+            .vtable(value_vtable!(alloc::string::String, |f, _opts| write!(
+                f,
+                "String"
+            )))
             .build()
     };
 }
@@ -67,7 +70,7 @@ unsafe impl Facet for &str {
     };
 }
 
-#[cfg(feature = "std")]
+#[cfg(feature = "alloc")]
 unsafe impl Facet for alloc::borrow::Cow<'_, str> {
     const SHAPE: &'static Shape = &const {
         Shape::builder()

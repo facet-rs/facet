@@ -15,5 +15,6 @@ impls = "1.0.3"
 bitflags = "2.4.1"
 
 [features]
-std = []
+std = ["alloc"]
+alloc = []
 default = ["std"]
