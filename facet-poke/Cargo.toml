@@ -16,8 +16,8 @@ alloc = ["facet-core/alloc"]
 default = ["std"]
 
 [dependencies]
-facet-peek = { path = "../facet-peek", version = "0.2.14" }
-facet-core = { path = "../facet-core", version = "0.4.2" }
+facet-peek = { path = "../facet-peek", version = "0.2.14", default-features = false }
+facet-core = { path = "../facet-core", version = "0.4.2", default-features = false }
 
 [dev-dependencies]
 color-backtrace = { version = "0.7.0", default-features = false, features = [
