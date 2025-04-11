@@ -104,7 +104,7 @@ absolve:
     fi
 
 ship:
-    #!/usr/bin/env -S /bin/bash -eux
+    #!/usr/bin/env -S bash -eux
     release-plz update
     git add .
     git commit -m "⬆️ crate upgrades"
@@ -113,3 +113,8 @@ ship:
 
 release:
     cargo ws publish --publish-as-is --allow-dirty
+
+docsrs:
+    #!/usr/bin/env -S bash -eux
+    source .envrc
+    RUSTDOCFLAGS="--cfg docsrs" cargo +nightly doc

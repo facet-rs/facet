@@ -49,11 +49,78 @@ fn copy_cargo_expand_output(has_diffs: &mut bool, opts: &Options) {
 
     // Run cargo expand command and measure execution time
     let start_time = std::time::Instant::now();
-    let output = std::process::Command::new("sh")
-        .arg("-c")
-        .arg("RUSTC_BOOTSTRAP=1 cargo rustc --target-dir /tmp/facet-codegen-expand --lib -- -Zunpretty=expanded | rustfmt --edition 2024 --emit stdout")
-        .output()
-        .expect("Failed to execute cargo expand command");
+
+    // Command 1: cargo rustc for expansion
+    let cargo_expand_output = std::process::Command::new("cargo")
+        .env("RUSTC_BOOTSTRAP", "1") // Necessary for -Z flags
+        .arg("rustc")
+        .arg("--target-dir")
+        .arg("/tmp/facet-codegen-expand") // Use a temporary, less intrusive target dir
+        .arg("--lib") // Expand the library crate in the current directory
+        .arg("--") // Separator for rustc flags
+        .arg("-Zunpretty=expanded") // The flag to expand macros
+        .output() // Execute and capture output
+        .expect("Failed to execute cargo rustc for expansion");
+
+    // Check if cargo rustc succeeded
+    if !cargo_expand_output.status.success() {
+        error!(
+            "🚫 {}:\n--- stderr ---\n{}\n--- stdout ---\n{}",
+            "cargo rustc expansion failed".red(),
+            String::from_utf8_lossy(&cargo_expand_output.stderr).trim(),
+            String::from_utf8_lossy(&cargo_expand_output.stdout).trim()
+        );
+        std::process::exit(1);
+    }
+
+    // Prepare the code for rustfmt: prepend the necessary lines
+    let expanded_code = String::from_utf8(cargo_expand_output.stdout)
+        .expect("Failed to convert cargo expand output to UTF-8 string");
+
+    // Command 2: rustfmt to format the expanded code
+    let mut rustfmt_cmd = std::process::Command::new("rustfmt")
+        .arg("--edition")
+        .arg("2024")
+        .arg("--emit")
+        .arg("stdout")
+        .stdin(std::process::Stdio::piped()) // Prepare to pipe stdin
+        .stdout(std::process::Stdio::piped()) // Capture stdout
+        .stderr(std::process::Stdio::piped()) // Capture stderr
+        .spawn()
+        .expect("Failed to spawn rustfmt");
+
+    // Write the combined code to rustfmt's stdin in a separate scope
+    // to ensure stdin is closed, signaling EOF to rustfmt.
+    {
+        let mut stdin = rustfmt_cmd
+            .stdin
+            .take()
+            .expect("Failed to open rustfmt stdin");
+        stdin
+            .write_all(expanded_code.as_bytes())
+            .expect("Failed to write to rustfmt stdin");
+    } // stdin is closed here
+
+    // Wait for rustfmt to finish and collect its output
+    let output = rustfmt_cmd
+        .wait_with_output()
+        .expect("Failed to wait for rustfmt");
+
+    // Check if rustfmt succeeded (using the final 'output' variable)
+    // Note: The original code only checked the final status, which might hide
+    // the cargo expand error if rustfmt succeeds. We now check both stages.
+    if !output.status.success() {
+        error!(
+            "🚫 {}:\n--- stderr ---\n{}\n--- stdout ---\n{}",
+            "rustfmt failed".red(),
+            String::from_utf8_lossy(&output.stderr).trim(),
+            String::from_utf8_lossy(&output.stdout).trim()
+        );
+        // We still need to check the final status for the rest of the function
+        // but the process might have already exited if cargo expand failed.
+        // If rustfmt itself fails, exit here.
+        std::process::exit(1);
+    }
     let execution_time = start_time.elapsed();
 
     // Change back to the workspace directory
@@ -67,6 +134,29 @@ fn copy_cargo_expand_output(has_diffs: &mut bool, opts: &Options) {
 
     let expanded_code =
         String::from_utf8(output.stdout).expect("Failed to convert output to string");
+
+    // Filter out lines added by `cargo expand` that we don't want in the sample file
+    let expanded_code = expanded_code
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim_start();
+            // - #![feature(...)]
+            // - //! ... (inner doc comments)
+            // - #[prelude_import]
+            // - use ::std::prelude::rust_2024::*;
+            // - #[macro_use]
+            // - extern crate std;
+            !trimmed.starts_with("#![") && !trimmed.starts_with("//!")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    // Ensure a trailing newline for consistency
+    let expanded_code = if expanded_code.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", expanded_code)
+    };
+    let expanded_code = format!("extern crate self as facet;\n {expanded_code}");
 
     // Write the expanded code to the target file
     let target_path = workspace_dir
