@@ -24,14 +24,38 @@ fn main() {
         panic!();
     }
 
-    // Generate tuple implementations
-    generate_tuple_impls(&mut has_diffs, &opts);
+    // Run all three code generation tasks in parallel
+    let opts_clone1 = opts.clone();
+    let tuple_impls_result = std::thread::spawn(move || {
+        let mut local_has_diffs = false;
+        generate_tuple_impls(&mut local_has_diffs, opts_clone1);
+        local_has_diffs
+    });
 
-    // Generate README files from templates
-    generate_readme_files(&mut has_diffs, &opts);
+    let opts_clone2 = opts.clone();
+    let readme_files_result = std::thread::spawn(move || {
+        let mut local_has_diffs = false;
+        generate_readme_files(&mut local_has_diffs, opts_clone2);
+        local_has_diffs
+    });
 
-    // Generate `facet-core/src/sample_generated_code.rs`
-    copy_cargo_expand_output(&mut has_diffs, &opts);
+    let opts_clone3 = opts.clone();
+    let sample_code_result = std::thread::spawn(move || {
+        let mut local_has_diffs = false;
+        copy_cargo_expand_output(&mut local_has_diffs, &opts_clone3);
+        local_has_diffs
+    });
+
+    // Collect results and update has_diffs
+    has_diffs |= tuple_impls_result
+        .join()
+        .expect("tuple_impls thread panicked");
+    has_diffs |= readme_files_result
+        .join()
+        .expect("readme_files thread panicked");
+    has_diffs |= sample_code_result
+        .join()
+        .expect("sample_code thread panicked");
 
     if opts.check && has_diffs {
         process::exit(1);
@@ -42,15 +66,13 @@ fn copy_cargo_expand_output(has_diffs: &mut bool, opts: &Options) {
     let workspace_dir = std::env::current_dir().unwrap();
     let sample_dir = workspace_dir.join("sample");
 
-    // Change to the sample directory
-    std::env::set_current_dir(&sample_dir).expect("Failed to change to sample directory");
-
     // Run cargo expand command and measure execution time
     let start_time = std::time::Instant::now();
 
     // Command 1: cargo rustc for expansion
     let cargo_expand_output = std::process::Command::new("cargo")
         .env("RUSTC_BOOTSTRAP", "1") // Necessary for -Z flags
+        .current_dir(&sample_dir) // Set working directory instead of changing it
         .arg("rustc")
         .arg("--target-dir")
         .arg("/tmp/facet-codegen-expand") // Use a temporary, less intrusive target dir
@@ -121,10 +143,6 @@ fn copy_cargo_expand_output(has_diffs: &mut bool, opts: &Options) {
     }
     let execution_time = start_time.elapsed();
 
-    // Change back to the workspace directory
-    std::env::set_current_dir(&workspace_dir)
-        .expect("Failed to change back to workspace directory");
-
     if !output.status.success() {
         error!("🚫 {}", "Cargo expand command failed".red());
         std::process::exit(1);
@@ -192,7 +210,7 @@ fn copy_cargo_expand_output(has_diffs: &mut bool, opts: &Options) {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Options {
     check: bool,
 }
@@ -271,7 +289,7 @@ fn write_if_different(path: &Path, content: Vec<u8>, check_mode: bool) -> bool {
     }
 }
 
-fn generate_tuple_impls(has_diffs: &mut bool, opts: &Options) {
+fn generate_tuple_impls(has_diffs: &mut bool, opts: Options) {
     // Start timer to measure execution time
     let start_time = std::time::Instant::now();
 
@@ -350,7 +368,7 @@ fn generate_tuple_impls(has_diffs: &mut bool, opts: &Options) {
     }
 }
 
-fn generate_readme_files(has_diffs: &mut bool, opts: &Options) {
+fn generate_readme_files(has_diffs: &mut bool, opts: Options) {
     let start = Instant::now();
 
     // Get all crate directories in the workspace
@@ -459,7 +477,7 @@ at your option."#.to_string()
             path.join("README.md.j2")
         };
         if template_path.exists() {
-            process_readme_template(&mut env, &path, &template_path, has_diffs, opts);
+            process_readme_template(&mut env, &path, &template_path, has_diffs, opts.clone());
             generated_crates.push(crate_name);
         } else {
             error!("🚫 Missing template: {}", template_path.display().red());
@@ -486,7 +504,7 @@ at your option."#.to_string()
         &workspace_dir,
         &workspace_template_path,
         has_diffs,
-        opts,
+        opts.clone(),
     );
 
     // Add workspace to the list of generated READMEs
@@ -514,7 +532,7 @@ fn process_readme_template(
     crate_path: &Path,
     template_path: &Path,
     has_diffs: &mut bool,
-    opts: &Options,
+    opts: Options,
 ) {
     // Get crate name from directory name
     let crate_name = crate_path
