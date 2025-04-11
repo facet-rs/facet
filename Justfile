@@ -83,7 +83,7 @@ rustfmt-fix:
     cargo fmt --all
 
 miri *args:
-    #!/usr/bin/env -S bash -euo pipefail
+    #!/usr/bin/env -S bash -euxo pipefail
     source .envrc
     echo -e "\033[1;31m🧪 Running tests under Miri...\033[0m"
 

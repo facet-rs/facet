@@ -7,6 +7,7 @@ ENV RUSTUP_TOOLCHAIN=${RUSTUP_TOOLCHAIN}
 
 # Accept additional Rust components as a build argument
 ARG ADDITIONAL_RUST_COMPONENTS=""
+ENV ADDITIONAL_RUST_COMPONENTS=${ADDITIONAL_RUST_COMPONENTS}
 
 # Set the default toolchain based on build arg and configure rust components
 RUN apt-get update && apt-get install -y curl && \

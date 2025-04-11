@@ -384,6 +384,7 @@ name = "facet-yaml"
 version = "0.1.11"
 dependencies = [
  "facet-core",
+ "facet-derive",
  "facet-poke",
  "yaml-rust2",
 ]
