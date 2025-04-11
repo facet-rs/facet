@@ -48,6 +48,14 @@ impl Discriminant {
     }
 }
 
+struct ProcessedEnumBody {
+    shadow_struct_defs: Vec<String>,
+    variant_expressions: Vec<String>,
+    repr_type: String,
+}
+
+type EnumVariant = Delimited<EnumVariantLike, Comma>;
+
 /// Processes an enum to implement Facet
 ///
 /// Example input:
@@ -61,6 +69,13 @@ impl Discriminant {
 /// }
 /// ```
 pub(crate) fn process_enum(parsed: Enum) -> proc_macro::TokenStream {
+    let enum_name = parsed.name.to_string();
+    let (generics_def, generics_use) = generics_split_for_impl(parsed.generics.as_ref());
+    let where_clauses = parsed
+        .clauses
+        .as_ref()
+        .map_or(String::new(), ToString::to_string);
+
     // collect all `#repr(..)` attrs
     // either multiple attrs, or a single attr with multiple values
     let attr_iter = parsed
@@ -82,7 +97,7 @@ pub(crate) fn process_enum(parsed: Enum) -> proc_macro::TokenStream {
         .flat_map(|repr_attr| repr_attr.attr.content.0.iter());
 
     let mut repr_c = false;
-    let mut repr_type = None;
+    let mut discriminant_type = None;
 
     for attr in attr_iter {
         let attr = attr.value.to_string();
@@ -93,16 +108,16 @@ pub(crate) fn process_enum(parsed: Enum) -> proc_macro::TokenStream {
             // set the repr type
             // NOTE: we're not worried about multiple
             // clashing types here -- that's rustc's problem
-            "u8" => repr_type = Some(Discriminant::U8),
-            "u16" => repr_type = Some(Discriminant::U16),
-            "u32" => repr_type = Some(Discriminant::U32),
-            "u64" => repr_type = Some(Discriminant::U64),
-            "usize" => repr_type = Some(Discriminant::USize),
-            "i8" => repr_type = Some(Discriminant::I8),
-            "i16" => repr_type = Some(Discriminant::I16),
-            "i32" => repr_type = Some(Discriminant::I32),
-            "i64" => repr_type = Some(Discriminant::I64),
-            "isize" => repr_type = Some(Discriminant::ISize),
+            "u8" => discriminant_type = Some(Discriminant::U8),
+            "u16" => discriminant_type = Some(Discriminant::U16),
+            "u32" => discriminant_type = Some(Discriminant::U32),
+            "u64" => discriminant_type = Some(Discriminant::U64),
+            "usize" => discriminant_type = Some(Discriminant::USize),
+            "i8" => discriminant_type = Some(Discriminant::I8),
+            "i16" => discriminant_type = Some(Discriminant::I16),
+            "i32" => discriminant_type = Some(Discriminant::I32),
+            "i64" => discriminant_type = Some(Discriminant::I64),
+            "isize" => discriminant_type = Some(Discriminant::ISize),
             _ => {
                 return r#"compile_error!("Facet only supports enums with a primitive representation (e.g. #[repr(u8)]) or C-style (e.g. #[repr(C)]")"#
             .into_token_stream()
@@ -111,18 +126,87 @@ pub(crate) fn process_enum(parsed: Enum) -> proc_macro::TokenStream {
         }
     }
 
-    match (repr_c, repr_type) {
+    let processed_body = match (repr_c, discriminant_type) {
         (true, _) => {
             // C-style enum, no discriminant type
-            process_c_style_enum(parsed, repr_type)
+            process_c_style_enum(
+                &enum_name,
+                &parsed.body.content.0,
+                discriminant_type,
+                &generics_def,
+                &generics_use,
+                &where_clauses,
+            )
         }
-        (false, Some(repr_type)) => process_primitive_enum(parsed, repr_type),
+        (false, Some(discriminant_type)) => process_primitive_enum(
+            &enum_name,
+            &parsed.body.content.0,
+            discriminant_type,
+            &generics_def,
+            &generics_use,
+            &where_clauses,
+        ),
         _ => {
-            r#"compile_error!("Enums must have an explicit representation (e.g. #[repr(u8)] or #[repr(C)]) to be used with Facet")"#
+            return r#"compile_error!("Enums must have an explicit representation (e.g. #[repr(u8)] or #[repr(C)]) to be used with Facet")"#
             .into_token_stream()
-            .into()
+            .into();
         }
-    }
+    };
+
+    let ProcessedEnumBody {
+        shadow_struct_defs,
+        variant_expressions,
+        repr_type,
+    } = processed_body;
+
+    // Join the shadow struct definitions and variant expressions
+    let shadow_structs = shadow_struct_defs.join("\n\n");
+    let variants = variant_expressions.join(", ");
+
+    let static_decl = if parsed.generics.is_none() {
+        generate_static_decl(&enum_name)
+    } else {
+        String::new()
+    };
+    let maybe_container_doc = build_maybe_doc(&parsed.attributes);
+
+    // Generate the impl
+    let output = format!(
+        r#"
+{static_decl}
+
+#[automatically_derived]
+unsafe impl<{generics_def}> facet::Facet for {enum_name}<{generics_use}> {where_clauses} {{
+    const SHAPE: &'static facet::Shape = &const {{
+        // Define all shadow structs at the beginning of the const block
+        // to ensure they're in scope for offset_of! macros
+        {shadow_structs}
+
+        facet::Shape::builder()
+            .id(facet::ConstTypeId::of::<Self>())
+            .layout(core::alloc::Layout::new::<Self>())
+            .vtable(facet::value_vtable!(
+                Self,
+                |f, _opts| core::fmt::Write::write_str(f, "{enum_name}")
+            ))
+            .def(facet::Def::Enum(facet::EnumDef::builder()
+                // Use variant expressions that just reference the shadow structs
+                // which are now defined above
+                .variants(&const {{[ {variants} ]}})
+                .repr(facet::EnumRepr::{repr_type})
+                .build()))
+            {maybe_container_doc}
+            .build()
+    }};
+}}
+        "#,
+    );
+
+    // Output generated code
+    // Don't use panic for debugging as it makes code unreachable
+
+    // Return the generated code
+    output.into_token_stream().into()
 }
 
 /// C-style enums (i.e. #[repr(C)], #[repr(C, u*)] and #[repr(C, i*)]) are laid out
@@ -133,27 +217,20 @@ pub(crate) fn process_enum(parsed: Enum) -> proc_macro::TokenStream {
 /// To calculate the offsets of each variant, we create a shadow struct that mimics this
 /// structure and use the `offset_of!` macro to calculate the offsets of each field.
 fn process_c_style_enum(
-    parsed: Enum,
+    enum_name: &str,
+    variants: &[EnumVariant],
     discriminant_type: Option<Discriminant>,
-) -> proc_macro::TokenStream {
-    let enum_name = parsed.name.to_string();
-
-    let (generics_def, generics_use) = generics_split_for_impl(parsed.generics.as_ref());
-    let where_clauses = parsed
-        .clauses
-        .as_ref()
-        .map_or(String::new(), ToString::to_string);
-
+    generics_def: &str,
+    generics_use: &str,
+    where_clauses: &str,
+) -> ProcessedEnumBody {
     // Collect shadow struct definitions separately from variant expressions
     let mut shadow_struct_defs = Vec::new();
     let mut variant_expressions = Vec::new();
 
     // first, create an enum to represent the discriminant type
     let shadow_discriminant_name = format!("__ShadowDiscriminant{enum_name}");
-    let all_variant_names = parsed
-        .body
-        .content
-        .0
+    let all_variant_names = variants
         .iter()
         .map(|var_like| match &var_like.value {
             EnumVariantLike::Unit(unit) => unit.name.to_string(),
@@ -170,10 +247,7 @@ fn process_c_style_enum(
 
     // we'll also generate a shadow union for the fields
     let shadow_union_name = format!("__ShadowFields{enum_name}");
-    let all_union_fields = parsed
-        .body
-        .content
-        .0
+    let all_union_fields = variants
         .iter()
         .map(|var_like| match &var_like.value {
             EnumVariantLike::Unit(unit) => unit.name.to_string(),
@@ -203,7 +277,7 @@ fn process_c_style_enum(
     ));
 
     // Process each variant using enumerate to get discriminant values
-    for (discriminant_value, var_like) in parsed.body.content.0.iter().enumerate() {
+    for (discriminant_value, var_like) in variants.iter().enumerate() {
         match &var_like.value {
             EnumVariantLike::Unit(unit) => {
                 let variant_name = unit.name.to_string();
@@ -264,7 +338,7 @@ fn process_c_style_enum(
                         gen_struct_field(
                             &field_name,
                             &shadow_struct_name,
-                            &generics_use,
+                            generics_use,
                             &field.value.attributes,
                         )
                     })
@@ -325,7 +399,7 @@ fn process_c_style_enum(
                         gen_struct_field(
                             &field_name,
                             &shadow_struct_name,
-                            &generics_use,
+                            generics_use,
                             &field.value.attributes,
                         )
                     })
@@ -352,60 +426,14 @@ fn process_c_style_enum(
         }
     }
 
-    // Join the shadow struct definitions and variant expressions
-    let shadow_structs = shadow_struct_defs.join("\n\n");
-    let variants = variant_expressions.join(", ");
-
-    let static_decl = if parsed.generics.is_none() {
-        generate_static_decl(&enum_name)
-    } else {
-        String::new()
-    };
-    let maybe_container_doc = build_maybe_doc(&parsed.attributes);
-
-    // Generate the impl
-    let output = format!(
-        r#"
-{static_decl}
-
-#[automatically_derived]
-unsafe impl<{generics_def}> facet::Facet for {enum_name}<{generics_use}> {where_clauses} {{
-    const SHAPE: &'static facet::Shape = &const {{
-        // Define all shadow structs at the beginning of the const block
-        // to ensure they're in scope for offset_of! macros
-        {shadow_structs}
-
-        facet::Shape::builder()
-            .id(facet::ConstTypeId::of::<Self>())
-            .layout(core::alloc::Layout::new::<Self>())
-            .vtable(facet::value_vtable!(
-                Self,
-                |f, _opts| core::fmt::Write::write_str(f, "{enum_name}")
-            ))
-            .def(facet::Def::Enum(facet::EnumDef::builder()
-                // Use variant expressions that just reference the shadow structs
-                // which are now defined above
-                .variants(&const {{[ {variants} ]}})
-                .repr(facet::EnumRepr::{repr_type})
-                .build()))
-            {maybe_container_doc}
-            .build()
-    }};
-}}
-        "#,
-        // for #[repr(C)] enums, we compute the enum representation from the size of the discriminant
-        // for #[repr(C, u*)] enums, we use the explicit type
-        repr_type = discriminant_type.map_or_else(
+    ProcessedEnumBody {
+        shadow_struct_defs,
+        variant_expressions,
+        repr_type: discriminant_type.map_or_else(
             || format!("from_discriminant_size::<{shadow_discriminant_name}>()"),
-            |d| d.as_enum_repr().to_string()
-        )
-    );
-
-    // Output generated code
-    // Don't use panic for debugging as it makes code unreachable
-
-    // Return the generated code
-    output.into_token_stream().into()
+            |d| d.as_enum_repr().to_string(),
+        ),
+    }
 }
 
 /// Primitive enums (i.e. #[repr(u*)] and #[repr(i*)]) are laid out
@@ -416,23 +444,19 @@ unsafe impl<{generics_def}> facet::Facet for {enum_name}<{generics_use}> {where_
 /// To calculate the offsets of each variant, we create a shadow struct that mimics this
 /// structure and use the `offset_of!` macro to calculate the offsets of each field.
 fn process_primitive_enum(
-    parsed: Enum,
+    enum_name: &str,
+    variants: &[EnumVariant],
     discriminant_type: Discriminant,
-) -> proc_macro::TokenStream {
-    let enum_name = parsed.name.to_string();
-
-    let (generics_def, generics_use) = generics_split_for_impl(parsed.generics.as_ref());
-    let where_clauses = parsed
-        .clauses
-        .as_ref()
-        .map_or(String::new(), ToString::to_string);
-
+    generics_def: &str,
+    generics_use: &str,
+    where_clauses: &str,
+) -> ProcessedEnumBody {
     // Collect shadow struct definitions separately from variant expressions
     let mut shadow_struct_defs = Vec::new();
     let mut variant_expressions = Vec::new();
 
     // Process each variant using enumerate to get discriminant values
-    for (discriminant_value, var_like) in parsed.body.content.0.iter().enumerate() {
+    for (discriminant_value, var_like) in variants.iter().enumerate() {
         match &var_like.value {
             EnumVariantLike::Unit(unit) => {
                 let variant_name = unit.name.to_string();
@@ -487,7 +511,7 @@ fn process_primitive_enum(
                         gen_struct_field(
                             &field_name,
                             &shadow_struct_name,
-                            &generics_use,
+                            generics_use,
                             &field.value.attributes,
                         )
                     })
@@ -549,7 +573,7 @@ fn process_primitive_enum(
                         gen_struct_field(
                             &field_name,
                             &shadow_struct_name,
-                            &generics_use,
+                            generics_use,
                             &field.value.attributes,
                         )
                     })
@@ -578,53 +602,9 @@ fn process_primitive_enum(
         }
     }
 
-    // Join the shadow struct definitions and variant expressions
-    let shadow_structs = shadow_struct_defs.join("\n\n");
-    let variants = variant_expressions.join(", ");
-
-    let static_decl = if parsed.generics.is_none() {
-        generate_static_decl(&enum_name)
-    } else {
-        String::new()
-    };
-    let maybe_container_doc = build_maybe_doc(&parsed.attributes);
-
-    // Generate the impl
-    let output = format!(
-        r#"
-{static_decl}
-
-#[automatically_derived]
-unsafe impl<{generics_def}> facet::Facet for {enum_name}<{generics_use}> {where_clauses} {{
-    const SHAPE: &'static facet::Shape = &const {{
-        // Define all shadow structs at the beginning of the const block
-        // to ensure they're in scope for offset_of! macros
-        {shadow_structs}
-
-        facet::Shape::builder()
-            .id(facet::ConstTypeId::of::<Self>())
-            .layout(core::alloc::Layout::new::<Self>())
-            .vtable(facet::value_vtable!(
-                Self,
-                |f, _opts| core::fmt::Write::write_str(f, "{enum_name}")
-            ))
-            .def(facet::Def::Enum(facet::EnumDef::builder()
-                // Use variant expressions that just reference the shadow structs
-                // which are now defined above
-                .variants(&const {{[ {variants} ]}})
-                .repr(facet::EnumRepr::{repr_type})
-                .build()))
-            {maybe_container_doc}
-            .build()
-    }};
-}}
-        "#,
-        repr_type = discriminant_type.as_enum_repr()
-    );
-
-    // Output generated code
-    // Don't use panic for debugging as it makes code unreachable
-
-    // Return the generated code
-    output.into_token_stream().into()
+    ProcessedEnumBody {
+        shadow_struct_defs,
+        variant_expressions,
+        repr_type: discriminant_type.as_enum_repr().to_string(),
+    }
 }
