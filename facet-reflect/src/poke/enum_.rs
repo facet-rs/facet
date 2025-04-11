@@ -150,6 +150,11 @@ impl<'mem> PokeEnumNoVariant<'mem> {
 
 /// Allows poking an enum with a selected variant (setting fields, etc.)
 pub struct PokeEnum<'mem> {
+    /// The internal data storage for the enum
+    ///
+    /// Note that this stores both the discriminant and the variant data
+    /// (if any), and the layout depends on the enum representation.
+    /// Use [`Self::variant_data`] to get a pointer to the variant data.
     data: OpaqueUninit<'mem>,
     iset: ISet,
     shape: &'static Shape,
@@ -162,6 +167,11 @@ impl<'mem> PokeEnum<'mem> {
     #[inline(always)]
     pub fn into_value(self) -> PokeValueUninit<'mem> {
         unsafe { PokeValueUninit::new(self.data, self.shape) }
+    }
+
+    pub(crate) fn variant_data(&self) -> OpaqueUninit<'mem> {
+        let variant_offset = self.def.variants[self.selected_variant].offset;
+        unsafe { self.data.field_uninit(variant_offset) }
     }
 
     /// Creates a new PokeEnum from raw data
@@ -208,7 +218,6 @@ impl<'mem> PokeEnum<'mem> {
         name: &str,
     ) -> Result<(usize, crate::PokeUninit<'mem>), FieldError> {
         let variant = &self.def.variants[self.selected_variant];
-        let variant_offset = variant.offset;
 
         // Find the field in the variant
         match &variant.kind {
@@ -225,7 +234,7 @@ impl<'mem> PokeEnum<'mem> {
                     .ok_or(FieldError::NoSuchStaticField)?;
 
                 // Get the field's address
-                let field_data = unsafe { self.data.field_uninit(variant_offset + field.offset) };
+                let field_data = unsafe { self.variant_data().field_uninit(field.offset) };
                 let poke = unsafe { crate::PokeUninit::unchecked_new(field_data, field.shape) };
                 Ok((index, poke))
             }
@@ -238,7 +247,7 @@ impl<'mem> PokeEnum<'mem> {
                     .ok_or(FieldError::NoSuchStaticField)?;
 
                 // Get the field's address
-                let field_data = unsafe { self.data.field_uninit(variant_offset + field.offset) };
+                let field_data = unsafe { self.variant_data().field_uninit(field.offset) };
                 let poke = unsafe { crate::PokeUninit::unchecked_new(field_data, field.shape) };
                 Ok((index, poke))
             }
@@ -257,7 +266,6 @@ impl<'mem> PokeEnum<'mem> {
     /// - The selected variant is not a tuple variant.
     pub fn tuple_field(&self, index: usize) -> Result<crate::PokeUninit<'mem>, FieldError> {
         let variant = &self.def.variants[self.selected_variant];
-        let variant_offset = variant.offset;
 
         // Make sure we're working with a tuple variant
         match &variant.kind {
@@ -271,7 +279,7 @@ impl<'mem> PokeEnum<'mem> {
                 let field = &fields[index];
 
                 // Get the field's address
-                let field_data = unsafe { self.data.field_uninit(variant_offset + field.offset) };
+                let field_data = unsafe { self.variant_data().field_uninit(field.offset) };
                 let poke = unsafe { crate::PokeUninit::unchecked_new(field_data, field.shape) };
                 Ok(poke)
             }
@@ -418,7 +426,6 @@ impl<'mem> PokeEnum<'mem> {
 impl Drop for PokeEnum<'_> {
     fn drop(&mut self) {
         let variant = &self.def.variants[self.selected_variant];
-        let variant_offset = variant.offset;
 
         // Drop fields based on the variant kind
         match &variant.kind {
@@ -431,7 +438,7 @@ impl Drop for PokeEnum<'_> {
                     if self.iset.has(field_index) {
                         if let Some(drop_fn) = field.shape.vtable.drop_in_place {
                             unsafe {
-                                drop_fn(self.data.field_init(variant_offset + field.offset));
+                                drop_fn(self.variant_data().field_init(field.offset));
                             }
                         }
                     }
