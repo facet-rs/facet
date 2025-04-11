@@ -10,6 +10,7 @@ on:
 jobs:
   test:
     runs-on: arc-runners
+
     container:
       image: rust:1.86.0-slim
     steps:
