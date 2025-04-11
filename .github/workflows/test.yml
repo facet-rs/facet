@@ -86,4 +86,5 @@ jobs:
       - name: Run miri
         shell: bash
         run: |
+          export CI=true
           just miri
