@@ -66,10 +66,10 @@ doc-tests:
     echo -e "\033[1;36m📚 Running documentation tests...\033[0m"
     cargo test --doc
 
-codegen:
+codegen *args:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
-    cargo run -p facet-codegen
+    cargo run -p facet-codegen -- {{args}}
 
 codegen-check:
     #!/usr/bin/env -S bash -euo pipefail

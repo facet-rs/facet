@@ -156,7 +156,7 @@ fn copy_cargo_expand_output(has_diffs: &mut bool, opts: &Options) {
     } else {
         format!("{}\n", expanded_code)
     };
-    let expanded_code = format!("extern crate self as facet;\n {expanded_code}");
+    let expanded_code = format!("extern crate self as facet;\n{expanded_code}");
 
     // Write the expanded code to the target file
     let target_path = workspace_dir
@@ -203,14 +203,49 @@ fn check_diff(path: &Path, new_content: &[u8]) -> bool {
 
         let diff = TextDiff::from_lines(&old_str, &new_str);
         info!("📝 {}", format!("Diff for {}:", path.display()).blue());
+
+        // Track consecutive equal lines
+        let mut equal_count = 0;
+        let mut last_tag = None;
+
         for change in diff.iter_all_changes() {
-            let (sign, style) = match change.tag() {
-                ChangeTag::Delete => ("-", Style::new().red()),
-                ChangeTag::Insert => ("+", Style::new().green()),
-                ChangeTag::Equal => (" ", Style::new()),
-            };
-            info!("{}{}", sign, style.style(change));
+            let tag = change.tag();
+
+            // If we're switching from Equal to another tag, and we have >=4 equal lines, show the count
+            if last_tag == Some(ChangeTag::Equal) && tag != ChangeTag::Equal && equal_count > 3 {
+                info!(" {} lines omitted.", equal_count - 1);
+                equal_count = 0;
+            }
+
+            match tag {
+                ChangeTag::Equal => {
+                    if equal_count == 0 {
+                        // Always show the first equal line
+                        info!(" {}", change);
+                    } else if equal_count < 3 {
+                        // Show the 2nd and 3rd equal lines
+                        info!(" {}", change);
+                    }
+                    equal_count += 1;
+                }
+                ChangeTag::Delete => {
+                    equal_count = 0;
+                    info!("-{}", Style::new().red().style(change));
+                }
+                ChangeTag::Insert => {
+                    equal_count = 0;
+                    info!("+{}", Style::new().green().style(change));
+                }
+            }
+
+            last_tag = Some(tag);
         }
+
+        // Handle case where diff ends with equal lines
+        if last_tag == Some(ChangeTag::Equal) && equal_count > 3 {
+            info!(" {} lines omitted.", equal_count - 1);
+        }
+
         return true;
     }
     false
