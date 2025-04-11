@@ -9,7 +9,7 @@ on:
 
 jobs:
   code-quality:
-    runs-on: arc-runners
+    runs-on: depot-ubuntu-24.04-arm-16
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
@@ -24,7 +24,7 @@ jobs:
           just absolve
 
   test:
-    runs-on: arc-runners
+    runs-on: depot-ubuntu-24.04-arm-16
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
@@ -37,7 +37,7 @@ jobs:
           just test
 
   nostd:
-    runs-on: arc-runners
+    runs-on: depot-ubuntu-24.04-arm-16
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
@@ -50,7 +50,7 @@ jobs:
           just nostd
 
   clippy:
-    runs-on: arc-runners
+    runs-on: depot-ubuntu-24.04-arm-16
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
@@ -63,7 +63,7 @@ jobs:
           just clippy
 
   doc-tests:
-    runs-on: arc-runners
+    runs-on: depot-ubuntu-24.04-arm-16
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
@@ -76,7 +76,7 @@ jobs:
           just doc-tests
 
   miri:
-    runs-on: arc-runners
+    runs-on: depot-ubuntu-24.04-arm-16
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-miri
