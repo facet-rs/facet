@@ -186,9 +186,10 @@ impl<'mem> PeekEnum<'mem> {
     }
 
     /// Returns an iterator over fields of a struct or tuple variant with metadata
+    #[cfg(feature = "alloc")]
     pub fn fields_with_metadata(
         self,
-    ) -> Box<
+    ) -> alloc::boxed::Box<
         dyn Iterator<
                 Item = (
                     usize,
@@ -203,40 +204,47 @@ impl<'mem> PeekEnum<'mem> {
 
         match &variant.kind {
             VariantKind::Struct { fields } => {
-                Box::new(fields.iter().enumerate().map(move |(i, field)| {
+                alloc::boxed::Box::new(fields.iter().enumerate().map(move |(i, field)| {
                     let field_data = unsafe { data.field(field.offset) };
                     let field_peek = unsafe { crate::Peek::unchecked_new(field_data, field.shape) };
                     (i, field.name, field_peek, field)
                 }))
             }
             VariantKind::Tuple { fields } => {
-                Box::new(fields.iter().enumerate().map(move |(i, field)| {
+                alloc::boxed::Box::new(fields.iter().enumerate().map(move |(i, field)| {
                     let field_data = unsafe { data.field(field.offset) };
                     let field_peek = unsafe { crate::Peek::unchecked_new(field_data, field.shape) };
                     (i, field.name, field_peek, field)
                 }))
             }
-            _ => Box::new(core::iter::empty()),
+            _ => alloc::boxed::Box::new(core::iter::empty()),
         }
     }
 
     /// Returns an iterator over fields of a struct or tuple variant
-    pub fn fields(self) -> Box<dyn Iterator<Item = (&'static str, crate::Peek<'mem>)> + 'mem> {
+    #[cfg(feature = "alloc")]
+    pub fn fields(
+        self,
+    ) -> alloc::boxed::Box<dyn Iterator<Item = (&'static str, crate::Peek<'mem>)> + 'mem> {
         let variant = self.active_variant();
         let data = self.value.data();
 
         match &variant.kind {
-            VariantKind::Struct { fields } => Box::new(fields.iter().map(move |field| {
-                let field_data = unsafe { data.field(field.offset) };
-                let peek = unsafe { crate::Peek::unchecked_new(field_data, field.shape) };
-                (field.name, peek)
-            })),
-            VariantKind::Tuple { fields } => Box::new(fields.iter().map(move |field| {
-                let field_data = unsafe { data.field(field.offset) };
-                let peek = unsafe { crate::Peek::unchecked_new(field_data, field.shape) };
-                (field.name, peek)
-            })),
-            _ => Box::new(core::iter::empty()),
+            VariantKind::Struct { fields } => {
+                alloc::boxed::Box::new(fields.iter().map(move |field| {
+                    let field_data = unsafe { data.field(field.offset) };
+                    let peek = unsafe { crate::Peek::unchecked_new(field_data, field.shape) };
+                    (field.name, peek)
+                }))
+            }
+            VariantKind::Tuple { fields } => {
+                alloc::boxed::Box::new(fields.iter().map(move |field| {
+                    let field_data = unsafe { data.field(field.offset) };
+                    let peek = unsafe { crate::Peek::unchecked_new(field_data, field.shape) };
+                    (field.name, peek)
+                }))
+            }
+            _ => alloc::boxed::Box::new(core::iter::empty()),
         }
     }
 }
