@@ -18,11 +18,12 @@ categories = ["encoding", "parsing", "data-structures"]
 
 [dependencies]
 log = "0.4.27"
-facet-core = { path = "../facet-core", version = "0.5.0" }
-facet-poke = { path = "../facet-poke", version = "0.6.0" }
-facet-peek = { path = "../facet-peek", version = "0.2.14" }
+facet = { path = "../facet", version = "0.1.18", features = ["reflect"] }
+
 [dev-dependencies]
 color-backtrace = "0.7.0"
 ctor = "0.4.1"
-facet = { path = "../facet", version = "0.1.18" }
-facet-derive = { path = "../facet-derive", version = "0.1.17" }
+facet = { path = "../facet", version = "0.1.18", features = [
+    "reflect",
+    "derive",
+] }

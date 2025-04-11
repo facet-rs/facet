@@ -9,8 +9,7 @@ use std::{
     num::NonZero,
 };
 
-use facet_core::{Facet, Opaque};
-use facet_poke::PokeUninit;
+use facet::{Facet, Opaque, PokeUninit};
 use toml_edit::{DocumentMut, Item, TomlError};
 
 /// Deserializes a TOML string into a value of type `T` that implements `Facet`.

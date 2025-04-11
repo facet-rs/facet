@@ -1,7 +1,4 @@
-use facet_derive::Facet;
-
-// this makes the derives work.. dirty but oh well.
-use facet_core as facet;
+use facet::Facet;
 
 #[test]
 fn it_works() {

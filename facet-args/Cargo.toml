@@ -12,9 +12,10 @@ keywords = ["cli", "args", "parser", "facet"]
 categories = ["command-line-interface"]
 
 [dependencies]
-facet-poke = { path = "../facet-poke", version = "0.6.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.6.0" }
 facet-core = { path = "../facet-core", version = "0.5.0" }
 log = "0.4.27"
+facet = { version = "0.1.18", path = "../facet", features = ["reflect"] }
 
 [dev-dependencies]
 color-backtrace = "0.7.0"

@@ -42,7 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other
 
-- updated the following local packages: facet-core, facet-poke, facet
+- updated the following local packages: facet-core, facet-reflect, facet
 
 ## [0.1.5](https://github.com/facet-rs/facet/compare/facet-args-v0.1.4...facet-args-v0.1.5) - 2025-04-10
 

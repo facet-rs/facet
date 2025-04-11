@@ -1,6 +1,5 @@
 use crate::from_str;
-use facet_core::{self as facet};
-use facet_derive::Facet;
+use facet::Facet;
 
 #[derive(Debug, Facet, PartialEq)]
 struct SearchParams {

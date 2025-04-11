@@ -5,8 +5,7 @@ use std::{
     num::NonZero,
 };
 
-use facet_core as facet;
-use facet_derive::Facet;
+use facet::Facet;
 
 #[test]
 fn test_string() {

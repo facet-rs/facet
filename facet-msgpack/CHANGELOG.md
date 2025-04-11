@@ -36,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other
 
-- updated the following local packages: facet-core, facet-poke, facet-derive, facet, facet-peek
+- updated the following local packages: facet-core, facet-reflect, facet-derive, facet
 
 ## [0.1.5](https://github.com/facet-rs/facet/compare/facet-msgpack-v0.1.4...facet-msgpack-v0.1.5) - 2025-04-10
 
@@ -62,13 +62,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Other
 
-- updated the following local packages: facet-trait, facet, facet-derive, facet-peek
+- updated the following local packages: facet-trait, facet, facet-derive, facet-reflect
 
 ## [0.1.1](https://github.com/facet-rs/facet/compare/facet-msgpack-v0.1.0...facet-msgpack-v0.1.1) - 2025-04-08
 
 ### Other
 
-- updated the following local packages: facet-types, facet-trait, facet-derive, facet, facet-peek, facet-poke
+- updated the following local packages: facet-types, facet-trait, facet-derive, facet, facet-reflect
 
 ## [0.1.0](https://github.com/facet-rs/facet/releases/tag/facet-msgpack-v0.1.0) - 2025-04-08
 

@@ -11,14 +11,14 @@ keywords = ["facet", "json", "serialization", "deserialization"]
 categories = ["encoding", "development-tools"]
 
 [dependencies]
-facet-poke = { path = "../facet-poke", version = "0.6.0" }
-facet-core = { path = "../facet-core", version = "0.5.0" }
+facet = { path = "../facet", version = "0.1.18", features = ["reflect"] }
 log = "0.4.27"
 
 [dev-dependencies]
+facet = { path = "../facet", version = "0.1.18", features = [
+    "reflect",
+    "derive",
+] }
 color-backtrace = "0.7.0"
 ctor = "0.4.1"
 env_logger = "0.11.8"
-facet = { path = "../facet", version = "0.1.18" }
-facet-derive = { path = "../facet-derive", version = "0.1.17" }
-facet-peek = { path = "../facet-peek", version = "0.2.14" }

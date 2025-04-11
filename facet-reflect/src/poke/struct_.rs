@@ -1,5 +1,10 @@
 use core::ptr::NonNull;
-use facet_core::{FieldError, Opaque, OpaqueConst, OpaqueUninit, Shape, StructDef};
+use facet_core::{Facet, FieldError, Opaque, OpaqueConst, OpaqueUninit, Shape, StructDef};
+
+#[cfg(feature = "alloc")]
+extern crate alloc;
+#[cfg(feature = "alloc")]
+use alloc::boxed::Box;
 
 use super::{Guard, ISet, PokeValueUninit};
 
@@ -78,7 +83,7 @@ impl<'mem> PokeStruct<'mem> {
     /// This function will panic if:
     /// - Not all the fields have been initialized.
     /// - The generic type parameter T does not match the shape that this PokeStruct is building.
-    pub fn build<T: crate::Facet>(self, guard: Option<Guard>) -> T {
+    pub fn build<T: Facet>(self, guard: Option<Guard>) -> T {
         let mut guard = guard;
         let this = self;
         // this changes drop order: guard must be dropped _after_ this.
@@ -105,11 +110,12 @@ impl<'mem> PokeStruct<'mem> {
     /// This function will panic if:
     /// - Not all the fields have been initialized.
     /// - The generic type parameter T does not match the shape that this PokeStruct is building.
-    pub fn build_boxed<T: crate::Facet>(self) -> alloc::boxed::Box<T> {
+    #[cfg(feature = "alloc")]
+    pub fn build_boxed<T: Facet>(self) -> Box<T> {
         self.assert_all_fields_initialized();
         self.shape.assert_type::<T>();
 
-        let boxed = unsafe { alloc::boxed::Box::from_raw(self.data.as_mut_bytes() as *mut T) };
+        let boxed = unsafe { Box::from_raw(self.data.as_mut_bytes() as *mut T) };
         core::mem::forget(self);
         boxed
     }
@@ -244,7 +250,7 @@ impl<'mem> PokeStruct<'mem> {
     /// Returns an error if:
     /// - The index is out of bounds
     /// - The field shapes don't match
-    pub fn set<T: crate::Facet>(&mut self, index: usize, value: T) -> Result<(), FieldError> {
+    pub fn set<T: Facet>(&mut self, index: usize, value: T) -> Result<(), FieldError> {
         let field_shape = self
             .def
             .fields
@@ -274,7 +280,7 @@ impl<'mem> PokeStruct<'mem> {
     /// Returns an error if:
     /// - The field name doesn't exist
     /// - The field shapes don't match
-    pub fn set_by_name<T: crate::Facet>(&mut self, name: &str, value: T) -> Result<(), FieldError> {
+    pub fn set_by_name<T: Facet>(&mut self, name: &str, value: T) -> Result<(), FieldError> {
         let index = self
             .def
             .fields

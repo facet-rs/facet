@@ -1,5 +1,4 @@
-use facet_core as facet;
-use facet_derive::Facet;
+use facet::Facet;
 
 #[derive(Debug, Facet, PartialEq)]
 struct Person {

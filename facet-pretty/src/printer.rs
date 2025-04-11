@@ -7,8 +7,7 @@ use std::{
     str,
 };
 
-use facet_core::Facet;
-use facet_peek::Peek;
+use facet::{Facet, Peek};
 
 use crate::{ansi, color::ColorGenerator};
 
@@ -339,10 +338,10 @@ impl PrettyPrinter {
 
                             // Process the variant fields based on the variant kind
                             match enum_.variant_kind_active() {
-                                facet_core::VariantKind::Unit => {
+                                facet::VariantKind::Unit => {
                                     // Unit variant has no fields, nothing more to print
                                 }
-                                facet_core::VariantKind::Tuple { .. } => {
+                                facet::VariantKind::Tuple { .. } => {
                                     // Tuple variant, print the fields like a tuple
                                     self.write_punctuation(f, "(")?;
 
@@ -361,7 +360,7 @@ impl PrettyPrinter {
                                     item.format_depth += 1;
                                     stack.push_back(item);
                                 }
-                                facet_core::VariantKind::Struct { .. } => {
+                                facet::VariantKind::Struct { .. } => {
                                     // Struct variant, print the fields like a struct
                                     self.write_punctuation(f, " {")?;
 
@@ -435,7 +434,7 @@ impl PrettyPrinter {
                         self.write_punctuation(f, ": ")?;
 
                         // Check if field is sensitive
-                        if field.flags.contains(facet_core::FieldFlags::SENSITIVE) {
+                        if field.flags.contains(facet::FieldFlags::SENSITIVE) {
                             // Field value is sensitive, use write_redacted
                             self.write_redacted(f, "[REDACTED]")?;
                             self.write_punctuation(f, ",")?;
@@ -479,7 +478,7 @@ impl PrettyPrinter {
                         if field_index >= fields.len() {
                             // Determine variant kind to use the right closing delimiter
                             match enum_val.variant_kind_active() {
-                                facet_core::VariantKind::Tuple { .. } => {
+                                facet::VariantKind::Tuple { .. } => {
                                     // Close tuple variant with )
                                     write!(
                                         f,
@@ -489,7 +488,7 @@ impl PrettyPrinter {
                                         width = (item.format_depth - 1) * self.indent_size
                                     )?;
                                 }
-                                facet_core::VariantKind::Struct { .. } => {
+                                facet::VariantKind::Struct { .. } => {
                                     // Close struct variant with }
                                     write!(
                                         f,
@@ -527,9 +526,7 @@ impl PrettyPrinter {
                         }
 
                         // For struct variants, print field name
-                        if let facet_core::VariantKind::Struct { .. } =
-                            enum_val.variant_kind_active()
-                        {
+                        if let facet::VariantKind::Struct { .. } = enum_val.variant_kind_active() {
                             self.write_field_name(f, field_name)?;
                             self.write_punctuation(f, ": ")?;
                         }
@@ -673,7 +670,7 @@ impl PrettyPrinter {
                 }
                 StackState::ProcessMapEntry => {
                     if let Peek::Map(_) = item.peek {
-                        // TODO: Implement proper map iteration when available in facet_peek
+                        // TODO: Implement proper map iteration when available in facet
 
                         // Indent
                         write!(
@@ -711,7 +708,7 @@ impl PrettyPrinter {
     }
 
     /// Format a scalar value
-    fn format_value(&self, value: facet_peek::PeekValue, f: &mut impl Write) -> fmt::Result {
+    fn format_value(&self, value: facet::PeekValue, f: &mut impl Write) -> fmt::Result {
         // Generate a color for this shape
         let mut hasher = DefaultHasher::new();
         value.shape().def.hash(&mut hasher);
@@ -724,7 +721,7 @@ impl PrettyPrinter {
         }
 
         // Display the value
-        struct DisplayWrapper<'a>(&'a facet_peek::PeekValue<'a>);
+        struct DisplayWrapper<'a>(&'a facet::PeekValue<'a>);
 
         impl fmt::Display for DisplayWrapper<'_> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -732,7 +729,7 @@ impl PrettyPrinter {
                     // If the value doesn't implement Display, use Debug
                     if self.0.debug(f).is_none() {
                         // If the value doesn't implement Debug either, just show the type name
-                        self.0.type_name(f, facet_core::TypeNameOpts::infinite())?;
+                        self.0.type_name(f, facet::TypeNameOpts::infinite())?;
                         write!(f, "(⋯)")?;
                     }
                 }
@@ -751,16 +748,12 @@ impl PrettyPrinter {
     }
 
     /// Write styled type name to formatter
-    fn write_type_name<W: fmt::Write>(
-        &self,
-        f: &mut W,
-        peek: &facet_peek::PeekValue,
-    ) -> fmt::Result {
-        struct TypeNameWriter<'a, 'b: 'a>(&'b facet_peek::PeekValue<'a>);
+    fn write_type_name<W: fmt::Write>(&self, f: &mut W, peek: &facet::PeekValue) -> fmt::Result {
+        struct TypeNameWriter<'a, 'b: 'a>(&'b facet::PeekValue<'a>);
 
         impl core::fmt::Display for TypeNameWriter<'_, '_> {
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                self.0.type_name(f, facet_core::TypeNameOpts::infinite())
+                self.0.type_name(f, facet::TypeNameOpts::infinite())
             }
         }
         let type_name = TypeNameWriter(peek);
@@ -776,7 +769,7 @@ impl PrettyPrinter {
 
     /// Style a type name and return it as a string
     #[allow(dead_code)]
-    fn style_type_name(&self, peek: &facet_peek::PeekValue) -> String {
+    fn style_type_name(&self, peek: &facet::PeekValue) -> String {
         let mut result = String::new();
         self.write_type_name(&mut result, peek).unwrap();
         result

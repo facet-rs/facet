@@ -7,9 +7,8 @@ JSON serialization and deserialization for [facet](https://crates.io/crates/face
 ### Serialization Example
 
 ```rust
-use facet::Facet;
+use facet::{Facet, Peek};
 use facet_json::to_json_string;
-use facet_poke::Peek;
 
 #[derive(facet::Facet)]
 struct Person {

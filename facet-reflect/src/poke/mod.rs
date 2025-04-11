@@ -1,17 +1,6 @@
-#![cfg_attr(not(feature = "std"), no_std)]
-#![warn(missing_docs)]
-#![warn(clippy::std_instead_of_core)]
-#![warn(clippy::std_instead_of_alloc)]
-#![doc = include_str!("../README.md")]
-
-#[cfg(not(feature = "alloc"))]
-compile_error!("`alloc` feature is required at this time");
-
 extern crate alloc;
 
 use core::alloc::Layout;
-
-pub use facet_peek::*;
 
 use facet_core::{Def, Facet, Opaque, OpaqueUninit, Shape};
 

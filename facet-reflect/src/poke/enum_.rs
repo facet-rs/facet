@@ -1,4 +1,9 @@
 use core::ptr::NonNull;
+#[cfg(feature = "alloc")]
+extern crate alloc;
+#[cfg(feature = "alloc")]
+use alloc::boxed::Box;
+
 use facet_core::{EnumDef, EnumRepr, Facet, FieldError, Opaque, OpaqueUninit, Shape, VariantKind};
 
 use crate::Guard;
@@ -377,11 +382,12 @@ impl<'mem> PokeEnum<'mem> {
     /// This function will panic if:
     /// - Not all fields in the selected variant have been initialized.
     /// - The generic type parameter T does not match the shape that this PokeEnum is building.
-    pub fn build_boxed<T: Facet>(self) -> alloc::boxed::Box<T> {
+    #[cfg(feature = "alloc")]
+    pub fn build_boxed<T: Facet>(self) -> Box<T> {
         self.assert_all_fields_initialized();
         self.assert_matching_shape::<T>();
 
-        let boxed = unsafe { alloc::boxed::Box::from_raw(self.data.as_mut_bytes() as *mut T) };
+        let boxed = unsafe { Box::from_raw(self.data.as_mut_bytes() as *mut T) };
         core::mem::forget(self);
         boxed
     }

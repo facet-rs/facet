@@ -13,7 +13,7 @@ pub use macros::*;
 ///
 /// # Safety
 ///
-/// If you implement this wrong, all the safe abstractions in `facet-peek`, `facet-poke`,
+/// If you implement this wrong, all the safe abstractions in `facet-reflect`,
 /// all the serializers, deserializers, the entire ecosystem is unsafe.
 ///
 /// You're responsible for describing the type layout properly, and annotating all the invariants.

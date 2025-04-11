@@ -5,10 +5,8 @@ fn init_backtrace() {
     color_backtrace::install();
 }
 
-use facet_derive::Facet;
+use facet::Facet;
 use facet_msgpack::to_vec;
-
-use facet_core as facet;
 
 #[test]
 fn test_integers() {

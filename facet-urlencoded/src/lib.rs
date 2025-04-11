@@ -1,8 +1,7 @@
 #![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 
-use facet_core::{Facet, Opaque};
-use facet_poke::PokeUninit;
+use facet::{Facet, Opaque, PokeStruct, PokeUninit};
 use log::*;
 
 #[cfg(test)]
@@ -23,8 +22,7 @@ mod tests;
 /// # Basic Example
 ///
 /// ```
-/// use facet_derive::Facet;
-/// use facet_core::{self as facet, Facet};
+/// use facet::Facet;
 /// use facet_urlencoded::from_str;
 ///
 /// #[derive(Debug, Facet, PartialEq)]
@@ -42,8 +40,7 @@ mod tests;
 /// # Nested Structure Example
 ///
 /// ```
-/// use facet_derive::Facet;
-/// use facet_core::{self as facet, Facet};
+/// use facet::Facet;
 /// use facet_urlencoded::from_str;
 ///
 /// #[derive(Debug, Facet, PartialEq)]
@@ -224,7 +221,7 @@ fn deserialize_scalar_field<'mem>(
     value: &str,
     field_poke: PokeUninit<'mem>,
     index: usize,
-    ps: &mut facet_poke::PokeStruct<'mem>,
+    ps: &mut PokeStruct<'mem>,
 ) -> Result<(), UrlEncodedError> {
     match field_poke {
         PokeUninit::Scalar(ps_scalar) => {

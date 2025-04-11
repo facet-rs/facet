@@ -1,8 +1,8 @@
 #![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 
-use facet_core::{Facet, Opaque};
-use facet_poke::PokeUninit;
+use facet::PokeUninit;
+use facet::{Facet, Opaque};
 use yaml_rust2::{Yaml, YamlLoader};
 
 #[cfg(test)]

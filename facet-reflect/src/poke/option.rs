@@ -1,4 +1,4 @@
-use facet_core::{Opaque, OpaqueConst, OpaqueUninit, OptionDef, OptionVTable, Shape};
+use facet_core::{Facet, Opaque, OpaqueConst, OpaqueUninit, OptionDef, OptionVTable, Shape};
 
 use crate::Guard;
 
@@ -148,7 +148,7 @@ impl<'mem> PokeOption<'mem> {
     ///
     /// This function will panic if:
     /// - The generic type parameter T does not match the shape that this PokeOption is building.
-    pub fn build<T: crate::Facet>(self, guard: Option<Guard>) -> Option<T> {
+    pub fn build<T: Facet>(self, guard: Option<Guard>) -> Option<T> {
         let mut guard = guard;
         let this = self;
         // this changes drop order: guard must be dropped _after_ this.
