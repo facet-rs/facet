@@ -44,10 +44,9 @@ impl<T: Facet> FacetPretty for T {
 
 #[cfg(test)]
 mod tests {
-    extern crate facet_core as facet;
     use super::*;
     use core::fmt::Write;
-    use facet_derive::Facet;
+    use facet::Facet;
 
     // Use the derive macro from facet
     #[derive(Facet)]

@@ -1,7 +1,5 @@
-extern crate facet_core as facet;
-
 use core::fmt::Write;
-use facet_derive::Facet;
+use facet::Facet;
 use facet_pretty::{FacetPretty, PrettyPrinter};
 
 #[derive(Debug, Facet)]

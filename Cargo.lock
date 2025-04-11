@@ -144,8 +144,8 @@ dependencies = [
 name = "facet-pretty"
 version = "0.1.11"
 dependencies = [
+ "facet",
  "facet-core",
- "facet-derive",
  "facet-reflect",
 ]
 
