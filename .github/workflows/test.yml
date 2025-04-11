@@ -86,7 +86,7 @@ jobs:
           just doc-tests
 
   miri:
-    runs-on: depot-ubuntu-24.04-arm-16
+    runs-on: depot-ubuntu-24.04-arm-32
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-miri
