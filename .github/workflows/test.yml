@@ -10,8 +10,7 @@ on:
 jobs:
   code-quality:
     runs-on: arc-runners
-    env:
-      CI: true
+
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
     steps:
@@ -26,8 +25,7 @@ jobs:
 
   test:
     runs-on: arc-runners
-    env:
-      CI: true
+
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
     steps:
@@ -40,8 +38,7 @@ jobs:
 
   nostd:
     runs-on: arc-runners
-    env:
-      CI: true
+
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
     steps:
@@ -54,8 +51,7 @@ jobs:
 
   clippy:
     runs-on: arc-runners
-    env:
-      CI: true
+
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
     steps:
@@ -68,8 +64,7 @@ jobs:
 
   doc-tests:
     runs-on: arc-runners
-    env:
-      CI: true
+
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
     steps:
@@ -82,8 +77,7 @@ jobs:
 
   miri:
     runs-on: arc-runners
-    env:
-      CI: true
+
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-miri
     steps:
