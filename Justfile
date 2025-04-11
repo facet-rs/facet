@@ -135,7 +135,7 @@ docker-build-push:
     echo -e "\033[1;36m🔨 Building tests image with stable Rust...\033[0m"
     docker build \
         --build-arg BASE_IMAGE=rust:1.86-slim-bullseye \
-        --build-arg RUSTUP_TOOLCHAIN=stable \
+        --build-arg RUSTUP_TOOLCHAIN=1.86 \
         -t "${IMAGE_NAME}:${TAG}" \
         -t "${IMAGE_NAME}:latest" \
         -f Dockerfile \
