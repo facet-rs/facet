@@ -1,7 +1,8 @@
 #![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 
-use facet::{Facet, Opaque, PokeStruct, PokeUninit};
+use facet_core::{Facet, Opaque};
+use facet_reflect::{PokeStruct, PokeUninit};
 use log::*;
 
 #[cfg(test)]

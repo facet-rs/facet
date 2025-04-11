@@ -195,6 +195,8 @@ name = "facet-urlencoded"
 version = "0.1.11"
 dependencies = [
  "facet",
+ "facet-core",
+ "facet-reflect",
  "form_urlencoded",
  "log",
 ]
@@ -204,6 +206,8 @@ name = "facet-yaml"
 version = "0.1.11"
 dependencies = [
  "facet",
+ "facet-core",
+ "facet-reflect",
  "yaml-rust2",
 ]
 
