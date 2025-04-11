@@ -105,11 +105,11 @@ impl<'mem> PokeStruct<'mem> {
     /// This function will panic if:
     /// - Not all the fields have been initialized.
     /// - The generic type parameter T does not match the shape that this PokeStruct is building.
-    pub fn build_boxed<T: crate::Facet>(self) -> Box<T> {
+    pub fn build_boxed<T: crate::Facet>(self) -> alloc::boxed::Box<T> {
         self.assert_all_fields_initialized();
         self.shape.assert_type::<T>();
 
-        let boxed = unsafe { Box::from_raw(self.data.as_mut_bytes() as *mut T) };
+        let boxed = unsafe { alloc::boxed::Box::from_raw(self.data.as_mut_bytes() as *mut T) };
         core::mem::forget(self);
         boxed
     }

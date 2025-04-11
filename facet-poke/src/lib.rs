@@ -1,5 +1,10 @@
+#![cfg_attr(not(feature = "std"), no_std)]
 #![warn(missing_docs)]
+#![warn(clippy::std_instead_of_core)]
+#![warn(clippy::std_instead_of_alloc)]
 #![doc = include_str!("../README.md")]
+
+extern crate alloc;
 
 use core::alloc::Layout;
 
@@ -55,7 +60,7 @@ impl Drop for Guard {
             return;
         }
         // SAFETY: `ptr` has been allocated via the global allocator with the given layout
-        unsafe { std::alloc::dealloc(self.ptr, self.layout) };
+        unsafe { alloc::alloc::dealloc(self.ptr, self.layout) };
     }
 }
 

@@ -393,11 +393,11 @@ impl<'mem> PokeEnum<'mem> {
     /// This function will panic if:
     /// - Not all fields in the selected variant have been initialized.
     /// - The generic type parameter T does not match the shape that this PokeEnum is building.
-    pub fn build_boxed<T: Facet>(self) -> Box<T> {
+    pub fn build_boxed<T: Facet>(self) -> alloc::boxed::Box<T> {
         self.assert_all_fields_initialized();
         self.assert_matching_shape::<T>();
 
-        let boxed = unsafe { Box::from_raw(self.data.as_mut_bytes() as *mut T) };
+        let boxed = unsafe { alloc::boxed::Box::from_raw(self.data.as_mut_bytes() as *mut T) };
         core::mem::forget(self);
         boxed
     }
@@ -465,7 +465,7 @@ pub enum VariantError {
     NoSuchVariant,
 }
 
-impl std::error::Error for VariantError {}
+impl core::error::Error for VariantError {}
 
 impl core::fmt::Display for VariantError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

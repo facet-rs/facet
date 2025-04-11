@@ -10,6 +10,10 @@ description = "Build and alter arbitrary Facet types"
 keywords = ["reflection", "introspection", "builder", "facet"]
 categories = ["development-tools", "rust-patterns", "memory-management"]
 
+[features]
+std = ["facet-core/std"]
+default = ["std"]
+
 [dependencies]
 facet-peek.workspace = true
 facet-core.workspace = true
