@@ -35,6 +35,21 @@ unsafe impl Facet for () {
     };
 }
 
+unsafe impl<T: ?Sized> Facet for core::marker::PhantomData<T> {
+    const SHAPE: &'static Shape = &const {
+        Shape::builder()
+            .id(ConstTypeId::of::<Self>())
+            .layout(Layout::new::<Self>())
+            .def(Def::Scalar(
+                ScalarDef::builder()
+                    .affinity(ScalarAffinity::empty().build())
+                    .build(),
+            ))
+            .vtable(value_vtable!((), |f, _opts| write!(f, "PhantomData")))
+            .build()
+    };
+}
+
 #[cfg(feature = "alloc")]
 unsafe impl Facet for alloc::string::String {
     const SHAPE: &'static Shape = &const {

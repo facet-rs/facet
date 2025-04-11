@@ -52,6 +52,12 @@ pub(crate) fn process_enum(parsed: Enum) -> proc_macro::TokenStream {
         }
     };
 
+    let (generics_def, generics_use) = generics_split_for_impl(parsed.generics.as_ref());
+    let where_clauses = parsed
+        .clauses
+        .as_ref()
+        .map_or(String::new(), ToString::to_string);
+
     // Collect shadow struct definitions separately from variant expressions
     let mut shadow_struct_defs = Vec::new();
     let mut variant_expressions = Vec::new();
@@ -95,7 +101,7 @@ pub(crate) fn process_enum(parsed: Enum) -> proc_macro::TokenStream {
 
                 // Add shadow struct definition
                 shadow_struct_defs.push(format!(
-                    "#[repr(C)] struct {} {{ _discriminant: {}, {} }}",
+                    "#[repr(C)] struct {}<{generics_def}> {where_clauses} {{ _discriminant: {}, {} }}",
                     shadow_struct_name, discriminant_type, fields_with_types
                 ));
 
@@ -108,7 +114,12 @@ pub(crate) fn process_enum(parsed: Enum) -> proc_macro::TokenStream {
                     .enumerate()
                     .map(|(idx, field)| {
                         let field_name = format!("_{idx}");
-                        gen_struct_field(&field_name, &shadow_struct_name, &field.value.attributes)
+                        gen_struct_field(
+                            &field_name,
+                            &shadow_struct_name,
+                            &generics_use,
+                            &field.value.attributes,
+                        )
                     })
                     .collect::<Vec<String>>()
                     .join(", ");
@@ -116,14 +127,14 @@ pub(crate) fn process_enum(parsed: Enum) -> proc_macro::TokenStream {
                 // Add variant expression - now with discriminant
                 variant_expressions.push(format!(
                     "{{
-                        static FIELDS: &[facet::Field] = &[
+                        let fields: &'static [facet::Field] = &const {{[
                             {fields}
-                        ];
+                        ]}};
 
                         facet::Variant::builder()
                             .name({variant_name:?})
                             .discriminant(Some({discriminant_value}))
-                            .kind(facet::VariantKind::Tuple {{ fields: FIELDS }})
+                            .kind(facet::VariantKind::Tuple {{ fields }})
                             {maybe_doc}
                             .build()
                     }}",
@@ -152,7 +163,7 @@ pub(crate) fn process_enum(parsed: Enum) -> proc_macro::TokenStream {
 
                 // Add shadow struct definition
                 shadow_struct_defs.push(format!(
-                    "#[repr(C)] struct {} {{ _discriminant: {}, {} }}",
+                    "#[repr(C)] struct {}<{generics_def}> {where_clauses} {{ _discriminant: {}, {} }}",
                     shadow_struct_name, discriminant_type, fields_with_types
                 ));
 
@@ -164,7 +175,12 @@ pub(crate) fn process_enum(parsed: Enum) -> proc_macro::TokenStream {
                     .iter()
                     .map(|field| {
                         let field_name = field.value.name.to_string();
-                        gen_struct_field(&field_name, &shadow_struct_name, &field.value.attributes)
+                        gen_struct_field(
+                            &field_name,
+                            &shadow_struct_name,
+                            &generics_use,
+                            &field.value.attributes,
+                        )
                     })
                     .collect::<Vec<String>>()
                     .join(", ");
@@ -172,14 +188,14 @@ pub(crate) fn process_enum(parsed: Enum) -> proc_macro::TokenStream {
                 // Add variant expression - now with discriminant
                 variant_expressions.push(format!(
                     "{{
-                        static FIELDS: &[facet::Field] = &[
+                        let fields: &'static [facet::Field] = &const {{[
                             {fields}
-                        ];
+                        ]}};
 
                         facet::Variant::builder()
                             .name({variant_name:?})
                             .discriminant(Some({discriminant_value}))
-                            .kind(facet::VariantKind::Struct {{ fields: FIELDS }})
+                            .kind(facet::VariantKind::Struct {{ fields }})
                             {maybe_doc}
                             .build()
                     }}",
@@ -192,7 +208,11 @@ pub(crate) fn process_enum(parsed: Enum) -> proc_macro::TokenStream {
     let shadow_structs = shadow_struct_defs.join("\n\n");
     let variants = variant_expressions.join(", ");
 
-    let static_decl = generate_static_decl(&enum_name);
+    let static_decl = if parsed.generics.is_none() {
+        generate_static_decl(&enum_name)
+    } else {
+        String::new()
+    };
     let maybe_container_doc = build_maybe_doc(&parsed.attributes);
 
     // Generate the impl
@@ -201,26 +221,23 @@ pub(crate) fn process_enum(parsed: Enum) -> proc_macro::TokenStream {
 {static_decl}
 
 #[automatically_derived]
-unsafe impl facet::Facet for {enum_name} {{
+unsafe impl<{generics_def}> facet::Facet for {enum_name}<{generics_use}> {where_clauses} {{
     const SHAPE: &'static facet::Shape = &const {{
         // Define all shadow structs at the beginning of the const block
         // to ensure they're in scope for offset_of! macros
         {shadow_structs}
 
         facet::Shape::builder()
-            .id(facet::ConstTypeId::of::<{enum_name}>())
+            .id(facet::ConstTypeId::of::<Self>())
             .layout(core::alloc::Layout::new::<Self>())
             .vtable(facet::value_vtable!(
-                {enum_name},
+                Self,
                 |f, _opts| core::fmt::Write::write_str(f, "{enum_name}")
             ))
             .def(facet::Def::Enum(facet::EnumDef::builder()
                 // Use variant expressions that just reference the shadow structs
                 // which are now defined above
-                .variants(&const {{
-                    static VARIANTS: &[facet::Variant] = &[ {variants} ];
-                    VARIANTS
-                }})
+                .variants(&const {{[ {variants} ]}})
                 .repr(facet::EnumRepr::{repr_type})
                 .build()))
             {maybe_container_doc}
