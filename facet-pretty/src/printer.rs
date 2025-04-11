@@ -10,7 +10,8 @@ use std::{
 use facet_core::{Facet, FieldFlags, TypeNameOpts, VariantKind};
 use facet_reflect::{Peek, PeekValue};
 
-use crate::{ansi, color::ColorGenerator};
+use crate::color::ColorGenerator;
+use facet_ansi::Stylize;
 
 /// A formatter for pretty-printing Facet types
 pub struct PrettyPrinter {
@@ -330,9 +331,7 @@ impl PrettyPrinter {
 
                             // Apply color for variant name
                             if self.use_colors {
-                                ansi::write_bold(f)?;
-                                write!(f, "{}", variant_name)?;
-                                ansi::write_reset(f)?;
+                                write!(f, "{}", variant_name.bold())?;
                             } else {
                                 write!(f, "{}", variant_name)?;
                             }
@@ -654,16 +653,14 @@ impl PrettyPrinter {
 
                             // Apply color if needed
                             if self.use_colors {
-                                color.write_fg(f)?;
+                                write!(f, "\x1b[38;2;{};{};{}m", color.r, color.g, color.b)?;
                             }
 
                             // Display the byte in hex format
                             write!(f, "{:02x}", byte)?;
 
                             // Reset color if needed
-                            if self.use_colors {
-                                ansi::write_reset(f)?;
-                            }
+                            // Reset color already handled by stylize
                         } else {
                             unreachable!()
                         }
@@ -722,11 +719,6 @@ impl PrettyPrinter {
         let hash = hasher.finish();
         let color = self.color_generator.generate_color(hash);
 
-        // Apply color if needed
-        if self.use_colors {
-            color.write_fg(f)?;
-        }
-
         // Display the value
         struct DisplayWrapper<'a>(&'a PeekValue<'a>);
 
@@ -744,11 +736,13 @@ impl PrettyPrinter {
             }
         }
 
-        write!(f, "{}", DisplayWrapper(&value))?;
-
-        // Reset color if needed
+        // Apply color if needed and display
         if self.use_colors {
-            ansi::write_reset(f)?;
+            // We need to use direct ANSI codes for RGB colors
+            write!(f, "\x1b[38;2;{};{};{}m{}", color.r, color.g, color.b, DisplayWrapper(&value))?;
+            write!(f, "\x1b[0m")?;
+        } else {
+            write!(f, "{}", DisplayWrapper(&value))?;
         }
 
         Ok(())
@@ -766,9 +760,7 @@ impl PrettyPrinter {
         let type_name = TypeNameWriter(peek);
 
         if self.use_colors {
-            ansi::write_bold(f)?;
-            write!(f, "{}", type_name)?;
-            ansi::write_reset(f)
+            write!(f, "{}", type_name.bold())
         } else {
             write!(f, "{}", type_name)
         }
@@ -785,9 +777,8 @@ impl PrettyPrinter {
     /// Write styled field name to formatter
     fn write_field_name<W: fmt::Write>(&self, f: &mut W, name: &str) -> fmt::Result {
         if self.use_colors {
-            ansi::write_rgb(f, 114, 160, 193)?;
-            write!(f, "{}", name)?;
-            ansi::write_reset(f)
+            // Use cyan color for field names (approximating original RGB color)
+            write!(f, "{}", name.cyan())
         } else {
             write!(f, "{}", name)
         }
@@ -796,9 +787,7 @@ impl PrettyPrinter {
     /// Write styled punctuation to formatter
     fn write_punctuation<W: fmt::Write>(&self, f: &mut W, text: &str) -> fmt::Result {
         if self.use_colors {
-            ansi::write_dim(f)?;
-            write!(f, "{}", text)?;
-            ansi::write_reset(f)
+            write!(f, "{}", text.dimmed())
         } else {
             write!(f, "{}", text)
         }
@@ -814,9 +803,7 @@ impl PrettyPrinter {
     /// Write styled comment to formatter
     fn write_comment<W: fmt::Write>(&self, f: &mut W, text: &str) -> fmt::Result {
         if self.use_colors {
-            ansi::write_dim(f)?;
-            write!(f, "{}", text)?;
-            ansi::write_reset(f)
+            write!(f, "{}", text.dimmed())
         } else {
             write!(f, "{}", text)
         }
@@ -832,10 +819,8 @@ impl PrettyPrinter {
     /// Write styled redacted value to formatter
     fn write_redacted<W: fmt::Write>(&self, f: &mut W, text: &str) -> fmt::Result {
         if self.use_colors {
-            ansi::write_rgb(f, 224, 49, 49)?; // Use bright red for redacted values
-            ansi::write_bold(f)?;
-            write!(f, "{}", text)?;
-            ansi::write_reset(f)
+            // Use bright red and bold for redacted values
+            write!(f, "{}", text.bright_red().bold())
         } else {
             write!(f, "{}", text)
         }
