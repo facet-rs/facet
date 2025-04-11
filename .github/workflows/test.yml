@@ -9,18 +9,17 @@ on:
 
 jobs:
   test:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: arc-runners
 
+    container:
+      image: rust:1.86.0-slim
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup cargo cache
         uses: Swatinem/rust-cache@v2
 
-      - name: Install Rust specified toolchain
+      - name: Verify Rust version
         run: |
           rustc --version
 
@@ -35,14 +34,26 @@ jobs:
           just
 
   miri:
-    runs-on: self-hosted-unknown-linux-gnu-x86_64
+    runs-on: arc-runners
+
+    container:
+      image: rustlang/rust:nightly-slim
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup cargo cache
         uses: Swatinem/rust-cache@v2
+
+      - name: Verify Rust version
+        run: |
+          rustc --version
+
+      - name: Install just and cargo-nextest
+        uses: taiki-e/install-action@v2
         with:
-          cache-bin: false
+          tool: just,cargo-nextest
 
       - name: Run miri
-        run: just miri
+        shell: bash
+        run: |
+          just miri
