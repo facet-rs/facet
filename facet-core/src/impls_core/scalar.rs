@@ -406,6 +406,7 @@ static NEGATIVE_INFINITY_F32: f32 = f32::NEG_INFINITY;
 static NAN_F32: f32 = f32::NAN;
 static POSITIVE_ZERO_F32: f32 = 0.0f32;
 static NEGATIVE_ZERO_F32: f32 = -0.0f32;
+static EPSILON_F32: f32 = f32::EPSILON;
 
 // Constants for f64
 static MIN_F64: f64 = f64::MIN;
@@ -415,6 +416,7 @@ static NEGATIVE_INFINITY_F64: f64 = f64::NEG_INFINITY;
 static NAN_F64: f64 = f64::NAN;
 static POSITIVE_ZERO_F64: f64 = 0.0f64;
 static NEGATIVE_ZERO_F64: f64 = -0.0f64;
+static EPSILON_F64: f64 = f64::EPSILON;
 
 unsafe impl Facet for f32 {
     const SHAPE: &'static Shape = &const {
@@ -425,7 +427,7 @@ unsafe impl Facet for f32 {
                 ScalarDef::builder()
                     .affinity(
                         ScalarAffinity::number()
-                            .float(1, 8, 23)
+                            .float(1, 8, f32::MANTISSA_DIGITS as usize -1, false)
                             .min(OpaqueConst::new(&raw const MIN_F32))
                             .max(OpaqueConst::new(&raw const MAX_F32))
                             .positive_infinity(OpaqueConst::new(&raw const POSITIVE_INFINITY_F32))
@@ -433,6 +435,7 @@ unsafe impl Facet for f32 {
                             .nan_sample(OpaqueConst::new(&raw const NAN_F32))
                             .positive_zero(OpaqueConst::new(&raw const POSITIVE_ZERO_F32))
                             .negative_zero(OpaqueConst::new(&raw const NEGATIVE_ZERO_F32))
+                            .epsilon(OpaqueConst::new(&raw const EPSILON_F32))
                             .build(),
                     )
                     .build(),
@@ -451,7 +454,7 @@ unsafe impl Facet for f64 {
                 ScalarDef::builder()
                     .affinity(
                         ScalarAffinity::number()
-                            .float(1, 11, 52)
+                            .float(1, 11, f64::MANTISSA_DIGITS as usize -1, false)
                             .min(OpaqueConst::new(&raw const MIN_F64))
                             .max(OpaqueConst::new(&raw const MAX_F64))
                             .positive_infinity(OpaqueConst::new(&raw const POSITIVE_INFINITY_F64))
@@ -459,6 +462,7 @@ unsafe impl Facet for f64 {
                             .nan_sample(OpaqueConst::new(&raw const NAN_F64))
                             .positive_zero(OpaqueConst::new(&raw const POSITIVE_ZERO_F64))
                             .negative_zero(OpaqueConst::new(&raw const NEGATIVE_ZERO_F64))
+                            .epsilon(OpaqueConst::new(&raw const EPSILON_F64))
                             .build(),
                     )
                     .build(),

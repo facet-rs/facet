@@ -150,6 +150,10 @@ pub struct NumberAffinity {
 
     /// Negative zero representation
     pub negative_zero: Option<OpaqueConst<'static>>,
+
+    /// "Machine epsilon" (https://en.wikipedia.org/wiki/Machine_epsilon), AKA relative
+    /// approximation error, if relevant
+    pub epsilon: Option<OpaqueConst<'static>>,
 }
 
 /// Represents whether a numeric type is signed or unsigned
@@ -182,6 +186,11 @@ pub enum NumberBits {
         exponent_bits: usize,
         /// Number of bits used for the mantissa (fraction part)
         mantissa_bits: usize,
+        /// Floating-point numbers that are large enough to not be "in subnormal mode"
+        /// have their mantissa represent a number between 1 (included) and 2 (excluded)
+        /// This indicates whether the representation of the mantissa has the significant digit
+        /// (always 1) explicitly written out
+        has_explicit_first_mantissa_bit: bool,
     },
     /// Fixed-point number limits with specified integer and fractional bits
     Fixed {
@@ -212,6 +221,7 @@ pub struct NumberAffinityBuilder {
     nan_sample: Option<OpaqueConst<'static>>,
     positive_zero: Option<OpaqueConst<'static>>,
     negative_zero: Option<OpaqueConst<'static>>,
+    epsilon: Option<OpaqueConst<'static>>,
 }
 
 impl NumberAffinityBuilder {
@@ -227,6 +237,7 @@ impl NumberAffinityBuilder {
             nan_sample: None,
             positive_zero: None,
             negative_zero: None,
+            epsilon: None,
         }
     }
 
@@ -252,11 +263,13 @@ impl NumberAffinityBuilder {
         sign_bits: usize,
         exponent_bits: usize,
         mantissa_bits: usize,
+        has_explicit_first_mantissa_bit: bool,
     ) -> Self {
         self.limits = Some(NumberBits::Float {
             sign_bits,
             exponent_bits,
             mantissa_bits,
+            has_explicit_first_mantissa_bit,
         });
         self
     }
@@ -318,6 +331,12 @@ impl NumberAffinityBuilder {
         self
     }
 
+    /// Sets the relative uncertainty for the NumberAffinity
+    pub const fn epsilon(mut self, value: OpaqueConst<'static>) -> Self {
+        self.epsilon = Some(value);
+        self
+    }
+
     /// Builds the ScalarAffinity
     pub const fn build(self) -> ScalarAffinity {
         ScalarAffinity::Number(NumberAffinity {
@@ -329,6 +348,7 @@ impl NumberAffinityBuilder {
             nan_sample: self.nan_sample,
             positive_zero: self.positive_zero,
             negative_zero: self.negative_zero,
+            epsilon: self.epsilon,
         })
     }
 }
