@@ -1,7 +1,6 @@
 use std::num::NonZero;
 
-extern crate facet_core as facet;
-use facet_derive::Facet;
+use facet::Facet;
 use facet_json::{to_json, to_json_string};
 use facet_reflect::Peek;
 

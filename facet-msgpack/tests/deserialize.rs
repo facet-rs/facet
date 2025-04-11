@@ -1,5 +1,4 @@
-extern crate facet_core as facet;
-use facet_derive::Facet;
+use facet::Facet;
 
 #[test]
 fn it_works() {

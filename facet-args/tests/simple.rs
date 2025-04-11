@@ -1,6 +1,4 @@
-extern crate facet_core as facet;
-
-use facet_derive::Facet;
+use facet::Facet;
 use facet_pretty::FacetPretty;
 
 #[test]

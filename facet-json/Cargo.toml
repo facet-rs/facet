@@ -16,5 +16,5 @@ facet-reflect = { version = "0.6.0", path = "../facet-reflect" }
 log = "0.4.27"
 
 [dev-dependencies]
-facet-derive = { path = "../facet-derive" }
+facet = { path = "../facet" }
 facet-testhelpers = { version = "0.1.0", path = "../facet-testhelpers" }
