@@ -1,4 +1,4 @@
-use facet::{Peek, PeekValue};
+use facet_reflect::{Peek, PeekValue};
 use log::trace;
 use std::collections::VecDeque;
 use std::io::{self, Write};

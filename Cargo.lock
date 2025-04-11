@@ -122,7 +122,9 @@ dependencies = [
 name = "facet-json"
 version = "0.1.15"
 dependencies = [
- "facet",
+ "facet-core",
+ "facet-derive",
+ "facet-reflect",
  "facet-testhelpers",
  "log",
 ]
