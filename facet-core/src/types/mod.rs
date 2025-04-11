@@ -883,8 +883,6 @@ pub enum VariantKind {
 #[repr(C)]
 #[non_exhaustive]
 pub enum EnumRepr {
-    /// Default representation (compiler-dependent)
-    Default,
     /// u8 representation (#[repr(u8)])
     U8,
     /// u16 representation (#[repr(u16)])
@@ -905,12 +903,6 @@ pub enum EnumRepr {
     I64,
     /// isize representation (#[repr(isize)])
     ISize,
-}
-
-impl Default for EnumRepr {
-    fn default() -> Self {
-        Self::Default
-    }
 }
 
 /// Definition for scalar types

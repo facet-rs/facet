@@ -87,16 +87,6 @@ impl<'mem> PeekEnum<'mem> {
                 EnumRepr::I32 => data.read::<i32>() as i64,
                 EnumRepr::I64 => data.read::<i64>(),
                 EnumRepr::ISize => data.read::<isize>() as i64,
-                EnumRepr::Default => {
-                    // Use a heuristic based on the number of variants
-                    if self.def.variants.len() <= 256 {
-                        data.read::<u8>() as i64
-                    } else if self.def.variants.len() <= 65536 {
-                        data.read::<u16>() as i64
-                    } else {
-                        data.read::<u32>() as i64
-                    }
-                }
                 _ => {
                     // Default to a reasonable size for other representations that might be added in the future
                     data.read::<u32>() as i64

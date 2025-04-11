@@ -16,26 +16,41 @@ use unsynn::*;
 pub(crate) fn process_enum(parsed: Enum) -> proc_macro::TokenStream {
     let enum_name = parsed.name.to_string();
 
-    // Check for explicit repr attribute
-    let has_repr = parsed
-        .attributes
-        .iter()
-        .any(|attr| matches!(attr.body.content, AttributeInner::Repr(_)));
-
-    if !has_repr {
-        return r#"compile_error!("Enums must have an explicit representation (e.g. #[repr(u8)]) to be used with Facet")"#
-            .into_token_stream()
-            .into();
-    }
-
-    // Get discriminant type - we'll use this for all variants
-    let mut discriminant_type = "u8".to_string(); // Default
-    for attr in &parsed.attributes {
+    // Find the explicit repr attribute and map to
+    // the corresponding discriminant type
+    let (discriminant_type, repr_type) = match parsed.attributes.iter().find_map(|attr| {
         if let AttributeInner::Repr(repr_attr) = &attr.body.content {
-            discriminant_type = repr_attr.attr.content.to_string();
-            break;
+            Some(repr_attr.attr.content.to_string())
+        } else {
+            None
         }
-    }
+    }) {
+        Some(type_name) => {
+            let repr_type = match type_name.as_str() {
+                "u8" => "U8",
+                "u16" => "U16",
+                "u32" => "U32",
+                "u64" => "U64",
+                "usize" => "USize",
+                "i8" => "I8",
+                "i16" => "I16",
+                "i32" => "I32",
+                "i64" => "I64",
+                "isize" => "ISize",
+                _ => {
+                    return r#"compile_error!("Enums must have an explicit *primitive* representation (e.g. #[repr(u8)]) to be used with Facet")"#
+                    .into_token_stream()
+                    .into();
+                }
+            };
+            (type_name, repr_type)
+        }
+        None => {
+            return r#"compile_error!("Enums must have an explicit *primitive* representation (e.g. #[repr(u8)]) to be used with Facet")"#
+                    .into_token_stream()
+                    .into();
+        }
+    };
 
     // Collect shadow struct definitions separately from variant expressions
     let mut shadow_struct_defs = Vec::new();
@@ -176,27 +191,6 @@ pub(crate) fn process_enum(parsed: Enum) -> proc_macro::TokenStream {
     // Join the shadow struct definitions and variant expressions
     let shadow_structs = shadow_struct_defs.join("\n\n");
     let variants = variant_expressions.join(", ");
-
-    // Extract the repr type
-    let mut repr_type = "Default"; // Default fallback
-    for attr in &parsed.attributes {
-        if let AttributeInner::Repr(repr_attr) = &attr.body.content {
-            repr_type = match repr_attr.attr.content.to_string().as_str() {
-                "u8" => "U8",
-                "u16" => "U16",
-                "u32" => "U32",
-                "u64" => "U64",
-                "usize" => "USize",
-                "i8" => "I8",
-                "i16" => "I16",
-                "i32" => "I32",
-                "i64" => "I64",
-                "isize" => "ISize",
-                _ => "Default", // Unknown repr type
-            };
-            break;
-        }
-    }
 
     let static_decl = generate_static_decl(&enum_name);
     let maybe_container_doc = build_maybe_doc(&parsed.attributes);

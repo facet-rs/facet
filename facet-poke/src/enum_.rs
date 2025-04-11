@@ -126,22 +126,6 @@ impl<'mem> PokeEnumNoVariant<'mem> {
                     let tag_ptr = self.data.as_mut_bytes() as *mut isize;
                     *tag_ptr = discriminant_value as isize;
                 }
-                EnumRepr::Default => {
-                    // Use a heuristic based on the number of variants
-                    if self.def.variants.len() <= 256 {
-                        // Can fit in a u8
-                        let tag_ptr = self.data.as_mut_bytes();
-                        *tag_ptr = discriminant_value as u8;
-                    } else if self.def.variants.len() <= 65536 {
-                        // Can fit in a u16
-                        let tag_ptr = self.data.as_mut_bytes() as *mut u16;
-                        *tag_ptr = discriminant_value as u16;
-                    } else {
-                        // Default to u32
-                        let tag_ptr = self.data.as_mut_bytes() as *mut u32;
-                        *tag_ptr = discriminant_value as u32;
-                    }
-                }
                 _ => {
                     panic!("Unsupported enum representation: {:?}", self.def.repr);
                 }
