@@ -791,6 +791,9 @@ pub struct Variant {
     /// Kind of variant (unit, tuple, or struct)
     pub kind: VariantKind,
 
+    /// Offset of the variant in the enum layout
+    pub offset: usize,
+
     /// Doc comment for the variant
     pub doc: &'static [&'static str],
 }
@@ -807,6 +810,7 @@ pub struct VariantBuilder {
     name: Option<&'static str>,
     discriminant: Option<Option<i64>>,
     kind: Option<VariantKind>,
+    offset: Option<usize>,
     doc: &'static [&'static str],
 }
 
@@ -818,6 +822,7 @@ impl VariantBuilder {
             name: None,
             discriminant: None,
             kind: None,
+            offset: None,
             doc: &[],
         }
     }
@@ -840,6 +845,12 @@ impl VariantBuilder {
         self
     }
 
+    /// Sets the offset for the Variant
+    pub const fn offset(mut self, offset: usize) -> Self {
+        self.offset = Some(offset);
+        self
+    }
+
     /// Sets the doc comment for the Variant
     pub const fn doc(mut self, doc: &'static [&'static str]) -> Self {
         self.doc = doc;
@@ -852,6 +863,7 @@ impl VariantBuilder {
             name: self.name.unwrap(),
             discriminant: self.discriminant.unwrap(),
             kind: self.kind.unwrap(),
+            offset: self.offset.unwrap(),
             doc: self.doc,
         }
     }
@@ -903,6 +915,25 @@ pub enum EnumRepr {
     I64,
     /// isize representation (#[repr(isize)])
     ISize,
+}
+
+impl EnumRepr {
+    /// Returns the enum representation for the given discriminant type
+    ///
+    /// NOTE: only supports unsigned discriminants
+    ///
+    /// # Panics
+    ///
+    /// Panics if the size of the discriminant size is not 1, 2, 4, or 8 bytes.
+    pub const fn from_discriminant_size<T>() -> Self {
+        match core::mem::size_of::<T>() {
+            1 => EnumRepr::U8,
+            2 => EnumRepr::U16,
+            4 => EnumRepr::U32,
+            8 => EnumRepr::U64,
+            _ => panic!("Invalid enum size"),
+        }
+    }
 }
 
 /// Definition for scalar types

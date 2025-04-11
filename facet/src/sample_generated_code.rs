@@ -1153,7 +1153,7 @@ unsafe impl facet::Facet for KitchenSinkEnum {
                                                 builder.build()
                                             }).def(facet::Def::Enum(facet::EnumDef::builder().variants(&const {
                                                             static VARIANTS: &[facet::Variant] =
-                                                                &[facet::Variant::builder().name("UnitVariant").discriminant(Some(0)).kind(facet::VariantKind::Unit).doc(&[" A simple unit variant."]).build(),
+                                                                &[facet::Variant::builder().name("UnitVariant").discriminant(Some(0)).offset(0).kind(facet::VariantKind::Unit).doc(&[" A simple unit variant."]).build(),
                                                                             {
                                                                                 static FIELDS: &[facet::Field] =
                                                                                     &[facet::Field::builder().name("_0").shape(facet::shape_of(&(|s:
@@ -1162,7 +1162,7 @@ unsafe impl facet::Facet for KitchenSinkEnum {
                                                                                                                     builtin # offset_of(__ShadowKitchenSinkEnum_TupleVariantSimple,
                                                                                                                         _0)
                                                                                                                 }).flags(facet::FieldFlags::EMPTY).attributes(&[]).build()];
-                                                                                facet::Variant::builder().name("TupleVariantSimple").discriminant(Some(1)).kind(facet::VariantKind::Tuple {
+                                                                                facet::Variant::builder().name("TupleVariantSimple").discriminant(Some(1)).offset(0).kind(facet::VariantKind::Tuple {
                                                                                                 fields: FIELDS,
                                                                                             }).doc(&[" A tuple variant with a single element.", "",
                                                                                                     " The contained `String` represents an important message payload."]).build()
@@ -1187,7 +1187,7 @@ unsafe impl facet::Facet for KitchenSinkEnum {
                                                                                                                     builtin # offset_of(__ShadowKitchenSinkEnum_TupleVariantMulti,
                                                                                                                         _2)
                                                                                                                 }).flags(facet::FieldFlags::EMPTY).attributes(&[]).build()];
-                                                                                facet::Variant::builder().name("TupleVariantMulti").discriminant(Some(2)).kind(facet::VariantKind::Tuple {
+                                                                                facet::Variant::builder().name("TupleVariantMulti").discriminant(Some(2)).offset(0).kind(facet::VariantKind::Tuple {
                                                                                                 fields: FIELDS,
                                                                                             }).doc(&[" A tuple variant with multiple elements.", "",
                                                                                                     " Contains important positional data:",
@@ -1209,7 +1209,7 @@ unsafe impl facet::Facet for KitchenSinkEnum {
                                                                                                                         builtin # offset_of(__ShadowKitchenSinkEnum_StructVariant,
                                                                                                                             height)
                                                                                                                     }).flags(facet::FieldFlags::EMPTY).attributes(&[]).doc(&[" The height dimension, also crucial for rendering."]).build()];
-                                                                                facet::Variant::builder().name("StructVariant").discriminant(Some(3)).kind(facet::VariantKind::Struct {
+                                                                                facet::Variant::builder().name("StructVariant").discriminant(Some(3)).offset(0).kind(facet::VariantKind::Struct {
                                                                                                 fields: FIELDS,
                                                                                             }).doc(&[" A struct variant with named fields."]).build()
                                                                             },
@@ -1221,7 +1221,7 @@ unsafe impl facet::Facet for KitchenSinkEnum {
                                                                                                                     builtin # offset_of(__ShadowKitchenSinkEnum_SensitiveTupleVariant,
                                                                                                                         _0)
                                                                                                                 }).flags(facet::FieldFlags::EMPTY).attributes(&[]).build()];
-                                                                                facet::Variant::builder().name("SensitiveTupleVariant").discriminant(Some(4)).kind(facet::VariantKind::Tuple {
+                                                                                facet::Variant::builder().name("SensitiveTupleVariant").discriminant(Some(4)).offset(0).kind(facet::VariantKind::Tuple {
                                                                                                 fields: FIELDS,
                                                                                             }).doc(&[" A tuple variant marked entirely as sensitive."]).build()
                                                                             },
@@ -1239,7 +1239,7 @@ unsafe impl facet::Facet for KitchenSinkEnum {
                                                                                                                         builtin # offset_of(__ShadowKitchenSinkEnum_StructVariantWithSensitiveField,
                                                                                                                             checksum)
                                                                                                                     }).flags(facet::FieldFlags::SENSITIVE).attributes(&[facet::FieldAttribute::Sensitive]).doc(&[" The sensitive checksum for integrity verification."]).build()];
-                                                                                facet::Variant::builder().name("StructVariantWithSensitiveField").discriminant(Some(5)).kind(facet::VariantKind::Struct {
+                                                                                facet::Variant::builder().name("StructVariantWithSensitiveField").discriminant(Some(5)).offset(0).kind(facet::VariantKind::Struct {
                                                                                                 fields: FIELDS,
                                                                                             }).doc(&[" A struct variant containing a sensitive field."]).build()
                                                                             },
@@ -1251,7 +1251,7 @@ unsafe impl facet::Facet for KitchenSinkEnum {
                                                                                                                     builtin # offset_of(__ShadowKitchenSinkEnum_ArbitraryVariant,
                                                                                                                         _0)
                                                                                                                 }).flags(facet::FieldFlags::EMPTY).attributes(&[]).build()];
-                                                                                facet::Variant::builder().name("ArbitraryVariant").discriminant(Some(6)).kind(facet::VariantKind::Tuple {
+                                                                                facet::Variant::builder().name("ArbitraryVariant").discriminant(Some(6)).offset(0).kind(facet::VariantKind::Tuple {
                                                                                                 fields: FIELDS,
                                                                                             }).doc(&[" A variant marked as arbitrary, potentially skipped during processing."]).build()
                                                                             },
@@ -1263,7 +1263,7 @@ unsafe impl facet::Facet for KitchenSinkEnum {
                                                                                                                     builtin # offset_of(__ShadowKitchenSinkEnum_NestedEnumVariant,
                                                                                                                         _0)
                                                                                                                 }).flags(facet::FieldFlags::EMPTY).attributes(&[]).build()];
-                                                                                facet::Variant::builder().name("NestedEnumVariant").discriminant(Some(7)).kind(facet::VariantKind::Tuple {
+                                                                                facet::Variant::builder().name("NestedEnumVariant").discriminant(Some(7)).offset(0).kind(facet::VariantKind::Tuple {
                                                                                                 fields: FIELDS,
                                                                                             }).doc(&[" A variant containing another enum that derives Facet.",
                                                                                                     "",
@@ -1600,6 +1600,7 @@ unsafe impl facet::Facet for SubEnum {
                                 facet::Variant::builder()
                                     .name("OptionA")
                                     .discriminant(Some(0))
+                                    .offset(0)
                                     .kind(facet::VariantKind::Unit)
                                     .doc(&[" Option A."])
                                     .build(),
@@ -1618,6 +1619,7 @@ unsafe impl facet::Facet for SubEnum {
                                     facet::Variant::builder()
                                         .name("OptionB")
                                         .discriminant(Some(1))
+                                        .offset(0)
                                         .kind(facet::VariantKind::Tuple { fields: FIELDS })
                                         .doc(&[" Option B with data."])
                                         .build()
@@ -1637,6 +1639,7 @@ unsafe impl facet::Facet for SubEnum {
                                     facet::Variant::builder()
                                         .name("SensitiveOption")
                                         .discriminant(Some(2))
+                                        .offset(0)
                                         .kind(facet::VariantKind::Tuple { fields: FIELDS })
                                         .doc(&[" A sensitive option."])
                                         .build()
@@ -1656,6 +1659,7 @@ unsafe impl facet::Facet for SubEnum {
                                     facet::Variant::builder()
                                         .name("ArbitraryOption")
                                         .discriminant(Some(3))
+                                        .offset(0)
                                         .kind(facet::VariantKind::Tuple { fields: FIELDS })
                                         .doc(&[" An arbitrary option."])
                                         .build()

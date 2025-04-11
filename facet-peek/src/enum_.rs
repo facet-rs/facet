@@ -138,19 +138,20 @@ impl<'mem> PeekEnum<'mem> {
     /// Returns a Peek handle to a field of a tuple or struct variant
     pub fn field(self, field_name: &str) -> Option<crate::Peek<'mem>> {
         let variant = self.active_variant();
+        let variant_offset = variant.offset;
 
         match &variant.kind {
             VariantKind::Unit => None, // Unit variants have no fields
             VariantKind::Tuple { fields } => {
                 // For tuple variants, find by name
                 let field = fields.iter().find(|f| f.name == field_name)?;
-                let field_data = unsafe { self.value.data().field(field.offset) };
+                let field_data = unsafe { self.value.data().field(variant_offset + field.offset) };
                 Some(unsafe { crate::Peek::unchecked_new(field_data, field.shape) })
             }
             VariantKind::Struct { fields } => {
                 // For struct variants, find by name
                 let field = fields.iter().find(|f| f.name == field_name)?;
-                let field_data = unsafe { self.value.data().field(field.offset) };
+                let field_data = unsafe { self.value.data().field(variant_offset + field.offset) };
                 Some(unsafe { crate::Peek::unchecked_new(field_data, field.shape) })
             }
             _ => None, // Handle other variant kinds that might be added in the future
@@ -160,6 +161,7 @@ impl<'mem> PeekEnum<'mem> {
     /// Returns a Peek handle to a field of a tuple variant by index
     pub fn tuple_field(self, index: usize) -> Option<crate::Peek<'mem>> {
         let variant = self.active_variant();
+        let variant_offset = variant.offset;
 
         match &variant.kind {
             VariantKind::Tuple { fields } => {
@@ -168,7 +170,7 @@ impl<'mem> PeekEnum<'mem> {
                 }
 
                 let field = &fields[index];
-                let field_data = unsafe { self.value.data().field(field.offset) };
+                let field_data = unsafe { self.value.data().field(variant_offset + field.offset) };
                 Some(unsafe { crate::Peek::unchecked_new(field_data, field.shape) })
             }
             _ => None, // Not a tuple variant
@@ -190,19 +192,20 @@ impl<'mem> PeekEnum<'mem> {
             > + 'mem,
     > {
         let variant = self.active_variant();
+        let variant_offset = variant.offset;
         let data = self.value.data();
 
         match &variant.kind {
             VariantKind::Struct { fields } => {
                 alloc::boxed::Box::new(fields.iter().enumerate().map(move |(i, field)| {
-                    let field_data = unsafe { data.field(field.offset) };
+                    let field_data = unsafe { data.field(variant_offset + field.offset) };
                     let field_peek = unsafe { crate::Peek::unchecked_new(field_data, field.shape) };
                     (i, field.name, field_peek, field)
                 }))
             }
             VariantKind::Tuple { fields } => {
                 alloc::boxed::Box::new(fields.iter().enumerate().map(move |(i, field)| {
-                    let field_data = unsafe { data.field(field.offset) };
+                    let field_data = unsafe { data.field(variant_offset + field.offset) };
                     let field_peek = unsafe { crate::Peek::unchecked_new(field_data, field.shape) };
                     (i, field.name, field_peek, field)
                 }))
@@ -217,19 +220,20 @@ impl<'mem> PeekEnum<'mem> {
         self,
     ) -> alloc::boxed::Box<dyn Iterator<Item = (&'static str, crate::Peek<'mem>)> + 'mem> {
         let variant = self.active_variant();
+        let variant_offset = variant.offset;
         let data = self.value.data();
 
         match &variant.kind {
             VariantKind::Struct { fields } => {
                 alloc::boxed::Box::new(fields.iter().map(move |field| {
-                    let field_data = unsafe { data.field(field.offset) };
+                    let field_data = unsafe { data.field(variant_offset + field.offset) };
                     let peek = unsafe { crate::Peek::unchecked_new(field_data, field.shape) };
                     (field.name, peek)
                 }))
             }
             VariantKind::Tuple { fields } => {
                 alloc::boxed::Box::new(fields.iter().map(move |field| {
-                    let field_data = unsafe { data.field(field.offset) };
+                    let field_data = unsafe { data.field(variant_offset + field.offset) };
                     let peek = unsafe { crate::Peek::unchecked_new(field_data, field.shape) };
                     (field.name, peek)
                 }))
