@@ -16,8 +16,8 @@ alloc = ["facet-core/alloc"]
 default = ["std"]
 
 [dependencies]
-facet-peek = { path = "../facet-peek" }
-facet-core = { path = "../facet-core" }
+facet-peek = { path = "../facet-peek", version = "0.2.14" }
+facet-core = { path = "../facet-core", version = "0.4.2" }
 
 [dev-dependencies]
 color-backtrace = { version = "0.7.0", default-features = false, features = [
@@ -25,7 +25,7 @@ color-backtrace = { version = "0.7.0", default-features = false, features = [
 ] }
 ctor = "0.4.1"
 owo-colors = "4.2.0"
-facet-derive = { path = "../facet-derive" }
-facet-samplelibc = { path = "../facet-samplelibc" }
-facet-pretty = { path = "../facet-pretty" }
+facet-derive = { path = "../facet-derive", version = "0.1.17" }
+facet-samplelibc = { path = "../facet-samplelibc", version = "0.1.13" }
+facet-pretty = { path = "../facet-pretty", version = "0.1.11" }
 env_logger = "0.11.8"

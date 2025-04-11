@@ -14,4 +14,4 @@ categories = ["development-tools::ffi"]
 cc = "1.2.18"
 
 [dependencies]
-facet = { path = "../facet" }
+facet = { path = "../facet", version = "0.1.18" }

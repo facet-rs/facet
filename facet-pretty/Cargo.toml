@@ -17,8 +17,8 @@ keywords = [
 categories = ["development-tools", "visualization", "command-line-utilities"]
 
 [dependencies]
-facet-core = { path = "../facet-core" }
-facet-peek = { path = "../facet-peek" }
+facet-core = { path = "../facet-core", version = "0.4.2" }
+facet-peek = { path = "../facet-peek", version = "0.2.14" }
 
 [dev-dependencies]
-facet-derive = { path = "../facet-derive" }
+facet-derive = { path = "../facet-derive", version = "0.1.17" }

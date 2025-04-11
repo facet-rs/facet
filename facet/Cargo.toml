@@ -11,8 +11,8 @@ keywords = ["facet", "introspection", "reflection"]
 categories = ["development-tools"]
 
 [dependencies]
-facet-core = { path = "../facet-core" }
-facet-derive = { path = "../facet-derive" }
+facet-core = { path = "../facet-core", version = "0.4.1" }
+facet-derive = { path = "../facet-derive", version = "0.1.16" }
 
 [features]
 # Does nothing, only used for tests
@@ -22,4 +22,4 @@ alloc = ["facet-core/alloc"]
 default = ["std"]
 
 [dev-dependencies]
-facet-poke = { path = "../facet-poke" }
+facet-poke = { path = "../facet-poke", version = "0.6.0" }

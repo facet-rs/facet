@@ -11,7 +11,7 @@ keywords = ["reflection", "traits"]
 categories = ["development-tools"]
 
 [dependencies]
-facet-core = { path = "../facet-core" }
+facet-core = { path = "../facet-core", version = "0.4.2" }
 
 [features]
 std = ["facet-core/std"]

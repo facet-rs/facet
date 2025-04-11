@@ -24,4 +24,4 @@ unsynn = "0.0.26"
 
 # cf. https://hachyderm.io/@epage/114141126315983016
 [target.'cfg(any())'.dependencies]
-facet-core = { path = "../facet-core" }
+facet-core = { path = "../facet-core", version = "0.4.2" }
