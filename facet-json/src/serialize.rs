@@ -340,7 +340,8 @@ pub fn to_json<W: Write>(peek: Peek<'_>, writer: &mut W, indent: bool) -> io::Re
 /// # Example
 ///
 /// ```rust
-/// use facet::{Facet, Peek};
+/// use facet::Facet;
+/// use facet_reflect::Peek;
 /// use facet_json::to_json_string;
 ///
 /// #[derive(facet::Facet)]

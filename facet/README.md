@@ -37,7 +37,7 @@ Thanks to all individual and corporate sponsors, without whom this work could no
 <img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v2/zed-light.svg" height="40" alt="Zed">
 </picture>
 </a> </p>
-         
+
 facet provides "const fn" reflection for Rust.
 
 The `Facet` trait is meant to be derived for _every single type in the Rust
@@ -226,7 +226,7 @@ We can build it fully through reflection:
 #     bar: String,
 # }
 
-use facet::PokeUninit;
+use facet_reflect::PokeUninit;
 
 fn main() {
     // outer code: we know the type of `FooBar` — we pass `poke`

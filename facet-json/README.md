@@ -37,7 +37,7 @@ Thanks to all individual and corporate sponsors, without whom this work could no
 <img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v2/zed-light.svg" height="40" alt="Zed">
 </picture>
 </a> </p>
-         
+
 JSON serialization and deserialization for [facet](https://crates.io/crates/facet).
 
 ## Usage
@@ -45,7 +45,8 @@ JSON serialization and deserialization for [facet](https://crates.io/crates/face
 ### Serialization Example
 
 ```rust
-use facet::{Facet, Peek};
+use facet::Facet;
+use facet_reflect::Peek;
 use facet_json::to_json_string;
 
 #[derive(facet::Facet)]
