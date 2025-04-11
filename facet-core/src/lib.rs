@@ -7,6 +7,9 @@
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
+#[cfg(docsrs)]
+mod sample_generated_code;
+
 // Opaque pointer utilities
 mod opaque;
 pub use opaque::*;

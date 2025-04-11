@@ -5,6 +5,77 @@ use std::process;
 use minijinja::Environment;
 use similar::{ChangeTag, TextDiff};
 
+fn main() {
+    let opts = Options {
+        check: std::env::args().any(|arg| arg == "--check"),
+    };
+    let mut has_diffs = false;
+
+    // Check if current directory has a Cargo.toml with [workspace]
+    let cargo_toml_path = std::env::current_dir().unwrap().join("Cargo.toml");
+    let cargo_toml_content =
+        fs_err::read_to_string(cargo_toml_path).expect("Failed to read Cargo.toml");
+    if !cargo_toml_content.contains("[workspace]") {
+        panic!(
+            "Cargo.toml does not contain [workspace] (you must run codegen from the workspace root)"
+        );
+    }
+
+    // Generate tuple implementations
+    generate_tuple_impls(&mut has_diffs, &opts);
+
+    // Generate README files from templates
+    generate_readme_files(&mut has_diffs, &opts);
+
+    // Generate `facet-core/src/sample_generated_code.rs`
+    copy_cargo_expand_output(&mut has_diffs, &opts);
+
+    if opts.check && has_diffs {
+        process::exit(1);
+    }
+}
+
+fn copy_cargo_expand_output(has_diffs: &mut bool, opts: &Options) {
+    let workspace_dir = std::env::current_dir().unwrap();
+    let sample_dir = workspace_dir.join("sample");
+
+    // Change to the sample directory
+    std::env::set_current_dir(&sample_dir).expect("Failed to change to sample directory");
+
+    // Run cargo expand command
+    let output = std::process::Command::new("sh")
+        .arg("-c")
+        .arg("RUSTC_BOOTSTRAP=1 cargo rustc --lib -- -Zunpretty=expanded | rustfmt --emit stdout")
+        .output()
+        .expect("Failed to execute cargo expand command");
+
+    // Change back to the workspace directory
+    std::env::set_current_dir(&workspace_dir)
+        .expect("Failed to change back to workspace directory");
+
+    if !output.status.success() {
+        eprintln!("Cargo expand command failed");
+        std::process::exit(1);
+    }
+
+    let expanded_code =
+        String::from_utf8(output.stdout).expect("Failed to convert output to string");
+
+    // Write the expanded code to the target file
+    let target_path = workspace_dir
+        .join("facet-core")
+        .join("src")
+        .join("sample_generated_code.rs");
+
+    *has_diffs |= write_if_different(&target_path, expanded_code.into_bytes(), opts.check);
+
+    if opts.check {
+        println!("Checked sample_generated_code.rs");
+    } else {
+        println!("Generated sample_generated_code.rs");
+    }
+}
+
 #[derive(Debug)]
 struct Options {
     check: bool,
@@ -42,33 +113,6 @@ fn write_if_different(path: &Path, content: Vec<u8>, check_mode: bool) -> bool {
     } else {
         fs_err::write(path, content).expect("Failed to write file");
         false
-    }
-}
-
-fn main() {
-    let opts = Options {
-        check: std::env::args().any(|arg| arg == "--check"),
-    };
-    let mut has_diffs = false;
-
-    // Check if current directory has a Cargo.toml with [workspace]
-    let cargo_toml_path = std::env::current_dir().unwrap().join("Cargo.toml");
-    let cargo_toml_content =
-        fs_err::read_to_string(cargo_toml_path).expect("Failed to read Cargo.toml");
-    if !cargo_toml_content.contains("[workspace]") {
-        panic!(
-            "Cargo.toml does not contain [workspace] (you must run codegen from the workspace root)"
-        );
-    }
-
-    // Generate tuple implementations
-    generate_tuple_impls(&mut has_diffs, &opts);
-
-    // Generate README files from templates
-    generate_readme_files(&mut has_diffs, &opts);
-
-    if opts.check && has_diffs {
-        process::exit(1);
     }
 }
 
