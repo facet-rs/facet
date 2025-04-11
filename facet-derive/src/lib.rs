@@ -322,7 +322,7 @@ pub(crate) fn to_upper_snake_case(input: &str) -> String {
 /// Generate a static declaration that exports the crate
 pub(crate) fn generate_static_decl(type_name: &str) -> String {
     format!(
-        "#[used]\nstatic {}_SHAPE: &'static facet::Shape = <{} as facet::Facet>::SHAPE;",
+        "#[used]\nstatic {}_SHAPE: &'static ::facet::Shape = <{} as ::facet::Facet>::SHAPE;",
         to_upper_snake_case(type_name),
         type_name
     )
@@ -351,19 +351,19 @@ pub(crate) fn gen_struct_field(
     attrs: &[Attribute],
 ) -> String {
     // Determine field flags
-    let mut flags = "facet::FieldFlags::EMPTY";
+    let mut flags = "::facet::FieldFlags::EMPTY";
     let mut attribute_list: Vec<String> = vec![];
     let mut doc_lines: Vec<&str> = vec![];
     for attr in attrs {
         match &attr.body.content {
             AttributeInner::Facet(facet_attr) => match &facet_attr.inner.content {
                 FacetInner::Sensitive(_ksensitive) => {
-                    flags = "facet::FieldFlags::SENSITIVE";
-                    attribute_list.push("facet::FieldAttribute::Sensitive".to_string());
+                    flags = "::facet::FieldFlags::SENSITIVE";
+                    attribute_list.push("::facet::FieldAttribute::Sensitive".to_string());
                 }
                 FacetInner::Other(tt) => {
                     attribute_list.push(format!(
-                        r#"facet::FieldAttribute::Arbitrary({:?})"#,
+                        r#"::facet::FieldAttribute::Arbitrary({:?})"#,
                         tt.tokens_to_string()
                     ));
                 }
@@ -387,9 +387,9 @@ pub(crate) fn gen_struct_field(
 
     // Generate each field definition
     format!(
-        "facet::Field::builder()
+        "::facet::Field::builder()
     .name(\"{field_name}\")
-    .shape(facet::shape_of(&|s: {struct_name}<{generics}>| s.{field_name}))
+    .shape(::facet::shape_of(&|s: {struct_name}<{generics}>| s.{field_name}))
     .offset(::core::mem::offset_of!({struct_name}<{generics}>, {field_name}))
     .flags({flags})
     .attributes(&[{attributes}])

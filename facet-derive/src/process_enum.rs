@@ -176,24 +176,24 @@ pub(crate) fn process_enum(parsed: Enum) -> proc_macro::TokenStream {
 {static_decl}
 
 #[automatically_derived]
-unsafe impl<{generics_def}> facet::Facet for {enum_name}<{generics_use}> {where_clauses} {{
-    const SHAPE: &'static facet::Shape = &const {{
+unsafe impl<{generics_def}> ::facet::Facet for {enum_name}<{generics_use}> {where_clauses} {{
+    const SHAPE: &'static ::facet::Shape = &const {{
         // Define all shadow structs at the beginning of the const block
         // to ensure they're in scope for offset_of! macros
         {shadow_structs}
 
-        facet::Shape::builder()
-            .id(facet::ConstTypeId::of::<Self>())
-            .layout(core::alloc::Layout::new::<Self>())
-            .vtable(facet::value_vtable!(
+        ::facet::Shape::builder()
+            .id(::facet::ConstTypeId::of::<Self>())
+            .layout(::core::alloc::Layout::new::<Self>())
+            .vtable(::facet::value_vtable!(
                 Self,
-                |f, _opts| core::fmt::Write::write_str(f, "{enum_name}")
+                |f, _opts| ::core::fmt::Write::write_str(f, "{enum_name}")
             ))
-            .def(facet::Def::Enum(facet::EnumDef::builder()
+            .def(::facet::Def::Enum(::facet::EnumDef::builder()
                 // Use variant expressions that just reference the shadow structs
                 // which are now defined above
                 .variants(&const {{[ {variants} ]}})
-                .repr(facet::EnumRepr::{repr_type})
+                .repr(::facet::EnumRepr::{repr_type})
                 .build()))
             {maybe_container_doc}
             .build()
@@ -291,11 +291,11 @@ fn process_c_style_enum(
 
                 // variant offset is offset of the `_fields` union
                 variant_expressions.push(format!(
-                    "facet::Variant::builder()
+                    "::facet::Variant::builder()
                     .name({variant_name:?})
                     .discriminant(Some({discriminant_value}))
                     .offset(::core::mem::offset_of!({shadow_repr_name}, _fields))
-                    .kind(facet::VariantKind::Unit)
+                    .kind(::facet::VariantKind::Unit)
                     {maybe_doc}
                     .build()",
                 ));
@@ -348,15 +348,15 @@ fn process_c_style_enum(
                 // Add variant expression - now with discriminant
                 variant_expressions.push(format!(
                     "{{
-                        let fields: &'static [facet::Field] = &const {{[
+                        let fields: &'static [::facet::Field] = &const {{[
                             {fields}
                         ]}};
 
-                        facet::Variant::builder()
+                        ::facet::Variant::builder()
                             .name({variant_name:?})
                             .discriminant(Some({discriminant_value}))
                             .offset(::core::mem::offset_of!({shadow_repr_name}, _fields))
-                            .kind(facet::VariantKind::Tuple {{ fields }})
+                            .kind(::facet::VariantKind::Tuple {{ fields }})
                             {maybe_doc}
                             .build()
                     }}",
@@ -409,15 +409,15 @@ fn process_c_style_enum(
                 // Add variant expression - now with discriminant
                 variant_expressions.push(format!(
                     "{{
-                        let fields: &'static [facet::Field] = &const {{[
+                        let fields: &'static [::facet::Field] = &const {{[
                             {fields}
                         ]}};
 
-                        facet::Variant::builder()
+                        ::facet::Variant::builder()
                             .name({variant_name:?})
                             .discriminant(Some({discriminant_value}))
                             .offset(::core::mem::offset_of!({shadow_repr_name}, _fields))
-                            .kind(facet::VariantKind::Struct {{ fields }})
+                            .kind(::facet::VariantKind::Struct {{ fields }})
                             {maybe_doc}
                             .build()
                     }}",
@@ -463,11 +463,11 @@ fn process_primitive_enum(
                 let maybe_doc = build_maybe_doc(&unit.attributes);
 
                 variant_expressions.push(format!(
-                    "facet::Variant::builder()
+                    "::facet::Variant::builder()
                     .name({variant_name:?})
                     .discriminant(Some({discriminant_value}))
                     .offset(0)
-                    .kind(facet::VariantKind::Unit)
+                    .kind(::facet::VariantKind::Unit)
                     {maybe_doc}
                     .build()",
                 ));
@@ -521,15 +521,15 @@ fn process_primitive_enum(
                 // Add variant expression - now with discriminant
                 variant_expressions.push(format!(
                     "{{
-                        let fields: &'static [facet::Field] = &const {{[
+                        let fields: &'static [::facet::Field] = &const {{[
                             {fields}
                         ]}};
 
-                        facet::Variant::builder()
+                        ::facet::Variant::builder()
                             .name({variant_name:?})
                             .discriminant(Some({discriminant_value}))
                             .offset(0)
-                            .kind(facet::VariantKind::Tuple {{ fields }})
+                            .kind(::facet::VariantKind::Tuple {{ fields }})
                             {maybe_doc}
                             .build()
                     }}",
@@ -585,15 +585,15 @@ fn process_primitive_enum(
                 // already computed relative to the discriminant
                 variant_expressions.push(format!(
                     "{{
-                        let fields: &'static [facet::Field] = &const {{[
+                        let fields: &'static [::facet::Field] = &const {{[
                             {fields}
                         ]}};
 
-                        facet::Variant::builder()
+                        ::facet::Variant::builder()
                             .name({variant_name:?})
                             .discriminant(Some({discriminant_value}))
                             .offset(0)
-                            .kind(facet::VariantKind::Struct {{ fields }})
+                            .kind(::facet::VariantKind::Struct {{ fields }})
                             {maybe_doc}
                             .build()
                     }}",

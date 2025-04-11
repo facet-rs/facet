@@ -6,7 +6,9 @@ use std::time::Instant;
 use crate::Options;
 use crate::write_if_different;
 
-pub(crate) fn generate_readme_files(has_diffs: &mut bool, opts: Options) {
+pub(crate) fn generate_readme_files(opts: Options) -> bool {
+    let mut has_diffs = false;
+
     let start = Instant::now();
 
     // Get all crate directories in the workspace
@@ -56,7 +58,7 @@ pub(crate) fn generate_readme_files(has_diffs: &mut bool, opts: Options) {
         };
 
         if template_path.exists() {
-            process_readme_template(&path, &template_path, has_diffs, opts.clone());
+            process_readme_template(&path, &template_path, &mut has_diffs, opts.clone());
             generated_crates.push(crate_name);
         } else {
             error!("🚫 Missing template: {}", template_path.display().red());
@@ -82,7 +84,7 @@ pub(crate) fn generate_readme_files(has_diffs: &mut bool, opts: Options) {
     process_readme_template(
         &workspace_dir,
         &workspace_template_path,
-        has_diffs,
+        &mut has_diffs,
         opts.clone(),
     );
 
@@ -97,13 +99,20 @@ pub(crate) fn generate_readme_files(has_diffs: &mut bool, opts: Options) {
             generated_crates.join(", ").blue(),
             execution_time
         );
-    } else {
+    } else if has_diffs {
         info!(
             "📚 Generated READMEs for: {} (took {:?})",
             generated_crates.join(", ").blue(),
             execution_time
         );
+    } else {
+        info!(
+            "✅ No changes to READMEs for: {} (took {:?})",
+            generated_crates.join(", ").blue(),
+            execution_time
+        );
     }
+    has_diffs
 }
 
 fn process_readme_template(
