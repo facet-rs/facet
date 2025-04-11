@@ -1,5 +1,3 @@
-extern crate alloc;
-
 use crate::value_vtable;
 use crate::*;
 use core::alloc::Layout;

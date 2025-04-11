@@ -4,6 +4,8 @@
 #![warn(clippy::std_instead_of_alloc)]
 #![doc = include_str!("../README.md")]
 
+extern crate alloc;
+
 // Opaque pointer utilities
 mod opaque;
 pub use opaque::*;

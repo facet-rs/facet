@@ -1,5 +1,3 @@
-extern crate alloc;
-
 use alloc::collections::VecDeque;
 use core::{alloc::Layout, hash::Hash};
 use std::collections::HashMap;

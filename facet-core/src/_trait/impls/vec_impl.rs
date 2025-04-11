@@ -1,5 +1,3 @@
-extern crate alloc;
-
 use crate::*;
 use core::{alloc::Layout, hash::Hash as _};
 

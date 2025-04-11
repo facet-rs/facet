@@ -1,7 +1,5 @@
 //! structs and vtable definitions used by Facet
 
-extern crate alloc;
-
 use core::alloc::Layout;
 use core::fmt;
 
