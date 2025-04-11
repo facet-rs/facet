@@ -17,13 +17,12 @@ keywords = [
 categories = ["encoding", "parsing", "data-structures"]
 
 [dependencies]
-log = "0.4.27"
 facet = { path = "../facet", version = "0.1.18", features = ["reflect"] }
+log = "0.4.27"
 
 [dev-dependencies]
-color-backtrace = "0.7.0"
-ctor = "0.4.1"
 facet = { path = "../facet", version = "0.1.18", features = [
     "reflect",
     "derive",
 ] }
+facet-testhelpers = { version = "0.1.0", path = "../facet-testhelpers" }

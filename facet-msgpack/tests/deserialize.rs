@@ -2,6 +2,8 @@ use facet::Facet;
 
 #[test]
 fn it_works() {
+    facet_testhelpers::setup();
+
     #[derive(Debug, PartialEq, Facet)]
     struct TestStruct {
         name: String,
