@@ -1,5 +1,5 @@
+use crate::peek::Peek;
 use facet_core::{Facet, Opaque, OpaqueConst, OpaqueUninit, Shape, TryFromError, ValueVTable};
-use facet_peek::Peek;
 
 /// A strongly-typed value writer that ensures type safety at compile-time
 pub struct TypedPokeValueUninit<'mem, T: Facet> {

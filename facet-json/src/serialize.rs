@@ -1,4 +1,4 @@
-use facet_poke::{Peek, PeekValue};
+use facet::{Peek, PeekValue};
 use log::trace;
 use std::collections::VecDeque;
 use std::io::{self, Write};
@@ -340,9 +340,8 @@ pub fn to_json<W: Write>(peek: Peek<'_>, writer: &mut W, indent: bool) -> io::Re
 /// # Example
 ///
 /// ```rust
-/// use facet::Facet;
+/// use facet::{Facet, Peek};
 /// use facet_json::to_json_string;
-/// use facet_poke::Peek;
 ///
 /// #[derive(facet::Facet)]
 /// struct Foo {

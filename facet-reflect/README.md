@@ -4,14 +4,14 @@
 <picture>
 <source srcset="https://github.com/facet-rs/facet/raw/main/static/logo-v2/logo-only.webp">
 <img src="https://github.com/facet-rs/facet/raw/main/static/logo-v2/logo-only.png" height="35" alt="Facet logo - a reflection library for Rust">
-</picture> &nbsp; facet-peek
+</picture> &nbsp; facet-args
 </h1>
 
 [![experimental](https://img.shields.io/badge/status-experimental-yellow)](https://github.com/fasterthanlime/facet)
 [![free of syn](https://img.shields.io/badge/free%20of-syn-hotpink)](https://github.com/fasterthanlime/free-of-syn)
-[![crates.io](https://img.shields.io/crates/v/facet-peek.svg)](https://crates.io/crates/facet-peek)
-[![documentation](https://docs.rs/facet-peek/badge.svg)](https://docs.rs/facet-peek)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-peek.svg)](./LICENSE)
+[![crates.io](https://img.shields.io/crates/v/facet-args.svg)](https://crates.io/crates/facet-args)
+[![documentation](https://docs.rs/facet-args/badge.svg)](https://docs.rs/facet-args)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-args.svg)](./LICENSE)
 
 _Logo by [Misiasart](https://misiasart.com/)_
 
@@ -40,7 +40,20 @@ Thanks to all individual and corporate sponsors, without whom this work could no
 </a> </p>
              
 
-Provides safe read operations for arbitrary Facet types.
+The `facet-reflect` crate allows reading from and writing to shapes implementing the `Facet` trait. This crate combines the functionality of the former `facet-peek` and `facet-poke` crates, providing a unified interface for reflection and manipulation of `Facet` types.
+
+## Features
+
+- Read (peek) values from `Facet` types
+- Write (poke) values to `Facet` types
+- Supports various data structures: scalars, lists, maps, structs, enums, and options
+- Efficient and safe manipulation of `Facet` types
+
+## Usage
+
+This crate makes it trivial to write serializers and deserializers. It's used by crates like `facet-json`, `facet-yaml`, `facet-urlencoded`, etc.
+
+For more detailed usage examples, please refer to the crate documentation.
 
 
 ## License

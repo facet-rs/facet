@@ -2,8 +2,8 @@ use std::num::NonZero;
 
 use crate::parser::{JsonParseErrorKind, JsonParseErrorWithContext, JsonParser};
 
-use facet_core::{Facet, Opaque, OpaqueUninit};
-use facet_poke::{PokeUninit, PokeValueUninit};
+use facet::{Facet, Opaque, OpaqueUninit, PokeList, PokeMap, PokeStruct};
+use facet::{PokeUninit, PokeValueUninit};
 use log::trace;
 
 /// Deserializes a JSON string into a value of type `T` that implements `Facet`.
@@ -21,9 +21,7 @@ use log::trace;
 ///
 /// # Example
 /// ```
-/// # use facet_core::Facet;
-/// # use facet_derive::Facet;
-/// # use facet_core as facet;
+/// # use facet::Facet;
 /// # #[derive(Facet)]
 /// # struct Person { name: String, age: u64 }
 /// let json = r#"{"name":"Alice","age":30}"#;
@@ -112,7 +110,7 @@ pub(crate) fn deserialize_value<'input, 'mem>(
             poke: PokeUninit<'mem>,
         },
         FinishStruct {
-            ps: facet_poke::PokeStruct<'mem>,
+            ps: PokeStruct<'mem>,
         },
         StructField {
             key: String,
@@ -121,13 +119,13 @@ pub(crate) fn deserialize_value<'input, 'mem>(
             index: usize,
         },
         FinishList {
-            pl: facet_poke::PokeList<'mem>,
+            pl: PokeList<'mem>,
         },
         AfterListItem {
             item: OpaqueUninit<'mem>,
         },
         FinishMap {
-            pm: facet_poke::PokeMap<'mem>,
+            pm: PokeMap<'mem>,
         },
         AfterMapValue {
             key: String,

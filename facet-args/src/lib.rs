@@ -1,7 +1,4 @@
-use facet_core::Facet;
-use facet_core::FieldAttribute;
-
-use facet_poke::{PokeStruct, PokeUninit};
+use facet::{Facet, FieldAttribute, PokeStruct, PokeUninit};
 
 fn parse_field(field: PokeUninit, value: &str, field_index: usize, ps: &mut PokeStruct<'_>) {
     let field_shape = field.shape();
