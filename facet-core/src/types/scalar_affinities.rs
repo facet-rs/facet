@@ -22,6 +22,8 @@ pub enum ScalarAffinity {
     Opaque(OpaqueAffinity),
     /// Other scalar affinity
     Other(OtherAffinity),
+    /// Character scalar affinity
+    Char(CharAffinity),
 }
 
 impl ScalarAffinity {
@@ -63,6 +65,11 @@ impl ScalarAffinity {
     /// Returns an OtherAffinityBuilder
     pub const fn other() -> OtherAffinityBuilder {
         OtherAffinityBuilder::new()
+    }
+
+    /// Returns a CharAffinityBuilder
+    pub const fn char() -> CharAffinityBuilder {
+        CharAffinityBuilder::new()
     }
 }
 
@@ -505,5 +512,35 @@ impl OtherAffinityBuilder {
     /// Builds the ScalarAffinity
     pub const fn build(self) -> ScalarAffinity {
         ScalarAffinity::Other(OtherAffinity {})
+    }
+}
+
+/// Definition for character scalar affinities
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[repr(C)]
+#[non_exhaustive]
+pub struct CharAffinity {}
+
+impl CharAffinity {
+    /// Returns a builder for CharAffinity
+    pub const fn builder() -> CharAffinityBuilder {
+        CharAffinityBuilder::new()
+    }
+}
+
+/// Builder for CharAffinity
+#[repr(C)]
+pub struct CharAffinityBuilder {}
+
+impl CharAffinityBuilder {
+    /// Creates a new CharAffinityBuilder
+    #[allow(clippy::new_without_default)]
+    pub const fn new() -> Self {
+        Self {}
+    }
+
+    /// Builds the ScalarAffinity
+    pub const fn build(self) -> ScalarAffinity {
+        ScalarAffinity::Char(CharAffinity {})
     }
 }

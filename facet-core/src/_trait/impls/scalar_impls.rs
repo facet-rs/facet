@@ -55,6 +55,21 @@ unsafe impl Facet for alloc::string::String {
     };
 }
 
+unsafe impl Facet for char {
+    const SHAPE: &'static Shape = &const {
+        Shape::builder()
+            .id(ConstTypeId::of::<char>())
+            .layout(Layout::new::<Self>())
+            .def(Def::Scalar(
+                ScalarDef::builder()
+                    .affinity(ScalarAffinity::char().build())
+                    .build(),
+            ))
+            .vtable(value_vtable!(char, |f, _opts| write!(f, "char")))
+            .build()
+    };
+}
+
 unsafe impl Facet for &str {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
