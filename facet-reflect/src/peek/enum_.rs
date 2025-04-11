@@ -85,7 +85,7 @@ impl<'mem> PeekEnum<'mem> {
     pub fn discriminant(self) -> i64 {
         // Read the discriminant based on the enum representation
         unsafe {
-            let data = self.variant_data();
+            let data = self.value.data();
             match self.def.repr {
                 EnumRepr::U8 => data.read::<u8>() as i64,
                 EnumRepr::U16 => data.read::<u16>() as i64,
