@@ -61,6 +61,16 @@ fn build_foobar_through_reflection() {
 }
 
 #[test]
+fn set_by_name_type_mismatch() {
+    let (poke, _guard) = PokeUninit::alloc::<FooBar>();
+    let mut poke = poke.into_struct();
+    assert!(matches!(
+        poke.set_by_name("foo", 42u16),
+        Err(facet_core::FieldError::TypeMismatch)
+    ));
+}
+
+#[test]
 #[should_panic(expected = "Field 'bar' was not initialized")]
 fn build_foobar_incomplete() {
     let (poke, guard) = PokeUninit::alloc::<FooBar>();

@@ -290,6 +290,9 @@ pub enum FieldError {
 
     /// `field_by_index` or `field_by_name` was called on a non-struct type.
     NotAStruct,
+
+    /// `set` or `set_by_name` was called with an mismatched type
+    TypeMismatch,
 }
 
 impl core::error::Error for FieldError {}
@@ -301,6 +304,7 @@ impl core::fmt::Display for FieldError {
             FieldError::NoSuchStaticField => write!(f, "No such static field"),
             FieldError::IndexOutOfBounds => write!(f, "Index out of bounds"),
             FieldError::NotAStruct => write!(f, "Not a struct"),
+            FieldError::TypeMismatch => write!(f, "Type mismatch"),
         }
     }
 }
