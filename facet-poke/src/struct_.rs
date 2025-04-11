@@ -251,7 +251,9 @@ impl<'mem> PokeStruct<'mem> {
             .get(index)
             .ok_or(FieldError::IndexOutOfBounds)?
             .shape;
-        field_shape.assert_type::<T>();
+        if !field_shape.is_type::<T>() {
+            return Err(FieldError::TypeMismatch);
+        }
 
         unsafe {
             let opaque = OpaqueConst::new(&value);

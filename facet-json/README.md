@@ -40,8 +40,68 @@ Thanks to all individual and corporate sponsors, without whom this work could no
 </a> </p>
              
 
-Re-exports [facet-json-read](https://crates.io/crates/facet-json-read) and [facet-json-write](https://crates.io/crates/facet-json-write),
-if the corresponding features are enabled.
+JSON serialization and deserialization for [facet](https://crates.io/crates/facet).
+
+## Usage
+
+### Serialization Example
+
+```rust
+use facet::Facet;
+use facet_json::to_json_string;
+use facet_poke::Peek;
+
+#[derive(facet::Facet)]
+struct Person {
+    name: String,
+    age: u32,
+}
+
+fn main() {
+    // Create a struct to serialize
+    let person = Person {
+        name: "Alice".to_string(),
+        age: 30,
+    };
+
+    // Create a Peek object from the struct
+    let peek = Peek::new(&person);
+
+    // Serialize to JSON (true = pretty-print)
+    let json = to_json_string(peek, true);
+
+    println!("{}", json);
+    // Output:
+    // {
+    //   "name": "Alice",
+    //   "age": 30
+    // }
+}
+```
+
+### Deserialization Example
+
+```rust
+use facet::Facet;
+use facet_json::from_str;
+
+#[derive(facet::Facet, Debug)]
+struct Person {
+    name: String,
+    age: u32,
+}
+
+fn main() {
+    // JSON string to deserialize
+    let json = r#"{"name":"Bob","age":25}"#;
+
+    // Deserialize the JSON to a Person struct
+    let person: Person = from_str(json).unwrap();
+
+    println!("{:?}", person);
+    // Output: Person { name: "Bob", age: 25 }
+}
+```
 
 
 ## License

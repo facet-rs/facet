@@ -15,6 +15,7 @@ keyword! {
     KCrate = "crate";
     KIn = "in";
     KConst = "const";
+    KWhere = "where";
     KMut = "mut";
     KFacet = "facet";
     KSensitive = "sensitive";
@@ -30,13 +31,14 @@ operator! {
 /// Parses tokens and groups until `C` is found on the current token tree level.
 type VerbatimUntil<C> = Many<Cons<Except<C>, AngleTokenTree>>;
 type ModPath = Cons<Option<PathSep>, PathSepDelimited<Ident>>;
+type Bounds = Cons<Colon, VerbatimUntil<Either<Comma, Eq, Gt>>>;
 
 unsynn! {
     /// Parses either a `TokenTree` or `<...>` grouping (which is not a [`Group`] as far as proc-macros
     /// are concerned).
     struct AngleTokenTree(Either<Cons<Lt, Vec<Cons<Except<Gt>, AngleTokenTree>>, Gt>, TokenTree>);
 
-    enum TypeDecl {
+    enum AdtDecl {
         Struct(Struct),
         Enum(Enum),
     }
@@ -85,17 +87,64 @@ unsynn! {
         _vis: Option<Vis>,
         _kw_struct: KStruct,
         name: Ident,
+        generics: Option<GenericParams>,
         kind: StructKind,
     }
 
+    struct GenericParams {
+        _lt: Lt,
+        params: CommaDelimitedVec<GenericParam>,
+        _gt: Gt,
+    }
+
+    enum GenericParam {
+        Lifetime{
+            name: Lifetime,
+            bounds: Option<Cons<Colon, VerbatimUntil<Either<Comma, Gt>>>>,
+        },
+        Const {
+            _const: KConst,
+            name: Ident,
+            _colon: Colon,
+            typ: VerbatimUntil<Either<Comma, Gt, Eq>>,
+            default: Option<Cons<Eq, VerbatimUntil<Either<Comma, Gt>>>>,
+        },
+        Type {
+            name: Ident,
+            bounds: Option<Bounds>,
+            default: Option<Cons<Eq, VerbatimUntil<Either<Comma, Gt>>>>,
+        },
+    }
+
+    struct WhereClauses {
+        _kw_where: KWhere,
+        clauses: CommaDelimitedVec<WhereClause>,
+    }
+
+    struct WhereClause {
+        // FIXME: This likely breaks for absolute `::` paths
+        _pred: VerbatimUntil<Colon>,
+        _colon: Colon,
+        bounds: VerbatimUntil<Either<Comma, Semicolon, BraceGroup>>,
+    }
+
     enum StructKind {
-        Struct(BraceGroupContaining<CommaDelimitedVec<StructField>>),
-        TupleStruct(Cons<ParenthesisGroupContaining<CommaDelimitedVec<TupleField>>, Semi>),
-        UnitStruct(Semi)
+        Struct {
+            clauses: Option<WhereClauses>, fields: BraceGroupContaining<CommaDelimitedVec<StructField>>
+        },
+        TupleStruct {
+            fields: ParenthesisGroupContaining<CommaDelimitedVec<TupleField>>,
+            clauses: Option<WhereClauses>,
+            semi: Semi
+        },
+        UnitStruct {
+            clauses: Option<WhereClauses>,
+            semi: Semi
+        }
     }
 
     struct Lifetime {
-        _apostrophe: Apostrophe,
+        _apostrophe: PunctJoint<'\''>,
         name: Ident,
     }
 
@@ -127,6 +176,8 @@ unsynn! {
         _pub: Option<KPub>,
         _kw_enum: KEnum,
         name: Ident,
+        generics: Option<GenericParams>,
+        clauses: Option<WhereClauses>,
         body: BraceGroupContaining<CommaDelimitedVec<EnumVariantLike>>,
     }
 
@@ -164,10 +215,10 @@ pub fn facet_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let mut i = input.to_token_iter();
 
     // Parse as TypeDecl
-    match i.parse::<Cons<TypeDecl, EndOfStream>>() {
+    match i.parse::<Cons<AdtDecl, EndOfStream>>() {
         Ok(it) => match it.first {
-            TypeDecl::Struct(parsed) => process_struct::process_struct(parsed),
-            TypeDecl::Enum(parsed) => process_enum::process_enum(parsed),
+            AdtDecl::Struct(parsed) => process_struct::process_struct(parsed),
+            AdtDecl::Enum(parsed) => process_enum::process_enum(parsed),
         },
         Err(err) => {
             panic!(
@@ -218,6 +269,27 @@ impl core::fmt::Display for ConstOrMut {
 impl core::fmt::Display for Lifetime {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "'{}", self.name)
+    }
+}
+
+impl core::fmt::Display for WhereClauses {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "where ")?;
+        for clause in self.clauses.0.iter() {
+            write!(f, "{},", clause.value)?;
+        }
+        Ok(())
+    }
+}
+
+impl core::fmt::Display for WhereClause {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}: {}",
+            VerbatimDisplay(&self._pred),
+            VerbatimDisplay(&self.bounds)
+        )
     }
 }
 
@@ -272,7 +344,12 @@ pub(crate) fn build_maybe_doc(attrs: &[Attribute]) -> String {
     }
 }
 
-pub(crate) fn gen_struct_field(field_name: &str, struct_name: &str, attrs: &[Attribute]) -> String {
+pub(crate) fn gen_struct_field(
+    field_name: &str,
+    struct_name: &str,
+    generics: &str,
+    attrs: &[Attribute],
+) -> String {
     // Determine field flags
     let mut flags = "facet::FieldFlags::EMPTY";
     let mut attribute_list: Vec<String> = vec![];
@@ -312,11 +389,60 @@ pub(crate) fn gen_struct_field(field_name: &str, struct_name: &str, attrs: &[Att
     format!(
         "facet::Field::builder()
     .name(\"{field_name}\")
-    .shape(facet::shape_of(&|s: {struct_name}| s.{field_name}))
-    .offset(::core::mem::offset_of!({struct_name}, {field_name}))
+    .shape(facet::shape_of(&|s: {struct_name}<{generics}>| s.{field_name}))
+    .offset(::core::mem::offset_of!({struct_name}<{generics}>, {field_name}))
     .flags({flags})
     .attributes(&[{attributes}])
     {maybe_field_doc}
     .build()"
     )
+}
+
+fn generics_split_for_impl(generics: Option<&GenericParams>) -> (String, String) {
+    let Some(generics) = generics else {
+        return ("".to_string(), "".to_string());
+    };
+    let mut generics_impl = Vec::new();
+    let mut generics_target = Vec::new();
+
+    for param in generics.params.0.iter() {
+        match &param.value {
+            GenericParam::Type {
+                name,
+                bounds,
+                default: _,
+            } => {
+                let name = name.to_string();
+                let mut impl_ = name.clone();
+                if let Some(bounds) = bounds {
+                    impl_.push_str(&format!(": {}", VerbatimDisplay(&bounds.second)));
+                }
+                generics_impl.push(impl_);
+                generics_target.push(name);
+            }
+            GenericParam::Lifetime { name, bounds } => {
+                let name = name.to_string();
+                let mut impl_ = name.clone();
+                if let Some(bounds) = bounds {
+                    impl_.push_str(&format!(": {}", VerbatimDisplay(&bounds.second)));
+                }
+                generics_impl.push(impl_);
+                generics_target.push(name);
+            }
+            GenericParam::Const {
+                _const,
+                name,
+                _colon,
+                typ,
+                default: _,
+            } => {
+                let name = name.to_string();
+                generics_impl.push(format!("const {}: {}", name, VerbatimDisplay(typ)));
+                generics_target.push(name);
+            }
+        }
+    }
+    let generics_impl = generics_impl.join(", ");
+    let generics_target = generics_target.join(", ");
+    (generics_impl, generics_target)
 }

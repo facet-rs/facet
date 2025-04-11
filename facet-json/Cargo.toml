@@ -11,10 +11,14 @@ keywords = ["facet", "json", "serialization", "deserialization"]
 categories = ["encoding", "development-tools"]
 
 [dependencies]
-facet-json-read = { version = "0.1.14", path = "../facet-json-read", optional = true }
-facet-json-write = { version = "0.1.14", path = "../facet-json-write", optional = true }
+facet-poke = { path = "../facet-poke", version = "0.6.0" }
+facet-core = { path = "../facet-core", version = "0.5.0" }
+log = "0.4.27"
 
-[features]
-default = ["read", "write"]
-read = ["dep:facet-json-read"]
-write = ["dep:facet-json-write"]
+[dev-dependencies]
+color-backtrace = "0.7.0"
+ctor = "0.4.1"
+env_logger = "0.11.8"
+facet = { path = "../facet", version = "0.1.18" }
+facet-derive = { path = "../facet-derive", version = "0.1.17" }
+facet-peek = { path = "../facet-peek", version = "0.2.14" }

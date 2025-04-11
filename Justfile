@@ -60,11 +60,11 @@ test *args:
     cargo nextest run {{args}} < /dev/null
     echo -e "\033[1;33m✅ Good good!\033[0m"
 
-doc-tests:
+doc-tests *args:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
     echo -e "\033[1;36m📚 Running documentation tests...\033[0m"
-    cargo test --doc
+    cargo test --doc {{args}}
 
 codegen *args:
     #!/usr/bin/env -S bash -euo pipefail
@@ -83,7 +83,7 @@ rustfmt-fix:
     cargo fmt --all
 
 miri *args:
-    #!/usr/bin/env -S bash -euo pipefail
+    #!/usr/bin/env -S bash -euxo pipefail
     source .envrc
     echo -e "\033[1;31m🧪 Running tests under Miri...\033[0m"
 
@@ -135,7 +135,7 @@ docker-build-push:
     echo -e "\033[1;36m🔨 Building tests image with stable Rust...\033[0m"
     docker build \
         --build-arg BASE_IMAGE=rust:1.86-slim-bullseye \
-        --build-arg RUSTUP_TOOLCHAIN=stable \
+        --build-arg RUSTUP_TOOLCHAIN=1.86 \
         -t "${IMAGE_NAME}:${TAG}" \
         -t "${IMAGE_NAME}:latest" \
         -f Dockerfile \

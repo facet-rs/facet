@@ -6,8 +6,6 @@ members = [
     "facet-core",
     "facet-derive",
     "facet-json",
-    "facet-json-read",
-    "facet-json-write",
     "facet-msgpack",
     "facet-peek",
     "facet-poke",

@@ -2,8 +2,14 @@
 ARG BASE_IMAGE=rust:1.86-slim-bullseye
 FROM ${BASE_IMAGE} AS builder
 
+ARG RUSTUP_TOOLCHAIN
+ENV RUSTUP_TOOLCHAIN=${RUSTUP_TOOLCHAIN}
+
+ENV CI=true
+
 # Accept additional Rust components as a build argument
 ARG ADDITIONAL_RUST_COMPONENTS=""
+ENV ADDITIONAL_RUST_COMPONENTS=${ADDITIONAL_RUST_COMPONENTS}
 
 # Set the default toolchain based on build arg and configure rust components
 RUN apt-get update && apt-get install -y curl && \
@@ -19,9 +25,6 @@ RUN apt-get update && apt-get install -y curl && \
 
 # Set environment variables
 ENV CARGO_INCREMENTAL=0
-
-ARG RUSTUP_TOOLCHAIN
-ENV RUSTUP_TOOLCHAIN=${RUSTUP_TOOLCHAIN}
 
 # Create a work directory
 WORKDIR /app

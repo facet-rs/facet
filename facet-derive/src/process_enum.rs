@@ -138,6 +138,12 @@ fn process_c_style_enum(
 ) -> proc_macro::TokenStream {
     let enum_name = parsed.name.to_string();
 
+    let (generics_def, generics_use) = generics_split_for_impl(parsed.generics.as_ref());
+    let where_clauses = parsed
+        .clauses
+        .as_ref()
+        .map_or(String::new(), ToString::to_string);
+
     // Collect shadow struct definitions separately from variant expressions
     let mut shadow_struct_defs = Vec::new();
     let mut variant_expressions = Vec::new();
@@ -243,7 +249,7 @@ fn process_c_style_enum(
 
                 // Add shadow struct definition
                 shadow_struct_defs.push(format!(
-                    "#[repr(C)] struct {shadow_struct_name} {{  {fields_with_types} }}",
+                    "#[repr(C)] struct {shadow_struct_name}<{generics_def}> {where_clauses} {{  {fields_with_types} }}",
                 ));
 
                 // Build the list of field types with calculated offsets
@@ -255,7 +261,12 @@ fn process_c_style_enum(
                     .enumerate()
                     .map(|(idx, field)| {
                         let field_name = format!("_{idx}");
-                        gen_struct_field(&field_name, &shadow_struct_name, &field.value.attributes)
+                        gen_struct_field(
+                            &field_name,
+                            &shadow_struct_name,
+                            &generics_use,
+                            &field.value.attributes,
+                        )
                     })
                     .collect::<Vec<String>>()
                     .join(", ");
@@ -263,15 +274,15 @@ fn process_c_style_enum(
                 // Add variant expression - now with discriminant
                 variant_expressions.push(format!(
                     "{{
-                        static FIELDS: &[facet::Field] = &[
+                        let fields: &'static [facet::Field] = &const {{[
                             {fields}
-                        ];
+                        ]}};
 
                         facet::Variant::builder()
                             .name({variant_name:?})
                             .discriminant(Some({discriminant_value}))
                             .offset(::core::mem::offset_of!({shadow_repr_name}, _fields))
-                            .kind(facet::VariantKind::Tuple {{ fields: FIELDS }})
+                            .kind(facet::VariantKind::Tuple {{ fields }})
                             {maybe_doc}
                             .build()
                     }}",
@@ -300,7 +311,7 @@ fn process_c_style_enum(
 
                 // Add shadow struct definition
                 shadow_struct_defs.push(format!(
-                    "#[repr(C)] struct {shadow_struct_name} {{  {fields_with_types} }}"
+                    "#[repr(C)] struct {shadow_struct_name}<{generics_def}> {where_clauses} {{  {fields_with_types} }}"
                 ));
 
                 // Build the list of field types with calculated offsets
@@ -311,7 +322,12 @@ fn process_c_style_enum(
                     .iter()
                     .map(|field| {
                         let field_name = field.value.name.to_string();
-                        gen_struct_field(&field_name, &shadow_struct_name, &field.value.attributes)
+                        gen_struct_field(
+                            &field_name,
+                            &shadow_struct_name,
+                            &generics_use,
+                            &field.value.attributes,
+                        )
                     })
                     .collect::<Vec<String>>()
                     .join(", ");
@@ -319,15 +335,15 @@ fn process_c_style_enum(
                 // Add variant expression - now with discriminant
                 variant_expressions.push(format!(
                     "{{
-                        static FIELDS: &[facet::Field] = &[
+                        let fields: &'static [facet::Field] = &const {{[
                             {fields}
-                        ];
+                        ]}};
 
                         facet::Variant::builder()
                             .name({variant_name:?})
                             .discriminant(Some({discriminant_value}))
                             .offset(::core::mem::offset_of!({shadow_repr_name}, _fields))
-                            .kind(facet::VariantKind::Struct {{ fields: FIELDS }})
+                            .kind(facet::VariantKind::Struct {{ fields }})
                             {maybe_doc}
                             .build()
                     }}",
@@ -340,7 +356,11 @@ fn process_c_style_enum(
     let shadow_structs = shadow_struct_defs.join("\n\n");
     let variants = variant_expressions.join(", ");
 
-    let static_decl = generate_static_decl(&enum_name);
+    let static_decl = if parsed.generics.is_none() {
+        generate_static_decl(&enum_name)
+    } else {
+        String::new()
+    };
     let maybe_container_doc = build_maybe_doc(&parsed.attributes);
 
     // Generate the impl
@@ -349,26 +369,23 @@ fn process_c_style_enum(
 {static_decl}
 
 #[automatically_derived]
-unsafe impl facet::Facet for {enum_name} {{
+unsafe impl<{generics_def}> facet::Facet for {enum_name}<{generics_use}> {where_clauses} {{
     const SHAPE: &'static facet::Shape = &const {{
         // Define all shadow structs at the beginning of the const block
         // to ensure they're in scope for offset_of! macros
         {shadow_structs}
 
         facet::Shape::builder()
-            .id(facet::ConstTypeId::of::<{enum_name}>())
+            .id(facet::ConstTypeId::of::<Self>())
             .layout(core::alloc::Layout::new::<Self>())
             .vtable(facet::value_vtable!(
-                {enum_name},
+                Self,
                 |f, _opts| core::fmt::Write::write_str(f, "{enum_name}")
             ))
             .def(facet::Def::Enum(facet::EnumDef::builder()
                 // Use variant expressions that just reference the shadow structs
                 // which are now defined above
-                .variants(&const {{
-                    static VARIANTS: &[facet::Variant] = &[ {variants} ];
-                    VARIANTS
-                }})
+                .variants(&const {{[ {variants} ]}})
                 .repr(facet::EnumRepr::{repr_type})
                 .build()))
             {maybe_container_doc}
@@ -403,6 +420,12 @@ fn process_primitive_enum(
     discriminant_type: Discriminant,
 ) -> proc_macro::TokenStream {
     let enum_name = parsed.name.to_string();
+
+    let (generics_def, generics_use) = generics_split_for_impl(parsed.generics.as_ref());
+    let where_clauses = parsed
+        .clauses
+        .as_ref()
+        .map_or(String::new(), ToString::to_string);
 
     // Collect shadow struct definitions separately from variant expressions
     let mut shadow_struct_defs = Vec::new();
@@ -448,10 +471,8 @@ fn process_primitive_enum(
 
                 // Add shadow struct definition
                 shadow_struct_defs.push(format!(
-                    "#[repr(C)] struct {} {{ _discriminant: {}, {} }}",
-                    shadow_struct_name,
+                    "#[repr(C)] struct {shadow_struct_name}<{generics_def}> {where_clauses}  {{ _discriminant: {}, {fields_with_types} }}",
                     discriminant_type.as_rust_type(),
-                    fields_with_types
                 ));
 
                 // Build the list of field types with calculated offsets
@@ -463,7 +484,12 @@ fn process_primitive_enum(
                     .enumerate()
                     .map(|(idx, field)| {
                         let field_name = format!("_{idx}");
-                        gen_struct_field(&field_name, &shadow_struct_name, &field.value.attributes)
+                        gen_struct_field(
+                            &field_name,
+                            &shadow_struct_name,
+                            &generics_use,
+                            &field.value.attributes,
+                        )
                     })
                     .collect::<Vec<String>>()
                     .join(", ");
@@ -471,15 +497,15 @@ fn process_primitive_enum(
                 // Add variant expression - now with discriminant
                 variant_expressions.push(format!(
                     "{{
-                        static FIELDS: &[facet::Field] = &[
+                        let fields: &'static [facet::Field] = &const {{[
                             {fields}
-                        ];
+                        ]}};
 
                         facet::Variant::builder()
                             .name({variant_name:?})
                             .discriminant(Some({discriminant_value}))
                             .offset(0)
-                            .kind(facet::VariantKind::Tuple {{ fields: FIELDS }})
+                            .kind(facet::VariantKind::Tuple {{ fields }})
                             {maybe_doc}
                             .build()
                     }}",
@@ -508,10 +534,8 @@ fn process_primitive_enum(
 
                 // Add shadow struct definition
                 shadow_struct_defs.push(format!(
-                    "#[repr(C)] struct {} {{ _discriminant: {}, {} }}",
-                    shadow_struct_name,
+                    "#[repr(C)] struct {shadow_struct_name}<{generics_def}> {where_clauses} {{ _discriminant: {}, {fields_with_types} }}",
                     discriminant_type.as_rust_type(),
-                    fields_with_types
                 ));
 
                 // Build the list of field types with calculated offsets
@@ -522,7 +546,12 @@ fn process_primitive_enum(
                     .iter()
                     .map(|field| {
                         let field_name = field.value.name.to_string();
-                        gen_struct_field(&field_name, &shadow_struct_name, &field.value.attributes)
+                        gen_struct_field(
+                            &field_name,
+                            &shadow_struct_name,
+                            &generics_use,
+                            &field.value.attributes,
+                        )
                     })
                     .collect::<Vec<String>>()
                     .join(", ");
@@ -532,15 +561,15 @@ fn process_primitive_enum(
                 // already computed relative to the discriminant
                 variant_expressions.push(format!(
                     "{{
-                        static FIELDS: &[facet::Field] = &[
+                        let fields: &'static [facet::Field] = &const {{[
                             {fields}
-                        ];
+                        ]}};
 
                         facet::Variant::builder()
                             .name({variant_name:?})
                             .discriminant(Some({discriminant_value}))
                             .offset(0)
-                            .kind(facet::VariantKind::Struct {{ fields: FIELDS }})
+                            .kind(facet::VariantKind::Struct {{ fields }})
                             {maybe_doc}
                             .build()
                     }}",
@@ -553,7 +582,11 @@ fn process_primitive_enum(
     let shadow_structs = shadow_struct_defs.join("\n\n");
     let variants = variant_expressions.join(", ");
 
-    let static_decl = generate_static_decl(&enum_name);
+    let static_decl = if parsed.generics.is_none() {
+        generate_static_decl(&enum_name)
+    } else {
+        String::new()
+    };
     let maybe_container_doc = build_maybe_doc(&parsed.attributes);
 
     // Generate the impl
@@ -562,26 +595,23 @@ fn process_primitive_enum(
 {static_decl}
 
 #[automatically_derived]
-unsafe impl facet::Facet for {enum_name} {{
+unsafe impl<{generics_def}> facet::Facet for {enum_name}<{generics_use}> {where_clauses} {{
     const SHAPE: &'static facet::Shape = &const {{
         // Define all shadow structs at the beginning of the const block
         // to ensure they're in scope for offset_of! macros
         {shadow_structs}
 
         facet::Shape::builder()
-            .id(facet::ConstTypeId::of::<{enum_name}>())
+            .id(facet::ConstTypeId::of::<Self>())
             .layout(core::alloc::Layout::new::<Self>())
             .vtable(facet::value_vtable!(
-                {enum_name},
+                Self,
                 |f, _opts| core::fmt::Write::write_str(f, "{enum_name}")
             ))
             .def(facet::Def::Enum(facet::EnumDef::builder()
                 // Use variant expressions that just reference the shadow structs
                 // which are now defined above
-                .variants(&const {{
-                    static VARIANTS: &[facet::Variant] = &[ {variants} ];
-                    VARIANTS
-                }})
+                .variants(&const {{[ {variants} ]}})
                 .repr(facet::EnumRepr::{repr_type})
                 .build()))
             {maybe_container_doc}

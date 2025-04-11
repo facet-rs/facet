@@ -8,6 +8,21 @@ on:
   merge_group:
 
 jobs:
+  code-quality:
+    runs-on: arc-runners
+
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run code quality checks
+        shell: bash
+        run: |
+          just codegen-check
+          just rustfmt
+          just absolve
+
   test:
     runs-on: arc-runners
 
@@ -19,8 +34,46 @@ jobs:
       - name: Run tests
         shell: bash
         run: |
-          just
-          echo "yay"
+          just test
+
+  nostd:
+    runs-on: arc-runners
+
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run nostd tests
+        shell: bash
+        run: |
+          just nostd
+
+  clippy:
+    runs-on: arc-runners
+
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run clippy
+        shell: bash
+        run: |
+          just clippy
+
+  doc-tests:
+    runs-on: arc-runners
+
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run doc tests
+        shell: bash
+        run: |
+          just doc-tests
 
   miri:
     runs-on: arc-runners
@@ -33,4 +86,5 @@ jobs:
       - name: Run miri
         shell: bash
         run: |
+          export CI=true
           just miri
