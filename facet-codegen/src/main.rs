@@ -35,11 +35,7 @@ fn main() {
     });
 
     let opts_clone2 = opts.clone();
-    let readme_files_result = std::thread::spawn(move || {
-        let mut local_has_diffs = false;
-        readmes::generate_readme_files(&mut local_has_diffs, opts_clone2);
-        local_has_diffs
-    });
+    let readme_had_diffs = std::thread::spawn(move || readmes::generate_readme_files(opts_clone2));
 
     let opts_clone3 = opts.clone();
     let sample_code_result = std::thread::spawn(move || {
@@ -52,7 +48,7 @@ fn main() {
     has_diffs |= tuple_impls_result
         .join()
         .expect("tuple_impls thread panicked");
-    has_diffs |= readme_files_result
+    has_diffs |= readme_had_diffs
         .join()
         .expect("readme_files thread panicked");
     has_diffs |= sample_code_result
@@ -195,7 +191,8 @@ fn copy_cargo_expand_output(has_diffs: &mut bool, opts: &Options) {
         .join("src")
         .join("sample_generated_code.rs");
 
-    *has_diffs |= write_if_different(&target_path, expanded_code.into_bytes(), opts.check);
+    let was_different = write_if_different(&target_path, expanded_code.into_bytes(), opts.check);
+    *has_diffs |= was_different;
 
     if opts.check {
         info!(
@@ -203,9 +200,15 @@ fn copy_cargo_expand_output(has_diffs: &mut bool, opts: &Options) {
             "sample_generated_code.rs".blue().green(),
             execution_time
         );
-    } else {
+    } else if was_different {
         info!(
             "🔧 Generated {} (took {:?})",
+            "sample_generated_code.rs".blue().green(),
+            execution_time
+        );
+    } else {
+        info!(
+            "✅ No changes to {} (took {:?})",
             "sample_generated_code.rs".blue().green(),
             execution_time
         );
@@ -283,10 +286,14 @@ fn check_diff(path: &Path, new_content: &[u8]) -> bool {
 }
 
 fn write_if_different(path: &Path, content: Vec<u8>, check_mode: bool) -> bool {
+    let is_different = check_diff(path, &content);
     if check_mode {
-        check_diff(path, &content)
-    } else {
+        is_different
+    } else if is_different {
+        info!("Overwriting {} (had changes)", path.display().blue());
         fs_err::write(path, content).expect("Failed to write file");
+        true
+    } else {
         false
     }
 }
@@ -334,7 +341,8 @@ fn generate_tuple_impls(has_diffs: &mut bool, opts: Options) {
         std::process::exit(1);
     }
 
-    *has_diffs |= write_if_different(base_path, formatted_output.stdout, opts.check);
+    let was_different = write_if_different(base_path, formatted_output.stdout, opts.check);
+    *has_diffs |= was_different;
 
     // Calculate execution time
     let execution_time = start_time.elapsed();
@@ -346,9 +354,15 @@ fn generate_tuple_impls(has_diffs: &mut bool, opts: Options) {
             "tuple implementations".blue().green(),
             execution_time
         );
-    } else {
+    } else if was_different {
         info!(
             "🔧 Generated {} (took {:?})",
+            "tuple implementations".blue().green(),
+            execution_time
+        );
+    } else {
+        info!(
+            "✅ No changes to {} (took {:?})",
             "tuple implementations".blue().green(),
             execution_time
         );

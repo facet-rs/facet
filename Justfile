@@ -28,6 +28,7 @@ nostd:
     cargo check --no-default-features -p facet-core
     cargo check --no-default-features -p facet
     cargo check --no-default-features -p facet-reflect
+    export CARGO_TARGET_DIR=target/nostd-w-alloc
     cargo check --no-default-features --features alloc -p facet-core
     cargo check --no-default-features --features alloc -p facet
     cargo check --no-default-features --features alloc -p facet-reflect
@@ -58,6 +59,10 @@ test *args:
     echo -e "\033[1;33m🏃 Running all but doc-tests with nextest...\033[0m"
     cargo nextest run {{args}} < /dev/null
     echo -e "\033[1;33m✅ Good good!\033[0m"
+
+    echo -e "\033[1;36m📚 Running documentation tests in separate target directory...\033[0m"
+    cargo test --doc {{args}}
+    echo -e "\033[1;33m✅ Documentation tests completed!\033[0m"
 
 doc-tests *args:
     #!/usr/bin/env -S bash -euo pipefail
