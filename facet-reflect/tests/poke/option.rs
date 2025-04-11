@@ -1,8 +1,10 @@
-use facet_poke::{Poke, PokeUninit};
 use facet_pretty::FacetPretty as _;
+use facet_reflect::{Poke, PokeUninit};
 
 #[test]
 fn poke_option() {
+    facet_testhelpers::setup();
+
     // Test creating a None value
     let (poke, guard) = PokeUninit::alloc::<Option<i32>>();
     let po = poke.into_option();

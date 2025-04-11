@@ -20,4 +20,8 @@ facet-core = { path = "../facet-core", version = "0.5.0" }
 
 [dev-dependencies]
 facet = { path = "../facet" }
+facet-ansi = { path = "../facet-ansi" }
+facet-pretty = { path = "../facet-pretty" }
+facet-samplelibc = { path = "../facet-samplelibc" }
+facet-testhelpers = { path = "../facet-testhelpers" }
 log = "0.4.27"

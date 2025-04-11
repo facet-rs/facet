@@ -1,15 +1,7 @@
-use facet_core as facet;
-use facet_core::{Facet, OpaqueConst, OpaqueUninit};
-use facet_derive::Facet;
-use facet_poke::PokeUninit;
+use facet::{Facet, OpaqueConst, OpaqueUninit};
+use facet_reflect::PokeUninit;
 
 use std::fmt::Debug;
-
-#[ctor::ctor]
-fn init_logger() {
-    color_backtrace::install();
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-}
 
 #[derive(Debug, PartialEq, Eq, Facet)]
 struct FooBar {
@@ -28,6 +20,8 @@ impl Default for FooBar {
 
 #[test]
 fn build_foobar_through_reflection() {
+    facet_testhelpers::setup();
+
     let (poke, guard) = PokeUninit::alloc::<FooBar>();
     let mut poke = poke.into_struct();
     unsafe {
@@ -62,6 +56,8 @@ fn build_foobar_through_reflection() {
 
 #[test]
 fn set_by_name_type_mismatch() {
+    facet_testhelpers::setup();
+
     let (poke, _guard) = PokeUninit::alloc::<FooBar>();
     let mut poke = poke.into_struct();
     assert!(matches!(
@@ -73,6 +69,8 @@ fn set_by_name_type_mismatch() {
 #[test]
 #[should_panic(expected = "Field 'bar' was not initialized")]
 fn build_foobar_incomplete() {
+    facet_testhelpers::setup();
+
     let (poke, guard) = PokeUninit::alloc::<FooBar>();
     let mut poke = poke.into_struct();
     unsafe {
@@ -97,6 +95,8 @@ fn build_foobar_incomplete() {
 
 #[test]
 fn build_foobar_after_default() {
+    facet_testhelpers::setup();
+
     let mut foo_bar: FooBar = Default::default();
 
     let mut poke = unsafe {
@@ -126,6 +126,8 @@ fn build_foobar_after_default() {
 
 #[test]
 fn build_u64_properly() {
+    facet_testhelpers::setup();
+
     let shape = u64::SHAPE;
     eprintln!("{:#?}", shape);
 
@@ -137,6 +139,3 @@ fn build_u64_properly() {
     // Verify the value was set correctly
     assert_eq!(value, 42);
 }
-
-#[test]
-fn build_option() {}

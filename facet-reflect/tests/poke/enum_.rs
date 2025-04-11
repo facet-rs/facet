@@ -1,16 +1,11 @@
-use facet_core as facet;
-use facet_derive::Facet;
-use facet_poke::PokeUninit;
+use facet::Facet;
 use facet_pretty::FacetPretty as _;
-
-#[ctor::ctor]
-fn init_logger() {
-    color_backtrace::install();
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-}
+use facet_reflect::PokeUninit;
 
 #[test]
 fn build_enum() {
+    facet_testhelpers::setup();
+
     #[derive(Facet, PartialEq, Debug)]
     #[repr(u8)]
     #[allow(dead_code)]

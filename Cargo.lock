@@ -153,8 +153,12 @@ dependencies = [
 name = "facet-reflect"
 version = "0.6.0"
 dependencies = [
+ "facet",
+ "facet-ansi",
  "facet-core",
- "facet-derive",
+ "facet-pretty",
+ "facet-samplelibc",
+ "facet-testhelpers",
  "log",
 ]
 

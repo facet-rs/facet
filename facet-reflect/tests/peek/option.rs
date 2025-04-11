@@ -1,4 +1,4 @@
-use facet_peek::Peek;
+use facet_reflect::Peek;
 
 #[test]
 fn peek_option() {

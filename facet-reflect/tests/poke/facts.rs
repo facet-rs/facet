@@ -1,17 +1,8 @@
 use std::{cmp::Ordering, collections::HashSet};
 
-use facet_core as facet;
-use facet_core::Facet;
-use facet_derive::Facet;
-use facet_peek::Peek;
-use facet_poke::PokeUninit;
-use owo_colors::{OwoColorize, Style};
-
-#[ctor::ctor]
-fn init_logger() {
-    color_backtrace::install();
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-}
+use facet::Facet;
+use facet_ansi::{Style, Stylize as _};
+use facet_reflect::{Peek, PokeUninit};
 
 fn check_facts<T>(val1: T, val2: T, expected_facts: HashSet<Fact>)
 where
@@ -240,6 +231,8 @@ impl Display for Fact {
 
 #[test]
 fn test_integer_traits() {
+    facet_testhelpers::setup();
+
     // i32 implements Debug, PartialEq, and Ord
     check_facts(
         42,
@@ -313,6 +306,8 @@ fn test_integer_traits() {
 
 #[test]
 fn test_boolean_traits() {
+    facet_testhelpers::setup();
+
     // bool implements Debug, PartialEq, Ord, and Display
     check_facts(
         true,
@@ -369,6 +364,8 @@ fn test_boolean_traits() {
 
 #[test]
 fn test_floating_traits() {
+    facet_testhelpers::setup();
+
     // f64 implements Debug, PartialEq
     check_facts(
         3.18,
@@ -385,6 +382,8 @@ fn test_floating_traits() {
 
 #[test]
 fn test_string_traits() {
+    facet_testhelpers::setup();
+
     // String implements Debug, PartialEq, and Ord
     check_facts(
         String::from("hello"),
@@ -455,6 +454,8 @@ fn test_string_traits() {
 
 #[test]
 fn test_slice_traits() {
+    facet_testhelpers::setup();
+
     // &[i32] implements Debug, PartialEq, and Ord
     check_facts(
         &[1, 2, 3][..],
@@ -484,6 +485,8 @@ fn test_slice_traits() {
 
 #[test]
 fn test_array_traits() {
+    facet_testhelpers::setup();
+
     // [i32; 0] implements Debug, PartialEq, Ord, Default, and Clone
     check_facts::<[i32; 0]>(
         [],
@@ -553,6 +556,8 @@ fn test_array_traits() {
 
 #[test]
 fn test_vecs() {
+    facet_testhelpers::setup();
+
     // Vec<i32> implements Debug, PartialEq, but not Ord
     check_facts(
         vec![1, 2, 3],
@@ -607,6 +612,8 @@ fn test_vecs() {
 
 #[test]
 fn test_hashmaps() {
+    facet_testhelpers::setup();
+
     use std::collections::HashMap;
 
     // HashMap<String, i32> implements Debug, PartialEq, but not Ord
@@ -652,6 +659,8 @@ fn test_hashmaps() {
 
 #[test]
 fn test_custom_structs() {
+    facet_testhelpers::setup();
+
     // Struct with no trait implementations
     #[derive(Facet)]
     struct StructNoTraits {
@@ -724,6 +733,8 @@ fn test_custom_structs() {
 
 #[test]
 fn test_tuple_structs() {
+    facet_testhelpers::setup();
+
     // Tuple struct with no trait implementations
     #[derive(Facet)]
     #[allow(dead_code)]
@@ -770,6 +781,8 @@ fn test_tuple_structs() {
 
 #[test]
 fn test_enums() {
+    facet_testhelpers::setup();
+
     #[derive(Facet, Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
     #[repr(u8)]
     enum TestEnum {
