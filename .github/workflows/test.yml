@@ -33,6 +33,26 @@ jobs:
         run: |
           just
 
+  miri:
+    runs-on: arc-runners
+
+    container:
+      image: rust:nightly-slim
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Verify Rust version
+        run: |
+          rustc --version
+
+      - name: Install just and cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-nextest
+
       - name: Run miri
         shell: bash
         run: |
