@@ -436,7 +436,6 @@ unsafe impl Facet for f64 {
     };
 }
 
-#[cfg(feature = "std")]
 unsafe impl Facet for core::net::SocketAddr {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
