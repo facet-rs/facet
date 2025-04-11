@@ -291,11 +291,12 @@ fn tuple_struct_field_doc_comment() {
 #[test]
 fn tuple_struct_with_pub_field() {
     #[derive(Clone, Hash, PartialEq, Eq, ::facet::Facet)]
-    #[repr(transparent)]
     /// This is a struct for sure
     struct Blah(
-        /// and this is a field
+        /// and this is a public field
         pub u32,
+        /// and this is a crate public field
+        pub(crate) u32,
     );
 }
 

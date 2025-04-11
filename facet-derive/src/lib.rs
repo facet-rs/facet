@@ -13,6 +13,7 @@ keyword! {
     KDoc = "doc";
     KRepr = "repr";
     KCrate = "crate";
+    KIn = "in";
     KConst = "const";
     KMut = "mut";
     KFacet = "facet";
@@ -28,6 +29,7 @@ operator! {
 
 /// Parses tokens and groups until `C` is found on the current token tree level.
 type VerbatimUntil<C> = Many<Cons<Except<C>, AngleTokenTree>>;
+type ModPath = Cons<Option<PathSep>, PathSepDelimited<Ident>>;
 
 unsynn! {
     /// Parses either a `TokenTree` or `<...>` grouping (which is not a [`Group`] as far as proc-macros
@@ -41,7 +43,8 @@ unsynn! {
 
     enum Vis {
         Pub(KPub),
-        PubCrate(Cons<KPub, ParenthesisGroupContaining<KCrate>>),
+        /// `pub(in? crate::foo::bar)`/`pub(in? ::foo::bar)`
+        PubIn(Cons<KPub, ParenthesisGroupContaining<Cons<Option<KIn>, ModPath>>>),
     }
 
     struct Attribute {
