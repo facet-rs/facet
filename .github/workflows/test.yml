@@ -9,40 +9,28 @@ on:
 
 jobs:
   test:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: arc-runners
 
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup cargo cache
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install Rust specified toolchain
-        run: |
-          rustc --version
-
-      - name: Install just and cargo-nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: just,cargo-nextest
 
       - name: Run tests
         shell: bash
         run: |
           just
+          echo "yay"
 
   miri:
-    runs-on: self-hosted-unknown-linux-gnu-x86_64
+    runs-on: arc-runners
+
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest-miri
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup cargo cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-bin: false
-
       - name: Run miri
-        run: just miri
+        shell: bash
+        run: |
+          just miri

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.14](https://github.com/facet-rs/facet/compare/facet-peek-v0.2.13...facet-peek-v0.2.14) - 2025-04-11
+
+### Added
+
+- *(core)* Allow use with just alloc
+
+### Fixed
+
+- *(peek)* Gate use of Box
+- *(peek)* Add no_std
+
+### Other
+
+- Remove workspace dependencies
+- Fix docs errors
+- Move the template files next to their output and improve the output of the facet-codegen crate.
+- Do not leak memory when dropping a peek map iterator.
+
 ## [0.2.13](https://github.com/facet-rs/facet/compare/facet-peek-v0.2.12...facet-peek-v0.2.13) - 2025-04-11
 
 ### Other

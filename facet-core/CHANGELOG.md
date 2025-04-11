@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2](https://github.com/facet-rs/facet/compare/facet-core-v0.4.1...facet-core-v0.4.2) - 2025-04-11
+
+### Added
+
+- *(core)* Allow use with just alloc
+
+### Fixed
+
+- *(core)* Allow SocketAddr without std
+
+### Other
+
+- Fix docs errors
+- Automatically patch generated/expanded code
+- Regen code
+- Move the template files next to their output and improve the output of the facet-codegen crate.
+- Add and commit sample_generated_code, that should build in docsrs
+- Implement facet for char
+- *(core)* Remove a redundant cfg
+- *(core)* Centralize 'extern crate alloc'
+
 ## [0.4.1](https://github.com/facet-rs/facet/compare/facet-core-v0.4.0...facet-core-v0.4.1) - 2025-04-11
 
 ### Other

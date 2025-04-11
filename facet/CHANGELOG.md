@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.18](https://github.com/facet-rs/facet/compare/facet-v0.1.17...facet-v0.1.18) - 2025-04-11
+
+### Added
+
+- *(core)* Allow use with just alloc
+
+### Fixed
+
+- *(facet)* Add no_std
+
+### Other
+
+- Remove workspace dependencies
+- Fix docs errors
+- Properly parse `pub(in path)` visibilities
+- Move the template files next to their output and improve the output of the facet-codegen crate.
+- Support array fields in structs and whatnot.
+- Add a sample project which will be code-generated, cf. #88
+- *(facet)* Lint against std
+- Properly deal with macroe'd types
+
 ## [0.1.17](https://github.com/facet-rs/facet/compare/facet-v0.1.16...facet-v0.1.17) - 2025-04-11
 
 ### Other

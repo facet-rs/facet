@@ -16,7 +16,7 @@ impl<'mem> OpaqueUninit<'mem> {
         Self(ptr as *mut u8, PhantomData)
     }
 
-    /// Creates a new opaque pointer from a reference to a MaybeUninit<T>
+    /// Creates a new opaque pointer from a reference to a [`core::mem::MaybeUninit`]
     ///
     /// The pointer will point to the potentially uninitialized contents
     ///

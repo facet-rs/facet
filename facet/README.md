@@ -395,7 +395,7 @@ instead of / in conjunction with debug info.
 HTTP routing is a form of deserialization.
 
 This is suitable for all the things serde is bad at: binary formats (specialize
-for Vec<u8> without a serde_bytes hack), it could be extended to support formats
+for `Vec<u8>` without a serde_bytes hack), it could be extended to support formats
 like KDL/XML.
 
 I want the derive macros to support arbitrary attributes eventually, which will also

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/facet-rs/facet/compare/facet-poke-v0.5.2...facet-poke-v0.6.0) - 2025-04-11
+
+### Added
+
+- *(poke)* [**breaking**] Future proof for no-alloc support
+- *(poke)* Allow use with just alloc
+
+### Other
+
+- Remove workspace dependencies
+- Fix docs errors
+- Move the template files next to their output and improve the output of the facet-codegen crate.
+
 ## [0.5.2](https://github.com/facet-rs/facet/compare/facet-poke-v0.5.1...facet-poke-v0.5.2) - 2025-04-11
 
 ### Other

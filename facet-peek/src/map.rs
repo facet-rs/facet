@@ -41,7 +41,7 @@ impl<'mem> IntoIterator for &'mem PeekMap<'mem> {
     }
 }
 
-/// Lets you read from a map (implements read-only [`MapVTable`] proxies)
+/// Lets you read from a map (implements read-only [`facet_core::MapVTable`] proxies)
 #[derive(Clone, Copy)]
 pub struct PeekMap<'mem> {
     value: PeekValue<'mem>,

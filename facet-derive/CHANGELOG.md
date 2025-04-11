@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.17](https://github.com/facet-rs/facet/compare/facet-derive-v0.1.16...facet-derive-v0.1.17) - 2025-04-11
+
+### Other
+
+- Remove workspace dependencies
+- Properly parse `pub(in path)` visibilities
+- Do not attempt to parse field types, that's not really our job
+- Move the template files next to their output and improve the output of the facet-codegen crate.
+- Support array fields in structs and whatnot.
+- Error on incomplete parse in facet-derive
+- Properly deal with macroe'd types
+
 ## [0.1.16](https://github.com/facet-rs/facet/compare/facet-derive-v0.1.15...facet-derive-v0.1.16) - 2025-04-11
 
 ### Other

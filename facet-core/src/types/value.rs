@@ -319,7 +319,7 @@ pub struct ValueVTable {
     /// cf. [`DefaultInPlaceFn`]
     pub default_in_place: Option<DefaultInPlaceFn>,
 
-    /// cf. [`CloneInPlaceFn`]
+    /// cf. [`CloneIntoFn`]
     pub clone_into: Option<CloneIntoFn>,
 
     /// Marker traits implemented by the type

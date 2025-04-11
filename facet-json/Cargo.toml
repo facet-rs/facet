@@ -1,6 +1,6 @@
 [package]
 name = "facet-json"
-version = "0.1.14"
+version = "0.1.15"
 authors.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,8 +11,8 @@ keywords = ["facet", "json", "serialization", "deserialization"]
 categories = ["encoding", "development-tools"]
 
 [dependencies]
-facet-json-read = { version = "0.1.13", path = "../facet-json-read", optional = true }
-facet-json-write = { version = "0.1.13", path = "../facet-json-write", optional = true }
+facet-json-read = { version = "0.1.14", path = "../facet-json-read", optional = true }
+facet-json-write = { version = "0.1.14", path = "../facet-json-write", optional = true }
 
 [features]
 default = ["read", "write"]

@@ -21,18 +21,9 @@ exclude = ["sample"]
 resolver = "3"
 
 [workspace.package]
-version = "0.1.10"
+version = "0.1.11"
 authors = ["Amos Wenger <amos@bearcove.eu>"]
 edition = "2024"
 rust-version = "1.86.0"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/facet-rs/facet"
-
-[workspace.dependencies]
-facet = { version = "0.1.17", path = "facet" }
-facet-derive = { version = "0.1.16", path = "facet-derive" }
-facet-peek = { version = "0.2.13", path = "facet-peek" }
-facet-poke = { version = "0.5.2", path = "facet-poke" }
-facet-core = { version = "0.4.1", path = "facet-core" }
-facet-samplelibc = { version = "0.1.12", path = "facet-samplelibc" }
-unsynn = "0.0.25"

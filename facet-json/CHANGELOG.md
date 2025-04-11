@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.15](https://github.com/facet-rs/facet/compare/facet-json-v0.1.14...facet-json-v0.1.15) - 2025-04-11
+
+### Other
+
+- Move the template files next to their output and improve the output of the facet-codegen crate.
+
 ## [0.1.14](https://github.com/facet-rs/facet/compare/facet-json-v0.1.13...facet-json-v0.1.14) - 2025-04-11
 
 ### Other

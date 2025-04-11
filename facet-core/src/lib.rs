@@ -3,16 +3,9 @@
 #![warn(clippy::std_instead_of_core)]
 #![warn(clippy::std_instead_of_alloc)]
 #![doc = include_str!("../README.md")]
-#![cfg_attr(docsrs, feature(doc_cfg))]
-#![cfg_attr(docsrs, feature(builtin_syntax))]
-#![cfg_attr(docsrs, feature(prelude_import))]
-#![cfg_attr(docsrs, allow(internal_features))]
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
-
-#[cfg(docsrs)]
-mod sample_generated_code;
 
 // Opaque pointer utilities
 mod opaque;

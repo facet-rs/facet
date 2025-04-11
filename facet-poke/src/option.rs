@@ -141,7 +141,7 @@ impl<'mem> PokeOption<'mem> {
         }
     }
 
-    /// Builds an Option<T> from the PokeOption, then deallocates the memory
+    /// Builds an `Option<T>` from the PokeOption, then deallocates the memory
     /// that this PokeOption was pointing to.
     ///
     /// # Panics

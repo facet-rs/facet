@@ -218,7 +218,7 @@ checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
 name = "facet"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "facet-core",
  "facet-derive",
@@ -227,7 +227,7 @@ dependencies = [
 
 [[package]]
 name = "facet-args"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "color-backtrace",
  "ctor",
@@ -253,7 +253,7 @@ dependencies = [
 
 [[package]]
 name = "facet-core"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "bitflags",
  "impls",
@@ -261,7 +261,7 @@ dependencies = [
 
 [[package]]
 name = "facet-derive"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "facet-core",
  "unsynn",
@@ -269,7 +269,7 @@ dependencies = [
 
 [[package]]
 name = "facet-json"
-version = "0.1.14"
+version = "0.1.15"
 dependencies = [
  "facet-json-read",
  "facet-json-write",
@@ -277,7 +277,7 @@ dependencies = [
 
 [[package]]
 name = "facet-json-read"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "color-backtrace",
  "ctor",
@@ -290,7 +290,7 @@ dependencies = [
 
 [[package]]
 name = "facet-json-write"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "color-backtrace",
  "ctor",
@@ -306,7 +306,7 @@ dependencies = [
 
 [[package]]
 name = "facet-msgpack"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "color-backtrace",
  "ctor",
@@ -320,14 +320,14 @@ dependencies = [
 
 [[package]]
 name = "facet-peek"
-version = "0.2.13"
+version = "0.2.14"
 dependencies = [
  "facet-core",
 ]
 
 [[package]]
 name = "facet-poke"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "color-backtrace",
  "ctor",
@@ -342,7 +342,7 @@ dependencies = [
 
 [[package]]
 name = "facet-pretty"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "facet-core",
  "facet-derive",
@@ -351,7 +351,7 @@ dependencies = [
 
 [[package]]
 name = "facet-samplelibc"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "cc",
  "facet",
@@ -359,7 +359,7 @@ dependencies = [
 
 [[package]]
 name = "facet-toml"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "facet-core",
  "facet-derive",
@@ -370,7 +370,7 @@ dependencies = [
 
 [[package]]
 name = "facet-urlencoded"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "facet-core",
  "facet-derive",
@@ -381,7 +381,7 @@ dependencies = [
 
 [[package]]
 name = "facet-yaml"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "facet-core",
  "facet-derive",
@@ -651,9 +651,9 @@ dependencies = [
 
 [[package]]
 name = "shadow_counted"
-version = "0.3.2"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41cd78bcc9026f6fc699f717588c4f757e87758d33464ede841ad42eee49a5b2"
+checksum = "65da48d447333cebe1aadbdd3662f3ba56e76e67f53bc46f3dd5f67c74629d6b"
 
 [[package]]
 name = "shlex"
@@ -712,9 +712,9 @@ checksum = "5a5f39404a5da50712a4c1eecf25e90dd62b613502b7e925fd4e4d19b5c96512"
 
 [[package]]
 name = "unsynn"
-version = "0.0.25"
+version = "0.0.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "45b8949e2e0d516407a99e232f0040c7d433f32d522edabcb27ed27f7d10c47c"
+checksum = "14013db4ac11f92d4df4b56edb431eab9c1d9f7aee4791f3205b6a1119b83f54"
 dependencies = [
  "mutants",
  "proc-macro2",

@@ -4,6 +4,9 @@
 #![warn(clippy::std_instead_of_alloc)]
 #![doc = include_str!("../README.md")]
 
+#[cfg(not(feature = "alloc"))]
+compile_error!("`alloc` feature is required at this time");
+
 extern crate alloc;
 
 use core::alloc::Layout;

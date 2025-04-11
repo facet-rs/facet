@@ -39,7 +39,7 @@ impl<'mem> IntoIterator for &'mem PeekList<'mem> {
     }
 }
 
-/// Lets you read from a list (implements read-only [`ListVTable`] proxies)
+/// Lets you read from a list (implements read-only [`facet_core::ListVTable`] proxies)
 #[derive(Clone, Copy)]
 pub struct PeekList<'mem> {
     value: PeekValue<'mem>,

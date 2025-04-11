@@ -47,7 +47,7 @@ pub type OptionInitNoneFn = unsafe fn(option: OpaqueUninit) -> Opaque;
 pub type OptionReplaceWithFn =
     for<'option> unsafe fn(option: Opaque<'option>, value: Option<OpaqueConst<'_>>);
 
-/// Virtual table for Option<T>
+/// Virtual table for `Option<T>`
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 #[repr(C)]
 pub struct OptionVTable {

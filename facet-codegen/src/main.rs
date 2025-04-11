@@ -135,32 +135,45 @@ fn copy_cargo_expand_output(has_diffs: &mut bool, opts: &Options) {
     let expanded_code =
         String::from_utf8(output.stdout).expect("Failed to convert output to string");
 
-    // Filter out lines added by `cargo expand` that we don't want in the sample file
+    // First collect doc comments, then filter out lines we don't want
+    let doc_comments = expanded_code
+        .lines()
+        .filter(|line| line.trim_start().starts_with("//!"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
     let expanded_code = expanded_code
         .lines()
         .filter(|line| {
             let trimmed = line.trim_start();
-            // - #![feature(...)]
-            // - //! ... (inner doc comments)
-            // - #[prelude_import]
-            // - use ::std::prelude::rust_2024::*;
-            // - #[macro_use]
-            // - extern crate std;
-            !trimmed.starts_with("#![") && !trimmed.starts_with("//!")
+            !trimmed.starts_with("#![")
+                && !trimmed.starts_with("#[facet(")
+                && !trimmed.starts_with("#[macro_use]")
+                && !trimmed.starts_with("//!")
         })
         .collect::<Vec<_>>()
         .join("\n");
+
     // Ensure a trailing newline for consistency
     let expanded_code = if expanded_code.is_empty() {
         String::new()
     } else {
         format!("{}\n", expanded_code)
     };
-    let expanded_code = format!("extern crate self as facet;\n{expanded_code}");
+
+    let expanded_code = format!(
+        "{}\n#![allow(warnings)]\nextern crate self as facet;\nextern crate self as facet_core;\n{}",
+        doc_comments, expanded_code
+    );
+
+    let expanded_code = expanded_code.replace(
+        "::impls::_core::marker::PhantomData",
+        "::core::marker::PhantomData",
+    );
 
     // Write the expanded code to the target file
     let target_path = workspace_dir
-        .join("facet-core")
+        .join("facet")
         .join("src")
         .join("sample_generated_code.rs");
 

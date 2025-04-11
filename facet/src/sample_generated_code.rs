@@ -1,7 +1,9 @@
+//! This defines a few types showcasing various features of the Facet derive macro.
+#![allow(warnings)]
 extern crate self as facet;
+extern crate self as facet_core;
 #[prelude_import]
 use std::prelude::rust_2024::*;
-#[macro_use]
 extern crate std;
 
 use facet::Facet;
@@ -11,7 +13,6 @@ pub struct KitchenSinkStruct {
     /// A basic string field.
     pub basic_field: String,
     /// A field marked as sensitive.
-    #[facet(sensitive)]
     pub sensitive_field: u64,
     /// A tuple field.
     pub tuple_field: (i32, bool),
@@ -121,7 +122,7 @@ unsafe impl facet::Facet for KitchenSinkStruct {
                         impl<T: ?Sized> DoesNotImpl for T {}
                         /// Concrete type with `True` for `IMPLS` if the type implements the
                         /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                        struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                         #[allow(dead_code)]
                         impl<T: ?Sized + core::fmt::Display> Wrapper<T> {
                             const IMPLS: bool = true;
@@ -142,7 +143,7 @@ unsafe impl facet::Facet for KitchenSinkStruct {
                         impl<T: ?Sized> DoesNotImpl for T {}
                         /// Concrete type with `True` for `IMPLS` if the type implements the
                         /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                        struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                         #[allow(dead_code)]
                         impl<T: ?Sized + core::fmt::Debug> Wrapper<T> {
                             const IMPLS: bool = true;
@@ -163,7 +164,7 @@ unsafe impl facet::Facet for KitchenSinkStruct {
                         impl<T: ?Sized> DoesNotImpl for T {}
                         /// Concrete type with `True` for `IMPLS` if the type implements the
                         /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                        struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                         #[allow(dead_code)]
                         impl<T: ?Sized + core::default::Default> Wrapper<T> {
                             const IMPLS: bool = true;
@@ -187,7 +188,7 @@ unsafe impl facet::Facet for KitchenSinkStruct {
                         impl<T: ?Sized> DoesNotImpl for T {}
                         /// Concrete type with `True` for `IMPLS` if the type implements the
                         /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                        struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                         #[allow(dead_code)]
                         impl<T: ?Sized + core::clone::Clone> Wrapper<T> {
                             const IMPLS: bool = true;
@@ -212,7 +213,7 @@ unsafe impl facet::Facet for KitchenSinkStruct {
                             impl<T: ?Sized> DoesNotImpl for T {}
                             /// Concrete type with `True` for `IMPLS` if the type implements the
                             /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                            struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                            struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                             #[allow(dead_code)]
                             impl<T: ?Sized + core::cmp::Eq> Wrapper<T> {
                                 const IMPLS: bool = true;
@@ -230,7 +231,7 @@ unsafe impl facet::Facet for KitchenSinkStruct {
                             impl<T: ?Sized> DoesNotImpl for T {}
                             /// Concrete type with `True` for `IMPLS` if the type implements the
                             /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                            struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                            struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                             #[allow(dead_code)]
                             impl<T: ?Sized + core::marker::Send> Wrapper<T> {
                                 const IMPLS: bool = true;
@@ -248,7 +249,7 @@ unsafe impl facet::Facet for KitchenSinkStruct {
                             impl<T: ?Sized> DoesNotImpl for T {}
                             /// Concrete type with `True` for `IMPLS` if the type implements the
                             /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                            struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                            struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                             #[allow(dead_code)]
                             impl<T: ?Sized + core::marker::Sync> Wrapper<T> {
                                 const IMPLS: bool = true;
@@ -266,7 +267,7 @@ unsafe impl facet::Facet for KitchenSinkStruct {
                             impl<T: ?Sized> DoesNotImpl for T {}
                             /// Concrete type with `True` for `IMPLS` if the type implements the
                             /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                            struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                            struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                             #[allow(dead_code)]
                             impl<T: ?Sized + core::marker::Copy> Wrapper<T> {
                                 const IMPLS: bool = true;
@@ -286,7 +287,7 @@ unsafe impl facet::Facet for KitchenSinkStruct {
                         impl<T: ?Sized> DoesNotImpl for T {}
                         /// Concrete type with `True` for `IMPLS` if the type implements the
                         /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                        struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                         #[allow(dead_code)]
                         impl<T: ?Sized + core::cmp::PartialEq> Wrapper<T> {
                             const IMPLS: bool = true;
@@ -308,7 +309,7 @@ unsafe impl facet::Facet for KitchenSinkStruct {
                         impl<T: ?Sized> DoesNotImpl for T {}
                         /// Concrete type with `True` for `IMPLS` if the type implements the
                         /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                        struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                         #[allow(dead_code)]
                         impl<T: ?Sized + core::cmp::PartialOrd> Wrapper<T> {
                             const IMPLS: bool = true;
@@ -332,7 +333,7 @@ unsafe impl facet::Facet for KitchenSinkStruct {
                         impl<T: ?Sized> DoesNotImpl for T {}
                         /// Concrete type with `True` for `IMPLS` if the type implements the
                         /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                        struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                         #[allow(dead_code)]
                         impl<T: ?Sized + core::cmp::Ord> Wrapper<T> {
                             const IMPLS: bool = true;
@@ -354,7 +355,7 @@ unsafe impl facet::Facet for KitchenSinkStruct {
                         impl<T: ?Sized> DoesNotImpl for T {}
                         /// Concrete type with `True` for `IMPLS` if the type implements the
                         /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                        struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                         #[allow(dead_code)]
                         impl<T: ?Sized + core::hash::Hash> Wrapper<T> {
                             const IMPLS: bool = true;
@@ -378,7 +379,7 @@ unsafe impl facet::Facet for KitchenSinkStruct {
                         impl<T: ?Sized> DoesNotImpl for T {}
                         /// Concrete type with `True` for `IMPLS` if the type implements the
                         /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                        struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                         #[allow(dead_code)]
                         impl<T: ?Sized + core::str::FromStr> Wrapper<T> {
                             const IMPLS: bool = true;
@@ -411,7 +412,6 @@ pub struct Point {
     pub x: f32,
     pub y: f32,
     /// Nested sensitive data within the struct.
-    #[facet(sensitive)]
     pub metadata: String,
 }
 #[used]
@@ -466,7 +466,7 @@ unsafe impl facet::Facet for Point {
                         impl<T: ?Sized> DoesNotImpl for T {}
                         /// Concrete type with `True` for `IMPLS` if the type implements the
                         /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                        struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                         #[allow(dead_code)]
                         impl<T: ?Sized + core::fmt::Display> Wrapper<T> {
                             const IMPLS: bool = true;
@@ -487,7 +487,7 @@ unsafe impl facet::Facet for Point {
                         impl<T: ?Sized> DoesNotImpl for T {}
                         /// Concrete type with `True` for `IMPLS` if the type implements the
                         /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                        struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                         #[allow(dead_code)]
                         impl<T: ?Sized + core::fmt::Debug> Wrapper<T> {
                             const IMPLS: bool = true;
@@ -508,7 +508,7 @@ unsafe impl facet::Facet for Point {
                         impl<T: ?Sized> DoesNotImpl for T {}
                         /// Concrete type with `True` for `IMPLS` if the type implements the
                         /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                        struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                         #[allow(dead_code)]
                         impl<T: ?Sized + core::default::Default> Wrapper<T> {
                             const IMPLS: bool = true;
@@ -529,7 +529,7 @@ unsafe impl facet::Facet for Point {
                         impl<T: ?Sized> DoesNotImpl for T {}
                         /// Concrete type with `True` for `IMPLS` if the type implements the
                         /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                        struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                         #[allow(dead_code)]
                         impl<T: ?Sized + core::clone::Clone> Wrapper<T> {
                             const IMPLS: bool = true;
@@ -552,7 +552,7 @@ unsafe impl facet::Facet for Point {
                             impl<T: ?Sized> DoesNotImpl for T {}
                             /// Concrete type with `True` for `IMPLS` if the type implements the
                             /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                            struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                            struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                             #[allow(dead_code)]
                             impl<T: ?Sized + core::cmp::Eq> Wrapper<T> {
                                 const IMPLS: bool = true;
@@ -570,7 +570,7 @@ unsafe impl facet::Facet for Point {
                             impl<T: ?Sized> DoesNotImpl for T {}
                             /// Concrete type with `True` for `IMPLS` if the type implements the
                             /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                            struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                            struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                             #[allow(dead_code)]
                             impl<T: ?Sized + core::marker::Send> Wrapper<T> {
                                 const IMPLS: bool = true;
@@ -588,7 +588,7 @@ unsafe impl facet::Facet for Point {
                             impl<T: ?Sized> DoesNotImpl for T {}
                             /// Concrete type with `True` for `IMPLS` if the type implements the
                             /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                            struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                            struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                             #[allow(dead_code)]
                             impl<T: ?Sized + core::marker::Sync> Wrapper<T> {
                                 const IMPLS: bool = true;
@@ -606,7 +606,7 @@ unsafe impl facet::Facet for Point {
                             impl<T: ?Sized> DoesNotImpl for T {}
                             /// Concrete type with `True` for `IMPLS` if the type implements the
                             /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                            struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                            struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                             #[allow(dead_code)]
                             impl<T: ?Sized + core::marker::Copy> Wrapper<T> {
                                 const IMPLS: bool = true;
@@ -626,7 +626,7 @@ unsafe impl facet::Facet for Point {
                         impl<T: ?Sized> DoesNotImpl for T {}
                         /// Concrete type with `True` for `IMPLS` if the type implements the
                         /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                        struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                         #[allow(dead_code)]
                         impl<T: ?Sized + core::cmp::PartialEq> Wrapper<T> {
                             const IMPLS: bool = true;
@@ -648,7 +648,7 @@ unsafe impl facet::Facet for Point {
                         impl<T: ?Sized> DoesNotImpl for T {}
                         /// Concrete type with `True` for `IMPLS` if the type implements the
                         /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                        struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                         #[allow(dead_code)]
                         impl<T: ?Sized + core::cmp::PartialOrd> Wrapper<T> {
                             const IMPLS: bool = true;
@@ -670,7 +670,7 @@ unsafe impl facet::Facet for Point {
                         impl<T: ?Sized> DoesNotImpl for T {}
                         /// Concrete type with `True` for `IMPLS` if the type implements the
                         /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                        struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                         #[allow(dead_code)]
                         impl<T: ?Sized + core::cmp::Ord> Wrapper<T> {
                             const IMPLS: bool = true;
@@ -692,7 +692,7 @@ unsafe impl facet::Facet for Point {
                         impl<T: ?Sized> DoesNotImpl for T {}
                         /// Concrete type with `True` for `IMPLS` if the type implements the
                         /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                        struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                         #[allow(dead_code)]
                         impl<T: ?Sized + core::hash::Hash> Wrapper<T> {
                             const IMPLS: bool = true;
@@ -716,7 +716,7 @@ unsafe impl facet::Facet for Point {
                         impl<T: ?Sized> DoesNotImpl for T {}
                         /// Concrete type with `True` for `IMPLS` if the type implements the
                         /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                        struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                         #[allow(dead_code)]
                         impl<T: ?Sized + core::str::FromStr> Wrapper<T> {
                             const IMPLS: bool = true;
@@ -770,7 +770,6 @@ pub enum KitchenSinkEnum {
     },
 
     /// A tuple variant marked entirely as sensitive.
-    #[facet(sensitive)]
     SensitiveTupleVariant(Vec<u8>),
 
     /// A struct variant containing a sensitive field.
@@ -778,12 +777,10 @@ pub enum KitchenSinkEnum {
         /// The main data payload, publicly accessible.
         payload: Vec<u8>,
         /// The sensitive checksum for integrity verification.
-        #[facet(sensitive)]
         checksum: u32,
     },
 
     /// A variant marked as arbitrary, potentially skipped during processing.
-    #[facet(arbitrary)]
     ArbitraryVariant((f64, f64)),
 
     /// A variant containing another enum that derives Facet.
@@ -850,7 +847,7 @@ unsafe impl facet::Facet for KitchenSinkEnum {
                                                             impl<T: ?Sized> DoesNotImpl for T {}
                                                             /// Concrete type with `True` for `IMPLS` if the type implements the
                                                             /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                                                            struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                                                            struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                                                             #[allow(dead_code)]
                                                             impl<T: ?Sized + core::fmt::Display> Wrapper<T> {
                                                                 const IMPLS: bool = true;
@@ -875,7 +872,7 @@ unsafe impl facet::Facet for KitchenSinkEnum {
                                                             impl<T: ?Sized> DoesNotImpl for T {}
                                                             /// Concrete type with `True` for `IMPLS` if the type implements the
                                                             /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                                                            struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                                                            struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                                                             #[allow(dead_code)]
                                                             impl<T: ?Sized + core::fmt::Debug> Wrapper<T> {
                                                                 const IMPLS: bool = true;
@@ -900,7 +897,7 @@ unsafe impl facet::Facet for KitchenSinkEnum {
                                                             impl<T: ?Sized> DoesNotImpl for T {}
                                                             /// Concrete type with `True` for `IMPLS` if the type implements the
                                                             /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                                                            struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                                                            struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                                                             #[allow(dead_code)]
                                                             impl<T: ?Sized + core::default::Default> Wrapper<T> {
                                                                 const IMPLS: bool = true;
@@ -925,7 +922,7 @@ unsafe impl facet::Facet for KitchenSinkEnum {
                                                             impl<T: ?Sized> DoesNotImpl for T {}
                                                             /// Concrete type with `True` for `IMPLS` if the type implements the
                                                             /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                                                            struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                                                            struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                                                             #[allow(dead_code)]
                                                             impl<T: ?Sized + core::clone::Clone> Wrapper<T> {
                                                                 const IMPLS: bool = true;
@@ -952,7 +949,7 @@ unsafe impl facet::Facet for KitchenSinkEnum {
                                                                 impl<T: ?Sized> DoesNotImpl for T {}
                                                                 /// Concrete type with `True` for `IMPLS` if the type implements the
                                                                 /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                                                                struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                                                                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                                                                 #[allow(dead_code)]
                                                                 impl<T: ?Sized + core::cmp::Eq> Wrapper<T> {
                                                                     const IMPLS: bool = true;
@@ -970,7 +967,7 @@ unsafe impl facet::Facet for KitchenSinkEnum {
                                                                 impl<T: ?Sized> DoesNotImpl for T {}
                                                                 /// Concrete type with `True` for `IMPLS` if the type implements the
                                                                 /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                                                                struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                                                                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                                                                 #[allow(dead_code)]
                                                                 impl<T: ?Sized + core::marker::Send> Wrapper<T> {
                                                                     const IMPLS: bool = true;
@@ -988,7 +985,7 @@ unsafe impl facet::Facet for KitchenSinkEnum {
                                                                 impl<T: ?Sized> DoesNotImpl for T {}
                                                                 /// Concrete type with `True` for `IMPLS` if the type implements the
                                                                 /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                                                                struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                                                                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                                                                 #[allow(dead_code)]
                                                                 impl<T: ?Sized + core::marker::Sync> Wrapper<T> {
                                                                     const IMPLS: bool = true;
@@ -1006,7 +1003,7 @@ unsafe impl facet::Facet for KitchenSinkEnum {
                                                                 impl<T: ?Sized> DoesNotImpl for T {}
                                                                 /// Concrete type with `True` for `IMPLS` if the type implements the
                                                                 /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                                                                struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                                                                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                                                                 #[allow(dead_code)]
                                                                 impl<T: ?Sized + core::marker::Copy> Wrapper<T> {
                                                                     const IMPLS: bool = true;
@@ -1026,7 +1023,7 @@ unsafe impl facet::Facet for KitchenSinkEnum {
                                                             impl<T: ?Sized> DoesNotImpl for T {}
                                                             /// Concrete type with `True` for `IMPLS` if the type implements the
                                                             /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                                                            struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                                                            struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                                                             #[allow(dead_code)]
                                                             impl<T: ?Sized + core::cmp::PartialEq> Wrapper<T> {
                                                                 const IMPLS: bool = true;
@@ -1053,7 +1050,7 @@ unsafe impl facet::Facet for KitchenSinkEnum {
                                                             impl<T: ?Sized> DoesNotImpl for T {}
                                                             /// Concrete type with `True` for `IMPLS` if the type implements the
                                                             /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                                                            struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                                                            struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                                                             #[allow(dead_code)]
                                                             impl<T: ?Sized + core::cmp::PartialOrd> Wrapper<T> {
                                                                 const IMPLS: bool = true;
@@ -1080,7 +1077,7 @@ unsafe impl facet::Facet for KitchenSinkEnum {
                                                             impl<T: ?Sized> DoesNotImpl for T {}
                                                             /// Concrete type with `True` for `IMPLS` if the type implements the
                                                             /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                                                            struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                                                            struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                                                             #[allow(dead_code)]
                                                             impl<T: ?Sized + core::cmp::Ord> Wrapper<T> {
                                                                 const IMPLS: bool = true;
@@ -1107,7 +1104,7 @@ unsafe impl facet::Facet for KitchenSinkEnum {
                                                             impl<T: ?Sized> DoesNotImpl for T {}
                                                             /// Concrete type with `True` for `IMPLS` if the type implements the
                                                             /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                                                            struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                                                            struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                                                             #[allow(dead_code)]
                                                             impl<T: ?Sized + core::hash::Hash> Wrapper<T> {
                                                                 const IMPLS: bool = true;
@@ -1135,7 +1132,7 @@ unsafe impl facet::Facet for KitchenSinkEnum {
                                                             impl<T: ?Sized> DoesNotImpl for T {}
                                                             /// Concrete type with `True` for `IMPLS` if the type implements the
                                                             /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                                                            struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                                                            struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                                                             #[allow(dead_code)]
                                                             impl<T: ?Sized + core::str::FromStr> Wrapper<T> {
                                                                 const IMPLS: bool = true;
@@ -1286,11 +1283,9 @@ pub enum SubEnum {
     OptionB(u8),
 
     /// A sensitive option.
-    #[facet(sensitive)]
     SensitiveOption(u64),
 
     /// An arbitrary option.
-    #[facet(arbitrary)]
     ArbitraryOption(u8),
 }
 #[used]
@@ -1330,7 +1325,7 @@ unsafe impl facet::Facet for SubEnum {
                         impl<T: ?Sized> DoesNotImpl for T {}
                         /// Concrete type with `True` for `IMPLS` if the type implements the
                         /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                        struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                         #[allow(dead_code)]
                         impl<T: ?Sized + core::fmt::Display> Wrapper<T> {
                             const IMPLS: bool = true;
@@ -1351,7 +1346,7 @@ unsafe impl facet::Facet for SubEnum {
                         impl<T: ?Sized> DoesNotImpl for T {}
                         /// Concrete type with `True` for `IMPLS` if the type implements the
                         /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                        struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                         #[allow(dead_code)]
                         impl<T: ?Sized + core::fmt::Debug> Wrapper<T> {
                             const IMPLS: bool = true;
@@ -1372,7 +1367,7 @@ unsafe impl facet::Facet for SubEnum {
                         impl<T: ?Sized> DoesNotImpl for T {}
                         /// Concrete type with `True` for `IMPLS` if the type implements the
                         /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                        struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                         #[allow(dead_code)]
                         impl<T: ?Sized + core::default::Default> Wrapper<T> {
                             const IMPLS: bool = true;
@@ -1393,7 +1388,7 @@ unsafe impl facet::Facet for SubEnum {
                         impl<T: ?Sized> DoesNotImpl for T {}
                         /// Concrete type with `True` for `IMPLS` if the type implements the
                         /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                        struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                         #[allow(dead_code)]
                         impl<T: ?Sized + core::clone::Clone> Wrapper<T> {
                             const IMPLS: bool = true;
@@ -1416,7 +1411,7 @@ unsafe impl facet::Facet for SubEnum {
                             impl<T: ?Sized> DoesNotImpl for T {}
                             /// Concrete type with `True` for `IMPLS` if the type implements the
                             /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                            struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                            struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                             #[allow(dead_code)]
                             impl<T: ?Sized + core::cmp::Eq> Wrapper<T> {
                                 const IMPLS: bool = true;
@@ -1434,7 +1429,7 @@ unsafe impl facet::Facet for SubEnum {
                             impl<T: ?Sized> DoesNotImpl for T {}
                             /// Concrete type with `True` for `IMPLS` if the type implements the
                             /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                            struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                            struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                             #[allow(dead_code)]
                             impl<T: ?Sized + core::marker::Send> Wrapper<T> {
                                 const IMPLS: bool = true;
@@ -1452,7 +1447,7 @@ unsafe impl facet::Facet for SubEnum {
                             impl<T: ?Sized> DoesNotImpl for T {}
                             /// Concrete type with `True` for `IMPLS` if the type implements the
                             /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                            struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                            struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                             #[allow(dead_code)]
                             impl<T: ?Sized + core::marker::Sync> Wrapper<T> {
                                 const IMPLS: bool = true;
@@ -1470,7 +1465,7 @@ unsafe impl facet::Facet for SubEnum {
                             impl<T: ?Sized> DoesNotImpl for T {}
                             /// Concrete type with `True` for `IMPLS` if the type implements the
                             /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                            struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                            struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                             #[allow(dead_code)]
                             impl<T: ?Sized + core::marker::Copy> Wrapper<T> {
                                 const IMPLS: bool = true;
@@ -1490,7 +1485,7 @@ unsafe impl facet::Facet for SubEnum {
                         impl<T: ?Sized> DoesNotImpl for T {}
                         /// Concrete type with `True` for `IMPLS` if the type implements the
                         /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                        struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                         #[allow(dead_code)]
                         impl<T: ?Sized + core::cmp::PartialEq> Wrapper<T> {
                             const IMPLS: bool = true;
@@ -1512,7 +1507,7 @@ unsafe impl facet::Facet for SubEnum {
                         impl<T: ?Sized> DoesNotImpl for T {}
                         /// Concrete type with `True` for `IMPLS` if the type implements the
                         /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                        struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                         #[allow(dead_code)]
                         impl<T: ?Sized + core::cmp::PartialOrd> Wrapper<T> {
                             const IMPLS: bool = true;
@@ -1534,7 +1529,7 @@ unsafe impl facet::Facet for SubEnum {
                         impl<T: ?Sized> DoesNotImpl for T {}
                         /// Concrete type with `True` for `IMPLS` if the type implements the
                         /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                        struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                         #[allow(dead_code)]
                         impl<T: ?Sized + core::cmp::Ord> Wrapper<T> {
                             const IMPLS: bool = true;
@@ -1556,7 +1551,7 @@ unsafe impl facet::Facet for SubEnum {
                         impl<T: ?Sized> DoesNotImpl for T {}
                         /// Concrete type with `True` for `IMPLS` if the type implements the
                         /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                        struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                         #[allow(dead_code)]
                         impl<T: ?Sized + core::hash::Hash> Wrapper<T> {
                             const IMPLS: bool = true;
@@ -1580,7 +1575,7 @@ unsafe impl facet::Facet for SubEnum {
                         impl<T: ?Sized> DoesNotImpl for T {}
                         /// Concrete type with `True` for `IMPLS` if the type implements the
                         /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                        struct Wrapper<T: ?Sized>(::impls::_core::marker::PhantomData<T>);
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
                         #[allow(dead_code)]
                         impl<T: ?Sized + core::str::FromStr> Wrapper<T> {
                             const IMPLS: bool = true;
