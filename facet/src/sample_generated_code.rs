@@ -26,95 +26,97 @@ pub struct KitchenSinkStruct {
     pub nested_struct_field: Point,
 }
 #[used]
-static KITCHEN_SINK_STRUCT_SHAPE: &'static facet::Shape =
-    <KitchenSinkStruct as facet::Facet>::SHAPE;
+static KITCHEN_SINK_STRUCT_SHAPE: &'static ::facet::Shape =
+    <KitchenSinkStruct as ::facet::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl facet::Facet for KitchenSinkStruct {
-    const SHAPE: &'static facet::Shape = &const {
-        let fields: &'static [facet::Field] = &const {
+unsafe impl ::facet::Facet for KitchenSinkStruct {
+    const SHAPE: &'static ::facet::Shape = &const {
+        let fields: &'static [::facet::Field] = &const {
             [
-                facet::Field::builder()
+                ::facet::Field::builder()
                     .name("basic_field")
-                    .shape(facet::shape_of(&(|s: KitchenSinkStruct| s.basic_field)))
+                    .shape(::facet::shape_of(&(|s: KitchenSinkStruct| s.basic_field)))
                     .offset({
                         builtin # offset_of(KitchenSinkStruct<>, basic_field)
                     })
-                    .flags(facet::FieldFlags::EMPTY)
+                    .flags(::facet::FieldFlags::EMPTY)
                     .attributes(&[])
                     .doc(&[" A basic string field."])
                     .build(),
-                facet::Field::builder()
+                ::facet::Field::builder()
                     .name("sensitive_field")
-                    .shape(facet::shape_of(&(|s: KitchenSinkStruct| s.sensitive_field)))
+                    .shape(::facet::shape_of(
+                        &(|s: KitchenSinkStruct| s.sensitive_field),
+                    ))
                     .offset({
                         builtin # offset_of(KitchenSinkStruct<>, sensitive_field)
                     })
-                    .flags(facet::FieldFlags::SENSITIVE)
-                    .attributes(&[facet::FieldAttribute::Sensitive])
+                    .flags(::facet::FieldFlags::SENSITIVE)
+                    .attributes(&[::facet::FieldAttribute::Sensitive])
                     .doc(&[" A field marked as sensitive."])
                     .build(),
-                facet::Field::builder()
+                ::facet::Field::builder()
                     .name("tuple_field")
-                    .shape(facet::shape_of(&(|s: KitchenSinkStruct| s.tuple_field)))
+                    .shape(::facet::shape_of(&(|s: KitchenSinkStruct| s.tuple_field)))
                     .offset({
                         builtin # offset_of(KitchenSinkStruct<>, tuple_field)
                     })
-                    .flags(facet::FieldFlags::EMPTY)
+                    .flags(::facet::FieldFlags::EMPTY)
                     .attributes(&[])
                     .doc(&[" A tuple field."])
                     .build(),
-                facet::Field::builder()
+                ::facet::Field::builder()
                     .name("array_field")
-                    .shape(facet::shape_of(&(|s: KitchenSinkStruct| s.array_field)))
+                    .shape(::facet::shape_of(&(|s: KitchenSinkStruct| s.array_field)))
                     .offset({
                         builtin # offset_of(KitchenSinkStruct<>, array_field)
                     })
-                    .flags(facet::FieldFlags::EMPTY)
+                    .flags(::facet::FieldFlags::EMPTY)
                     .attributes(&[])
                     .doc(&[" An array field."])
                     .build(),
-                facet::Field::builder()
+                ::facet::Field::builder()
                     .name("slice_field")
-                    .shape(facet::shape_of(&(|s: KitchenSinkStruct| s.slice_field)))
+                    .shape(::facet::shape_of(&(|s: KitchenSinkStruct| s.slice_field)))
                     .offset({
                         builtin # offset_of(KitchenSinkStruct<>, slice_field)
                     })
-                    .flags(facet::FieldFlags::EMPTY)
+                    .flags(::facet::FieldFlags::EMPTY)
                     .attributes(&[])
                     .doc(&[" A static slice field."])
                     .build(),
-                facet::Field::builder()
+                ::facet::Field::builder()
                     .name("vec_field")
-                    .shape(facet::shape_of(&(|s: KitchenSinkStruct| s.vec_field)))
+                    .shape(::facet::shape_of(&(|s: KitchenSinkStruct| s.vec_field)))
                     .offset({
                         builtin # offset_of(KitchenSinkStruct<>, vec_field)
                     })
-                    .flags(facet::FieldFlags::EMPTY)
+                    .flags(::facet::FieldFlags::EMPTY)
                     .attributes(&[])
                     .doc(&[" A vector field."])
                     .build(),
-                facet::Field::builder()
+                ::facet::Field::builder()
                     .name("nested_struct_field")
-                    .shape(facet::shape_of(
+                    .shape(::facet::shape_of(
                         &(|s: KitchenSinkStruct| s.nested_struct_field),
                     ))
                     .offset({
                         builtin # offset_of(KitchenSinkStruct<>,
                                                                         nested_struct_field)
                     })
-                    .flags(facet::FieldFlags::EMPTY)
+                    .flags(::facet::FieldFlags::EMPTY)
                     .attributes(&[])
                     .doc(&[" A field containing another struct that derives Facet."])
                     .build(),
             ]
         };
-        facet::Shape::builder()
-            .id(facet::ConstTypeId::of::<Self>())
-            .layout(core::alloc::Layout::new::<Self>())
+        ::facet::Shape::builder()
+            .id(::facet::ConstTypeId::of::<Self>())
+            .layout(::core::alloc::Layout::new::<Self>())
             .vtable(
                 &const {
                     let mut builder = ::facet_core::ValueVTable::builder()
-                        .type_name(|f, _opts| core::fmt::Write::write_str(f, "KitchenSinkStruct"))
+                        .type_name(|f, _opts| ::core::fmt::Write::write_str(f, "KitchenSinkStruct"))
                         .drop_in_place(|data| unsafe { data.drop_in_place::<Self>() });
                     if {
                         /// Fallback trait with `False` for `IMPLS` if the type does not
@@ -391,9 +393,9 @@ unsafe impl facet::Facet for KitchenSinkStruct {
                     builder.build()
                 },
             )
-            .def(facet::Def::Struct(
-                facet::StructDef::builder()
-                    .kind(facet::StructKind::Struct)
+            .def(::facet::Def::Struct(
+                ::facet::StructDef::builder()
+                    .kind(::facet::StructKind::Struct)
                     .fields(fields)
                     .build(),
             ))
@@ -409,49 +411,49 @@ pub struct Point {
     pub metadata: String,
 }
 #[used]
-static POINT_SHAPE: &'static facet::Shape = <Point as facet::Facet>::SHAPE;
+static POINT_SHAPE: &'static ::facet::Shape = <Point as ::facet::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl facet::Facet for Point {
-    const SHAPE: &'static facet::Shape = &const {
-        let fields: &'static [facet::Field] = &const {
+unsafe impl ::facet::Facet for Point {
+    const SHAPE: &'static ::facet::Shape = &const {
+        let fields: &'static [::facet::Field] = &const {
             [
-                facet::Field::builder()
+                ::facet::Field::builder()
                     .name("x")
-                    .shape(facet::shape_of(&(|s: Point| s.x)))
+                    .shape(::facet::shape_of(&(|s: Point| s.x)))
                     .offset({
                         builtin # offset_of(Point<>, x)
                     })
-                    .flags(facet::FieldFlags::EMPTY)
+                    .flags(::facet::FieldFlags::EMPTY)
                     .attributes(&[])
                     .build(),
-                facet::Field::builder()
+                ::facet::Field::builder()
                     .name("y")
-                    .shape(facet::shape_of(&(|s: Point| s.y)))
+                    .shape(::facet::shape_of(&(|s: Point| s.y)))
                     .offset({
                         builtin # offset_of(Point<>, y)
                     })
-                    .flags(facet::FieldFlags::EMPTY)
+                    .flags(::facet::FieldFlags::EMPTY)
                     .attributes(&[])
                     .build(),
-                facet::Field::builder()
+                ::facet::Field::builder()
                     .name("metadata")
-                    .shape(facet::shape_of(&(|s: Point| s.metadata)))
+                    .shape(::facet::shape_of(&(|s: Point| s.metadata)))
                     .offset({
                         builtin # offset_of(Point<>, metadata)
                     })
-                    .flags(facet::FieldFlags::SENSITIVE)
-                    .attributes(&[facet::FieldAttribute::Sensitive])
+                    .flags(::facet::FieldFlags::SENSITIVE)
+                    .attributes(&[::facet::FieldAttribute::Sensitive])
                     .doc(&[" Nested sensitive data within the struct."])
                     .build(),
             ]
         };
-        facet::Shape::builder()
-            .id(facet::ConstTypeId::of::<Self>())
-            .layout(core::alloc::Layout::new::<Self>())
+        ::facet::Shape::builder()
+            .id(::facet::ConstTypeId::of::<Self>())
+            .layout(::core::alloc::Layout::new::<Self>())
             .vtable(
                 &const {
                     let mut builder = ::facet_core::ValueVTable::builder()
-                        .type_name(|f, _opts| core::fmt::Write::write_str(f, "Point"))
+                        .type_name(|f, _opts| ::core::fmt::Write::write_str(f, "Point"))
                         .drop_in_place(|data| unsafe { data.drop_in_place::<Self>() });
                     if {
                         /// Fallback trait with `False` for `IMPLS` if the type does not
@@ -728,9 +730,9 @@ unsafe impl facet::Facet for Point {
                     builder.build()
                 },
             )
-            .def(facet::Def::Struct(
-                facet::StructDef::builder()
-                    .kind(facet::StructKind::Struct)
+            .def(::facet::Def::Struct(
+                ::facet::StructDef::builder()
+                    .kind(::facet::StructKind::Struct)
                     .fields(fields)
                     .build(),
             ))
@@ -785,10 +787,11 @@ pub enum KitchenSinkEnum {
     NestedEnumVariant(SubEnum),
 }
 #[used]
-static KITCHEN_SINK_ENUM_SHAPE: &'static facet::Shape = <KitchenSinkEnum as facet::Facet>::SHAPE;
+static KITCHEN_SINK_ENUM_SHAPE: &'static ::facet::Shape =
+    <KitchenSinkEnum as ::facet::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl facet::Facet for KitchenSinkEnum {
-    const SHAPE: &'static facet::Shape = &const {
+unsafe impl ::facet::Facet for KitchenSinkEnum {
+    const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
         struct __ShadowKitchenSinkEnum_TupleVariantSimple {
             _discriminant: u8,
@@ -828,10 +831,10 @@ unsafe impl facet::Facet for KitchenSinkEnum {
             _discriminant: u8,
             _0: SubEnum,
         }
-        facet::Shape::builder().id(facet::ConstTypeId::of::<Self>()).layout(core::alloc::Layout::new::<Self>()).vtable(&const {
+        ::facet::Shape::builder().id(::facet::ConstTypeId::of::<Self>()).layout(::core::alloc::Layout::new::<Self>()).vtable(&const {
                                                 let mut builder =
                                                     ::facet_core::ValueVTable::builder().type_name(|f, _opts|
-                                                                core::fmt::Write::write_str(f,
+                                                                ::core::fmt::Write::write_str(f,
                                                                     "KitchenSinkEnum")).drop_in_place(|data|
                                                             unsafe { data.drop_in_place::<Self>() });
                                                 if {
@@ -1139,46 +1142,46 @@ unsafe impl facet::Facet for KitchenSinkEnum {
                                                                     });
                                                     }
                                                 builder.build()
-                                            }).def(facet::Def::Enum(facet::EnumDef::builder().variants(&const {
-                                                            [facet::Variant::builder().name("UnitVariant").discriminant(Some(0)).kind(facet::VariantKind::Unit).doc(&[" A simple unit variant."]).build(),
+                                            }).def(::facet::Def::Enum(::facet::EnumDef::builder().variants(&const {
+                                                            [::facet::Variant::builder().name("UnitVariant").discriminant(Some(0)).kind(::facet::VariantKind::Unit).doc(&[" A simple unit variant."]).build(),
                                                                     {
-                                                                        let fields: &'static [facet::Field] =
+                                                                        let fields: &'static [::facet::Field] =
                                                                             &const {
-                                                                                        [facet::Field::builder().name("_0").shape(facet::shape_of(&(|s:
+                                                                                        [::facet::Field::builder().name("_0").shape(::facet::shape_of(&(|s:
                                                                                                                                     __ShadowKitchenSinkEnum_TupleVariantSimple<>|
                                                                                                                                 s._0))).offset({
                                                                                                                     builtin # offset_of(__ShadowKitchenSinkEnum_TupleVariantSimple<>,
                                                                                                                         _0)
-                                                                                                                }).flags(facet::FieldFlags::EMPTY).attributes(&[]).build()]
+                                                                                                                }).flags(::facet::FieldFlags::EMPTY).attributes(&[]).build()]
                                                                                     };
-                                                                        facet::Variant::builder().name("TupleVariantSimple").discriminant(Some(1)).kind(facet::VariantKind::Tuple {
+                                                                        ::facet::Variant::builder().name("TupleVariantSimple").discriminant(Some(1)).kind(::facet::VariantKind::Tuple {
                                                                                         fields,
                                                                                     }).doc(&[" A tuple variant with a single element.", "",
                                                                                             " The contained `String` represents an important message payload."]).build()
                                                                     },
                                                                     {
-                                                                        let fields: &'static [facet::Field] =
+                                                                        let fields: &'static [::facet::Field] =
                                                                             &const {
-                                                                                        [facet::Field::builder().name("_0").shape(facet::shape_of(&(|s:
+                                                                                        [::facet::Field::builder().name("_0").shape(::facet::shape_of(&(|s:
                                                                                                                                     __ShadowKitchenSinkEnum_TupleVariantMulti<>|
                                                                                                                                 s._0))).offset({
                                                                                                                     builtin # offset_of(__ShadowKitchenSinkEnum_TupleVariantMulti<>,
                                                                                                                         _0)
-                                                                                                                }).flags(facet::FieldFlags::EMPTY).attributes(&[]).build(),
-                                                                                                facet::Field::builder().name("_1").shape(facet::shape_of(&(|s:
+                                                                                                                }).flags(::facet::FieldFlags::EMPTY).attributes(&[]).build(),
+                                                                                                ::facet::Field::builder().name("_1").shape(::facet::shape_of(&(|s:
                                                                                                                                     __ShadowKitchenSinkEnum_TupleVariantMulti<>|
                                                                                                                                 s._1))).offset({
                                                                                                                     builtin # offset_of(__ShadowKitchenSinkEnum_TupleVariantMulti<>,
                                                                                                                         _1)
-                                                                                                                }).flags(facet::FieldFlags::EMPTY).attributes(&[]).build(),
-                                                                                                facet::Field::builder().name("_2").shape(facet::shape_of(&(|s:
+                                                                                                                }).flags(::facet::FieldFlags::EMPTY).attributes(&[]).build(),
+                                                                                                ::facet::Field::builder().name("_2").shape(::facet::shape_of(&(|s:
                                                                                                                                     __ShadowKitchenSinkEnum_TupleVariantMulti<>|
                                                                                                                                 s._2))).offset({
                                                                                                                     builtin # offset_of(__ShadowKitchenSinkEnum_TupleVariantMulti<>,
                                                                                                                         _2)
-                                                                                                                }).flags(facet::FieldFlags::EMPTY).attributes(&[]).build()]
+                                                                                                                }).flags(::facet::FieldFlags::EMPTY).attributes(&[]).build()]
                                                                                     };
-                                                                        facet::Variant::builder().name("TupleVariantMulti").discriminant(Some(2)).kind(facet::VariantKind::Tuple {
+                                                                        ::facet::Variant::builder().name("TupleVariantMulti").discriminant(Some(2)).kind(::facet::VariantKind::Tuple {
                                                                                         fields,
                                                                                     }).doc(&[" A tuple variant with multiple elements.", "",
                                                                                             " Contains important positional data:",
@@ -1187,90 +1190,90 @@ unsafe impl facet::Facet for KitchenSinkEnum {
                                                                                             " - `_2` (i32): A status flag."]).build()
                                                                     },
                                                                     {
-                                                                        let fields: &'static [facet::Field] =
+                                                                        let fields: &'static [::facet::Field] =
                                                                             &const {
-                                                                                        [facet::Field::builder().name("width").shape(facet::shape_of(&(|s:
+                                                                                        [::facet::Field::builder().name("width").shape(::facet::shape_of(&(|s:
                                                                                                                                         __ShadowKitchenSinkEnum_StructVariant<>|
                                                                                                                                     s.width))).offset({
                                                                                                                         builtin # offset_of(__ShadowKitchenSinkEnum_StructVariant<>,
                                                                                                                             width)
-                                                                                                                    }).flags(facet::FieldFlags::EMPTY).attributes(&[]).doc(&[" The width dimension, crucial for rendering."]).build(),
-                                                                                                facet::Field::builder().name("height").shape(facet::shape_of(&(|s:
+                                                                                                                    }).flags(::facet::FieldFlags::EMPTY).attributes(&[]).doc(&[" The width dimension, crucial for rendering."]).build(),
+                                                                                                ::facet::Field::builder().name("height").shape(::facet::shape_of(&(|s:
                                                                                                                                         __ShadowKitchenSinkEnum_StructVariant<>|
                                                                                                                                     s.height))).offset({
                                                                                                                         builtin # offset_of(__ShadowKitchenSinkEnum_StructVariant<>,
                                                                                                                             height)
-                                                                                                                    }).flags(facet::FieldFlags::EMPTY).attributes(&[]).doc(&[" The height dimension, also crucial for rendering."]).build()]
+                                                                                                                    }).flags(::facet::FieldFlags::EMPTY).attributes(&[]).doc(&[" The height dimension, also crucial for rendering."]).build()]
                                                                                     };
-                                                                        facet::Variant::builder().name("StructVariant").discriminant(Some(3)).kind(facet::VariantKind::Struct {
+                                                                        ::facet::Variant::builder().name("StructVariant").discriminant(Some(3)).kind(::facet::VariantKind::Struct {
                                                                                         fields,
                                                                                     }).doc(&[" A struct variant with named fields."]).build()
                                                                     },
                                                                     {
-                                                                        let fields: &'static [facet::Field] =
+                                                                        let fields: &'static [::facet::Field] =
                                                                             &const {
-                                                                                        [facet::Field::builder().name("_0").shape(facet::shape_of(&(|s:
+                                                                                        [::facet::Field::builder().name("_0").shape(::facet::shape_of(&(|s:
                                                                                                                                     __ShadowKitchenSinkEnum_SensitiveTupleVariant<>|
                                                                                                                                 s._0))).offset({
                                                                                                                     builtin # offset_of(__ShadowKitchenSinkEnum_SensitiveTupleVariant<>,
                                                                                                                         _0)
-                                                                                                                }).flags(facet::FieldFlags::EMPTY).attributes(&[]).build()]
+                                                                                                                }).flags(::facet::FieldFlags::EMPTY).attributes(&[]).build()]
                                                                                     };
-                                                                        facet::Variant::builder().name("SensitiveTupleVariant").discriminant(Some(4)).kind(facet::VariantKind::Tuple {
+                                                                        ::facet::Variant::builder().name("SensitiveTupleVariant").discriminant(Some(4)).kind(::facet::VariantKind::Tuple {
                                                                                         fields,
                                                                                     }).doc(&[" A tuple variant marked entirely as sensitive."]).build()
                                                                     },
                                                                     {
-                                                                        let fields: &'static [facet::Field] =
+                                                                        let fields: &'static [::facet::Field] =
                                                                             &const {
-                                                                                        [facet::Field::builder().name("payload").shape(facet::shape_of(&(|s:
+                                                                                        [::facet::Field::builder().name("payload").shape(::facet::shape_of(&(|s:
                                                                                                                                         __ShadowKitchenSinkEnum_StructVariantWithSensitiveField<>|
                                                                                                                                     s.payload))).offset({
                                                                                                                         builtin # offset_of(__ShadowKitchenSinkEnum_StructVariantWithSensitiveField<>,
                                                                                                                             payload)
-                                                                                                                    }).flags(facet::FieldFlags::EMPTY).attributes(&[]).doc(&[" The main data payload, publicly accessible."]).build(),
-                                                                                                facet::Field::builder().name("checksum").shape(facet::shape_of(&(|s:
+                                                                                                                    }).flags(::facet::FieldFlags::EMPTY).attributes(&[]).doc(&[" The main data payload, publicly accessible."]).build(),
+                                                                                                ::facet::Field::builder().name("checksum").shape(::facet::shape_of(&(|s:
                                                                                                                                         __ShadowKitchenSinkEnum_StructVariantWithSensitiveField<>|
                                                                                                                                     s.checksum))).offset({
                                                                                                                         builtin # offset_of(__ShadowKitchenSinkEnum_StructVariantWithSensitiveField<>,
                                                                                                                             checksum)
-                                                                                                                    }).flags(facet::FieldFlags::SENSITIVE).attributes(&[facet::FieldAttribute::Sensitive]).doc(&[" The sensitive checksum for integrity verification."]).build()]
+                                                                                                                    }).flags(::facet::FieldFlags::SENSITIVE).attributes(&[::facet::FieldAttribute::Sensitive]).doc(&[" The sensitive checksum for integrity verification."]).build()]
                                                                                     };
-                                                                        facet::Variant::builder().name("StructVariantWithSensitiveField").discriminant(Some(5)).kind(facet::VariantKind::Struct {
+                                                                        ::facet::Variant::builder().name("StructVariantWithSensitiveField").discriminant(Some(5)).kind(::facet::VariantKind::Struct {
                                                                                         fields,
                                                                                     }).doc(&[" A struct variant containing a sensitive field."]).build()
                                                                     },
                                                                     {
-                                                                        let fields: &'static [facet::Field] =
+                                                                        let fields: &'static [::facet::Field] =
                                                                             &const {
-                                                                                        [facet::Field::builder().name("_0").shape(facet::shape_of(&(|s:
+                                                                                        [::facet::Field::builder().name("_0").shape(::facet::shape_of(&(|s:
                                                                                                                                     __ShadowKitchenSinkEnum_ArbitraryVariant<>|
                                                                                                                                 s._0))).offset({
                                                                                                                     builtin # offset_of(__ShadowKitchenSinkEnum_ArbitraryVariant<>,
                                                                                                                         _0)
-                                                                                                                }).flags(facet::FieldFlags::EMPTY).attributes(&[]).build()]
+                                                                                                                }).flags(::facet::FieldFlags::EMPTY).attributes(&[]).build()]
                                                                                     };
-                                                                        facet::Variant::builder().name("ArbitraryVariant").discriminant(Some(6)).kind(facet::VariantKind::Tuple {
+                                                                        ::facet::Variant::builder().name("ArbitraryVariant").discriminant(Some(6)).kind(::facet::VariantKind::Tuple {
                                                                                         fields,
                                                                                     }).doc(&[" A variant marked as arbitrary, potentially skipped during processing."]).build()
                                                                     },
                                                                     {
-                                                                        let fields: &'static [facet::Field] =
+                                                                        let fields: &'static [::facet::Field] =
                                                                             &const {
-                                                                                        [facet::Field::builder().name("_0").shape(facet::shape_of(&(|s:
+                                                                                        [::facet::Field::builder().name("_0").shape(::facet::shape_of(&(|s:
                                                                                                                                     __ShadowKitchenSinkEnum_NestedEnumVariant<>|
                                                                                                                                 s._0))).offset({
                                                                                                                     builtin # offset_of(__ShadowKitchenSinkEnum_NestedEnumVariant<>,
                                                                                                                         _0)
-                                                                                                                }).flags(facet::FieldFlags::EMPTY).attributes(&[]).build()]
+                                                                                                                }).flags(::facet::FieldFlags::EMPTY).attributes(&[]).build()]
                                                                                     };
-                                                                        facet::Variant::builder().name("NestedEnumVariant").discriminant(Some(7)).kind(facet::VariantKind::Tuple {
+                                                                        ::facet::Variant::builder().name("NestedEnumVariant").discriminant(Some(7)).kind(::facet::VariantKind::Tuple {
                                                                                         fields,
                                                                                     }).doc(&[" A variant containing another enum that derives Facet.",
                                                                                             "",
                                                                                             " The nested `SubEnum` indicates a specific sub-state or option."]).build()
                                                                     }]
-                                                        }).repr(facet::EnumRepr::U8).build())).doc(&[" An enum demonstrating different variant types and attributes."]).build()
+                                                        }).repr(::facet::EnumRepr::U8).build())).doc(&[" An enum demonstrating different variant types and attributes."]).build()
     };
 }
 /// A sub-enum used within `KitchenSinkEnum`.
@@ -1289,10 +1292,10 @@ pub enum SubEnum {
     ArbitraryOption(u8),
 }
 #[used]
-static SUB_ENUM_SHAPE: &'static facet::Shape = <SubEnum as facet::Facet>::SHAPE;
+static SUB_ENUM_SHAPE: &'static ::facet::Shape = <SubEnum as ::facet::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl facet::Facet for SubEnum {
-    const SHAPE: &'static facet::Shape = &const {
+unsafe impl ::facet::Facet for SubEnum {
+    const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
         struct __ShadowSubEnum_OptionB {
             _discriminant: u8,
@@ -1308,10 +1311,10 @@ unsafe impl facet::Facet for SubEnum {
             _discriminant: u8,
             _0: u8,
         }
-        facet::Shape::builder().id(facet::ConstTypeId::of::<Self>()).layout(core::alloc::Layout::new::<Self>()).vtable(&const {
+        ::facet::Shape::builder().id(::facet::ConstTypeId::of::<Self>()).layout(::core::alloc::Layout::new::<Self>()).vtable(&const {
                                                 let mut builder =
                                                     ::facet_core::ValueVTable::builder().type_name(|f, _opts|
-                                                                core::fmt::Write::write_str(f,
+                                                                ::core::fmt::Write::write_str(f,
                                                                     "SubEnum")).drop_in_place(|data|
                                                             unsafe { data.drop_in_place::<Self>() });
                                                 if {
@@ -1619,47 +1622,47 @@ unsafe impl facet::Facet for SubEnum {
                                                                     });
                                                     }
                                                 builder.build()
-                                            }).def(facet::Def::Enum(facet::EnumDef::builder().variants(&const {
-                                                            [facet::Variant::builder().name("OptionA").discriminant(Some(0)).kind(facet::VariantKind::Unit).doc(&[" Option A."]).build(),
+                                            }).def(::facet::Def::Enum(::facet::EnumDef::builder().variants(&const {
+                                                            [::facet::Variant::builder().name("OptionA").discriminant(Some(0)).kind(::facet::VariantKind::Unit).doc(&[" Option A."]).build(),
                                                                     {
-                                                                        let fields: &'static [facet::Field] =
+                                                                        let fields: &'static [::facet::Field] =
                                                                             &const {
-                                                                                        [facet::Field::builder().name("_0").shape(facet::shape_of(&(|s:
+                                                                                        [::facet::Field::builder().name("_0").shape(::facet::shape_of(&(|s:
                                                                                                                                     __ShadowSubEnum_OptionB<>|
                                                                                                                                 s._0))).offset({
                                                                                                                     builtin # offset_of(__ShadowSubEnum_OptionB<>, _0)
-                                                                                                                }).flags(facet::FieldFlags::EMPTY).attributes(&[]).build()]
+                                                                                                                }).flags(::facet::FieldFlags::EMPTY).attributes(&[]).build()]
                                                                                     };
-                                                                        facet::Variant::builder().name("OptionB").discriminant(Some(1)).kind(facet::VariantKind::Tuple {
+                                                                        ::facet::Variant::builder().name("OptionB").discriminant(Some(1)).kind(::facet::VariantKind::Tuple {
                                                                                         fields,
                                                                                     }).doc(&[" Option B with data."]).build()
                                                                     },
                                                                     {
-                                                                        let fields: &'static [facet::Field] =
+                                                                        let fields: &'static [::facet::Field] =
                                                                             &const {
-                                                                                        [facet::Field::builder().name("_0").shape(facet::shape_of(&(|s:
+                                                                                        [::facet::Field::builder().name("_0").shape(::facet::shape_of(&(|s:
                                                                                                                                     __ShadowSubEnum_SensitiveOption<>|
                                                                                                                                 s._0))).offset({
                                                                                                                     builtin # offset_of(__ShadowSubEnum_SensitiveOption<>, _0)
-                                                                                                                }).flags(facet::FieldFlags::EMPTY).attributes(&[]).build()]
+                                                                                                                }).flags(::facet::FieldFlags::EMPTY).attributes(&[]).build()]
                                                                                     };
-                                                                        facet::Variant::builder().name("SensitiveOption").discriminant(Some(2)).kind(facet::VariantKind::Tuple {
+                                                                        ::facet::Variant::builder().name("SensitiveOption").discriminant(Some(2)).kind(::facet::VariantKind::Tuple {
                                                                                         fields,
                                                                                     }).doc(&[" A sensitive option."]).build()
                                                                     },
                                                                     {
-                                                                        let fields: &'static [facet::Field] =
+                                                                        let fields: &'static [::facet::Field] =
                                                                             &const {
-                                                                                        [facet::Field::builder().name("_0").shape(facet::shape_of(&(|s:
+                                                                                        [::facet::Field::builder().name("_0").shape(::facet::shape_of(&(|s:
                                                                                                                                     __ShadowSubEnum_ArbitraryOption<>|
                                                                                                                                 s._0))).offset({
                                                                                                                     builtin # offset_of(__ShadowSubEnum_ArbitraryOption<>, _0)
-                                                                                                                }).flags(facet::FieldFlags::EMPTY).attributes(&[]).build()]
+                                                                                                                }).flags(::facet::FieldFlags::EMPTY).attributes(&[]).build()]
                                                                                     };
-                                                                        facet::Variant::builder().name("ArbitraryOption").discriminant(Some(3)).kind(facet::VariantKind::Tuple {
+                                                                        ::facet::Variant::builder().name("ArbitraryOption").discriminant(Some(3)).kind(::facet::VariantKind::Tuple {
                                                                                         fields,
                                                                                     }).doc(&[" An arbitrary option."]).build()
                                                                     }]
-                                                        }).repr(facet::EnumRepr::U8).build())).doc(&[" A sub-enum used within `KitchenSinkEnum`."]).build()
+                                                        }).repr(::facet::EnumRepr::U8).build())).doc(&[" A sub-enum used within `KitchenSinkEnum`."]).build()
     };
 }

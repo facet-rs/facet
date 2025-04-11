@@ -18,7 +18,7 @@ pub(crate) fn process_struct(parsed: Struct) -> proc_macro::TokenStream {
     let where_clauses;
     let fields = match &parsed.kind {
         StructKind::Struct { clauses, fields } => {
-            kind = "facet::StructKind::Struct";
+            kind = "::facet::StructKind::Struct";
             where_clauses = clauses.as_ref();
             fields
                 .content
@@ -40,7 +40,7 @@ pub(crate) fn process_struct(parsed: Struct) -> proc_macro::TokenStream {
             clauses,
             semi: _,
         } => {
-            kind = "facet::StructKind::TupleStruct";
+            kind = "::facet::StructKind::TupleStruct";
             where_clauses = clauses.as_ref();
             fields
                 .content
@@ -59,7 +59,7 @@ pub(crate) fn process_struct(parsed: Struct) -> proc_macro::TokenStream {
                 .collect::<Vec<String>>()
         }
         StructKind::UnitStruct { clauses, semi: _ } => {
-            kind = "facet::StructKind::Unit";
+            kind = "::facet::StructKind::Unit";
             where_clauses = clauses.as_ref();
             vec![]
         }
@@ -80,18 +80,18 @@ pub(crate) fn process_struct(parsed: Struct) -> proc_macro::TokenStream {
 {static_decl}
 
 #[automatically_derived]
-unsafe impl<{generics_def}> facet::Facet for {struct_name}<{generics_use}> {where_clauses} {{
-    const SHAPE: &'static facet::Shape = &const {{
-        let fields: &'static [facet::Field] = &const {{[{fields}]}};
+unsafe impl<{generics_def}> ::facet::Facet for {struct_name}<{generics_use}> {where_clauses} {{
+    const SHAPE: &'static ::facet::Shape = &const {{
+        let fields: &'static [::facet::Field] = &const {{[{fields}]}};
 
-        facet::Shape::builder()
-            .id(facet::ConstTypeId::of::<Self>())
-            .layout(core::alloc::Layout::new::<Self>())
-            .vtable(facet::value_vtable!(
+        ::facet::Shape::builder()
+            .id(::facet::ConstTypeId::of::<Self>())
+            .layout(::core::alloc::Layout::new::<Self>())
+            .vtable(::facet::value_vtable!(
                 Self,
-                |f, _opts| core::fmt::Write::write_str(f, "{struct_name}")
+                |f, _opts| ::core::fmt::Write::write_str(f, "{struct_name}")
             ))
-            .def(facet::Def::Struct(facet::StructDef::builder()
+            .def(::facet::Def::Struct(::facet::StructDef::builder()
                 .kind({kind})
                 .fields(fields)
                 .build()))

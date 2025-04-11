@@ -70,10 +70,10 @@ pub(crate) fn process_enum(parsed: Enum) -> proc_macro::TokenStream {
                 let maybe_doc = build_maybe_doc(&unit.attributes);
 
                 variant_expressions.push(format!(
-                    "facet::Variant::builder()
+                    "::facet::Variant::builder()
                     .name({variant_name:?})
                     .discriminant(Some({discriminant_value}))
-                    .kind(facet::VariantKind::Unit)
+                    .kind(::facet::VariantKind::Unit)
                     {maybe_doc}
                     .build()",
                 ));
@@ -127,14 +127,14 @@ pub(crate) fn process_enum(parsed: Enum) -> proc_macro::TokenStream {
                 // Add variant expression - now with discriminant
                 variant_expressions.push(format!(
                     "{{
-                        let fields: &'static [facet::Field] = &const {{[
+                        let fields: &'static [::facet::Field] = &const {{[
                             {fields}
                         ]}};
 
-                        facet::Variant::builder()
+                        ::facet::Variant::builder()
                             .name({variant_name:?})
                             .discriminant(Some({discriminant_value}))
-                            .kind(facet::VariantKind::Tuple {{ fields }})
+                            .kind(::facet::VariantKind::Tuple {{ fields }})
                             {maybe_doc}
                             .build()
                     }}",
@@ -188,14 +188,14 @@ pub(crate) fn process_enum(parsed: Enum) -> proc_macro::TokenStream {
                 // Add variant expression - now with discriminant
                 variant_expressions.push(format!(
                     "{{
-                        let fields: &'static [facet::Field] = &const {{[
+                        let fields: &'static [::facet::Field] = &const {{[
                             {fields}
                         ]}};
 
-                        facet::Variant::builder()
+                        ::facet::Variant::builder()
                             .name({variant_name:?})
                             .discriminant(Some({discriminant_value}))
-                            .kind(facet::VariantKind::Struct {{ fields }})
+                            .kind(::facet::VariantKind::Struct {{ fields }})
                             {maybe_doc}
                             .build()
                     }}",
@@ -221,24 +221,24 @@ pub(crate) fn process_enum(parsed: Enum) -> proc_macro::TokenStream {
 {static_decl}
 
 #[automatically_derived]
-unsafe impl<{generics_def}> facet::Facet for {enum_name}<{generics_use}> {where_clauses} {{
-    const SHAPE: &'static facet::Shape = &const {{
+unsafe impl<{generics_def}> ::facet::Facet for {enum_name}<{generics_use}> {where_clauses} {{
+    const SHAPE: &'static ::facet::Shape = &const {{
         // Define all shadow structs at the beginning of the const block
         // to ensure they're in scope for offset_of! macros
         {shadow_structs}
 
-        facet::Shape::builder()
-            .id(facet::ConstTypeId::of::<Self>())
-            .layout(core::alloc::Layout::new::<Self>())
-            .vtable(facet::value_vtable!(
+        ::facet::Shape::builder()
+            .id(::facet::ConstTypeId::of::<Self>())
+            .layout(::core::alloc::Layout::new::<Self>())
+            .vtable(::facet::value_vtable!(
                 Self,
-                |f, _opts| core::fmt::Write::write_str(f, "{enum_name}")
+                |f, _opts| ::core::fmt::Write::write_str(f, "{enum_name}")
             ))
-            .def(facet::Def::Enum(facet::EnumDef::builder()
+            .def(::facet::Def::Enum(::facet::EnumDef::builder()
                 // Use variant expressions that just reference the shadow structs
                 // which are now defined above
                 .variants(&const {{[ {variants} ]}})
-                .repr(facet::EnumRepr::{repr_type})
+                .repr(::facet::EnumRepr::{repr_type})
                 .build()))
             {maybe_container_doc}
             .build()
