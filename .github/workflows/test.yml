@@ -9,7 +9,7 @@ on:
 
 jobs:
   test:
-    runs-on: self-hosted-unknown-linux-gnu-x86_64
+    runs-on: arc-runners
     steps:
       - uses: actions/checkout@v4
 
