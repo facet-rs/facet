@@ -191,7 +191,6 @@ impl<'mem> PokeStruct<'mem> {
     ///
     /// Returns an error if:
     /// - The index is out of bounds
-    /// - The field shapes don't match
     pub unsafe fn unchecked_set(
         &mut self,
         index: usize,
@@ -226,7 +225,6 @@ impl<'mem> PokeStruct<'mem> {
     ///
     /// Returns an error if:
     /// - The field name doesn't exist
-    /// - The field shapes don't match
     pub unsafe fn unchecked_set_by_name(
         &mut self,
         name: &str,
