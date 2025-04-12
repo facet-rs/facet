@@ -301,10 +301,12 @@ pub(crate) fn deserialize_value<'input, 'mem>(
             }
             StackItem::FinishSome { po, some } => {
                 trace!("Finished deserializing \x1b[1;36mSome\x1b[0m");
+                let layout = po.def().t.layout;
                 result = Some(unsafe {
                     po.replace_with_some_opaque(some.assume_init().as_const())
                         .build_in_place()
                 });
+                unsafe { std::alloc::dealloc(some.as_mut_bytes(), layout) };
             }
             StackItem::AfterStructField { index } => {
                 trace!("After processing struct field at index: \x1b[1;33m{index}\x1b[0m");
