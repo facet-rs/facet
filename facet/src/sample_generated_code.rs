@@ -43,9 +43,7 @@ unsafe impl crate::Facet for KitchenSinkStruct {
                     .build(),
                 crate::Field::builder()
                     .name("sensitive_field")
-                    .shape(crate::shape_of(
-                        &(|s: KitchenSinkStruct| s.sensitive_field),
-                    ))
+                    .shape(crate::shape_of(&(|s: KitchenSinkStruct| s.sensitive_field)))
                     .offset({
                         builtin # offset_of(KitchenSinkStruct<>, sensitive_field)
                     })
@@ -785,8 +783,7 @@ pub enum KitchenSinkEnum {
     NestedEnumVariant(SubEnum),
 }
 #[used]
-static KITCHEN_SINK_ENUM_SHAPE: &'static crate::Shape =
-    <KitchenSinkEnum as crate::Facet>::SHAPE;
+static KITCHEN_SINK_ENUM_SHAPE: &'static crate::Shape = <KitchenSinkEnum as crate::Facet>::SHAPE;
 #[automatically_derived]
 unsafe impl crate::Facet for KitchenSinkEnum {
     const SHAPE: &'static crate::Shape = &const {
