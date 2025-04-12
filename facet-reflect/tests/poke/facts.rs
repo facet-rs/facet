@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, collections::HashSet};
 
 use facet::Facet;
-use facet_ansi::{Style, Stylize as _};
+use facet_ansi::{ColorStyle as _, Style, Stylize as _};
 use facet_reflect::{Peek, PokeUninit};
 
 fn check_facts<T>(val1: T, val2: T, expected_facts: HashSet<Fact>)
@@ -37,7 +37,7 @@ where
     let l = Peek::new(&val1);
     let r = Peek::new(&val2);
 
-    let remarkable = Style::new().blue();
+    let remarkable = Style::new().with_blue();
 
     // Format display representation
     if l.as_value().shape().vtable.display.is_some() {

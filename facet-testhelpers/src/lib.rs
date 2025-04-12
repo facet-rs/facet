@@ -1,4 +1,4 @@
-use facet_ansi::{Style, Stylize as _};
+use facet_ansi::{ColorStyle, Style, Stylize};
 use log::{Level, LevelFilter, Log, Metadata, Record};
 use std::io::Write;
 
@@ -10,17 +10,21 @@ impl Log for SimpleLogger {
     }
 
     fn log(&self, record: &Record) {
-        let style = match record.level() {
-            Level::Error => Style::new().red(),
-            Level::Warn => Style::new().yellow(),
-            Level::Info => Style::new().green(),
-            Level::Debug => Style::new().cyan(),
+        // Create style based on log level
+        let level_style = match record.level() {
+            Level::Error => Style::new().with_red(),
+            Level::Warn => Style::new().with_yellow(),
+            Level::Info => Style::new().with_green(),
+            Level::Debug => Style::new().with_cyan(),
             Level::Trace => Style::new().dimmed(),
         };
 
+        // Convert level to styled display
+        let styled_level = record.level().style(level_style);
+
         eprintln!(
             "{} - {}: {}",
-            record.level().style(style),
+            styled_level,
             record.target().blue(),
             record.args()
         );

@@ -3,6 +3,12 @@
 version = 4
 
 [[package]]
+name = "anstyle"
+version = "1.0.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "55cc3b69f167a1ef2e161439aa98aed94e6028e5f9a59be9a6ffb47aef1651f9"
+
+[[package]]
 name = "arraydeque"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -78,6 +84,9 @@ dependencies = [
 [[package]]
 name = "facet-ansi"
 version = "0.1.1"
+dependencies = [
+ "anstyle",
+]
 
 [[package]]
 name = "facet-args"

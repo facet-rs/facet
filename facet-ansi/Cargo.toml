@@ -11,3 +11,4 @@ categories = ["command-line-interface", "text-processing"]
 description = "A library for ANSI terminal formatting and styling, providing utilities to add colors and text effects to terminal output"
 
 [dependencies]
+anstyle = "1.0.10"

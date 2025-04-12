@@ -1,299 +1,224 @@
 use std::fmt::{self, Debug, Display, Formatter};
 
-/// A struct to represent a text style including color and formatting.
-#[derive(Default, Clone, Copy)]
-pub struct Style {
-    color: Option<Color>,
-    bold: bool,
-    underline: bool,
-    dimmed: bool,
+// Re-export Style from anstyle
+pub use anstyle::Style;
+
+/// Provides easy access to common styles
+pub mod styles {
+    use super::*;
+
+    /// Get a red style
+    pub fn red() -> Style {
+        Style::new().with_red()
+    }
+
+    /// Get a green style
+    pub fn green() -> Style {
+        Style::new().with_green()
+    }
+
+    /// Get a blue style
+    pub fn blue() -> Style {
+        Style::new().with_blue()
+    }
+
+    /// Get a yellow style
+    pub fn yellow() -> Style {
+        Style::new().with_yellow()
+    }
+
+    /// Get a magenta style
+    pub fn magenta() -> Style {
+        Style::new().with_magenta()
+    }
+
+    /// Get a cyan style
+    pub fn cyan() -> Style {
+        Style::new().with_cyan()
+    }
+
+    /// Get a white style
+    pub fn white() -> Style {
+        Style::new().with_white()
+    }
+
+    /// Get a black style
+    pub fn black() -> Style {
+        Style::new().with_black()
+    }
+
+    /// Get a bright red style
+    pub fn bright_red() -> Style {
+        Style::new().with_bright_red()
+    }
+
+    /// Get a bright green style
+    pub fn bright_green() -> Style {
+        Style::new().with_bright_green()
+    }
+
+    /// Get a bright blue style
+    pub fn bright_blue() -> Style {
+        Style::new().with_bright_blue()
+    }
+
+    /// Get a bright yellow style
+    pub fn bright_yellow() -> Style {
+        Style::new().with_bright_yellow()
+    }
+
+    /// Get a bright magenta style
+    pub fn bright_magenta() -> Style {
+        Style::new().with_bright_magenta()
+    }
+
+    /// Get a bright cyan style
+    pub fn bright_cyan() -> Style {
+        Style::new().with_bright_cyan()
+    }
+
+    /// Get a bright white style
+    pub fn bright_white() -> Style {
+        Style::new().with_bright_white()
+    }
+
+    /// Get a bold style
+    pub fn bold() -> Style {
+        Style::new().bold()
+    }
+
+    /// Get an underlined style
+    pub fn underline() -> Style {
+        Style::new().underline()
+    }
+
+    /// Get a dimmed style
+    pub fn dimmed() -> Style {
+        Style::new().dimmed()
+    }
 }
 
-/// Available colors for text styling.
-#[derive(Clone, Copy)]
-pub enum Color {
-    Red,
-    Green,
-    Blue,
-    Yellow,
-    Magenta,
-    Cyan,
-    White,
-    Black,
-    BrightRed,
-    BrightGreen,
-    BrightBlue,
-    BrightYellow,
-    BrightMagenta,
-    BrightCyan,
-    BrightWhite,
+/// Extensions for creating styles with common colors
+pub trait ColorStyle {
+    /// Create a new style with red foreground color
+    fn with_red(self) -> Style;
+    /// Create a new style with green foreground color
+    fn with_green(self) -> Style;
+    /// Create a new style with blue foreground color
+    fn with_blue(self) -> Style;
+    /// Create a new style with yellow foreground color
+    fn with_yellow(self) -> Style;
+    /// Create a new style with magenta foreground color
+    fn with_magenta(self) -> Style;
+    /// Create a new style with cyan foreground color
+    fn with_cyan(self) -> Style;
+    /// Create a new style with white foreground color
+    fn with_white(self) -> Style;
+    /// Create a new style with black foreground color
+    fn with_black(self) -> Style;
+    /// Create a new style with bright red foreground color
+    fn with_bright_red(self) -> Style;
+    /// Create a new style with bright green foreground color
+    fn with_bright_green(self) -> Style;
+    /// Create a new style with bright blue foreground color
+    fn with_bright_blue(self) -> Style;
+    /// Create a new style with bright yellow foreground color
+    fn with_bright_yellow(self) -> Style;
+    /// Create a new style with bright magenta foreground color
+    fn with_bright_magenta(self) -> Style;
+    /// Create a new style with bright cyan foreground color
+    fn with_bright_cyan(self) -> Style;
+    /// Create a new style with bright white foreground color
+    fn with_bright_white(self) -> Style;
 }
 
-impl Style {
-    /// Create a new style with no color or formatting.
-    pub fn new() -> Self {
-        Style {
-            color: None,
-            bold: false,
-            underline: false,
-            dimmed: false,
-        }
+impl ColorStyle for Style {
+    fn with_red(self) -> Style {
+        self.fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::Red)))
     }
 
-    /// Set the style color to red.
-    pub fn red(self) -> Self {
-        Style {
-            color: Some(Color::Red),
-            bold: self.bold,
-            underline: self.underline,
-            dimmed: self.dimmed,
-        }
+    fn with_green(self) -> Style {
+        self.fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::Green)))
     }
 
-    /// Set the style color to green.
-    pub fn green(self) -> Self {
-        Style {
-            color: Some(Color::Green),
-            bold: self.bold,
-            underline: self.underline,
-            dimmed: self.dimmed,
-        }
+    fn with_blue(self) -> Style {
+        self.fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::Blue)))
     }
 
-    /// Set the style color to blue.
-    pub fn blue(self) -> Self {
-        Style {
-            color: Some(Color::Blue),
-            bold: self.bold,
-            underline: self.underline,
-            dimmed: self.dimmed,
-        }
+    fn with_yellow(self) -> Style {
+        self.fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::Yellow)))
     }
 
-    /// Set the style color to yellow.
-    pub fn yellow(self) -> Self {
-        Style {
-            color: Some(Color::Yellow),
-            bold: self.bold,
-            underline: self.underline,
-            dimmed: self.dimmed,
-        }
+    fn with_magenta(self) -> Style {
+        self.fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::Magenta)))
     }
 
-    /// Set the style color to magenta.
-    pub fn magenta(self) -> Self {
-        Style {
-            color: Some(Color::Magenta),
-            bold: self.bold,
-            underline: self.underline,
-            dimmed: self.dimmed,
-        }
+    fn with_cyan(self) -> Style {
+        self.fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::Cyan)))
     }
 
-    /// Set the style color to cyan.
-    pub fn cyan(self) -> Self {
-        Style {
-            color: Some(Color::Cyan),
-            bold: self.bold,
-            underline: self.underline,
-            dimmed: self.dimmed,
-        }
+    fn with_white(self) -> Style {
+        self.fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::White)))
     }
 
-    /// Set the style color to white.
-    pub fn white(self) -> Self {
-        Style {
-            color: Some(Color::White),
-            bold: self.bold,
-            underline: self.underline,
-            dimmed: self.dimmed,
-        }
+    fn with_black(self) -> Style {
+        self.fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::Black)))
     }
 
-    /// Set the style color to black.
-    pub fn black(self) -> Self {
-        Style {
-            color: Some(Color::Black),
-            bold: self.bold,
-            underline: self.underline,
-            dimmed: self.dimmed,
-        }
+    fn with_bright_red(self) -> Style {
+        self.fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::BrightRed)))
     }
 
-    /// Set the style color to bright red.
-    pub fn bright_red(self) -> Self {
-        Style {
-            color: Some(Color::BrightRed),
-            bold: self.bold,
-            underline: self.underline,
-            dimmed: self.dimmed,
-        }
+    fn with_bright_green(self) -> Style {
+        self.fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::BrightGreen)))
     }
 
-    /// Set the style color to bright green.
-    pub fn bright_green(self) -> Self {
-        Style {
-            color: Some(Color::BrightGreen),
-            bold: self.bold,
-            underline: self.underline,
-            dimmed: self.dimmed,
-        }
+    fn with_bright_blue(self) -> Style {
+        self.fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::BrightBlue)))
     }
 
-    /// Set the style color to bright blue.
-    pub fn bright_blue(self) -> Self {
-        Style {
-            color: Some(Color::BrightBlue),
-            bold: self.bold,
-            underline: self.underline,
-            dimmed: self.dimmed,
-        }
+    fn with_bright_yellow(self) -> Style {
+        self.fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::BrightYellow)))
     }
 
-    /// Set the style color to bright yellow.
-    pub fn bright_yellow(self) -> Self {
-        Style {
-            color: Some(Color::BrightYellow),
-            bold: self.bold,
-            underline: self.underline,
-            dimmed: self.dimmed,
-        }
+    fn with_bright_magenta(self) -> Style {
+        self.fg_color(Some(anstyle::Color::Ansi(
+            anstyle::AnsiColor::BrightMagenta,
+        )))
     }
 
-    /// Set the style color to bright magenta.
-    pub fn bright_magenta(self) -> Self {
-        Style {
-            color: Some(Color::BrightMagenta),
-            bold: self.bold,
-            underline: self.underline,
-            dimmed: self.dimmed,
-        }
+    fn with_bright_cyan(self) -> Style {
+        self.fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::BrightCyan)))
     }
 
-    /// Set the style color to bright cyan.
-    pub fn bright_cyan(self) -> Self {
-        Style {
-            color: Some(Color::BrightCyan),
-            bold: self.bold,
-            underline: self.underline,
-            dimmed: self.dimmed,
-        }
-    }
-
-    /// Set the style color to bright white.
-    pub fn bright_white(self) -> Self {
-        Style {
-            color: Some(Color::BrightWhite),
-            bold: self.bold,
-            underline: self.underline,
-            dimmed: self.dimmed,
-        }
-    }
-
-    /// Set the text style to bold.
-    pub fn bold(self) -> Self {
-        Style {
-            color: self.color,
-            bold: true,
-            underline: self.underline,
-            dimmed: self.dimmed,
-        }
-    }
-
-    /// Set the text style to underlined.
-    pub fn underline(self) -> Self {
-        Style {
-            color: self.color,
-            bold: self.bold,
-            underline: true,
-            dimmed: self.dimmed,
-        }
-    }
-
-    /// Set the text style to dimmed.
-    pub fn dimmed(self) -> Self {
-        Style {
-            color: self.color,
-            bold: self.bold,
-            underline: self.underline,
-            dimmed: true,
-        }
+    fn with_bright_white(self) -> Style {
+        self.fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::BrightWhite)))
     }
 }
 
 /// A struct that wraps a value and its style.
-pub struct StyledDisplay<T> {
+pub struct Styled<T> {
     value: T,
     style: Style,
 }
 
-impl Color {
-    fn ansi_code(&self) -> &'static str {
-        match self {
-            Color::Red => "\x1b[31m",
-            Color::Green => "\x1b[32m",
-            Color::Blue => "\x1b[34m",
-            Color::Yellow => "\x1b[33m",
-            Color::Magenta => "\x1b[35m",
-            Color::Cyan => "\x1b[36m",
-            Color::White => "\x1b[37m",
-            Color::Black => "\x1b[30m",
-            Color::BrightRed => "\x1b[91m",
-            Color::BrightGreen => "\x1b[92m",
-            Color::BrightBlue => "\x1b[94m",
-            Color::BrightYellow => "\x1b[93m",
-            Color::BrightMagenta => "\x1b[95m",
-            Color::BrightCyan => "\x1b[96m",
-            Color::BrightWhite => "\x1b[97m",
-        }
-    }
-}
-
-impl Style {
-    // Helper method to generate formatting codes
-    fn format_codes(&self) -> String {
-        let mut format_codes = String::new();
-
-        if self.bold {
-            format_codes.push_str("\x1b[1m");
-        }
-
-        if self.underline {
-            format_codes.push_str("\x1b[4m");
-        }
-
-        if self.dimmed {
-            format_codes.push_str("\x1b[2m");
-        }
-
-        if let Some(color) = self.color {
-            format_codes.push_str(color.ansi_code());
-        }
-
-        format_codes
-    }
-}
-
-impl<T: Display> Display for StyledDisplay<T> {
+impl<T: Display> Display for Styled<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let format_codes = self.style.format_codes();
-
-        if format_codes.is_empty() {
+        if self.style == Style::new() {
             write!(f, "{}", self.value)
         } else {
-            write!(f, "{}{}\x1b[0m", format_codes, self.value)
+            // anstyle's Style implements Display which handles all the formatting
+            write!(f, "{}{}{}", self.style, self.value, anstyle::Reset)
         }
     }
 }
 
-impl<T: Debug> Debug for StyledDisplay<T> {
+impl<T: Debug> Debug for Styled<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let format_codes = self.style.format_codes();
-
-        if format_codes.is_empty() {
+        if self.style == Style::new() {
             write!(f, "{:?}", self.value)
         } else {
-            write!(f, "{}{:?}\x1b[0m", format_codes, self.value)
+            write!(f, "{}{:?}{}", self.style, self.value, anstyle::Reset)
         }
     }
 }
@@ -301,229 +226,175 @@ impl<T: Debug> Debug for StyledDisplay<T> {
 /// Extension trait for styling any Display value.
 pub trait Stylize {
     /// Apply a style to a value.
-    fn style(self, style: Style) -> StyledDisplay<Self>
+    fn style(self, style: Style) -> Styled<Self>
     where
         Self: Sized;
 
     /// Apply red color style to a value.
-    fn red(self) -> StyledDisplay<Self>
+    fn red(self) -> Styled<Self>
     where
         Self: Sized;
 
     /// Apply green color style to a value.
-    fn green(self) -> StyledDisplay<Self>
+    fn green(self) -> Styled<Self>
     where
         Self: Sized;
 
     /// Apply blue color style to a value.
-    fn blue(self) -> StyledDisplay<Self>
+    fn blue(self) -> Styled<Self>
     where
         Self: Sized;
 
     /// Apply yellow color style to a value.
-    fn yellow(self) -> StyledDisplay<Self>
+    fn yellow(self) -> Styled<Self>
     where
         Self: Sized;
 
     /// Apply magenta color style to a value.
-    fn magenta(self) -> StyledDisplay<Self>
+    fn magenta(self) -> Styled<Self>
     where
         Self: Sized;
 
     /// Apply cyan color style to a value.
-    fn cyan(self) -> StyledDisplay<Self>
+    fn cyan(self) -> Styled<Self>
     where
         Self: Sized;
 
     /// Apply white color style to a value.
-    fn white(self) -> StyledDisplay<Self>
+    fn white(self) -> Styled<Self>
     where
         Self: Sized;
 
     /// Apply black color style to a value.
-    fn black(self) -> StyledDisplay<Self>
+    fn black(self) -> Styled<Self>
     where
         Self: Sized;
 
     /// Apply bright red color style to a value.
-    fn bright_red(self) -> StyledDisplay<Self>
+    fn bright_red(self) -> Styled<Self>
     where
         Self: Sized;
 
     /// Apply bright green color style to a value.
-    fn bright_green(self) -> StyledDisplay<Self>
+    fn bright_green(self) -> Styled<Self>
     where
         Self: Sized;
 
     /// Apply bright blue color style to a value.
-    fn bright_blue(self) -> StyledDisplay<Self>
+    fn bright_blue(self) -> Styled<Self>
     where
         Self: Sized;
 
     /// Apply bright yellow color style to a value.
-    fn bright_yellow(self) -> StyledDisplay<Self>
+    fn bright_yellow(self) -> Styled<Self>
     where
         Self: Sized;
 
     /// Apply bright magenta color style to a value.
-    fn bright_magenta(self) -> StyledDisplay<Self>
+    fn bright_magenta(self) -> Styled<Self>
     where
         Self: Sized;
 
     /// Apply bright cyan color style to a value.
-    fn bright_cyan(self) -> StyledDisplay<Self>
+    fn bright_cyan(self) -> Styled<Self>
     where
         Self: Sized;
 
     /// Apply bright white color style to a value.
-    fn bright_white(self) -> StyledDisplay<Self>
+    fn bright_white(self) -> Styled<Self>
     where
         Self: Sized;
 
     /// Apply bold style to a value.
-    fn bold(self) -> StyledDisplay<Self>
+    fn bold(self) -> Styled<Self>
     where
         Self: Sized;
 
     /// Apply underline style to a value.
-    fn underline(self) -> StyledDisplay<Self>
+    fn underline(self) -> Styled<Self>
     where
         Self: Sized;
 
     /// Apply dimmed style to a value.
-    fn dimmed(self) -> StyledDisplay<Self>
+    fn dimmed(self) -> Styled<Self>
     where
         Self: Sized;
 }
 
 impl<T: Display> Stylize for T {
-    fn style(self, style: Style) -> StyledDisplay<Self> {
-        StyledDisplay { value: self, style }
+    fn style(self, style: Style) -> Styled<Self> {
+        Styled { value: self, style }
     }
 
-    fn red(self) -> StyledDisplay<Self> {
-        StyledDisplay {
-            value: self,
-            style: Style::new().red(),
-        }
+    fn red(self) -> Styled<Self> {
+        self.style(Style::new().with_red())
     }
 
-    fn green(self) -> StyledDisplay<Self> {
-        StyledDisplay {
-            value: self,
-            style: Style::new().green(),
-        }
+    fn green(self) -> Styled<Self> {
+        self.style(Style::new().with_green())
     }
 
-    fn blue(self) -> StyledDisplay<Self> {
-        StyledDisplay {
-            value: self,
-            style: Style::new().blue(),
-        }
+    fn blue(self) -> Styled<Self> {
+        self.style(Style::new().with_blue())
     }
 
-    fn yellow(self) -> StyledDisplay<Self> {
-        StyledDisplay {
-            value: self,
-            style: Style::new().yellow(),
-        }
+    fn yellow(self) -> Styled<Self> {
+        self.style(Style::new().with_yellow())
     }
 
-    fn magenta(self) -> StyledDisplay<Self> {
-        StyledDisplay {
-            value: self,
-            style: Style::new().magenta(),
-        }
+    fn magenta(self) -> Styled<Self> {
+        self.style(Style::new().with_magenta())
     }
 
-    fn cyan(self) -> StyledDisplay<Self> {
-        StyledDisplay {
-            value: self,
-            style: Style::new().cyan(),
-        }
+    fn cyan(self) -> Styled<Self> {
+        self.style(Style::new().with_cyan())
     }
 
-    fn white(self) -> StyledDisplay<Self> {
-        StyledDisplay {
-            value: self,
-            style: Style::new().white(),
-        }
+    fn white(self) -> Styled<Self> {
+        self.style(Style::new().with_white())
     }
 
-    fn black(self) -> StyledDisplay<Self> {
-        StyledDisplay {
-            value: self,
-            style: Style::new().black(),
-        }
+    fn black(self) -> Styled<Self> {
+        self.style(Style::new().with_black())
     }
 
-    fn bright_red(self) -> StyledDisplay<Self> {
-        StyledDisplay {
-            value: self,
-            style: Style::new().bright_red(),
-        }
+    fn bright_red(self) -> Styled<Self> {
+        self.style(Style::new().with_bright_red())
     }
 
-    fn bright_green(self) -> StyledDisplay<Self> {
-        StyledDisplay {
-            value: self,
-            style: Style::new().bright_green(),
-        }
+    fn bright_green(self) -> Styled<Self> {
+        self.style(Style::new().with_bright_green())
     }
 
-    fn bright_blue(self) -> StyledDisplay<Self> {
-        StyledDisplay {
-            value: self,
-            style: Style::new().bright_blue(),
-        }
+    fn bright_blue(self) -> Styled<Self> {
+        self.style(Style::new().with_bright_blue())
     }
 
-    fn bright_yellow(self) -> StyledDisplay<Self> {
-        StyledDisplay {
-            value: self,
-            style: Style::new().bright_yellow(),
-        }
+    fn bright_yellow(self) -> Styled<Self> {
+        self.style(Style::new().with_bright_yellow())
     }
 
-    fn bright_magenta(self) -> StyledDisplay<Self> {
-        StyledDisplay {
-            value: self,
-            style: Style::new().bright_magenta(),
-        }
+    fn bright_magenta(self) -> Styled<Self> {
+        self.style(Style::new().with_bright_magenta())
     }
 
-    fn bright_cyan(self) -> StyledDisplay<Self> {
-        StyledDisplay {
-            value: self,
-            style: Style::new().bright_cyan(),
-        }
+    fn bright_cyan(self) -> Styled<Self> {
+        self.style(Style::new().with_bright_cyan())
     }
 
-    fn bright_white(self) -> StyledDisplay<Self> {
-        StyledDisplay {
-            value: self,
-            style: Style::new().bright_white(),
-        }
+    fn bright_white(self) -> Styled<Self> {
+        self.style(Style::new().with_bright_white())
     }
 
-    fn bold(self) -> StyledDisplay<Self> {
-        StyledDisplay {
-            value: self,
-            style: Style::new().bold(),
-        }
+    fn bold(self) -> Styled<Self> {
+        self.style(Style::new().bold())
     }
 
-    fn underline(self) -> StyledDisplay<Self> {
-        StyledDisplay {
-            value: self,
-            style: Style::new().underline(),
-        }
+    fn underline(self) -> Styled<Self> {
+        self.style(Style::new().underline())
     }
 
-    fn dimmed(self) -> StyledDisplay<Self> {
-        StyledDisplay {
-            value: self,
-            style: Style::new().dimmed(),
-        }
+    fn dimmed(self) -> Styled<Self> {
+        self.style(Style::new().dimmed())
     }
 }
