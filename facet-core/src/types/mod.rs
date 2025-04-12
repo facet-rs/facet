@@ -213,127 +213,6 @@ impl Shape {
         })
     }
 }
-/// Fields for map types
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-#[repr(C)]
-#[non_exhaustive]
-pub struct MapDef {
-    /// vtable for interacting with the map
-    pub vtable: &'static MapVTable,
-    /// shape of the keys in the map
-    pub k: &'static Shape,
-    /// shape of the values in the map
-    pub v: &'static Shape,
-}
-
-impl MapDef {
-    /// Returns a builder for MapDef
-    pub const fn builder() -> MapDefBuilder {
-        MapDefBuilder::new()
-    }
-}
-
-/// Builder for MapDef
-pub struct MapDefBuilder {
-    vtable: Option<&'static MapVTable>,
-    k: Option<&'static Shape>,
-    v: Option<&'static Shape>,
-}
-
-impl MapDefBuilder {
-    /// Creates a new MapDefBuilder
-    #[allow(clippy::new_without_default)]
-    pub const fn new() -> Self {
-        Self {
-            vtable: None,
-            k: None,
-            v: None,
-        }
-    }
-
-    /// Sets the vtable for the MapDef
-    pub const fn vtable(mut self, vtable: &'static MapVTable) -> Self {
-        self.vtable = Some(vtable);
-        self
-    }
-
-    /// Sets the key shape for the MapDef
-    pub const fn k(mut self, k: &'static Shape) -> Self {
-        self.k = Some(k);
-        self
-    }
-
-    /// Sets the value shape for the MapDef
-    pub const fn v(mut self, v: &'static Shape) -> Self {
-        self.v = Some(v);
-        self
-    }
-
-    /// Builds the MapDef
-    pub const fn build(self) -> MapDef {
-        MapDef {
-            vtable: self.vtable.unwrap(),
-            k: self.k.unwrap(),
-            v: self.v.unwrap(),
-        }
-    }
-}
-
-/// Fields for list types
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-#[repr(C)]
-#[non_exhaustive]
-pub struct ListDef {
-    /// vtable for interacting with the list
-    pub vtable: &'static ListVTable,
-    /// shape of the items in the list
-    pub t: &'static Shape,
-}
-
-impl ListDef {
-    /// Returns a builder for ListDef
-    pub const fn builder() -> ListDefBuilder {
-        ListDefBuilder::new()
-    }
-}
-
-/// Builder for ListDef
-pub struct ListDefBuilder {
-    vtable: Option<&'static ListVTable>,
-    t: Option<&'static Shape>,
-}
-
-impl ListDefBuilder {
-    /// Creates a new ListDefBuilder
-    #[allow(clippy::new_without_default)]
-    pub const fn new() -> Self {
-        Self {
-            vtable: None,
-            t: None,
-        }
-    }
-
-    /// Sets the vtable for the ListDef
-    pub const fn vtable(mut self, vtable: &'static ListVTable) -> Self {
-        self.vtable = Some(vtable);
-        self
-    }
-
-    /// Sets the item shape for the ListDef
-    pub const fn t(mut self, t: &'static Shape) -> Self {
-        self.t = Some(t);
-        self
-    }
-
-    /// Builds the ListDef
-    pub const fn build(self) -> ListDef {
-        ListDef {
-            vtable: self.vtable.unwrap(),
-            t: self.t.unwrap(),
-        }
-    }
-}
-
 /// The definition of a shape: is it more like a struct, a map, a list?
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
@@ -370,6 +249,6 @@ pub enum Def {
     /// e.g. `Option<T>`
     Option(OptionDef),
 
-    /// Smart pointers, like Arc<T>, Rc<T>, etc.
+    /// Smart pointers, like `Arc<T>`, `Rc<T>`, etc.
     SmartPointer(SmartPointerDef),
 }
