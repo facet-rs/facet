@@ -189,10 +189,11 @@ fn copy_cargo_expand_output(has_diffs: &mut bool, opts: &Options) {
         format!("{}\n", expanded_code)
     };
 
-    let expanded_code = format!(
-        "{}\n#![allow(warnings)]\nextern crate self as facet;\nextern crate self as facet_core;\n{}",
-        doc_comments, expanded_code
-    );
+    // Replace any ::facet:: references with crate::
+    let expanded_code = expanded_code.replace("::facet::", "crate::");
+    let expanded_code = expanded_code.replace("use facet::", "use crate::");
+
+    let expanded_code = format!("{}\n#![allow(warnings)]\n{}", doc_comments, expanded_code);
 
     let expanded_code = expanded_code.replace(
         "::impls::_core::marker::PhantomData",
