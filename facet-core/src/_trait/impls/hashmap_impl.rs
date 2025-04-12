@@ -84,19 +84,15 @@ where
                     builder = builder
                         .clone_into(|src, dst| unsafe { dst.put(src.as_ref::<HashMap<K, V>>()) });
 
-                    if K::SHAPE.vtable.eq.is_some() && V::SHAPE.vtable.eq.is_some() {
+                    if V::SHAPE.vtable.eq.is_some() {
                         builder = builder.eq(|a, b| unsafe {
                             let a = a.as_ref::<HashMap<K, V>>();
                             let b = b.as_ref::<HashMap<K, V>>();
-                            let k_eq = K::SHAPE.vtable.eq.unwrap_unchecked();
                             let v_eq = V::SHAPE.vtable.eq.unwrap_unchecked();
                             a.len() == b.len()
                                 && a.iter().all(|(key_a, val_a)| {
                                     b.get(key_a).is_some_and(|val_b| {
-                                        (k_eq)(
-                                            OpaqueConst::new(key_a as *const _),
-                                            OpaqueConst::new(key_a as *const _),
-                                        ) && (v_eq)(
+                                        (v_eq)(
                                             OpaqueConst::new(val_a as *const _),
                                             OpaqueConst::new(val_b as *const _),
                                         )
