@@ -18,7 +18,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Run code quality checks
+      - name: ✨ Run code quality checks
         shell: bash
         run: |
           just codegen-check
@@ -35,7 +35,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Run tests
+      - name: ✨ Run tests
         shell: bash
         run: |
           just test
@@ -50,7 +50,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Run nostd tests
+      - name: ✨ Run nostd tests
         shell: bash
         run: |
           just nostd
@@ -65,7 +65,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Run clippy
+      - name: ✨ Run clippy
         shell: bash
         run: |
           just clippy
@@ -80,7 +80,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Run doc tests
+      - name: ✨ Run doc tests
         shell: bash
         run: |
           just doc-tests
@@ -95,7 +95,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Run miri
+      - name: ✨ Run miri
         shell: bash
         run: |
           export CI=true
