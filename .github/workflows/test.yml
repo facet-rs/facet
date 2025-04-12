@@ -21,9 +21,7 @@ jobs:
       - name: ✨ Run code quality checks
         shell: bash
         run: |
-          just codegen-check
-          just rustfmt
-          just absolve
+          just code-quality
 
   test:
     runs-on: depot-ubuntu-24.04-arm-16

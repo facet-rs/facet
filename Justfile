@@ -82,11 +82,12 @@ codegen *args:
     source .envrc
     cmd_group "cargo run -p facet-codegen -- {{args}}"
 
-rustfmt-fix:
+code-quality:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
-    echo -e "\033[1;34m📝 Fixing code formatting...\033[0m"
-    cmd_group "cargo fmt --all"
+    cmd_group "just codegen --check"
+    cmd_group "cargo fmt --check --all"
+    cmd_group "just absolve"
 
 miri *args:
     #!/usr/bin/env -S bash -euxo pipefail
