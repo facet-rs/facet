@@ -23,15 +23,34 @@ veryquickcheck:
 nostd:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
-    echo -e "\033[1;33m🧪 Checking without std...\033[0m"
+
+    # Define GitHub Actions group functions
+    start_group() {
+        if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+            echo "::group::$1"
+        fi
+        echo -e "\033[1;33m🧪 $1\033[0m"
+    }
+
+    end_group() {
+        if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+            echo "::endgroup::"
+        fi
+    }
+
+    start_group "Checking without std..."
     export CARGO_TARGET_DIR=target/nostd
     cargo check --no-default-features -p facet-core
     cargo check --no-default-features -p facet
     cargo check --no-default-features -p facet-reflect
+    end_group
+
+    start_group "Checking with alloc but without std..."
     export CARGO_TARGET_DIR=target/nostd-w-alloc
     cargo check --no-default-features --features alloc -p facet-core
     cargo check --no-default-features --features alloc -p facet
     cargo check --no-default-features --features alloc -p facet-reflect
+    end_group
 
 ci:
     #!/usr/bin/env -S bash -euo pipefail
