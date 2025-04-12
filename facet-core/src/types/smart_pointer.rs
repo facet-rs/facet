@@ -140,12 +140,12 @@ bitflags! {
 }
 
 /// Tries to upgrade the weak pointer to a strong one.
-pub type TryUpgradeFn = for<'ptr> unsafe fn(opaque: OpaqueConst<'ptr>) -> Option<OpaqueConst<'ptr>>;
+pub type TryUpgradeFn = for<'ptr> unsafe fn(opaque: Opaque<'ptr>) -> Option<Opaque<'ptr>>;
 
 /// Downgrades a strong pointer to a weak one.
 ///
 /// Only strong pointers can be downgraded (like [`std::sync::Arc`] or [`std::rc::Rc`]).
-pub type DowngradeFn = for<'ptr> unsafe fn(opaque: OpaqueConst<'ptr>) -> OpaqueConst<'ptr>;
+pub type DowngradeFn = for<'ptr> unsafe fn(opaque: Opaque<'ptr>) -> Opaque<'ptr>;
 
 /// Tries to obtain a reference to the inner value of the smart pointer.
 ///
@@ -171,16 +171,16 @@ pub type NewIntoFn =
 /// Type-erased result of locking a mutex-like smart pointer
 pub struct LockResult<'ptr> {
     /// The data that was locked
-    data: OpaqueConst<'ptr>,
+    data: Opaque<'ptr>,
     /// The guard that protects the data
     guard: OpaqueConst<'ptr>,
     /// The vtable for the guard
-    guard_vtable: &'static GuardVTable,
+    guard_vtable: &'static LockGuardVTable,
 }
 
 impl<'ptr> LockResult<'ptr> {
     /// Returns a reference to the locked data
-    pub fn data(&self) -> &OpaqueConst<'ptr> {
+    pub fn data(&self) -> &Opaque<'ptr> {
         &self.data
     }
 }
@@ -194,7 +194,7 @@ impl Drop for LockResult<'_> {
 }
 
 /// Functions for manipulating a guard
-pub struct GuardVTable {
+pub struct LockGuardVTable {
     /// Drops the guard in place
     pub drop_in_place: for<'ptr> unsafe fn(guard: OpaqueConst<'ptr>),
 }

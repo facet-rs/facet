@@ -9,50 +9,6 @@ pub struct PeekValue<'mem> {
     data: OpaqueConst<'mem>,
     shape: &'static Shape,
 }
-
-impl core::fmt::Display for PeekValue<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if let Some(display_fn) = self.vtable().display {
-            unsafe { display_fn(self.data, f) }
-        } else {
-            write!(f, "⟨{}⟩", self.shape)
-        }
-    }
-}
-
-impl core::fmt::Debug for PeekValue<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if let Some(debug_fn) = self.vtable().debug {
-            unsafe { debug_fn(self.data, f) }
-        } else {
-            write!(f, "⟨{}⟩", self.shape)
-        }
-    }
-}
-
-impl core::cmp::PartialEq for PeekValue<'_> {
-    fn eq(&self, other: &Self) -> bool {
-        if self.shape != other.shape {
-            return false;
-        }
-        let eq_fn = match self.shape.vtable.eq {
-            Some(eq_fn) => eq_fn,
-            None => return false,
-        };
-        unsafe { eq_fn(self.data, other.data) }
-    }
-}
-
-impl core::cmp::PartialOrd for PeekValue<'_> {
-    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-        if self.shape != other.shape {
-            return None;
-        }
-        let partial_ord_fn = self.shape.vtable.partial_ord?;
-        unsafe { partial_ord_fn(self.data, other.data) }
-    }
-}
-
 impl<'mem> PeekValue<'mem> {
     /// Creates a new `PeekValue` instance.
     ///
@@ -257,5 +213,48 @@ impl<'mem> PeekValue<'mem> {
     /// Get the scalar type if set.
     pub fn scalar_type(&self) -> Option<ScalarType> {
         ScalarType::try_from_shape(self.shape)
+    }
+}
+
+impl core::fmt::Display for PeekValue<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if let Some(display_fn) = self.vtable().display {
+            unsafe { display_fn(self.data, f) }
+        } else {
+            write!(f, "⟨{}⟩", self.shape)
+        }
+    }
+}
+
+impl core::fmt::Debug for PeekValue<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if let Some(debug_fn) = self.vtable().debug {
+            unsafe { debug_fn(self.data, f) }
+        } else {
+            write!(f, "⟨{}⟩", self.shape)
+        }
+    }
+}
+
+impl core::cmp::PartialEq for PeekValue<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        if self.shape != other.shape {
+            return false;
+        }
+        let eq_fn = match self.shape.vtable.eq {
+            Some(eq_fn) => eq_fn,
+            None => return false,
+        };
+        unsafe { eq_fn(self.data, other.data) }
+    }
+}
+
+impl core::cmp::PartialOrd for PeekValue<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        if self.shape != other.shape {
+            return None;
+        }
+        let partial_ord_fn = self.shape.vtable.partial_ord?;
+        unsafe { partial_ord_fn(self.data, other.data) }
     }
 }

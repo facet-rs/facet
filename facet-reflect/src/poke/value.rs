@@ -200,6 +200,15 @@ impl core::fmt::Debug for PokeValue<'_> {
 }
 
 impl<'mem> PokeValue<'mem> {
+    /// Creates a value write-proxy from its essential components
+    ///
+    /// # Safety
+    ///
+    /// The data must be a valid, initialized instance of the type described by shape.
+    pub unsafe fn unchecked_new(data: Opaque<'mem>, shape: &'static Shape) -> Self {
+        Self { data, shape }
+    }
+
     #[inline(always)]
     /// Coerce back into a `PokeValue`
     pub fn into_value(self) -> Self {
