@@ -55,3 +55,32 @@ fn test_unit_struct() {
         },
     );
 }
+
+#[test]
+fn test_nested_unit_struct() {
+    #[derive(Debug, Facet, PartialEq)]
+    struct Root {
+        value: i32,
+        unit: NestedUnit,
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct NestedUnit(Unit);
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Unit(i32);
+
+    assert_eq!(
+        facet_toml::from_str::<Root>(
+            r#"
+            value = 1
+            unit = 2
+            "#
+        )
+        .expect("Failed to parse TOML"),
+        Root {
+            value: 1,
+            unit: NestedUnit(Unit(2)),
+        },
+    );
+}

@@ -20,7 +20,7 @@ pub(crate) fn number<T: NumCast>(item: &Item) -> Result<T, AnyErr> {
             .ok_or_else(|| format!("Cannot convert float to {}", std::any::type_name::<T>()))?),
         Value::Integer(i) => Ok(T::from(*i.value())
             .ok_or_else(|| format!("Cannot convert integer to {}", std::any::type_name::<T>()))?),
-        _ => Err(AnyErr(format!("Cannot convert {} to u64", v.type_name()))),
+        _ => Err(format!("Cannot convert {} to u64", v.type_name()).into()),
     }
 }
 
@@ -32,7 +32,7 @@ pub(crate) fn boolean(item: &Item) -> Result<bool, AnyErr> {
 
     match v {
         Value::Boolean(boolean) => Ok(*boolean.value()),
-        _ => Err(AnyErr(format!("Cannot convert {} to u64", v.type_name()))),
+        _ => Err(format!("Cannot convert {} to u64", v.type_name()).into()),
     }
 }
 
@@ -40,7 +40,7 @@ pub(crate) fn boolean(item: &Item) -> Result<bool, AnyErr> {
 pub(crate) fn string(item: &Item) -> Result<String, AnyErr> {
     Ok(item
         .as_str()
-        .ok_or_else(|| AnyErr(format!("Expected string, got: {}", item.type_name())))?
+        .ok_or_else(|| format!("Expected string, got: {}", item.type_name()))?
         .to_string())
 }
 
@@ -52,9 +52,9 @@ where
 {
     let string = item
         .as_str()
-        .ok_or_else(|| AnyErr(format!("Expected string, got: {}", item.type_name())))?;
+        .ok_or_else(|| format!("Expected string, got: {}", item.type_name()))?;
 
-    string
+    Ok(string
         .parse()
-        .map_err(|e: T::Err| AnyErr(format!("Cannot convert string to {}: {e}", type_name)))
+        .map_err(|e: T::Err| format!("Cannot convert string to {}: {e}", type_name))?)
 }
