@@ -2,6 +2,7 @@ use core::alloc::Layout;
 
 use crate::{
     ConstTypeId, Def, Facet, OpaqueConst, SmartPointerDef, SmartPointerFlags, SmartPointerVTable,
+    value_vtable,
 };
 
 #[cfg(feature = "alloc")]
@@ -32,6 +33,10 @@ unsafe impl<T: Facet> Facet for alloc::sync::Arc<T> {
                     )
                     .build(),
             ))
+            .vtable(value_vtable!(alloc::sync::Arc<T>, |f, _opts| write!(
+                f,
+                "Arc"
+            )))
             .build()
     };
 }

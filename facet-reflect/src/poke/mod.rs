@@ -147,6 +147,14 @@ impl<'mem> PokeUninit<'mem> {
         }
     }
 
+    /// Converts this Poke into a PokeSmartPointer, panicking if it's not a SmartPointer variant
+    pub fn into_smart_pointer(self) -> PokeSmartPointerUninit<'mem> {
+        match self {
+            PokeUninit::SmartPointer(s) => s,
+            _ => panic!("expected SmartPointer variant"),
+        }
+    }
+
     /// Converts this Poke into a PokeValue, panicking if it's not a Scalar variant
     pub fn into_scalar(self) -> PokeValueUninit<'mem> {
         match self {
@@ -256,6 +264,8 @@ pub enum Poke<'mem> {
     Enum(PokeEnum<'mem>),
     /// An option value. See [`PokeOption`].
     Option(PokeOption<'mem>),
+    /// A smart pointer. See [`PokeSmartPointer`].
+    SmartPointer(PokeSmartPointer<'mem>),
 }
 
 impl<'mem> Poke<'mem> {
@@ -291,6 +301,10 @@ impl<'mem> Poke<'mem> {
                 let po = unsafe { PokeOption::new(data, shape, option_def) };
                 Poke::Option(po)
             }
+            Def::SmartPointer(smart_pointer_def) => {
+                let ps = unsafe { PokeSmartPointer::new(data, shape, smart_pointer_def) };
+                Poke::SmartPointer(ps)
+            }
             _ => todo!("unsupported def: {:?}", shape.def),
         }
     }
@@ -301,6 +315,14 @@ impl<'mem> Poke<'mem> {
         let shape = T::SHAPE;
         let data = Opaque::new(data);
         unsafe { Poke::unchecked_new(data, shape) }
+    }
+
+    /// Converts this Poke into a PokeSmartPointer, panicking if it's not a SmartPointer variant
+    pub fn into_smart_pointer(self) -> PokeSmartPointer<'mem> {
+        match self {
+            Poke::SmartPointer(s) => s,
+            _ => panic!("expected SmartPointer variant"),
+        }
     }
 
     /// Converts this Poke into a PokeValue, panicking if it's not a Scalar variant
@@ -361,6 +383,7 @@ impl<'mem> Poke<'mem> {
             Poke::Struct(poke_struct) => poke_struct.shape(),
             Poke::Enum(poke_enum) => poke_enum.shape(),
             Poke::Option(poke_option) => poke_option.shape(),
+            Poke::SmartPointer(poke_smart_pointer) => poke_smart_pointer.shape(),
         }
     }
 }

@@ -1,3 +1,0 @@
-{
-  "*.rs": "rustfmt --edition 2024",
-}

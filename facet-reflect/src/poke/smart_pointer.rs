@@ -1,6 +1,6 @@
 use facet_core::{
-    LockResult, Opaque, OpaqueConst, OpaqueUninit, Shape, SmartPointerDef, SmartPointerFlags,
-    SmartPointerVTable,
+    Facet, LockResult, Opaque, OpaqueConst, OpaqueUninit, Shape, SmartPointerDef,
+    SmartPointerFlags, SmartPointerVTable,
 };
 
 /// Allows initializing an uninitialized option
@@ -49,12 +49,37 @@ impl<'mem> PokeSmartPointerUninit<'mem> {
     ///
     /// Returns `None` if the smart pointer cannot be created directly
     /// (like for weak pointers).
-    pub fn create<T>(self, value: T) -> Option<PokeSmartPointer<'mem>> {
+    pub fn from_t<T>(self, value: T) -> Option<PokeSmartPointer<'mem>> {
         let into_fn = self.def.vtable.new_into_fn?;
 
         let value_opaque = OpaqueConst::new(&raw const value);
         let opaque = unsafe { into_fn(self.data, value_opaque) };
         core::mem::forget(value);
+        Some(PokeSmartPointer {
+            data: opaque,
+            shape: self.shape,
+            def: self.def,
+        })
+    }
+
+    /// Creates a new smart pointer from an existing [`PeekValue`].
+    ///
+    /// Note: The `PeekValue` is moved out of (consumed) during this operation.
+    /// It must be deallocated by the caller on success.
+    ///
+    /// Returns `None` if the smart pointer cannot be created directly
+    /// (like for weak pointers).
+    pub fn from_peek_value(self, value: crate::PeekValue<'mem>) -> Option<PokeSmartPointer<'mem>> {
+        // Assert that the value's shape matches the expected inner type
+        assert_eq!(
+            value.shape(),
+            self.def.t,
+            "Inner value shape does not match expected smart pointer inner type"
+        );
+
+        let into_fn = self.def.vtable.new_into_fn?;
+
+        let opaque = unsafe { into_fn(self.data, value.data()) };
         Some(PokeSmartPointer {
             data: opaque,
             shape: self.shape,
@@ -69,7 +94,20 @@ pub struct PokeSmartPointer<'mem> {
     def: SmartPointerDef,
 }
 
-impl PokeSmartPointer<'_> {
+impl<'mem> PokeSmartPointer<'mem> {
+    /// Creates a new smart pointer poke
+    ///
+    /// # Safety
+    ///
+    /// `data` must be properly aligned and sized for this shape.
+    pub(crate) unsafe fn new(
+        data: Opaque<'mem>,
+        shape: &'static Shape,
+        def: SmartPointerDef,
+    ) -> Self {
+        Self { data, shape, def }
+    }
+
     /// Returns the shape for this smart pointer.
     pub fn shape(&self) -> &'static Shape {
         self.shape
@@ -153,6 +191,21 @@ impl PokeSmartPointer<'_> {
             write_fn(self.data.as_const())
                 .map(|result| PokeSmartPointerWriteGuard::from_lock_result(result, self.def.t))
         })
+    }
+
+    /// Get a reference to the underlying PokeValue
+    #[inline(always)]
+    pub fn into_value(self) -> crate::PokeValue<'mem> {
+        unsafe { crate::PokeValue::new(self.data, self.shape) }
+    }
+
+    /// Moves `U` out of this `PokeSmartPointer`.
+    ///
+    /// Note that `U` should be something like `Arc<T>`, `Rc<T>`, etc.
+    pub fn build_in_place<U: Facet>(self) -> U {
+        // Ensure the shape matches the expected type
+        self.shape.assert_type::<U>();
+        unsafe { self.data.read::<U>() }
     }
 }
 
