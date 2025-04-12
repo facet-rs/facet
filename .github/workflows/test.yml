@@ -55,21 +55,6 @@ jobs:
         run: |
           just nostd
 
-  clippy:
-    runs-on: depot-ubuntu-24.04-arm-16
-
-    container:
-      image: ghcr.io/facet-rs/facet-ci:latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: ✨ Run clippy
-        shell: bash
-        run: |
-          just clippy
-
   doc-tests:
     runs-on: depot-ubuntu-24.04-arm-16
 
@@ -100,3 +85,107 @@ jobs:
         run: |
           export CI=true
           just miri
+
+  msrv:
+    runs-on: depot-ubuntu-24.04-arm-16
+
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@cargo-hack
+
+      - name: ✨ Check MSRV
+        shell: bash
+        run: |
+          cargo hack check --feature-powerset --locked --rust-version --ignore-private --workspace --all-targets --keep-going
+
+  minimal-versions:
+    runs-on: depot-ubuntu-24.04-arm-16
+
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: ✨ Check minimal versions
+        shell: bash
+        run: |
+          # Install nightly for minimal-versions feature
+          rustup toolchain install nightly
+          # Generate lockfile with minimal versions
+          cargo +nightly generate-lockfile -Z minimal-versions
+          # Check with stable using minimal versions
+          cargo check --workspace --all-features --locked --keep-going
+
+  docs:
+    runs-on: depot-ubuntu-24.04-arm-16
+
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: ✨ Check documentation
+        shell: bash
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: |
+          cargo doc --workspace --all-features --no-deps --document-private-items --keep-going
+
+  lockfile:
+    runs-on: depot-ubuntu-24.04-arm-16
+
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: ✨ Check lockfile is updated
+        shell: bash
+        run: |
+          cargo update --workspace --locked
+
+  clippy-sarif:
+    runs-on: depot-ubuntu-24.04-arm-16
+
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest
+    permissions:
+      security-events: write # to upload sarif results
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install SARIF tools
+        shell: bash
+        run: |
+          cargo install clippy-sarif --locked
+          cargo install sarif-fmt --locked
+
+      - name: ✨ Run clippy with SARIF output
+        shell: bash
+        run: |
+          cargo clippy --workspace --all-features --all-targets --message-format=json | clippy-sarif | tee clippy-results.sarif | sarif-fmt
+        continue-on-error: true
+
+      - name: Upload SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: clippy-results.sarif
+          wait-for-processing: true
+
+      - name: Report status
+        shell: bash
+        run: |
+          cargo clippy --workspace --all-features --all-targets --keep-going -- -D warnings --allow deprecated
