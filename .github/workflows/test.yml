@@ -138,7 +138,7 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
         run: |
-          cargo doc --workspace --all-features --no-deps --document-private-items --keep-going
+          just docs
 
   lockfile:
     runs-on: depot-ubuntu-24.04-arm-16

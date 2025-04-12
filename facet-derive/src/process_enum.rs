@@ -212,7 +212,7 @@ unsafe impl<{generics_def}> ::facet::Facet for {enum_name}<{generics_use}> {wher
 /// C-style enums (i.e. #[repr(C)], #[repr(C, u*)] and #[repr(C, i*)]) are laid out
 /// as a #[repr(C)] struct with two fiels: the discriminant and the union of all the variants.
 ///
-/// See: https://doc.rust-lang.org/reference/type-layout.html#r-layout.repr.primitive.adt
+/// See: <https://doc.rust-lang.org/reference/type-layout.html#r-layout.repr.primitive.adt>
 ///
 /// To calculate the offsets of each variant, we create a shadow struct that mimics this
 /// structure and use the `offset_of!` macro to calculate the offsets of each field.
@@ -439,7 +439,7 @@ fn process_c_style_enum(
 /// Primitive enums (i.e. #[repr(u*)] and #[repr(i*)]) are laid out
 /// as a union of all the variants, with the discriminant as an "inner" tag in the struct.
 ///
-/// See: https://doc.rust-lang.org/reference/type-layout.html#r-layout.repr.primitive.adt
+/// See: <https://doc.rust-lang.org/reference/type-layout.html#r-layout.repr.primitive.adt>
 ///
 /// To calculate the offsets of each variant, we create a shadow struct that mimics this
 /// structure and use the `offset_of!` macro to calculate the offsets of each field.

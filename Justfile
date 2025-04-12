@@ -1,22 +1,36 @@
-quickcheck:
+precommit:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
-    just veryquickcheck
+    just genfmt
+
+prepush:
+    #!/usr/bin/env -S bash -euo pipefail
+    source .envrc
     just clippy
     just test
-    just nostd
     just doc-tests
+    just docs
 
-veryquickcheck:
+ci:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
-    if [[ -z "${CI:-}" ]]; then
+    just precommit
+    just prepush
+    just docs
+    just msrv
+    just miri
+
+genfmt:
+    #!/usr/bin/env -S bash -euo pipefail
+    just lockfile
+    source .envrc
+    if [[ -z "${GITHUB_ACTIONS:-}" ]]; then
         just codegen
         echo -e "\033[1;34m📝 Fixing code formatting...\033[0m"
-        cmd_group "cargo fmt --all"
+        cargo fmt --all
     else
-        just codegen-check
-        just rustfmt
+        just codegen --check
+        cargo fmt --all --check
     fi
     just absolve
 
@@ -39,20 +53,6 @@ nostd:
     cmd_group "cargo check --no-default-features --features alloc -p facet-core"
     cmd_group "cargo check --no-default-features --features alloc -p facet"
     cmd_group "cargo check --no-default-features --features alloc -p facet-reflect"
-
-ci:
-    #!/usr/bin/env -S bash -euo pipefail
-    source .envrc
-    just quickcheck
-    just miri
-    echo -e "\033[1;34m📝 Running cargo fmt in check mode...\033[0m"
-    cmd_group "cargo fmt --all -- --check"
-
-rustfmt:
-    #!/usr/bin/env -S bash -euo pipefail
-    source .envrc
-    echo -e "\033[1;34m📝 Checking code formatting...\033[0m"
-    cmd_group "cargo fmt --all -- --check"
 
 clippy:
     #!/usr/bin/env -S bash -euo pipefail
@@ -81,11 +81,6 @@ codegen *args:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
     cmd_group "cargo run -p facet-codegen -- {{args}}"
-
-codegen-check:
-    #!/usr/bin/env -S bash -euo pipefail
-    source .envrc
-    cmd_group "cargo run -p facet-codegen -- --check"
 
 rustfmt-fix:
     #!/usr/bin/env -S bash -euo pipefail
@@ -136,6 +131,12 @@ docsrs *args:
 
 msrv:
     cargo hack check --feature-powerset --locked --rust-version --ignore-private --workspace --all-targets --keep-going --exclude-no-default-features
+
+docs:
+    cargo doc --workspace --all-features --no-deps --document-private-items --keep-going
+
+lockfile:
+    cargo update --workspace --locked
 
 docker-build-push:
     #!/usr/bin/env -S bash -eu
