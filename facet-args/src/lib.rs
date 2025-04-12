@@ -1,7 +1,7 @@
 use facet_core::{Facet, FieldAttribute};
-use facet_reflect::{PokeStruct, PokeUninit};
+use facet_reflect::{PokeStructUninit, PokeUninit};
 
-fn parse_field(field: PokeUninit, value: &str, field_index: usize, ps: &mut PokeStruct<'_>) {
+fn parse_field(field: PokeUninit, value: &str, field_index: usize, ps: &mut PokeStructUninit<'_>) {
     let field_shape = field.shape();
     log::trace!("Field shape: {}", field_shape);
 
@@ -10,7 +10,7 @@ fn parse_field(field: PokeUninit, value: &str, field_index: usize, ps: &mut Poke
             let pv = match pv.typed::<String>() {
                 Ok(pv) => {
                     pv.put(value.to_string());
-                    unsafe { ps.mark_initialized(field_index) }
+                    unsafe { ps.assume_field_init(field_index) }
                     return;
                 }
                 Err(pv) => pv,
@@ -19,7 +19,7 @@ fn parse_field(field: PokeUninit, value: &str, field_index: usize, ps: &mut Poke
                 Ok(pv) => {
                     log::trace!("Boolean field detected, setting to true");
                     pv.put(value.to_lowercase() == "true");
-                    unsafe { ps.mark_initialized(field_index) }
+                    unsafe { ps.assume_field_init(field_index) }
                     return;
                 }
                 Err(pv) => pv,
@@ -38,7 +38,7 @@ fn parse_field(field: PokeUninit, value: &str, field_index: usize, ps: &mut Poke
         log::trace!("Failed to parse field: {}", e);
         panic!("Failed to parse field of shape {}: {}", field_shape, e)
     });
-    unsafe { ps.mark_initialized(field_index) }
+    unsafe { ps.assume_field_init(field_index) }
 }
 
 pub fn from_slice<T: Facet>(s: &[&str]) -> T {

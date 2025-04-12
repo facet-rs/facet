@@ -39,18 +39,7 @@ Thanks to all individual and corporate sponsors, without whom this work could no
     <img src="https://depot.dev/badges/built-with-depot.svg" alt="built with depot">
 </a> </p>
 
-The `facet-reflect` crate allows reading from and writing to shapes implementing the `Facet` trait. This crate combines the functionality of the former `facet-peek` and `facet-poke` crates, providing a unified interface for reflection and manipulation of `Facet` types.
 
-## Features
-
-- Read (peek) values from `Facet` types
-- Write (poke) values to `Facet` types
-- Supports various data structures: scalars, lists, maps, structs, enums, and options
-- Efficient and safe manipulation of `Facet` types
-
-## Usage
-
-This crate makes it trivial to write serializers and deserializers. It's used by crates like `facet-json`, `facet-yaml`, `facet-urlencoded`, etc.
-
-For more detailed usage examples, please refer to the crate documentation.
+Allows reading (peek) and constructing/initializing/mutating (poke) arbitrary
+values without knowing their concrete type until runtime.
 

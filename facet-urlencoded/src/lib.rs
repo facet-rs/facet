@@ -2,7 +2,7 @@
 #![doc = include_str!("../README.md")]
 
 use facet_core::{Facet, Opaque};
-use facet_reflect::{PokeStruct, PokeUninit};
+use facet_reflect::{PokeStructUninit, PokeUninit};
 use log::*;
 
 #[cfg(test)]
@@ -222,7 +222,7 @@ fn deserialize_scalar_field<'mem>(
     value: &str,
     field_poke: PokeUninit<'mem>,
     index: usize,
-    ps: &mut PokeStruct<'mem>,
+    ps: &mut PokeStructUninit<'mem>,
 ) -> Result<(), UrlEncodedError> {
     match field_poke {
         PokeUninit::Scalar(ps_scalar) => {
@@ -248,7 +248,7 @@ fn deserialize_scalar_field<'mem>(
                     ps_scalar.shape()
                 )));
             }
-            unsafe { ps.mark_initialized(index) };
+            unsafe { ps.assume_field_init(index) };
             Ok(())
         }
         _ => {

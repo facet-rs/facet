@@ -61,9 +61,9 @@ impl ScalarType {
         #[cfg(feature = "std")]
         if shape.id == ConstTypeId::of::<String>() {
             return Some(ScalarType::String);
-        } else if shape.id == ConstTypeId::of::<std::borrow::Cow<'_, str>>() {
+        } else if shape.id == ConstTypeId::of::<alloc::borrow::Cow<'_, str>>() {
             return Some(ScalarType::CowStr);
-        } else if shape.id == ConstTypeId::of::<std::net::SocketAddr>() {
+        } else if shape.id == ConstTypeId::of::<core::net::SocketAddr>() {
             return Some(ScalarType::SocketAddr);
         }
 
@@ -142,7 +142,7 @@ mod tests {
         #[cfg(feature = "std")]
         assert_eq!(
             ScalarType::CowStr,
-            ScalarType::try_from_shape(std::borrow::Cow::SHAPE).unwrap()
+            ScalarType::try_from_shape(alloc::borrow::Cow::SHAPE).unwrap()
         );
         assert_eq!(
             ScalarType::F32,
@@ -195,7 +195,7 @@ mod tests {
         #[cfg(feature = "std")]
         assert_eq!(
             ScalarType::SocketAddr,
-            ScalarType::try_from_shape(std::net::SocketAddr::SHAPE).unwrap()
+            ScalarType::try_from_shape(core::net::SocketAddr::SHAPE).unwrap()
         );
         assert_eq!(
             ScalarType::IpAddr,

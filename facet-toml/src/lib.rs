@@ -12,7 +12,7 @@ use std::{
 
 use error::AnyErr;
 use facet_core::{Facet, Opaque, VariantKind};
-use facet_reflect::{PokeEnumNoVariant, PokeStruct, PokeUninit, PokeValueUninit};
+use facet_reflect::{PokeEnumNoVariant, PokeStructUninit, PokeUninit, PokeValue, PokeValueUninit};
 use toml_edit::{DocumentMut, Item, TomlError};
 
 /// Deserializes a TOML string into a value of type `T` that implements `Facet`.
@@ -29,7 +29,7 @@ fn from_str_opaque<'mem>(poke: PokeUninit<'mem>, toml: &str) -> Result<Opaque<'m
 
 fn deserialize_item<'mem>(poke: PokeUninit<'mem>, item: &Item) -> Result<Opaque<'mem>, AnyErr> {
     match poke {
-        PokeUninit::Scalar(poke) => deserialize_as_scalar(poke, item),
+        PokeUninit::Scalar(poke) => Ok(deserialize_as_scalar(poke, item)?.data()),
         PokeUninit::List(_) => todo!(),
         PokeUninit::Map(_) => todo!(),
         PokeUninit::Struct(poke) => deserialize_as_struct(poke, item),
@@ -39,7 +39,7 @@ fn deserialize_item<'mem>(poke: PokeUninit<'mem>, item: &Item) -> Result<Opaque<
 }
 
 fn deserialize_as_struct<'mem>(
-    mut poke: PokeStruct<'mem>,
+    mut poke: PokeStructUninit<'mem>,
     item: &Item,
 ) -> Result<Opaque<'mem>, AnyErr> {
     // Parse as a the inner struct type if item is a single value and the struct is a unit struct
@@ -70,7 +70,7 @@ fn deserialize_as_struct<'mem>(
         let _v = deserialize_item(field_poke, v)
             .map_err(|e| format!("Error deserializing field '{}': {}", k, e))?;
         unsafe {
-            poke.mark_initialized(index);
+            poke.assume_field_init(index);
         }
     }
 
@@ -107,7 +107,7 @@ fn deserialize_as_enum<'mem>(
 fn deserialize_as_scalar<'mem>(
     poke: PokeValueUninit<'mem>,
     item: &Item,
-) -> Result<Opaque<'mem>, AnyErr> {
+) -> Result<PokeValue<'mem>, AnyErr> {
     let shape = poke.shape();
 
     Ok(if shape.is_type::<String>() {

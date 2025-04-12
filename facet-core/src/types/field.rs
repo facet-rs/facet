@@ -172,24 +172,22 @@ impl core::fmt::Display for FieldFlags {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum FieldError {
-    /// `field_by_index` was called on a dynamic collection, that has no
-    /// static fields. a map doesn't have a "first field", it can only
-    /// associate by keys.
-    NoStaticFields,
-
     /// `field_by_name` was called on a struct, and there is no static field
     /// with the given key.
-    NoSuchStaticField,
+    NoSuchField,
 
     /// `field_by_index` was called on a fixed-size collection (like a tuple,
     /// a struct, or a fixed-size array) and the index was out of bounds.
     IndexOutOfBounds,
 
-    /// `field_by_index` or `field_by_name` was called on a non-struct type.
-    NotAStruct,
-
     /// `set` or `set_by_name` was called with an mismatched type
-    TypeMismatch,
+    TypeMismatch {
+        /// the actual type of the field
+        expected: &'static Shape,
+
+        /// what someone tried to write into it / read from it
+        actual: &'static Shape,
+    },
 }
 
 impl core::error::Error for FieldError {}
@@ -197,11 +195,11 @@ impl core::error::Error for FieldError {}
 impl core::fmt::Display for FieldError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            FieldError::NoStaticFields => write!(f, "No static fields available"),
-            FieldError::NoSuchStaticField => write!(f, "No such static field"),
+            FieldError::NoSuchField => write!(f, "No such static field"),
             FieldError::IndexOutOfBounds => write!(f, "Index out of bounds"),
-            FieldError::NotAStruct => write!(f, "Not a struct"),
-            FieldError::TypeMismatch => write!(f, "Type mismatch"),
+            FieldError::TypeMismatch { expected, actual } => {
+                write!(f, "Type mismatch: expected {}, got {}", expected, actual)
+            }
         }
     }
 }

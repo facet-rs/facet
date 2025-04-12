@@ -91,7 +91,7 @@ unsafe impl<{generics_def}> ::facet::Facet for {struct_name}<{generics_use}> {wh
                 Self,
                 |f, _opts| ::core::fmt::Write::write_str(f, "{struct_name}")
             ))
-            .def(::facet::Def::Struct(::facet::StructDef::builder()
+            .def(::facet::Def::Struct(::facet::Struct::builder()
                 .kind({kind})
                 .fields(fields)
                 .build()))

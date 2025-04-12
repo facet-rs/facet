@@ -83,7 +83,7 @@ where
                             let t_dip = T::SHAPE.vtable.default_in_place.unwrap_unchecked();
                             let stride = T::SHAPE.layout.pad_to_align().size();
                             for idx in 0..L {
-                                t_dip(target.field_uninit(idx * stride));
+                                t_dip(target.field_uninit_at(idx * stride));
                             }
                             target.assume_init()
                         });
@@ -97,7 +97,7 @@ where
                             let src = src.as_ref::<[T; L]>();
                             let stride = T::SHAPE.layout.pad_to_align().size();
                             for (idx, src) in src.iter().enumerate() {
-                                (t_cip)(OpaqueConst::new(src), dst.field_uninit(idx * stride));
+                                (t_cip)(OpaqueConst::new(src), dst.field_uninit_at(idx * stride));
                             }
                             dst.assume_init()
                         });

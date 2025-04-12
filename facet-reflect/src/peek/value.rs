@@ -1,5 +1,5 @@
 use core::cmp::Ordering;
-use facet_core::{Opaque, OpaqueConst, Shape, TypeNameOpts, ValueVTable};
+use facet_core::{Facet, Opaque, OpaqueConst, Shape, TypeNameOpts, ValueVTable};
 
 use crate::{Peek, ScalarType};
 
@@ -213,6 +213,16 @@ impl<'mem> PeekValue<'mem> {
     /// Get the scalar type if set.
     pub fn scalar_type(&self) -> Option<ScalarType> {
         ScalarType::try_from_shape(self.shape)
+    }
+
+    /// Read the value from memory into a Rust value.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the shape doesn't match the type `T`.
+    pub fn get<T: Facet>(&self) -> &T {
+        self.shape.assert_type::<T>();
+        unsafe { self.data.as_ref::<T>() }
     }
 }
 

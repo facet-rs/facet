@@ -1,4 +1,4 @@
-use facet_core::StructDef;
+use facet_core::Struct;
 
 use crate::{Peek, PeekValue};
 
@@ -7,7 +7,7 @@ use crate::{Peek, PeekValue};
 pub struct PeekStruct<'mem> {
     value: PeekValue<'mem>,
     // I suppose this could be a `&'static` as well, idk
-    def: StructDef,
+    def: Struct,
 }
 
 impl<'mem> core::ops::Deref for PeekStruct<'mem> {
@@ -21,7 +21,7 @@ impl<'mem> core::ops::Deref for PeekStruct<'mem> {
 
 impl<'mem> PeekStruct<'mem> {
     /// Create a new peek struct
-    pub(crate) fn new(value: PeekValue<'mem>, def: StructDef) -> Self {
+    pub(crate) fn new(value: PeekValue<'mem>, def: Struct) -> Self {
         Self { value, def }
     }
 
@@ -68,7 +68,7 @@ impl<'mem> PeekStruct<'mem> {
 
     /// Returns the struct definition
     #[inline(always)]
-    pub fn def(&self) -> &StructDef {
+    pub fn def(&self) -> &Struct {
         &self.def
     }
 

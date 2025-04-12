@@ -5,7 +5,7 @@
 use core::{marker::PhantomData, ptr::NonNull};
 
 /// A type-erased pointer to an uninitialized value
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct OpaqueUninit<'mem>(*mut u8, PhantomData<&'mem mut ()>);
 
 impl<'mem> OpaqueUninit<'mem> {
@@ -82,7 +82,7 @@ impl<'mem> OpaqueUninit<'mem> {
     /// # Safety
     ///
     /// Offset is within the bounds of the allocated memory
-    pub unsafe fn field_uninit(self, offset: usize) -> OpaqueUninit<'mem> {
+    pub unsafe fn field_uninit_at(self, offset: usize) -> OpaqueUninit<'mem> {
         OpaqueUninit(unsafe { self.0.byte_add(offset) }, PhantomData)
     }
 

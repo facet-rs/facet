@@ -1,5 +1,5 @@
 use core::{fmt::Debug, mem::offset_of};
-use facet::{Def, Facet, FieldFlags, OpaqueConst, Shape, StructDef, StructKind, VariantKind};
+use facet::{Def, Facet, FieldFlags, OpaqueConst, Shape, Struct, StructKind, VariantKind};
 
 #[test]
 fn unit_struct() {
@@ -14,7 +14,7 @@ fn unit_struct() {
     assert_eq!(shape.layout.size(), 0);
     assert_eq!(shape.layout.align(), 1);
 
-    if let Def::Struct(StructDef { kind, fields, .. }) = shape.def {
+    if let Def::Struct(Struct { kind, fields, .. }) = shape.def {
         assert_eq!(kind, StructKind::Unit);
         assert_eq!(fields.len(), 0);
     } else {
@@ -39,7 +39,7 @@ fn simple_struct() {
         assert_eq!(shape.layout.size(), 32);
         assert_eq!(shape.layout.align(), 8);
 
-        if let Def::Struct(StructDef { kind, fields, .. }) = shape.def {
+        if let Def::Struct(Struct { kind, fields, .. }) = shape.def {
             assert_eq!(kind, StructKind::Struct);
             assert_eq!(fields.len(), 2);
 
@@ -72,7 +72,7 @@ fn struct_with_sensitive_field() {
     if !cfg!(miri) {
         let shape = Blah::SHAPE;
 
-        if let Def::Struct(StructDef { fields, .. }) = shape.def {
+        if let Def::Struct(Struct { fields, .. }) = shape.def {
             let bar_field = &fields[1];
             assert_eq!(bar_field.name, "bar");
             match shape.def {
@@ -159,7 +159,7 @@ fn struct_field_doc_comment() {
         bar: u32,
     }
 
-    if let Def::Struct(StructDef { fields, .. }) = Foo::SHAPE.def {
+    if let Def::Struct(Struct { fields, .. }) = Foo::SHAPE.def {
         assert_eq!(fields[0].doc, &[" This field has a doc comment"]);
     } else {
         panic!("Expected Struct innards");
@@ -178,7 +178,7 @@ fn tuple_struct_field_doc_comment_test() {
 
     let shape = MyTupleStruct::SHAPE;
 
-    if let Def::Struct(StructDef { kind, fields, .. }) = shape.def {
+    if let Def::Struct(Struct { kind, fields, .. }) = shape.def {
         assert_eq!(kind, StructKind::TupleStruct);
         assert_eq!(fields[0].doc, &[" This is a documented field"]);
         assert_eq!(fields[1].doc, &[" This is another documented field"]);

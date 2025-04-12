@@ -139,8 +139,9 @@ bitflags! {
     }
 }
 
-/// Tries to upgrade the weak pointer to a strong one.
-pub type TryUpgradeFn = for<'ptr> unsafe fn(opaque: Opaque<'ptr>) -> Option<Opaque<'ptr>>;
+/// Tries to upgrade the weak pointer to a strong one. The result must _also_ be a smart pointer.
+pub type TryUpgradeFn =
+    for<'ptr> unsafe fn(opaque: Opaque<'ptr>) -> Option<(Opaque<'ptr>, &'static Shape)>;
 
 /// Downgrades a strong pointer to a weak one.
 ///

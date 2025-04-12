@@ -227,7 +227,7 @@ pub enum Def {
     /// Various kinds of structs, see [`StructKind`]
     ///
     /// e.g. `struct Struct { field: u32 }`, `struct TupleStruct(u32, u32);`, `(u32, u32)`
-    Struct(StructDef),
+    Struct(Struct),
 
     /// Map — keys are dynamic (and strings, sorry), values are homogeneous
     ///

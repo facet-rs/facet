@@ -1,4 +1,4 @@
-use super::Field;
+use super::Struct;
 
 /// Fields for enum types
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -7,6 +7,7 @@ use super::Field;
 pub struct EnumDef {
     /// representation of the enum (u8, u16, etc.)
     pub repr: EnumRepr,
+
     /// all variants for this enum
     pub variants: &'static [Variant],
 }
@@ -60,17 +61,16 @@ impl EnumDefBuilder {
 #[repr(C)]
 #[non_exhaustive]
 pub struct Variant {
-    /// Name of the variant
+    /// Name of the variant, e.g. `Foo` for `enum FooBar { Foo, Bar }`
     pub name: &'static str,
 
-    /// Discriminant value (if available)
-    pub discriminant: Option<i64>,
+    /// Discriminant value (if available). Might fit in a u8, etc.
+    pub discriminant: i64,
 
-    /// Kind of variant (unit, tuple, or struct)
-    pub kind: VariantKind,
-
-    /// Offset of the variant in the enum layout
-    pub offset: usize,
+    /// Fields for this variant (empty if unit, number-named if tuple).
+    /// IMPORTANT: the offset for the fields already takes into account the size & alignment of the
+    /// discriminant.
+    pub fields: Struct,
 
     /// Doc comment for the variant
     pub doc: &'static [&'static str],
@@ -86,8 +86,8 @@ impl Variant {
 /// Builder for Variant
 pub struct VariantBuilder {
     name: Option<&'static str>,
-    discriminant: Option<Option<i64>>,
-    kind: Option<VariantKind>,
+    discriminant: Option<i64>,
+    fields: Option<Struct>,
     offset: Option<usize>,
     doc: &'static [&'static str],
 }
@@ -99,7 +99,7 @@ impl VariantBuilder {
         Self {
             name: None,
             discriminant: None,
-            kind: None,
+            fields: None,
             offset: None,
             doc: &[],
         }
@@ -112,14 +112,14 @@ impl VariantBuilder {
     }
 
     /// Sets the discriminant for the Variant
-    pub const fn discriminant(mut self, discriminant: Option<i64>) -> Self {
+    pub const fn discriminant(mut self, discriminant: i64) -> Self {
         self.discriminant = Some(discriminant);
         self
     }
 
-    /// Sets the kind for the Variant
-    pub const fn kind(mut self, kind: VariantKind) -> Self {
-        self.kind = Some(kind);
+    /// Sets the fields for the Variant
+    pub const fn fields(mut self, fields: Struct) -> Self {
+        self.fields = Some(fields);
         self
     }
 
@@ -140,35 +140,13 @@ impl VariantBuilder {
         Variant {
             name: self.name.unwrap(),
             discriminant: self.discriminant.unwrap(),
-            kind: self.kind.unwrap(),
-            offset: self.offset.unwrap(),
+            fields: self.fields.unwrap(),
             doc: self.doc,
         }
     }
 }
 
-/// Represents the different kinds of variants that can exist in a Rust enum
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-#[repr(C)]
-#[non_exhaustive]
-pub enum VariantKind {
-    /// Unit variant (e.g., `None` in Option)
-    Unit,
-
-    /// Tuple variant with unnamed fields (e.g., `Some(T)` in Option)
-    Tuple {
-        /// List of fields contained in the tuple variant
-        fields: &'static [Field],
-    },
-
-    /// Struct variant with named fields (e.g., `Struct { field: T }`)
-    Struct {
-        /// List of fields contained in the struct variant
-        fields: &'static [Field],
-    },
-}
-
-/// All possible representations for Rust enums
+/// All possible representations for Rust enums — ie. the type/size of the discriminant
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
 #[non_exhaustive]

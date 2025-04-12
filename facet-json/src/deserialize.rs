@@ -4,7 +4,8 @@ use crate::parser::{JsonParseErrorKind, JsonParseErrorWithContext, JsonParser};
 
 use facet_core::{Facet, Opaque, OpaqueUninit};
 use facet_reflect::{
-    PokeList, PokeMap, PokeOption, PokeStruct, PokeUninit, PokeValueUninit, ScalarType,
+    PokeList, PokeMap, PokeOption, PokeStructUninit, PokeUninit, PokeValue, PokeValueUninit,
+    ScalarType,
 };
 use log::trace;
 
@@ -112,7 +113,7 @@ pub(crate) fn deserialize_value<'input, 'mem>(
             poke: PokeUninit<'mem>,
         },
         FinishStruct {
-            ps: PokeStruct<'mem>,
+            ps: PokeStructUninit<'mem>,
         },
         StructField {
             key: String,
@@ -155,7 +156,7 @@ pub(crate) fn deserialize_value<'input, 'mem>(
                         fn aux<'input, 'mem>(
                             parser: &mut JsonParser<'input>,
                             pv: PokeValueUninit<'mem>,
-                        ) -> Result<Opaque<'mem>, JsonParseErrorWithContext<'input>>
+                        ) -> Result<PokeValue<'mem>, JsonParseErrorWithContext<'input>>
                         {
                             match pv.scalar_type() {
                                 Some(ScalarType::Bool) => {
@@ -185,7 +186,7 @@ pub(crate) fn deserialize_value<'input, 'mem>(
                             panic!("Unknown scalar shape: {}", pv.shape());
                         }
 
-                        result = Some(aux(parser, pv)?);
+                        result = Some(aux(parser, pv)?.data());
                     }
                     PokeUninit::Struct(ps) => {
                         trace!("Deserializing \x1b[1;36mstruct\x1b[0m");
@@ -323,7 +324,7 @@ pub(crate) fn deserialize_value<'input, 'mem>(
                 };
 
                 unsafe {
-                    ps.mark_initialized(index);
+                    ps.assume_field_init(index);
                 }
 
                 let next_key = parser.parse_object_key()?;

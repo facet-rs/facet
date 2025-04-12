@@ -77,14 +77,14 @@ fn deserialize_value<'mem>(poke: PokeUninit<'mem>, value: &Yaml) -> Result<Opaqu
         PokeUninit::Scalar(ps) => match ps.scalar_type() {
             Some(ScalarType::U64) => {
                 let u = yaml_to_u64(value)?;
-                ps.put(u)
+                ps.put(u).data()
             }
             Some(ScalarType::String) => {
                 let s = value
                     .as_str()
                     .ok_or_else(|| AnyErr(format!("Expected string, got: {}", yaml_type(value))))?
                     .to_string();
-                ps.put(s)
+                ps.put(s).data()
             }
             Some(_) | None => {
                 return Err(format!("Unsupported scalar type: {}", ps.shape()).into());

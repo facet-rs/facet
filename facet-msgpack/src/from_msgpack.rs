@@ -107,6 +107,7 @@ pub fn from_slice_opaque<'mem>(
                 } else {
                     todo!("Unsupported scalar type: {}", pv.shape())
                 }
+                .data()
             }
             PokeUninit::Struct(mut ps) => {
                 trace!("Deserializing struct");

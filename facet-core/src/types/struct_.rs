@@ -4,7 +4,7 @@ use super::Field;
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
 #[non_exhaustive]
-pub struct StructDef {
+pub struct Struct {
     /// the kind of struct (e.g. struct, tuple struct, tuple)
     pub kind: StructKind,
 
@@ -12,7 +12,7 @@ pub struct StructDef {
     pub fields: &'static [Field],
 }
 
-impl StructDef {
+impl Struct {
     /// Returns a builder for StructDef
     pub const fn builder() -> StructDefBuilder {
         StructDefBuilder::new()
@@ -48,8 +48,8 @@ impl StructDefBuilder {
     }
 
     /// Builds the StructDef
-    pub const fn build(self) -> StructDef {
-        StructDef {
+    pub const fn build(self) -> Struct {
+        Struct {
             kind: self.kind.unwrap(),
             fields: self.fields.unwrap(),
         }
@@ -61,14 +61,14 @@ impl StructDefBuilder {
 #[repr(C)]
 #[non_exhaustive]
 pub enum StructKind {
-    /// struct S { t0: T0, t1: T1 }
-    Struct,
+    /// struct UnitStruct;
+    Unit,
 
     /// struct TupleStruct(T0, T1);
     TupleStruct,
 
-    /// struct UnitStruct;
-    Unit,
+    /// struct S { foo: T0, bar: T1 }
+    Struct,
 
     /// (T0, T1)
     Tuple,
