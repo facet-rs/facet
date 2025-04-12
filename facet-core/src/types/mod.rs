@@ -223,6 +223,9 @@ impl Shape {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
 #[non_exhaustive]
+// this enum is only ever going to be owned in static space,
+// right?
+#[allow(clippy::large_enum_variant)]
 pub enum Def {
     /// Scalar — those don't have a def, they're not composed of other things.
     /// You can interact with them through [`ValueVTable`].

@@ -52,6 +52,8 @@ impl ScalarDefBuilder {
 pub enum ScalarAffinity {
     /// Number-like scalar affinity
     Number(NumberAffinity),
+    /// Complex-Number-like scalar affinity
+    ComplexNumber(ComplexNumberAffinity),
     /// String-like scalar affinity
     String(StringAffinity),
     /// Boolean scalar affinity
@@ -62,6 +64,10 @@ pub enum ScalarAffinity {
     SocketAddr(SocketAddrAffinity),
     /// Ip Address scalar affinity
     IpAddr(IpAddrAffinity),
+    /// UUID or UUID-like identifier, containing 16 bytes of information
+    UUID(UuidAffinity),
+    /// Timestamp or Datetime-like scalar affinity
+    Time(TimeAffinity),
     /// Something you're not supposed to look inside of
     Opaque(OpaqueAffinity),
     /// Other scalar affinity
@@ -74,6 +80,11 @@ impl ScalarAffinity {
     /// Returns a NumberAffinityBuilder
     pub const fn number() -> NumberAffinityBuilder {
         NumberAffinityBuilder::new()
+    }
+
+    /// Returns a ComplexNumberAffinityBuilder
+    pub const fn complex_number() -> ComplexNumberAffinityBuilder {
+        ComplexNumberAffinityBuilder::new()
     }
 
     /// Returns a StringAffinityBuilder
@@ -99,6 +110,16 @@ impl ScalarAffinity {
     /// Returns an IpAddrAffinityBuilder
     pub const fn ip_addr() -> IpAddrAffinityBuilder {
         IpAddrAffinityBuilder::new()
+    }
+
+    /// Returns an UuidAffinityBuilder
+    pub const fn uuid() -> UuidAffinityBuilder {
+        UuidAffinityBuilder::new()
+    }
+
+    /// Returns an TimeAffinityBuilder
+    pub const fn time() -> TimeAffinityBuilder {
+        TimeAffinityBuilder::new()
     }
 
     /// Returns an OpaqueAffinityBuilder
@@ -151,7 +172,7 @@ pub struct NumberAffinity {
     /// Negative zero representation
     pub negative_zero: Option<OpaqueConst<'static>>,
 
-    /// "Machine epsilon" (https://en.wikipedia.org/wiki/Machine_epsilon), AKA relative
+    /// "Machine epsilon" (<https://en.wikipedia.org/wiki/Machine_epsilon>), AKA relative
     /// approximation error, if relevant
     pub epsilon: Option<OpaqueConst<'static>>,
 }
@@ -200,6 +221,15 @@ pub enum NumberBits {
         integer_bits: usize,
         /// Number of bits used for the fractional part
         fraction_bits: usize,
+    },
+    /// Decimal number limits with unsized-integer, scaling, and sign bits
+    Decimal {
+        /// Number of bits used for the sign (typically 0 or 1)
+        sign_bits: usize,
+        /// Number of bits used for the integer part
+        integer_bits: usize,
+        /// Number of bits used for the scale part
+        scale_bits: usize,
     },
 }
 
@@ -350,6 +380,97 @@ impl NumberAffinityBuilder {
             negative_zero: self.negative_zero,
             epsilon: self.epsilon,
         })
+    }
+}
+
+/// Definition for string-like scalar affinities
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[repr(C)]
+#[non_exhaustive]
+pub struct ComplexNumberAffinity {
+    /// hiding the actual enum in a non-pub element
+    inner: ComplexNumberAffinityInner,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[repr(C)]
+#[non_exhaustive]
+enum ComplexNumberAffinityInner {
+    /// represented as a+ib
+    Cartesian {
+        /// the underlying number affinity for both components
+        /// (assuming they are the same seems reasonable)
+        component: NumberAffinity,
+    },
+    /// represented as a*exp(ib)
+    Polar {
+        /// the number affinity for the absolute value
+        absolute: NumberAffinity,
+        /// the number affinity for the ...angle? bearing?
+        bearing: NumberAffinity,
+    },
+}
+
+impl ComplexNumberAffinity {
+    /// Returns a builder for ComplexNumberAffinity
+    pub const fn builder() -> ComplexNumberAffinityBuilder {
+        ComplexNumberAffinityBuilder::new()
+    }
+}
+
+/// Builder for ComplexNumberAffinity
+#[repr(C)]
+pub struct ComplexNumberAffinityBuilder {
+    inner: ComplexNumberAffinityBuilderInner,
+}
+
+#[repr(C)]
+enum ComplexNumberAffinityBuilderInner {
+    Undefined,
+    Cartesian {
+        // note: this could have been a NumberAffinityBuilder,
+        // but we want to be able to set this up from existing Number types
+        component: NumberAffinity,
+    },
+    Polar {
+        absolute: NumberAffinity,
+        bearing: NumberAffinity,
+    },
+}
+
+impl ComplexNumberAffinityBuilder {
+    /// Creates a new ComplexNumberAffinityBuilder
+    #[allow(clippy::new_without_default)]
+    pub const fn new() -> Self {
+        Self {
+            inner: ComplexNumberAffinityBuilderInner::Undefined,
+        }
+    }
+
+    /// sets the coordinates system to be cartesian
+    pub const fn cartesian(self, component: NumberAffinity) -> Self {
+        Self {
+            inner: ComplexNumberAffinityBuilderInner::Cartesian { component },
+        }
+    }
+
+    /// sets the coordinates system to be polar
+    pub const fn polar(self, absolute: NumberAffinity, bearing: NumberAffinity) -> Self {
+        Self {
+            inner: ComplexNumberAffinityBuilderInner::Polar { absolute, bearing },
+        }
+    }
+
+    /// Builds the ScalarAffinity
+    pub const fn build(self) -> ScalarAffinity {
+        use ComplexNumberAffinityBuilderInner as Inner;
+        use ComplexNumberAffinityInner as AffInner;
+        let inner = match self.inner {
+            Inner::Undefined => panic!(),
+            Inner::Cartesian { component } => AffInner::Cartesian { component },
+            Inner::Polar { absolute, bearing } => AffInner::Polar { absolute, bearing },
+        };
+        ScalarAffinity::ComplexNumber(ComplexNumberAffinity { inner })
     }
 }
 
@@ -515,6 +636,167 @@ impl IpAddrAffinityBuilder {
     /// Builds the ScalarAffinity
     pub const fn build(self) -> ScalarAffinity {
         ScalarAffinity::IpAddr(IpAddrAffinity {})
+    }
+}
+
+/// Definition for UUID and UUID-like scalar affinities
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[repr(C)]
+#[non_exhaustive]
+pub struct UuidAffinity {}
+
+impl UuidAffinity {
+    /// Returns a builder for UuidAffinity
+    pub const fn builder() -> UuidAffinityBuilder {
+        UuidAffinityBuilder::new()
+    }
+}
+
+/// Builder for UuidAffinity
+#[repr(C)]
+pub struct UuidAffinityBuilder {}
+
+impl UuidAffinityBuilder {
+    /// Creates a new UuidAffinityBuilder
+    #[allow(clippy::new_without_default)]
+    pub const fn new() -> Self {
+        Self {}
+    }
+
+    /// Builds the ScalarAffinity
+    pub const fn build(self) -> ScalarAffinity {
+        ScalarAffinity::UUID(UuidAffinity {})
+    }
+}
+
+/// Definition for Datetime/Timestamp scalar affinities
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[repr(C)]
+#[non_exhaustive]
+pub struct TimeAffinity {
+    /// What serves as the reference, or "time zero"
+    /// for implementations that don't depend on an epoch in the traditionnal sense,
+    /// the first moment of year 1AD can be used
+    epoch: Option<OpaqueConst<'static>>,
+
+    /// The first moment representable
+    min: Option<OpaqueConst<'static>>,
+
+    /// The last moment representable
+    max: Option<OpaqueConst<'static>>,
+
+    /// The moment immediately after the epoch,
+    /// serving as a proxy for the smallest interval of time representable
+    /// (do use None if this interval depends on when in time the interval occurs, e.g. if someone
+    /// ever decides to store a timestamp on floating-point numbers)
+    granularity: Option<OpaqueConst<'static>>,
+
+    // TODO: the following solution leaves a LOT to desire.
+    // Some examples of things where this breaks:
+    // - leap years, day length in daylight savings, leap seconds
+    // - datetime objects that seamlessly switch from Julian to Gregorian calendar
+    //   - even worse if this transition is based on when a given country did, if there even is
+    //   something that does this
+    // - datetime objects that allow you to specify both individual Gregorian months and ISO 8601
+    //   weeks (but of course not at the same time, which is the whole difficulty)
+    /// For DateTime types made of interval elements some of which are optional
+    /// (for instance, letting you say "the 1st of March" without specifying year, hours, etc.)
+    /// Specify how long the interval elements (hour, minute, etc.) are
+    /// (all represented as moments separated from the epoch by said intervals)
+    /// the intervals MUST be of increasing length. (TODO bikeshedding for this line)
+    interval_elements: Option<&'static [OpaqueConst<'static>]>,
+
+    /// the minimum interval between timezone-local times which correspond to the same global time
+    /// (planet-local time? I mean duh that's what global means right?)
+    /// store a copy of the epoch for a lack of timezone support, and None for "it's more
+    /// complicated than that".
+    timezone_granularity: Option<OpaqueConst<'static>>,
+}
+
+impl TimeAffinity {
+    /// Returns a builder for TimeAffinity
+    pub const fn builder() -> TimeAffinityBuilder {
+        TimeAffinityBuilder::new()
+    }
+}
+
+/// Builder for UuidAffinity
+#[repr(C)]
+pub struct TimeAffinityBuilder {
+    epoch: Option<OpaqueConst<'static>>,
+    min: Option<OpaqueConst<'static>>,
+    max: Option<OpaqueConst<'static>>,
+    granularity: Option<OpaqueConst<'static>>,
+    interval_elements: Option<&'static [OpaqueConst<'static>]>,
+    timezone_granularity: Option<OpaqueConst<'static>>,
+}
+
+impl TimeAffinityBuilder {
+    /// Creates a new UuidAffinityBuilder
+    #[allow(clippy::new_without_default)]
+    pub const fn new() -> Self {
+        Self {
+            epoch: None,
+            min: None,
+            max: None,
+            granularity: None,
+            interval_elements: None,
+            timezone_granularity: None,
+        }
+    }
+
+    /// Sets the epoch for the TimeAffinity
+    pub const fn epoch(mut self, epoch: OpaqueConst<'static>) -> Self {
+        self.epoch = Some(epoch);
+        self
+    }
+
+    /// Sets the min value for the TimeAffinity
+    pub const fn min(mut self, min: OpaqueConst<'static>) -> Self {
+        self.min = Some(min);
+        self
+    }
+
+    /// Sets the max value for the TimeAffinity
+    pub const fn max(mut self, max: OpaqueConst<'static>) -> Self {
+        self.max = Some(max);
+        self
+    }
+
+    /// Sets the granularity for the TimeAffinity
+    pub const fn granularity(mut self, granularity: OpaqueConst<'static>) -> Self {
+        self.granularity = Some(granularity);
+        self
+    }
+
+    /// Sets the interval elements for the TimeAffinity
+    pub const fn interval_elements(
+        mut self,
+        interval_elements: &'static [OpaqueConst<'static>],
+    ) -> Self {
+        self.interval_elements = Some(interval_elements);
+        self
+    }
+
+    /// Sets the timezone granularity for the TimeAffinity
+    pub const fn timezone_granularity(
+        mut self,
+        timezone_granularity: OpaqueConst<'static>,
+    ) -> Self {
+        self.timezone_granularity = Some(timezone_granularity);
+        self
+    }
+
+    /// Builds the ScalarAffinity
+    pub const fn build(self) -> ScalarAffinity {
+        ScalarAffinity::Time(TimeAffinity {
+            epoch: self.epoch,
+            min: self.min,
+            max: self.max,
+            granularity: self.granularity,
+            interval_elements: self.interval_elements,
+            timezone_granularity: self.timezone_granularity,
+        })
     }
 }
 

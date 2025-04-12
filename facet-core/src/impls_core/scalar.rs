@@ -427,7 +427,7 @@ unsafe impl Facet for f32 {
                 ScalarDef::builder()
                     .affinity(
                         ScalarAffinity::number()
-                            .float(1, 8, f32::MANTISSA_DIGITS as usize -1, false)
+                            .float(1, 8, f32::MANTISSA_DIGITS as usize - 1, false)
                             .min(OpaqueConst::new(&raw const MIN_F32))
                             .max(OpaqueConst::new(&raw const MAX_F32))
                             .positive_infinity(OpaqueConst::new(&raw const POSITIVE_INFINITY_F32))
@@ -454,7 +454,7 @@ unsafe impl Facet for f64 {
                 ScalarDef::builder()
                     .affinity(
                         ScalarAffinity::number()
-                            .float(1, 11, f64::MANTISSA_DIGITS as usize -1, false)
+                            .float(1, 11, f64::MANTISSA_DIGITS as usize - 1, false)
                             .min(OpaqueConst::new(&raw const MIN_F64))
                             .max(OpaqueConst::new(&raw const MAX_F64))
                             .positive_infinity(OpaqueConst::new(&raw const POSITIVE_INFINITY_F64))
