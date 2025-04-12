@@ -24,25 +24,6 @@ nostd:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
 
-    # Define a function to run a command within a GitHub Actions group
-    cmd_group() {
-        local cmd="$*"
-
-        # Start group
-        if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
-            echo "::group::$cmd"
-        fi
-        echo -e "\033[1;33m🧪 $cmd\033[0m"
-
-        # Run the command
-        eval "$cmd"
-
-        # End group
-        if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
-            echo "::endgroup::"
-        fi
-    }
-
     # Set up target directory for no-std checks
     export CARGO_TARGET_DIR=target/nostd
 
