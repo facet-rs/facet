@@ -267,6 +267,17 @@ impl<'a> JsonParser<'a> {
         Err(self.make_error(JsonParseErrorKind::InvalidValue))
     }
 
+    pub fn parse_null(&mut self) -> Result<(), JsonParseErrorWithContext<'a>> {
+        self.skip_whitespace();
+        if self.position + 4 <= self.input.len()
+            && &self.input[self.position..self.position + 4] == "null"
+        {
+            self.position += 4;
+            return Ok(());
+        }
+        Err(self.make_error(JsonParseErrorKind::InvalidValue))
+    }
+
     pub fn skip_whitespace(&mut self) {
         while self.position < self.input.len() {
             match self.input.as_bytes()[self.position] {

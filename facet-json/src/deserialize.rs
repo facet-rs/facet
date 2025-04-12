@@ -3,7 +3,7 @@ use std::num::NonZero;
 use crate::parser::{JsonParseErrorKind, JsonParseErrorWithContext, JsonParser};
 
 use facet_core::{Facet, Opaque, OpaqueUninit};
-use facet_reflect::{PokeList, PokeMap, PokeStruct, PokeUninit, PokeValueUninit};
+use facet_reflect::{PokeList, PokeMap, PokeOption, PokeStruct, PokeUninit, PokeValueUninit};
 use log::trace;
 
 /// Deserializes a JSON string into a value of type `T` that implements `Facet`.
@@ -114,6 +114,10 @@ pub(crate) fn deserialize_value<'input, 'mem>(
         },
         StructField {
             key: String,
+        },
+        FinishSome {
+            po: PokeOption<'mem>,
+            some: OpaqueUninit<'mem>,
         },
         AfterStructField {
             index: usize,
@@ -250,6 +254,23 @@ pub(crate) fn deserialize_value<'input, 'mem>(
                         let opaque = pe.build_in_place();
                         result = Some(opaque);
                     }
+                    PokeUninit::Option(po) => {
+                        trace!("Deserializing \x1b[1;36moption\x1b[0m");
+                        let po = unsafe { po.init_none() };
+                        if let Ok(()) = parser.parse_null() {
+                            trace!("Finished deserializing \x1b[1;36mNone\x1b[0m");
+                            result = Some(po.build_in_place());
+                        } else {
+                            let some_shape = po.def().t;
+                            let some_data =
+                                OpaqueUninit::new(unsafe { std::alloc::alloc(some_shape.layout) });
+                            let some_poke =
+                                unsafe { PokeUninit::unchecked_new(some_data, some_shape) };
+
+                            stack.push_front(StackItem::FinishSome { po, some: some_data } );
+                            stack.push_front(StackItem::Value { poke: some_poke });
+                        }
+                    }
                     _ => todo!("unsupported poke type"),
                 }
             }
@@ -274,6 +295,12 @@ pub(crate) fn deserialize_value<'input, 'mem>(
                         return Err(parser.make_error(JsonParseErrorKind::UnknownField(key)));
                     }
                 }
+            }
+            StackItem::FinishSome { po, some } => {
+                trace!("Finished deserializing \x1b[1;36mSome\x1b[0m");
+                result = Some(unsafe {
+                    po.replace_with_some_opaque(some.assume_init().as_const()).build_in_place()
+                });
             }
             StackItem::AfterStructField { index } => {
                 trace!("After processing struct field at index: \x1b[1;33m{index}\x1b[0m");
