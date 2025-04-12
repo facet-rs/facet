@@ -1,4 +1,4 @@
-Defines the core types adn traits used throughout the facet ecosystem for runtime reflection:
+Defines the core types and traits used throughout the facet ecosystem for runtime reflection:
 
 * `Facet`: exposes a `SHAPE` associated const
 * `Shape`: The central type that describes the memory layout and capabilities of a type

@@ -39,7 +39,7 @@ Thanks to all individual and corporate sponsors, without whom this work could no
     <img src="https://depot.dev/badges/built-with-depot.svg" alt="built with depot">
 </a> </p>
 
-Defines the core types adn traits used throughout the facet ecosystem for runtime reflection:
+Defines the core types and traits used throughout the facet ecosystem for runtime reflection:
 
 * `Facet`: exposes a `SHAPE` associated const
 * `Shape`: The central type that describes the memory layout and capabilities of a type
