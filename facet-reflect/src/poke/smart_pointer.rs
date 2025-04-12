@@ -3,6 +3,8 @@ use facet_core::{
     SmartPointerFlags, SmartPointerVTable,
 };
 
+use crate::PeekValue;
+
 /// Allows initializing an uninitialized option
 pub struct PokeSmartPointerUninit<'mem> {
     data: OpaqueUninit<'mem>,
@@ -69,7 +71,7 @@ impl<'mem> PokeSmartPointerUninit<'mem> {
     ///
     /// Returns `None` if the smart pointer cannot be created directly
     /// (like for weak pointers).
-    pub fn from_peek_value(self, value: crate::PeekValue<'mem>) -> Option<PokeSmartPointer<'mem>> {
+    pub fn from_peek_value(self, value: PeekValue<'mem>) -> Option<PokeSmartPointer<'mem>> {
         // Assert that the value's shape matches the expected inner type
         assert_eq!(
             value.shape(),
@@ -149,10 +151,10 @@ impl<'mem> PokeSmartPointer<'mem> {
     }
 
     /// Attempts to borrow the inner value if the smart pointer supports it.
-    pub fn try_borrow(&self) -> Option<crate::PeekValue<'_>> {
+    pub fn try_borrow(&self) -> Option<PeekValue<'_>> {
         let borrow_fn = self.def.vtable.borrow_fn?;
         let opaque = unsafe { borrow_fn(self.data.as_const()) };
-        Some(unsafe { crate::PeekValue::unchecked_new(opaque, self.def.t) })
+        Some(unsafe { PeekValue::unchecked_new(opaque, self.def.t) })
     }
 
     /// Attempts to upgrade this pointer if it's a weak reference.
