@@ -267,7 +267,10 @@ pub(crate) fn deserialize_value<'input, 'mem>(
                             let some_poke =
                                 unsafe { PokeUninit::unchecked_new(some_data, some_shape) };
 
-                            stack.push_front(StackItem::FinishSome { po, some: some_data } );
+                            stack.push_front(StackItem::FinishSome {
+                                po,
+                                some: some_data,
+                            });
                             stack.push_front(StackItem::Value { poke: some_poke });
                         }
                     }
@@ -299,7 +302,8 @@ pub(crate) fn deserialize_value<'input, 'mem>(
             StackItem::FinishSome { po, some } => {
                 trace!("Finished deserializing \x1b[1;36mSome\x1b[0m");
                 result = Some(unsafe {
-                    po.replace_with_some_opaque(some.assume_init().as_const()).build_in_place()
+                    po.replace_with_some_opaque(some.assume_init().as_const())
+                        .build_in_place()
                 });
             }
             StackItem::AfterStructField { index } => {
