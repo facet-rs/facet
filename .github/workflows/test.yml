@@ -187,3 +187,23 @@ jobs:
         shell: bash
         run: |
           cargo clippy --workspace --all-features --all-targets --keep-going -- -D warnings --allow deprecated
+
+  coverage:
+    runs-on: depot-ubuntu-24.04-arm-32
+
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: ✨ Gather coverage
+        shell: bash
+        run: |
+          cargo tarpaulin --output-dir coverage --out lcov
+
+      - name: ✨ Publish to Coveralls
+        uses: coverallsapp/github-action@master
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
