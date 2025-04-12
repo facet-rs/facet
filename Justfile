@@ -24,33 +24,40 @@ nostd:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
 
-    # Define GitHub Actions group functions
-    start_group() {
-        if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
-            echo "::group::$1"
-        fi
-        echo -e "\033[1;33m🧪 $1\033[0m"
-    }
+    # Define a function to run a command within a GitHub Actions group
+    cmd_group() {
+        local cmd="$*"
 
-    end_group() {
+        # Start group
+        if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+            echo "::group::$cmd"
+        fi
+        echo -e "\033[1;33m🧪 $cmd\033[0m"
+
+        # Run the command
+        eval "$cmd"
+
+        # End group
         if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
             echo "::endgroup::"
         fi
     }
 
-    start_group "Checking without std..."
+    # Set up target directory for no-std checks
     export CARGO_TARGET_DIR=target/nostd
-    cargo check --no-default-features -p facet-core
-    cargo check --no-default-features -p facet
-    cargo check --no-default-features -p facet-reflect
-    end_group
 
-    start_group "Checking with alloc but without std..."
+    # Run each check in its own group with the full command as the title
+    cmd_group "cargo check --no-default-features -p facet-core"
+    cmd_group "cargo check --no-default-features -p facet"
+    cmd_group "cargo check --no-default-features -p facet-reflect"
+
+    # Set up target directory for alloc but no-std checks
     export CARGO_TARGET_DIR=target/nostd-w-alloc
-    cargo check --no-default-features --features alloc -p facet-core
-    cargo check --no-default-features --features alloc -p facet
-    cargo check --no-default-features --features alloc -p facet-reflect
-    end_group
+
+    # Run each check in its own group with the full command as the title
+    cmd_group "cargo check --no-default-features --features alloc -p facet-core"
+    cmd_group "cargo check --no-default-features --features alloc -p facet"
+    cmd_group "cargo check --no-default-features --features alloc -p facet-reflect"
 
 ci:
     #!/usr/bin/env -S bash -euo pipefail
