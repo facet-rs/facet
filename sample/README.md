@@ -5,7 +5,7 @@
 </picture> &nbsp; sample
 </h1>
 
-[![experimental](https://img.shields.io/badge/status-experimental-yellow)](https://github.com/fasterthanlime/facet)
+[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
 [![free of syn](https://img.shields.io/badge/free%20of-syn-hotpink)](https://github.com/fasterthanlime/free-of-syn)
 [![crates.io](https://img.shields.io/crates/v/sample.svg)](https://crates.io/crates/sample)
 [![documentation](https://docs.rs/sample/badge.svg)](https://docs.rs/sample)
