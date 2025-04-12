@@ -29,16 +29,10 @@ pub use option::*;
 mod smart_pointer;
 pub use smart_pointer::*;
 
-mod lock;
-pub use lock::*;
-
-mod ref_cell;
-pub use ref_cell::*;
-
 mod scalar;
 pub use scalar::*;
 
-use crate::ConstTypeId;
+use crate::{ConstTypeId, Facet};
 
 /// Schema for reflection of a type
 #[derive(Clone, Copy, Debug)]
@@ -79,6 +73,29 @@ pub struct ShapeBuilder {
     vtable: Option<&'static ValueVTable>,
     def: Option<Def>,
     doc: &'static [&'static str],
+}
+
+impl Shape {
+    /// Returns a builder for shape
+    pub const fn builder() -> ShapeBuilder {
+        ShapeBuilder::new()
+    }
+
+    /// Check if this shape is of the given type
+    pub fn is_type<Other: Facet>(&'static self) -> bool {
+        let l = self;
+        let r = Other::SHAPE;
+        l == r
+    }
+
+    /// Assert that this shape is of the given type, panicking if it's not
+    pub fn assert_type<Other: Facet>(&'static self) {
+        assert!(
+            self.is_type::<Other>(),
+            "Type mismatch: expected {}, found {self}",
+            Other::SHAPE,
+        );
+    }
 }
 
 impl ShapeBuilder {
@@ -355,10 +372,4 @@ pub enum Def {
 
     /// Smart pointers, like Arc<T>, Rc<T>, etc.
     SmartPointer(SmartPointerDef),
-
-    /// Locks, like `Mutex<T>`, `RwLock<T>`
-    Lock(LockDef),
-
-    /// Reference-counted mutable data, like `RefCell<T>`
-    RefCell(RefCellDef),
 }

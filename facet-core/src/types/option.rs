@@ -1,13 +1,15 @@
 use super::Shape;
 use crate::opaque::{Opaque, OpaqueConst, OpaqueUninit};
 
-/// Fields for option types
+/// Describes an Option — including a vtable to query and alter its state,
+/// and the inner shape (the `T` in `Option<T>`).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
 #[non_exhaustive]
 pub struct OptionDef {
     /// vtable for interacting with the option
     pub vtable: &'static OptionVTable,
+
     /// shape of the inner type of the option
     pub t: &'static Shape,
 }

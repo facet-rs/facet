@@ -1,4 +1,6 @@
-use super::Shape;
+use core::fmt;
+
+use super::{MarkerTraits, Shape, TypeNameOpts};
 
 /// A characteristic a shape can have
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -158,26 +160,5 @@ impl Shape {
     /// Writes the name of this type to the given formatter
     pub fn write_type_name(&self, f: &mut fmt::Formatter<'_>, opts: TypeNameOpts) -> fmt::Result {
         (self.vtable.type_name)(f, opts)
-    }
-
-    /// Returns a builder for shape
-    pub const fn builder() -> ShapeBuilder {
-        ShapeBuilder::new()
-    }
-
-    /// Check if this shape is of the given type
-    pub fn is_type<Other: Facet>(&'static self) -> bool {
-        let l = self;
-        let r = Other::SHAPE;
-        l == r
-    }
-
-    /// Assert that this shape is of the given type, panicking if it's not
-    pub fn assert_type<Other: Facet>(&'static self) {
-        assert!(
-            self.is_type::<Other>(),
-            "Type mismatch: expected {}, found {self}",
-            Other::SHAPE,
-        );
     }
 }

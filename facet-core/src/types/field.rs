@@ -1,4 +1,5 @@
 use super::Shape;
+use bitflags::bitflags;
 
 /// Describes a field in a struct or tuple
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -118,7 +119,7 @@ impl FieldBuilder {
     }
 }
 
-bitflags::bitflags! {
+bitflags! {
     /// Flags that can be applied to fields to modify their behavior
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct FieldFlags: u64 {
