@@ -1,5 +1,62 @@
 use crate::opaque::{Opaque, OpaqueConst, OpaqueUninit};
 
+use super::Shape;
+
+/// Fields for list types
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[repr(C)]
+#[non_exhaustive]
+pub struct ListDef {
+    /// vtable for interacting with the list
+    pub vtable: &'static ListVTable,
+    /// shape of the items in the list
+    pub t: &'static Shape,
+}
+
+impl ListDef {
+    /// Returns a builder for ListDef
+    pub const fn builder() -> ListDefBuilder {
+        ListDefBuilder::new()
+    }
+}
+
+/// Builder for ListDef
+pub struct ListDefBuilder {
+    vtable: Option<&'static ListVTable>,
+    t: Option<&'static Shape>,
+}
+
+impl ListDefBuilder {
+    /// Creates a new ListDefBuilder
+    #[allow(clippy::new_without_default)]
+    pub const fn new() -> Self {
+        Self {
+            vtable: None,
+            t: None,
+        }
+    }
+
+    /// Sets the vtable for the ListDef
+    pub const fn vtable(mut self, vtable: &'static ListVTable) -> Self {
+        self.vtable = Some(vtable);
+        self
+    }
+
+    /// Sets the item shape for the ListDef
+    pub const fn t(mut self, t: &'static Shape) -> Self {
+        self.t = Some(t);
+        self
+    }
+
+    /// Builds the ListDef
+    pub const fn build(self) -> ListDef {
+        ListDef {
+            vtable: self.vtable.unwrap(),
+            t: self.t.unwrap(),
+        }
+    }
+}
+
 /// Initialize a list in place with a given capacity
 ///
 /// # Safety

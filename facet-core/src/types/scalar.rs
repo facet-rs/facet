@@ -1,5 +1,49 @@
 use crate::OpaqueConst;
 
+/// Definition for scalar types
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[repr(C)]
+#[non_exhaustive]
+pub struct ScalarDef {
+    /// Affinity of the scalar — is spiritually more like a number, more like a string, something else?
+    /// example: an IPv4 address is both. good luck.
+    pub affinity: ScalarAffinity,
+}
+
+impl ScalarDef {
+    /// Returns a builder for ScalarDef
+    pub const fn builder() -> ScalarDefBuilder {
+        ScalarDefBuilder::new()
+    }
+}
+
+/// Builder for ScalarDef
+#[derive(Default)]
+pub struct ScalarDefBuilder {
+    affinity: Option<ScalarAffinity>,
+}
+
+impl ScalarDefBuilder {
+    /// Creates a new ScalarDefBuilder
+    #[allow(clippy::new_without_default)]
+    pub const fn new() -> Self {
+        Self { affinity: None }
+    }
+
+    /// Sets the affinity for the ScalarDef
+    pub const fn affinity(mut self, affinity: ScalarAffinity) -> Self {
+        self.affinity = Some(affinity);
+        self
+    }
+
+    /// Builds the ScalarDef
+    pub const fn build(self) -> ScalarDef {
+        ScalarDef {
+            affinity: self.affinity.unwrap(),
+        }
+    }
+}
+
 /// Scalar affinity: what a scalar spiritually is: a number, a string, a bool, something else
 /// entirely?
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]

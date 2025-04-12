@@ -1,0 +1,207 @@
+use super::Shape;
+use bitflags::bitflags;
+
+/// Describes a field in a struct or tuple
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[repr(C)]
+#[non_exhaustive]
+pub struct Field {
+    /// key for the struct field (for tuples and tuple-structs, this is the 0-based index)
+    pub name: &'static str,
+
+    /// schema of the inner type
+    pub shape: &'static Shape,
+
+    /// offset of the field in the struct (obtained through `core::mem::offset_of`)
+    pub offset: usize,
+
+    /// flags for the field (e.g. sensitive, etc.)
+    pub flags: FieldFlags,
+
+    /// arbitrary attributes set via the derive macro
+    pub attributes: &'static [FieldAttribute],
+
+    /// doc comments
+    pub doc: &'static [&'static str],
+}
+
+impl Field {
+    /// Returns a builder for Field
+    pub const fn builder() -> FieldBuilder {
+        FieldBuilder::new()
+    }
+}
+
+/// Builder for Field
+pub struct FieldBuilder {
+    name: Option<&'static str>,
+    shape: Option<&'static Shape>,
+    offset: Option<usize>,
+    flags: Option<FieldFlags>,
+    attributes: &'static [FieldAttribute],
+    doc: &'static [&'static str],
+}
+
+/// An attribute that can be set on a field
+#[non_exhaustive]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[repr(C)]
+pub enum FieldAttribute {
+    /// Marks field as containing sensitive information
+    Sensitive,
+    /// Custom field attribute containing arbitrary text
+    Arbitrary(&'static str),
+}
+
+impl FieldBuilder {
+    /// Creates a new FieldBuilder
+    #[allow(clippy::new_without_default)]
+    pub const fn new() -> Self {
+        Self {
+            name: None,
+            shape: None,
+            offset: None,
+            flags: None,
+            attributes: &[],
+            doc: &[],
+        }
+    }
+
+    /// Sets the name for the Field
+    pub const fn name(mut self, name: &'static str) -> Self {
+        self.name = Some(name);
+        self
+    }
+
+    /// Sets the shape for the Field
+    pub const fn shape(mut self, shape: &'static Shape) -> Self {
+        self.shape = Some(shape);
+        self
+    }
+
+    /// Sets the offset for the Field
+    pub const fn offset(mut self, offset: usize) -> Self {
+        self.offset = Some(offset);
+        self
+    }
+
+    /// Sets the flags for the Field
+    pub const fn flags(mut self, flags: FieldFlags) -> Self {
+        self.flags = Some(flags);
+        self
+    }
+
+    /// Sets the attributes for the Field
+    pub const fn attributes(mut self, attributes: &'static [FieldAttribute]) -> Self {
+        self.attributes = attributes;
+        self
+    }
+
+    /// Sets the doc comments for the Field
+    pub const fn doc(mut self, doc: &'static [&'static str]) -> Self {
+        self.doc = doc;
+        self
+    }
+
+    /// Builds the Field
+    pub const fn build(self) -> Field {
+        Field {
+            name: self.name.unwrap(),
+            shape: self.shape.unwrap(),
+            offset: self.offset.unwrap(),
+            flags: match self.flags {
+                Some(flags) => flags,
+                None => FieldFlags::EMPTY,
+            },
+            attributes: self.attributes,
+            doc: self.doc,
+        }
+    }
+}
+
+bitflags! {
+    /// Flags that can be applied to fields to modify their behavior
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct FieldFlags: u64 {
+        /// An empty set of flags
+        const EMPTY = 0;
+
+        /// Flag indicating this field contains sensitive data that should not be displayed
+        const SENSITIVE = 1 << 0;
+    }
+}
+
+impl Default for FieldFlags {
+    #[inline(always)]
+    fn default() -> Self {
+        Self::EMPTY
+    }
+}
+
+impl core::fmt::Display for FieldFlags {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if self.is_empty() {
+            return write!(f, "none");
+        }
+
+        // Define a vector of flag entries: (flag, name)
+        let flags = [
+            (FieldFlags::SENSITIVE, "sensitive"),
+            // Future flags can be easily added here:
+            // (FieldFlags::SOME_FLAG, "some_flag"),
+            // (FieldFlags::ANOTHER_FLAG, "another_flag"),
+        ];
+
+        // Write all active flags with proper separators
+        let mut is_first = true;
+        for (flag, name) in flags {
+            if self.contains(flag) {
+                if !is_first {
+                    write!(f, ", ")?;
+                }
+                is_first = false;
+                write!(f, "{}", name)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Errors encountered when calling `field_by_index` or `field_by_name`
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FieldError {
+    /// `field_by_index` was called on a dynamic collection, that has no
+    /// static fields. a map doesn't have a "first field", it can only
+    /// associate by keys.
+    NoStaticFields,
+
+    /// `field_by_name` was called on a struct, and there is no static field
+    /// with the given key.
+    NoSuchStaticField,
+
+    /// `field_by_index` was called on a fixed-size collection (like a tuple,
+    /// a struct, or a fixed-size array) and the index was out of bounds.
+    IndexOutOfBounds,
+
+    /// `field_by_index` or `field_by_name` was called on a non-struct type.
+    NotAStruct,
+
+    /// `set` or `set_by_name` was called with an mismatched type
+    TypeMismatch,
+}
+
+impl core::error::Error for FieldError {}
+
+impl core::fmt::Display for FieldError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            FieldError::NoStaticFields => write!(f, "No static fields available"),
+            FieldError::NoSuchStaticField => write!(f, "No such static field"),
+            FieldError::IndexOutOfBounds => write!(f, "Index out of bounds"),
+            FieldError::NotAStruct => write!(f, "Not a struct"),
+            FieldError::TypeMismatch => write!(f, "Type mismatch"),
+        }
+    }
+}

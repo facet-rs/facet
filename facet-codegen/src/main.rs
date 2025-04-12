@@ -56,6 +56,20 @@ fn main() {
         .expect("sample_code thread panicked");
 
     if opts.check && has_diffs {
+        // Print a big banner with error message about generated files
+        error!("┌────────────────────────────────────────────────────────────────────────────┐");
+        error!("│                                                                            │");
+        error!("│  GENERATED FILES HAVE CHANGED - RUN `just codegen` TO UPDATE THEM          │");
+        error!("│                                                                            │");
+        error!("│  For README.md files:                                                      │");
+        error!("│                                                                            │");
+        error!("│  • Don't edit README.md directly - edit the README.md.in template instead  │");
+        error!("│  • Then run `just codegen` to regenerate the README.md files               │");
+        error!("│  • A pre-commit hook is set up by cargo-husky to do just that              │");
+        error!("│                                                                            │");
+        error!("│  See CONTRIBUTING.md                                                       │");
+        error!("│                                                                            │");
+        error!("└────────────────────────────────────────────────────────────────────────────┘");
         process::exit(1);
     }
 }

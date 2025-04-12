@@ -1,4 +1,62 @@
+use super::Shape;
 use crate::opaque::{Opaque, OpaqueConst, OpaqueUninit};
+
+/// Describes an Option — including a vtable to query and alter its state,
+/// and the inner shape (the `T` in `Option<T>`).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[repr(C)]
+#[non_exhaustive]
+pub struct OptionDef {
+    /// vtable for interacting with the option
+    pub vtable: &'static OptionVTable,
+
+    /// shape of the inner type of the option
+    pub t: &'static Shape,
+}
+
+impl OptionDef {
+    /// Returns a builder for OptionDef
+    pub const fn builder() -> OptionDefBuilder {
+        OptionDefBuilder::new()
+    }
+}
+
+/// Builder for OptionDef
+pub struct OptionDefBuilder {
+    vtable: Option<&'static OptionVTable>,
+    t: Option<&'static Shape>,
+}
+
+impl OptionDefBuilder {
+    /// Creates a new OptionDefBuilder
+    #[allow(clippy::new_without_default)]
+    pub const fn new() -> Self {
+        Self {
+            vtable: None,
+            t: None,
+        }
+    }
+
+    /// Sets the vtable for the OptionDef
+    pub const fn vtable(mut self, vtable: &'static OptionVTable) -> Self {
+        self.vtable = Some(vtable);
+        self
+    }
+
+    /// Sets the inner type shape for the OptionDef
+    pub const fn t(mut self, t: &'static Shape) -> Self {
+        self.t = Some(t);
+        self
+    }
+
+    /// Builds the OptionDef
+    pub const fn build(self) -> OptionDef {
+        OptionDef {
+            vtable: self.vtable.unwrap(),
+            t: self.t.unwrap(),
+        }
+    }
+}
 
 /// Check if an option contains a value
 ///
