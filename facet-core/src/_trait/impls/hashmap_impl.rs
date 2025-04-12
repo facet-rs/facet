@@ -101,20 +101,15 @@ where
                         });
                     }
 
-                    if K::SHAPE.vtable.hash.is_some() && V::SHAPE.vtable.hash.is_some() {
+                    if V::SHAPE.vtable.hash.is_some() {
                         builder = builder.hash(|value, hasher_this, hasher_write_fn| unsafe {
                             use crate::HasherProxy;
                             let map = value.as_ref::<HashMap<K, V>>();
-                            let k_hash = K::SHAPE.vtable.hash.unwrap_unchecked();
                             let v_hash = V::SHAPE.vtable.hash.unwrap_unchecked();
                             let mut hasher = HasherProxy::new(hasher_this, hasher_write_fn);
                             map.len().hash(&mut hasher);
                             for (k, v) in map {
-                                (k_hash)(
-                                    OpaqueConst::new(k as *const _),
-                                    hasher_this,
-                                    hasher_write_fn,
-                                );
+                                k.hash(&mut hasher);
                                 (v_hash)(
                                     OpaqueConst::new(v as *const _),
                                     hasher_this,
