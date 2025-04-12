@@ -1,4 +1,4 @@
-!/bin/bash
+#!/bin/bash
 if ! command -v just &> /dev/null; then
     echo "just command not found. Please install it using one of the following methods:"
     echo "  brew install just"
