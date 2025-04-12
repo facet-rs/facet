@@ -35,6 +35,6 @@ pub fn setup() {
     #[cfg(not(miri))]
     color_backtrace::install();
     let logger = Box::new(SimpleLogger);
-    log::set_boxed_logger(logger).unwrap();
+    _ = log::set_boxed_logger(logger);
     log::set_max_level(LevelFilter::Trace);
 }
