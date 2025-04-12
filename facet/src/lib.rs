@@ -13,7 +13,6 @@ pub mod sample_generated_code;
 
 pub use facet_core::*;
 
-#[cfg(feature = "derive")]
 pub use facet_derive::*;
 
 #[cfg(feature = "reflect")]

@@ -16,4 +16,4 @@ facet-core = { version = "0.5.2", path = "../facet-core" }
 facet-reflect = { version = "0.6.1", path = "../facet-reflect" }
 
 [dev-dependencies]
-facet = { path = "../facet", version = "0.1.20", features = ["derive"] }
+facet = { path = "../facet", version = "0.1.20" }

@@ -134,6 +134,9 @@ docsrs *args:
     export RUSTDOCFLAGS="--cfg docsrs"
     cmd_group "cargo +nightly doc {{args}}"
 
+msrv:
+    cargo hack check --feature-powerset --locked --rust-version --ignore-private --workspace --all-targets --keep-going --exclude-no-default-features
+
 docker-build-push:
     #!/usr/bin/env -S bash -eu
     source .envrc

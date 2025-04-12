@@ -12,7 +12,7 @@ categories = ["development-tools"]
 
 [dependencies]
 facet-core = { path = "../facet-core", version = "0.5.2", default-features = false }
-facet-derive = { path = "../facet-derive", version = "0.1.19", optional = true }
+facet-derive = { path = "../facet-derive", version = "0.1.19" }
 facet-reflect = { path = "../facet-reflect", version = "0.6.1", optional = true }
 
 [features]
@@ -20,8 +20,7 @@ reflect = ["dep:facet-reflect"]   # Enables reflection via Peek and Poke types
 testfeat = []                     # Does nothing, only used for tests
 std = ["facet-core/std", "alloc"] # Uses libstd and alloc
 alloc = ["facet-core/alloc"]      # Enables alloc support
-derive = ["dep:facet-derive"]     # Enables the derive macro
-default = ["std", "derive"]
+default = ["std"]
 
 [dev-dependencies]
 facet-reflect = { path = "../facet-reflect", version = "0.6.1" }

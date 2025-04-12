@@ -367,22 +367,22 @@ fn tuple_struct_with_pub_field() {
 #[test]
 fn cfg_attrs() {
     #[derive(Facet)]
-    #[cfg_attr(feature = "testfeat", derive(Serialize, Deserialize))]
-    #[cfg_attr(feature = "testfeat", serde(deny_unknown_fields))]
+    #[cfg_attr(feature = "testfeat", derive(Debug))]
+    #[cfg_attr(feature = "testfeat", facet(deny_unknown_fields))]
     pub struct CubConfig {}
 }
 
 #[test]
 fn cfg_attrs2() {
     #[derive(Facet)]
-    #[cfg_attr(feature = "testfeat", derive(Serialize, Deserialize))]
-    #[cfg_attr(feature = "testfeat", serde(deny_unknown_fields))]
+    #[cfg_attr(feature = "testfeat", derive(Debug))]
+    #[cfg_attr(feature = "testfeat", facet(deny_unknown_fields))]
     pub struct CubConfig {
         /// size the disk cache is allowed to use
-        #[cfg_attr(feature = "testfeat", serde(skip_serializing))]
+        #[cfg_attr(feature = "testfeat", facet(skip_serializing))]
         #[cfg_attr(
             feature = "testfeat",
-            serde(default = "serde_defaults::default_disk_cache_size")
+            facet(default = "serde_defaults::default_disk_cache_size")
         )]
         pub disk_cache_size: String,
     }
@@ -400,7 +400,6 @@ fn struct_with_std_string() {
 #[test]
 fn derive_real_life_cub_config() {
     #[derive(Facet)]
-    #[cfg_attr(feature = "testfeat", derive(Serialize, Deserialize))]
     #[cfg_attr(feature = "testfeat", facet(deny_unknown_fields))]
     pub struct CubConfig {
         /// size the disk cache is allowed to use
