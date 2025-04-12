@@ -109,6 +109,15 @@ fn copy_cargo_expand_output(has_diffs: &mut bool, opts: &Options) {
     let expanded_code = String::from_utf8(cargo_expand_output.stdout)
         .expect("Failed to convert cargo expand output to UTF-8 string");
 
+    // Replace any ::facet:: references with crate::
+    let expanded_code = expanded_code.replace("::facet::", "crate::");
+    let expanded_code = expanded_code.replace("use facet::", "use crate::");
+
+    let expanded_code = expanded_code.replace(
+        "::impls::_core::marker::PhantomData",
+        "::core::marker::PhantomData",
+    );
+
     // Command 2: rustfmt to format the expanded code
     let mut rustfmt_cmd = std::process::Command::new("rustfmt")
         .arg("--edition")
@@ -181,6 +190,7 @@ fn copy_cargo_expand_output(has_diffs: &mut bool, opts: &Options) {
         })
         .collect::<Vec<_>>()
         .join("\n");
+    let expanded_code = format!("{}\n#![allow(warnings)]\n{}", doc_comments, expanded_code);
 
     // Ensure a trailing newline for consistency
     let expanded_code = if expanded_code.is_empty() {
@@ -188,17 +198,6 @@ fn copy_cargo_expand_output(has_diffs: &mut bool, opts: &Options) {
     } else {
         format!("{}\n", expanded_code)
     };
-
-    // Replace any ::facet:: references with crate::
-    let expanded_code = expanded_code.replace("::facet::", "crate::");
-    let expanded_code = expanded_code.replace("use facet::", "use crate::");
-
-    let expanded_code = format!("{}\n#![allow(warnings)]\n{}", doc_comments, expanded_code);
-
-    let expanded_code = expanded_code.replace(
-        "::impls::_core::marker::PhantomData",
-        "::core::marker::PhantomData",
-    );
 
     // Write the expanded code to the target file
     let target_path = workspace_dir
