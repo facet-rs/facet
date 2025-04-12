@@ -146,18 +146,10 @@ impl<'mem> PokeOption<'mem> {
         }
     }
 
-    /// Forgets the PokeOption and returns the underlying Opaque data.
-    ///
-    /// This method is only used when the origin is borrowed. If this method is
-    /// not called, and then option is initialized with a `Some(T)`, the `T`
-    /// will be dropped when the PokeOption is dropped.
-    ///
-    /// Note that this function cannot panic, because PokeOption cannot be
-    /// constructed without initializing the option.
+    /// Takes ownership of this `PokeOption` and returns the underlying data.
+    #[inline]
     pub fn build_in_place(self) -> Opaque<'mem> {
-        let data = self.data;
-        core::mem::forget(self);
-        data
+        self.data
     }
 
     /// Builds an `Option<T>` from the PokeOption, then deallocates the memory
