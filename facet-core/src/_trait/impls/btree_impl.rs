@@ -1,6 +1,9 @@
 use core::alloc::Layout;
 
-use alloc::collections::{BTreeMap, VecDeque};
+use alloc::{
+    boxed::Box,
+    collections::{BTreeMap, VecDeque},
+};
 
 use crate::{
     ConstTypeId, Def, Facet, MapDef, MapIterVTable, MapVTable, MarkerTraits, Opaque, OpaqueConst,
