@@ -58,7 +58,7 @@ clippy:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
     echo -e "\033[1;35m🔍 Running Clippy on all targets...\033[0m"
-    cmd_group "cargo clippy --all-targets -- -D warnings"
+    cmd_group "cargo clippy --workspace --all-targets --all-features -- -D warnings"
 
 test *args:
     #!/usr/bin/env -S bash -euo pipefail

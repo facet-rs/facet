@@ -25,6 +25,9 @@ RUN apt-get update && apt-get install -y curl && \
 
 # Set environment variables
 ENV CARGO_INCREMENTAL=0
+ENV CLICOLOR=1
+ENV FORCE_COLOR=1
+ENV CLICOLOR_FORCE=1
 
 # Create a work directory
 WORKDIR /app
