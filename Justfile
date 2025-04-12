@@ -13,7 +13,7 @@ veryquickcheck:
     if [[ -z "${CI:-}" ]]; then
         just codegen
         echo -e "\033[1;34m📝 Fixing code formatting...\033[0m"
-        cargo fmt --all
+        cmd_group "cargo fmt --all"
     else
         just codegen-check
         just rustfmt
@@ -46,52 +46,52 @@ ci:
     just quickcheck
     just miri
     echo -e "\033[1;34m📝 Running cargo fmt in check mode...\033[0m"
-    cargo fmt --all -- --check
+    cmd_group "cargo fmt --all -- --check"
 
 rustfmt:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
     echo -e "\033[1;34m📝 Checking code formatting...\033[0m"
-    cargo fmt --all -- --check
+    cmd_group "cargo fmt --all -- --check"
 
 clippy:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
     echo -e "\033[1;35m🔍 Running Clippy on all targets...\033[0m"
-    cargo clippy --all-targets -- -D warnings
+    cmd_group "cargo clippy --all-targets -- -D warnings"
 
 test *args:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
     echo -e "\033[1;33m🏃 Running all but doc-tests with nextest...\033[0m"
-    cargo nextest run {{args}} < /dev/null
+    cmd_group "cargo nextest run {{args}} < /dev/null"
     echo -e "\033[1;33m✅ Good good!\033[0m"
 
     echo -e "\033[1;36m📚 Running documentation tests in separate target directory...\033[0m"
-    cargo test --doc {{args}}
+    cmd_group "cargo test --doc {{args}}"
     echo -e "\033[1;33m✅ Documentation tests completed!\033[0m"
 
 doc-tests *args:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
     echo -e "\033[1;36m📚 Running documentation tests...\033[0m"
-    cargo test --doc {{args}}
+    cmd_group "cargo test --doc {{args}}"
 
 codegen *args:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
-    cargo run -p facet-codegen -- {{args}}
+    cmd_group "cargo run -p facet-codegen -- {{args}}"
 
 codegen-check:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
-    cargo run -p facet-codegen -- --check
+    cmd_group "cargo run -p facet-codegen -- --check"
 
 rustfmt-fix:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
     echo -e "\033[1;34m📝 Fixing code formatting...\033[0m"
-    cargo fmt --all
+    cmd_group "cargo fmt --all"
 
 miri *args:
     #!/usr/bin/env -S bash -euxo pipefail
@@ -101,10 +101,10 @@ miri *args:
     export CARGO_TARGET_DIR=target/miri
     if [[ -z "${CI:-}" ]]; then
         export RUSTUP_TOOLCHAIN=nightly-2025-04-05
-        rustup toolchain install
-        rustup component add miri rust-src
+        cmd_group "rustup toolchain install"
+        cmd_group "rustup component add miri rust-src"
     fi
-    cargo miri nextest run {{args}}
+    cmd_group "cargo miri nextest run {{args}}"
 
 absolve:
     #!/usr/bin/env -S bash -euo pipefail
@@ -126,12 +126,13 @@ ship:
     just release
 
 release:
-    cargo ws publish --publish-as-is --allow-dirty
+    cmd_group "cargo ws publish --publish-as-is --allow-dirty"
 
 docsrs *args:
     #!/usr/bin/env -S bash -eux
     source .envrc
-    RUSTDOCFLAGS="--cfg docsrs" cargo +nightly doc {{args}}
+    export RUSTDOCFLAGS="--cfg docsrs"
+    cmd_group "cargo +nightly doc {{args}}"
 
 docker-build-push:
     #!/usr/bin/env -S bash -eu
