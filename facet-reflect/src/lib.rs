@@ -11,9 +11,9 @@ mod error;
 pub use error::*;
 
 #[cfg(feature = "alloc")]
-mod poke;
+mod wip;
 #[cfg(feature = "alloc")]
-pub use poke::*;
+pub use wip::*;
 
 mod peek;
 pub use peek::*;

@@ -1,15 +1,16 @@
-use std::collections::HashMap;
-
-use facet_core::{Def, Facet, FieldError, Variant};
-
+extern crate alloc;
 use crate::{ReflectError, ValueId};
-
-use super::{Guard, HeapVal, ISet, PokeValue, PokeValueUninit};
+use core::alloc::Layout;
+use facet_core::{Def, Facet, FieldError, OpaqueConst, OpaqueUninit, Shape, Variant};
+use std::collections::HashMap;
 
 /// Represents a frame in the initialization stack
 pub struct Frame<'mem> {
     /// The value we're initializing
-    value: PokeValueUninit<'mem>,
+    data: OpaqueUninit<'mem>,
+
+    /// The shape of the value
+    shape: &'static Shape,
 
     /// If set, when we're initialized, we must mark the
     /// parent's indexth field as initialized.
@@ -20,9 +21,14 @@ pub struct Frame<'mem> {
 }
 
 impl Frame<'_> {
+    /// Returns the value ID for a frame
+    fn id(&self) -> ValueId {
+        ValueId::new(self.shape, self.data.as_byte_ptr())
+    }
+
     /// Returns true if the frame is fully initialized
     fn is_fully_initialized(&self) -> bool {
-        match self.value.shape.def {
+        match self.shape.def {
             Def::Struct(sd) => self.istate.fields.are_all_set(sd.fields.len()),
             Def::Enum(_) => match self.istate.variant.as_ref() {
                 None => false,
@@ -45,34 +51,41 @@ struct IState {
     fields: ISet,
 }
 
-/// A builder for constructing and initializing complex data structures
-pub struct Builder<'mem> {
+/// A "work-in-progress" value — partially initialized
+pub struct WipValue<'mem> {
     /// guarantees the memory allocation for the whole tree
     guard: Option<Guard>,
 
-    /// the frames of the tree
+    /// stack of frames to keep track of deeply nested initialization
     frames: Vec<Frame<'mem>>,
 
-    /// Keeps track of field initialization
+    /// keeps track of initialization of out-of-tree frames
     isets: HashMap<ValueId, IState>,
 }
 
-impl<'mem> Builder<'mem> {
-    /// Creates a new Tree
-    pub fn new(value: HeapVal<PokeValueUninit<'mem>>) -> Self {
-        let HeapVal::Full { inner, guard } = value else {
-            panic!()
+impl<'mem> WipValue<'mem> {
+    /// Allocates a new value of the given shape
+    pub fn alloc_shape(shape: &'static Shape) -> Self {
+        let data = shape.allocate();
+        let guard = Guard {
+            ptr: data.as_mut_byte_ptr(),
+            layout: shape.layout,
         };
-
         Self {
             frames: vec![Frame {
-                value: inner,
+                data,
+                shape,
                 index: None,
                 istate: Default::default(),
             }],
             guard: Some(guard),
             isets: Default::default(),
         }
+    }
+
+    /// Allocates a new value of type `S`
+    pub fn alloc<S: Facet>() -> Self {
+        Self::alloc_shape(S::SHAPE)
     }
 
     /// Selects a field of a struct by name and pushes it onto the frame stack.
@@ -87,7 +100,7 @@ impl<'mem> Builder<'mem> {
     /// * `Err(ReflectError)` if the current frame is not a struct or the field doesn't exist.
     pub fn field_named(mut self, name: &str) -> Result<Self, ReflectError> {
         let frame = self.frames.last_mut().unwrap();
-        let shape = frame.value.shape();
+        let shape = frame.shape;
         let Def::Struct(def) = shape.def else {
             return Err(ReflectError::WasNotA { name: "struct" });
         };
@@ -100,13 +113,11 @@ impl<'mem> Builder<'mem> {
                 shape,
                 field_error: FieldError::NoSuchField,
             })?;
-        let field_data = unsafe { frame.value.data.field_uninit_at(field.offset) };
+        let field_data = unsafe { frame.data.field_uninit_at(field.offset) };
 
         self.frames.push(Frame {
-            value: PokeValueUninit {
-                data: field_data,
-                shape: field.shape,
-            },
+            data: field_data,
+            shape: field.shape,
             index: Some(index),
             istate: Default::default(),
         });
@@ -132,9 +143,9 @@ impl<'mem> Builder<'mem> {
         };
 
         // check that the type matches
-        if !frame.value.shape.is_type::<T>() {
+        if !frame.shape.is_type::<T>() {
             return Err(ReflectError::WrongShape {
-                expected: frame.value.shape,
+                expected: frame.shape,
                 actual: T::SHAPE,
             });
         }
@@ -143,26 +154,26 @@ impl<'mem> Builder<'mem> {
         if frame.istate.variant.is_some() || frame.istate.fields.is_any_set() {
             todo!(
                 "we should de-initialize partially initialized fields for {}",
-                frame.value.shape
+                frame.shape
             );
         }
 
         unsafe {
-            frame.value.data.put(t);
+            frame.data.put(t);
         }
 
         // mark the field as initialized
         if let Some(index) = frame.index {
             let Some(parent) = self.frames.last_mut() else {
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.value.shape,
+                    shape: frame.shape,
                     operation: "put was supposed to mark a field as initialized, but there was no parent frame",
                 });
             };
 
-            if matches!(parent.value.shape.def, Def::Enum(_)) && parent.istate.variant.is_none() {
+            if matches!(parent.shape.def, Def::Enum(_)) && parent.istate.variant.is_none() {
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.value.shape,
+                    shape: frame.shape,
                     operation: "put was supposed to mark a field as initialized, but the parent frame was an enum and didn't have a variant chosen",
                 });
             }
@@ -170,7 +181,7 @@ impl<'mem> Builder<'mem> {
             if parent.istate.fields.has(index) {
                 // TODO: just drop the field in place
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.value.shape,
+                    shape: frame.shape,
                     operation: "put was supposed to mark a field as initialized, but the parent frame already had it marked as initialized",
                 });
             }
@@ -182,33 +193,36 @@ impl<'mem> Builder<'mem> {
 
     /// Pops the current frame — goes back up one level
     pub fn pop(mut self) -> Result<Self, ReflectError> {
-        let Some(_) = self.pop_inner() else {
+        let Some(frame) = self.pop_inner() else {
             return Err(ReflectError::InvariantViolation);
         };
+        self.track(frame);
         Ok(self)
     }
 
-    fn pop_inner(&mut self) -> Option<PokeValueUninit<'mem>> {
+    fn pop_inner(&mut self) -> Option<Frame<'mem>> {
         let frame = self.frames.pop()?;
-
         if frame.is_fully_initialized() {
             if let Some(parent) = self.frames.last_mut() {
-                parent.istate.fields.set(frame.index.unwrap());
-            };
+                if let Some(index) = frame.index {
+                    parent.istate.fields.set(index);
+                }
+            }
         }
-
-        // we'll check if everything is initialized at the end
-        self.isets.insert(frame.value.id(), frame.istate);
-
-        Some(frame.value)
+        Some(frame)
     }
 
-    /// Asserts everything is initialized — get back a `HeapAlloc<PokeValue>`
-    pub fn build(mut self) -> Result<HeapVal<PokeValue<'mem>>, ReflectError> {
-        let mut root: Option<PokeValueUninit<'mem>> = None;
+    fn track(&mut self, frame: Frame<'mem>) {
+        self.isets.insert(frame.id(), frame.istate);
+    }
 
+    /// Asserts everything is initialized
+    pub fn build(mut self) -> Result<HeapValue, ReflectError> {
+        let mut root: Option<Frame<'mem>> = None;
         while let Some(frame) = self.pop_inner() {
-            root = Some(frame);
+            if let Some(old_root) = root.replace(frame) {
+                self.track(old_root);
+            }
         }
         let Some(root) = root else {
             return Err(ReflectError::InvariantViolation);
@@ -243,16 +257,16 @@ impl<'mem> Builder<'mem> {
         }
 
         let shape = root.shape;
-        let data = unsafe { root.data.assume_init() };
+        let _data = unsafe { root.data.assume_init() };
 
-        Ok(HeapVal::Full {
-            inner: PokeValue { data, shape },
+        Ok(HeapValue {
             guard: self.guard.take().unwrap(),
+            shape,
         })
     }
 }
 
-impl Drop for Builder<'_> {
+impl Drop for WipValue<'_> {
     fn drop(&mut self) {
         for (id, is) in self.isets.drain() {
             let field_count = match id.shape.def {
@@ -281,5 +295,113 @@ impl Drop for Builder<'_> {
                 panic!("some fields were not initialized")
             }
         }
+    }
+}
+
+/// A guard structure to manage memory allocation and deallocation.
+///
+/// This struct holds a raw pointer to the allocated memory and the layout
+/// information used for allocation. It's responsible for deallocating
+/// the memory when dropped.
+pub struct Guard {
+    /// Raw pointer to the allocated memory.
+    ptr: *mut u8,
+    /// Layout information of the allocated memory.
+    layout: Layout,
+}
+
+impl Drop for Guard {
+    fn drop(&mut self) {
+        if self.layout.size() != 0 {
+            eprintln!("GUARD IS DEALLOCATING {:p} {:?}", self.ptr, self.layout);
+
+            // SAFETY: `ptr` has been allocated via the global allocator with the given layout
+            unsafe { alloc::alloc::dealloc(self.ptr, self.layout) };
+        }
+    }
+}
+
+use facet_core::Field;
+
+/// Keeps track of which fields were initialized, up to 64 fields
+#[derive(Clone, Copy, Default, Debug)]
+pub struct ISet(u64);
+
+impl ISet {
+    /// The maximum index that can be tracked.
+    pub const MAX_INDEX: usize = 63;
+
+    /// Creates a new ISet with all (given) fields set.
+    pub fn all(fields: &[Field]) -> Self {
+        let mut iset = ISet::default();
+        for (i, _field) in fields.iter().enumerate() {
+            iset.set(i);
+        }
+        iset
+    }
+
+    /// Sets the bit at the given index.
+    pub fn set(&mut self, index: usize) {
+        if index >= 64 {
+            panic!("ISet can only track up to 64 fields. Index {index} is out of bounds.");
+        }
+        self.0 |= 1 << index;
+    }
+
+    /// Unsets the bit at the given index.
+    pub fn unset(&mut self, index: usize) {
+        if index >= 64 {
+            panic!("ISet can only track up to 64 fields. Index {index} is out of bounds.");
+        }
+        self.0 &= !(1 << index);
+    }
+
+    /// Checks if the bit at the given index is set.
+    pub fn has(&self, index: usize) -> bool {
+        if index >= 64 {
+            panic!("ISet can only track up to 64 fields. Index {index} is out of bounds.");
+        }
+        (self.0 & (1 << index)) != 0
+    }
+
+    /// Checks if all bits up to the given count are set.
+    pub fn are_all_set(&self, count: usize) -> bool {
+        if count > 64 {
+            panic!("ISet can only track up to 64 fields. Count {count} is out of bounds.");
+        }
+        let mask = (1 << count) - 1;
+        self.0 & mask == mask
+    }
+
+    /// Checks if any bit in the ISet is set.
+    pub fn is_any_set(&self) -> bool {
+        self.0 != 0
+    }
+
+    /// Clears all bits in the ISet.
+    pub fn clear(&mut self) {
+        self.0 = 0;
+    }
+}
+
+/// A type-erased value stored on the heap
+pub struct HeapValue {
+    guard: Guard,
+    shape: &'static Shape,
+}
+
+impl HeapValue {
+    pub fn materialize<T: Facet>(self) -> Result<T, ReflectError> {
+        if self.shape != T::SHAPE {
+            return Err(ReflectError::WrongShape {
+                expected: self.shape,
+                actual: T::SHAPE,
+            });
+        }
+
+        let data = OpaqueConst::new(self.guard.ptr);
+        let res = unsafe { data.read::<T>() };
+        core::mem::forget(self);
+        Ok(res)
     }
 }

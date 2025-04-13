@@ -232,7 +232,7 @@ use facet_reflect::PokeValueUninit;
 
 # fn main() {
 // Allocate memory for a struct - returns a PokeValueUninit and a Guard that ensures proper cleanup
-let (poke, guard) = PokeValueUninit::alloc::<FooBar>();
+let poke = PokeValueUninit::alloc::<FooBar>();
 
 // Convert to a struct handler
 let poke = poke.into_struct().unwrap();
