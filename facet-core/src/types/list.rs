@@ -96,8 +96,9 @@ pub type ListGetItemPtrFn = unsafe fn(list: OpaqueConst, index: usize) -> Opaque
 #[repr(C)]
 #[non_exhaustive]
 pub struct ListVTable {
-    /// cf. [`ListInitInPlaceWithCapacityFn`]
-    pub init_in_place_with_capacity: ListInitInPlaceWithCapacityFn,
+    /// cf. [`ListInitInPlaceWithCapacityFn`].
+    /// Unbuildable lists exist, like arrays.
+    pub init_in_place_with_capacity: Option<ListInitInPlaceWithCapacityFn>,
 
     /// cf. [`ListPushFn`]
     pub push: ListPushFn,
@@ -167,7 +168,7 @@ impl ListVTableBuilder {
     /// This method will panic if any of the required fields are `None`.
     pub const fn build(self) -> ListVTable {
         ListVTable {
-            init_in_place_with_capacity: self.init_in_place_with_capacity.unwrap(),
+            init_in_place_with_capacity: self.init_in_place_with_capacity,
             push: self.push.unwrap(),
             len: self.len.unwrap(),
             get_item_ptr: self.get_item_ptr.unwrap(),

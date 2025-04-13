@@ -31,7 +31,14 @@ impl<'mem> HeapVal<PokeListUninit<'mem>> {
         if let Some(capacity) = size_hint {
             let init_in_place_with_capacity = self.def.vtable.init_in_place_with_capacity;
             self.map_res(|this| {
-                let data = unsafe { init_in_place_with_capacity(this.value.data, capacity) };
+                let data = match init_in_place_with_capacity {
+                    Some(init_fn) => unsafe { init_fn(this.value.data, capacity) },
+                    None => {
+                        return Err(ReflectError::NoDefault {
+                            shape: this.shape(),
+                        });
+                    }
+                };
                 Ok(PokeList {
                     value: PokeValue {
                         data,

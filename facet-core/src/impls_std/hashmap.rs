@@ -120,10 +120,8 @@ where
                         &const {
                             MapVTable::builder()
                                 .init_in_place_with_capacity(|uninit, capacity| unsafe {
-                                    Ok(uninit.put(Self::with_capacity_and_hasher(
-                                        capacity,
-                                        S::default(),
-                                    )))
+                                    uninit
+                                        .put(Self::with_capacity_and_hasher(capacity, S::default()))
                                 })
                                 .insert(|ptr, key, value| unsafe {
                                     let map = ptr.as_mut::<HashMap<K, V>>();
