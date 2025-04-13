@@ -25,9 +25,9 @@ fn peek_enum() {
 
     // Check if it's the Some variant
     if peek_def_not_enum.variant_name_active() == "Some" {
-        // Get the value field
+        // Get the value field using tuple_field since it's a tuple variant
         let inner_value = peek_def_not_enum
-            .field("0")
+            .tuple_field(0)
             .expect("Should have a value field");
         let value = inner_value.get::<u32>();
         assert_eq!(*value, 42);
