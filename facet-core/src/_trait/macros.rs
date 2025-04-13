@@ -31,7 +31,15 @@ pub const fn shape_of<TStruct, TField: Facet>(_f: &dyn Fn(TStruct) -> TField) ->
 #[macro_export]
 macro_rules! value_vtable {
     ($type_name:ty, $type_name_fn:expr) => {
-        &const {
+        &$crate::value_vtable_inner!($type_name, $type_name_fn)
+    };
+}
+
+/// Creates a `ValueVTable` for a given type, see [`value_vtable!`] for more details.
+#[macro_export]
+macro_rules! value_vtable_inner {
+    ($type_name:ty, $type_name_fn:expr) => {
+        const {
             let mut builder = $crate::ValueVTable::builder()
                 .type_name($type_name_fn)
                 .drop_in_place(|data| unsafe { data.drop_in_place::<$type_name>() });
