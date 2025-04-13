@@ -269,6 +269,15 @@ impl<'mem> PeekValue<'mem> {
             })
         }
     }
+
+    /// Tries to identify this value as an option
+    pub fn into_option(self) -> Result<super::PeekOption<'mem>, ReflectError> {
+        if let Def::Option(def) = self.shape.def {
+            Ok(super::PeekOption { value: self, def })
+        } else {
+            Err(ReflectError::WasNotA { name: "option" })
+        }
+    }
 }
 
 impl core::fmt::Display for PeekValue<'_> {

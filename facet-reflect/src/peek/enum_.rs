@@ -131,7 +131,7 @@ impl<'mem> PeekEnum<'mem> {
     /// Returns a PeekValue handle to a field of a tuple or struct variant
     pub fn field(self, field_name: &str) -> Option<crate::PeekValue<'mem>> {
         let variant = self.active_variant();
-        
+
         // Get field by name from variant data struct
         let field = variant.data.fields.iter().find(|f| f.name == field_name)?;
         let field_data = unsafe { self.value.data().field(field.offset) };
@@ -145,11 +145,11 @@ impl<'mem> PeekEnum<'mem> {
     pub fn tuple_field(self, index: usize) -> Option<crate::PeekValue<'mem>> {
         let variant = self.active_variant();
         let fields = &variant.data.fields;
-        
+
         if index >= fields.len() {
             return None;
         }
-        
+
         let field = &fields[index];
         let field_data = unsafe { self.value.data().field(field.offset) };
         Some(crate::PeekValue {
@@ -160,10 +160,12 @@ impl<'mem> PeekEnum<'mem> {
 
     /// Iterates over all fields in this enum variant, providing both field metadata and value
     #[inline]
-    pub fn fields(self) -> impl Iterator<Item = (&'static facet_core::Field, crate::PeekValue<'mem>)> {
+    pub fn fields(
+        self,
+    ) -> impl Iterator<Item = (&'static facet_core::Field, crate::PeekValue<'mem>)> {
         let variant = self.active_variant();
         let fields = &variant.data.fields;
-        
+
         // Create an iterator that maps each field to a (Field, PeekValue) pair
         fields.iter().map(move |field| {
             let field_data = unsafe { self.value.data().field(field.offset) };
