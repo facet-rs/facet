@@ -10,7 +10,7 @@ pub struct PokeMapUninit<'mem> {
     pub(crate) def: MapDef,
 }
 
-impl<'mem> PokeMapUninit<'mem> {
+impl PokeMapUninit<'_> {
     #[inline(always)]
     /// Shape getter
     pub fn shape(&self) -> &'static Shape {
@@ -42,6 +42,7 @@ impl<'mem> HeapVal<PokeMapUninit<'mem>> {
         }
     }
 
+    /// Converts the `PokeMapUninit` into a `HeapVal<PokeValueUninit>`
     pub fn into_value(self) -> HeapVal<PokeValueUninit<'mem>> {
         self.map(|map| map.value)
     }

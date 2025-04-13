@@ -38,15 +38,19 @@ pub enum ReflectError {
     MissingCharacteristic {
         /// The shape of the value that doesn't implement `Default`.
         shape: &'static Shape,
+        /// The characteristic that is missing.
         characteristic: Characteristic,
     },
 
     /// An operation failed for a given shape
     OperationFailed {
+        /// The shape of the value for which the operation failed.
         shape: &'static Shape,
+        /// The name of the operation that failed.
         operation: &'static str,
     },
 
+    /// An unknown error occurred.
     Unknown,
 }
 

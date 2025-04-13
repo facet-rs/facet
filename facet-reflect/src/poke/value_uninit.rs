@@ -174,8 +174,15 @@ impl<'mem> HeapVal<PokeValueUninit<'mem>> {
     }
 }
 
-struct Guard {
+/// A guard structure to manage memory allocation and deallocation.
+///
+/// This struct holds a raw pointer to the allocated memory and the layout
+/// information used for allocation. It's responsible for deallocating
+/// the memory when dropped.
+pub struct Guard {
+    /// Raw pointer to the allocated memory.
     ptr: *mut u8,
+    /// Layout information of the allocated memory.
     layout: Layout,
 }
 
@@ -189,8 +196,16 @@ impl Drop for Guard {
 }
 
 /// Ensures a value is dropped when the guard is dropped.
+/// Ensures a value is dropped when the guard is dropped.
 pub enum HeapVal<T> {
-    Full { inner: T, guard: Guard },
+    /// Contains the initialized value and its associated guard.
+    Full {
+        /// The inner value of type T.
+        inner: T,
+        /// The guard responsible for managing the allocation.
+        guard: Guard,
+    },
+    /// Represents an uninitialized or empty state.
     Empty,
 }
 
@@ -219,7 +234,7 @@ impl<T> DerefMut for HeapVal<T> {
 impl<T> HeapVal<T> {
     /// Maps the inner value with a closure.
     pub(crate) fn map<U>(mut self, f: impl FnOnce(T) -> U) -> HeapVal<U> {
-        match std::mem::replace(&mut self, HeapVal::Empty) {
+        match core::mem::replace(&mut self, HeapVal::Empty) {
             HeapVal::Full { inner, guard } => {
                 let new_inner = f(inner);
                 HeapVal::Full {
@@ -234,7 +249,7 @@ impl<T> HeapVal<T> {
     /// Maps the inner value with a closure that returns an option
     /// If it returns `None`, the heap value is deallocated.
     pub(crate) fn map_opt<U>(mut self, f: impl FnOnce(T) -> Option<U>) -> Option<HeapVal<U>> {
-        match std::mem::replace(&mut self, HeapVal::Empty) {
+        match core::mem::replace(&mut self, HeapVal::Empty) {
             HeapVal::Full { inner, guard } => f(inner).map(|new_inner| HeapVal::Full {
                 inner: new_inner,
                 guard,
@@ -249,7 +264,7 @@ impl<T> HeapVal<T> {
         mut self,
         f: impl FnOnce(T) -> Result<U, E>,
     ) -> Result<HeapVal<U>, E> {
-        match std::mem::replace(&mut self, HeapVal::Empty) {
+        match core::mem::replace(&mut self, HeapVal::Empty) {
             HeapVal::Full { inner, guard } => f(inner).map(|new_inner| HeapVal::Full {
                 inner: new_inner,
                 guard,

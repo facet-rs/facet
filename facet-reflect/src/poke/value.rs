@@ -134,7 +134,7 @@ impl core::hash::Hash for PokeValue<'_> {
     }
 }
 
-impl<'mem> HeapVal<PokeValue<'mem>> {
+impl HeapVal<PokeValue<'_>> {
     /// Builds a value of type `U` out of this
     pub fn materialize<U: Facet>(self) -> Result<U, ReflectError> {
         if self.shape() != U::SHAPE {
@@ -155,7 +155,7 @@ impl<'mem> HeapVal<PokeValue<'mem>> {
     }
 }
 
-impl<'mem> Drop for PokeValue<'mem> {
+impl Drop for PokeValue<'_> {
     fn drop(&mut self) {
         if let Some(drop_fn) = self.shape.vtable.drop_in_place {
             unsafe { drop_fn(self.data) };

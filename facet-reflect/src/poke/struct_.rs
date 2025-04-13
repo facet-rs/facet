@@ -46,6 +46,7 @@ impl<'mem> PokeStruct<'mem> {
 }
 
 impl<'mem> HeapVal<PokeStruct<'mem>> {
+    /// Converts the `HeapVal<PokeStruct>` into a `HeapVal<PokeValue>`
     pub fn into_value(self) -> HeapVal<PokeValue<'mem>> {
         self.map(|s| s.into_value())
     }
