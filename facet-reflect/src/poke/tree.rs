@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use facet_core::{Def, Facet, FieldError, Variant};
+use facet_core::{Def, Facet, FieldError, OpaqueConst, Variant};
 
 use crate::{ReflectError, ValueId};
 
@@ -92,6 +92,16 @@ impl<'mem> Tree<'mem> {
                 operation: "tried to put a T but there was no frame to put T into",
             });
         };
+
+        // check that the type matches
+        if !frame.value.shape.is_type::<T>() {
+            return Err(ReflectError::WrongShape {
+                expected: frame.value.shape,
+                actual: T::SHAPE,
+            });
+        }
+
+        // de-initialize partially initialized fields
         if frame.istate.variant.is_some() || frame.istate.fields.is_any_set() {
             todo!(
                 "we should de-initialize partially initialized fields for {}",
@@ -99,6 +109,11 @@ impl<'mem> Tree<'mem> {
             );
         }
 
+        // move the value into the frame
+        unsafe { frame.value.data.write(OpaqueConst::new(&raw const t)) };
+        core::mem::forget(t);
+
+        // mark the field as initialized
         if let Some(index) = frame.index {
             let Some(parent) = self.frames.last_mut() else {
                 return Err(ReflectError::OperationFailed {
@@ -183,5 +198,11 @@ impl<'mem> Tree<'mem> {
             inner: PokeValue { data, shape },
             guard: self.guard,
         })
+    }
+}
+
+impl Drop for Tree<'_> {
+    fn drop(&mut self) {
+        todo!()
     }
 }
