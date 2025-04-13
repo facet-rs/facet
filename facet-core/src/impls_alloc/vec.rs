@@ -94,7 +94,7 @@ where
                         &const {
                             ListVTable::builder()
                         .init_in_place_with_capacity(|data, capacity| unsafe {
-                            Ok(data.put(Self::with_capacity(capacity)))
+                            data.put(Self::with_capacity(capacity))
                         })
                         .push(|ptr, item| unsafe {
                             let vec = ptr.as_mut::<Vec<T>>();

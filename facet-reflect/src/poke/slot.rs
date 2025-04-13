@@ -1,4 +1,4 @@
-use facet_core::{Facet, FieldError};
+use facet_core::{Facet, FieldError, OpaqueConst};
 
 use crate::ReflectError;
 
@@ -74,7 +74,10 @@ impl<'mem> Slot<'mem> {
             parent,
             index,
         } = self;
-        value.put(t)?;
+        // manual put, because we can't move out of `value`
+        unsafe { value.data.write(OpaqueConst::new(&raw const t)) };
+        core::mem::forget(t);
+
         let parent = unsafe { parent.assume_field_init(index) };
         Ok(parent)
     }

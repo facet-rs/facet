@@ -64,7 +64,7 @@ impl ListDefBuilder {
 /// The `list` parameter must point to uninitialized memory of sufficient size.
 /// The function must properly initialize the memory.
 pub type ListInitInPlaceWithCapacityFn =
-    unsafe fn(list: OpaqueUninit, capacity: usize) -> Result<Opaque, ()>;
+    for<'mem> unsafe fn(list: OpaqueUninit<'mem>, capacity: usize) -> Opaque<'mem>;
 
 /// Push an item to the list
 ///

@@ -14,7 +14,6 @@ where
                     .vtable(
                         &const {
                             ListVTable::builder()
-                        .init_in_place_with_capacity(|_, _| Err(()))
                         .push(|_, _| {
                             panic!("Cannot push to &[T]");
                         })

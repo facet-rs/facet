@@ -75,7 +75,7 @@ impl MapDefBuilder {
 /// The `map` parameter must point to uninitialized memory of sufficient size.
 /// The function must properly initialize the memory.
 pub type MapInitInPlaceWithCapacityFn =
-    unsafe fn(map: OpaqueUninit, capacity: usize) -> Result<Opaque, ()>;
+    for<'mem> unsafe fn(map: OpaqueUninit<'mem>, capacity: usize) -> Opaque<'mem>;
 
 /// Insert a key-value pair into the map
 ///

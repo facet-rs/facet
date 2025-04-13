@@ -94,37 +94,6 @@ impl<'mem> PokeValueUninit<'mem> {
         }
     }
 
-    /// Place a value in the space provided — this is equivalent to `*self = value`
-    ///
-    /// This function places a value of type T into the destination space,
-    /// checking that T exactly matches the expected shape.
-    pub fn put<T: Facet + 'mem>(self, value: T) -> Result<PokeValue<'mem>, ReflectError> {
-        if !self.shape.is_type::<T>() {
-            return Err(ReflectError::WrongShape {
-                expected: self.shape,
-                actual: T::SHAPE,
-            });
-        }
-        Ok(PokeValue {
-            data: unsafe { self.data.put(value) },
-            shape: self.shape,
-        })
-    }
-
-    /// Attempts to set the value to its default
-    ///
-    /// Returns `Ok(PokeValue)` if setting to default was successful, `Err(Self)` otherwise.
-    pub fn default_in_place(self) -> Result<PokeValue<'mem>, Self> {
-        if let Some(default_in_place_fn) = self.vtable().default_in_place {
-            Ok(PokeValue {
-                data: unsafe { default_in_place_fn(self.data) },
-                shape: self.shape,
-            })
-        } else {
-            Err(self)
-        }
-    }
-
     // /// Attempts to clone `source` into this value
     // ///
     // /// Returns `Ok(PokeValue)` if cloning was successful, `Err(Self)` otherwise.
@@ -280,5 +249,39 @@ impl<T> HeapVal<T> {
             }),
             HeapVal::Empty => panic!("cannot map empty heapval"),
         }
+    }
+}
+
+impl<'mem> HeapVal<PokeValueUninit<'mem>> {
+    /// Place a value in the space provided — this is equivalent to `*self = value`
+    ///
+    /// This function places a value of type T into the destination space,
+    /// checking that T exactly matches the expected shape.
+    pub fn put<T: Facet + 'mem>(self, value: T) -> Result<PokeValue<'mem>, ReflectError> {
+        if !self.shape.is_type::<T>() {
+            return Err(ReflectError::WrongShape {
+                expected: self.shape,
+                actual: T::SHAPE,
+            });
+        }
+        Ok(PokeValue {
+            data: unsafe { self.data.put(value) },
+            shape: self.shape,
+        })
+    }
+
+    /// Attempts to set the value to its default
+    ///
+    /// Returns `Ok(PokeValue)` if setting to default was successful, `Err(Self)` otherwise.
+    pub fn default_in_place(self) -> Result<HeapVal<PokeValue<'mem>>, ReflectError> {
+        let Some(default_in_place_fn) = self.vtable().default_in_place else {
+            return Err(ReflectError::NoDefault { shape: self.shape });
+        };
+        self.map_res(|this| {
+            Ok(PokeValue {
+                data: unsafe { default_in_place_fn(this.data) },
+                shape: this.shape,
+            })
+        })
     }
 }

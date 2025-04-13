@@ -1,6 +1,8 @@
 use facet_core::{ListDef, Shape};
 
-use super::{PokeList, PokeValue, PokeValueUninit};
+use crate::ReflectError;
+
+use super::{HeapVal, PokeList, PokeValue, PokeValueUninit};
 
 /// Allows initializing an uninitialized list
 pub struct PokeListUninit<'mem> {
@@ -21,33 +23,33 @@ impl<'mem> PokeListUninit<'mem> {
     pub fn def(&self) -> &ListDef {
         &self.def
     }
+}
 
+impl<'mem> HeapVal<PokeListUninit<'mem>> {
     /// Initializes the list with an optional size hint
-    pub fn init(self, size_hint: Option<usize>) -> Result<PokeList<'mem>, Self> {
+    pub fn init(self, size_hint: Option<usize>) -> Result<HeapVal<PokeList<'mem>>, ReflectError> {
         if let Some(capacity) = size_hint {
             let init_in_place_with_capacity = self.def.vtable.init_in_place_with_capacity;
-            let res = unsafe { init_in_place_with_capacity(self.value.data, capacity) };
-            match res {
-                Ok(data) => Ok(PokeList {
+            self.map_res(|this| {
+                let data = unsafe { init_in_place_with_capacity(this.value.data, capacity) };
+                Ok(PokeList {
                     value: PokeValue {
                         data,
-                        shape: self.shape(),
+                        shape: this.shape(),
                     },
-                    def: self.def,
-                }),
-                Err(_) => Err(self),
-            }
+                    def: this.def,
+                })
+            })
         } else {
-            match self.value.default_in_place() {
-                Ok(val) => Ok(PokeList {
-                    value: val,
-                    def: self.def,
-                }),
-                Err(uninit_val) => Err(PokeListUninit {
-                    value: uninit_val,
-                    def: self.def,
-                }),
-            }
+            let def = self.def;
+            Ok(self
+                .into_value()
+                .default_in_place()?
+                .map(|val| PokeList { value: val, def }))
         }
+    }
+
+    pub fn into_value(self) -> HeapVal<PokeValueUninit<'mem>> {
+        self.map(|list| list.value)
     }
 }

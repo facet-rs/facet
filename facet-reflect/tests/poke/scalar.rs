@@ -4,7 +4,7 @@ use facet_reflect::PokeValueUninit;
 fn build_u64() {
     facet_testhelpers::setup();
 
-    let (pu, _guard) = PokeValueUninit::alloc::<u64>();
+    let pu = PokeValueUninit::alloc::<u64>();
     let pv = pu.put(42u64).unwrap();
 
     let value = *pv.get::<u64>();

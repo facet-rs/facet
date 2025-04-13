@@ -2,6 +2,7 @@ use facet_core::{EnumDef, Field, Shape};
 
 /// Errors that can occur when reflecting on types.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ReflectError {
     /// Tried to `build` or `build_in_place` a struct/enum without initializing all fields.
     PartiallyInitialized {
@@ -32,6 +33,14 @@ pub enum ReflectError {
 
     /// An invariant of the reflection system was violated.
     InvariantViolation,
+
+    /// Attempted to set a value to its default, but the value doesn't implement `Default`.
+    NoDefault {
+        /// The shape of the value that doesn't implement `Default`.
+        shape: &'static Shape,
+    },
+
+    Unknown,
 }
 
 impl core::fmt::Display for ReflectError {
@@ -56,6 +65,12 @@ impl core::fmt::Display for ReflectError {
             }
             ReflectError::WasNotA { name } => write!(f, "Was not a {}", name),
             ReflectError::InvariantViolation => write!(f, "Invariant violation"),
+            ReflectError::NoDefault { shape } => write!(
+                f,
+                "No default value available for type {}. The type does not implement the Default trait, which is required for this operation.",
+                shape
+            ),
+            ReflectError::Unknown => write!(f, "Unknown error"),
         }
     }
 }
