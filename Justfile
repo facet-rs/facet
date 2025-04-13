@@ -1,3 +1,7 @@
+default:
+    just precommit
+    just prepush
+
 precommit:
     just genfmt
 
