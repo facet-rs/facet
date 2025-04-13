@@ -72,7 +72,7 @@ pub struct Wip<'a> {
     guard: Guard,
 
     /// stack of frames to keep track of deeply nested initialization
-    frames: Vec<Frame>,
+    frames: alloc::vec::Vec<Frame>,
 
     /// keeps track of initialization of out-of-tree frames
     istates: HashMap<ValueId, IState>,
