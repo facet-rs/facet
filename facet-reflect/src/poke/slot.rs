@@ -164,7 +164,8 @@ impl<'mem> StructSlot<'mem> {
 
     /// Finish this struct
     pub fn finish(self) -> Result<Parent<'mem>, ReflectError> {
-        self.storage.build_in_place()?;
+        let pv = self.storage.build_in_place()?;
+        core::mem::forget(pv);
         unsafe { Ok(self.slot.assume_init()) }
     }
 }

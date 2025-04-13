@@ -209,7 +209,9 @@ fn test_nested_initialization() -> eyre::Result<()> {
     let poke = poke.field_by_name("y")?.set(0i32)?.into_struct_slot();
     let poke = poke.finish()?.into_struct_uninit();
 
+    eprintln!("WE ARE MATERIALIZING");
     let named_point: NamedPoint = poke.materialize()?;
+    eprintln!("WE ARE DONE MATERIALIZING");
 
     assert_eq!(named_point.name, "Origin");
     assert_eq!(named_point.point, Point { x: 0, y: 0 });

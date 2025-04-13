@@ -144,8 +144,7 @@ impl HeapVal<PokeValue<'_>> {
             });
         }
         let u = unsafe { self.data.read::<U>() };
-        // ok we've read from the value, now it has to be deallocated (but not dropped in place)
-        // this will happen naturally as we drop
+        self.map(core::mem::forget);
         Ok(u)
     }
 
@@ -157,6 +156,9 @@ impl HeapVal<PokeValue<'_>> {
 
 impl Drop for PokeValue<'_> {
     fn drop(&mut self) {
+        eprintln!("POKEVALUE IS DROPPING A {}", self.shape);
+        panic!();
+
         if let Some(drop_fn) = self.shape.vtable.drop_in_place {
             unsafe { drop_fn(self.data) };
         }
