@@ -279,17 +279,17 @@ impl<'mem> HeapVal<PokeValueUninit<'mem>> {
     ///
     /// This function places a value of type T into the destination space,
     /// checking that T exactly matches the expected shape.
-    pub fn put<T: Facet + 'mem>(self, value: T) -> Result<PokeValue<'mem>, ReflectError> {
+    pub fn put<T: Facet + 'mem>(self, value: T) -> Result<HeapVal<PokeValue<'mem>>, ReflectError> {
         if !self.shape.is_type::<T>() {
             return Err(ReflectError::WrongShape {
                 expected: self.shape,
                 actual: T::SHAPE,
             });
         }
-        Ok(PokeValue {
-            data: unsafe { self.data.put(value) },
-            shape: self.shape,
-        })
+        Ok(self.map(|this| PokeValue {
+            data: unsafe { this.data.put(value) },
+            shape: this.shape,
+        }))
     }
 
     /// Attempts to set the value to its default

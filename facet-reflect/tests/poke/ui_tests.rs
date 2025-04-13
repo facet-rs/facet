@@ -169,7 +169,7 @@ fn main() {
         s: &'a str,
     }
 
-    let (poke, _guard) = PokeValueUninit::alloc::<Foo>();
+    let poke = PokeValueUninit::alloc::<Foo>();
     let v = {
         let s = "abc".to_string();
         let foo = Foo { s: &s };
