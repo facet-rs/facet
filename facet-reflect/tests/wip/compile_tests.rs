@@ -156,6 +156,7 @@ facet-reflect = {{ path = "{}" }}
 
 /// Test for lifetime issues in Poke implementation
 #[test]
+#[cfg(not(miri))]
 fn test_poke_lifetime_error() {
     // Define the test case
     let test = CompilationTest {

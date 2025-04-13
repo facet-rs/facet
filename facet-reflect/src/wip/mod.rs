@@ -1,7 +1,7 @@
 extern crate alloc;
 use crate::{ReflectError, ValueId};
 use core::{alloc::Layout, marker::PhantomData};
-use facet_core::{Def, Facet, FieldError, OpaqueConst, OpaqueUninit, Shape, Variant};
+use facet_core::{Def, Facet, FieldError, Opaque, OpaqueConst, OpaqueUninit, Shape, Variant};
 use std::collections::HashMap;
 
 /// Represents a frame in the initialization stack
@@ -170,7 +170,7 @@ impl<'a> Wip<'a> {
         let _data = unsafe { root.data.assume_init() };
 
         Ok(HeapValue {
-            guard: self.guard,
+            guard: Some(self.guard),
             shape,
             phantom: PhantomData,
         })
@@ -428,14 +428,25 @@ impl ISet {
 
 /// A type-erased value stored on the heap
 pub struct HeapValue<'a> {
-    guard: Guard,
+    guard: Option<Guard>,
     shape: &'static Shape,
     phantom: PhantomData<&'a ()>,
 }
 
+impl Drop for HeapValue<'_> {
+    fn drop(&mut self) {
+        if let Some(guard) = self.guard.take() {
+            if let Some(drop_fn) = self.shape.vtable.drop_in_place {
+                unsafe { drop_fn(Opaque::new(guard.ptr)) };
+            }
+            drop(guard);
+        }
+    }
+}
+
 impl<'a> HeapValue<'a> {
     /// Turn this heapvalue into a concrete type
-    pub fn materialize<T: Facet + 'a>(self) -> Result<T, ReflectError> {
+    pub fn materialize<T: Facet + 'a>(mut self) -> Result<T, ReflectError> {
         if self.shape != T::SHAPE {
             return Err(ReflectError::WrongShape {
                 expected: self.shape,
@@ -443,9 +454,10 @@ impl<'a> HeapValue<'a> {
             });
         }
 
-        let data = OpaqueConst::new(self.guard.ptr);
+        let guard = self.guard.take().unwrap();
+        let data = OpaqueConst::new(guard.ptr);
         let res = unsafe { data.read::<T>() };
-        core::mem::forget(self);
+        drop(guard); // free memory (but don't drop in place)
         Ok(res)
     }
 }
@@ -454,7 +466,7 @@ impl HeapValue<'_> {
     /// Formats the value using its Display implementation, if available
     pub fn fmt_display(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if let Some(display_fn) = self.shape.vtable.display {
-            unsafe { display_fn(OpaqueConst::new(self.guard.ptr), f) }
+            unsafe { display_fn(OpaqueConst::new(self.guard.as_ref().unwrap().ptr), f) }
         } else {
             write!(f, "⟨{}⟩", self.shape)
         }
@@ -463,7 +475,7 @@ impl HeapValue<'_> {
     /// Formats the value using its Debug implementation, if available
     pub fn fmt_debug(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if let Some(debug_fn) = self.shape.vtable.debug {
-            unsafe { debug_fn(OpaqueConst::new(self.guard.ptr), f) }
+            unsafe { debug_fn(OpaqueConst::new(self.guard.as_ref().unwrap().ptr), f) }
         } else {
             write!(f, "⟨{}⟩", self.shape)
         }
@@ -490,8 +502,8 @@ impl PartialEq for HeapValue<'_> {
         if let Some(eq_fn) = self.shape.vtable.eq {
             unsafe {
                 eq_fn(
-                    OpaqueConst::new(self.guard.ptr),
-                    OpaqueConst::new(other.guard.ptr),
+                    OpaqueConst::new(self.guard.as_ref().unwrap().ptr),
+                    OpaqueConst::new(other.guard.as_ref().unwrap().ptr),
                 )
             }
         } else {
@@ -508,8 +520,8 @@ impl PartialOrd for HeapValue<'_> {
         if let Some(partial_ord_fn) = self.shape.vtable.partial_ord {
             unsafe {
                 partial_ord_fn(
-                    OpaqueConst::new(self.guard.ptr),
-                    OpaqueConst::new(other.guard.ptr),
+                    OpaqueConst::new(self.guard.as_ref().unwrap().ptr),
+                    OpaqueConst::new(other.guard.as_ref().unwrap().ptr),
                 )
             }
         } else {
