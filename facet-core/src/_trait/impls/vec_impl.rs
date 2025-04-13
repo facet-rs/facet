@@ -78,16 +78,11 @@ where
                         });
                     }
 
-                    let mut traits = MarkerTraits::empty();
-                    if T::SHAPE.vtable.marker_traits.contains(MarkerTraits::SEND) {
-                        traits = traits.union(MarkerTraits::SEND);
-                    }
-                    if T::SHAPE.vtable.marker_traits.contains(MarkerTraits::SYNC) {
-                        traits = traits.union(MarkerTraits::SYNC);
-                    }
-                    if T::SHAPE.vtable.marker_traits.contains(MarkerTraits::EQ) {
-                        traits = traits.union(MarkerTraits::EQ);
-                    }
+                    let traits = MarkerTraits::SEND
+                        .union(MarkerTraits::SYNC)
+                        .union(MarkerTraits::EQ)
+                        .union(MarkerTraits::UNPIN)
+                        .intersection(T::SHAPE.vtable.marker_traits);
                     builder = builder.marker_traits(traits);
 
                     builder.build()

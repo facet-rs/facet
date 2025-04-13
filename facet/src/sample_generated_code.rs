@@ -272,6 +272,24 @@ unsafe impl crate::Facet for KitchenSinkStruct {
                         } {
                             traits = traits.union(::facet_core::MarkerTraits::COPY);
                         }
+                        if {
+                            /// Fallback trait with `False` for `IMPLS` if the type does not
+                            /// implement the given trait.
+                            trait DoesNotImpl {
+                                const IMPLS: bool = false;
+                            }
+                            impl<T: ?Sized> DoesNotImpl for T {}
+                            /// Concrete type with `True` for `IMPLS` if the type implements the
+                            /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                            struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                            #[allow(dead_code)]
+                            impl<T: ?Sized + core::marker::Unpin> Wrapper<T> {
+                                const IMPLS: bool = true;
+                            }
+                            <Wrapper<Self>>::IMPLS
+                        } {
+                            traits = traits.union(::facet_core::MarkerTraits::UNPIN);
+                        }
                         builder = builder.marker_traits(traits);
                     }
                     if {
@@ -608,6 +626,24 @@ unsafe impl crate::Facet for Point {
                             <Wrapper<Self>>::IMPLS
                         } {
                             traits = traits.union(::facet_core::MarkerTraits::COPY);
+                        }
+                        if {
+                            /// Fallback trait with `False` for `IMPLS` if the type does not
+                            /// implement the given trait.
+                            trait DoesNotImpl {
+                                const IMPLS: bool = false;
+                            }
+                            impl<T: ?Sized> DoesNotImpl for T {}
+                            /// Concrete type with `True` for `IMPLS` if the type implements the
+                            /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                            struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                            #[allow(dead_code)]
+                            impl<T: ?Sized + core::marker::Unpin> Wrapper<T> {
+                                const IMPLS: bool = true;
+                            }
+                            <Wrapper<Self>>::IMPLS
+                        } {
+                            traits = traits.union(::facet_core::MarkerTraits::UNPIN);
                         }
                         builder = builder.marker_traits(traits);
                     }
@@ -1001,6 +1037,24 @@ unsafe impl crate::Facet for KitchenSinkEnum {
                                                                 <Wrapper<Self>>::IMPLS
                                                             } {
                                                             traits = traits.union(::facet_core::MarkerTraits::COPY);
+                                                        }
+                                                    if {
+                                                                /// Fallback trait with `False` for `IMPLS` if the type does not
+                                                                /// implement the given trait.
+                                                                trait DoesNotImpl {
+                                                                    const IMPLS: bool = false;
+                                                                }
+                                                                impl<T: ?Sized> DoesNotImpl for T {}
+                                                                /// Concrete type with `True` for `IMPLS` if the type implements the
+                                                                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                                                                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                                                                #[allow(dead_code)]
+                                                                impl<T: ?Sized + core::marker::Unpin> Wrapper<T> {
+                                                                    const IMPLS: bool = true;
+                                                                }
+                                                                <Wrapper<Self>>::IMPLS
+                                                            } {
+                                                            traits = traits.union(::facet_core::MarkerTraits::UNPIN);
                                                         }
                                                     builder = builder.marker_traits(traits);
                                                 }
@@ -1481,6 +1535,24 @@ unsafe impl crate::Facet for SubEnum {
                                                                 <Wrapper<Self>>::IMPLS
                                                             } {
                                                             traits = traits.union(::facet_core::MarkerTraits::COPY);
+                                                        }
+                                                    if {
+                                                                /// Fallback trait with `False` for `IMPLS` if the type does not
+                                                                /// implement the given trait.
+                                                                trait DoesNotImpl {
+                                                                    const IMPLS: bool = false;
+                                                                }
+                                                                impl<T: ?Sized> DoesNotImpl for T {}
+                                                                /// Concrete type with `True` for `IMPLS` if the type implements the
+                                                                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                                                                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                                                                #[allow(dead_code)]
+                                                                impl<T: ?Sized + core::marker::Unpin> Wrapper<T> {
+                                                                    const IMPLS: bool = true;
+                                                                }
+                                                                <Wrapper<Self>>::IMPLS
+                                                            } {
+                                                            traits = traits.union(::facet_core::MarkerTraits::UNPIN);
                                                         }
                                                     builder = builder.marker_traits(traits);
                                                 }

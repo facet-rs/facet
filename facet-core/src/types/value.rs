@@ -274,6 +274,8 @@ bitflags! {
         const SYNC = 1 << 2;
         /// Indicates that the type implements the [`Copy`] marker trait
         const COPY = 1 << 3;
+        /// Indicates that the type implements the [`Unpin`] marker trait
+        const UNPIN = 1 << 4;
     }
 }
 
@@ -368,6 +370,11 @@ impl ValueVTable {
     /// Check if the type implements the [`Copy`] marker trait
     pub fn is_copy(&self) -> bool {
         self.marker_traits.contains(MarkerTraits::COPY)
+    }
+
+    /// Check if the type implements the [`Unpin`] marker trait
+    pub fn is_unpin(&self) -> bool {
+        self.marker_traits.contains(MarkerTraits::UNPIN)
     }
 
     /// Creates a new [`ValueVTableBuilder`]
