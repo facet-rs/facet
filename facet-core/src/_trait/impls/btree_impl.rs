@@ -1,30 +1,29 @@
-use alloc::collections::VecDeque;
-use core::{alloc::Layout, hash::Hash};
-use std::collections::HashMap;
-use std::hash::RandomState;
+use core::alloc::Layout;
 
-use crate::opaque::{Opaque, OpaqueConst};
-
-use crate::{
-    ConstTypeId, Def, Facet, MapDef, MapIterVTable, MapVTable, MarkerTraits, ScalarAffinity,
-    ScalarDef, Shape, ValueVTable, value_vtable,
+use alloc::{
+    boxed::Box,
+    collections::{BTreeMap, VecDeque},
 };
 
-struct HashMapIterator<'mem, K> {
+use crate::{
+    ConstTypeId, Def, Facet, MapDef, MapIterVTable, MapVTable, MarkerTraits, Opaque, OpaqueConst,
+    Shape, ValueVTable,
+};
+
+struct BTreeMapIterator<'mem, K> {
     map: OpaqueConst<'mem>,
     keys: VecDeque<&'mem K>,
 }
 
-unsafe impl<K, V, S> Facet for HashMap<K, V, S>
+unsafe impl<K, V> Facet for BTreeMap<K, V>
 where
-    K: Facet + core::cmp::Eq + core::hash::Hash + 'static,
+    K: Facet + core::cmp::Eq + core::cmp::Ord + 'static,
     V: Facet + 'static,
-    S: Facet + Default,
 {
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static crate::Shape = &const {
         Shape::builder()
-            .id(ConstTypeId::of::<HashMap<K, V, S>>())
-            .layout(Layout::new::<HashMap<K, V>>())
+            .id(ConstTypeId::of::<BTreeMap<K, V>>())
+            .layout(Layout::new::<BTreeMap<K, V>>())
             .vtable(
                 &const {
                     let mut builder = ValueVTable::builder()
@@ -49,20 +48,20 @@ where
                         })
                         .type_name(|f, opts| {
                             if let Some(opts) = opts.for_children() {
-                                write!(f, "HashMap<")?;
+                                write!(f, "BTreeMap<")?;
                                 (K::SHAPE.vtable.type_name)(f, opts)?;
                                 write!(f, ", ")?;
                                 (V::SHAPE.vtable.type_name)(f, opts)?;
                                 write!(f, ">")
                             } else {
-                                write!(f, "HashMap<⋯>")
+                                write!(f, "BTreeMap<⋯>")
                             }
                         })
-                        .drop_in_place(|value| unsafe { value.drop_in_place::<HashMap<K, V>>() });
+                        .drop_in_place(|value| unsafe { value.drop_in_place::<BTreeMap<K, V>>() });
 
                     if K::SHAPE.vtable.debug.is_some() && V::SHAPE.vtable.debug.is_some() {
                         builder = builder.debug(|value, f| unsafe {
-                            let value = value.as_ref::<HashMap<K, V>>();
+                            let value = value.as_ref::<BTreeMap<K, V>>();
                             let k_debug = K::SHAPE.vtable.debug.unwrap_unchecked();
                             let v_debug = V::SHAPE.vtable.debug.unwrap_unchecked();
                             write!(f, "{{")?;
@@ -75,19 +74,18 @@ where
                                 (v_debug)(OpaqueConst::new(val as *const _), f)?;
                             }
                             write!(f, "}}")
-                        });
+                        })
                     }
 
                     builder =
                         builder.default_in_place(|target| unsafe { target.put(Self::default()) });
-
                     builder = builder
-                        .clone_into(|src, dst| unsafe { dst.put(src.as_ref::<HashMap<K, V>>()) });
+                        .clone_into(|src, dst| unsafe { dst.put(src.as_ref::<BTreeMap<K, V>>()) });
 
                     if V::SHAPE.vtable.eq.is_some() {
                         builder = builder.eq(|a, b| unsafe {
-                            let a = a.as_ref::<HashMap<K, V>>();
-                            let b = b.as_ref::<HashMap<K, V>>();
+                            let a = a.as_ref::<BTreeMap<K, V>>();
+                            let b = b.as_ref::<BTreeMap<K, V>>();
                             let v_eq = V::SHAPE.vtable.eq.unwrap_unchecked();
                             a.len() == b.len()
                                 && a.iter().all(|(key_a, val_a)| {
@@ -101,15 +99,22 @@ where
                         });
                     }
 
-                    if V::SHAPE.vtable.hash.is_some() {
+                    if K::SHAPE.vtable.hash.is_some() && V::SHAPE.vtable.hash.is_some() {
                         builder = builder.hash(|value, hasher_this, hasher_write_fn| unsafe {
                             use crate::HasherProxy;
-                            let map = value.as_ref::<HashMap<K, V>>();
+                            use core::hash::Hash;
+
+                            let map = value.as_ref::<BTreeMap<K, V>>();
+                            let k_hash = K::SHAPE.vtable.hash.unwrap_unchecked();
                             let v_hash = V::SHAPE.vtable.hash.unwrap_unchecked();
                             let mut hasher = HasherProxy::new(hasher_this, hasher_write_fn);
                             map.len().hash(&mut hasher);
                             for (k, v) in map {
-                                k.hash(&mut hasher);
+                                (k_hash)(
+                                    OpaqueConst::new(k as *const _),
+                                    hasher_this,
+                                    hasher_write_fn,
+                                );
                                 (v_hash)(
                                     OpaqueConst::new(v as *const _),
                                     hasher_this,
@@ -129,42 +134,37 @@ where
                     .vtable(
                         &const {
                             MapVTable::builder()
-                                .init_in_place_with_capacity(|uninit, capacity| unsafe {
-                                    Ok(uninit.put(Self::with_capacity_and_hasher(
-                                        capacity,
-                                        S::default(),
-                                    )))
-                                })
                                 .insert(|ptr, key, value| unsafe {
-                                    let map = ptr.as_mut::<HashMap<K, V>>();
-                                    let key = key.read::<K>();
-                                    let value = value.read::<V>();
-                                    map.insert(key, value);
+                                    let map = ptr.as_mut::<BTreeMap<K, V>>();
+                                    let k = key.read::<K>();
+                                    let v = value.read::<V>();
+                                    map.insert(k, v);
                                 })
                                 .len(|ptr| unsafe {
-                                    let map = ptr.as_ref::<HashMap<K, V>>();
+                                    let map = ptr.as_ref::<BTreeMap<K, V>>();
                                     map.len()
                                 })
                                 .contains_key(|ptr, key| unsafe {
-                                    let map = ptr.as_ref::<HashMap<K, V>>();
+                                    let map = ptr.as_ref::<BTreeMap<K, V>>();
                                     map.contains_key(key.as_ref())
                                 })
                                 .get_value_ptr(|ptr, key| unsafe {
-                                    let map = ptr.as_ref::<HashMap<K, V>>();
+                                    let map = ptr.as_ref::<BTreeMap<K, V>>();
                                     map.get(key.as_ref())
                                         .map(|v| OpaqueConst::new(v as *const _))
                                 })
                                 .iter(|ptr| unsafe {
-                                    let map = ptr.as_ref::<HashMap<K, V>>();
+                                    let map = ptr.as_ref::<BTreeMap<K, V>>();
                                     let keys: VecDeque<&K> = map.keys().collect();
-                                    let iter_state = Box::new(HashMapIterator { map: ptr, keys });
+                                    let iter_state = Box::new(BTreeMapIterator { map: ptr, keys });
                                     Opaque::new(Box::into_raw(iter_state) as *mut u8)
                                 })
                                 .iter_vtable(
                                     MapIterVTable::builder()
                                         .next(|iter_ptr| unsafe {
-                                            let state = iter_ptr.as_mut::<HashMapIterator<'_, K>>();
-                                            let map = state.map.as_ref::<HashMap<K, V>>();
+                                            let state =
+                                                iter_ptr.as_mut::<BTreeMapIterator<'_, K>>();
+                                            let map = state.map.as_ref::<BTreeMap<K, V>>();
                                             while let Some(key) = state.keys.pop_front() {
                                                 if let Some(value) = map.get(key) {
                                                     return Some((
@@ -178,9 +178,9 @@ where
                                         })
                                         .dealloc(|iter_ptr| unsafe {
                                             drop(Box::from_raw(
-                                                iter_ptr.as_ptr::<HashMapIterator<'_, K>>()
-                                                    as *mut HashMapIterator<'_, K>,
-                                            ));
+                                                iter_ptr.as_ptr::<BTreeMapIterator<'_, K>>()
+                                                    as *mut BTreeMapIterator<'_, K>,
+                                            ))
                                         })
                                         .build(),
                                 )
@@ -189,21 +189,6 @@ where
                     )
                     .build(),
             ))
-            .build()
-    };
-}
-
-unsafe impl Facet for RandomState {
-    const SHAPE: &'static Shape = &const {
-        Shape::builder()
-            .id(ConstTypeId::of::<RandomState>())
-            .layout(Layout::new::<Self>())
-            .def(Def::Scalar(
-                ScalarDef::builder()
-                    .affinity(ScalarAffinity::opaque().build())
-                    .build(),
-            ))
-            .vtable(value_vtable!((), |f, _opts| write!(f, "RandomState")))
             .build()
     };
 }

@@ -1,4 +1,6 @@
 mod array_impl;
+#[cfg(feature = "alloc")]
+mod btree_impl;
 #[cfg(feature = "std")]
 mod hashmap_impl;
 mod option_impl;
