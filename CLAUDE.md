@@ -10,7 +10,7 @@ happily do it. I will be happier clarifying ahead of time than undoing your stuf
 
 In general, give a high-level overview of your plan and ask for consent before making any edits. Thanks.
 
-Don't edit any `README.md` files directly — edit `templates/README.md.j2` and run `just codegen` to
+Don't edit any `README.md` files directly — edit `README.md.in` and run `just codegen` to
 regenerate the README.
 
 Run `just quickcheck` to make sure that tests pass.
