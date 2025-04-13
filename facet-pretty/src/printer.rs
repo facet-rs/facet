@@ -489,23 +489,25 @@ impl PrettyPrinter {
                         let field = variant.data.fields[field_index];
                         let field_value = enum_val.field(field_index).unwrap();
 
-                        // Define consistent indentation
-                        let field_indent = "  "; // Use 2 spaces for all fields
-
                         // Add field doc comments if available
+                        // Only add new line if not the first field
+                        write!(
+                            f,
+                            "{:width$}",
+                            "",
+                            width = item.format_depth * self.indent_size
+                        )?;
+
                         if !field.doc.is_empty() {
-                            // Only add new line if not the first field
-                            if field_index > 0 {
-                                writeln!(f)?;
-                            }
                             for line in field.doc {
-                                // Hard-code consistent indentation (2 spaces)
-                                write!(f, "  ")?;
                                 self.write_comment(f, &format!("///{}", line))?;
-                                writeln!(f)?;
+                                write!(
+                                    f,
+                                    "\n{:width$}",
+                                    "",
+                                    width = item.format_depth * self.indent_size
+                                )?;
                             }
-                            // Rewrite indentation after doc comments
-                            write!(f, "{}", field_indent)?;
                         }
 
                         // For struct variants, print field name
