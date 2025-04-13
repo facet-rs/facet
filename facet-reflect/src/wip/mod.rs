@@ -245,9 +245,6 @@ impl<'mem> WipValue<'mem> {
             }
 
             if parent.istate.fields.has(index) {
-                panic!(
-                    "was supposed to mark a field as initialized, but the parent frame already had it marked as initialized"
-                );
                 return Err(ReflectError::OperationFailed {
                     shape,
                     operation: "was supposed to mark a field as initialized, but the parent frame already had it marked as initialized",
