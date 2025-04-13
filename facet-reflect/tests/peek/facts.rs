@@ -2,7 +2,7 @@ use std::{cmp::Ordering, collections::HashSet};
 
 use facet::Facet;
 use facet_ansi::{ColorStyle, Style, Stylize as _};
-use facet_reflect::ConstValue;
+use facet_reflect::{ConstValue, WipValue};
 
 fn check_facts<T>(val1: T, val2: T, expected_facts: HashSet<Fact>)
 where
@@ -84,12 +84,14 @@ where
         eprintln!("Ordering:  {}", cmp_str);
     }
 
-    // // Test default_in_place
-    // let poke_value = PokeValueUninit::alloc::<T>();
-    // if let Ok(pokeval) = poke_value.default_in_place() {
-    //     facts.insert(Fact::Default);
-    //     eprintln!("Default:   {}", format!("{:?}", pokeval).style(remarkable));
-    // }
+    // Test default_in_place
+    let poke_value = WipValue::alloc::<T>();
+    if let Ok(pokeval) = poke_value.put_default() {
+        let pokeval = pokeval.build().unwrap();
+
+        facts.insert(Fact::Default);
+        eprintln!("Default:   {}", format!("{:?}", pokeval).style(remarkable));
+    }
 
     // Test clone
     if l.shape().vtable.clone_into.is_some() {

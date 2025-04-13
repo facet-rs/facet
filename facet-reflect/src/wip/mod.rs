@@ -34,9 +34,7 @@ impl Frame<'_> {
                 None => false,
                 Some(v) => self.istate.fields.are_all_set(v.data.fields.len()),
             },
-            _ => {
-                todo!()
-            }
+            _ => self.istate.fields.are_all_set(1),
         }
     }
 }
@@ -163,32 +161,66 @@ impl<'mem> WipValue<'mem> {
         }
 
         // mark the field as initialized
-        if let Some(index) = frame.index {
+        self.mark_field_as_initialized(frame.shape, frame.index)?;
+
+        Ok(self)
+    }
+
+    /// Puts the default value in the currrent frame.
+    pub fn put_default(mut self) -> Result<Self, ReflectError> {
+        let Some(frame) = self.frames.last() else {
+            return Err(ReflectError::InvariantViolation);
+        };
+
+        let vtable = frame.shape.vtable;
+
+        let Some(default_in_place) = vtable.default_in_place else {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "type does not implement Default",
+            });
+        };
+        unsafe {
+            default_in_place(frame.data);
+        }
+
+        // mark the field as initialized
+        self.mark_field_as_initialized(frame.shape, frame.index)?;
+
+        Ok(self)
+    }
+
+    /// Marks a field as initialized in the parent frame.
+    fn mark_field_as_initialized(
+        &mut self,
+        shape: &'static Shape,
+        index: Option<usize>,
+    ) -> Result<(), ReflectError> {
+        if let Some(index) = index {
             let Some(parent) = self.frames.last_mut() else {
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
-                    operation: "put was supposed to mark a field as initialized, but there was no parent frame",
+                    shape,
+                    operation: "was supposed to mark a field as initialized, but there was no parent frame",
                 });
             };
 
             if matches!(parent.shape.def, Def::Enum(_)) && parent.istate.variant.is_none() {
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
-                    operation: "put was supposed to mark a field as initialized, but the parent frame was an enum and didn't have a variant chosen",
+                    shape,
+                    operation: "was supposed to mark a field as initialized, but the parent frame was an enum and didn't have a variant chosen",
                 });
             }
 
             if parent.istate.fields.has(index) {
-                // TODO: just drop the field in place
                 return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
-                    operation: "put was supposed to mark a field as initialized, but the parent frame already had it marked as initialized",
+                    shape,
+                    operation: "was supposed to mark a field as initialized, but the parent frame already had it marked as initialized",
                 });
             }
 
             parent.istate.fields.set(index);
         }
-        Ok(self)
+        Ok(())
     }
 
     /// Pops the current frame — goes back up one level
@@ -404,5 +436,73 @@ impl HeapValue {
         let res = unsafe { data.read::<T>() };
         core::mem::forget(self);
         Ok(res)
+    }
+}
+
+impl HeapValue {
+    /// Formats the value using its Display implementation, if available
+    pub fn fmt_display(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if let Some(display_fn) = self.shape.vtable.display {
+            unsafe { display_fn(OpaqueConst::new(self.guard.ptr), f) }
+        } else {
+            write!(f, "⟨{}⟩", self.shape)
+        }
+    }
+
+    /// Formats the value using its Debug implementation, if available
+    pub fn fmt_debug(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if let Some(debug_fn) = self.shape.vtable.debug {
+            unsafe { debug_fn(OpaqueConst::new(self.guard.ptr), f) }
+        } else {
+            write!(f, "⟨{}⟩", self.shape)
+        }
+    }
+}
+
+impl core::fmt::Display for HeapValue {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.fmt_display(f)
+    }
+}
+
+impl core::fmt::Debug for HeapValue {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.fmt_debug(f)
+    }
+}
+
+impl PartialEq for HeapValue {
+    fn eq(&self, other: &Self) -> bool {
+        if self.shape != other.shape {
+            return false;
+        }
+        if let Some(eq_fn) = self.shape.vtable.eq {
+            unsafe {
+                eq_fn(
+                    OpaqueConst::new(self.guard.ptr),
+                    OpaqueConst::new(other.guard.ptr),
+                )
+            }
+        } else {
+            false
+        }
+    }
+}
+
+impl PartialOrd for HeapValue {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        if self.shape != other.shape {
+            return None;
+        }
+        if let Some(partial_ord_fn) = self.shape.vtable.partial_ord {
+            unsafe {
+                partial_ord_fn(
+                    OpaqueConst::new(self.guard.ptr),
+                    OpaqueConst::new(other.guard.ptr),
+                )
+            }
+        } else {
+            None
+        }
     }
 }
