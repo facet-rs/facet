@@ -107,11 +107,6 @@ impl Wip {
         Self::alloc_shape(S::SHAPE)
     }
 
-    /// Returns a Bob builder
-    pub fn bob(&mut self) -> Bob<'_> {
-        Bob(self)
-    }
-
     fn pop_inner(&mut self) -> Option<Frame> {
         let frame = self.frames.pop()?;
         if frame.is_fully_initialized() {
@@ -179,12 +174,7 @@ impl Wip {
             shape,
         })
     }
-}
 
-/// Bob's a builder
-pub struct Bob<'mem>(&'mem mut Wip);
-
-impl<'mem> Bob<'mem> {
     /// Selects a field of a struct by name and pushes it onto the frame stack.
     ///
     /// # Arguments
@@ -195,8 +185,8 @@ impl<'mem> Bob<'mem> {
     ///
     /// * `Ok(Self)` if the field was successfully selected and pushed.
     /// * `Err(ReflectError)` if the current frame is not a struct or the field doesn't exist.
-    pub fn field_named(self, name: &str) -> Result<Self, ReflectError> {
-        let frame = self.0.frames.last_mut().unwrap();
+    pub fn field_named(&mut self, name: &str) -> Result<&mut Self, ReflectError> {
+        let frame = self.frames.last_mut().unwrap();
         let shape = frame.shape;
         let Def::Struct(def) = shape.def else {
             return Err(ReflectError::WasNotA { name: "struct" });
@@ -218,10 +208,10 @@ impl<'mem> Bob<'mem> {
             index: Some(index),
             istate: Default::default(),
         };
-        if let Some(iset) = self.0.istates.remove(&frame.id()) {
+        if let Some(iset) = self.istates.remove(&frame.id()) {
             frame.istate = iset;
         }
-        self.0.frames.push(frame);
+        self.frames.push(frame);
         Ok(self)
     }
 
@@ -235,8 +225,8 @@ impl<'mem> Bob<'mem> {
     ///
     /// * `Ok(Self)` if the value was successfully put into the frame.
     /// * `Err(ReflectError)` if there was an error putting the value into the frame.
-    pub fn put<T: Facet + 'mem>(mut self, t: T) -> Result<Self, ReflectError> {
-        let Some(frame) = self.0.frames.last_mut() else {
+    pub fn put<T: Facet>(&mut self, t: T) -> Result<&mut Self, ReflectError> {
+        let Some(frame) = self.frames.last_mut() else {
             return Err(ReflectError::OperationFailed {
                 shape: T::SHAPE,
                 operation: "tried to put a T but there was no frame to put T into",
@@ -274,8 +264,8 @@ impl<'mem> Bob<'mem> {
     }
 
     /// Puts the default value in the currrent frame.
-    pub fn put_default(mut self) -> Result<Bob<'mem>, ReflectError> {
-        let Some(frame) = self.0.frames.last_mut() else {
+    pub fn put_default(&mut self) -> Result<&mut Self, ReflectError> {
+        let Some(frame) = self.frames.last_mut() else {
             return Err(ReflectError::OperationFailed {
                 shape: <()>::SHAPE,
                 operation: "tried to put default value but there was no frame",
@@ -311,8 +301,8 @@ impl<'mem> Bob<'mem> {
         index: Option<usize>,
     ) -> Result<(), ReflectError> {
         if let Some(index) = index {
-            let parent_index = self.0.frames.len().saturating_sub(2);
-            let Some(parent) = self.0.frames.get_mut(parent_index) else {
+            let parent_index = self.frames.len().saturating_sub(2);
+            let Some(parent) = self.frames.get_mut(parent_index) else {
                 return Err(ReflectError::OperationFailed {
                     shape,
                     operation: "was supposed to mark a field as initialized, but there was no parent frame",
@@ -339,34 +329,23 @@ impl<'mem> Bob<'mem> {
     }
 
     /// Pops the current frame — goes back up one level
-    pub fn pop(self) -> Result<Self, ReflectError> {
-        let Some(frame) = self.0.pop_inner() else {
+    pub fn pop(&mut self) -> Result<&mut Self, ReflectError> {
+        let Some(frame) = self.pop_inner() else {
             return Err(ReflectError::InvariantViolation);
         };
-        self.0.track(frame);
+        self.track(frame);
         Ok(self)
     }
 
-    /// Finish with this bob (validate that exactly one frame remains)
-    pub fn finish(self) -> Result<(), ReflectError> {
-        if self.0.frames.len() != 1 {
+    /// Finish with this wip (validate that exactly one frame remains)
+    pub fn finish(&self) -> Result<(), ReflectError> {
+        if self.frames.len() != 1 {
             return Err(ReflectError::OperationFailed {
-                shape: self.0.shape,
-                operation: "Bob finished with incorrect number of frames",
+                shape: self.shape,
+                operation: "Wip finished with incorrect number of frames",
             });
         }
         Ok(())
-    }
-}
-
-impl Drop for Bob<'_> {
-    fn drop(&mut self) {
-        if self.0.frames.len() != 1 {
-            panic!(
-                "Bob dropped with {} frames, expected exactly 1 frame",
-                self.0.frames.len()
-            );
-        }
     }
 }
 

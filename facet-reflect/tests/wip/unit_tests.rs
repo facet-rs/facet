@@ -18,8 +18,7 @@ fn wip_nested() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
     let mut wip = Wip::alloc::<Outer>();
-    wip.bob()
-        .field_named("name")?
+    wip.field_named("name")?
         .put(String::from("Hello, world!"))?
         .pop()?
         .field_named("inner")?
@@ -58,7 +57,6 @@ fn readme_sample() -> eyre::Result<()> {
 
     let mut foo_bar = Wip::alloc::<FooBar>();
     foo_bar
-        .bob()
         .field_named("foo")?
         .put(42u64)?
         .pop()?
@@ -82,19 +80,37 @@ fn lifetimes() -> eyre::Result<()> {
     }
 
     let mut wip = Wip::alloc::<Foo>();
-    let bob = wip.bob();
-
-    // fn accept_static_bob_only(bob: &Bob<'static>) {}
-    // accept_static_bob_only(&bob);
-
     {
         let s = "abc".to_string();
         let foo = Foo { s: &s };
-        bob.put(foo)?.finish()?;
+        wip.put(foo)?.finish()?;
     };
 
     let v = wip.build()?.materialize::<Foo>()?;
     dbg!(v);
 
     Ok(())
+}
+
+#[test]
+fn lifetimes_simple() {
+    struct Owned;
+    struct Borrowed<'a>(&'a mut Owned);
+
+    impl<'a> Borrowed<'a> {
+        fn put<T: 'a>(self, t: T) {}
+    }
+
+    struct Ref<'a>(&'a str);
+
+    let mut owned = Owned;
+    let borrowed = Borrowed(&mut owned);
+
+    {
+        let s = String::from("abc");
+        let r = Ref(s.as_str());
+        borrowed.put(r);
+    }
+
+    // dangling!
 }
