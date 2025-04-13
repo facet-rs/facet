@@ -128,21 +128,8 @@ impl<'mem> PeekEnum<'mem> {
 
     // variant_data has been removed to reduce unsafe code exposure
 
-    /// Returns a PeekValue handle to a field of a tuple or struct variant
-    pub fn field(self, field_name: &str) -> Option<crate::PeekValue<'mem>> {
-        let variant = self.active_variant();
-
-        // Get field by name from variant data struct
-        let field = variant.data.fields.iter().find(|f| f.name == field_name)?;
-        let field_data = unsafe { self.value.data().field(field.offset) };
-        Some(crate::PeekValue {
-            data: field_data,
-            shape: field.shape,
-        })
-    }
-
-    /// Returns a PeekValue handle to a field of a tuple variant by index
-    pub fn tuple_field(self, index: usize) -> Option<crate::PeekValue<'mem>> {
+    /// Returns a PeekValue handle to a field of a tuple or struct variant by index
+    pub fn field(self, index: usize) -> Option<crate::PeekValue<'mem>> {
         let variant = self.active_variant();
         let fields = &variant.data.fields;
 
@@ -156,6 +143,21 @@ impl<'mem> PeekEnum<'mem> {
             data: field_data,
             shape: field.shape,
         })
+    }
+
+    /// Returns a PeekValue handle to a field of a tuple or struct variant by name
+    pub fn field_by_name(self, field_name: &str) -> Option<crate::PeekValue<'mem>> {
+        let variant = self.active_variant();
+
+        // Find the field index by name
+        let index = variant
+            .data
+            .fields
+            .iter()
+            .position(|f| f.name == field_name)?;
+
+        // Use the field method to get the field by index
+        self.field(index)
     }
 
     /// Iterates over all fields in this enum variant, providing both field metadata and value

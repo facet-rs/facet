@@ -14,7 +14,7 @@ fn peek_option() {
     // Check the Some variant methods
     assert!(peek_option.is_some());
     assert!(!peek_option.is_none());
-    
+
     // Get the inner value
     let inner_value = peek_option.value().expect("Should have a value");
     let value = inner_value.get::<i32>();
