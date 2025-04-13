@@ -62,15 +62,13 @@ impl<'mem> PokeValue<'mem> {
     }
 
     /// Gets as a reference to `&T`
-    #[allow(clippy::should_implement_trait)]
-    pub fn as_ref<T: Facet>(&self) -> &T {
+    pub fn get<T: Facet>(&self) -> &T {
         self.shape.assert_type::<T>();
-        unsafe { self.data.as_ref::<T>() }
+        unsafe { self.data.get::<T>() }
     }
 
     /// Attempt to clone this value. Returns None if the value is not cloneable.
-    #[allow(clippy::should_implement_trait)]
-    pub fn clone(&self) -> Option<Self> {
+    pub fn maybe_clone(&self) -> Option<Self> {
         let clone_fn = self.vtable().clone_into?;
         let uninit_data = self.shape.allocate();
         // Create an opaque const reference to the source data for cloning
@@ -88,6 +86,64 @@ impl<'mem> PokeValue<'mem> {
         PokeValueUninit {
             data: OpaqueUninit::new(self.data.as_mut_byte_ptr()),
             shape: self.shape,
+        }
+    }
+}
+
+impl core::fmt::Display for PokeValue<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if let Some(display_fn) = self.vtable().display {
+            unsafe { display_fn(self.data.as_const(), f) }
+        } else {
+            write!(f, "⟨{}⟩", self.shape)
+        }
+    }
+}
+
+impl core::fmt::Debug for PokeValue<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if let Some(debug_fn) = self.vtable().debug {
+            unsafe { debug_fn(self.data.as_const(), f) }
+        } else {
+            write!(f, "⟨{}⟩", self.shape)
+        }
+    }
+}
+
+impl core::cmp::PartialEq for PokeValue<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        if self.shape != other.shape {
+            return false;
+        }
+        let eq_fn = match self.shape.vtable.eq {
+            Some(eq_fn) => eq_fn,
+            None => return false,
+        };
+        unsafe { eq_fn(self.data.as_const(), other.data.as_const()) }
+    }
+}
+
+impl core::cmp::PartialOrd for PokeValue<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        if self.shape != other.shape {
+            return None;
+        }
+        let partial_ord_fn = self.shape.vtable.partial_ord?;
+        unsafe { partial_ord_fn(self.data.as_const(), other.data.as_const()) }
+    }
+}
+
+impl core::hash::Hash for PokeValue<'_> {
+    fn hash<H: core::hash::Hasher>(&self, hasher: &mut H) {
+        if let Some(hash_fn) = self.shape.vtable.hash {
+            let hasher_opaque = Opaque::new(hasher);
+            unsafe {
+                hash_fn(self.data.as_const(), hasher_opaque, |opaque, bytes| {
+                    opaque.as_mut::<H>().write(bytes)
+                })
+            };
+        } else {
+            panic!("Hashing is not supported for this shape");
         }
     }
 }

@@ -16,11 +16,11 @@ unsafe impl<T: Facet> Facet for Option<T> {
                         const {
                             &OptionVTable {
                                 is_some_fn: |option| unsafe {
-                                    option.as_ref::<Option<T>>().is_some()
+                                    option.get::<Option<T>>().is_some()
                                 },
                                 get_value_fn: |option| unsafe {
                                     option
-                                        .as_ref::<Option<T>>()
+                                        .get::<Option<T>>()
                                         .as_ref()
                                         .map(|t| OpaqueConst::new(t as *const T))
                                 },
@@ -56,7 +56,7 @@ unsafe impl<T: Facet> Facet for Option<T> {
 
                     if T::SHAPE.is_debug() {
                         vtable.debug = Some(|this, f| {
-                            let this = unsafe { this.as_ref::<Self>() };
+                            let this = unsafe { this.get::<Self>() };
                             if let Some(value) = &this {
                                 write!(f, "Some(")?;
                                 unsafe {

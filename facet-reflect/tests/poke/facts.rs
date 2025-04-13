@@ -2,7 +2,7 @@ use std::{cmp::Ordering, collections::HashSet};
 
 use facet::Facet;
 use facet_ansi::{ColorStyle as _, Style, Stylize as _};
-use facet_reflect::{Peek, PokeUninit};
+use facet_reflect::{PeekValue, PokeValueUninit};
 
 fn check_facts<T>(val1: T, val2: T, expected_facts: HashSet<Fact>)
 where
@@ -34,27 +34,27 @@ where
         .join(" + ");
     eprintln!("{} {}", trait_str, "======".yellow());
 
-    let l = Peek::new(&val1);
-    let r = Peek::new(&val2);
+    let l = PeekValue::new(&val1);
+    let r = PeekValue::new(&val2);
 
     let remarkable = Style::new().with_blue();
 
     // Format display representation
-    if l.as_value().shape().vtable.display.is_some() {
+    if l.shape().vtable.display.is_some() {
         facts.insert(Fact::Display);
         let display_str = format!("{} vs {}", l.style(remarkable), r.style(remarkable));
         eprintln!("Display:   {}", display_str);
     }
 
     // Format debug representation
-    if l.as_value().shape().vtable.debug.is_some() {
+    if l.shape().vtable.debug.is_some() {
         facts.insert(Fact::Debug);
         let debug_str = format!("{:?} vs {:?}", l.style(remarkable), r.style(remarkable));
         eprintln!("Debug:     {}", debug_str);
     }
 
     // Test equality
-    if let Some(eq_result) = l.as_value().eq(&r.as_value()) {
+    if let Some(eq_result) = l.eq(&r) {
         facts.insert(Fact::EqualAnd { l_eq_r: eq_result });
         let eq_str = format!(
             "{:?} {} {:?}",
@@ -66,7 +66,7 @@ where
     }
 
     // Test ordering
-    if let Some(cmp_result) = l.as_value().cmp(&r.as_value()) {
+    if let Some(cmp_result) = l.partial_cmp(&r) {
         facts.insert(Fact::OrdAnd {
             l_ord_r: cmp_result,
         });
@@ -85,16 +85,14 @@ where
     }
 
     // Test default_in_place
-    let (poke, _guard) = PokeUninit::alloc::<T>();
-    let poke_value = poke.into_value();
-    if let Ok(value) = poke_value.default_in_place() {
+    let (poke_value, _guard) = PokeValueUninit::alloc::<T>();
+    if let Ok(pokeval) = poke_value.default_in_place() {
         facts.insert(Fact::Default);
-        let peek = unsafe { Peek::unchecked_new(value.as_const(), T::SHAPE) };
-        eprintln!("Default:   {}", format!("{:?}", peek).style(remarkable));
+        eprintln!("Default:   {}", format!("{:?}", pokeval).style(remarkable));
     }
 
     // Test clone
-    if l.as_value().shape().vtable.clone_into.is_some() {
+    if l.shape().vtable.clone_into.is_some() {
         facts.insert(Fact::Clone);
         eprintln!("Clone:     Implemented");
     }
@@ -374,6 +372,7 @@ fn test_floating_traits() {
             .debug()
             .display()
             .equal_and(false)
+            .ord_and(Ordering::Greater)
             .default()
             .clone()
             .build(),

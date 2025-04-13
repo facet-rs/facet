@@ -123,7 +123,7 @@ impl<'mem> PeekValue<'mem> {
     /// Panics if the shape doesn't match the type `T`.
     pub fn get<T: Facet>(&self) -> &T {
         self.shape.assert_type::<T>();
-        unsafe { self.data.as_ref::<T>() }
+        unsafe { self.data.get::<T>() }
     }
 
     /// Tries to identify this value as a struct

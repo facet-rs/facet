@@ -20,7 +20,7 @@ unsafe impl<T: Facet> Facet for alloc::sync::Arc<T> {
                         &const {
                             SmartPointerVTable::builder()
                                 .borrow_fn(|opaque| {
-                                    let ptr = Self::as_ptr(unsafe { opaque.as_ref() });
+                                    let ptr = Self::as_ptr(unsafe { opaque.get() });
                                     OpaqueConst::new(ptr)
                                 })
                                 .new_into_fn(|this, ptr| {
@@ -29,7 +29,7 @@ unsafe impl<T: Facet> Facet for alloc::sync::Arc<T> {
                                     unsafe { this.put(arc) }
                                 })
                                 .downgrade_fn(|strong, weak| unsafe {
-                                    weak.put(alloc::sync::Arc::downgrade(strong.as_ref::<Self>()))
+                                    weak.put(alloc::sync::Arc::downgrade(strong.get::<Self>()))
                                 })
                                 .build()
                         },
@@ -60,7 +60,7 @@ unsafe impl<T: Facet> Facet for alloc::sync::Weak<T> {
                         &const {
                             SmartPointerVTable::builder()
                                 .upgrade_into_fn(|weak, strong| unsafe {
-                                    Some(strong.put(weak.as_ref::<Self>().upgrade()?))
+                                    Some(strong.put(weak.get::<Self>().upgrade()?))
                                 })
                                 .build()
                         },

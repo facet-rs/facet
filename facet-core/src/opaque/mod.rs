@@ -143,7 +143,7 @@ impl<'mem> OpaqueConst<'mem> {
     /// # Safety
     ///
     /// `T` must be the _actual_ underlying type. You're downcasting with no guardrails.
-    pub const unsafe fn as_ref<'borrow: 'mem, T>(self) -> &'borrow T {
+    pub const unsafe fn get<'borrow: 'mem, T>(self) -> &'borrow T {
         // TODO: rename to `get`, or something else? it's technically a borrow...
         unsafe { &*(self.0.as_ptr() as *const T) }
     }
@@ -229,7 +229,7 @@ impl<'mem> Opaque<'mem> {
     /// calling as_mut is UB.
     ///
     /// Basically this is UB land. Careful.
-    pub const unsafe fn as_ref<'borrow: 'mem, T>(self) -> &'borrow T {
+    pub const unsafe fn get<'borrow: 'mem, T>(self) -> &'borrow T {
         unsafe { &*(self.0.as_ptr() as *const T) }
     }
 

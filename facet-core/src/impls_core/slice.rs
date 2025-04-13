@@ -19,11 +19,11 @@ where
                             panic!("Cannot push to &[T]");
                         })
                         .len(|ptr| unsafe {
-                            let slice = ptr.as_ref::<&[T]>();
+                            let slice = ptr.get::<&[T]>();
                             slice.len()
                         })
                         .get_item_ptr(|ptr, index| unsafe {
-                            let slice = ptr.as_ref::<&[T]>();
+                            let slice = ptr.get::<&[T]>();
                             let len = slice.len();
                             if index >= len {
                                 panic!(
@@ -55,12 +55,12 @@ where
                         .clone_into(|src, dst| unsafe {
                             // This works because we're cloning a shared reference (&[T]), not the actual slice data.
                             // We're just copying the fat pointer (ptr + length) that makes up the slice reference.
-                            dst.put(src.as_ref::<&[T]>())
+                            dst.put(src.get::<&[T]>())
                         });
 
                     if T::SHAPE.vtable.debug.is_some() {
                         builder = builder.debug(|value, f| {
-                            let value = unsafe { value.as_ref::<&[T]>() };
+                            let value = unsafe { value.get::<&[T]>() };
                             write!(f, "[")?;
                             for (i, item) in value.iter().enumerate() {
                                 if i > 0 {
@@ -79,8 +79,8 @@ where
 
                     if T::SHAPE.vtable.eq.is_some() {
                         builder = builder.eq(|a, b| {
-                            let a = unsafe { a.as_ref::<&[T]>() };
-                            let b = unsafe { b.as_ref::<&[T]>() };
+                            let a = unsafe { a.get::<&[T]>() };
+                            let b = unsafe { b.get::<&[T]>() };
                             if a.len() != b.len() {
                                 return false;
                             }
@@ -100,8 +100,8 @@ where
 
                     if T::SHAPE.vtable.ord.is_some() {
                         builder = builder.ord(|a, b| {
-                            let a = unsafe { a.as_ref::<&[T]>() };
-                            let b = unsafe { b.as_ref::<&[T]>() };
+                            let a = unsafe { a.get::<&[T]>() };
+                            let b = unsafe { b.get::<&[T]>() };
                             for (x, y) in a.iter().zip(b.iter()) {
                                 let ord = unsafe {
                                     (T::SHAPE.vtable.ord.unwrap_unchecked())(
@@ -119,8 +119,8 @@ where
 
                     if T::SHAPE.vtable.partial_ord.is_some() {
                         builder = builder.partial_ord(|a, b| {
-                            let a = unsafe { a.as_ref::<&[T]>() };
-                            let b = unsafe { b.as_ref::<&[T]>() };
+                            let a = unsafe { a.get::<&[T]>() };
+                            let b = unsafe { b.get::<&[T]>() };
                             for (x, y) in a.iter().zip(b.iter()) {
                                 let ord = unsafe {
                                     (T::SHAPE.vtable.partial_ord.unwrap_unchecked())(
@@ -140,7 +140,7 @@ where
 
                     if T::SHAPE.vtable.hash.is_some() {
                         builder = builder.hash(|value, state, hasher| {
-                            let value = unsafe { value.as_ref::<&[T]>() };
+                            let value = unsafe { value.get::<&[T]>() };
                             for item in value.iter() {
                                 unsafe {
                                     (T::SHAPE.vtable.hash.unwrap_unchecked())(

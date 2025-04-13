@@ -25,11 +25,11 @@ where
                         })
                         .drop_in_place(|value| unsafe { value.drop_in_place::<Vec<T>>() })
                         .default_in_place(|target| unsafe { target.put(Self::default()) })
-                        .clone_into(|src, dst| unsafe { dst.put(src.as_ref::<Vec<T>>()) });
+                        .clone_into(|src, dst| unsafe { dst.put(src.get::<Vec<T>>()) });
 
                     if T::SHAPE.vtable.debug.is_some() {
                         builder = builder.debug(|value, f| {
-                            let value = unsafe { value.as_ref::<Vec<T>>() };
+                            let value = unsafe { value.get::<Vec<T>>() };
                             write!(f, "[")?;
                             for (i, item) in value.iter().enumerate() {
                                 if i > 0 {
@@ -48,8 +48,8 @@ where
 
                     if T::SHAPE.vtable.eq.is_some() {
                         builder = builder.eq(|a, b| unsafe {
-                            let a = a.as_ref::<Vec<T>>();
-                            let b = b.as_ref::<Vec<T>>();
+                            let a = a.get::<Vec<T>>();
+                            let b = b.get::<Vec<T>>();
                             if a.len() != b.len() {
                                 return false;
                             }
@@ -68,7 +68,7 @@ where
                     if T::SHAPE.vtable.hash.is_some() {
                         builder = builder.hash(|value, hasher_this, hasher_write_fn| unsafe {
                             use crate::HasherProxy;
-                            let vec = value.as_ref::<Vec<T>>();
+                            let vec = value.get::<Vec<T>>();
                             let t_hash = T::SHAPE.vtable.hash.unwrap_unchecked();
                             let mut hasher = HasherProxy::new(hasher_this, hasher_write_fn);
                             vec.len().hash(&mut hasher);
@@ -102,11 +102,11 @@ where
                             (*vec).push(item);
                         })
                         .len(|ptr| unsafe {
-                            let vec = ptr.as_ref::<Vec<T>>();
+                            let vec = ptr.get::<Vec<T>>();
                             vec.len()
                         })
                         .get_item_ptr(|ptr, index| unsafe {
-                            let vec = ptr.as_ref::<Vec<T>>();
+                            let vec = ptr.get::<Vec<T>>();
                             let len = vec.len();
                             if index >= len {
                                 panic!(

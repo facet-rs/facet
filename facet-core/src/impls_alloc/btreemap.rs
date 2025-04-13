@@ -52,7 +52,7 @@ where
 
                     if K::SHAPE.vtable.debug.is_some() && V::SHAPE.vtable.debug.is_some() {
                         builder = builder.debug(|value, f| unsafe {
-                            let value = value.as_ref::<BTreeMap<K, V>>();
+                            let value = value.get::<BTreeMap<K, V>>();
                             let k_debug = K::SHAPE.vtable.debug.unwrap_unchecked();
                             let v_debug = V::SHAPE.vtable.debug.unwrap_unchecked();
                             write!(f, "{{")?;
@@ -71,12 +71,12 @@ where
                     builder =
                         builder.default_in_place(|target| unsafe { target.put(Self::default()) });
                     builder = builder
-                        .clone_into(|src, dst| unsafe { dst.put(src.as_ref::<BTreeMap<K, V>>()) });
+                        .clone_into(|src, dst| unsafe { dst.put(src.get::<BTreeMap<K, V>>()) });
 
                     if V::SHAPE.vtable.eq.is_some() {
                         builder = builder.eq(|a, b| unsafe {
-                            let a = a.as_ref::<BTreeMap<K, V>>();
-                            let b = b.as_ref::<BTreeMap<K, V>>();
+                            let a = a.get::<BTreeMap<K, V>>();
+                            let b = b.get::<BTreeMap<K, V>>();
                             let v_eq = V::SHAPE.vtable.eq.unwrap_unchecked();
                             a.len() == b.len()
                                 && a.iter().all(|(key_a, val_a)| {
@@ -95,7 +95,7 @@ where
                             use crate::HasherProxy;
                             use core::hash::Hash;
 
-                            let map = value.as_ref::<BTreeMap<K, V>>();
+                            let map = value.get::<BTreeMap<K, V>>();
                             let k_hash = K::SHAPE.vtable.hash.unwrap_unchecked();
                             let v_hash = V::SHAPE.vtable.hash.unwrap_unchecked();
                             let mut hasher = HasherProxy::new(hasher_this, hasher_write_fn);
@@ -132,20 +132,19 @@ where
                                     map.insert(k, v);
                                 })
                                 .len(|ptr| unsafe {
-                                    let map = ptr.as_ref::<BTreeMap<K, V>>();
+                                    let map = ptr.get::<BTreeMap<K, V>>();
                                     map.len()
                                 })
                                 .contains_key(|ptr, key| unsafe {
-                                    let map = ptr.as_ref::<BTreeMap<K, V>>();
-                                    map.contains_key(key.as_ref())
+                                    let map = ptr.get::<BTreeMap<K, V>>();
+                                    map.contains_key(key.get())
                                 })
                                 .get_value_ptr(|ptr, key| unsafe {
-                                    let map = ptr.as_ref::<BTreeMap<K, V>>();
-                                    map.get(key.as_ref())
-                                        .map(|v| OpaqueConst::new(v as *const _))
+                                    let map = ptr.get::<BTreeMap<K, V>>();
+                                    map.get(key.get()).map(|v| OpaqueConst::new(v as *const _))
                                 })
                                 .iter(|ptr| unsafe {
-                                    let map = ptr.as_ref::<BTreeMap<K, V>>();
+                                    let map = ptr.get::<BTreeMap<K, V>>();
                                     let keys: VecDeque<&K> = map.keys().collect();
                                     let iter_state = Box::new(BTreeMapIterator { map: ptr, keys });
                                     Opaque::new(Box::into_raw(iter_state) as *mut u8)
@@ -155,7 +154,7 @@ where
                                         .next(|iter_ptr| unsafe {
                                             let state =
                                                 iter_ptr.as_mut::<BTreeMapIterator<'_, K>>();
-                                            let map = state.map.as_ref::<BTreeMap<K, V>>();
+                                            let map = state.map.get::<BTreeMap<K, V>>();
                                             while let Some(key) = state.keys.pop_front() {
                                                 if let Some(value) = map.get(key) {
                                                     return Some((

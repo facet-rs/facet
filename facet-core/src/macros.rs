@@ -47,14 +47,14 @@ macro_rules! value_vtable_inner {
             if $crate::spez::impls!($type_name: core::fmt::Display) {
                 builder = builder.display(|data, f| {
                     use $crate::spez::*;
-                    (&&Spez(unsafe { data.as_ref::<$type_name>() })).spez_display(f)
+                    (&&Spez(unsafe { data.get::<$type_name>() })).spez_display(f)
                 });
             }
 
             if $crate::spez::impls!($type_name: core::fmt::Debug) {
                 builder = builder.debug(|data, f| {
                     use $crate::spez::*;
-                    (&&Spez(unsafe { data.as_ref::<$type_name>() })).spez_debug(f)
+                    (&&Spez(unsafe { data.get::<$type_name>() })).spez_debug(f)
                 });
             }
 
@@ -68,7 +68,7 @@ macro_rules! value_vtable_inner {
             if $crate::spez::impls!($type_name: core::clone::Clone) {
                 builder = builder.clone_into(|src, dst| {
                     use $crate::spez::*;
-                    unsafe { (&&Spez(src.as_ref::<$type_name>())).spez_clone_into(dst) }
+                    unsafe { (&&Spez(src.get::<$type_name>())).spez_clone_into(dst) }
                 });
             }
 
@@ -95,24 +95,24 @@ macro_rules! value_vtable_inner {
             if $crate::spez::impls!($type_name: core::cmp::PartialEq) {
                 builder = builder.eq(|left, right| {
                     use $crate::spez::*;
-                    (&&Spez(unsafe { left.as_ref::<$type_name>() }))
-                        .spez_eq(&&Spez(unsafe { right.as_ref::<$type_name>() }))
+                    (&&Spez(unsafe { left.get::<$type_name>() }))
+                        .spez_eq(&&Spez(unsafe { right.get::<$type_name>() }))
                 });
             }
 
             if $crate::spez::impls!($type_name: core::cmp::PartialOrd) {
                 builder = builder.partial_ord(|left, right| {
                     use $crate::spez::*;
-                    (&&Spez(unsafe { left.as_ref::<$type_name>() }))
-                        .spez_partial_cmp(&&Spez(unsafe { right.as_ref::<$type_name>() }))
+                    (&&Spez(unsafe { left.get::<$type_name>() }))
+                        .spez_partial_cmp(&&Spez(unsafe { right.get::<$type_name>() }))
                 });
             }
 
             if $crate::spez::impls!($type_name: core::cmp::Ord) {
                 builder = builder.ord(|left, right| {
                     use $crate::spez::*;
-                    (&&Spez(unsafe { left.as_ref::<$type_name>() }))
-                        .spez_cmp(&&Spez(unsafe { right.as_ref::<$type_name>() }))
+                    (&&Spez(unsafe { left.get::<$type_name>() }))
+                        .spez_cmp(&&Spez(unsafe { right.get::<$type_name>() }))
                 });
             }
 
@@ -120,7 +120,7 @@ macro_rules! value_vtable_inner {
                 builder = builder.hash(|value, hasher_this, hasher_write_fn| {
                     use $crate::spez::*;
                     use $crate::HasherProxy;
-                    (&&Spez(unsafe { value.as_ref::<$type_name>() }))
+                    (&&Spez(unsafe { value.get::<$type_name>() }))
                         .spez_hash(&mut unsafe { HasherProxy::new(hasher_this, hasher_write_fn) })
                 });
             }

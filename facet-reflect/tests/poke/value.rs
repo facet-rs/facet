@@ -52,7 +52,7 @@ fn test_default_initialization() {
     let poke = poke
         .default_in_place()
         .expect("i32 should have default impl");
-    assert_eq!(*poke.as_ref::<i32>(), 0);
+    assert_eq!(*poke.get::<i32>(), 0);
     drop((poke, guard)); // Clean up
 
     // Test with a struct that has a default
@@ -60,7 +60,7 @@ fn test_default_initialization() {
     let poke = poke
         .default_in_place()
         .expect("Point should have default impl");
-    assert_eq!(*poke.as_ref::<Point>(), Point { x: 0, y: 0 });
+    assert_eq!(*poke.get::<Point>(), Point { x: 0, y: 0 });
     drop((poke, guard)); // Clean up
 }
 
@@ -72,14 +72,14 @@ fn test_put_value() {
     // For a simple type
     let (poke, guard) = PokeValueUninit::alloc::<i32>();
     let poke = poke.put(42i32).expect("Should accept correct type");
-    assert_eq!(*poke.as_ref::<i32>(), 42);
+    assert_eq!(*poke.get::<i32>(), 42);
     drop((poke, guard)); // Clean up
 
     // For a compound type
     let (poke, guard) = PokeValueUninit::alloc::<Point>();
     let point = Point { x: 10, y: 20 };
     let poke = poke.put(point).expect("Should accept correct type");
-    assert_eq!(*poke.as_ref::<Point>(), Point { x: 10, y: 20 });
+    assert_eq!(*poke.get::<Point>(), Point { x: 10, y: 20 });
     drop((poke, guard)); // Clean up
 }
 
@@ -112,7 +112,7 @@ fn test_parse_from_string() {
     let poke = poke
         .parse("42")
         .expect("i32 should be parseable from string");
-    assert_eq!(*poke.as_ref::<i32>(), 42);
+    assert_eq!(*poke.get::<i32>(), 42);
     drop((poke, guard)); // Clean up
 
     // Try parsing an invalid string
@@ -145,13 +145,13 @@ fn test_direct_initialization() {
     // For a primitive
     let (poke, guard) = PokeValueUninit::alloc::<u16>();
     let poke = poke.put(42u16).expect("Should accept u16");
-    assert_eq!(*poke.as_ref::<u16>(), 42u16);
+    assert_eq!(*poke.get::<u16>(), 42u16);
     drop((poke, guard)); // Clean up
 
     // For a different primitive
     let (poke, guard) = PokeValueUninit::alloc::<f64>();
     let poke = poke.put(3.2f64).expect("Should accept f64");
-    assert_eq!(*poke.as_ref::<f64>(), 3.2f64);
+    assert_eq!(*poke.get::<f64>(), 3.2f64);
     drop((poke, guard)); // Clean up
 }
 

@@ -19,7 +19,7 @@ unsafe impl<T: Facet> Facet for core::ptr::NonNull<T> {
                         &const {
                             SmartPointerVTable::builder()
                                 .borrow_fn(|opaque| {
-                                    let ptr = unsafe { opaque.as_ref::<Self>().as_ptr() };
+                                    let ptr = unsafe { opaque.get::<Self>().as_ptr() };
                                     OpaqueConst::new(ptr)
                                 })
                                 .new_into_fn(|this, ptr| {

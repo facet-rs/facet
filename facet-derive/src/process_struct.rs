@@ -107,7 +107,7 @@ pub(crate) fn process_struct(parsed: Struct) -> proc_macro::TokenStream {
         let invariant_fn = format!(
             r#"
             unsafe fn invariants<'mem>(value: ::facet::OpaqueConst<'mem>) -> bool {{
-                let value = value.as_ref::<{struct_name}<{generics_use}>>();
+                let value = value.get::<{struct_name}<{generics_use}>>();
                 {tests}
                 true
             }}

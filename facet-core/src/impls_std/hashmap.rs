@@ -52,7 +52,7 @@ where
 
                     if K::SHAPE.vtable.debug.is_some() && V::SHAPE.vtable.debug.is_some() {
                         builder = builder.debug(|value, f| unsafe {
-                            let value = value.as_ref::<HashMap<K, V>>();
+                            let value = value.get::<HashMap<K, V>>();
                             let k_debug = K::SHAPE.vtable.debug.unwrap_unchecked();
                             let v_debug = V::SHAPE.vtable.debug.unwrap_unchecked();
                             write!(f, "{{")?;
@@ -72,12 +72,12 @@ where
                         builder.default_in_place(|target| unsafe { target.put(Self::default()) });
 
                     builder = builder
-                        .clone_into(|src, dst| unsafe { dst.put(src.as_ref::<HashMap<K, V>>()) });
+                        .clone_into(|src, dst| unsafe { dst.put(src.get::<HashMap<K, V>>()) });
 
                     if V::SHAPE.vtable.eq.is_some() {
                         builder = builder.eq(|a, b| unsafe {
-                            let a = a.as_ref::<HashMap<K, V>>();
-                            let b = b.as_ref::<HashMap<K, V>>();
+                            let a = a.get::<HashMap<K, V>>();
+                            let b = b.get::<HashMap<K, V>>();
                             let v_eq = V::SHAPE.vtable.eq.unwrap_unchecked();
                             a.len() == b.len()
                                 && a.iter().all(|(key_a, val_a)| {
@@ -94,7 +94,7 @@ where
                     if V::SHAPE.vtable.hash.is_some() {
                         builder = builder.hash(|value, hasher_this, hasher_write_fn| unsafe {
                             use crate::HasherProxy;
-                            let map = value.as_ref::<HashMap<K, V>>();
+                            let map = value.get::<HashMap<K, V>>();
                             let v_hash = V::SHAPE.vtable.hash.unwrap_unchecked();
                             let mut hasher = HasherProxy::new(hasher_this, hasher_write_fn);
                             map.len().hash(&mut hasher);
@@ -132,20 +132,20 @@ where
                                     map.insert(key, value);
                                 })
                                 .len(|ptr| unsafe {
-                                    let map = ptr.as_ref::<HashMap<K, V>>();
+                                    let map = ptr.get::<HashMap<K, V>>();
                                     map.len()
                                 })
                                 .contains_key(|ptr, key| unsafe {
-                                    let map = ptr.as_ref::<HashMap<K, V>>();
-                                    map.contains_key(key.as_ref())
+                                    let map = ptr.get::<HashMap<K, V>>();
+                                    map.contains_key(key.get())
                                 })
                                 .get_value_ptr(|ptr, key| unsafe {
-                                    let map = ptr.as_ref::<HashMap<K, V>>();
-                                    map.get(key.as_ref())
+                                    let map = ptr.get::<HashMap<K, V>>();
+                                    map.get(key.get())
                                         .map(|v| OpaqueConst::new(v as *const _))
                                 })
                                 .iter(|ptr| unsafe {
-                                    let map = ptr.as_ref::<HashMap<K, V>>();
+                                    let map = ptr.get::<HashMap<K, V>>();
                                     let keys: VecDeque<&K> = map.keys().collect();
                                     let iter_state = Box::new(HashMapIterator { map: ptr, keys });
                                     Opaque::new(Box::into_raw(iter_state) as *mut u8)
@@ -154,7 +154,7 @@ where
                                     MapIterVTable::builder()
                                         .next(|iter_ptr| unsafe {
                                             let state = iter_ptr.as_mut::<HashMapIterator<'_, K>>();
-                                            let map = state.map.as_ref::<HashMap<K, V>>();
+                                            let map = state.map.get::<HashMap<K, V>>();
                                             while let Some(key) = state.keys.pop_front() {
                                                 if let Some(value) = map.get(key) {
                                                     return Some((

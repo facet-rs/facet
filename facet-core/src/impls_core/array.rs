@@ -26,7 +26,7 @@ where
                         .drop_in_place(|value| unsafe { value.drop_in_place::<[T; L]>() });
                     if T::SHAPE.vtable.display.is_some() {
                         builder = builder.display(|value, f| {
-                            let value = unsafe { value.as_ref::<[T; L]>() };
+                            let value = unsafe { value.get::<[T; L]>() };
                             write!(f, "[")?;
 
                             for (idx, value) in value.iter().enumerate() {
@@ -45,7 +45,7 @@ where
                     }
                     if T::SHAPE.vtable.debug.is_some() {
                         builder = builder.debug(|value, f| {
-                            let value = unsafe { value.as_ref::<[T; L]>() };
+                            let value = unsafe { value.get::<[T; L]>() };
                             write!(f, "[")?;
 
                             for (idx, value) in value.iter().enumerate() {
@@ -64,8 +64,8 @@ where
                     }
                     if T::SHAPE.vtable.eq.is_some() {
                         builder = builder.eq(|a, b| {
-                            let a = unsafe { a.as_ref::<[T; L]>() };
-                            let b = unsafe { b.as_ref::<[T; L]>() };
+                            let a = unsafe { a.get::<[T; L]>() };
+                            let b = unsafe { b.get::<[T; L]>() };
                             zip(a, b).all(|(a, b)| unsafe {
                                 (T::SHAPE.vtable.eq.unwrap_unchecked())(
                                     OpaqueConst::new(a),
@@ -94,7 +94,7 @@ where
                     if T::SHAPE.vtable.clone_into.is_some() {
                         builder = builder.clone_into(|src, dst| unsafe {
                             let t_cip = T::SHAPE.vtable.clone_into.unwrap_unchecked();
-                            let src = src.as_ref::<[T; L]>();
+                            let src = src.get::<[T; L]>();
                             let stride = T::SHAPE.layout.pad_to_align().size();
                             for (idx, src) in src.iter().enumerate() {
                                 (t_cip)(OpaqueConst::new(src), dst.field_uninit_at(idx * stride));
@@ -104,8 +104,8 @@ where
                     }
                     if T::SHAPE.vtable.partial_ord.is_some() {
                         builder = builder.partial_ord(|a, b| {
-                            let a = unsafe { a.as_ref::<[T; L]>() };
-                            let b = unsafe { b.as_ref::<[T; L]>() };
+                            let a = unsafe { a.get::<[T; L]>() };
+                            let b = unsafe { b.get::<[T; L]>() };
                             zip(a, b)
                                 .find_map(|(a, b)| unsafe {
                                     match (T::SHAPE.vtable.partial_ord.unwrap_unchecked())(
@@ -121,8 +121,8 @@ where
                     }
                     if T::SHAPE.vtable.ord.is_some() {
                         builder = builder.ord(|a, b| {
-                            let a = unsafe { a.as_ref::<[T; L]>() };
-                            let b = unsafe { b.as_ref::<[T; L]>() };
+                            let a = unsafe { a.get::<[T; L]>() };
+                            let b = unsafe { b.get::<[T; L]>() };
                             zip(a, b)
                                 .find_map(|(a, b)| unsafe {
                                     match (T::SHAPE.vtable.ord.unwrap_unchecked())(
@@ -138,7 +138,7 @@ where
                     }
                     if T::SHAPE.vtable.hash.is_some() {
                         builder = builder.hash(|value, state, hasher| {
-                            let value = unsafe { value.as_ref::<[T; L]>() };
+                            let value = unsafe { value.get::<[T; L]>() };
                             for value in value {
                                 unsafe {
                                     (T::SHAPE.vtable.hash.unwrap_unchecked())(
