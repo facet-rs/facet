@@ -2,7 +2,7 @@ use std::{cmp::Ordering, collections::HashSet};
 
 use facet::Facet;
 use facet_ansi::{ColorStyle, Style, Stylize as _};
-use facet_reflect::{ConstValue, WipValue};
+use facet_reflect::{ConstValue, Wip};
 
 fn check_facts<T>(val1: T, val2: T, expected_facts: HashSet<Fact>)
 where
@@ -85,12 +85,12 @@ where
     }
 
     // Test default_in_place
-    let poke_value = WipValue::alloc::<T>();
-    if let Ok(pokeval) = poke_value.put_default() {
-        let pokeval = pokeval.build().unwrap();
-
+    let mut wip = Wip::alloc::<T>();
+    let bob = wip.bob();
+    if bob.put_default().is_ok() {
+        let val = wip.build().unwrap();
         facts.insert(Fact::Default);
-        eprintln!("Default:   {}", format!("{:?}", pokeval).style(remarkable));
+        eprintln!("Default:   {}", format!("{:?}", val).style(remarkable));
     }
 
     // Test clone

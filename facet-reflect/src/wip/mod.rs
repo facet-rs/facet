@@ -5,9 +5,9 @@ use facet_core::{Def, Facet, FieldError, OpaqueConst, OpaqueUninit, Shape, Varia
 use std::collections::HashMap;
 
 /// Represents a frame in the initialization stack
-pub struct Frame<'mem> {
+pub struct Frame {
     /// The value we're initializing
-    data: OpaqueUninit<'mem>,
+    data: OpaqueUninit<'static>,
 
     /// The shape of the value
     shape: &'static Shape,
@@ -20,7 +20,7 @@ pub struct Frame<'mem> {
     istate: IState,
 }
 
-impl Frame<'_> {
+impl Frame {
     /// Returns the value ID for a frame
     fn id(&self) -> ValueId {
         ValueId::new(self.shape, self.data.as_byte_ptr())
@@ -66,19 +66,26 @@ struct IState {
     fields: ISet,
 }
 
-/// A "work-in-progress" value — partially initialized
-pub struct WipValue<'mem> {
-    /// guarantees the memory allocation for the whole tree
-    guard: Option<Guard>,
+/// A work-in-progress heap-allocated value
+pub struct Wip {
+    /// frees the memory when dropped
+    guard: Guard,
+
+    /// the shape of the value
+    shape: &'static Shape,
 
     /// stack of frames to keep track of deeply nested initialization
-    frames: Vec<Frame<'mem>>,
+    frames: Vec<Frame>,
 
     /// keeps track of initialization of out-of-tree frames
     istates: HashMap<ValueId, IState>,
 }
 
-impl<'mem> WipValue<'mem> {
+impl Wip {
+    fn data(&self) -> OpaqueUninit<'static> {
+        OpaqueUninit::new(self.guard.ptr)
+    }
+
     /// Allocates a new value of the given shape
     pub fn alloc_shape(shape: &'static Shape) -> Self {
         let data = shape.allocate();
@@ -87,14 +94,15 @@ impl<'mem> WipValue<'mem> {
             layout: shape.layout,
         };
         Self {
+            guard,
+            shape,
             frames: vec![Frame {
                 data,
                 shape,
                 index: None,
                 istate: Default::default(),
             }],
-            guard: Some(guard),
-            istates: Default::default(),
+            istates: HashMap::new(),
         }
     }
 
@@ -103,169 +111,12 @@ impl<'mem> WipValue<'mem> {
         Self::alloc_shape(S::SHAPE)
     }
 
-    /// Selects a field of a struct by name and pushes it onto the frame stack.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - The name of the field to select.
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(Self)` if the field was successfully selected and pushed.
-    /// * `Err(ReflectError)` if the current frame is not a struct or the field doesn't exist.
-    pub fn field_named(mut self, name: &str) -> Result<Self, ReflectError> {
-        let frame = self.frames.last_mut().unwrap();
-        let shape = frame.shape;
-        let Def::Struct(def) = shape.def else {
-            return Err(ReflectError::WasNotA { name: "struct" });
-        };
-        let (index, field) = def
-            .fields
-            .iter()
-            .enumerate()
-            .find(|(_, f)| f.name == name)
-            .ok_or(ReflectError::FieldError {
-                shape,
-                field_error: FieldError::NoSuchField,
-            })?;
-        let field_data = unsafe { frame.data.field_uninit_at(field.offset) };
-
-        let mut frame = Frame {
-            data: field_data,
-            shape: field.shape,
-            index: Some(index),
-            istate: Default::default(),
-        };
-        if let Some(iset) = self.istates.remove(&frame.id()) {
-            frame.istate = iset;
-        }
-        self.frames.push(frame);
-        Ok(self)
+    /// Returns a Bob builder
+    pub fn bob(&mut self) -> Bob<'_> {
+        Bob(self)
     }
 
-    /// Puts a value of type `T` into the current frame.
-    ///
-    /// # Arguments
-    ///
-    /// * `t` - The value to put into the frame.
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(Self)` if the value was successfully put into the frame.
-    /// * `Err(ReflectError)` if there was an error putting the value into the frame.
-    pub fn put<T: Facet + 'mem>(mut self, t: T) -> Result<Self, ReflectError> {
-        let Some(frame) = self.frames.last_mut() else {
-            return Err(ReflectError::OperationFailed {
-                shape: T::SHAPE,
-                operation: "tried to put a T but there was no frame to put T into",
-            });
-        };
-
-        // check that the type matches
-        if !frame.shape.is_type::<T>() {
-            return Err(ReflectError::WrongShape {
-                expected: frame.shape,
-                actual: T::SHAPE,
-            });
-        }
-
-        // de-initialize partially initialized fields
-        if frame.istate.variant.is_some() || frame.istate.fields.is_any_set() {
-            todo!(
-                "we should de-initialize partially initialized fields for {}",
-                frame.shape
-            );
-        }
-
-        unsafe {
-            frame.data.put(t);
-            frame.mark_fully_initialized();
-        }
-
-        let shape = frame.shape;
-        let index = frame.index;
-
-        // mark the field as initialized
-        self.mark_field_as_initialized(shape, index)?;
-
-        Ok(self)
-    }
-
-    /// Puts the default value in the currrent frame.
-    pub fn put_default(mut self) -> Result<Self, ReflectError> {
-        let Some(frame) = self.frames.last_mut() else {
-            return Err(ReflectError::OperationFailed {
-                shape: <()>::SHAPE,
-                operation: "tried to put default value but there was no frame",
-            });
-        };
-
-        let vtable = frame.shape.vtable;
-
-        let Some(default_in_place) = vtable.default_in_place else {
-            return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
-                operation: "type does not implement Default",
-            });
-        };
-        unsafe {
-            default_in_place(frame.data);
-            frame.mark_fully_initialized();
-        }
-
-        let shape = frame.shape;
-        let index = frame.index;
-
-        // mark the field as initialized
-        self.mark_field_as_initialized(shape, index)?;
-
-        Ok(self)
-    }
-
-    /// Marks a field as initialized in the parent frame.
-    fn mark_field_as_initialized(
-        &mut self,
-        shape: &'static Shape,
-        index: Option<usize>,
-    ) -> Result<(), ReflectError> {
-        if let Some(index) = index {
-            let parent_index = self.frames.len().saturating_sub(2);
-            let Some(parent) = self.frames.get_mut(parent_index) else {
-                return Err(ReflectError::OperationFailed {
-                    shape,
-                    operation: "was supposed to mark a field as initialized, but there was no parent frame",
-                });
-            };
-
-            if matches!(parent.shape.def, Def::Enum(_)) && parent.istate.variant.is_none() {
-                return Err(ReflectError::OperationFailed {
-                    shape,
-                    operation: "was supposed to mark a field as initialized, but the parent frame was an enum and didn't have a variant chosen",
-                });
-            }
-
-            if parent.istate.fields.has(index) {
-                return Err(ReflectError::OperationFailed {
-                    shape,
-                    operation: "was supposed to mark a field as initialized, but the parent frame already had it marked as initialized",
-                });
-            }
-
-            parent.istate.fields.set(index);
-        }
-        Ok(())
-    }
-
-    /// Pops the current frame — goes back up one level
-    pub fn pop(mut self) -> Result<Self, ReflectError> {
-        let Some(frame) = self.pop_inner() else {
-            return Err(ReflectError::InvariantViolation);
-        };
-        self.track(frame);
-        Ok(self)
-    }
-
-    fn pop_inner(&mut self) -> Option<Frame<'mem>> {
+    fn pop_inner(&mut self) -> Option<Frame> {
         let frame = self.frames.pop()?;
         if frame.is_fully_initialized() {
             if let Some(parent) = self.frames.last_mut() {
@@ -277,13 +128,13 @@ impl<'mem> WipValue<'mem> {
         Some(frame)
     }
 
-    fn track(&mut self, frame: Frame<'mem>) {
+    fn track(&mut self, frame: Frame) {
         self.istates.insert(frame.id(), frame.istate);
     }
 
     /// Asserts everything is initialized
     pub fn build(mut self) -> Result<HeapValue, ReflectError> {
-        let mut root: Option<Frame<'mem>> = None;
+        let mut root: Option<Frame> = None;
         while let Some(frame) = self.pop_inner() {
             if let Some(old_root) = root.replace(frame) {
                 self.track(old_root);
@@ -328,40 +179,197 @@ impl<'mem> WipValue<'mem> {
         let _data = unsafe { root.data.assume_init() };
 
         Ok(HeapValue {
-            guard: self.guard.take().unwrap(),
+            guard: self.guard,
             shape,
         })
     }
 }
 
-impl Drop for WipValue<'_> {
-    fn drop(&mut self) {
-        for (id, is) in self.istates.drain() {
-            let field_count = match id.shape.def {
-                Def::Struct(def) => def.fields.len(),
-                Def::Enum(_) => todo!(),
-                _ => 1,
+/// Bob's a builder
+pub struct Bob<'mem>(&'mem mut Wip);
+
+impl<'mem> Bob<'mem> {
+    /// Selects a field of a struct by name and pushes it onto the frame stack.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name of the field to select.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Self)` if the field was successfully selected and pushed.
+    /// * `Err(ReflectError)` if the current frame is not a struct or the field doesn't exist.
+    pub fn field_named(self, name: &str) -> Result<Self, ReflectError> {
+        let frame = self.0.frames.last_mut().unwrap();
+        let shape = frame.shape;
+        let Def::Struct(def) = shape.def else {
+            return Err(ReflectError::WasNotA { name: "struct" });
+        };
+        let (index, field) = def
+            .fields
+            .iter()
+            .enumerate()
+            .find(|(_, f)| f.name == name)
+            .ok_or(ReflectError::FieldError {
+                shape,
+                field_error: FieldError::NoSuchField,
+            })?;
+        let field_data = unsafe { frame.data.field_uninit_at(field.offset) };
+
+        let mut frame = Frame {
+            data: field_data,
+            shape: field.shape,
+            index: Some(index),
+            istate: Default::default(),
+        };
+        if let Some(iset) = self.0.istates.remove(&frame.id()) {
+            frame.istate = iset;
+        }
+        self.0.frames.push(frame);
+        Ok(self)
+    }
+
+    /// Puts a value of type `T` into the current frame.
+    ///
+    /// # Arguments
+    ///
+    /// * `t` - The value to put into the frame.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Self)` if the value was successfully put into the frame.
+    /// * `Err(ReflectError)` if there was an error putting the value into the frame.
+    pub fn put<T: Facet + 'mem>(mut self, t: T) -> Result<Self, ReflectError> {
+        let Some(frame) = self.0.frames.last_mut() else {
+            return Err(ReflectError::OperationFailed {
+                shape: T::SHAPE,
+                operation: "tried to put a T but there was no frame to put T into",
+            });
+        };
+
+        // check that the type matches
+        if !frame.shape.is_type::<T>() {
+            return Err(ReflectError::WrongShape {
+                expected: frame.shape,
+                actual: T::SHAPE,
+            });
+        }
+
+        // de-initialize partially initialized fields
+        if frame.istate.variant.is_some() || frame.istate.fields.is_any_set() {
+            todo!(
+                "we should de-initialize partially initialized fields for {}",
+                frame.shape
+            );
+        }
+
+        unsafe {
+            frame.data.put(t);
+            frame.mark_fully_initialized();
+        }
+
+        let shape = frame.shape;
+        let index = frame.index;
+
+        // mark the field as initialized
+        self.mark_field_as_initialized(shape, index)?;
+
+        Ok(self)
+    }
+
+    /// Puts the default value in the currrent frame.
+    pub fn put_default(mut self) -> Result<Bob<'mem>, ReflectError> {
+        let Some(frame) = self.0.frames.last_mut() else {
+            return Err(ReflectError::OperationFailed {
+                shape: <()>::SHAPE,
+                operation: "tried to put default value but there was no frame",
+            });
+        };
+
+        let vtable = frame.shape.vtable;
+
+        let Some(default_in_place) = vtable.default_in_place else {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "type does not implement Default",
+            });
+        };
+        unsafe {
+            default_in_place(frame.data);
+            frame.mark_fully_initialized();
+        }
+
+        let shape = frame.shape;
+        let index = frame.index;
+
+        // mark the field as initialized
+        self.mark_field_as_initialized(shape, index)?;
+
+        Ok(self)
+    }
+
+    /// Marks a field as initialized in the parent frame.
+    fn mark_field_as_initialized(
+        &mut self,
+        shape: &'static Shape,
+        index: Option<usize>,
+    ) -> Result<(), ReflectError> {
+        if let Some(index) = index {
+            let parent_index = self.0.frames.len().saturating_sub(2);
+            let Some(parent) = self.0.frames.get_mut(parent_index) else {
+                return Err(ReflectError::OperationFailed {
+                    shape,
+                    operation: "was supposed to mark a field as initialized, but there was no parent frame",
+                });
             };
-            if !is.fields.are_all_set(field_count) {
-                match id.shape.def {
-                    Def::Struct(sd) => {
-                        eprintln!("fields were not initialized for struct {}", id.shape);
-                        for (i, field) in sd.fields.iter().enumerate() {
-                            if !is.fields.has(i) {
-                                eprintln!("  {}", field.name);
-                            }
-                        }
-                    }
-                    Def::Enum(_) => {
-                        todo!()
-                    }
-                    Def::Scalar(_) => {
-                        eprintln!("fields were not initialized for scalar {}", id.shape);
-                    }
-                    _ => {}
-                }
-                panic!("some fields were not initialized")
+
+            if matches!(parent.shape.def, Def::Enum(_)) && parent.istate.variant.is_none() {
+                return Err(ReflectError::OperationFailed {
+                    shape,
+                    operation: "was supposed to mark a field as initialized, but the parent frame was an enum and didn't have a variant chosen",
+                });
             }
+
+            if parent.istate.fields.has(index) {
+                return Err(ReflectError::OperationFailed {
+                    shape,
+                    operation: "was supposed to mark a field as initialized, but the parent frame already had it marked as initialized",
+                });
+            }
+
+            parent.istate.fields.set(index);
+        }
+        Ok(())
+    }
+
+    /// Pops the current frame — goes back up one level
+    pub fn pop(self) -> Result<Self, ReflectError> {
+        let Some(frame) = self.0.pop_inner() else {
+            return Err(ReflectError::InvariantViolation);
+        };
+        self.0.track(frame);
+        Ok(self)
+    }
+
+    /// Finish with this bob (validate that exactly one frame remains)
+    pub fn finish(self) -> Result<(), ReflectError> {
+        if self.0.frames.len() != 1 {
+            return Err(ReflectError::OperationFailed {
+                shape: self.0.shape,
+                operation: "Bob finished with incorrect number of frames",
+            });
+        }
+        Ok(())
+    }
+}
+
+impl Drop for Bob<'_> {
+    fn drop(&mut self) {
+        if self.0.frames.len() != 1 {
+            panic!(
+                "Bob dropped with {} frames, expected exactly 1 frame",
+                self.0.frames.len()
+            );
         }
     }
 }

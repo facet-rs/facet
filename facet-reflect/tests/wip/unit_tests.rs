@@ -1,5 +1,5 @@
 use facet::Facet;
-use facet_reflect::WipValue;
+use facet_reflect::{Bob, Wip};
 
 #[derive(Facet, PartialEq, Eq, Debug)]
 struct Outer {
@@ -17,7 +17,8 @@ struct Inner {
 fn wip_nested() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    let v = WipValue::alloc::<Outer>()
+    let mut wip = Wip::alloc::<Outer>();
+    wip.bob()
         .field_named("name")?
         .put(String::from("Hello, world!"))?
         .pop()?
@@ -29,8 +30,8 @@ fn wip_nested() -> eyre::Result<()> {
         .put(43)?
         .pop()?
         .pop()?
-        .build()?
-        .materialize::<Outer>()?;
+        .finish()?;
+    let v = wip.build()?.materialize::<Outer>()?;
 
     assert_eq!(
         v,
@@ -48,7 +49,6 @@ fn readme_sample() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
     use facet::Facet;
-    use facet_reflect::WipValue;
 
     #[derive(Debug, PartialEq, Eq, Facet)]
     struct FooBar {
@@ -56,14 +56,17 @@ fn readme_sample() -> eyre::Result<()> {
         bar: String,
     }
 
-    let foo_bar = WipValue::alloc::<FooBar>()
+    let mut foo_bar = Wip::alloc::<FooBar>();
+    foo_bar
+        .bob()
         .field_named("foo")?
         .put(42u64)?
         .pop()?
         .field_named("bar")?
         .put(String::from("Hello, World!"))?
-        .build()?
-        .materialize::<FooBar>()?;
+        .pop()?
+        .finish()?;
+    let foo_bar = foo_bar.build()?.materialize::<FooBar>()?;
 
     // Now we can use the constructed value
     println!("{}", foo_bar.bar);
@@ -78,17 +81,13 @@ fn lifetimes() -> eyre::Result<()> {
         s: &'a str,
     }
 
-    let wip = WipValue::alloc::<Foo>();
+    let mut wip = Wip::alloc::<Foo>();
+    let bob = wip.bob();
     let v = {
         let s = "abc".to_string();
         let foo = Foo { s: &s };
-
-        wip.put(foo)
-            .unwrap()
-            .build()
-            .unwrap()
-            .materialize::<Foo>()
-            .unwrap()
+        bob.put(foo)?.finish()?;
+        wip.build()?.materialize::<Foo>()?;
     };
     dbg!(v);
 
