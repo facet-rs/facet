@@ -19,6 +19,22 @@ pub struct Frame<'mem> {
     istate: IState,
 }
 
+impl Frame<'_> {
+    /// Returns true if the frame is fully initialized
+    fn is_fully_initialized(&self) -> bool {
+        match self.value.shape.def {
+            Def::Struct(sd) => self.istate.fields.are_all_set(sd.fields.len()),
+            Def::Enum(_) => match self.istate.variant.as_ref() {
+                None => false,
+                Some(v) => self.istate.fields.are_all_set(v.data.fields.len()),
+            },
+            _ => {
+                todo!()
+            }
+        }
+    }
+}
+
 /// Initialization state
 #[derive(Default)]
 struct IState {
@@ -175,8 +191,15 @@ impl<'mem> Builder<'mem> {
     fn pop_inner(&mut self) -> Option<PokeValueUninit<'mem>> {
         let frame = self.frames.pop()?;
 
+        if frame.is_fully_initialized() {
+            if let Some(parent) = self.frames.last_mut() {
+                parent.istate.fields.set(frame.index.unwrap());
+            };
+        }
+
         // we'll check if everything is initialized at the end
         self.isets.insert(frame.value.id(), frame.istate);
+
         Some(frame.value)
     }
 
