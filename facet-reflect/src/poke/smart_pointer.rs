@@ -2,7 +2,7 @@ use facet_core::{Def, Facet, LockResult, Opaque, Shape, SmartPointerDef, SmartPo
 
 use crate::PeekValue;
 
-use super::{Guard, PokeValue, PokeValueUninit};
+use super::{HeapVal, PokeValue, PokeValueUninit};
 
 /// Allows mutating an initialized smart pointer
 pub struct PokeSmartPointer<'mem> {
@@ -65,25 +65,25 @@ impl<'mem> PokeSmartPointer<'mem> {
     /// Attempts to upgrade this pointer if it's a weak reference.
     ///
     /// The guard returned controls the lifetime of the upgraded smart pointer?
-    pub fn try_upgrade(&self) -> Option<(Self, Guard)> {
+    pub fn try_upgrade(&self) -> Option<HeapVal<Self>> {
         let upgrade_into_fn = self.def.vtable.upgrade_into_fn?;
         let strong_shape = (self.def.strong?)();
         let strong_def = match strong_shape.def {
             Def::SmartPointer(def) => def,
             _ => panic!("the strong equivalent of a smart pointer must be a smart pointer"),
         };
-        let (target, guard) = PokeValueUninit::alloc_shape(strong_shape);
-        let strong_data = unsafe { upgrade_into_fn(self.data(), target.data)? };
-        Some((
-            Self {
+
+        let target = PokeValueUninit::alloc_shape(strong_shape);
+        target.map_opt(|target| {
+            let strong_data = unsafe { upgrade_into_fn(self.data(), target.data)? };
+            Some(Self {
                 value: PokeValue {
                     shape: strong_shape,
                     data: strong_data,
                 },
                 def: strong_def,
-            },
-            guard,
-        ))
+            })
+        })
     }
 
     /// Attempts to lock this pointer if it's a mutex-like smart pointer.

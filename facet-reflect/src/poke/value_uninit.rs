@@ -1,4 +1,7 @@
-use core::alloc::Layout;
+use core::{
+    alloc::Layout,
+    ops::{Deref, DerefMut},
+};
 
 use crate::{ReflectError, ScalarType};
 use facet_core::{Def, Facet, OpaqueConst, OpaqueUninit, Shape, TryFromError, ValueVTable};
@@ -23,22 +26,22 @@ pub struct PokeValueUninit<'mem> {
 impl<'mem> PokeValueUninit<'mem> {
     /// Allocates a new poke of a type that implements facet
     #[inline(always)]
-    pub fn alloc<S: Facet>() -> (Self, Guard) {
+    pub fn alloc<S: Facet>() -> HeapVal<Self> {
         Self::alloc_shape(S::SHAPE)
     }
 
     /// Allocates a new poke from a given shape
     #[inline(always)]
-    pub fn alloc_shape(shape: &'static Shape) -> (Self, Guard) {
+    pub fn alloc_shape(shape: &'static Shape) -> HeapVal<Self> {
         let data = shape.allocate();
         let layout = shape.layout;
-        let guard = Guard {
+        let poke = Self { data, shape };
+        HeapVal {
+            inner: poke,
             data,
             layout,
             shape,
-        };
-        let poke = Self { data, shape };
-        (poke, guard)
+        }
     }
 
     /// Shape getter
@@ -196,13 +199,62 @@ impl<'mem> PokeValueUninit<'mem> {
 }
 
 /// Ensures a value is dropped when the guard is dropped.
-pub struct Guard {
+pub struct HeapVal<T> {
+    pub(crate) inner: T,
     pub(crate) data: OpaqueUninit<'static>,
     pub(crate) layout: Layout,
     pub(crate) shape: &'static Shape,
 }
 
-impl Drop for Guard {
+impl<T> Deref for HeapVal<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<T> DerefMut for HeapVal<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
+impl<T> HeapVal<T> {
+    /// Maps the inner value with a closure
+    pub(crate) fn map<U>(self, f: impl FnOnce(&T) -> U) -> HeapVal<U> {
+        HeapVal {
+            inner: f(&self.inner),
+            data: self.data,
+            layout: self.layout,
+            shape: self.shape,
+        }
+    }
+
+    /// Maps the inner value with a closure that returns an option
+    /// If it returns `None`, the heap value is deallocated.
+    pub(crate) fn map_opt<U>(self, f: impl FnOnce(&T) -> Option<U>) -> Option<HeapVal<U>> {
+        Some(HeapVal {
+            inner: f(&self.inner)?,
+            data: self.data,
+            layout: self.layout,
+            shape: self.shape,
+        })
+    }
+
+    /// Maps the inner value with a closure that returns a result
+    /// If it returns `Err`, the heap value is deallocated.
+    pub(crate) fn map_res<U, E>(self, f: impl FnOnce(&T) -> Result<U, E>) -> Result<HeapVal<U>, E> {
+        Ok(HeapVal {
+            inner: f(&self.inner)?,
+            data: self.data,
+            layout: self.layout,
+            shape: self.shape,
+        })
+    }
+}
+
+impl<T> Drop for HeapVal<T> {
     fn drop(&mut self) {
         if self.layout.size() == 0 {
             return;

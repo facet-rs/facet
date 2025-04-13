@@ -3,7 +3,7 @@ use facet_core::{Facet, FieldError, Shape, Struct};
 use crate::ReflectError;
 
 use super::slot::Parent;
-use super::{Guard, ISet, PokeStruct, PokeValue, PokeValueUninit, Slot};
+use super::{HeapVal, ISet, PokeStruct, PokeValue, PokeValueUninit, Slot};
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
@@ -84,7 +84,7 @@ impl<'mem> PokeStructUninit<'mem> {
     /// This function will panic if:
     /// - Not all the fields have been initialized.
     /// - The generic type parameter T does not match the shape that this PokeStruct is building.
-    pub fn build<T: Facet>(self, guard: Option<Guard>) -> Result<T, ReflectError> {
+    pub fn build<T: Facet>(self, guard: Option<HeapVal>) -> Result<T, ReflectError> {
         // change drop order: we want to drop guard _after_ this.
         let (guard, this) = (guard, self);
 
