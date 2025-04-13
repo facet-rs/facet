@@ -4,12 +4,15 @@ use crate::ReflectError;
 
 use super::{PokeStructUninit, PokeValueUninit};
 
-/// We're essentially building a graph of slots we're initializing —
-/// when we're done initializing something, we need to be able to go back
-/// to the parent.
 #[derive(Debug)]
+/// Represents the parent container during the initialization process.
+///
+/// This enum tracks what kind of structure we're building within, so we can
+/// navigate back up the initialization hierarchy when completing a field.
 pub enum Parent<'mem> {
+    /// An uninitialized struct that we're in the process of building.
     StructUninit(PokeStructUninit<'mem>),
+    /// A struct field that itself contains a struct we're initializing.
     StructSlot(Box<StructSlot<'mem>>),
 }
 

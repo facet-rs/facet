@@ -1,7 +1,7 @@
 use facet::Facet;
 use facet_reflect::{PokeValueUninit, ReflectError};
 
-use std::{fmt::Debug, mem::MaybeUninit};
+use std::fmt::Debug;
 
 #[derive(Debug, PartialEq, Eq, Facet)]
 struct Person {
@@ -121,21 +121,21 @@ fn nested_struct() -> eyre::Result<()> {
     Ok(())
 }
 
+#[derive(Facet)]
+#[facet(invariants = "invariants")]
+struct MyNonZeroU8 {
+    value: u8,
+}
+
+impl MyNonZeroU8 {
+    // TODO: does this need to be MaybUninit?
+    fn invariants(&self) -> bool {
+        self.value != 0
+    }
+}
+
 #[test]
 fn struct_with_invariant() {
-    #[derive(Facet)]
-    #[facet(invariants = "invariants")]
-    struct MyNonZeroU8 {
-        value: u8,
-    }
-
-    impl MyNonZeroU8 {
-        // TODO: does this need to be MaybUninit?
-        fn invariants(&self) -> bool {
-            self.value != 0
-        }
-    }
-
     facet_testhelpers::setup();
 
     let (poke, guard) = PokeValueUninit::alloc::<MyNonZeroU8>();
@@ -157,21 +157,22 @@ fn struct_with_invariant() {
     }
 }
 
-// #[test]
-// fn mutate_person() {
-//     facet_testhelpers::setup();
+#[test]
+fn mutate_person() {
+    facet_testhelpers::setup();
 
-//     let mut person: Person = Default::default();
+    let mut person: Person = Default::default();
 
-//     {
-//         let mut poke = Poke::new(&mut person).into_struct();
-//         // Use the safe set_by_name method
-//         poke.set_by_name("name", String::from("Hello, World!"))
-//             .unwrap();
-//         poke.build_in_place();
-//     }
+    {
+        let mut poke = facet_reflect::poke(&mut person).into_struct().unwrap();
+        // Use the field_by_name method
+        poke.field_by_name("name")
+            .unwrap()
+            .set(String::from("Hello, World!"))
+            .unwrap();
+    }
 
-//     // Verify the fields were set correctly
-//     assert_eq!(person.age, 69);
-//     assert_eq!(person.name, "Hello, World!");
-// }
+    // Verify the fields were set correctly
+    assert_eq!(person.age, 69);
+    assert_eq!(person.name, "Hello, World!");
+}
