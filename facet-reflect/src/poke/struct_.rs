@@ -1,6 +1,6 @@
 use facet_core::{OpaqueUninit, Shape, Struct};
 
-use super::{ISet, PokeStructUninit, PokeValue, PokeValueUninit};
+use super::{HeapVal, ISet, PokeStructUninit, PokeValue, PokeValueUninit};
 
 /// Allows mutating a fully-initialized struct
 pub struct PokeStruct<'mem> {
@@ -42,5 +42,11 @@ impl<'mem> PokeStruct<'mem> {
             def: self.def,
             iset: ISet::all(self.def.fields),
         }
+    }
+}
+
+impl<'mem> HeapVal<PokeStruct<'mem>> {
+    pub fn into_value(self) -> HeapVal<PokeValue<'mem>> {
+        self.map(|s| s.into_value())
     }
 }

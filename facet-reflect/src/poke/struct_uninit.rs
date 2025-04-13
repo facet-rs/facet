@@ -3,7 +3,7 @@ use facet_core::{Facet, FieldError, Shape, Struct};
 use crate::ReflectError;
 
 use super::slot::Parent;
-use super::{Buildabear, ISet, PokeStruct, PokeValue, PokeValueUninit, Slot};
+use super::{Buildabear, HeapVal, ISet, PokeStruct, PokeValue, PokeValueUninit, Slot};
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
@@ -60,23 +60,17 @@ impl<'mem> PokeStructUninit<'mem> {
     /// Asserts that every field has been initialized and gives a [`PokeStruct`]
     ///
     /// If one of the field was not initialized, all fields will be dropped in place.
-    pub fn build_in_place(mut self) -> Result<PokeStruct<'mem>, ReflectError> {
-        let res = unsafe { self.build_in_place_inner() };
-        core::mem::forget(self); // prevent field drops
-        res
-    }
-
-    unsafe fn build_in_place_inner(&mut self) -> Result<PokeStruct<'mem>, ReflectError> {
+    pub fn build_in_place(self) -> Result<PokeStruct<'mem>, ReflectError> {
         self.assert_can_build()?;
-
-        let data = unsafe { self.value.data.assume_init() };
-        let shape = self.value.shape;
-        let def = self.def;
-
-        Ok(PokeStruct {
-            def,
-            value: PokeValue { data, shape },
-        })
+        let ps = PokeStruct {
+            def: self.def,
+            value: PokeValue {
+                data: unsafe { self.value.data.assume_init() },
+                shape: self.value.shape,
+            },
+        };
+        core::mem::forget(self); // prevent field double-drops
+        Ok(ps)
     }
 
     /// Gets a slot for a given field, by index
@@ -127,34 +121,29 @@ impl Drop for PokeStructUninit<'_> {
     }
 }
 
-impl Buildabear for PokeStructUninit<'_> {
-    /// Builds a value of type `U` from the PokeStruct, then deallocates the memory
-    /// that this PokeStruct was pointing to.
-    ///
-    /// # Panics
-    ///
-    /// This function will panic if:
-    /// - Not all the fields have been initialized.
-    /// - The generic type parameter U does not match the shape that this PokeStruct is building.
-    fn build<U: Facet>(&mut self) -> Result<U, ReflectError> {
-        self.shape().assert_type::<U>();
-        let ps = unsafe { self.build_in_place_inner() }?;
-        Ok(unsafe { ps.value.data.read::<U>() })
+impl<'mem> HeapVal<PokeStructUninit<'mem>> {
+    /// Builds a Poke Struct out of this
+    pub fn build(self) -> Result<HeapVal<PokeStruct<'mem>>, ReflectError> {
+        self.map_res(|this| {
+            this.assert_can_build()?;
+            let ps = PokeStruct {
+                def: this.def,
+                value: PokeValue {
+                    data: unsafe { this.value.data.assume_init() },
+                    shape: this.value.shape,
+                },
+            };
+            core::mem::forget(this);
+            Ok(ps)
+        })
     }
 
-    /// Build that PokeStruct into a boxed completed shape.
-    ///
-    /// # Panics
-    ///
-    /// This function will panic if:
-    /// - Not all the fields have been initialized.
-    /// - The generic type parameter U does not match the shape that this PokeStruct is building.
-    #[cfg(feature = "alloc")]
-    fn build_boxed<U: Facet>(&mut self) -> Result<Box<U>, ReflectError> {
-        self.assert_can_build()?;
-        self.shape().assert_type::<U>();
-        self.iset.clear(); // avoids double drop for fields
-        let boxed = unsafe { Box::from_raw(self.value.data.as_mut_bytes() as *mut U) };
-        Ok(boxed)
+    /// Builds a value of type `U` out of this
+    pub fn materialize<U: Facet>(self) -> Result<U, ReflectError> {
+        self.build()?.into_value().materialize::<U>()
+    }
+
+    pub fn materialize_boxed<U: Facet>(self) -> Result<Box<U>, ReflectError> {
+        self.build()?.into_value().materialize_boxed::<U>()
     }
 }

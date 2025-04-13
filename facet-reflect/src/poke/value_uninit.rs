@@ -4,7 +4,7 @@ use core::{
 };
 
 use crate::{ReflectError, ScalarType};
-use facet_core::{Def, Facet, OpaqueConst, OpaqueUninit, Shape, TryFromError, ValueVTable};
+use facet_core::{Def, Facet, Opaque, OpaqueConst, OpaqueUninit, Shape, TryFromError, ValueVTable};
 
 use super::{
     ISet, PokeEnumNoVariant, PokeListUninit, PokeMapUninit, PokeSmartPointerUninit,
@@ -198,97 +198,105 @@ impl<'mem> PokeValueUninit<'mem> {
     }
 }
 
+struct Guard {
+    ptr: *mut u8,
+    layout: Layout,
+    shape: Option<&'static Shape>,
+}
+
+impl Drop for Guard {
+    fn drop(&mut self) {
+        if let Some(drop_fn) = self.shape.and_then(|shape| shape.vtable.drop_in_place) {
+            unsafe { drop_fn(Opaque::new(self.ptr)) };
+        }
+        if self.layout.size() != 0 {
+            // SAFETY: `ptr` has been allocated via the global allocator with the given layout
+            unsafe { alloc::alloc::dealloc(self.ptr, self.layout) };
+        }
+    }
+}
+
 /// Ensures a value is dropped when the guard is dropped.
-pub struct HeapVal<T> {
-    pub(crate) inner: T,
-    pub(crate) data: OpaqueUninit<'static>,
-    pub(crate) layout: Layout,
-    pub(crate) shape: &'static Shape,
+pub enum HeapVal<T> {
+    Full { inner: T, guard: Guard },
+    Empty,
 }
 
 impl<T> Deref for HeapVal<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        &self.inner
+        match self {
+            HeapVal::Full { inner, .. } => inner,
+            HeapVal::Empty => panic!("Attempted to dereference uninitialized HeapVal"),
+        }
     }
 }
 
 impl<T> DerefMut for HeapVal<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner
+        match self {
+            HeapVal::Full { inner, .. } => inner,
+            HeapVal::Empty => {
+                panic!("Attempted to mutably dereference uninitialized HeapVal")
+            }
+        }
     }
 }
 
 impl<T> HeapVal<T> {
-    /// Maps the inner value with a closure
-    #[expect(dead_code)]
-    pub(crate) fn map<U>(self, f: impl FnOnce(&T) -> U) -> HeapVal<U> {
-        HeapVal {
-            inner: f(&self.inner),
-            data: self.data,
-            layout: self.layout,
-            shape: self.shape,
+    /// Maps the inner value with a closure.
+    ///
+    /// If the closure returns a shape, then the heap value will be deallocated on drop. If it
+    /// doesn't, then it won't. So you can map from an initialized value to an uninitialized value
+    /// in VAC.
+    pub(crate) fn map<U>(mut self, f: impl FnOnce(T) -> (U, Option<&'static Shape>)) -> HeapVal<U> {
+        match std::mem::replace(&mut self, HeapVal::Empty) {
+            HeapVal::Full { inner, mut guard } => {
+                let (new_inner, shape) = f(inner);
+                guard.shape = shape;
+                HeapVal::Full {
+                    inner: new_inner,
+                    guard,
+                }
+            }
+            HeapVal::Empty => panic!("cannot map empty heapval"),
         }
     }
 
     /// Maps the inner value with a closure that returns an option
     /// If it returns `None`, the heap value is deallocated.
-    pub(crate) fn map_opt<U>(self, f: impl FnOnce(&T) -> Option<U>) -> Option<HeapVal<U>> {
-        Some(HeapVal {
-            inner: f(&self.inner)?,
-            data: self.data,
-            layout: self.layout,
-            shape: self.shape,
-        })
+    pub(crate) fn map_opt<U>(
+        mut self,
+        f: impl FnOnce(T) -> Option<(U, Option<&'static Shape>)>,
+    ) -> Option<HeapVal<U>> {
+        match std::mem::replace(&mut self, HeapVal::Empty) {
+            HeapVal::Full { inner, mut guard } => f(inner).map(|(new_inner, shape)| {
+                guard.shape = shape;
+                HeapVal::Full {
+                    inner: new_inner,
+                    guard,
+                }
+            }),
+            HeapVal::Empty => panic!("cannot map empty heapval"),
+        }
     }
 
     /// Maps the inner value with a closure that returns a result
     /// If it returns `Err`, the heap value is deallocated.
-    #[expect(dead_code)]
-    pub(crate) fn map_res<U, E>(self, f: impl FnOnce(&T) -> Result<U, E>) -> Result<HeapVal<U>, E> {
-        Ok(HeapVal {
-            inner: f(&self.inner)?,
-            data: self.data,
-            layout: self.layout,
-            shape: self.shape,
-        })
-    }
-}
-
-impl<T> Drop for HeapVal<T> {
-    fn drop(&mut self) {
-        if self.layout.size() == 0 {
-            return;
+    pub(crate) fn map_res<U, E>(
+        mut self,
+        f: impl FnOnce(T) -> Result<(U, Option<&'static Shape>), E>,
+    ) -> Result<HeapVal<U>, E> {
+        match std::mem::replace(&mut self, HeapVal::Empty) {
+            HeapVal::Full { inner, mut guard } => f(inner).map(|(new_inner, shape)| {
+                guard.shape = shape;
+                HeapVal::Full {
+                    inner: new_inner,
+                    guard,
+                }
+            }),
+            HeapVal::Empty => panic!("cannot map empty heapval"),
         }
-        // SAFETY: `ptr` has been allocated via the global allocator with the given layout
-        unsafe { alloc::alloc::dealloc(self.data.as_mut_bytes(), self.layout) };
-    }
-}
-
-/// Anything inside of a heap allocated value that can be moved out of it.
-///
-/// This is an internal trait and you're not supposed to implement it.
-pub(crate) trait Buildabear {
-    /// Whatever you need to read from the underlying value, you should do now.
-    fn build<U: Facet>(&mut self) -> Result<U, ReflectError>;
-
-    /// This builds an inner value, moving out of it (so the heap val can be freed)
-    fn build_boxed<U: Facet>(&mut self) -> Result<Box<U>, ReflectError>;
-}
-
-#[allow(private_bounds)]
-impl<T: Buildabear> HeapVal<T> {
-    /// Build a value of type `U from this then return it (moving out of it)
-    pub fn build<U: Facet>(mut self) -> Result<U, ReflectError> {
-        self.inner.build::<U>()
-    }
-
-    /// Build a value of type `U from this then return it (moving out of it)
-    pub fn build_boxed<U: Facet>(mut self) -> Result<Box<U>, ReflectError> {
-        let b = self.inner.build_boxed::<U>()?;
-        // prevent drop
-        self.layout = Layout::from_size_align(0, 0).unwrap();
-        Ok(b)
     }
 }

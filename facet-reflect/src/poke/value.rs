@@ -1,7 +1,7 @@
-use crate::ScalarType;
+use crate::{ReflectError, ScalarType};
 use facet_core::{Facet, Opaque, OpaqueUninit, Shape, ValueVTable};
 
-use super::PokeValueUninit;
+use super::{HeapVal, PokeValueUninit};
 
 /// Lets you modify an initialized value (implements read-write [`ValueVTable`] proxies)
 pub struct PokeValue<'mem> {
@@ -131,5 +131,26 @@ impl core::hash::Hash for PokeValue<'_> {
         } else {
             panic!("Hashing is not supported for this shape");
         }
+    }
+}
+
+impl<'mem> HeapVal<PokeValue<'mem>> {
+    /// Builds a value of type `U` out of this
+    pub fn materialize<U: Facet>(self) -> Result<U, ReflectError> {
+        if self.shape() != U::SHAPE {
+            return Err(ReflectError::WrongShape {
+                expected: U::SHAPE,
+                actual: self.shape(),
+            });
+        }
+        let u = unsafe { self.data.read::<U>() };
+        // ok we've read from the value, now it has to be deallocated (but not dropped in place)
+        // this will happen naturally as we drop
+        Ok(u)
+    }
+
+    /// Builds a value of type `U` out of this
+    pub fn materialize_boxed<U: Facet>(self) -> Result<Box<U>, ReflectError> {
+        todo!()
     }
 }

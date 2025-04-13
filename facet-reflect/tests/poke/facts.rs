@@ -85,7 +85,7 @@ where
     }
 
     // Test default_in_place
-    let (poke_value, _guard) = PokeValueUninit::alloc::<T>();
+    let poke_value = PokeValueUninit::alloc::<T>();
     if let Ok(pokeval) = poke_value.default_in_place() {
         facts.insert(Fact::Default);
         eprintln!("Default:   {}", format!("{:?}", pokeval).style(remarkable));
