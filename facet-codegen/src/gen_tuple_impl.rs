@@ -168,10 +168,10 @@ pub(super) fn generate_tuples_impls() -> String {
         // debug implementation
         w!("                        builder = builder.debug(|value, f| {{\n");
         if n == 1 {
-            w!("                            let value = unsafe {{ value.as_ref::<(T0,)>() }};\n");
+            w!("                            let value = unsafe {{ value.get::<(T0,)>() }};\n");
         } else {
             w!(
-                "                            let value = unsafe {{ value.as_ref::<({})>() }};\n",
+                "                            let value = unsafe {{ value.get::<({})>() }};\n",
                 type_params
             );
         }
@@ -202,15 +202,15 @@ pub(super) fn generate_tuples_impls() -> String {
         // eq implementation
         w!("                        builder = builder.eq(|a, b| {{\n");
         if n == 1 {
-            w!("                            let a = unsafe {{ a.as_ref::<(T0,)>() }};\n");
-            w!("                            let b = unsafe {{ b.as_ref::<(T0,)>() }};\n\n");
+            w!("                            let a = unsafe {{ a.get::<(T0,)>() }};\n");
+            w!("                            let b = unsafe {{ b.get::<(T0,)>() }};\n\n");
         } else {
             w!(
-                "                            let a = unsafe {{ a.as_ref::<({})>() }};\n",
+                "                            let a = unsafe {{ a.get::<({})>() }};\n",
                 type_params
             );
             w!(
-                "                            let b = unsafe {{ b.as_ref::<({})>() }};\n\n",
+                "                            let b = unsafe {{ b.get::<({})>() }};\n\n",
                 type_params
             );
         }

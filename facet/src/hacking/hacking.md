@@ -89,8 +89,8 @@ fn create_array_shape<T: Facet>() {
         // Implementation of partial_ord for arrays
         let partial_ord = if T::SHAPE.vtable.partial_ord.is_some() {
             Some(|a: OpaqueConst, b: OpaqueConst| {
-                let a = unsafe { a.as_ref::<[T; 1]>() };
-                let b = unsafe { b.as_ref::<[T; 1]>() };
+                let a = unsafe { a.get::<[T; 1]>() };
+                let b = unsafe { b.get::<[T; 1]>() };
                 unsafe {
                     (T::SHAPE.vtable.partial_ord.unwrap_unchecked())(
                         OpaqueConst::new(&a[0]),
@@ -130,8 +130,8 @@ For non-generic types, we use the `value_vtable` macro which leverages auto-dere
             let partial_ord = if facet::spez::impls!($type_name: core::cmp::PartialOrd) {
                 Some(|left: OpaqueConst, right: OpaqueConst| {
                     use facet::spez::*;
-                    (&&Spez(unsafe { left.as_ref::<$type_name>() }))
-                        .spez_partial_cmp(&&Spez(unsafe { right.as_ref::<$type_name>() }))
+                    (&&Spez(unsafe { left.get::<$type_name>() }))
+                        .spez_partial_cmp(&&Spez(unsafe { right.get::<$type_name>() }))
                 })
             } else {
                 None

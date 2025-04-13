@@ -141,8 +141,7 @@ where
                                 })
                                 .get_value_ptr(|ptr, key| unsafe {
                                     let map = ptr.get::<HashMap<K, V>>();
-                                    map.get(key.get())
-                                        .map(|v| OpaqueConst::new(v as *const _))
+                                    map.get(key.get()).map(|v| OpaqueConst::new(v as *const _))
                                 })
                                 .iter(|ptr| unsafe {
                                     let map = ptr.get::<HashMap<K, V>>();

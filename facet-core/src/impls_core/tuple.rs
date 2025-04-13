@@ -1173,8 +1173,7 @@ where
                         T7::SHAPE,
                     ]) {
                         builder = builder.debug(|value, f| {
-                            let value =
-                                unsafe { value.get::<(T0, T1, T2, T3, T4, T5, T6, T7)>() };
+                            let value = unsafe { value.get::<(T0, T1, T2, T3, T4, T5, T6, T7)>() };
                             write!(f, "(")?;
                             unsafe {
                                 let ptr = &value.0 as *const T0;
@@ -1746,9 +1745,8 @@ where
                         T9::SHAPE,
                     ]) {
                         builder = builder.debug(|value, f| {
-                            let value = unsafe {
-                                value.get::<(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9)>()
-                            };
+                            let value =
+                                unsafe { value.get::<(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9)>() };
                             write!(f, "(")?;
                             unsafe {
                                 let ptr = &value.0 as *const T0;
@@ -1833,10 +1831,8 @@ where
                         });
 
                         builder = builder.eq(|a, b| {
-                            let a =
-                                unsafe { a.get::<(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9)>() };
-                            let b =
-                                unsafe { b.get::<(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9)>() };
+                            let a = unsafe { a.get::<(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9)>() };
+                            let b = unsafe { b.get::<(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9)>() };
 
                             // Compare element 0
                             unsafe {
@@ -2182,12 +2178,10 @@ where
                         });
 
                         builder = builder.eq(|a, b| {
-                            let a = unsafe {
-                                a.get::<(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10)>()
-                            };
-                            let b = unsafe {
-                                b.get::<(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10)>()
-                            };
+                            let a =
+                                unsafe { a.get::<(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10)>() };
+                            let b =
+                                unsafe { b.get::<(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10)>() };
 
                             // Compare element 0
                             unsafe {

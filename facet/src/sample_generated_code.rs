@@ -129,7 +129,7 @@ unsafe impl crate::Facet for KitchenSinkStruct {
                 } {
                     builder = builder.display(|data, f| {
                         use ::facet_core::spez::*;
-                        (&&Spez(unsafe { data.as_ref::<Self>() })).spez_display(f)
+                        (&&Spez(unsafe { data.get::<Self>() })).spez_display(f)
                     });
                 }
                 if {
@@ -150,7 +150,7 @@ unsafe impl crate::Facet for KitchenSinkStruct {
                 } {
                     builder = builder.debug(|data, f| {
                         use ::facet_core::spez::*;
-                        (&&Spez(unsafe { data.as_ref::<Self>() })).spez_debug(f)
+                        (&&Spez(unsafe { data.get::<Self>() })).spez_debug(f)
                     });
                 }
                 if {
@@ -192,7 +192,7 @@ unsafe impl crate::Facet for KitchenSinkStruct {
                 } {
                     builder = builder.clone_into(|src, dst| {
                         use ::facet_core::spez::*;
-                        unsafe { (&&Spez(src.as_ref::<Self>())).spez_clone_into(dst) }
+                        unsafe { (&&Spez(src.get::<Self>())).spez_clone_into(dst) }
                     });
                 }
                 {
@@ -307,8 +307,8 @@ unsafe impl crate::Facet for KitchenSinkStruct {
                 } {
                     builder = builder.eq(|left, right| {
                         use ::facet_core::spez::*;
-                        (&&Spez(unsafe { left.as_ref::<Self>() }))
-                            .spez_eq(&&Spez(unsafe { right.as_ref::<Self>() }))
+                        (&&Spez(unsafe { left.get::<Self>() }))
+                            .spez_eq(&&Spez(unsafe { right.get::<Self>() }))
                     });
                 }
                 if {
@@ -329,8 +329,8 @@ unsafe impl crate::Facet for KitchenSinkStruct {
                 } {
                     builder = builder.partial_ord(|left, right| {
                         use ::facet_core::spez::*;
-                        (&&Spez(unsafe { left.as_ref::<Self>() }))
-                            .spez_partial_cmp(&&Spez(unsafe { right.as_ref::<Self>() }))
+                        (&&Spez(unsafe { left.get::<Self>() }))
+                            .spez_partial_cmp(&&Spez(unsafe { right.get::<Self>() }))
                     });
                 }
                 if {
@@ -351,8 +351,8 @@ unsafe impl crate::Facet for KitchenSinkStruct {
                 } {
                     builder = builder.ord(|left, right| {
                         use ::facet_core::spez::*;
-                        (&&Spez(unsafe { left.as_ref::<Self>() }))
-                            .spez_cmp(&&Spez(unsafe { right.as_ref::<Self>() }))
+                        (&&Spez(unsafe { left.get::<Self>() }))
+                            .spez_cmp(&&Spez(unsafe { right.get::<Self>() }))
                     });
                 }
                 if {
@@ -374,7 +374,7 @@ unsafe impl crate::Facet for KitchenSinkStruct {
                     builder = builder.hash(|value, hasher_this, hasher_write_fn| {
                         use ::facet_core::HasherProxy;
                         use ::facet_core::spez::*;
-                        (&&Spez(unsafe { value.as_ref::<Self>() })).spez_hash(&mut unsafe {
+                        (&&Spez(unsafe { value.get::<Self>() })).spez_hash(&mut unsafe {
                             HasherProxy::new(hasher_this, hasher_write_fn)
                         })
                     });
@@ -486,7 +486,7 @@ unsafe impl crate::Facet for Point {
                 } {
                     builder = builder.display(|data, f| {
                         use ::facet_core::spez::*;
-                        (&&Spez(unsafe { data.as_ref::<Self>() })).spez_display(f)
+                        (&&Spez(unsafe { data.get::<Self>() })).spez_display(f)
                     });
                 }
                 if {
@@ -507,7 +507,7 @@ unsafe impl crate::Facet for Point {
                 } {
                     builder = builder.debug(|data, f| {
                         use ::facet_core::spez::*;
-                        (&&Spez(unsafe { data.as_ref::<Self>() })).spez_debug(f)
+                        (&&Spez(unsafe { data.get::<Self>() })).spez_debug(f)
                     });
                 }
                 if {
@@ -549,7 +549,7 @@ unsafe impl crate::Facet for Point {
                 } {
                     builder = builder.clone_into(|src, dst| {
                         use ::facet_core::spez::*;
-                        unsafe { (&&Spez(src.as_ref::<Self>())).spez_clone_into(dst) }
+                        unsafe { (&&Spez(src.get::<Self>())).spez_clone_into(dst) }
                     });
                 }
                 {
@@ -664,8 +664,8 @@ unsafe impl crate::Facet for Point {
                 } {
                     builder = builder.eq(|left, right| {
                         use ::facet_core::spez::*;
-                        (&&Spez(unsafe { left.as_ref::<Self>() }))
-                            .spez_eq(&&Spez(unsafe { right.as_ref::<Self>() }))
+                        (&&Spez(unsafe { left.get::<Self>() }))
+                            .spez_eq(&&Spez(unsafe { right.get::<Self>() }))
                     });
                 }
                 if {
@@ -686,8 +686,8 @@ unsafe impl crate::Facet for Point {
                 } {
                     builder = builder.partial_ord(|left, right| {
                         use ::facet_core::spez::*;
-                        (&&Spez(unsafe { left.as_ref::<Self>() }))
-                            .spez_partial_cmp(&&Spez(unsafe { right.as_ref::<Self>() }))
+                        (&&Spez(unsafe { left.get::<Self>() }))
+                            .spez_partial_cmp(&&Spez(unsafe { right.get::<Self>() }))
                     });
                 }
                 if {
@@ -708,8 +708,8 @@ unsafe impl crate::Facet for Point {
                 } {
                     builder = builder.ord(|left, right| {
                         use ::facet_core::spez::*;
-                        (&&Spez(unsafe { left.as_ref::<Self>() }))
-                            .spez_cmp(&&Spez(unsafe { right.as_ref::<Self>() }))
+                        (&&Spez(unsafe { left.get::<Self>() }))
+                            .spez_cmp(&&Spez(unsafe { right.get::<Self>() }))
                     });
                 }
                 if {
@@ -731,7 +731,7 @@ unsafe impl crate::Facet for Point {
                     builder = builder.hash(|value, hasher_this, hasher_write_fn| {
                         use ::facet_core::HasherProxy;
                         use ::facet_core::spez::*;
-                        (&&Spez(unsafe { value.as_ref::<Self>() })).spez_hash(&mut unsafe {
+                        (&&Spez(unsafe { value.get::<Self>() })).spez_hash(&mut unsafe {
                             HasherProxy::new(hasher_this, hasher_write_fn)
                         })
                     });
@@ -892,7 +892,7 @@ unsafe impl crate::Facet for KitchenSinkEnum {
                                                             builder.display(|data, f|
                                                                     {
                                                                         use ::facet_core::spez::*;
-                                                                        (&&Spez(unsafe { data.as_ref::<Self>() })).spez_display(f)
+                                                                        (&&Spez(unsafe { data.get::<Self>() })).spez_display(f)
                                                                     });
                                                     }
                                                 if {
@@ -915,7 +915,7 @@ unsafe impl crate::Facet for KitchenSinkEnum {
                                                             builder.debug(|data, f|
                                                                     {
                                                                         use ::facet_core::spez::*;
-                                                                        (&&Spez(unsafe { data.as_ref::<Self>() })).spez_debug(f)
+                                                                        (&&Spez(unsafe { data.get::<Self>() })).spez_debug(f)
                                                                     });
                                                     }
                                                 if {
@@ -963,9 +963,7 @@ unsafe impl crate::Facet for KitchenSinkEnum {
                                                             builder.clone_into(|src, dst|
                                                                     {
                                                                         use ::facet_core::spez::*;
-                                                                        unsafe {
-                                                                            (&&Spez(src.as_ref::<Self>())).spez_clone_into(dst)
-                                                                        }
+                                                                        unsafe { (&&Spez(src.get::<Self>())).spez_clone_into(dst) }
                                                                     });
                                                     }
                                                 {
@@ -1083,8 +1081,8 @@ unsafe impl crate::Facet for KitchenSinkEnum {
                                                                     {
                                                                         use ::facet_core::spez::*;
                                                                         (&&Spez(unsafe {
-                                                                                                left.as_ref::<Self>()
-                                                                                            })).spez_eq(&&Spez(unsafe { right.as_ref::<Self>() }))
+                                                                                                left.get::<Self>()
+                                                                                            })).spez_eq(&&Spez(unsafe { right.get::<Self>() }))
                                                                     });
                                                     }
                                                 if {
@@ -1108,10 +1106,8 @@ unsafe impl crate::Facet for KitchenSinkEnum {
                                                                     {
                                                                         use ::facet_core::spez::*;
                                                                         (&&Spez(unsafe {
-                                                                                                left.as_ref::<Self>()
-                                                                                            })).spez_partial_cmp(&&Spez(unsafe {
-                                                                                            right.as_ref::<Self>()
-                                                                                        }))
+                                                                                                left.get::<Self>()
+                                                                                            })).spez_partial_cmp(&&Spez(unsafe { right.get::<Self>() }))
                                                                     });
                                                     }
                                                 if {
@@ -1135,8 +1131,8 @@ unsafe impl crate::Facet for KitchenSinkEnum {
                                                                     {
                                                                         use ::facet_core::spez::*;
                                                                         (&&Spez(unsafe {
-                                                                                                left.as_ref::<Self>()
-                                                                                            })).spez_cmp(&&Spez(unsafe { right.as_ref::<Self>() }))
+                                                                                                left.get::<Self>()
+                                                                                            })).spez_cmp(&&Spez(unsafe { right.get::<Self>() }))
                                                                     });
                                                     }
                                                 if {
@@ -1161,7 +1157,7 @@ unsafe impl crate::Facet for KitchenSinkEnum {
                                                                         use ::facet_core::spez::*;
                                                                         use ::facet_core::HasherProxy;
                                                                         (&&Spez(unsafe {
-                                                                                                value.as_ref::<Self>()
+                                                                                                value.get::<Self>()
                                                                                             })).spez_hash(&mut unsafe {
                                                                                     HasherProxy::new(hasher_this, hasher_write_fn)
                                                                                 })
@@ -1377,7 +1373,7 @@ unsafe impl crate::Facet for SubEnum {
                                                             builder.display(|data, f|
                                                                     {
                                                                         use ::facet_core::spez::*;
-                                                                        (&&Spez(unsafe { data.as_ref::<Self>() })).spez_display(f)
+                                                                        (&&Spez(unsafe { data.get::<Self>() })).spez_display(f)
                                                                     });
                                                     }
                                                 if {
@@ -1400,7 +1396,7 @@ unsafe impl crate::Facet for SubEnum {
                                                             builder.debug(|data, f|
                                                                     {
                                                                         use ::facet_core::spez::*;
-                                                                        (&&Spez(unsafe { data.as_ref::<Self>() })).spez_debug(f)
+                                                                        (&&Spez(unsafe { data.get::<Self>() })).spez_debug(f)
                                                                     });
                                                     }
                                                 if {
@@ -1448,9 +1444,7 @@ unsafe impl crate::Facet for SubEnum {
                                                             builder.clone_into(|src, dst|
                                                                     {
                                                                         use ::facet_core::spez::*;
-                                                                        unsafe {
-                                                                            (&&Spez(src.as_ref::<Self>())).spez_clone_into(dst)
-                                                                        }
+                                                                        unsafe { (&&Spez(src.get::<Self>())).spez_clone_into(dst) }
                                                                     });
                                                     }
                                                 {
@@ -1568,8 +1562,8 @@ unsafe impl crate::Facet for SubEnum {
                                                                     {
                                                                         use ::facet_core::spez::*;
                                                                         (&&Spez(unsafe {
-                                                                                                left.as_ref::<Self>()
-                                                                                            })).spez_eq(&&Spez(unsafe { right.as_ref::<Self>() }))
+                                                                                                left.get::<Self>()
+                                                                                            })).spez_eq(&&Spez(unsafe { right.get::<Self>() }))
                                                                     });
                                                     }
                                                 if {
@@ -1593,10 +1587,8 @@ unsafe impl crate::Facet for SubEnum {
                                                                     {
                                                                         use ::facet_core::spez::*;
                                                                         (&&Spez(unsafe {
-                                                                                                left.as_ref::<Self>()
-                                                                                            })).spez_partial_cmp(&&Spez(unsafe {
-                                                                                            right.as_ref::<Self>()
-                                                                                        }))
+                                                                                                left.get::<Self>()
+                                                                                            })).spez_partial_cmp(&&Spez(unsafe { right.get::<Self>() }))
                                                                     });
                                                     }
                                                 if {
@@ -1620,8 +1612,8 @@ unsafe impl crate::Facet for SubEnum {
                                                                     {
                                                                         use ::facet_core::spez::*;
                                                                         (&&Spez(unsafe {
-                                                                                                left.as_ref::<Self>()
-                                                                                            })).spez_cmp(&&Spez(unsafe { right.as_ref::<Self>() }))
+                                                                                                left.get::<Self>()
+                                                                                            })).spez_cmp(&&Spez(unsafe { right.get::<Self>() }))
                                                                     });
                                                     }
                                                 if {
@@ -1646,7 +1638,7 @@ unsafe impl crate::Facet for SubEnum {
                                                                         use ::facet_core::spez::*;
                                                                         use ::facet_core::HasherProxy;
                                                                         (&&Spez(unsafe {
-                                                                                                value.as_ref::<Self>()
+                                                                                                value.get::<Self>()
                                                                                             })).spez_hash(&mut unsafe {
                                                                                     HasherProxy::new(hasher_this, hasher_write_fn)
                                                                                 })

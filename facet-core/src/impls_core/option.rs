@@ -15,9 +15,7 @@ unsafe impl<T: Facet> Facet for Option<T> {
                     .vtable(
                         const {
                             &OptionVTable {
-                                is_some_fn: |option| unsafe {
-                                    option.get::<Option<T>>().is_some()
-                                },
+                                is_some_fn: |option| unsafe { option.get::<Option<T>>().is_some() },
                                 get_value_fn: |option| unsafe {
                                     option
                                         .get::<Option<T>>()
