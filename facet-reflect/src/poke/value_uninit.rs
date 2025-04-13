@@ -222,6 +222,7 @@ impl<T> DerefMut for HeapVal<T> {
 
 impl<T> HeapVal<T> {
     /// Maps the inner value with a closure
+    #[expect(dead_code)]
     pub(crate) fn map<U>(self, f: impl FnOnce(&T) -> U) -> HeapVal<U> {
         HeapVal {
             inner: f(&self.inner),
@@ -244,6 +245,7 @@ impl<T> HeapVal<T> {
 
     /// Maps the inner value with a closure that returns a result
     /// If it returns `Err`, the heap value is deallocated.
+    #[expect(dead_code)]
     pub(crate) fn map_res<U, E>(self, f: impl FnOnce(&T) -> Result<U, E>) -> Result<HeapVal<U>, E> {
         Ok(HeapVal {
             inner: f(&self.inner)?,
@@ -261,5 +263,32 @@ impl<T> Drop for HeapVal<T> {
         }
         // SAFETY: `ptr` has been allocated via the global allocator with the given layout
         unsafe { alloc::alloc::dealloc(self.data.as_mut_bytes(), self.layout) };
+    }
+}
+
+/// Anything inside of a heap allocated value that can be moved out of it.
+///
+/// This is an internal trait and you're not supposed to implement it.
+pub(crate) trait Buildabear {
+    /// Whatever you need to read from the underlying value, you should do now.
+    fn build<U: Facet>(&mut self) -> Result<U, ReflectError>;
+
+    /// This builds an inner value, moving out of it (so the heap val can be freed)
+    fn build_boxed<U: Facet>(&mut self) -> Result<Box<U>, ReflectError>;
+}
+
+#[allow(private_bounds)]
+impl<T: Buildabear> HeapVal<T> {
+    /// Build a value of type `U from this then return it (moving out of it)
+    pub fn build<U: Facet>(mut self) -> Result<U, ReflectError> {
+        self.inner.build::<U>()
+    }
+
+    /// Build a value of type `U from this then return it (moving out of it)
+    pub fn build_boxed<U: Facet>(mut self) -> Result<Box<U>, ReflectError> {
+        let b = self.inner.build_boxed::<U>()?;
+        // prevent drop
+        self.layout = Layout::from_size_align(0, 0).unwrap();
+        Ok(b)
     }
 }

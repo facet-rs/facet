@@ -3,7 +3,7 @@ use facet_core::{Facet, FieldError, Shape, Struct};
 use crate::ReflectError;
 
 use super::slot::Parent;
-use super::{HeapVal, ISet, PokeStruct, PokeValue, PokeValueUninit, Slot};
+use super::{Buildabear, ISet, PokeStruct, PokeValue, PokeValueUninit, Slot};
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
@@ -60,58 +60,23 @@ impl<'mem> PokeStructUninit<'mem> {
     /// Asserts that every field has been initialized and gives a [`PokeStruct`]
     ///
     /// If one of the field was not initialized, all fields will be dropped in place.
-    pub fn build_in_place(self) -> Result<PokeStruct<'mem>, ReflectError> {
+    pub fn build_in_place(mut self) -> Result<PokeStruct<'mem>, ReflectError> {
+        let res = unsafe { self.build_in_place_inner() };
+        core::mem::forget(self); // prevent field drops
+        res
+    }
+
+    unsafe fn build_in_place_inner(&mut self) -> Result<PokeStruct<'mem>, ReflectError> {
         self.assert_can_build()?;
 
         let data = unsafe { self.value.data.assume_init() };
         let shape = self.value.shape;
         let def = self.def;
 
-        // prevent field drops
-        core::mem::forget(self);
-
         Ok(PokeStruct {
             def,
             value: PokeValue { data, shape },
         })
-    }
-
-    /// Builds a value of type `T` from the PokeStruct, then deallocates the memory
-    /// that this PokeStruct was pointing to.
-    ///
-    /// # Panics
-    ///
-    /// This function will panic if:
-    /// - Not all the fields have been initialized.
-    /// - The generic type parameter T does not match the shape that this PokeStruct is building.
-    pub fn build<T: Facet>(self, guard: Option<HeapVal>) -> Result<T, ReflectError> {
-        // change drop order: we want to drop guard _after_ this.
-        let (guard, this) = (guard, self);
-
-        this.shape().assert_type::<T>();
-        if let Some(guard) = &guard {
-            guard.shape.assert_type::<T>();
-        }
-
-        let ps = this.build_in_place()?;
-        Ok(unsafe { ps.value.data.read::<T>() })
-    }
-
-    /// Build that PokeStruct into a boxed completed shape.
-    ///
-    /// # Panics
-    ///
-    /// This function will panic if:
-    /// - Not all the fields have been initialized.
-    /// - The generic type parameter T does not match the shape that this PokeStruct is building.
-    #[cfg(feature = "alloc")]
-    pub fn build_boxed<T: Facet>(self) -> Result<Box<T>, ReflectError> {
-        self.assert_can_build()?;
-        self.shape().assert_type::<T>();
-
-        let boxed = unsafe { Box::from_raw(self.value.data.as_mut_bytes() as *mut T) };
-        core::mem::forget(self);
-        Ok(boxed)
     }
 
     /// Gets a slot for a given field, by index
@@ -159,5 +124,37 @@ impl Drop for PokeStructUninit<'_> {
                 }
             }
         }
+    }
+}
+
+impl Buildabear for PokeStructUninit<'_> {
+    /// Builds a value of type `U` from the PokeStruct, then deallocates the memory
+    /// that this PokeStruct was pointing to.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if:
+    /// - Not all the fields have been initialized.
+    /// - The generic type parameter U does not match the shape that this PokeStruct is building.
+    fn build<U: Facet>(&mut self) -> Result<U, ReflectError> {
+        self.shape().assert_type::<U>();
+        let ps = unsafe { self.build_in_place_inner() }?;
+        Ok(unsafe { ps.value.data.read::<U>() })
+    }
+
+    /// Build that PokeStruct into a boxed completed shape.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if:
+    /// - Not all the fields have been initialized.
+    /// - The generic type parameter U does not match the shape that this PokeStruct is building.
+    #[cfg(feature = "alloc")]
+    fn build_boxed<U: Facet>(&mut self) -> Result<Box<U>, ReflectError> {
+        self.assert_can_build()?;
+        self.shape().assert_type::<U>();
+        self.iset.clear(); // avoids double drop for fields
+        let boxed = unsafe { Box::from_raw(self.value.data.as_mut_bytes() as *mut U) };
+        Ok(boxed)
     }
 }

@@ -46,4 +46,9 @@ impl ISet {
         let mask = (1 << count) - 1;
         self.0 & mask == mask
     }
+
+    /// Clears all bits in the ISet.
+    pub fn clear(&mut self) {
+        self.0 = 0;
+    }
 }
