@@ -123,7 +123,7 @@ impl<'a> Wip<'a> {
         self.istates.insert(frame.id(), frame.istate);
     }
 
-    /// Asserts everything is initialized
+    /// Asserts everything is initialized and that invariants are upheld (if any)
     pub fn build(mut self) -> Result<HeapValue<'a>, ReflectError> {
         let mut root: Option<Frame> = None;
         while let Some(frame) = self.pop_inner() {
@@ -167,7 +167,13 @@ impl<'a> Wip<'a> {
         }
 
         let shape = root.shape;
-        let _data = unsafe { root.data.assume_init() };
+        let data = unsafe { root.data.assume_init() };
+
+        if let Some(invariant_fn) = shape.vtable.invariants {
+            if !unsafe { invariant_fn(OpaqueConst::new(data.as_byte_ptr())) } {
+                return Err(ReflectError::InvariantViolation);
+            }
+        }
 
         Ok(HeapValue {
             guard: Some(self.guard),
