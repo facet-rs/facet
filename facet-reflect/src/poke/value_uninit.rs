@@ -95,10 +95,7 @@ impl<'mem> PokeValueUninit<'mem> {
     ///
     /// This function places a value of type T into the destination space,
     /// checking that T exactly matches the expected shape.
-    pub fn put<'src, T>(self, value: T) -> Result<PokeValue<'mem>, ReflectError>
-    where
-        T: Facet + 'src,
-    {
+    pub fn put<T: Facet + 'mem>(self, value: T) -> Result<PokeValue<'mem>, ReflectError> {
         if !self.shape.is_type::<T>() {
             return Err(ReflectError::WrongShape {
                 expected: self.shape,
