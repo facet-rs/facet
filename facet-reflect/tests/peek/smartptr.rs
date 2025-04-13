@@ -1,11 +1,11 @@
 use facet::Facet;
-use facet_reflect::PeekValue;
+use facet_reflect::ConstValue;
 use std::sync::Arc;
 
 #[test]
 fn test_peek_arc() {
     let source = Arc::new(42);
-    let peek_value = PeekValue::new(&source);
+    let peek_value = ConstValue::new(&source);
 
     // First test we can convert to a smart pointer
     let peek_smart_pointer = peek_value.into_smart_pointer().unwrap();
@@ -20,7 +20,7 @@ fn test_peek_arc() {
 #[test]
 fn test_peek_arc_with_string() {
     let source = Arc::new("Hello, world!".to_string());
-    let peek_value = PeekValue::new(&source);
+    let peek_value = ConstValue::new(&source);
 
     // Convert to a smart pointer
     let peek_smart_pointer = peek_value.into_smart_pointer().unwrap();
@@ -44,7 +44,7 @@ fn test_peek_arc_in_struct() {
     };
 
     // First get the struct field
-    let peek_value = PeekValue::new(&source);
+    let peek_value = ConstValue::new(&source);
     let peek_struct = peek_value.into_struct().unwrap();
     let peek_data = peek_struct.field_by_name("data").unwrap();
 
@@ -62,7 +62,7 @@ fn test_peek_arc_in_struct() {
 #[test]
 fn test_peek_arc_in_vec() {
     let source = vec![Arc::new(1), Arc::new(2), Arc::new(3)];
-    let peek_value = PeekValue::new(&source);
+    let peek_value = ConstValue::new(&source);
     let peek_list = peek_value.into_list().unwrap();
 
     assert_eq!(peek_list.len(), 3);
@@ -80,7 +80,7 @@ fn test_peek_arc_in_vec() {
 #[test]
 fn test_smart_pointer_flags() {
     let source = Arc::new(42);
-    let peek_value = PeekValue::new(&source);
+    let peek_value = ConstValue::new(&source);
     let peek_smart_pointer = peek_value.into_smart_pointer().unwrap();
 
     // Test the definition has the expected flags

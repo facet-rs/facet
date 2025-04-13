@@ -1,10 +1,10 @@
-use facet_reflect::PeekValue;
+use facet_reflect::ConstValue;
 
 #[test]
 fn peek_list() {
     // Create test Vec instance
     let test_list = vec![1, 2, 3, 4, 5];
-    let peek_value = PeekValue::new(&test_list);
+    let peek_value = ConstValue::new(&test_list);
 
     // Convert to list and check we can convert to PeekList
     let peek_list = peek_value

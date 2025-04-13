@@ -32,7 +32,7 @@ impl core::fmt::Debug for ValueId {
 
 /// Lets you read from a value (implements read-only [`ValueVTable`] proxies)
 #[derive(Clone, Copy)]
-pub struct PeekValue<'mem> {
+pub struct ConstValue<'mem> {
     /// Underlying data
     pub(crate) data: OpaqueConst<'mem>,
 
@@ -40,7 +40,7 @@ pub struct PeekValue<'mem> {
     pub(crate) shape: &'static Shape,
 }
 
-impl<'mem> PeekValue<'mem> {
+impl<'mem> ConstValue<'mem> {
     /// Creates a new `PeekValue` instance for a value of type `T`.
     pub fn new<T: Facet + 'mem>(t: &'mem T) -> Self {
         Self {
@@ -73,7 +73,7 @@ impl<'mem> PeekValue<'mem> {
 
     /// Returns true if the two values are pointer-equal
     #[inline]
-    pub fn ptr_eq(&self, other: &PeekValue<'_>) -> bool {
+    pub fn ptr_eq(&self, other: &ConstValue<'_>) -> bool {
         self.data.as_byte_ptr() == other.data.as_byte_ptr()
     }
 
@@ -83,7 +83,7 @@ impl<'mem> PeekValue<'mem> {
     ///
     /// `false` if equality comparison is not supported for this scalar type
     #[inline]
-    pub fn eq(&self, other: &PeekValue<'_>) -> Option<bool> {
+    pub fn eq(&self, other: &ConstValue<'_>) -> Option<bool> {
         unsafe {
             self.shape
                 .vtable
@@ -98,7 +98,7 @@ impl<'mem> PeekValue<'mem> {
     ///
     /// `None` if comparison is not supported for this scalar type
     #[inline]
-    pub fn partial_cmp(&self, other: &PeekValue<'_>) -> Option<Ordering> {
+    pub fn partial_cmp(&self, other: &ConstValue<'_>) -> Option<Ordering> {
         unsafe {
             self.shape
                 .vtable
@@ -230,7 +230,7 @@ impl<'mem> PeekValue<'mem> {
     }
 }
 
-impl core::fmt::Display for PeekValue<'_> {
+impl core::fmt::Display for ConstValue<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if let Some(display_fn) = self.vtable().display {
             unsafe { display_fn(self.data, f) }
@@ -240,7 +240,7 @@ impl core::fmt::Display for PeekValue<'_> {
     }
 }
 
-impl core::fmt::Debug for PeekValue<'_> {
+impl core::fmt::Debug for ConstValue<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if let Some(debug_fn) = self.vtable().debug {
             unsafe { debug_fn(self.data, f) }
@@ -250,7 +250,7 @@ impl core::fmt::Debug for PeekValue<'_> {
     }
 }
 
-impl core::cmp::PartialEq for PeekValue<'_> {
+impl core::cmp::PartialEq for ConstValue<'_> {
     fn eq(&self, other: &Self) -> bool {
         if self.shape != other.shape {
             return false;
@@ -263,7 +263,7 @@ impl core::cmp::PartialEq for PeekValue<'_> {
     }
 }
 
-impl core::cmp::PartialOrd for PeekValue<'_> {
+impl core::cmp::PartialOrd for ConstValue<'_> {
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         if self.shape != other.shape {
             return None;
@@ -273,7 +273,7 @@ impl core::cmp::PartialOrd for PeekValue<'_> {
     }
 }
 
-impl core::hash::Hash for PeekValue<'_> {
+impl core::hash::Hash for ConstValue<'_> {
     fn hash<H: core::hash::Hasher>(&self, hasher: &mut H) {
         if let Some(hash_fn) = self.shape.vtable.hash {
             let hasher_opaque = Opaque::new(hasher);

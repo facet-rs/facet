@@ -1,5 +1,5 @@
 use facet::Facet;
-use facet_reflect::PeekValue;
+use facet_reflect::ConstValue;
 
 #[derive(Facet)]
 #[repr(u8)]
@@ -13,7 +13,7 @@ enum DefinitelyNotAnEnum {
 fn peek_enum() {
     // Test with Some value
     let some_value = DefinitelyNotAnEnum::Some(42);
-    let peek_value = PeekValue::new(&some_value);
+    let peek_value = ConstValue::new(&some_value);
 
     // Convert to enum and check we can convert to PeekEnum
     let peek_enum = peek_value
@@ -37,7 +37,7 @@ fn peek_enum() {
 
     // Test with None value
     let none_value = DefinitelyNotAnEnum::None;
-    let peek_value = PeekValue::new(&none_value);
+    let peek_value = ConstValue::new(&none_value);
 
     // Convert to enum and check we can convert to PeekEnum
     let peek_enum = peek_value

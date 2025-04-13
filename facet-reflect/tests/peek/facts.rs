@@ -2,7 +2,7 @@ use std::{cmp::Ordering, collections::HashSet};
 
 use facet::Facet;
 use facet_ansi::{ColorStyle, Style, Stylize as _};
-use facet_reflect::PeekValue;
+use facet_reflect::ConstValue;
 
 fn check_facts<T>(val1: T, val2: T, expected_facts: HashSet<Fact>)
 where
@@ -34,8 +34,8 @@ where
         .join(" + ");
     eprintln!("{} {}", trait_str, "======".yellow());
 
-    let l = PeekValue::new(&val1);
-    let r = PeekValue::new(&val2);
+    let l = ConstValue::new(&val1);
+    let r = ConstValue::new(&val2);
 
     let remarkable = Style::new().fg_blue();
 

@@ -10,7 +10,7 @@ pub struct PeekEnum<'mem> {
     ///
     /// Note that this stores both the discriminant and the variant data
     /// (if any), and the layout depends on the enum representation.
-    pub(crate) value: crate::PeekValue<'mem>,
+    pub(crate) value: crate::ConstValue<'mem>,
 
     /// The definition of the enum.
     pub(crate) def: EnumDef,
@@ -35,7 +35,7 @@ pub fn peek_enum_variants(shape: &'static Shape) -> Option<&'static [Variant]> {
 }
 
 impl<'mem> core::ops::Deref for PeekEnum<'mem> {
-    type Target = crate::PeekValue<'mem>;
+    type Target = crate::ConstValue<'mem>;
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
@@ -128,7 +128,7 @@ impl<'mem> PeekEnum<'mem> {
     // variant_data has been removed to reduce unsafe code exposure
 
     /// Returns a PeekValue handle to a field of a tuple or struct variant by index
-    pub fn field(self, index: usize) -> Option<crate::PeekValue<'mem>> {
+    pub fn field(self, index: usize) -> Option<crate::ConstValue<'mem>> {
         let variant = self.active_variant();
         let fields = &variant.data.fields;
 
@@ -138,14 +138,14 @@ impl<'mem> PeekEnum<'mem> {
 
         let field = &fields[index];
         let field_data = unsafe { self.value.data().field(field.offset) };
-        Some(crate::PeekValue {
+        Some(crate::ConstValue {
             data: field_data,
             shape: field.shape,
         })
     }
 
     /// Returns a PeekValue handle to a field of a tuple or struct variant by name
-    pub fn field_by_name(self, field_name: &str) -> Option<crate::PeekValue<'mem>> {
+    pub fn field_by_name(self, field_name: &str) -> Option<crate::ConstValue<'mem>> {
         let variant = self.active_variant();
 
         // Find the field index by name
@@ -163,14 +163,14 @@ impl<'mem> PeekEnum<'mem> {
     #[inline]
     pub fn fields(
         self,
-    ) -> impl Iterator<Item = (&'static facet_core::Field, crate::PeekValue<'mem>)> {
+    ) -> impl Iterator<Item = (&'static facet_core::Field, crate::ConstValue<'mem>)> {
         let variant = self.active_variant();
         let fields = &variant.data.fields;
 
         // Create an iterator that maps each field to a (Field, PeekValue) pair
         fields.iter().map(move |field| {
             let field_data = unsafe { self.value.data().field(field.offset) };
-            let peek = crate::PeekValue {
+            let peek = crate::ConstValue {
                 data: field_data,
                 shape: field.shape,
             };

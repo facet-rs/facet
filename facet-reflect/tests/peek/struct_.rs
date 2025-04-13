@@ -1,5 +1,5 @@
 use facet::Facet;
-use facet_reflect::PeekValue;
+use facet_reflect::ConstValue;
 
 #[derive(Facet)]
 struct TestStruct {
@@ -14,7 +14,7 @@ fn peek_struct() {
         number: 42,
         text: "hello".to_string(),
     };
-    let peek_value = PeekValue::new(&test_struct);
+    let peek_value = ConstValue::new(&test_struct);
 
     // Convert to struct and check we can convert to PeekStruct
     let peek_struct = peek_value

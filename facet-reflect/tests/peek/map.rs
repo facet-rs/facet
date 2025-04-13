@@ -1,4 +1,4 @@
-use facet_reflect::PeekValue;
+use facet_reflect::ConstValue;
 use std::collections::HashMap;
 
 #[test]
@@ -8,7 +8,7 @@ fn test_peek_map_basics() {
     source.insert("b", 2);
     source.insert("c", 3);
 
-    let peek_value = PeekValue::new(&source);
+    let peek_value = ConstValue::new(&source);
     let peek_map = peek_value.into_map().unwrap();
     assert_eq!(peek_map.len(), 3);
     assert!(!peek_map.is_empty());
@@ -27,7 +27,7 @@ fn test_peek_map_basics() {
 #[test]
 fn test_peek_map_empty() {
     let source: HashMap<&str, i32> = HashMap::new();
-    let peek_value = PeekValue::new(&source);
+    let peek_value = ConstValue::new(&source);
     let peek_map = peek_value.into_map().unwrap();
     assert_eq!(peek_map.len(), 0);
     assert!(peek_map.is_empty());
@@ -41,7 +41,7 @@ fn test_peek_map_iteration() {
     source.insert("a", 1);
     source.insert("b", 2);
 
-    let peek_value = PeekValue::new(&source);
+    let peek_value = ConstValue::new(&source);
     let peek_map = peek_value.into_map().unwrap();
     let mut entries: Vec<_> = peek_map
         .iter()
@@ -58,7 +58,7 @@ fn test_peek_map_different_types() {
     source.insert(1, "one");
     source.insert(2, "two");
 
-    let peek_value = PeekValue::new(&source);
+    let peek_value = ConstValue::new(&source);
     let peek_map = peek_value.into_map().unwrap();
     assert_eq!(peek_map.len(), 2);
 

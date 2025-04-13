@@ -8,7 +8,7 @@ use std::{
 };
 
 use facet_core::{Def, Facet, FieldFlags, StructKind, TypeNameOpts};
-use facet_reflect::{PeekValue, ValueId};
+use facet_reflect::{ConstValue, ValueId};
 
 use crate::color::ColorGenerator;
 use facet_ansi::Stylize;
@@ -47,7 +47,7 @@ enum StackState {
 
 /// Stack item for iterative traversal
 struct StackItem<'a> {
-    value: PeekValue<'a>,
+    value: ConstValue<'a>,
     format_depth: usize,
     type_depth: usize,
     state: StackState,
@@ -85,7 +85,7 @@ impl PrettyPrinter {
 
     /// Format a value to a string
     pub fn format<T: Facet>(&self, value: &T) -> String {
-        let value = PeekValue::new(value);
+        let value = ConstValue::new(value);
 
         let mut output = String::new();
         self.format_peek_internal(value, &mut output, &mut HashMap::new())
@@ -96,12 +96,12 @@ impl PrettyPrinter {
 
     /// Format a value to a formatter
     pub fn format_to<T: Facet>(&self, value: &T, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let value = PeekValue::new(value);
+        let value = ConstValue::new(value);
         self.format_peek_internal(value, f, &mut HashMap::new())
     }
 
     /// Format a value to a string
-    pub fn format_peek(&self, value: PeekValue<'_>) -> String {
+    pub fn format_peek(&self, value: ConstValue<'_>) -> String {
         let mut output = String::new();
         self.format_peek_internal(value, &mut output, &mut HashMap::new())
             .expect("Formatting failed");
@@ -111,7 +111,7 @@ impl PrettyPrinter {
     /// Internal method to format a Peek value
     pub(crate) fn format_peek_internal(
         &self,
-        initial_value: PeekValue<'_>,
+        initial_value: ConstValue<'_>,
         f: &mut impl Write,
         visited: &mut HashMap<ValueId, usize>,
     ) -> fmt::Result {
@@ -685,7 +685,7 @@ impl PrettyPrinter {
     }
 
     /// Format a scalar value
-    fn format_scalar(&self, value: PeekValue, f: &mut impl Write) -> fmt::Result {
+    fn format_scalar(&self, value: ConstValue, f: &mut impl Write) -> fmt::Result {
         // Generate a color for this shape
         let mut hasher = DefaultHasher::new();
         value.shape().def.hash(&mut hasher);
@@ -693,7 +693,7 @@ impl PrettyPrinter {
         let color = self.color_generator.generate_color(hash);
 
         // Display the value
-        struct DisplayWrapper<'a>(&'a PeekValue<'a>);
+        struct DisplayWrapper<'a>(&'a ConstValue<'a>);
 
         impl fmt::Display for DisplayWrapper<'_> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -729,8 +729,8 @@ impl PrettyPrinter {
     }
 
     /// Write styled type name to formatter
-    fn write_type_name<W: fmt::Write>(&self, f: &mut W, peek: &PeekValue) -> fmt::Result {
-        struct TypeNameWriter<'a, 'b: 'a>(&'b PeekValue<'a>);
+    fn write_type_name<W: fmt::Write>(&self, f: &mut W, peek: &ConstValue) -> fmt::Result {
+        struct TypeNameWriter<'a, 'b: 'a>(&'b ConstValue<'a>);
 
         impl core::fmt::Display for TypeNameWriter<'_, '_> {
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -748,7 +748,7 @@ impl PrettyPrinter {
 
     /// Style a type name and return it as a string
     #[allow(dead_code)]
-    fn style_type_name(&self, peek: &PeekValue) -> String {
+    fn style_type_name(&self, peek: &ConstValue) -> String {
         let mut result = String::new();
         self.write_type_name(&mut result, peek).unwrap();
         result

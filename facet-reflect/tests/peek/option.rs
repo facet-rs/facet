@@ -1,10 +1,10 @@
-use facet_reflect::PeekValue;
+use facet_reflect::ConstValue;
 
 #[test]
 fn peek_option() {
     // Test with Some value
     let some_value = Some(42);
-    let peek_value = PeekValue::new(&some_value);
+    let peek_value = ConstValue::new(&some_value);
 
     // Convert to option
     let peek_option = peek_value
@@ -22,7 +22,7 @@ fn peek_option() {
 
     // Test with None value
     let none_value: Option<i32> = None;
-    let peek_value = PeekValue::new(&none_value);
+    let peek_value = ConstValue::new(&none_value);
 
     // Convert to option
     let peek_option = peek_value

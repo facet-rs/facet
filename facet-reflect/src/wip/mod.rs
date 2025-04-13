@@ -391,6 +391,7 @@ pub struct HeapValue {
 }
 
 impl HeapValue {
+    /// Turn this heapvalue into a concrete type
     pub fn materialize<T: Facet>(self) -> Result<T, ReflectError> {
         if self.shape != T::SHAPE {
             return Err(ReflectError::WrongShape {

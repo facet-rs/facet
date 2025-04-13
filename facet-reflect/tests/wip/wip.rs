@@ -1,5 +1,5 @@
 use facet::Facet;
-use facet_reflect::{Wip, PokeValueU, Wipninit};
+use facet_reflect::WipValue;
 
 #[derive(Facet, PartialEq, Eq, Debug)]
 struct Outer {
@@ -15,8 +15,7 @@ struct Inner {
 
 #[test]
 fn test_tree() -> eyre::Result<()> {
-    let v = PokeValueUninit::alloc::<Outer>();
-    let v = ValueWip::new(v)
+    let v = WipValue::alloc::<Outer>()
         .field_named("name")?
         .put(String::from("Hello, world!"))?
         .field_named("inner")?
@@ -41,7 +40,7 @@ fn test_tree() -> eyre::Result<()> {
 #[test]
 fn readme_sample() -> eyre::Result<()> {
     use facet::Facet;
-    use facet_reflect::{Wip, PokeValueU, Wipninit};
+    use facet_reflect::WipValue;
 
     #[derive(Debug, PartialEq, Eq, Facet)]
     struct FooBar {
@@ -49,11 +48,7 @@ fn readme_sample() -> eyre::Result<()> {
         bar: String,
     }
 
-    // Allocate memory for a struct - returns a PokeValueUninit
-    let v = PokeValueUninit::alloc::<FooBar>();
-
-    // Use the Builder API to set field values
-    let foo_bar = ValueWip::new(v)
+    let foo_bar = WipValue::alloc::<FooBar>()
         .field_named("foo")?
         .put(42u64)?
         .field_named("bar")?

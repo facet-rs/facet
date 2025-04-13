@@ -1,14 +1,14 @@
 use std::hash::{DefaultHasher, Hash, Hasher};
 
-use facet_reflect::PeekValue;
+use facet_reflect::ConstValue;
 
 #[test]
 fn test_peek_value_twoints() {
     let a = 42_i32;
     let b = 42_i32;
 
-    let av = PeekValue::new(&a);
-    let bv = PeekValue::new(&b);
+    let av = ConstValue::new(&a);
+    let bv = ConstValue::new(&b);
 
     assert_eq!(av, bv);
     assert_eq!(av.to_string(), "42");
@@ -27,7 +27,7 @@ fn test_peek_value_twoints() {
 #[test]
 fn test_peek_value_twostrings() {
     let a = Some(42_i32);
-    let av = PeekValue::new(&a);
+    let av = ConstValue::new(&a);
 
     assert_eq!(av.to_string(), "⟨Option<i32>⟩");
     assert_eq!(format!("{a:?}"), format!("{av:?}"));

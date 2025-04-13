@@ -1,5 +1,5 @@
 use facet_ansi::Stylize as _;
-use facet_reflect::PeekValue;
+use facet_reflect::ConstValue;
 
 #[test]
 fn test_sample_libc() {
@@ -7,7 +7,7 @@ fn test_sample_libc() {
 
     if !cfg!(miri) {
         let (data, shape) = facet_samplelibc::get_foo_and_shape();
-        let peek = unsafe { PeekValue::unchecked_new(data.as_const(), shape) };
+        let peek = unsafe { ConstValue::unchecked_new(data.as_const(), shape) };
         eprintln!("{peek}");
         eprintln!("🔍 Display: {}", format!("{}", peek).bright_green());
         eprintln!("🐛 Debug: {}", format!("{:?}", peek).bright_blue());
@@ -16,11 +16,11 @@ fn test_sample_libc() {
     }
 }
 
-fn inspect(peek: PeekValue) {
+fn inspect(peek: ConstValue) {
     inspect_with_indent(peek, 0);
 }
 
-fn inspect_with_indent(peek: PeekValue, indent: usize) {
+fn inspect_with_indent(peek: ConstValue, indent: usize) {
     let indent_str = " ".repeat(indent * 4);
 
     if let Ok(ps) = peek.into_struct() {

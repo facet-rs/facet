@@ -1,4 +1,4 @@
-//! Allows peeking (reading from) shapes
+//! Allows reading from shapes
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
