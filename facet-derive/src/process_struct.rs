@@ -16,6 +16,7 @@ pub(crate) fn process_struct(parsed: Struct) -> proc_macro::TokenStream {
     let (generics_def, generics_use) = generics_split_for_impl(parsed.generics.as_ref());
     let kind;
     let where_clauses;
+
     let fields = match &parsed.kind {
         StructKind::Struct { clauses, fields } => {
             kind = "::facet::StructKind::Struct";

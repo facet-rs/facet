@@ -4,9 +4,17 @@ use facet_reflect::{PokeValueUninit, ReflectError};
 use std::fmt::Debug;
 
 #[derive(Debug, PartialEq, Eq, Facet)]
+#[facet(invariants = "invariants")]
 struct Person {
     age: u64,
     name: String,
+}
+
+impl Person {
+    /// Checks invariants for this struct
+    fn invariants(&self) -> bool {
+        self.age < 150
+    }
 }
 
 impl Default for Person {
@@ -120,6 +128,9 @@ fn nested_struct() -> eyre::Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn struct_with_invariant() {}
 
 // #[test]
 // fn mutate_person() {

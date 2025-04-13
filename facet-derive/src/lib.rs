@@ -19,6 +19,7 @@ keyword! {
     KMut = "mut";
     KFacet = "facet";
     KSensitive = "sensitive";
+    KInvariants = "invariants";
 }
 
 operator! {
@@ -68,7 +69,14 @@ unsynn! {
 
     enum FacetInner {
         Sensitive(KSensitive),
+        Invariants(InvariantInner),
         Other(Vec<TokenTree>)
+    }
+
+    struct InvariantInner {
+        _kw_invariants: KInvariants,
+        _eq: Eq,
+        value: LiteralString,
     }
 
     struct DocInner {
@@ -360,6 +368,9 @@ pub(crate) fn gen_struct_field(
                 FacetInner::Sensitive(_ksensitive) => {
                     flags = "::facet::FieldFlags::SENSITIVE";
                     attribute_list.push("::facet::FieldAttribute::Sensitive".to_string());
+                }
+                FacetInner::Invariants(_invariant_inner) => {
+                    panic!("fields cannot have invariants")
                 }
                 FacetInner::Other(tt) => {
                     attribute_list.push(format!(
