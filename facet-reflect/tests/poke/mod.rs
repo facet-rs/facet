@@ -7,5 +7,5 @@ mod value;
 
 mod c_test;
 // mod enum_;
-// mod scalar;
+mod scalar;
 // mod smart_pointer;
