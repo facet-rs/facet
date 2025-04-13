@@ -6,6 +6,7 @@ use crate::{ReflectError, ValueId};
 
 use super::{Guard, HeapVal, ISet, PokeValue, PokeValueUninit};
 
+/// Represents a frame in the initialization stack
 pub struct Frame<'mem> {
     /// The value we're initializing
     value: PokeValueUninit<'mem>,
@@ -28,6 +29,7 @@ struct IState {
     fields: ISet,
 }
 
+/// A builder for constructing and initializing complex data structures
 pub struct Builder<'mem> {
     /// guarantees the memory allocation for the whole tree
     guard: Option<Guard>,
@@ -57,6 +59,16 @@ impl<'mem> Builder<'mem> {
         }
     }
 
+    /// Selects a field of a struct by name and pushes it onto the frame stack.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name of the field to select.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Self)` if the field was successfully selected and pushed.
+    /// * `Err(ReflectError)` if the current frame is not a struct or the field doesn't exist.
     pub fn field_named(mut self, name: &str) -> Result<Self, ReflectError> {
         let frame = self.frames.last_mut().unwrap();
         let shape = frame.value.shape();
@@ -85,6 +97,16 @@ impl<'mem> Builder<'mem> {
         Ok(self)
     }
 
+    /// Puts a value of type `T` into the current frame.
+    ///
+    /// # Arguments
+    ///
+    /// * `t` - The value to put into the frame.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Self)` if the value was successfully put into the frame.
+    /// * `Err(ReflectError)` if there was an error putting the value into the frame.
     pub fn put<T: Facet + 'mem>(mut self, t: T) -> Result<Self, ReflectError> {
         let Some(frame) = self.frames.pop() else {
             return Err(ReflectError::OperationFailed {
@@ -144,24 +166,30 @@ impl<'mem> Builder<'mem> {
 
     /// Pops the current frame — goes back up one level
     pub fn pop(mut self) -> Result<Self, ReflectError> {
-        let Some(frame) = self.frames.pop() else {
+        let Some(_) = self.pop_inner() else {
             return Err(ReflectError::InvariantViolation);
         };
-
-        // we'll check if everything is initialized at the end
-        self.isets.insert(frame.value.id(), frame.istate);
-
         Ok(self)
     }
 
-    /// Asserts everything is initialized — get back a `HeapAlloc<PokeValue>`
-    pub fn build<T>(mut self) -> Result<HeapVal<PokeValue<'mem>>, ReflectError> {
-        let Some(frame) = self.frames.pop() else {
-            return Err(ReflectError::InvariantViolation);
-        };
+    fn pop_inner(&mut self) -> Option<PokeValueUninit<'mem>> {
+        let frame = self.frames.pop()?;
 
         // we'll check if everything is initialized at the end
         self.isets.insert(frame.value.id(), frame.istate);
+        Some(frame.value)
+    }
+
+    /// Asserts everything is initialized — get back a `HeapAlloc<PokeValue>`
+    pub fn build(mut self) -> Result<HeapVal<PokeValue<'mem>>, ReflectError> {
+        let mut root: Option<PokeValueUninit<'mem>> = None;
+
+        while let Some(frame) = self.pop_inner() {
+            root = Some(frame);
+        }
+        let Some(root) = root else {
+            return Err(ReflectError::InvariantViolation);
+        };
 
         for (id, is) in self.isets.drain() {
             let field_count = match id.shape.def {
@@ -191,8 +219,8 @@ impl<'mem> Builder<'mem> {
             }
         }
 
-        let shape = self.frames[0].value.shape;
-        let data = unsafe { self.frames[0].value.data.assume_init() };
+        let shape = root.shape;
+        let data = unsafe { root.data.assume_init() };
 
         Ok(HeapVal::Full {
             inner: PokeValue { data, shape },
@@ -203,6 +231,32 @@ impl<'mem> Builder<'mem> {
 
 impl Drop for Builder<'_> {
     fn drop(&mut self) {
-        todo!("de-initialize fields if we have a guard still (which means nobody called `finish`)")
+        for (id, is) in self.isets.drain() {
+            let field_count = match id.shape.def {
+                Def::Struct(def) => def.fields.len(),
+                Def::Enum(_) => todo!(),
+                _ => 1,
+            };
+            if !is.fields.are_all_set(field_count) {
+                match id.shape.def {
+                    Def::Struct(sd) => {
+                        eprintln!("fields were not initialized for struct {}", id.shape);
+                        for (i, field) in sd.fields.iter().enumerate() {
+                            if !is.fields.has(i) {
+                                eprintln!("  {}", field.name);
+                            }
+                        }
+                    }
+                    Def::Enum(_) => {
+                        todo!()
+                    }
+                    Def::Scalar(_) => {
+                        eprintln!("fields were not initialized for scalar {}", id.shape);
+                    }
+                    _ => {}
+                }
+                panic!("some fields were not initialized")
+            }
+        }
     }
 }
