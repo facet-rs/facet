@@ -48,25 +48,6 @@ impl<'mem> OpaqueUninit<'mem> {
         }
     }
 
-    /// Copies data from the source pointer to this location and converts to an initialized pointer
-    ///
-    /// # Safety
-    ///
-    /// - The destination pointer must be properly aligned and point to allocated memory
-    ///   that can be safely written to.
-    /// - The source pointer must point to properly initialized data.
-    /// - Both pointers must refer to objects of the same type and size.
-    pub unsafe fn write(self, source: OpaqueConst<'_>) -> Opaque<'mem> {
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                source.as_byte_ptr(),
-                self.0,
-                core::mem::size_of_val(&*source.as_byte_ptr()),
-            );
-            self.assume_init()
-        }
-    }
-
     /// Returns the underlying raw pointer as a byte pointer
     pub fn as_mut_byte_ptr(self) -> *mut u8 {
         self.0
