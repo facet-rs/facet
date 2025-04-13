@@ -3,8 +3,6 @@
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
-use facet_core::{Facet, TypeNameOpts};
-
 mod value;
 pub use value::*;
 

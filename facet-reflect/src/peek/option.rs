@@ -1,26 +1,16 @@
-use facet_core::{OptionDef, OptionVTable, Shape};
+use facet_core::{OptionDef, OptionVTable};
 
 /// Lets you read from an option (implements read-only option operations)
 #[derive(Clone, Copy)]
 pub struct PeekOption<'mem> {
-    value: crate::PeekValue<'mem>,
-    def: OptionDef,
-}
+    /// the underlying value
+    pub(crate) value: crate::PeekValue<'mem>,
 
-/// Returns the option definition if the shape represents an option, None otherwise
-pub fn peek_option(shape: &'static Shape) -> Option<OptionDef> {
-    match shape.def {
-        facet_core::Def::Option(option_def) => Some(option_def),
-        _ => None,
-    }
+    /// the definition of the option
+    pub(crate) def: OptionDef,
 }
 
 impl<'mem> PeekOption<'mem> {
-    /// Create a new peek option
-    pub(crate) fn new(value: crate::PeekValue<'mem>, def: OptionDef) -> Self {
-        Self { value, def }
-    }
-
     /// Returns the option definition
     #[inline(always)]
     pub fn def(self) -> OptionDef {
