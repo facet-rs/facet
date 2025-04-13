@@ -18,9 +18,13 @@ struct NamedPoint {
 #[derive(Debug, PartialEq, Eq, Facet)]
 #[repr(u8)]
 enum Direction {
+    #[allow(dead_code)]
     North,
+    #[allow(dead_code)]
     East,
+    #[allow(dead_code)]
     South,
+    #[allow(dead_code)]
     West,
 }
 

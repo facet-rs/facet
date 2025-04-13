@@ -114,21 +114,6 @@ impl<'mem> PokeStructUninit<'mem> {
         Ok(boxed)
     }
 
-    pub(crate) unsafe fn field_uninit(
-        &self,
-        index: usize,
-    ) -> Result<PokeValueUninit<'mem>, FieldError> {
-        if index >= self.def.fields.len() {
-            return Err(FieldError::IndexOutOfBounds);
-        }
-        let field = &self.def.fields[index];
-
-        Ok(PokeValueUninit {
-            data: unsafe { self.value.data.field_uninit_at(field.offset) },
-            shape: field.shape,
-        })
-    }
-
     /// Gets a slot for a given field, by index
     pub fn field(self, index: usize) -> Slot<'mem> {
         if index >= self.def.fields.len() {

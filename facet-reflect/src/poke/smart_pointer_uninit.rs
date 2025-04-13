@@ -1,4 +1,4 @@
-use facet_core::{OpaqueConst, Shape, SmartPointerDef, SmartPointerVTable};
+use facet_core::{OpaqueConst, Shape, SmartPointerDef};
 
 use super::{PokeSmartPointer, PokeValueUninit};
 
@@ -19,12 +19,6 @@ impl<'mem> PokeSmartPointerUninit<'mem> {
     #[inline(always)]
     pub fn def(&self) -> &SmartPointerDef {
         &self.def
-    }
-
-    /// Returns the smart pointer vtable
-    #[inline(always)]
-    fn vtable(&self) -> &'static SmartPointerVTable {
-        self.def.vtable
     }
 
     /// Get a reference to the underlying PokeValue

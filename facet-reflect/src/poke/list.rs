@@ -1,4 +1,4 @@
-use facet_core::{ListDef, ListVTable, Shape};
+use facet_core::{ListDef, Shape};
 
 use super::PokeValue;
 
@@ -15,12 +15,6 @@ impl PokeList<'_> {
     /// Shape getter
     pub fn shape(&self) -> &'static Shape {
         self.value.shape()
-    }
-
-    /// Gets the vtable for the list
-    #[inline(always)]
-    fn list_vtable(&self) -> &'static ListVTable {
-        self.def.vtable
     }
 
     /// Gets the def for that list

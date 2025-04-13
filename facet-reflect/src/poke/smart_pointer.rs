@@ -1,6 +1,4 @@
-use facet_core::{
-    LockResult, Opaque, Shape, SmartPointerDef, SmartPointerFlags, SmartPointerVTable,
-};
+use facet_core::{LockResult, Opaque, Shape, SmartPointerDef, SmartPointerFlags};
 
 use super::PokeValue;
 
@@ -28,12 +26,6 @@ impl<'mem> PokeSmartPointer<'mem> {
     #[inline(always)]
     fn data(&self) -> Opaque<'mem> {
         self.value.data
-    }
-
-    /// Returns the smart pointer vtable
-    #[inline(always)]
-    fn vtable(&self) -> &'static SmartPointerVTable {
-        self.def.vtable
     }
 
     /// Returns whether this smart pointer is weak (like [`std::sync::Weak`]).
