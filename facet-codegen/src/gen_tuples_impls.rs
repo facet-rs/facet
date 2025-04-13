@@ -9,16 +9,16 @@ pub(super) fn generate_tuples_impls() -> String {
     }
 
     // Header
-    w!("//! GENERATED: DO NOT EDIT — this file is generated from `tuples_impls.rs.j2`\n");
+    w!(
+        "//! GENERATED: DO NOT EDIT — this file is generated from the `facet-codegen/src/gen_tuples_impls.rs`\n"
+    );
     w!("//! file in the `facet-codegen` crate.\n");
     w!("//!\n");
     w!("//! Edit the template and run `just codegen` to update.\n\n");
 
     w!("use core::{{alloc::Layout, fmt}};\n\n");
     w!("use crate::{{\n");
-    w!(
-        "    Characteristic, ConstTypeId, Def, Facet, Field, FieldFlags, MarkerTraits, OpaqueConst, Shape,\n"
-    );
+    w!("    Characteristic, ConstTypeId, Def, Facet, Field, FieldFlags, OpaqueConst, Shape,\n");
     w!("    StructDef, StructKind, TypeNameOpts, ValueVTable,\n");
     w!("}};
 \n");
@@ -144,7 +144,19 @@ pub(super) fn generate_tuples_impls() -> String {
             "                        .type_name(type_name::<{}>)\n",
             type_params
         );
-        w!("                        .marker_traits(MarkerTraits::empty());\n\n");
+        w!("                        .marker_traits(");
+        if n == 1 {
+            w!("T0::SHAPE.vtable.marker_traits);\n\n")
+        } else {
+            w!("                        {{\n");
+            w!("                            T0::SHAPE.vtable.marker_traits\n");
+            for i in 1..n {
+                w!(
+                    "                                .intersection(T{i}::SHAPE.vtable.marker_traits)\n"
+                );
+            }
+            w!("                    }});\n\n");
+        }
 
         // Conditional debug and eq implementations
         w!("                    if Characteristic::Eq.all(&[");

@@ -1,4 +1,4 @@
-//! GENERATED: DO NOT EDIT — this file is generated from `tuples_impls.rs.j2`
+//! GENERATED: DO NOT EDIT — this file is generated from the `facet-codegen/src/gen_tuples_impls.rs`
 //! file in the `facet-codegen` crate.
 //!
 //! Edit the template and run `just codegen` to update.
@@ -6,8 +6,8 @@
 use core::{alloc::Layout, fmt};
 
 use crate::{
-    Characteristic, ConstTypeId, Def, Facet, Field, FieldFlags, MarkerTraits, OpaqueConst, Shape,
-    StructDef, StructKind, TypeNameOpts, ValueVTable,
+    Characteristic, ConstTypeId, Def, Facet, Field, FieldFlags, OpaqueConst, Shape, StructDef,
+    StructKind, TypeNameOpts, ValueVTable,
 };
 
 #[inline(always)]
@@ -64,7 +64,7 @@ where
                 &const {
                     let mut builder = ValueVTable::builder()
                         .type_name(type_name::<T0>)
-                        .marker_traits(MarkerTraits::empty());
+                        .marker_traits(T0::SHAPE.vtable.marker_traits);
 
                     if Characteristic::Eq.all(&[T0::SHAPE]) {
                         builder = builder.debug(|value, f| {
@@ -127,7 +127,12 @@ where
                 &const {
                     let mut builder = ValueVTable::builder()
                         .type_name(type_name::<T0, T1>)
-                        .marker_traits(MarkerTraits::empty());
+                        .marker_traits({
+                            T0::SHAPE
+                                .vtable
+                                .marker_traits
+                                .intersection(T1::SHAPE.vtable.marker_traits)
+                        });
 
                     if Characteristic::Eq.all(&[T0::SHAPE, T1::SHAPE]) {
                         builder = builder.debug(|value, f| {
@@ -212,7 +217,13 @@ where
                 &const {
                     let mut builder = ValueVTable::builder()
                         .type_name(type_name::<T0, T1, T2>)
-                        .marker_traits(MarkerTraits::empty());
+                        .marker_traits({
+                            T0::SHAPE
+                                .vtable
+                                .marker_traits
+                                .intersection(T1::SHAPE.vtable.marker_traits)
+                                .intersection(T2::SHAPE.vtable.marker_traits)
+                        });
 
                     if Characteristic::Eq.all(&[T0::SHAPE, T1::SHAPE, T2::SHAPE]) {
                         builder = builder.debug(|value, f| {
@@ -334,7 +345,14 @@ where
                 &const {
                     let mut builder = ValueVTable::builder()
                         .type_name(type_name::<T0, T1, T2, T3>)
-                        .marker_traits(MarkerTraits::empty());
+                        .marker_traits({
+                            T0::SHAPE
+                                .vtable
+                                .marker_traits
+                                .intersection(T1::SHAPE.vtable.marker_traits)
+                                .intersection(T2::SHAPE.vtable.marker_traits)
+                                .intersection(T3::SHAPE.vtable.marker_traits)
+                        });
 
                     if Characteristic::Eq.all(&[T0::SHAPE, T1::SHAPE, T2::SHAPE, T3::SHAPE]) {
                         builder = builder.debug(|value, f| {
@@ -479,7 +497,15 @@ where
                 &const {
                     let mut builder = ValueVTable::builder()
                         .type_name(type_name::<T0, T1, T2, T3, T4>)
-                        .marker_traits(MarkerTraits::empty());
+                        .marker_traits({
+                            T0::SHAPE
+                                .vtable
+                                .marker_traits
+                                .intersection(T1::SHAPE.vtable.marker_traits)
+                                .intersection(T2::SHAPE.vtable.marker_traits)
+                                .intersection(T3::SHAPE.vtable.marker_traits)
+                                .intersection(T4::SHAPE.vtable.marker_traits)
+                        });
 
                     if Characteristic::Eq.all(&[
                         T0::SHAPE,
@@ -663,7 +689,16 @@ where
                 &const {
                     let mut builder = ValueVTable::builder()
                         .type_name(type_name::<T0, T1, T2, T3, T4, T5>)
-                        .marker_traits(MarkerTraits::empty());
+                        .marker_traits({
+                            T0::SHAPE
+                                .vtable
+                                .marker_traits
+                                .intersection(T1::SHAPE.vtable.marker_traits)
+                                .intersection(T2::SHAPE.vtable.marker_traits)
+                                .intersection(T3::SHAPE.vtable.marker_traits)
+                                .intersection(T4::SHAPE.vtable.marker_traits)
+                                .intersection(T5::SHAPE.vtable.marker_traits)
+                        });
 
                     if Characteristic::Eq.all(&[
                         T0::SHAPE,
@@ -872,7 +907,17 @@ where
                 &const {
                     let mut builder = ValueVTable::builder()
                         .type_name(type_name::<T0, T1, T2, T3, T4, T5, T6>)
-                        .marker_traits(MarkerTraits::empty());
+                        .marker_traits({
+                            T0::SHAPE
+                                .vtable
+                                .marker_traits
+                                .intersection(T1::SHAPE.vtable.marker_traits)
+                                .intersection(T2::SHAPE.vtable.marker_traits)
+                                .intersection(T3::SHAPE.vtable.marker_traits)
+                                .intersection(T4::SHAPE.vtable.marker_traits)
+                                .intersection(T5::SHAPE.vtable.marker_traits)
+                                .intersection(T6::SHAPE.vtable.marker_traits)
+                        });
 
                     if Characteristic::Eq.all(&[
                         T0::SHAPE,
@@ -1106,7 +1151,18 @@ where
                 &const {
                     let mut builder = ValueVTable::builder()
                         .type_name(type_name::<T0, T1, T2, T3, T4, T5, T6, T7>)
-                        .marker_traits(MarkerTraits::empty());
+                        .marker_traits({
+                            T0::SHAPE
+                                .vtable
+                                .marker_traits
+                                .intersection(T1::SHAPE.vtable.marker_traits)
+                                .intersection(T2::SHAPE.vtable.marker_traits)
+                                .intersection(T3::SHAPE.vtable.marker_traits)
+                                .intersection(T4::SHAPE.vtable.marker_traits)
+                                .intersection(T5::SHAPE.vtable.marker_traits)
+                                .intersection(T6::SHAPE.vtable.marker_traits)
+                                .intersection(T7::SHAPE.vtable.marker_traits)
+                        });
 
                     if Characteristic::Eq.all(&[
                         T0::SHAPE,
@@ -1366,7 +1422,19 @@ where
                 &const {
                     let mut builder = ValueVTable::builder()
                         .type_name(type_name::<T0, T1, T2, T3, T4, T5, T6, T7, T8>)
-                        .marker_traits(MarkerTraits::empty());
+                        .marker_traits({
+                            T0::SHAPE
+                                .vtable
+                                .marker_traits
+                                .intersection(T1::SHAPE.vtable.marker_traits)
+                                .intersection(T2::SHAPE.vtable.marker_traits)
+                                .intersection(T3::SHAPE.vtable.marker_traits)
+                                .intersection(T4::SHAPE.vtable.marker_traits)
+                                .intersection(T5::SHAPE.vtable.marker_traits)
+                                .intersection(T6::SHAPE.vtable.marker_traits)
+                                .intersection(T7::SHAPE.vtable.marker_traits)
+                                .intersection(T8::SHAPE.vtable.marker_traits)
+                        });
 
                     if Characteristic::Eq.all(&[
                         T0::SHAPE,
@@ -1652,7 +1720,20 @@ where
                 &const {
                     let mut builder = ValueVTable::builder()
                         .type_name(type_name::<T0, T1, T2, T3, T4, T5, T6, T7, T8, T9>)
-                        .marker_traits(MarkerTraits::empty());
+                        .marker_traits({
+                            T0::SHAPE
+                                .vtable
+                                .marker_traits
+                                .intersection(T1::SHAPE.vtable.marker_traits)
+                                .intersection(T2::SHAPE.vtable.marker_traits)
+                                .intersection(T3::SHAPE.vtable.marker_traits)
+                                .intersection(T4::SHAPE.vtable.marker_traits)
+                                .intersection(T5::SHAPE.vtable.marker_traits)
+                                .intersection(T6::SHAPE.vtable.marker_traits)
+                                .intersection(T7::SHAPE.vtable.marker_traits)
+                                .intersection(T8::SHAPE.vtable.marker_traits)
+                                .intersection(T9::SHAPE.vtable.marker_traits)
+                        });
 
                     if Characteristic::Eq.all(&[
                         T0::SHAPE,
@@ -1978,7 +2059,21 @@ where
                 &const {
                     let mut builder = ValueVTable::builder()
                         .type_name(type_name::<T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10>)
-                        .marker_traits(MarkerTraits::empty());
+                        .marker_traits({
+                            T0::SHAPE
+                                .vtable
+                                .marker_traits
+                                .intersection(T1::SHAPE.vtable.marker_traits)
+                                .intersection(T2::SHAPE.vtable.marker_traits)
+                                .intersection(T3::SHAPE.vtable.marker_traits)
+                                .intersection(T4::SHAPE.vtable.marker_traits)
+                                .intersection(T5::SHAPE.vtable.marker_traits)
+                                .intersection(T6::SHAPE.vtable.marker_traits)
+                                .intersection(T7::SHAPE.vtable.marker_traits)
+                                .intersection(T8::SHAPE.vtable.marker_traits)
+                                .intersection(T9::SHAPE.vtable.marker_traits)
+                                .intersection(T10::SHAPE.vtable.marker_traits)
+                        });
 
                     if Characteristic::Eq.all(&[
                         T0::SHAPE,
@@ -2345,7 +2440,22 @@ where
                 &const {
                     let mut builder = ValueVTable::builder()
                         .type_name(type_name::<T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11>)
-                        .marker_traits(MarkerTraits::empty());
+                        .marker_traits({
+                            T0::SHAPE
+                                .vtable
+                                .marker_traits
+                                .intersection(T1::SHAPE.vtable.marker_traits)
+                                .intersection(T2::SHAPE.vtable.marker_traits)
+                                .intersection(T3::SHAPE.vtable.marker_traits)
+                                .intersection(T4::SHAPE.vtable.marker_traits)
+                                .intersection(T5::SHAPE.vtable.marker_traits)
+                                .intersection(T6::SHAPE.vtable.marker_traits)
+                                .intersection(T7::SHAPE.vtable.marker_traits)
+                                .intersection(T8::SHAPE.vtable.marker_traits)
+                                .intersection(T9::SHAPE.vtable.marker_traits)
+                                .intersection(T10::SHAPE.vtable.marker_traits)
+                                .intersection(T11::SHAPE.vtable.marker_traits)
+                        });
 
                     if Characteristic::Eq.all(&[
                         T0::SHAPE,
