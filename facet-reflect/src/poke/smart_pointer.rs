@@ -167,6 +167,8 @@ impl<'mem> HeapVal<PokeSmartPointer<'mem>> {
     pub fn build_in_place<U: Facet + 'mem>(self) -> U {
         // Ensure the shape matches the expected type
         self.shape().assert_type::<U>();
-        unsafe { self.data().read::<U>() }
+        let result = unsafe { self.data().read::<U>() };
+        self.map(core::mem::forget);
+        result
     }
 }
