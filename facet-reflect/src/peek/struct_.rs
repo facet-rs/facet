@@ -13,11 +13,6 @@ pub struct PeekStruct<'mem> {
 }
 
 impl<'mem> PeekStruct<'mem> {
-    /// Create a new peek struct
-    pub(crate) fn new(value: PeekValue<'mem>, def: Struct) -> Self {
-        Self { value, def }
-    }
-
     /// Returns the struct definition
     #[inline(always)]
     pub fn def(&self) -> &Struct {

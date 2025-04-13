@@ -5,11 +5,6 @@
         "path_lookup": true
       },
       "initialization_options": {
-        "check": {
-          "command": "clippy",
-          "allTargets": true,
-          "extraArgs": ["--all-features"]
-        },
         "cargo": {
           "buildScripts": {
             "enable": true
@@ -17,6 +12,10 @@
         },
         "procMacro": {
           "enable": true
+        },
+        "check": {
+          "command": "clippy",
+          "features": "all"
         }
       }
     }
