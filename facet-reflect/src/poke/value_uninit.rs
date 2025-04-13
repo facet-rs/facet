@@ -4,7 +4,7 @@ use core::{
 };
 
 use crate::{ReflectError, ScalarType};
-use facet_core::{Def, Facet, Opaque, OpaqueConst, OpaqueUninit, Shape, TryFromError, ValueVTable};
+use facet_core::{Def, Facet, OpaqueConst, OpaqueUninit, Shape, TryFromError, ValueVTable};
 
 use super::{
     ISet, PokeEnumNoVariant, PokeListUninit, PokeMapUninit, PokeSmartPointerUninit,
@@ -114,51 +114,53 @@ impl<'mem> PokeValueUninit<'mem> {
     pub fn scalar_type(&self) -> Option<ScalarType> {
         ScalarType::try_from_shape(self.shape)
     }
+}
 
+impl<'mem> HeapVal<PokeValueUninit<'mem>> {
     /// Tries to identify this value as a struct
-    pub fn into_struct(self) -> Result<PokeStructUninit<'mem>, ReflectError> {
+    pub fn into_struct(self) -> Result<HeapVal<PokeStructUninit<'mem>>, ReflectError> {
         if let Def::Struct(def) = self.shape.def {
-            Ok(PokeStructUninit {
-                value: self,
+            Ok(self.map(|value| PokeStructUninit {
+                value,
                 iset: ISet::default(),
                 def,
-            })
+            }))
         } else {
             Err(ReflectError::WasNotA { name: "struct" })
         }
     }
 
     /// Tries to identify this value as an enum
-    pub fn into_enum(self) -> Result<PokeEnumNoVariant<'mem>, ReflectError> {
+    pub fn into_enum(self) -> Result<HeapVal<PokeEnumNoVariant<'mem>>, ReflectError> {
         if let Def::Enum(def) = self.shape.def {
-            Ok(PokeEnumNoVariant { value: self, def })
+            Ok(self.map(|value| PokeEnumNoVariant { value, def }))
         } else {
             Err(ReflectError::WasNotA { name: "enum" })
         }
     }
 
     /// Tries to identify this value as a map
-    pub fn into_map(self) -> Result<PokeMapUninit<'mem>, ReflectError> {
+    pub fn into_map(self) -> Result<HeapVal<PokeMapUninit<'mem>>, ReflectError> {
         if let Def::Map(def) = self.shape.def {
-            Ok(PokeMapUninit { value: self, def })
+            Ok(self.map(|value| PokeMapUninit { value, def }))
         } else {
             Err(ReflectError::WasNotA { name: "map" })
         }
     }
 
     /// Tries to identify this value as a list
-    pub fn into_list(self) -> Result<PokeListUninit<'mem>, ReflectError> {
+    pub fn into_list(self) -> Result<HeapVal<PokeListUninit<'mem>>, ReflectError> {
         if let Def::List(def) = self.shape.def {
-            Ok(PokeListUninit { value: self, def })
+            Ok(self.map(|value| PokeListUninit { value, def }))
         } else {
             Err(ReflectError::WasNotA { name: "list" })
         }
     }
 
     /// Tries to identify this value as a smart pointer
-    pub fn into_smart_pointer(self) -> Result<PokeSmartPointerUninit<'mem>, ReflectError> {
+    pub fn into_smart_pointer(self) -> Result<HeapVal<PokeSmartPointerUninit<'mem>>, ReflectError> {
         if let Def::SmartPointer(def) = self.shape.def {
-            Ok(PokeSmartPointerUninit { value: self, def })
+            Ok(self.map(|value| PokeSmartPointerUninit { value, def }))
         } else {
             Err(ReflectError::WasNotA {
                 name: "smart pointer",
@@ -283,5 +285,23 @@ impl<'mem> HeapVal<PokeValueUninit<'mem>> {
                 shape: this.shape,
             })
         })
+    }
+}
+
+impl<T: core::fmt::Debug> core::fmt::Debug for HeapVal<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            HeapVal::Full { inner, .. } => inner.fmt(f),
+            HeapVal::Empty => write!(f, "<empty>"),
+        }
+    }
+}
+
+impl<T: core::fmt::Display> core::fmt::Display for HeapVal<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            HeapVal::Full { inner, .. } => inner.fmt(f),
+            HeapVal::Empty => write!(f, "<empty>"),
+        }
     }
 }

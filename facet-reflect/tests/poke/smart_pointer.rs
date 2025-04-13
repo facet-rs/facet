@@ -6,7 +6,7 @@ use facet_reflect::PokeValueUninit;
 fn build_arc() {
     facet_testhelpers::setup();
 
-    let (poke, _guard) = PokeValueUninit::alloc::<Arc<String>>();
+    let poke = PokeValueUninit::alloc::<Arc<String>>();
     let po = poke.into_smart_pointer().unwrap();
     let po = po.from_t(String::from("Hello, World!")).unwrap();
     {

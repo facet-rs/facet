@@ -33,13 +33,11 @@ enum Direction {
 fn test_allocate_and_check_shape() {
     facet_testhelpers::setup();
 
-    let (poke, guard) = PokeValueUninit::alloc::<i32>();
+    let poke = PokeValueUninit::alloc::<i32>();
     assert_eq!(poke.shape(), i32::SHAPE);
-    drop((poke, guard)); // Clean up
 
-    let (poke, guard) = PokeValueUninit::alloc_shape(Point::SHAPE);
+    let poke = PokeValueUninit::alloc_shape(Point::SHAPE);
     assert_eq!(poke.shape(), Point::SHAPE);
-    drop((poke, guard)); // Clean up
 }
 
 // Test initializing with default value
@@ -48,20 +46,18 @@ fn test_default_initialization() {
     facet_testhelpers::setup();
 
     // Test with a primitive that has a default
-    let (poke, guard) = PokeValueUninit::alloc::<i32>();
+    let poke = PokeValueUninit::alloc::<i32>();
     let poke = poke
         .default_in_place()
         .expect("i32 should have default impl");
     assert_eq!(*poke.get::<i32>(), 0);
-    drop((poke, guard)); // Clean up
 
     // Test with a struct that has a default
-    let (poke, guard) = PokeValueUninit::alloc::<Point>();
+    let poke = PokeValueUninit::alloc::<Point>();
     let poke = poke
         .default_in_place()
         .expect("Point should have default impl");
     assert_eq!(*poke.get::<Point>(), Point { x: 0, y: 0 });
-    drop((poke, guard)); // Clean up
 }
 
 // Test direct value initialization
@@ -70,17 +66,15 @@ fn test_put_value() {
     facet_testhelpers::setup();
 
     // For a simple type
-    let (poke, guard) = PokeValueUninit::alloc::<i32>();
+    let poke = PokeValueUninit::alloc::<i32>();
     let poke = poke.put(42i32).expect("Should accept correct type");
     assert_eq!(*poke.get::<i32>(), 42);
-    drop((poke, guard)); // Clean up
 
     // For a compound type
-    let (poke, guard) = PokeValueUninit::alloc::<Point>();
+    let poke = PokeValueUninit::alloc::<Point>();
     let point = Point { x: 10, y: 20 };
     let poke = poke.put(point).expect("Should accept correct type");
     assert_eq!(*poke.get::<Point>(), Point { x: 10, y: 20 });
-    drop((poke, guard)); // Clean up
 }
 
 // Test type mismatch in put
@@ -88,7 +82,7 @@ fn test_put_value() {
 fn test_put_wrong_type() {
     facet_testhelpers::setup();
 
-    let (poke, guard) = PokeValueUninit::alloc::<i32>();
+    let poke = PokeValueUninit::alloc::<i32>();
     let result = poke.put(42i64); // Wrong type
 
     match result {
@@ -98,8 +92,6 @@ fn test_put_wrong_type() {
         }
         _ => panic!("Expected WrongShape error"),
     }
-
-    drop(guard); // Clean up
 }
 
 // Test parsing from string
@@ -108,18 +100,16 @@ fn test_parse_from_string() {
     facet_testhelpers::setup();
 
     // Parse a number
-    let (poke, guard) = PokeValueUninit::alloc::<i32>();
+    let poke = PokeValueUninit::alloc::<i32>();
     let poke = poke
         .parse("42")
         .expect("i32 should be parseable from string");
     assert_eq!(*poke.get::<i32>(), 42);
-    drop((poke, guard)); // Clean up
 
     // Try parsing an invalid string
-    let (poke, guard) = PokeValueUninit::alloc::<i32>();
+    let poke = PokeValueUninit::alloc::<i32>();
     let result = poke.parse("not a number");
     assert!(result.is_err(), "Parsing invalid string should fail");
-    drop(guard); // Clean up
 }
 
 // Test scalar type identification
@@ -128,11 +118,11 @@ fn test_scalar_type_identification() {
     facet_testhelpers::setup();
 
     // For a primitive type
-    let (poke, _guard) = PokeValueUninit::alloc::<i32>();
+    let poke = PokeValueUninit::alloc::<i32>();
     assert!(poke.scalar_type().is_some());
 
     // For a non-scalar type
-    let (poke, _guard) = PokeValueUninit::alloc::<Point>();
+    let poke = PokeValueUninit::alloc::<Point>();
     assert!(poke.scalar_type().is_none());
 }
 
@@ -143,16 +133,14 @@ fn test_direct_initialization() {
     facet_testhelpers::setup();
 
     // For a primitive
-    let (poke, guard) = PokeValueUninit::alloc::<u16>();
+    let poke = PokeValueUninit::alloc::<u16>();
     let poke = poke.put(42u16).expect("Should accept u16");
     assert_eq!(*poke.get::<u16>(), 42u16);
-    drop((poke, guard)); // Clean up
 
     // For a different primitive
-    let (poke, guard) = PokeValueUninit::alloc::<f64>();
+    let poke = PokeValueUninit::alloc::<f64>();
     let poke = poke.put(3.2f64).expect("Should accept f64");
     assert_eq!(*poke.get::<f64>(), 3.2f64);
-    drop((poke, guard)); // Clean up
 }
 
 // Test for different struct shape types
@@ -161,14 +149,12 @@ fn test_into_struct() {
     facet_testhelpers::setup();
 
     // Should succeed for struct type
-    let (poke, guard) = PokeValueUninit::alloc::<Point>();
+    let poke = PokeValueUninit::alloc::<Point>();
     assert!(poke.into_struct().is_ok());
-    drop(guard); // Clean up
 
     // Should fail for non-struct type
-    let (poke, guard) = PokeValueUninit::alloc::<i32>();
+    let poke = PokeValueUninit::alloc::<i32>();
     assert!(poke.into_struct().is_err());
-    drop(guard); // Clean up
 }
 
 // Test for enum shape types
@@ -177,14 +163,12 @@ fn test_into_enum() {
     facet_testhelpers::setup();
 
     // Should succeed for enum type
-    let (poke, guard) = PokeValueUninit::alloc::<Direction>();
+    let poke = PokeValueUninit::alloc::<Direction>();
     assert!(poke.into_enum().is_ok());
-    drop(guard); // Clean up
 
     // Should fail for non-enum type
-    let (poke, guard) = PokeValueUninit::alloc::<Point>();
+    let poke = PokeValueUninit::alloc::<Point>();
     assert!(poke.into_enum().is_err());
-    drop(guard); // Clean up
 }
 
 // Test that allocate and build work together
@@ -193,13 +177,13 @@ fn test_alloc_and_build() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
     // Allocate and initialize a struct value
-    let (poke, guard) = PokeValueUninit::alloc::<Point>();
+    let poke = PokeValueUninit::alloc::<Point>();
     let poke = poke.into_struct()?;
     let poke = poke.field_by_name("x")?.set(42i32)?.into_struct_uninit();
     let poke = poke.field_by_name("y")?.set(24i32)?.into_struct_uninit();
 
     // Build the final value
-    let point: Point = poke.build(Some(guard))?;
+    let point: Point = poke.build(None)?;
 
     assert_eq!(point, Point { x: 42, y: 24 });
     Ok(())
@@ -211,7 +195,7 @@ fn test_nested_initialization() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
     // Allocate a NamedPoint which contains a Point
-    let (poke, guard) = PokeValueUninit::alloc::<NamedPoint>();
+    let poke = PokeValueUninit::alloc::<NamedPoint>();
     let poke = poke.into_struct()?;
 
     // Set the name field
@@ -226,7 +210,7 @@ fn test_nested_initialization() -> eyre::Result<()> {
     let poke = poke.finish()?.into_struct_uninit();
 
     // Build the final value
-    let named_point: NamedPoint = poke.build(Some(guard))?;
+    let named_point: NamedPoint = poke.build(None)?;
 
     assert_eq!(named_point.name, "Origin");
     assert_eq!(named_point.point, Point { x: 0, y: 0 });

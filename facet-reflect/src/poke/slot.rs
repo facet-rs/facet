@@ -1,4 +1,4 @@
-use facet_core::{Facet, FieldError, OpaqueConst};
+use facet_core::{Def, Facet, FieldError, OpaqueConst};
 
 use crate::ReflectError;
 
@@ -99,17 +99,22 @@ impl<'mem> Slot<'mem> {
         let data = value.data;
         let shape = value.shape();
 
-        match value.into_struct() {
-            Ok(storage) => Ok(StructSlot {
-                slot: Slot {
-                    parent,
-                    value: PokeValueUninit { data, shape },
-                    index,
-                },
-                storage,
-            }),
-            Err(_) => Err(ReflectError::WasNotA { name: "struct" }),
-        }
+        let Def::Struct(def) = shape.def else {
+            return Err(ReflectError::WasNotA { name: "struct" });
+        };
+
+        Ok(StructSlot {
+            slot: Slot {
+                parent,
+                value: PokeValueUninit { data, shape },
+                index,
+            },
+            storage: PokeStructUninit {
+                value: PokeValueUninit { data, shape },
+                def,
+                iset: Default::default(),
+            },
+        })
     }
 }
 

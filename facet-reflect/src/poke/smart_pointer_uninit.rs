@@ -1,6 +1,6 @@
 use facet_core::{OpaqueConst, Shape, SmartPointerDef};
 
-use super::{PokeSmartPointer, PokeValueUninit};
+use super::{HeapVal, PokeSmartPointer, PokeValueUninit};
 
 /// Allows initializing an uninitialized option
 pub struct PokeSmartPointerUninit<'mem> {
@@ -25,25 +25,6 @@ impl<'mem> PokeSmartPointerUninit<'mem> {
     #[inline(always)]
     pub fn into_value(self) -> crate::PokeValueUninit<'mem> {
         self.value
-    }
-
-    /// Creates a new smart pointer around a given T
-    ///
-    /// Returns `None` if the smart pointer cannot be created directly
-    /// (like for weak pointers).
-    pub fn from_t<T>(self, value: T) -> Option<PokeSmartPointer<'mem>> {
-        let into_fn = self.def.vtable.new_into_fn?;
-
-        let value_opaque = OpaqueConst::new(&raw const value);
-        let opaque = unsafe { into_fn(self.value.data, value_opaque) };
-        core::mem::forget(value);
-        Some(PokeSmartPointer {
-            value: crate::PokeValue {
-                data: opaque,
-                shape: self.value.shape,
-            },
-            def: self.def,
-        })
     }
 
     // /// Creates a new smart pointer from an existing [`PeekValue`].
@@ -72,4 +53,25 @@ impl<'mem> PokeSmartPointerUninit<'mem> {
     //         def: self.def,
     //     })
     // }
+}
+
+impl<'mem> HeapVal<PokeSmartPointerUninit<'mem>> {
+    /// Creates a new smart pointer around a given T
+    ///
+    /// Returns `None` if the smart pointer cannot be created directly
+    /// (like for weak pointers).
+    pub fn from_t<T>(self, value: T) -> Option<HeapVal<PokeSmartPointer<'mem>>> {
+        let into_fn = self.def.vtable.new_into_fn?;
+
+        let value_opaque = OpaqueConst::new(&raw const value);
+        let opaque = unsafe { into_fn(self.value.data, value_opaque) };
+        core::mem::forget(value);
+        Some(self.map(|this| PokeSmartPointer {
+            value: crate::PokeValue {
+                data: opaque,
+                shape: this.value.shape,
+            },
+            def: this.def,
+        }))
+    }
 }

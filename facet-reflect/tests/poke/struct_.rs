@@ -22,7 +22,7 @@ impl Default for Person {
 fn build_person_through_reflection() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    let (poke, guard) = PokeValueUninit::alloc::<Person>();
+    let poke = PokeValueUninit::alloc::<Person>();
     let poke = poke.into_struct().unwrap();
     let poke = poke.field_by_name("age")?.set(42u64)?.into_struct_uninit();
     let poke = poke

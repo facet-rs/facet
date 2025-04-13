@@ -120,15 +120,6 @@ impl<'mem> PokeSmartPointer<'mem> {
     pub fn into_value(self) -> crate::PokeValue<'mem> {
         self.value
     }
-
-    /// Moves `U` out of this `PokeSmartPointer`.
-    ///
-    /// Note that `U` should be something like `Arc<T>`, `Rc<T>`, etc.
-    pub fn build_in_place<U: Facet + 'mem>(self) -> U {
-        // Ensure the shape matches the expected type
-        self.shape().assert_type::<U>();
-        unsafe { self.data().read::<U>() }
-    }
 }
 
 /// Represents a write guard for a lock
@@ -166,5 +157,16 @@ impl<'mem> PokeSmartPointerReadGuard<'mem> {
     /// Returns the shape for this guard
     pub fn shape(&self) -> &'static Shape {
         self.shape
+    }
+}
+
+impl<'mem> HeapVal<PokeSmartPointer<'mem>> {
+    /// Moves `U` out of this `PokeSmartPointer`.
+    ///
+    /// Note that `U` should be something like `Arc<T>`, `Rc<T>`, etc.
+    pub fn build_in_place<U: Facet + 'mem>(self) -> U {
+        // Ensure the shape matches the expected type
+        self.shape().assert_type::<U>();
+        unsafe { self.data().read::<U>() }
     }
 }
