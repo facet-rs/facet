@@ -21,7 +21,7 @@ jobs:
       - name: ✨ Run code quality checks
         shell: bash
         run: |
-          just code-quality
+          just code-quality-ci
 
   test:
     runs-on: depot-ubuntu-24.04-arm-16
@@ -36,7 +36,7 @@ jobs:
       - name: ✨ Run tests
         shell: bash
         run: |
-          just test
+          just test-ci
 
   nostd:
     runs-on: depot-ubuntu-24.04-arm-16
@@ -51,7 +51,7 @@ jobs:
       - name: ✨ Run nostd tests
         shell: bash
         run: |
-          just nostd
+          just nostd-ci
 
   doc-tests:
     runs-on: depot-ubuntu-24.04-arm-16
@@ -66,7 +66,7 @@ jobs:
       - name: ✨ Run doc tests
         shell: bash
         run: |
-          just doc-tests
+          just doc-tests-ci
 
   miri:
     runs-on: depot-ubuntu-24.04-arm-32

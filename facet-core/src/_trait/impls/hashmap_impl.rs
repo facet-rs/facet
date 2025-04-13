@@ -29,23 +29,13 @@ where
                 &const {
                     let mut builder = ValueVTable::builder()
                         .marker_traits({
-                            let mut traits = MarkerTraits::empty();
-                            if K::SHAPE.vtable.marker_traits.contains(MarkerTraits::SEND)
-                                && V::SHAPE.vtable.marker_traits.contains(MarkerTraits::SEND)
-                            {
-                                traits = traits.union(MarkerTraits::SEND);
-                            }
-                            if K::SHAPE.vtable.marker_traits.contains(MarkerTraits::SYNC)
-                                && V::SHAPE.vtable.marker_traits.contains(MarkerTraits::SYNC)
-                            {
-                                traits = traits.union(MarkerTraits::SYNC);
-                            }
-                            if K::SHAPE.vtable.marker_traits.contains(MarkerTraits::EQ)
-                                && V::SHAPE.vtable.marker_traits.contains(MarkerTraits::EQ)
-                            {
-                                traits = traits.union(MarkerTraits::EQ);
-                            }
-                            traits
+                            let arg_dependent_traits = MarkerTraits::SEND
+                                .union(MarkerTraits::SYNC)
+                                .union(MarkerTraits::EQ)
+                                .union(MarkerTraits::UNPIN);
+                            arg_dependent_traits
+                                .intersection(V::SHAPE.vtable.marker_traits)
+                                .intersection(K::SHAPE.vtable.marker_traits)
                         })
                         .type_name(|f, opts| {
                             if let Some(opts) = opts.for_children() {

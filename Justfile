@@ -1,19 +1,11 @@
 precommit:
-    #!/usr/bin/env -S bash -euo pipefail
-    source .envrc
     just genfmt
 
 prepush:
-    #!/usr/bin/env -S bash -euo pipefail
-    source .envrc
     just clippy
     just test
-    just doc-tests
-    just docs
 
 ci:
-    #!/usr/bin/env -S bash -euo pipefail
-    source .envrc
     just precommit
     just prepush
     just docs
@@ -21,20 +13,23 @@ ci:
     just miri
 
 genfmt:
-    #!/usr/bin/env -S bash -euo pipefail
     just lockfile
-    source .envrc
-    if [[ -z "${GITHUB_ACTIONS:-}" ]]; then
-        just codegen
-        echo -e "\033[1;34m📝 Fixing code formatting...\033[0m"
-        cargo fmt --all
-    else
-        just codegen --check
-        cargo fmt --all --check
-    fi
+    just codegen
+    cargo fmt --all
     just absolve
 
 nostd:
+    # Run alloc but no-std checks with specified target directory
+    cargo check --no-default-features -p facet-core --target-dir target/nostd
+    cargo check --no-default-features -p facet --target-dir target/nostd
+    cargo check --no-default-features -p facet-reflect --target-dir target/nostd
+
+    # Run alloc but no-std checks with specified target directory
+    cargo check --no-default-features --features alloc -p facet-core --target-dir target/nostd-w-alloc
+    cargo check --no-default-features --features alloc -p facet --target-dir target/nostd-w-alloc
+    cargo check --no-default-features --features alloc -p facet-reflect --target-dir target/nostd-w-alloc
+
+nostd-ci:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
 
@@ -55,34 +50,39 @@ nostd:
     cmd_group "cargo check --no-default-features --features alloc -p facet-reflect"
 
 clippy:
-    #!/usr/bin/env -S bash -euo pipefail
-    source .envrc
-    echo -e "\033[1;35m🔍 Running Clippy on all targets...\033[0m"
-    cmd_group "cargo clippy --workspace --all-targets --all-features -- -D warnings"
+    cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 test *args:
+    cargo nextest run {{args}} < /dev/null
+    cargo test --doc {{args}}
+
+test-ci *args:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
     echo -e "\033[1;33m🏃 Running all but doc-tests with nextest...\033[0m"
     cmd_group "cargo nextest run {{args}} < /dev/null"
-    echo -e "\033[1;33m✅ Good good!\033[0m"
 
-    echo -e "\033[1;36m📚 Running documentation tests in separate target directory...\033[0m"
+    echo -e "\033[1;36m📚 Running documentation tests...\033[0m"
     cmd_group "cargo test --doc {{args}}"
-    echo -e "\033[1;33m✅ Documentation tests completed!\033[0m"
 
 doc-tests *args:
+    cargo test --doc {{args}}
+
+doc-tests-ci *args:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
     echo -e "\033[1;36m📚 Running documentation tests...\033[0m"
     cmd_group "cargo test --doc {{args}}"
 
 codegen *args:
-    #!/usr/bin/env -S bash -euo pipefail
-    source .envrc
-    cmd_group "cargo run -p facet-codegen -- {{args}}"
+    cargo run -p facet-codegen -- {{args}}
 
 code-quality:
+    just codegen --check
+    cargo fmt --check --all
+    just absolve
+
+code-quality-ci:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
     cmd_group "just codegen --check"
@@ -90,16 +90,17 @@ code-quality:
     cmd_group "just absolve"
 
 miri *args:
+    export RUSTUP_TOOLCHAIN=nightly-2025-04-05
+    rustup toolchain install nightly-2025-04-05
+    rustup +nightly-2025-04-05 component add miri rust-src
+    cargo +nightly-2025-04-05 miri nextest run --target-dir target/miri {{args}}
+
+miri-ci *args:
     #!/usr/bin/env -S bash -euxo pipefail
     source .envrc
     echo -e "\033[1;31m🧪 Running tests under Miri...\033[0m"
 
     export CARGO_TARGET_DIR=target/miri
-    if [[ -z "${CI:-}" ]]; then
-        export RUSTUP_TOOLCHAIN=nightly-2025-04-05
-        cmd_group "rustup toolchain install"
-        cmd_group "rustup component add miri rust-src"
-    fi
     cmd_group "cargo miri nextest run {{args}}"
 
 absolve:

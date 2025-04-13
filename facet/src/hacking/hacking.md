@@ -5,8 +5,8 @@
 The `Facet` trait is the cornerstone of our reflection system. It provides a way to access type information at both compile time and runtime, enabling powerful meta-programming capabilities while maintaining Rust's safety guarantees.
 
 ```rust,ignore
-pub unsafe trait Facet: 'static {
-    /// A static reference to a Shape describing this type
+pub unsafe trait Facet: Sized {
+    /// The shape of this type
     const SHAPE: &'static Shape;
 }
 ```

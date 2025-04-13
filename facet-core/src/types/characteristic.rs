@@ -20,6 +20,9 @@ pub enum Characteristic {
     /// Implements Eq
     Eq,
 
+    /// Implements Unpin
+    Unpin,
+
     // Functionality traits
     /// Implements Clone
     Clone,
@@ -90,6 +93,7 @@ impl Shape {
             Characteristic::Sync => self.vtable.marker_traits.contains(MarkerTraits::SYNC),
             Characteristic::Copy => self.vtable.marker_traits.contains(MarkerTraits::COPY),
             Characteristic::Eq => self.vtable.marker_traits.contains(MarkerTraits::EQ),
+            Characteristic::Unpin => self.vtable.marker_traits.contains(MarkerTraits::UNPIN),
 
             // Functionality traits
             Characteristic::Clone => self.vtable.clone_into.is_some(),

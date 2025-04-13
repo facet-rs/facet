@@ -86,6 +86,9 @@ macro_rules! value_vtable_inner {
                 if $crate::spez::impls!($type_name: core::marker::Copy) {
                     traits = traits.union($crate::MarkerTraits::COPY);
                 }
+                if $crate::spez::impls!($type_name: core::marker::Unpin) {
+                    traits = traits.union($crate::MarkerTraits::UNPIN);
+                }
                 builder = builder.marker_traits(traits);
             }
 

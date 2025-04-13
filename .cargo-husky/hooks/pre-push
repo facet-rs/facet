@@ -1,9 +1,2 @@
-#!/bin/bash
-if ! command -v just &> /dev/null; then
-    echo "just command not found. Please install it using one of the following methods:"
-    echo "  brew install just"
-    echo "  cargo binstall just"
-    echo "For more information, visit: https://github.com/casey/just"
-    exit 1
-fi
+#!/usr/bin/env sh
 just prepush
