@@ -74,6 +74,7 @@ impl<'mem> Slot<'mem> {
             parent,
             index,
         } = self;
+
         // manual put, because we can't move out of `value`
         unsafe { value.data.write(OpaqueConst::new(&raw const t)) };
         core::mem::forget(t);

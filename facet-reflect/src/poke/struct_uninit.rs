@@ -60,7 +60,6 @@ impl<'mem> PokeStructUninit<'mem> {
     /// Asserts that every field has been initialized and gives a [`PokeStruct`]
     ///
     /// If one of the field was not initialized, all fields will be dropped in place.
-    #[must_use]
     pub fn build_in_place(self) -> Result<PokeStruct<'mem>, ReflectError> {
         self.assert_can_build()?;
         let ps = PokeStruct {

@@ -157,7 +157,6 @@ impl HeapVal<PokeValue<'_>> {
 impl Drop for PokeValue<'_> {
     fn drop(&mut self) {
         eprintln!("POKEVALUE IS DROPPING A {}", self.shape);
-        panic!();
 
         if let Some(drop_fn) = self.shape.vtable.drop_in_place {
             unsafe { drop_fn(self.data) };
