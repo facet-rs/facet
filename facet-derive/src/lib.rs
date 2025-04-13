@@ -258,7 +258,7 @@ impl core::fmt::Display for AngleTokenTree {
 struct VerbatimDisplay<'a, C>(&'a VerbatimUntil<C>);
 impl<C> core::fmt::Display for VerbatimDisplay<'_, C> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        for tt in self.0 .0.iter() {
+        for tt in self.0.0.iter() {
             write!(f, "{}", tt.value.second)?;
         }
         Ok(())

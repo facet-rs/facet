@@ -1,28 +1,30 @@
 use core::cmp::Ordering;
 use facet_core::{Facet, Opaque, OpaqueConst, Shape, TypeNameOpts, ValueVTable};
 
-use crate::{Peek, ScalarType};
+use crate::ScalarType;
 
 /// Lets you read from a value (implements read-only [`ValueVTable`] proxies)
 #[derive(Clone, Copy)]
 pub struct PeekValue<'mem> {
-    data: OpaqueConst<'mem>,
-    shape: &'static Shape,
+    /// Underlying data
+    pub(crate) data: OpaqueConst<'mem>,
+
+    /// Shape of the value
+    pub(crate) shape: &'static Shape,
 }
+
 impl<'mem> PeekValue<'mem> {
-    /// Creates a new `PeekValue` instance.
-    ///
-    /// # Safety
-    ///
-    /// `data` must be initialized and well-aligned, and point to a value
-    /// of the type described by `shape`.
-    pub(crate) unsafe fn unchecked_new(data: OpaqueConst<'mem>, shape: &'static Shape) -> Self {
-        Self { data, shape }
+    /// Creates a new `PeekValue` instance for a value of type `T`.
+    pub fn new<T: Facet + 'mem>(t: &'mem T) -> Self {
+        Self {
+            data: OpaqueConst::new(t as *const T),
+            shape: T::SHAPE,
+        }
     }
 
     /// Returns the vtable
     #[inline(always)]
-    pub fn vtable(&self) -> &'static ValueVTable {
+    fn vtable(&self) -> &'static ValueVTable {
         self.shape.vtable
     }
 

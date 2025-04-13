@@ -15,8 +15,8 @@ mod poke;
 #[cfg(feature = "alloc")]
 pub use poke::*;
 
-// mod peek;
-// pub use peek::*;
+mod peek;
+pub use peek::*;
 
 mod scalar;
 pub use scalar::*;
