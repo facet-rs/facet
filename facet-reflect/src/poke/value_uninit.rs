@@ -91,8 +91,7 @@ impl<'mem> PokeValueUninit<'mem> {
         }
     }
 
-    /// Place a value in the space provided. See also [`Self::typed`], which
-    /// is panic-free.
+    /// Place a value in the space provided — this is equivalent to `*self = value`
     ///
     /// This function places a value of type T into the destination space,
     /// checking that T exactly matches the expected shape.

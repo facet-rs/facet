@@ -5,7 +5,6 @@ use crate::{
     SmartPointerVTable, value_vtable,
 };
 
-#[cfg(feature = "alloc")]
 unsafe impl<T: Facet> Facet for alloc::sync::Arc<T> {
     const SHAPE: &'static crate::Shape = &const {
         crate::Shape::builder()

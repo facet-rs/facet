@@ -26,8 +26,8 @@ pub use value::*;
 mod option;
 pub use option::*;
 
-mod smart_pointer;
-pub use smart_pointer::*;
+mod smartptr;
+pub use smartptr::*;
 
 mod scalar;
 pub use scalar::*;

@@ -2,7 +2,7 @@ use std::io::Write;
 use std::path::Path;
 use std::process;
 
-mod gen_tuples_impls;
+mod gen_tuple_impl;
 mod readmes;
 
 use facet_ansi::Stylize as _;
@@ -317,9 +317,9 @@ fn generate_tuple_impls(has_diffs: &mut bool, opts: Options) {
     let start_time = std::time::Instant::now();
 
     // Define the base path and template path
-    let base_path = Path::new("facet-core/src/_trait/impls/tuples_impls.rs");
+    let base_path = Path::new("facet-core/src/impls_core/tuple.rs");
 
-    let output = gen_tuples_impls::generate_tuples_impls();
+    let output = gen_tuple_impl::generate_tuples_impls();
 
     // Format the generated code using rustfmt
     let mut fmt = std::process::Command::new("rustfmt")

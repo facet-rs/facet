@@ -241,10 +241,10 @@ pub type WriteFn = for<'ptr> unsafe fn(opaque: OpaqueConst<'ptr>) -> Result<Lock
 /// Functions for interacting with a smart pointer
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SmartPointerVTable {
-    /// See [`TryUpgradeFn`]
+    /// See [`UpgradeIntoFn`]
     pub upgrade_into_fn: Option<UpgradeIntoFn>,
 
-    /// See [`DowngradeFn`]
+    /// See [`DowngradeIntoFn`]
     pub downgrade_into_fn: Option<DowngradeIntoFn>,
 
     /// See [`BorrowFn`]
@@ -399,4 +399,6 @@ pub enum KnownSmartPointer {
     Mutex,
     /// [`RwLock<T>`](std::sync::RwLock), a reader-writer lock
     RwLock,
+    /// [`NonNull<T>`](core::ptr::NonNull), a wrapper around a raw pointer that is not null
+    NonNull,
 }

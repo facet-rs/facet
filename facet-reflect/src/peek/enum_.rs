@@ -10,7 +10,6 @@ pub struct PeekEnum<'mem> {
     ///
     /// Note that this stores both the discriminant and the variant data
     /// (if any), and the layout depends on the enum representation.
-    /// Use [`Self::variant_data`] to get a pointer to the variant data.
     pub(crate) value: crate::PeekValue<'mem>,
 
     /// The definition of the enum.
