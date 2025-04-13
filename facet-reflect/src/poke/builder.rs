@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use facet_core::{Def, Facet, FieldError, OpaqueConst, Variant};
+use facet_core::{Def, Facet, FieldError, Variant};
 
 use crate::{ReflectError, ValueId};
 
@@ -148,7 +148,14 @@ impl<'mem> Builder<'mem> {
         }
 
         // move the value into the frame
-        unsafe { frame.value.data.write(OpaqueConst::new(&raw const t)) };
+        unsafe {
+            let size = core::mem::size_of::<T>();
+            core::ptr::copy_nonoverlapping(
+                &raw const t as *const u8,
+                frame.value.data.as_mut_byte_ptr(),
+                size,
+            );
+        };
         core::mem::forget(t);
 
         // mark the field as initialized

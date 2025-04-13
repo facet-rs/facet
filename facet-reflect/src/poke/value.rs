@@ -151,7 +151,7 @@ impl HeapVal<PokeValue<'_>> {
             self.shape()
         );
         let u = unsafe { self.data.read::<U>() };
-        core::mem::forget(self);
+        self.map(core::mem::forget);
         Ok(u)
     }
 
