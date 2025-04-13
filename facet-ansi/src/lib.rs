@@ -1,4 +1,9 @@
-use std::fmt::{self, Debug, Display, Formatter};
+#![warn(missing_docs)]
+#![warn(clippy::std_instead_of_core)]
+#![warn(clippy::std_instead_of_alloc)]
+#![doc = include_str!("../README.md")]
+
+use core::fmt::{self, Debug, Display, Formatter};
 
 // Re-export Style from anstyle
 pub use anstyle::Style;

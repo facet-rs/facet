@@ -1,5 +1,6 @@
 mod facts;
 mod struct_;
+mod ui_tests;
 mod value;
 
 // mod c_test;

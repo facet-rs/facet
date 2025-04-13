@@ -26,3 +26,4 @@ facet-ansi = { path = "../facet-ansi" }
 facet-samplelibc = { path = "../facet-samplelibc" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 log = "0.4.27"
+tempfile = "3.19.1"
