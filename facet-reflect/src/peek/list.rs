@@ -15,7 +15,7 @@ impl<'mem> Iterator for PeekListIter<'mem> {
         if self.index >= self.len {
             return None;
         }
-        let item = self.list.item_at(self.index);
+        let item = self.list.get(self.index);
         self.index += 1;
         item
     }
@@ -64,7 +64,7 @@ impl<'mem> PeekList<'mem> {
     /// # Panics
     ///
     /// Panics if the index is out of bounds
-    pub fn item_at(&self, index: usize) -> Option<PeekValue<'mem>> {
+    pub fn get(&self, index: usize) -> Option<PeekValue<'mem>> {
         if index >= self.len() {
             return None;
         }
