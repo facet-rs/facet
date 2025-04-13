@@ -545,9 +545,9 @@ impl ValueVTableBuilder {
         self
     }
 
-    /// Sets the drop_in_place function for this builder.
-    pub const fn drop_in_place(mut self, drop_in_place: DropInPlaceFn) -> Self {
-        self.drop_in_place = Some(drop_in_place);
+    /// Sets the invariants function for this builder.
+    pub const fn invariants(mut self, invariants: InvariantsFn) -> Self {
+        self.invariants = Some(invariants);
         self
     }
 

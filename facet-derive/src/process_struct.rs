@@ -85,13 +85,15 @@ unsafe impl<{generics_def}> ::facet::Facet for {struct_name}<{generics_use}> {wh
     const SHAPE: &'static ::facet::Shape = &const {{
         let fields: &'static [::facet::Field] = &const {{[{fields}]}};
 
+        let mut vtable = ::facet::value_vtable!(
+            Self,
+            |f, _opts| ::core::fmt::Write::write_str(f, "{struct_name}")
+        );
+
         ::facet::Shape::builder()
             .id(::facet::ConstTypeId::of::<Self>())
             .layout(::core::alloc::Layout::new::<Self>())
-            .vtable(::facet::value_vtable!(
-                Self,
-                |f, _opts| ::core::fmt::Write::write_str(f, "{struct_name}")
-            ))
+            .vtable(vtable)
             .def(::facet::Def::Struct(::facet::Struct::builder()
                 .kind({kind})
                 .fields(fields)

@@ -1,20 +1,12 @@
 use facet::Facet;
 use facet_reflect::{PokeValueUninit, ReflectError};
 
-use std::fmt::Debug;
+use std::{fmt::Debug, mem::MaybeUninit};
 
 #[derive(Debug, PartialEq, Eq, Facet)]
-#[facet(invariants = "invariants")]
 struct Person {
     age: u64,
     name: String,
-}
-
-impl Person {
-    /// Checks invariants for this struct
-    fn invariants(&self) -> bool {
-        self.age < 150
-    }
 }
 
 impl Default for Person {
@@ -130,7 +122,40 @@ fn nested_struct() -> eyre::Result<()> {
 }
 
 #[test]
-fn struct_with_invariant() {}
+fn struct_with_invariant() {
+    #[derive(Facet)]
+    #[facet(invariants = "invariants")]
+    struct MyNonZeroU8 {
+        value: u8,
+    }
+
+    impl MyNonZeroU8 {
+        // TODO: does this need to be MaybUninit?
+        fn invariants(&self) -> bool {
+            self.value != 0
+        }
+    }
+
+    facet_testhelpers::setup();
+
+    let (poke, guard) = PokeValueUninit::alloc::<MyNonZeroU8>();
+    let poke = poke.into_struct().unwrap();
+    let poke = poke
+        .field_by_name("value")
+        .unwrap()
+        .set(0u8)
+        .unwrap()
+        .into_struct_uninit();
+
+    // This should fail because the invariant is violated (value == 0)
+    match poke.build::<MyNonZeroU8>(Some(guard)) {
+        Err(ReflectError::InvariantViolation) => {
+            // Expected failure due to invariant violation
+        }
+        Ok(_) => panic!("Expected invariant violation, but build succeeded"),
+        Err(e) => panic!("Expected invariant violation, got {:?}", e),
+    }
+}
 
 // #[test]
 // fn mutate_person() {

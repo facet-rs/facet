@@ -20,6 +20,8 @@ pub enum ReflectError {
     },
 
     WasNotAStruct,
+
+    InvariantViolation,
 }
 
 impl core::fmt::Display for ReflectError {
@@ -43,6 +45,7 @@ impl core::fmt::Display for ReflectError {
                 write!(f, "Wrong shape: expected {}, but got {}", expected, actual)
             }
             ReflectError::WasNotAStruct => write!(f, "Was not a struct"),
+            ReflectError::InvariantViolation => write!(f, "Invariant violation"),
         }
     }
 }

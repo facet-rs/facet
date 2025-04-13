@@ -102,7 +102,7 @@ impl<'mem> Slot<'mem> {
                 },
                 storage,
             }),
-            Err(value) => Err(ReflectError::WasNotAStruct),
+            Err(_) => Err(ReflectError::WasNotAStruct),
         }
     }
 }

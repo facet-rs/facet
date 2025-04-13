@@ -95,13 +95,13 @@ impl<'mem> PokeStructUninit<'mem> {
     /// - Not all the fields have been initialized.
     /// - The generic type parameter T does not match the shape that this PokeStruct is building.
     #[cfg(feature = "alloc")]
-    pub fn build_boxed<T: Facet>(self) -> Box<T> {
-        self.assert_all_fields_initialized();
+    pub fn build_boxed<T: Facet>(self) -> Result<Box<T>, ReflectError> {
+        self.assert_all_fields_initialized()?;
         self.shape().assert_type::<T>();
 
         let boxed = unsafe { Box::from_raw(self.value.data.as_mut_bytes() as *mut T) };
         core::mem::forget(self);
-        boxed
+        Ok(boxed)
     }
 
     pub(crate) unsafe fn field_uninit(
