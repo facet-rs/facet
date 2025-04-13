@@ -9,18 +9,18 @@ use super::{PeekEnum, PeekList, PeekMap, PeekSmartPointer, PeekStruct};
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ValueId {
     pub(crate) shape: &'static Shape,
-    pub(crate) ptr_val: u64,
+    pub(crate) ptr: *const u8,
 }
 
 impl ValueId {
-    pub(crate) fn new(shape: &'static Shape, ptr_val: u64) -> Self {
-        Self { shape, ptr_val }
+    pub(crate) fn new(shape: &'static Shape, ptr: *const u8) -> Self {
+        Self { shape, ptr }
     }
 }
 
 impl core::fmt::Display for ValueId {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}@{:016x}", self.shape, self.ptr_val)
+        write!(f, "{}@{:p}", self.shape, self.ptr)
     }
 }
 
@@ -68,7 +68,7 @@ impl<'mem> PeekValue<'mem> {
 
     /// Returns a unique identifier for this value, usable for cycle detection
     pub fn id(&self) -> ValueId {
-        ValueId::new(self.shape, self.data.as_byte_ptr() as u64)
+        ValueId::new(self.shape, self.data.as_byte_ptr())
     }
 
     /// Returns true if the two values are pointer-equal

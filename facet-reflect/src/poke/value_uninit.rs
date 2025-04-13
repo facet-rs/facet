@@ -48,7 +48,7 @@ impl<'mem> PokeValueUninit<'mem> {
 
     /// Returns a unique identifier for this value, usable for cycle detection
     pub fn id(&self) -> ValueId {
-        ValueId::new(self.shape, self.data.as_byte_ptr() as u64)
+        ValueId::new(self.shape, self.data.as_byte_ptr())
     }
 
     /// Shape getter
