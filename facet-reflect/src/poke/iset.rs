@@ -5,7 +5,8 @@ use facet_core::Field;
 pub struct ISet(u64);
 
 impl ISet {
-    const MAX_VALUE: usize = 63;
+    /// The maximum index that can be tracked.
+    pub const MAX_INDEX: usize = 63;
 
     /// Creates a new ISet with all (given) fields set.
     pub fn all(fields: &[Field]) -> Self {

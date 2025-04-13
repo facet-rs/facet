@@ -28,9 +28,9 @@ struct IState {
     fields: ISet,
 }
 
-pub struct Tree<'mem> {
+pub struct Builder<'mem> {
     /// guarantees the memory allocation for the whole tree
-    guard: Guard,
+    guard: Option<Guard>,
 
     /// the frames of the tree
     frames: Vec<Frame<'mem>>,
@@ -39,7 +39,7 @@ pub struct Tree<'mem> {
     isets: HashMap<ValueId, IState>,
 }
 
-impl<'mem> Tree<'mem> {
+impl<'mem> Builder<'mem> {
     /// Creates a new Tree
     pub fn new(value: HeapVal<PokeValueUninit<'mem>>) -> Self {
         let HeapVal::Full { inner, guard } = value else {
@@ -52,7 +52,7 @@ impl<'mem> Tree<'mem> {
                 index: None,
                 istate: Default::default(),
             }],
-            guard,
+            guard: Some(guard),
             isets: Default::default(),
         }
     }
@@ -155,7 +155,7 @@ impl<'mem> Tree<'mem> {
     }
 
     /// Asserts everything is initialized — get back a `HeapAlloc<PokeValue>`
-    pub fn finish<T>(mut self) -> Result<HeapVal<PokeValue<'mem>>, ReflectError> {
+    pub fn build<T>(mut self) -> Result<HeapVal<PokeValue<'mem>>, ReflectError> {
         let Some(frame) = self.frames.pop() else {
             return Err(ReflectError::InvariantViolation);
         };
@@ -196,13 +196,13 @@ impl<'mem> Tree<'mem> {
 
         Ok(HeapVal::Full {
             inner: PokeValue { data, shape },
-            guard: self.guard,
+            guard: self.guard.take().unwrap(),
         })
     }
 }
 
-impl Drop for Tree<'_> {
+impl Drop for Builder<'_> {
     fn drop(&mut self) {
-        todo!()
+        todo!("de-initialize fields if we have a guard still (which means nobody called `finish`)")
     }
 }

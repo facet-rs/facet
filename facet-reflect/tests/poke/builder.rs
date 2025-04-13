@@ -1,5 +1,5 @@
 use facet::Facet;
-use facet_reflect::{PokeValueUninit, Tree};
+use facet_reflect::{PokeValueUninit, Builder};
 
 #[derive(Facet, PartialEq, Eq, Debug)]
 struct Outer {
@@ -16,7 +16,7 @@ struct Inner {
 #[test]
 fn test_tree() -> eyre::Result<()> {
     let v = PokeValueUninit::alloc::<Outer>();
-    let v = Tree::new(v);
+    let v = Builder::new(v);
     let v = v.field_named("name")?;
     v.put("Hello, world!")?;
 

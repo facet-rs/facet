@@ -1,7 +1,7 @@
 extern crate alloc;
 
-mod tree;
-pub use tree::*;
+mod builder;
+pub use builder::*;
 
 mod iset;
 pub use iset::*;
