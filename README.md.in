@@ -94,10 +94,10 @@ fn main() {
 
 ```bash
 facet on  main [!?] via 🦀 v1.86.0
-❯ cargo run --example various_vecs
+❯ cargo run --example vec_person
    Compiling facet-pretty v0.1.2 (/Users/amos/bearcove/facet/facet-pretty)
     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.15s
-     Running `target/debug/examples/various_vecs`
+     Running `target/debug/examples/vec_person`
 Vec<Person> [
   Person {
     name: Alice,
@@ -244,7 +244,7 @@ eprintln!("args: {}", args.pretty());
 
 ```bash
 facet on  args [!] via 🦀 v1.86.0
-❯ RUST_LOG=info nt run --no-capture test_arg_parse
+❯ RUST_LOG=info cargo nextest run --no-capture test_arg_parse
     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
 ────────────
  Nextest run ID a8ab7183-8333-465f-a94f-6036576f19c2 with nextest profile: default
