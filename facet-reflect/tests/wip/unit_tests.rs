@@ -14,15 +14,21 @@ struct Inner {
 }
 
 #[test]
-fn test_tree() -> eyre::Result<()> {
+fn wip_nested() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
     let v = WipValue::alloc::<Outer>()
         .field_named("name")?
         .put(String::from("Hello, world!"))?
+        .pop()?
         .field_named("inner")?
         .field_named("x")?
         .put(42)?
+        .pop()?
         .field_named("b")?
         .put(43)?
+        .pop()?
+        .pop()?
         .build()?
         .materialize::<Outer>()?;
 
@@ -39,6 +45,8 @@ fn test_tree() -> eyre::Result<()> {
 
 #[test]
 fn readme_sample() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
     use facet::Facet;
     use facet_reflect::WipValue;
 
@@ -51,6 +59,7 @@ fn readme_sample() -> eyre::Result<()> {
     let foo_bar = WipValue::alloc::<FooBar>()
         .field_named("foo")?
         .put(42u64)?
+        .pop()?
         .field_named("bar")?
         .put(String::from("Hello, World!"))?
         .build()?
@@ -58,6 +67,30 @@ fn readme_sample() -> eyre::Result<()> {
 
     // Now we can use the constructed value
     println!("{}", foo_bar.bar);
+
+    Ok(())
+}
+
+#[test]
+fn lifetimes() -> eyre::Result<()> {
+    #[derive(Debug, Facet)]
+    struct Foo<'a> {
+        s: &'a str,
+    }
+
+    let wip = WipValue::alloc::<Foo>();
+    let v = {
+        let s = "abc".to_string();
+        let foo = Foo { s: &s };
+
+        wip.put(foo)
+            .unwrap()
+            .build()
+            .unwrap()
+            .materialize::<Foo>()
+            .unwrap()
+    };
+    dbg!(v);
 
     Ok(())
 }

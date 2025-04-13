@@ -37,6 +37,23 @@ impl Frame<'_> {
             _ => self.istate.fields.are_all_set(1),
         }
     }
+
+    /// Marks the frame as fully initialized
+    unsafe fn mark_fully_initialized(&mut self) {
+        match self.shape.def {
+            Def::Struct(sd) => {
+                self.istate.fields = ISet::all(sd.fields);
+            }
+            Def::Enum(_) => {
+                if let Some(variant) = &self.istate.variant {
+                    self.istate.fields = ISet::all(variant.data.fields);
+                }
+            }
+            _ => {
+                self.istate.fields.set(0);
+            }
+        }
+    }
 }
 
 /// Initialization state
@@ -58,7 +75,7 @@ pub struct WipValue<'mem> {
     frames: Vec<Frame<'mem>>,
 
     /// keeps track of initialization of out-of-tree frames
-    isets: HashMap<ValueId, IState>,
+    istates: HashMap<ValueId, IState>,
 }
 
 impl<'mem> WipValue<'mem> {
@@ -77,7 +94,7 @@ impl<'mem> WipValue<'mem> {
                 istate: Default::default(),
             }],
             guard: Some(guard),
-            isets: Default::default(),
+            istates: Default::default(),
         }
     }
 
@@ -113,12 +130,16 @@ impl<'mem> WipValue<'mem> {
             })?;
         let field_data = unsafe { frame.data.field_uninit_at(field.offset) };
 
-        self.frames.push(Frame {
+        let mut frame = Frame {
             data: field_data,
             shape: field.shape,
             index: Some(index),
             istate: Default::default(),
-        });
+        };
+        if let Some(iset) = self.istates.remove(&frame.id()) {
+            frame.istate = iset;
+        }
+        self.frames.push(frame);
         Ok(self)
     }
 
@@ -133,7 +154,7 @@ impl<'mem> WipValue<'mem> {
     /// * `Ok(Self)` if the value was successfully put into the frame.
     /// * `Err(ReflectError)` if there was an error putting the value into the frame.
     pub fn put<T: Facet + 'mem>(mut self, t: T) -> Result<Self, ReflectError> {
-        let Some(frame) = self.frames.pop() else {
+        let Some(frame) = self.frames.last_mut() else {
             return Err(ReflectError::OperationFailed {
                 shape: T::SHAPE,
                 operation: "tried to put a T but there was no frame to put T into",
@@ -158,18 +179,25 @@ impl<'mem> WipValue<'mem> {
 
         unsafe {
             frame.data.put(t);
+            frame.mark_fully_initialized();
         }
 
+        let shape = frame.shape;
+        let index = frame.index;
+
         // mark the field as initialized
-        self.mark_field_as_initialized(frame.shape, frame.index)?;
+        self.mark_field_as_initialized(shape, index)?;
 
         Ok(self)
     }
 
     /// Puts the default value in the currrent frame.
     pub fn put_default(mut self) -> Result<Self, ReflectError> {
-        let Some(frame) = self.frames.last() else {
-            return Err(ReflectError::InvariantViolation);
+        let Some(frame) = self.frames.last_mut() else {
+            return Err(ReflectError::OperationFailed {
+                shape: <()>::SHAPE,
+                operation: "tried to put default value but there was no frame",
+            });
         };
 
         let vtable = frame.shape.vtable;
@@ -182,10 +210,14 @@ impl<'mem> WipValue<'mem> {
         };
         unsafe {
             default_in_place(frame.data);
+            frame.mark_fully_initialized();
         }
 
+        let shape = frame.shape;
+        let index = frame.index;
+
         // mark the field as initialized
-        self.mark_field_as_initialized(frame.shape, frame.index)?;
+        self.mark_field_as_initialized(shape, index)?;
 
         Ok(self)
     }
@@ -197,7 +229,8 @@ impl<'mem> WipValue<'mem> {
         index: Option<usize>,
     ) -> Result<(), ReflectError> {
         if let Some(index) = index {
-            let Some(parent) = self.frames.last_mut() else {
+            let parent_index = self.frames.len().saturating_sub(2);
+            let Some(parent) = self.frames.get_mut(parent_index) else {
                 return Err(ReflectError::OperationFailed {
                     shape,
                     operation: "was supposed to mark a field as initialized, but there was no parent frame",
@@ -212,6 +245,9 @@ impl<'mem> WipValue<'mem> {
             }
 
             if parent.istate.fields.has(index) {
+                panic!(
+                    "was supposed to mark a field as initialized, but the parent frame already had it marked as initialized"
+                );
                 return Err(ReflectError::OperationFailed {
                     shape,
                     operation: "was supposed to mark a field as initialized, but the parent frame already had it marked as initialized",
@@ -245,7 +281,7 @@ impl<'mem> WipValue<'mem> {
     }
 
     fn track(&mut self, frame: Frame<'mem>) {
-        self.isets.insert(frame.id(), frame.istate);
+        self.istates.insert(frame.id(), frame.istate);
     }
 
     /// Asserts everything is initialized
@@ -257,10 +293,13 @@ impl<'mem> WipValue<'mem> {
             }
         }
         let Some(root) = root else {
-            return Err(ReflectError::InvariantViolation);
+            return Err(ReflectError::OperationFailed {
+                shape: <()>::SHAPE,
+                operation: "tried to build a value but there was no root frame",
+            });
         };
 
-        for (id, is) in self.isets.drain() {
+        for (id, is) in self.istates.drain() {
             let field_count = match id.shape.def {
                 Def::Struct(def) => def.fields.len(),
                 Def::Enum(_) => todo!(),
@@ -300,7 +339,7 @@ impl<'mem> WipValue<'mem> {
 
 impl Drop for WipValue<'_> {
     fn drop(&mut self) {
-        for (id, is) in self.isets.drain() {
+        for (id, is) in self.istates.drain() {
             let field_count = match id.shape.def {
                 Def::Struct(def) => def.fields.len(),
                 Def::Enum(_) => todo!(),
@@ -345,8 +384,6 @@ pub struct Guard {
 impl Drop for Guard {
     fn drop(&mut self) {
         if self.layout.size() != 0 {
-            eprintln!("GUARD IS DEALLOCATING {:p} {:?}", self.ptr, self.layout);
-
             // SAFETY: `ptr` has been allocated via the global allocator with the given layout
             unsafe { alloc::alloc::dealloc(self.ptr, self.layout) };
         }
