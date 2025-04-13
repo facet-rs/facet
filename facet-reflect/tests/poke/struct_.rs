@@ -156,23 +156,3 @@ fn struct_with_invariant() {
         Err(e) => panic!("Expected invariant violation, got {:?}", e),
     }
 }
-
-#[test]
-fn mutate_person() {
-    facet_testhelpers::setup();
-
-    let mut person: Person = Default::default();
-
-    {
-        let mut poke = facet_reflect::poke(&mut person).into_struct().unwrap();
-        // Use the field_by_name method
-        poke.field_by_name("name")
-            .unwrap()
-            .set(String::from("Hello, World!"))
-            .unwrap();
-    }
-
-    // Verify the fields were set correctly
-    assert_eq!(person.age, 69);
-    assert_eq!(person.name, "Hello, World!");
-}

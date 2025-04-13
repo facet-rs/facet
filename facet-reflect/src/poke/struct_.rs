@@ -40,7 +40,7 @@ impl<'mem> PokeStruct<'mem> {
                 shape: self.value.shape,
             },
             def: self.def,
-            iset: ISet::all(&self.def.fields),
+            iset: ISet::all(self.def.fields),
         }
     }
 }

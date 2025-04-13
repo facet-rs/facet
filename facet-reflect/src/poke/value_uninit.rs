@@ -148,7 +148,7 @@ impl<'mem> PokeValueUninit<'mem> {
     }
 
     /// Tries to identify this value as a struct
-    pub fn into_struct(self) -> Result<PokeStructUninit<'mem>, Self> {
+    pub fn into_struct(self) -> Result<PokeStructUninit<'mem>, ReflectError> {
         if let Def::Struct(def) = self.shape.def {
             Ok(PokeStructUninit {
                 value: self,
@@ -156,43 +156,45 @@ impl<'mem> PokeValueUninit<'mem> {
                 def,
             })
         } else {
-            Err(self)
+            Err(ReflectError::WasNotA { name: "struct" })
         }
     }
 
     /// Tries to identify this value as an enum
-    pub fn into_enum(self) -> Result<PokeEnumNoVariant<'mem>, Self> {
+    pub fn into_enum(self) -> Result<PokeEnumNoVariant<'mem>, ReflectError> {
         if let Def::Enum(def) = self.shape.def {
             Ok(PokeEnumNoVariant { value: self, def })
         } else {
-            Err(self)
+            Err(ReflectError::WasNotA { name: "enum" })
         }
     }
 
     /// Tries to identify this value as a map
-    pub fn into_map(self) -> Result<PokeMapUninit<'mem>, Self> {
+    pub fn into_map(self) -> Result<PokeMapUninit<'mem>, ReflectError> {
         if let Def::Map(def) = self.shape.def {
             Ok(PokeMapUninit { value: self, def })
         } else {
-            Err(self)
+            Err(ReflectError::WasNotA { name: "map" })
         }
     }
 
     /// Tries to identify this value as a list
-    pub fn into_list(self) -> Result<PokeListUninit<'mem>, Self> {
+    pub fn into_list(self) -> Result<PokeListUninit<'mem>, ReflectError> {
         if let Def::List(def) = self.shape.def {
             Ok(PokeListUninit { value: self, def })
         } else {
-            Err(self)
+            Err(ReflectError::WasNotA { name: "list" })
         }
     }
 
     /// Tries to identify this value as a smart pointer
-    pub fn into_smart_pointer(self) -> Result<PokeSmartPointerUninit<'mem>, Self> {
+    pub fn into_smart_pointer(self) -> Result<PokeSmartPointerUninit<'mem>, ReflectError> {
         if let Def::SmartPointer(def) = self.shape.def {
             Ok(PokeSmartPointerUninit { value: self, def })
         } else {
-            Err(self)
+            Err(ReflectError::WasNotA {
+                name: "smart pointer",
+            })
         }
     }
 }

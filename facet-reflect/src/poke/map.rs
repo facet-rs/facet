@@ -9,7 +9,7 @@ pub struct PokeMap<'mem> {
     pub(crate) def: MapDef,
 }
 
-impl<'mem> PokeMap<'mem> {
+impl PokeMap<'_> {
     /// Get the shape of the map
     #[inline(always)]
     pub fn shape(&self) -> &'static Shape {

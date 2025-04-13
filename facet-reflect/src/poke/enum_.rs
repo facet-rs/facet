@@ -17,7 +17,7 @@ pub struct PokeEnum<'mem> {
     pub(crate) variant_idx: usize,
 }
 
-impl<'mem> PokeEnum<'mem> {
+impl PokeEnum<'_> {
     /// Shape getter
     #[inline(always)]
     pub fn shape(&self) -> &'static Shape {

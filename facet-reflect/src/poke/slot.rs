@@ -105,7 +105,7 @@ impl<'mem> Slot<'mem> {
                 },
                 storage,
             }),
-            Err(_) => Err(ReflectError::WasNotAStruct),
+            Err(_) => Err(ReflectError::WasNotA { name: "struct" }),
         }
     }
 }

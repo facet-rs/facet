@@ -25,7 +25,10 @@ pub enum ReflectError {
     },
 
     /// Attempted to perform an operation that expected a struct on a non-struct value.
-    WasNotAStruct,
+    WasNotA {
+        /// The name of the expected type.
+        name: &'static str,
+    },
 
     /// An invariant of the reflection system was violated.
     InvariantViolation,
@@ -51,7 +54,7 @@ impl core::fmt::Display for ReflectError {
             ReflectError::WrongShape { expected, actual } => {
                 write!(f, "Wrong shape: expected {}, but got {}", expected, actual)
             }
-            ReflectError::WasNotAStruct => write!(f, "Was not a struct"),
+            ReflectError::WasNotA { name } => write!(f, "Was not a {}", name),
             ReflectError::InvariantViolation => write!(f, "Invariant violation"),
         }
     }

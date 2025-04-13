@@ -14,7 +14,7 @@ pub struct PokeEnumUninit<'mem> {
     pub(crate) variant_idx: usize,
 }
 
-impl<'mem> PokeEnumUninit<'mem> {
+impl PokeEnumUninit<'_> {
     /// Shape getter
     #[inline(always)]
     pub fn shape(&self) -> &'static Shape {

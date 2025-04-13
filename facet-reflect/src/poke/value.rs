@@ -62,12 +62,14 @@ impl<'mem> PokeValue<'mem> {
     }
 
     /// Gets as a reference to `&T`
+    #[allow(clippy::should_implement_trait)]
     pub fn as_ref<T: Facet>(&self) -> &T {
         self.shape.assert_type::<T>();
         unsafe { self.data.as_ref::<T>() }
     }
 
     /// Attempt to clone this value. Returns None if the value is not cloneable.
+    #[allow(clippy::should_implement_trait)]
     pub fn clone(&self) -> Option<Self> {
         let clone_fn = self.vtable().clone_into?;
         let uninit_data = self.shape.allocate();

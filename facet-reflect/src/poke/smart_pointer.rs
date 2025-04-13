@@ -74,7 +74,7 @@ impl<'mem> PokeSmartPointer<'mem> {
         let (data, shape) = unsafe { upgrade_fn(self.data())? };
         Some(Self {
             value: PokeValue { data, shape },
-            def: self.def.clone(),
+            def: self.def,
         })
     }
 

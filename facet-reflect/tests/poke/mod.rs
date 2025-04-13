@@ -1,4 +1,5 @@
 mod struct_;
+mod value;
 
 // mod c_test;
 // mod enum_;

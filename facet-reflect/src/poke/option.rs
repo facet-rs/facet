@@ -7,7 +7,7 @@ pub struct PokeOption<'mem> {
     pub(crate) def: OptionDef,
 }
 
-impl<'mem> PokeOption<'mem> {
+impl PokeOption<'_> {
     /// Returns the shape of this option
     pub fn shape(&self) -> &'static Shape {
         self.value.shape()

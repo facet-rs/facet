@@ -10,7 +10,7 @@ pub struct PokeList<'mem> {
     pub(crate) def: ListDef,
 }
 
-impl<'mem> PokeList<'mem> {
+impl PokeList<'_> {
     #[inline(always)]
     /// Shape getter
     pub fn shape(&self) -> &'static Shape {
