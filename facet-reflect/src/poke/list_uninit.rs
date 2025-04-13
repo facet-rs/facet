@@ -1,4 +1,4 @@
-use facet_core::{ListDef, Shape};
+use facet_core::{Characteristic, ListDef, Shape};
 
 use crate::ReflectError;
 
@@ -34,8 +34,9 @@ impl<'mem> HeapVal<PokeListUninit<'mem>> {
                 let data = match init_in_place_with_capacity {
                     Some(init_fn) => unsafe { init_fn(this.value.data, capacity) },
                     None => {
-                        return Err(ReflectError::NoDefault {
+                        return Err(ReflectError::MissingCharacteristic {
                             shape: this.shape(),
+                            characteristic: Characteristic::Default,
                         });
                     }
                 };

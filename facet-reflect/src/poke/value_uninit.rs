@@ -4,7 +4,9 @@ use core::{
 };
 
 use crate::{ReflectError, ScalarType};
-use facet_core::{Def, Facet, OpaqueConst, OpaqueUninit, Shape, TryFromError, ValueVTable};
+use facet_core::{
+    Characteristic, Def, Facet, OpaqueConst, OpaqueUninit, Shape, TryFromError, ValueVTable,
+};
 
 use super::{
     ISet, PokeEnumNoVariant, PokeListUninit, PokeMapUninit, PokeSmartPointerUninit,
@@ -74,23 +76,6 @@ impl<'mem> PokeValueUninit<'mem> {
         } else {
             let shape = self.shape;
             Err((self, TryFromError::Unimplemented(shape)))
-        }
-    }
-
-    /// Attempts to parse a string into this value
-    ///
-    /// Returns `Ok(Opaque)` if parsing was successful, `Err(Self)` otherwise.
-    pub fn parse(self, s: &str) -> Result<PokeValue<'mem>, Self> {
-        if let Some(parse_fn) = self.vtable().parse {
-            match unsafe { parse_fn(s, self.data) } {
-                Ok(data) => Ok(PokeValue {
-                    shape: self.shape,
-                    data,
-                }),
-                Err(_) => Err(self),
-            }
-        } else {
-            Err(self)
         }
     }
 
@@ -166,6 +151,26 @@ impl<'mem> HeapVal<PokeValueUninit<'mem>> {
                 name: "smart pointer",
             })
         }
+    }
+
+    /// Attempts to parse a string into this value
+    ///
+    /// Returns `Ok(Opaque)` if parsing was successful, `Err(Self)` otherwise.
+    pub fn parse(self, s: &str) -> Result<HeapVal<PokeValue<'mem>>, ReflectError> {
+        let Some(parse_fn) = self.vtable().parse else {
+            return Err(ReflectError::MissingCharacteristic {
+                shape: self.shape,
+                characteristic: Characteristic::FromStr,
+            });
+        };
+
+        self.map_res(|this| match unsafe { parse_fn(s, this.data) } {
+            Ok(data) => Ok(PokeValue {
+                shape: this.shape,
+                data,
+            }),
+            Err(_) => Err(ReflectError::Unknown),
+        })
     }
 }
 
@@ -277,7 +282,10 @@ impl<'mem> HeapVal<PokeValueUninit<'mem>> {
     /// Returns `Ok(PokeValue)` if setting to default was successful, `Err(Self)` otherwise.
     pub fn default_in_place(self) -> Result<HeapVal<PokeValue<'mem>>, ReflectError> {
         let Some(default_in_place_fn) = self.vtable().default_in_place else {
-            return Err(ReflectError::NoDefault { shape: self.shape });
+            return Err(ReflectError::MissingCharacteristic {
+                shape: self.shape,
+                characteristic: Characteristic::Default,
+            });
         };
         self.map_res(|this| {
             Ok(PokeValue {

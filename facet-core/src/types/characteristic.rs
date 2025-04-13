@@ -47,6 +47,9 @@ pub enum Characteristic {
 
     /// Implements Default
     Default,
+
+    /// Implements FromStr
+    FromStr,
 }
 
 impl Characteristic {
@@ -107,6 +110,7 @@ impl Shape {
             Characteristic::Ord => self.vtable.ord.is_some(),
             Characteristic::Hash => self.vtable.hash.is_some(),
             Characteristic::Default => self.vtable.default_in_place.is_some(),
+            Characteristic::FromStr => self.vtable.parse.is_some(),
         }
     }
 
@@ -168,6 +172,11 @@ impl Shape {
     /// Check if this shape implements the Default trait
     pub const fn is_default(&'static self) -> bool {
         self.is(Characteristic::Default)
+    }
+
+    /// Check if this shape implements the FromStr trait
+    pub const fn is_from_str(&'static self) -> bool {
+        self.is(Characteristic::FromStr)
     }
 
     /// Writes the name of this type to the given formatter

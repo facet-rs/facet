@@ -1,4 +1,4 @@
-use facet_core::{EnumDef, Field, Shape};
+use facet_core::{Characteristic, EnumDef, Field, Shape};
 
 /// Errors that can occur when reflecting on types.
 #[derive(Debug)]
@@ -35,9 +35,16 @@ pub enum ReflectError {
     InvariantViolation,
 
     /// Attempted to set a value to its default, but the value doesn't implement `Default`.
-    NoDefault {
+    MissingCharacteristic {
         /// The shape of the value that doesn't implement `Default`.
         shape: &'static Shape,
+        characteristic: Characteristic,
+    },
+
+    /// An operation failed for a given shape
+    OperationFailed {
+        shape: &'static Shape,
+        operation: &'static str,
     },
 
     Unknown,
@@ -65,11 +72,16 @@ impl core::fmt::Display for ReflectError {
             }
             ReflectError::WasNotA { name } => write!(f, "Was not a {}", name),
             ReflectError::InvariantViolation => write!(f, "Invariant violation"),
-            ReflectError::NoDefault { shape } => write!(
+            ReflectError::MissingCharacteristic {
+                shape,
+                characteristic,
+            } => write!(
                 f,
-                "No default value available for type {}. The type does not implement the Default trait, which is required for this operation.",
-                shape
+                "{shape} does not implement characteristic {characteristic:?}",
             ),
+            ReflectError::OperationFailed { shape, operation } => {
+                write!(f, "Operation '{}' failed for shape {}", operation, shape)
+            }
             ReflectError::Unknown => write!(f, "Unknown error"),
         }
     }
