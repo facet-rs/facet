@@ -5,6 +5,8 @@ use facet_core::Field;
 pub struct ISet(u64);
 
 impl ISet {
+    const MAX_VALUE: usize = 63;
+
     /// Creates a new ISet with all (given) fields set.
     pub fn all(fields: &[Field]) -> Self {
         let mut iset = ISet::default();
@@ -45,6 +47,11 @@ impl ISet {
         }
         let mask = (1 << count) - 1;
         self.0 & mask == mask
+    }
+
+    /// Checks if any bit in the ISet is set.
+    pub fn is_any_set(&self) -> bool {
+        self.0 != 0
     }
 
     /// Clears all bits in the ISet.

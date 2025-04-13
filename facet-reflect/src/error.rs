@@ -1,4 +1,4 @@
-use facet_core::{Characteristic, EnumDef, Field, Shape};
+use facet_core::{Characteristic, EnumDef, Field, FieldError, Shape};
 
 /// Errors that can occur when reflecting on types.
 #[derive(Debug)]
@@ -50,6 +50,14 @@ pub enum ReflectError {
         operation: &'static str,
     },
 
+    /// An error occurred when attempting to access or modify a field.
+    FieldError {
+        /// The shape of the value containing the field.
+        shape: &'static Shape,
+        /// The specific error that occurred with the field.
+        field_error: FieldError,
+    },
+
     /// An unknown error occurred.
     Unknown,
 }
@@ -85,6 +93,9 @@ impl core::fmt::Display for ReflectError {
             ),
             ReflectError::OperationFailed { shape, operation } => {
                 write!(f, "Operation '{}' failed for shape {}", operation, shape)
+            }
+            ReflectError::FieldError { shape, field_error } => {
+                write!(f, "Field error for shape {}: {}", shape, field_error)
             }
             ReflectError::Unknown => write!(f, "Unknown error"),
         }

@@ -8,7 +8,7 @@ use std::{
 };
 
 use facet_core::{Def, Facet, FieldFlags, StructKind, TypeNameOpts};
-use facet_reflect::{PeekValue, PeekValueId};
+use facet_reflect::{PeekValue, ValueId};
 
 use crate::color::ColorGenerator;
 use facet_ansi::Stylize;
@@ -113,7 +113,7 @@ impl PrettyPrinter {
         &self,
         initial_value: PeekValue<'_>,
         f: &mut impl Write,
-        visited: &mut HashMap<PeekValueId, usize>,
+        visited: &mut HashMap<ValueId, usize>,
     ) -> fmt::Result {
         // Create a queue for our stack items
         let mut stack = VecDeque::new();

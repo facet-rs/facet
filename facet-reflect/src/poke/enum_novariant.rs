@@ -68,7 +68,7 @@ impl<'mem> PokeEnumNoVariant<'mem> {
         unsafe {
             // Zero out the memory first to ensure clean state
             core::ptr::write_bytes(
-                self.value.data.as_mut_bytes(),
+                self.value.data.as_mut_byte_ptr(),
                 0,
                 self.shape().layout.size(),
             );
@@ -76,7 +76,7 @@ impl<'mem> PokeEnumNoVariant<'mem> {
             // Set up the discriminant (tag)
             // For enums in Rust, the first bytes contain the discriminant
             let discriminant_value = variant.discriminant;
-            let ptr = self.value.data.as_mut_bytes();
+            let ptr = self.value.data.as_mut_byte_ptr();
 
             // Write the discriminant value based on the representation
             match self.def.repr {

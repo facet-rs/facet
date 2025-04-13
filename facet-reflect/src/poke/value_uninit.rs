@@ -3,7 +3,7 @@ use core::{
     ops::{Deref, DerefMut},
 };
 
-use crate::{ReflectError, ScalarType};
+use crate::{ReflectError, ScalarType, ValueId};
 use facet_core::{
     Characteristic, Def, Facet, OpaqueConst, OpaqueUninit, Shape, TryFromError, ValueVTable,
 };
@@ -40,10 +40,15 @@ impl<'mem> PokeValueUninit<'mem> {
         HeapVal::Full {
             inner: poke,
             guard: Guard {
-                ptr: data.as_mut_bytes(),
+                ptr: data.as_mut_byte_ptr(),
                 layout: shape.layout,
             },
         }
+    }
+
+    /// Returns a unique identifier for this value, usable for cycle detection
+    pub fn id(&self) -> ValueId {
+        ValueId::new(self.shape, self.data.as_byte_ptr() as u64)
     }
 
     /// Shape getter

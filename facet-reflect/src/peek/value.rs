@@ -7,18 +7,24 @@ use super::{PeekEnum, PeekList, PeekMap, PeekSmartPointer, PeekStruct};
 
 /// A unique identifier for a peek value
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct PeekValueId {
-    shape: &'static Shape,
-    ptr_val: u64,
+pub struct ValueId {
+    pub(crate) shape: &'static Shape,
+    pub(crate) ptr_val: u64,
 }
 
-impl core::fmt::Display for PeekValueId {
+impl ValueId {
+    pub(crate) fn new(shape: &'static Shape, ptr_val: u64) -> Self {
+        Self { shape, ptr_val }
+    }
+}
+
+impl core::fmt::Display for ValueId {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}@{:016x}", self.shape, self.ptr_val)
     }
 }
 
-impl core::fmt::Debug for PeekValueId {
+impl core::fmt::Debug for ValueId {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         core::fmt::Display::fmt(self, f)
     }
@@ -61,11 +67,8 @@ impl<'mem> PeekValue<'mem> {
     }
 
     /// Returns a unique identifier for this value, usable for cycle detection
-    pub fn id(&self) -> PeekValueId {
-        PeekValueId {
-            shape: self.shape,
-            ptr_val: self.data.as_byte_ptr() as u64,
-        }
+    pub fn id(&self) -> ValueId {
+        ValueId::new(self.shape, self.data.as_byte_ptr() as u64)
     }
 
     /// Returns true if the two values are pointer-equal

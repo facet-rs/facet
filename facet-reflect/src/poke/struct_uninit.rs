@@ -1,9 +1,8 @@
-use facet_core::{Facet, FieldError, Shape, Struct};
+use facet_core::{Facet, Shape, Struct};
 
 use crate::ReflectError;
 
-use super::slot::Parent;
-use super::{HeapVal, ISet, PokeStruct, PokeValue, PokeValueUninit, Slot};
+use super::{HeapVal, ISet, PokeStruct, PokeValue, PokeValueUninit};
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
@@ -122,42 +121,5 @@ impl<'mem> HeapVal<PokeStructUninit<'mem>> {
     /// Builds a boxed value of type `U` out of this
     pub fn materialize_boxed<U: Facet>(self) -> Result<Box<U>, ReflectError> {
         self.build()?.into_value().materialize_boxed::<U>()
-    }
-
-    /// Gets a slot for a given field, by index
-    pub fn field(self, index: usize) -> Slot<'mem> {
-        if index >= self.def.fields.len() {
-            panic!("Index out of bounds");
-        }
-        let field = self.def.fields[index];
-
-        eprintln!(
-            "=> COMPUTED ADDRESS FOR FIELD {index} (of name {}) IS \x1b[33m{:p}\x1b[0m",
-            field.name,
-            unsafe { self.value.data.field_uninit_at(field.offset).as_bytes() }
-        );
-
-        let value = PokeValueUninit {
-            data: unsafe { self.value.data.field_uninit_at(field.offset) },
-            shape: field.shape,
-        };
-
-        Slot {
-            parent: Parent::StructUninit(self),
-            value,
-            index,
-        }
-    }
-
-    /// Gets a slot for a given field, by name
-    pub fn field_by_name(self, name: &str) -> Result<Slot<'mem>, FieldError> {
-        for (index, field) in self.def.fields.iter().enumerate() {
-            if field.name == name {
-                eprintln!("FOUND FIELD BY NAME {:?} AT INDEX {:?}", name, index);
-                return Ok(self.field(index));
-            }
-        }
-
-        Err(FieldError::NoSuchField)
     }
 }

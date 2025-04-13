@@ -68,12 +68,12 @@ impl<'mem> OpaqueUninit<'mem> {
     }
 
     /// Returns the underlying raw pointer as a byte pointer
-    pub fn as_mut_bytes(self) -> *mut u8 {
+    pub fn as_mut_byte_ptr(self) -> *mut u8 {
         self.0
     }
 
     /// Returns the underlying raw pointer as a const byte pointer
-    pub fn as_bytes(self) -> *const u8 {
+    pub fn as_byte_ptr(self) -> *const u8 {
         self.0
     }
 
