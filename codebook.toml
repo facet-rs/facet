@@ -1,5 +1,10 @@
 dictionaries = []
-words = ["vtable"]
+words = [
+    "def",
+    "facet",
+    "guard",
+    "vtable",
+]
 flag_words = []
 ignore_paths = []
 ignore_patterns = []

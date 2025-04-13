@@ -1,6 +1,8 @@
-use facet_core::{LockResult, Opaque, Shape, SmartPointerDef, SmartPointerFlags};
+use facet_core::{Def, Facet, LockResult, Opaque, Shape, SmartPointerDef, SmartPointerFlags};
 
-use super::PokeValue;
+use crate::PeekValue;
+
+use super::{Guard, PokeValue, PokeValueUninit};
 
 /// Allows mutating an initialized smart pointer
 pub struct PokeSmartPointer<'mem> {
@@ -53,25 +55,36 @@ impl<'mem> PokeSmartPointer<'mem> {
         self.def.pointee
     }
 
-    // /// Attempts to borrow the inner value if the smart pointer supports it.
-    // pub fn try_borrow(&self) -> Option<PeekValue<'_>> {
-    //     let borrow_fn = self.def.vtable.borrow_fn?;
-    //     let opaque = unsafe { borrow_fn(self.data().as_const()) };
-    //     Some(unsafe { PeekValue::unchecked_new(opaque, self.def.t) })
-    // }
+    /// Attempts to borrow the inner value if the smart pointer supports it.
+    pub fn try_borrow(&self) -> Option<PeekValue<'_>> {
+        let borrow_fn = self.def.vtable.borrow_fn?;
+        let opaque = unsafe { borrow_fn(self.data().as_const()) };
+        Some(unsafe { PeekValue::unchecked_new(opaque, self.def.pointee) })
+    }
 
-    // /// Attempts to upgrade this pointer if it's a weak reference.
-    // pub fn try_upgrade(&self) -> Option<Self> {
-    //     let upgrade_fn = self.def.vtable.upgrade_into_fn?;
-    //     let opaque = unsafe { upgrade_fn(self.data(), facet_core::OpaqueUninit::null())? };
-    //     Some(Self {
-    //         value: PokeValue {
-    //             data: opaque,
-    //             shape: self.def.t,
-    //         },
-    //         def: self.def,
-    //     })
-    // }
+    /// Attempts to upgrade this pointer if it's a weak reference.
+    ///
+    /// The guard returned controls the lifetime of the upgraded smart pointer?
+    pub fn try_upgrade(&self) -> Option<(Self, Guard)> {
+        let upgrade_into_fn = self.def.vtable.upgrade_into_fn?;
+        let strong_shape = (self.def.strong?)();
+        let strong_def = match strong_shape.def {
+            Def::SmartPointer(def) => def,
+            _ => panic!("the strong equivalent of a smart pointer must be a smart pointer"),
+        };
+        let (target, guard) = PokeValueUninit::alloc_shape(strong_shape);
+        let strong_data = unsafe { upgrade_into_fn(self.data(), target.data)? };
+        Some((
+            Self {
+                value: PokeValue {
+                    shape: strong_shape,
+                    data: strong_data,
+                },
+                def: strong_def,
+            },
+            guard,
+        ))
+    }
 
     /// Attempts to lock this pointer if it's a mutex-like smart pointer.
     pub fn try_lock(&self) -> Option<Result<PokeSmartPointerWriteGuard<'_>, ()>> {
@@ -108,14 +121,14 @@ impl<'mem> PokeSmartPointer<'mem> {
         self.value
     }
 
-    // /// Moves `U` out of this `PokeSmartPointer`.
-    // ///
-    // /// Note that `U` should be something like `Arc<T>`, `Rc<T>`, etc.
-    // pub fn build_in_place<U: Facet>(self) -> U {
-    //     // Ensure the shape matches the expected type
-    //     self.shape.assert_type::<U>();
-    //     unsafe { self.data.read::<U>() }
-    // }
+    /// Moves `U` out of this `PokeSmartPointer`.
+    ///
+    /// Note that `U` should be something like `Arc<T>`, `Rc<T>`, etc.
+    pub fn build_in_place<U: Facet + 'mem>(self) -> U {
+        // Ensure the shape matches the expected type
+        self.shape().assert_type::<U>();
+        unsafe { self.data().read::<U>() }
+    }
 }
 
 /// Represents a write guard for a lock

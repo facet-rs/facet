@@ -8,4 +8,4 @@ mod value;
 mod c_test;
 // mod enum_;
 mod scalar;
-// mod smart_pointer;
+mod smart_pointer;

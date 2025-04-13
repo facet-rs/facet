@@ -67,20 +67,6 @@ impl<'mem> PokeValue<'mem> {
         unsafe { self.data.get::<T>() }
     }
 
-    /// Attempt to clone this value. Returns None if the value is not cloneable.
-    pub fn maybe_clone(&self) -> Option<Self> {
-        let clone_fn = self.vtable().clone_into?;
-        let uninit_data = self.shape.allocate();
-        // Create an opaque const reference to the source data for cloning
-        let source_data = self.data.as_const();
-        // Call clone_fn to actually clone the data
-        let initialized_data = unsafe { clone_fn(source_data, uninit_data) };
-        Some(PokeValue {
-            data: initialized_data,
-            shape: self.shape,
-        })
-    }
-
     /// Goes back to a partially-initialized value
     pub fn into_uninit(self) -> PokeValueUninit<'mem> {
         PokeValueUninit {
