@@ -8,7 +8,7 @@ pub struct PeekStruct<'mem> {
     /// the underlying value
     pub(crate) value: PeekValue<'mem>,
 
-    /// the definition of the struct
+    /// the definition of the struct!
     pub(crate) def: Struct,
 }
 

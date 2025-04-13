@@ -230,16 +230,6 @@ pub type HasherWriteFn = for<'mem> unsafe fn(hasher_self: Opaque<'mem>, bytes: &
 /// Provides an implementation of [`core::hash::Hasher`] for a given hasher pointer and write function
 ///
 /// See [`HashFn`] for more details on the parameters.
-///
-/// Example usage (for a type that already implements `Hasher`)
-///
-/// ```rust,ignore
-/// hash: Some(|value, hasher_self, hasher_write_fn| unsafe {
-///     value
-///         .as_ref::<Self>()
-///         .hash(&mut HasherProxy::new(hasher_self, hasher_write_fn));
-/// }),
-/// ```
 pub struct HasherProxy<'a> {
     hasher_this: Opaque<'a>,
     hasher_write_fn: HasherWriteFn,
