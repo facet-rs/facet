@@ -83,12 +83,17 @@ fn lifetimes() -> eyre::Result<()> {
 
     let mut wip = Wip::alloc::<Foo>();
     let bob = wip.bob();
-    let v = {
+
+    // fn accept_static_bob_only(bob: &Bob<'static>) {}
+    // accept_static_bob_only(&bob);
+
+    {
         let s = "abc".to_string();
         let foo = Foo { s: &s };
         bob.put(foo)?.finish()?;
-        wip.build()?.materialize::<Foo>()?
     };
+
+    let v = wip.build()?.materialize::<Foo>()?;
     dbg!(v);
 
     Ok(())
