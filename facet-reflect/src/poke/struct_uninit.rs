@@ -38,12 +38,22 @@ impl<'mem> PokeStructUninit<'mem> {
         self.def
     }
 
-    pub(crate) fn assert_all_fields_initialized(&self) -> Result<(), ReflectError> {
+    pub(crate) fn assert_can_build(&self) -> Result<(), ReflectError> {
+        // are all fields initialized?
         for (i, field) in self.def.fields.iter().copied().enumerate() {
             if !self.iset.has(i) {
                 return Err(ReflectError::PartiallyInitialized { field });
             }
         }
+
+        // do we have any invariants to check?
+        if let Some(invariants) = self.shape().vtable.invariants {
+            let value = unsafe { self.value.data.assume_init().as_const() };
+            if !unsafe { invariants(value) } {
+                return Err(ReflectError::InvariantViolation);
+            }
+        }
+
         Ok(())
     }
 
@@ -51,7 +61,7 @@ impl<'mem> PokeStructUninit<'mem> {
     ///
     /// If one of the field was not initialized, all fields will be dropped in place.
     pub fn build_in_place(self) -> Result<PokeStruct<'mem>, ReflectError> {
-        self.assert_all_fields_initialized()?;
+        self.assert_can_build()?;
 
         let data = unsafe { self.value.data.assume_init() };
         let shape = self.value.shape;
@@ -96,7 +106,7 @@ impl<'mem> PokeStructUninit<'mem> {
     /// - The generic type parameter T does not match the shape that this PokeStruct is building.
     #[cfg(feature = "alloc")]
     pub fn build_boxed<T: Facet>(self) -> Result<Box<T>, ReflectError> {
-        self.assert_all_fields_initialized()?;
+        self.assert_can_build()?;
         self.shape().assert_type::<T>();
 
         let boxed = unsafe { Box::from_raw(self.value.data.as_mut_bytes() as *mut T) };
