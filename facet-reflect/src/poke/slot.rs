@@ -1,6 +1,6 @@
 use facet_core::{Def, Facet, FieldError, OpaqueConst};
 
-use crate::ReflectError;
+use crate::{PeekValue, ReflectError};
 
 use super::{HeapVal, PokeStructUninit, PokeValueUninit};
 
@@ -25,10 +25,12 @@ impl<'mem> Parent<'mem> {
     unsafe fn assume_field_init(self, index: usize) -> Parent<'mem> {
         match self {
             Parent::StructUninit(mut storage) => {
+                eprintln!("FOR STRUCTUNINIT, ASSUMING FIELD INIT {:?}", index);
                 storage.iset.set(index);
                 Parent::StructUninit(storage)
             }
             Parent::StructSlot(mut storage) => {
+                eprintln!("FOR STRUCTSLOT, ASSUMING FIELD INIT {:?}", index);
                 storage.storage.iset.set(index);
                 Parent::StructSlot(storage)
             }
@@ -69,11 +71,25 @@ pub struct Slot<'mem> {
 impl<'mem> Slot<'mem> {
     /// Assign this field, get back the parent with the field marked as initialized.
     pub fn set<T: Facet>(self, t: T) -> Result<Parent<'mem>, ReflectError> {
+        eprintln!(
+            "SETTING {:?}, of type {} to field {}",
+            PeekValue::new(&t),
+            T::SHAPE,
+            self.index
+        );
+
         let Self {
             value,
             parent,
             index,
         } = self;
+
+        if T::SHAPE != value.shape() {
+            return Err(ReflectError::WrongShape {
+                expected: value.shape(),
+                actual: T::SHAPE,
+            });
+        }
 
         // manual put, because we can't move out of `value`
         unsafe { value.data.write(OpaqueConst::new(&raw const t)) };
@@ -151,6 +167,19 @@ impl<'mem> StructSlot<'mem> {
             .fields
             .get(index)
             .ok_or(FieldError::NoSuchField)?;
+
+        eprintln!(
+            "=> COMPUTED ADDRESS FOR FIELD {index} (of name {}) IS \x1b[33m{:p}\x1b[0m",
+            field.name,
+            unsafe {
+                self.storage
+                    .value
+                    .data
+                    .field_uninit_at(field.offset)
+                    .as_bytes()
+            }
+        );
+
         let value = PokeValueUninit {
             data: unsafe { self.storage.value.data.field_uninit_at(field.offset) },
             shape: field.shape,

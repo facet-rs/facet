@@ -1,7 +1,7 @@
 use crate::{Facet, Shape};
 
 #[doc(hidden)]
-pub const fn shape_of<TStruct, TField: Facet>(_f: &dyn Fn(TStruct) -> TField) -> &'static Shape {
+pub const fn shape_of<TStruct, TField: Facet>(_f: &dyn Fn(&TStruct) -> &TField) -> &'static Shape {
     TField::SHAPE
 }
 

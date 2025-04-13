@@ -189,6 +189,8 @@ pub struct Guard {
 impl Drop for Guard {
     fn drop(&mut self) {
         if self.layout.size() != 0 {
+            eprintln!("GUARD IS DEALLOCATING {:p} {:?}", self.ptr, self.layout);
+
             // SAFETY: `ptr` has been allocated via the global allocator with the given layout
             unsafe { alloc::alloc::dealloc(self.ptr, self.layout) };
         }

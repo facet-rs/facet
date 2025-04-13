@@ -10,12 +10,6 @@ struct Point {
 }
 
 #[derive(Debug, PartialEq, Eq, Facet)]
-struct NamedPoint {
-    name: String,
-    point: Point,
-}
-
-#[derive(Debug, PartialEq, Eq, Facet)]
 #[repr(u8)]
 enum Direction {
     #[allow(dead_code)]
@@ -194,27 +188,45 @@ fn test_alloc_and_build() -> eyre::Result<()> {
 fn test_nested_initialization() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
+    #[derive(Debug, PartialEq, Eq, Facet)]
+    struct NoisyDropString(String);
+
+    impl Drop for NoisyDropString {
+        fn drop(&mut self) {
+            eprintln!("DROPPING A STRING");
+            panic!();
+        }
+    }
+
+    #[derive(Debug, PartialEq, Eq, Facet)]
+    struct NamedPoint {
+        name: NoisyDropString,
+        point: Point,
+    }
+
     // Allocate a NamedPoint which contains a Point
     let poke = PokeValueUninit::alloc::<NamedPoint>();
     let poke = poke.into_struct()?;
 
     // Set the name field
     let poke = poke.field_by_name("name")?;
-    let poke = poke.set(String::from("Origin"))?.into_struct_uninit();
+    let s = String::from("Origin");
+    let poke = poke.set(NoisyDropString(s))?.into_struct_uninit();
 
     // Set the point field by going into the nested struct
     let poke = poke.field_by_name("point")?;
     let poke = poke.into_struct()?;
-    let poke = poke.field_by_name("x")?.set(0i32)?.into_struct_slot();
-    let poke = poke.field_by_name("y")?.set(0i32)?.into_struct_slot();
+    let poke = poke.field_by_name("x")?.set(23i32)?.into_struct_slot();
+    let poke = poke.field_by_name("y")?.set(45i32)?.into_struct_slot();
     let poke = poke.finish()?.into_struct_uninit();
 
     eprintln!("WE ARE MATERIALIZING");
     let named_point: NamedPoint = poke.materialize()?;
     eprintln!("WE ARE DONE MATERIALIZING");
 
-    assert_eq!(named_point.name, "Origin");
-    assert_eq!(named_point.point, Point { x: 0, y: 0 });
+    eprintln!("WE ARE PRINTING ORIGIN");
+    assert_eq!(named_point.point, Point { x: 23, y: 45 });
+    assert_eq!(named_point.name, NoisyDropString("Origin".to_string()));
 
     Ok(())
 }

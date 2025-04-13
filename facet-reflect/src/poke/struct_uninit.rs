@@ -110,7 +110,13 @@ impl<'mem> HeapVal<PokeStructUninit<'mem>> {
 
     /// Builds a value of type `U` out of this
     pub fn materialize<U: Facet>(self) -> Result<U, ReflectError> {
-        self.build()?.into_value().materialize::<U>()
+        let built = self.build()?;
+        eprintln!("BUILT");
+        let val = built.into_value();
+        eprintln!("INTO_VALUE'd");
+        let u = val.materialize::<U>()?;
+        eprintln!("MATERIALIZED");
+        Ok(u)
     }
 
     /// Builds a boxed value of type `U` out of this
@@ -123,8 +129,14 @@ impl<'mem> HeapVal<PokeStructUninit<'mem>> {
         if index >= self.def.fields.len() {
             panic!("Index out of bounds");
         }
-
         let field = self.def.fields[index];
+
+        eprintln!(
+            "=> COMPUTED ADDRESS FOR FIELD {index} (of name {}) IS \x1b[33m{:p}\x1b[0m",
+            field.name,
+            unsafe { self.value.data.field_uninit_at(field.offset).as_bytes() }
+        );
+
         let value = PokeValueUninit {
             data: unsafe { self.value.data.field_uninit_at(field.offset) },
             shape: field.shape,
@@ -141,6 +153,7 @@ impl<'mem> HeapVal<PokeStructUninit<'mem>> {
     pub fn field_by_name(self, name: &str) -> Result<Slot<'mem>, FieldError> {
         for (index, field) in self.def.fields.iter().enumerate() {
             if field.name == name {
+                eprintln!("FOUND FIELD BY NAME {:?} AT INDEX {:?}", name, index);
                 return Ok(self.field(index));
             }
         }

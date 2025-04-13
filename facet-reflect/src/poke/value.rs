@@ -143,8 +143,15 @@ impl HeapVal<PokeValue<'_>> {
                 actual: self.shape(),
             });
         }
+
+        eprintln!(
+            "READING A {} out of {} of shape {}",
+            core::any::type_name::<U>(),
+            self,
+            self.shape()
+        );
         let u = unsafe { self.data.read::<U>() };
-        self.map(core::mem::forget);
+        core::mem::forget(self);
         Ok(u)
     }
 
