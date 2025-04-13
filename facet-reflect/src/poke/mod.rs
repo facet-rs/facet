@@ -12,21 +12,6 @@ pub use value_uninit::*;
 mod value;
 pub use value::*;
 
-mod struct_uninit;
-pub use struct_uninit::*;
-
-mod struct_;
-pub use struct_::*;
-
-mod enum_novariant;
-pub use enum_novariant::*;
-
-mod enum_uninit;
-pub use enum_uninit::*;
-
-mod enum_;
-pub use enum_::*;
-
 mod list_uninit;
 pub use list_uninit::*;
 

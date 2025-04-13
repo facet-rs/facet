@@ -37,3 +37,32 @@ fn test_tree() -> eyre::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn readme_sample() -> eyre::Result<()> {
+    use facet::Facet;
+    use facet_reflect::{Builder, PokeValueUninit};
+
+    #[derive(Debug, PartialEq, Eq, Facet)]
+    struct FooBar {
+        foo: u64,
+        bar: String,
+    }
+
+    // Allocate memory for a struct - returns a PokeValueUninit
+    let v = PokeValueUninit::alloc::<FooBar>();
+
+    // Use the Builder API to set field values
+    let foo_bar = Builder::new(v)
+        .field_named("foo")?
+        .put(42u64)?
+        .field_named("bar")?
+        .put(String::from("Hello, World!"))?
+        .build()?
+        .materialize::<FooBar>()?;
+
+    // Now we can use the constructed value
+    println!("{}", foo_bar.bar);
+
+    Ok(())
+}

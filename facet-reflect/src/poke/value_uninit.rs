@@ -5,13 +5,10 @@ use core::{
 
 use crate::{ReflectError, ScalarType, ValueId};
 use facet_core::{
-    Characteristic, Def, Facet, OpaqueConst, OpaqueUninit, Shape, TryFromError, ValueVTable,
+    Characteristic, Facet, OpaqueConst, OpaqueUninit, Shape, TryFromError, ValueVTable,
 };
 
-use super::{
-    ISet, PokeEnumNoVariant, PokeListUninit, PokeMapUninit, PokeSmartPointerUninit,
-    PokeStructUninit, PokeValue,
-};
+use super::PokeValue;
 
 /// Allows initializing/setting a value.
 ///
@@ -107,57 +104,6 @@ impl<'mem> PokeValueUninit<'mem> {
 }
 
 impl<'mem> HeapVal<PokeValueUninit<'mem>> {
-    /// Tries to identify this value as a struct
-    pub fn into_struct(self) -> Result<HeapVal<PokeStructUninit<'mem>>, ReflectError> {
-        if let Def::Struct(def) = self.shape.def {
-            Ok(self.map(|value| PokeStructUninit {
-                value,
-                iset: ISet::default(),
-                def,
-            }))
-        } else {
-            Err(ReflectError::WasNotA { name: "struct" })
-        }
-    }
-
-    /// Tries to identify this value as an enum
-    pub fn into_enum(self) -> Result<HeapVal<PokeEnumNoVariant<'mem>>, ReflectError> {
-        if let Def::Enum(def) = self.shape.def {
-            Ok(self.map(|value| PokeEnumNoVariant { value, def }))
-        } else {
-            Err(ReflectError::WasNotA { name: "enum" })
-        }
-    }
-
-    /// Tries to identify this value as a map
-    pub fn into_map(self) -> Result<HeapVal<PokeMapUninit<'mem>>, ReflectError> {
-        if let Def::Map(def) = self.shape.def {
-            Ok(self.map(|value| PokeMapUninit { value, def }))
-        } else {
-            Err(ReflectError::WasNotA { name: "map" })
-        }
-    }
-
-    /// Tries to identify this value as a list
-    pub fn into_list(self) -> Result<HeapVal<PokeListUninit<'mem>>, ReflectError> {
-        if let Def::List(def) = self.shape.def {
-            Ok(self.map(|value| PokeListUninit { value, def }))
-        } else {
-            Err(ReflectError::WasNotA { name: "list" })
-        }
-    }
-
-    /// Tries to identify this value as a smart pointer
-    pub fn into_smart_pointer(self) -> Result<HeapVal<PokeSmartPointerUninit<'mem>>, ReflectError> {
-        if let Def::SmartPointer(def) = self.shape.def {
-            Ok(self.map(|value| PokeSmartPointerUninit { value, def }))
-        } else {
-            Err(ReflectError::WasNotA {
-                name: "smart pointer",
-            })
-        }
-    }
-
     /// Attempts to parse a string into this value
     ///
     /// Returns `Ok(Opaque)` if parsing was successful, `Err(Self)` otherwise.

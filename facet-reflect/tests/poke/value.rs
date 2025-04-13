@@ -136,31 +136,3 @@ fn test_direct_initialization() {
     let poke = poke.put(3.2f64).expect("Should accept f64");
     assert_eq!(*poke.get::<f64>(), 3.2f64);
 }
-
-// Test for different struct shape types
-#[test]
-fn test_into_struct() {
-    facet_testhelpers::setup();
-
-    // Should succeed for struct type
-    let poke = PokeValueUninit::alloc::<Point>();
-    assert!(poke.into_struct().is_ok());
-
-    // Should fail for non-struct type
-    let poke = PokeValueUninit::alloc::<i32>();
-    assert!(poke.into_struct().is_err());
-}
-
-// Test for enum shape types
-#[test]
-fn test_into_enum() {
-    facet_testhelpers::setup();
-
-    // Should succeed for enum type
-    let poke = PokeValueUninit::alloc::<Direction>();
-    assert!(poke.into_enum().is_ok());
-
-    // Should fail for non-enum type
-    let poke = PokeValueUninit::alloc::<Point>();
-    assert!(poke.into_enum().is_err());
-}
