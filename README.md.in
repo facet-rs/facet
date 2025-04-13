@@ -77,19 +77,19 @@ struct Person {
     name: String,
 }
 
-fn main() {
-    let alice = Person {
-        name: "Alice".to_string(),
-    };
-    let bob = Person {
-        name: "Bob".to_string(),
-    };
-    let carol = Person {
-        name: "Carol".to_string(),
-    };
+# fn main() {
+let alice = Person {
+    name: "Alice".to_string(),
+};
+let bob = Person {
+    name: "Bob".to_string(),
+};
+let carol = Person {
+    name: "Carol".to_string(),
+};
 
-    println!("{}", vec![alice, bob, carol].pretty());
-}
+println!("{}", vec![alice, bob, carol].pretty());
+# }
 ```
 
 ```bash
@@ -160,8 +160,8 @@ This is just a pretty printer, but an imaginative mind could come up with...
 
 ## Use case: (de)serialization
 
-The `facet-reflect` crate allows reading and writing (constructing,
-initializing) any type that implements `Facet` — this makes it trivial to
+The `facet-reflect` crate allows reading (peek) and constructing/initializing/mutating (poke) arbitrary
+values without knowing their concrete type until runtime. This makes it trivial to
 write deserializers, see `facet-json`, `facet-yaml`, `facet-urlencoded`, etc.
 
 Say we have this struct:
@@ -176,47 +176,47 @@ struct FooBar {
 }
 ```
 
-We can build it fully through reflection:
+We can build it fully through reflection using the slot-based initialization API:
 
 ```rust
-# use facet::Facet;
-# #[derive(Debug, PartialEq, Eq, Facet)]
-# struct FooBar {
-#     foo: u64,
-#     bar: String,
-# }
+use facet::Facet;
 
-use facet_reflect::PokeUninit;
-
-fn main() {
-    // outer code: we know the type of `FooBar` — we pass `poke`
-    let (poke, guard) = PokeUninit::alloc::<FooBar>();
-
-    let foo_bar;
-    {
-        // inner code: all we have is a `poke` — our function is not generic,
-        // `Poke` is not generic.
-        let mut poke = poke.into_struct();
-        poke.set_by_name("foo", 42u64).unwrap();
-
-        {
-            let bar = String::from("Hello, World!");
-            poke.set_by_name("bar", bar).unwrap();
-        }
-        foo_bar = poke.build::<FooBar>(Some(guard));
-    }
-
-    // outer code: we know the type of `FooBar` again, we can
-    // move out of the `Poke`
-
-    println!("{}", foo_bar.bar);
+#[derive(Debug, PartialEq, Eq, Facet)]
+struct FooBar {
+    foo: u64,
+    bar: String,
 }
+
+use facet_reflect::PokeValueUninit;
+
+# fn main() {
+// Allocate memory for a struct - returns a PokeValueUninit and a Guard that ensures proper cleanup
+let (poke, guard) = PokeValueUninit::alloc::<FooBar>();
+
+// Convert to a struct handler
+let poke = poke.into_struct().unwrap();
+
+// Set field values by name using the slot API
+// Each operation returns the parent context after setting the value
+let poke = poke.field_by_name("foo").unwrap().set(42u64).unwrap().into_struct_uninit();
+let poke = poke
+    .field_by_name("bar")
+    .unwrap()
+    .set(String::from("Hello, World!"))
+    .unwrap()
+    .into_struct_uninit();
+
+// Build the final struct
+let foo_bar = poke.build::<FooBar>(Some(guard)).unwrap();
+
+// Now we can use the constructed value
+println!("{}", foo_bar.bar);
+# }
 ```
 
-The `inner code` here is the kind of code you would write in a deserializer, for example.
+The reflection API maintains type safety by validating types at each step and tracks which fields have been initialized.
 
-Here, we cheated because we (the human) knew the structure of Poke, but in a deserializer,
-you would match against the `Poke` variant, you would inspect a `StructDef` and its `Field`s, etc.
+This approach is particularly powerful for deserializers, where you need to incrementally build objects without knowing their full structure upfront. Inside a deserializer, you would first inspect the shape to understand its structure, and then systematically initialize each field.
 
 ## Use case: parsing CLI arguments
 
