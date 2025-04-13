@@ -27,6 +27,9 @@ pub enum Characteristic {
     /// Implements Clone
     Clone,
 
+    /// Implements Display
+    Display,
+
     /// Implements Debug
     Debug,
 
@@ -97,6 +100,7 @@ impl Shape {
 
             // Functionality traits
             Characteristic::Clone => self.vtable.clone_into.is_some(),
+            Characteristic::Display => self.vtable.display.is_some(),
             Characteristic::Debug => self.vtable.debug.is_some(),
             Characteristic::PartialEq => self.vtable.eq.is_some(),
             Characteristic::PartialOrd => self.vtable.partial_ord.is_some(),
@@ -129,6 +133,11 @@ impl Shape {
     /// Check if this shape implements the Clone trait
     pub const fn is_clone(&'static self) -> bool {
         self.is(Characteristic::Clone)
+    }
+
+    /// Check if this shape implements the Display trait
+    pub const fn is_display(&'static self) -> bool {
+        self.vtable.display.is_some()
     }
 
     /// Check if this shape implements the Debug trait

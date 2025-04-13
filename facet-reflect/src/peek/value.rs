@@ -5,6 +5,25 @@ use crate::{ReflectError, ScalarType};
 
 use super::{PeekEnum, PeekList, PeekMap, PeekSmartPointer, PeekStruct};
 
+/// A unique identifier for a peek value
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PeekValueId {
+    shape: &'static Shape,
+    ptr_val: u64,
+}
+
+impl core::fmt::Display for PeekValueId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}@{:016x}", self.shape, self.ptr_val)
+    }
+}
+
+impl core::fmt::Debug for PeekValueId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self, f)
+    }
+}
+
 /// Lets you read from a value (implements read-only [`ValueVTable`] proxies)
 #[derive(Clone, Copy)]
 pub struct PeekValue<'mem> {
@@ -28,6 +47,20 @@ impl<'mem> PeekValue<'mem> {
     #[inline(always)]
     fn vtable(&self) -> &'static ValueVTable {
         self.shape.vtable
+    }
+
+    /// Returns a unique identifier for this value, usable for cycle detection
+    pub fn id(&self) -> PeekValueId {
+        PeekValueId {
+            shape: self.shape,
+            ptr_val: self.data.as_byte_ptr() as u64,
+        }
+    }
+
+    /// Returns true if the two values are pointer-equal
+    #[inline]
+    pub fn ptr_eq(&self, other: &PeekValue<'_>) -> bool {
+        self.data.as_byte_ptr() == other.data.as_byte_ptr()
     }
 
     /// Returns true if this scalar is equal to the other scalar

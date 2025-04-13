@@ -122,6 +122,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-pretty"
+version = "0.3.0"
+dependencies = [
+ "facet",
+ "facet-ansi",
+ "facet-core",
+ "facet-reflect",
+]
+
+[[package]]
 name = "facet-reflect"
 version = "0.6.2"
 dependencies = [
