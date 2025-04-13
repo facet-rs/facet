@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use facet_reflect::PeekValue;
+use std::collections::HashMap;
 
 #[test]
 fn test_peek_map_basics() {
@@ -12,7 +12,7 @@ fn test_peek_map_basics() {
     let peek_map = peek_value.into_map().unwrap();
     assert_eq!(peek_map.len(), 3);
     assert!(!peek_map.is_empty());
-    
+
     assert!(peek_map.contains_key(&"a"));
     assert!(peek_map.contains_key(&"b"));
     assert!(peek_map.contains_key(&"c"));
@@ -43,15 +43,13 @@ fn test_peek_map_iteration() {
 
     let peek_value = PeekValue::new(&source);
     let peek_map = peek_value.into_map().unwrap();
-    let mut entries: Vec<_> = peek_map.iter()
+    let mut entries: Vec<_> = peek_map
+        .iter()
         .map(|(k, v)| (k.get::<&str>().to_string(), *v.get::<i32>()))
         .collect();
     entries.sort_by(|a, b| a.0.cmp(&b.0));
-    
-    assert_eq!(entries, vec![
-        ("a".to_string(), 1),
-        ("b".to_string(), 2),
-    ]);
+
+    assert_eq!(entries, vec![("a".to_string(), 1), ("b".to_string(), 2),]);
 }
 
 #[test]
@@ -63,7 +61,7 @@ fn test_peek_map_different_types() {
     let peek_value = PeekValue::new(&source);
     let peek_map = peek_value.into_map().unwrap();
     assert_eq!(peek_map.len(), 2);
-    
+
     assert!(peek_map.contains_key(&1));
     assert!(peek_map.contains_key(&2));
     assert!(!peek_map.contains_key(&3));

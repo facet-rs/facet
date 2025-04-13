@@ -49,8 +49,8 @@ impl<'mem> PokeSmartPointer<'mem> {
     }
 
     /// Returns the shape of the inner type of the smart pointer.
-    pub fn inner_type(&self) -> &'static Shape {
-        self.def.t
+    pub fn pointee(&self) -> &'static Shape {
+        self.def.pointee
     }
 
     // /// Attempts to borrow the inner value if the smart pointer supports it.
@@ -60,22 +60,26 @@ impl<'mem> PokeSmartPointer<'mem> {
     //     Some(unsafe { PeekValue::unchecked_new(opaque, self.def.t) })
     // }
 
-    /// Attempts to upgrade this pointer if it's a weak reference.
-    pub fn try_upgrade(&self) -> Option<Self> {
-        let upgrade_fn = self.def.vtable.try_upgrade_fn?;
-        let (data, shape) = unsafe { upgrade_fn(self.data())? };
-        Some(Self {
-            value: PokeValue { data, shape },
-            def: self.def,
-        })
-    }
+    // /// Attempts to upgrade this pointer if it's a weak reference.
+    // pub fn try_upgrade(&self) -> Option<Self> {
+    //     let upgrade_fn = self.def.vtable.upgrade_into_fn?;
+    //     let opaque = unsafe { upgrade_fn(self.data(), facet_core::OpaqueUninit::null())? };
+    //     Some(Self {
+    //         value: PokeValue {
+    //             data: opaque,
+    //             shape: self.def.t,
+    //         },
+    //         def: self.def,
+    //     })
+    // }
 
     /// Attempts to lock this pointer if it's a mutex-like smart pointer.
     pub fn try_lock(&self) -> Option<Result<PokeSmartPointerWriteGuard<'_>, ()>> {
         let lock_fn = self.def.vtable.lock_fn?;
         Some(unsafe {
-            lock_fn(self.data().as_const())
-                .map(|result| PokeSmartPointerWriteGuard::from_lock_result(result, self.def.t))
+            lock_fn(self.data().as_const()).map(|result| {
+                PokeSmartPointerWriteGuard::from_lock_result(result, self.def.pointee)
+            })
         })
     }
 
@@ -84,7 +88,7 @@ impl<'mem> PokeSmartPointer<'mem> {
         let read_fn = self.def.vtable.read_fn?;
         Some(unsafe {
             read_fn(self.data().as_const())
-                .map(|result| PokeSmartPointerReadGuard::from_lock_result(result, self.def.t))
+                .map(|result| PokeSmartPointerReadGuard::from_lock_result(result, self.def.pointee))
         })
     }
 
@@ -92,8 +96,9 @@ impl<'mem> PokeSmartPointer<'mem> {
     pub fn try_write(&self) -> Option<Result<PokeSmartPointerWriteGuard<'_>, ()>> {
         let write_fn = self.def.vtable.write_fn?;
         Some(unsafe {
-            write_fn(self.data().as_const())
-                .map(|result| PokeSmartPointerWriteGuard::from_lock_result(result, self.def.t))
+            write_fn(self.data().as_const()).map(|result| {
+                PokeSmartPointerWriteGuard::from_lock_result(result, self.def.pointee)
+            })
         })
     }
 

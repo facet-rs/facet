@@ -1,8 +1,8 @@
 use core::alloc::Layout;
 
 use crate::{
-    ConstTypeId, Def, Facet, OpaqueConst, SmartPointerDef, SmartPointerFlags, SmartPointerVTable,
-    value_vtable,
+    ConstTypeId, Def, Facet, KnownSmartPointer, OpaqueConst, SmartPointerDef, SmartPointerFlags,
+    SmartPointerVTable, value_vtable,
 };
 
 #[cfg(feature = "alloc")]
@@ -13,9 +13,10 @@ unsafe impl<T: Facet> Facet for alloc::sync::Arc<T> {
             .layout(Layout::new::<Self>())
             .def(Def::SmartPointer(
                 SmartPointerDef::builder()
-                    .t(T::SHAPE)
+                    .pointee(T::SHAPE)
                     .flags(SmartPointerFlags::ATOMIC)
-                    .known(Some(crate::KnownSmartPointer::Arc))
+                    .known(KnownSmartPointer::Arc)
+                    .weak(|| <alloc::sync::Weak<T> as Facet>::SHAPE)
                     .vtable(
                         &const {
                             SmartPointerVTable::builder()
@@ -27,6 +28,40 @@ unsafe impl<T: Facet> Facet for alloc::sync::Arc<T> {
                                     let t = unsafe { ptr.read::<T>() };
                                     let arc = alloc::sync::Arc::new(t);
                                     unsafe { this.put(arc) }
+                                })
+                                .downgrade_fn(|strong, weak| unsafe {
+                                    weak.put(alloc::sync::Arc::downgrade(strong.as_ref::<Self>()))
+                                })
+                                .build()
+                        },
+                    )
+                    .build(),
+            ))
+            .vtable(value_vtable!(alloc::sync::Arc<T>, |f, _opts| write!(
+                f,
+                "Arc"
+            )))
+            .build()
+    };
+}
+
+#[cfg(feature = "alloc")]
+unsafe impl<T: Facet> Facet for alloc::sync::Weak<T> {
+    const SHAPE: &'static crate::Shape = &const {
+        crate::Shape::builder()
+            .id(ConstTypeId::of::<Self>())
+            .layout(Layout::new::<Self>())
+            .def(Def::SmartPointer(
+                SmartPointerDef::builder()
+                    .pointee(T::SHAPE)
+                    .flags(SmartPointerFlags::ATOMIC.union(SmartPointerFlags::WEAK))
+                    .known(KnownSmartPointer::ArcWeak)
+                    .strong(|| <alloc::sync::Arc<T> as Facet>::SHAPE)
+                    .vtable(
+                        &const {
+                            SmartPointerVTable::builder()
+                                .upgrade_into_fn(|weak, strong| unsafe {
+                                    Some(strong.put(weak.as_ref::<Self>().upgrade()?))
                                 })
                                 .build()
                         },
