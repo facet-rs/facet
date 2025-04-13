@@ -161,7 +161,7 @@ fn test_poke_lifetime_error() {
         name: "poke_lifetime_error",
         source: r#"
 use facet::Facet;
-use facet_reflect::PokeValueUninit;
+use facet_reflect::WipValue;
 
 fn main() {
     #[derive(Debug, Facet)]
@@ -169,11 +169,11 @@ fn main() {
         s: &'a str,
     }
 
-    let poke = PokeValueUninit::alloc::<Foo>();
+    let wip = WipValue::alloc::<Foo>();
     let v = {
         let s = "abc".to_string();
         let foo = Foo { s: &s };
-        poke.put(foo)
+        wip.put(foo).unwrap().build().unwrap().materialize::<Foo>().unwrap()
     };
     dbg!(v);
 }

@@ -1,2 +1,2 @@
-mod ui_tests;
-mod wip;
+mod compile_tests;
+mod unit_tests;
