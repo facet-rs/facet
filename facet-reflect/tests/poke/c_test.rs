@@ -1,5 +1,5 @@
 use facet_ansi::Stylize as _;
-use facet_reflect::Peek;
+use facet_reflect::PeekValue;
 
 #[test]
 fn test_sample_libc() {
@@ -7,8 +7,8 @@ fn test_sample_libc() {
 
     if !cfg!(miri) {
         let (data, shape) = facet_samplelibc::get_foo_and_shape();
-        let peek = unsafe { Peek::unchecked_new(data.as_const(), shape) };
-        eprintln!("{}", facet_pretty::PrettyPrinter::new().format_peek(peek),);
+        let peek = unsafe { PeekValue::unchecked_new(data.as_const(), shape) };
+        eprintln!("{peek}");
         eprintln!("🔍 Display: {}", format!("{}", peek).bright_green());
         eprintln!("🐛 Debug: {}", format!("{:?}", peek).bright_blue());
 
@@ -16,32 +16,27 @@ fn test_sample_libc() {
     }
 }
 
-fn inspect(peek: Peek) {
+fn inspect(peek: PeekValue) {
     inspect_with_indent(peek, 0);
 }
 
-fn inspect_with_indent(peek: Peek, indent: usize) {
+fn inspect_with_indent(peek: PeekValue, indent: usize) {
     let indent_str = " ".repeat(indent * 4);
 
-    let ps = match peek {
-        Peek::Struct(ps) => ps,
-        _ => {
-            return;
-        }
-    };
-
-    eprintln!(
-        "{}📊 That struct has {} fields",
-        indent_str,
-        ps.field_count().to_string().bright_yellow()
-    );
-    for (k, v) in ps.fields() {
+    if let Ok(ps) = peek.into_struct() {
         eprintln!(
-            "{}🔑 Field {} => {}",
+            "{}📊 That struct has {} fields",
             indent_str,
-            k.to_string().bright_cyan(),
-            v.to_string().bright_magenta()
+            ps.field_count().to_string().bright_yellow()
         );
-        inspect_with_indent(v.wrap(), indent + 1);
+        for (k, v) in ps.fields() {
+            eprintln!(
+                "{}🔑 Field {} => {}",
+                indent_str,
+                k.name.bright_cyan(),
+                v.to_string().bright_magenta()
+            );
+            inspect_with_indent(v, indent + 1);
+        }
     }
 }

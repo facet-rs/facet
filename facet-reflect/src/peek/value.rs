@@ -43,6 +43,17 @@ impl<'mem> PeekValue<'mem> {
         }
     }
 
+    /// Creates a new `PeekValue` instance without checking the type.
+    ///
+    /// # Safety
+    ///
+    /// This function is unsafe because it doesn't check if the provided data
+    /// and shape are compatible. The caller must ensure that the data is valid
+    /// for the given shape.
+    pub unsafe fn unchecked_new(data: OpaqueConst<'mem>, shape: &'static Shape) -> Self {
+        Self { data, shape }
+    }
+
     /// Returns the vtable
     #[inline(always)]
     fn vtable(&self) -> &'static ValueVTable {

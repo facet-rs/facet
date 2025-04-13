@@ -5,7 +5,7 @@ mod value;
 
 // mod option;
 
-// mod c_test;
+mod c_test;
 // mod enum_;
 // mod scalar;
 // mod smart_pointer;
