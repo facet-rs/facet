@@ -3,7 +3,7 @@ use facet_core::{Facet, FieldError, Shape, Struct};
 use crate::ReflectError;
 
 use super::slot::Parent;
-use super::{Buildabear, HeapVal, ISet, PokeStruct, PokeValue, PokeValueUninit, Slot};
+use super::{HeapVal, ISet, PokeStruct, PokeValue, PokeValueUninit, Slot};
 
 #[cfg(feature = "alloc")]
 extern crate alloc;

@@ -154,3 +154,11 @@ impl<'mem> HeapVal<PokeValue<'mem>> {
         todo!()
     }
 }
+
+impl<'mem> Drop for PokeValue<'mem> {
+    fn drop(&mut self) {
+        if let Some(drop_fn) = self.shape.vtable.drop_in_place {
+            unsafe { drop_fn(self.data) };
+        }
+    }
+}

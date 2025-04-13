@@ -34,13 +34,13 @@ impl<'mem> PokeValueUninit<'mem> {
     #[inline(always)]
     pub fn alloc_shape(shape: &'static Shape) -> HeapVal<Self> {
         let data = shape.allocate();
-        let layout = shape.layout;
         let poke = Self { data, shape };
-        HeapVal {
+        HeapVal::Full {
             inner: poke,
-            data,
-            layout,
-            shape,
+            guard: Guard {
+                ptr: data.as_mut_bytes(),
+                layout: shape.layout,
+            },
         }
     }
 
@@ -201,14 +201,10 @@ impl<'mem> PokeValueUninit<'mem> {
 struct Guard {
     ptr: *mut u8,
     layout: Layout,
-    shape: Option<&'static Shape>,
 }
 
 impl Drop for Guard {
     fn drop(&mut self) {
-        if let Some(drop_fn) = self.shape.and_then(|shape| shape.vtable.drop_in_place) {
-            unsafe { drop_fn(Opaque::new(self.ptr)) };
-        }
         if self.layout.size() != 0 {
             // SAFETY: `ptr` has been allocated via the global allocator with the given layout
             unsafe { alloc::alloc::dealloc(self.ptr, self.layout) };
@@ -246,15 +242,10 @@ impl<T> DerefMut for HeapVal<T> {
 
 impl<T> HeapVal<T> {
     /// Maps the inner value with a closure.
-    ///
-    /// If the closure returns a shape, then the heap value will be deallocated on drop. If it
-    /// doesn't, then it won't. So you can map from an initialized value to an uninitialized value
-    /// in VAC.
-    pub(crate) fn map<U>(mut self, f: impl FnOnce(T) -> (U, Option<&'static Shape>)) -> HeapVal<U> {
+    pub(crate) fn map<U>(mut self, f: impl FnOnce(T) -> U) -> HeapVal<U> {
         match std::mem::replace(&mut self, HeapVal::Empty) {
-            HeapVal::Full { inner, mut guard } => {
-                let (new_inner, shape) = f(inner);
-                guard.shape = shape;
+            HeapVal::Full { inner, guard } => {
+                let new_inner = f(inner);
                 HeapVal::Full {
                     inner: new_inner,
                     guard,
@@ -266,17 +257,11 @@ impl<T> HeapVal<T> {
 
     /// Maps the inner value with a closure that returns an option
     /// If it returns `None`, the heap value is deallocated.
-    pub(crate) fn map_opt<U>(
-        mut self,
-        f: impl FnOnce(T) -> Option<(U, Option<&'static Shape>)>,
-    ) -> Option<HeapVal<U>> {
+    pub(crate) fn map_opt<U>(mut self, f: impl FnOnce(T) -> Option<U>) -> Option<HeapVal<U>> {
         match std::mem::replace(&mut self, HeapVal::Empty) {
-            HeapVal::Full { inner, mut guard } => f(inner).map(|(new_inner, shape)| {
-                guard.shape = shape;
-                HeapVal::Full {
-                    inner: new_inner,
-                    guard,
-                }
+            HeapVal::Full { inner, guard } => f(inner).map(|new_inner| HeapVal::Full {
+                inner: new_inner,
+                guard,
             }),
             HeapVal::Empty => panic!("cannot map empty heapval"),
         }
@@ -286,15 +271,12 @@ impl<T> HeapVal<T> {
     /// If it returns `Err`, the heap value is deallocated.
     pub(crate) fn map_res<U, E>(
         mut self,
-        f: impl FnOnce(T) -> Result<(U, Option<&'static Shape>), E>,
+        f: impl FnOnce(T) -> Result<U, E>,
     ) -> Result<HeapVal<U>, E> {
         match std::mem::replace(&mut self, HeapVal::Empty) {
-            HeapVal::Full { inner, mut guard } => f(inner).map(|(new_inner, shape)| {
-                guard.shape = shape;
-                HeapVal::Full {
-                    inner: new_inner,
-                    guard,
-                }
+            HeapVal::Full { inner, guard } => f(inner).map(|new_inner| HeapVal::Full {
+                inner: new_inner,
+                guard,
             }),
             HeapVal::Empty => panic!("cannot map empty heapval"),
         }
