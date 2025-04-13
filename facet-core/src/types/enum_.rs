@@ -70,7 +70,7 @@ pub struct Variant {
     /// Fields for this variant (empty if unit, number-named if tuple).
     /// IMPORTANT: the offset for the fields already takes into account the size & alignment of the
     /// discriminant.
-    pub fields: Struct,
+    pub data: Struct,
 
     /// Doc comment for the variant
     pub doc: &'static [&'static str],
@@ -140,7 +140,7 @@ impl VariantBuilder {
         Variant {
             name: self.name.unwrap(),
             discriminant: self.discriminant.unwrap(),
-            fields: self.fields.unwrap(),
+            data: self.fields.unwrap(),
             doc: self.doc,
         }
     }

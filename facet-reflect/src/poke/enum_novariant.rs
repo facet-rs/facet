@@ -132,7 +132,7 @@ impl<'mem> PokeEnumNoVariant<'mem> {
             variant_idx,
             storage: super::PokeStructUninit {
                 value: self.value,
-                def: self.def.variants[variant_idx].fields,
+                def: self.def.variants[variant_idx].data,
                 iset: Default::default(),
             },
         })

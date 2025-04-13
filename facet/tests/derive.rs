@@ -1,5 +1,5 @@
 use core::{fmt::Debug, mem::offset_of};
-use facet::{Def, Facet, FieldFlags, OpaqueConst, Shape, Struct, StructKind, VariantKind};
+use facet::{Def, Facet, FieldFlags, OpaqueConst, Shape, Struct, StructKind};
 
 #[test]
 fn unit_struct() {
@@ -237,15 +237,12 @@ fn enum_variants_with_comments() {
         );
 
         // Check fields of variant C
-        if let VariantKind::Struct { fields } = &variant_c.kind {
-            assert_eq!(fields.len(), 2);
-            assert_eq!(fields[0].name, "x");
-            assert_eq!(fields[0].doc, &[" This is field x"]);
-            assert_eq!(fields[1].name, "y");
-            assert_eq!(fields[1].doc, &[" This is field y"]);
-        } else {
-            panic!("Expected Struct variant");
-        }
+        let fields = variant_c.data.fields;
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].name, "x");
+        assert_eq!(fields[0].doc, &[" This is field x"]);
+        assert_eq!(fields[1].name, "y");
+        assert_eq!(fields[1].doc, &[" This is field y"]);
     } else {
         panic!("Expected Enum definition");
     }
@@ -477,19 +474,14 @@ fn array_field() {
     match shape.def {
         Def::Enum(e) => {
             let variant = &e.variants[0];
-            match &variant.kind {
-                VariantKind::Tuple { fields } => {
-                    let field = &fields[0];
-                    match field.shape.def {
-                        Def::List(ld) => {
-                            let len = unsafe {
-                                (ld.vtable.len)(OpaqueConst::new(std::ptr::dangling::<u8>()))
-                            };
-                            assert_eq!(len, 4);
-                            eprintln!("Shape {shape} looks correct");
-                        }
-                        _ => unreachable!(),
-                    }
+            let fields = &variant.data.fields;
+            let field = &fields[0];
+            match field.shape.def {
+                Def::List(ld) => {
+                    let len =
+                        unsafe { (ld.vtable.len)(OpaqueConst::new(std::ptr::dangling::<u8>())) };
+                    assert_eq!(len, 4);
+                    eprintln!("Shape {shape} looks correct");
                 }
                 _ => unreachable!(),
             }

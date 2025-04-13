@@ -293,9 +293,9 @@ fn process_c_style_enum(
                 variant_expressions.push(format!(
                     "::facet::Variant::builder()
                     .name({variant_name:?})
-                    .discriminant(Some({discriminant_value}))
+                    .discriminant({discriminant_value})
                     .offset(::core::mem::offset_of!({shadow_repr_name}, _fields))
-                    .kind(::facet::VariantKind::Unit)
+                    .fields(::facet::Struct::builder().unit().build(),
                     {maybe_doc}
                     .build()",
                 ));
@@ -354,9 +354,9 @@ fn process_c_style_enum(
 
                         ::facet::Variant::builder()
                             .name({variant_name:?})
-                            .discriminant(Some({discriminant_value}))
+                            .discriminant({discriminant_value})
                             .offset(::core::mem::offset_of!({shadow_repr_name}, _fields))
-                            .kind(::facet::VariantKind::Tuple {{ fields }})
+                            .fields(::facet::Struct::builder().tuple().fields(fields).build(),
                             {maybe_doc}
                             .build()
                     }}",
@@ -415,9 +415,9 @@ fn process_c_style_enum(
 
                         ::facet::Variant::builder()
                             .name({variant_name:?})
-                            .discriminant(Some({discriminant_value}))
+                            .discriminant(discriminant_value)
                             .offset(::core::mem::offset_of!({shadow_repr_name}, _fields))
-                            .kind(::facet::VariantKind::Struct {{ fields }})
+                            .fields(::facet::Struct::builder().struct_().fields(fields).build(),
                             {maybe_doc}
                             .build()
                     }}",
@@ -465,9 +465,9 @@ fn process_primitive_enum(
                 variant_expressions.push(format!(
                     "::facet::Variant::builder()
                     .name({variant_name:?})
-                    .discriminant(Some({discriminant_value}))
+                    .discriminant({discriminant_value})
                     .offset(0)
-                    .kind(::facet::VariantKind::Unit)
+                    .fields(::facet::Struct::builder().unit().build())
                     {maybe_doc}
                     .build()",
                 ));
@@ -527,9 +527,9 @@ fn process_primitive_enum(
 
                         ::facet::Variant::builder()
                             .name({variant_name:?})
-                            .discriminant(Some({discriminant_value}))
+                            .discriminant({discriminant_value})
                             .offset(0)
-                            .kind(::facet::VariantKind::Tuple {{ fields }})
+                            .fields(::facet::Struct::builder().tuple().fields(fields).build())
                             {maybe_doc}
                             .build()
                     }}",
@@ -591,9 +591,9 @@ fn process_primitive_enum(
 
                         ::facet::Variant::builder()
                             .name({variant_name:?})
-                            .discriminant(Some({discriminant_value}))
+                            .discriminant({discriminant_value})
                             .offset(0)
-                            .kind(::facet::VariantKind::Struct {{ fields }})
+                            .fields(::facet::Struct::builder().struct_().fields(fields).build())
                             {maybe_doc}
                             .build()
                     }}",

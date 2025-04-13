@@ -14,25 +14,42 @@ pub struct Struct {
 
 impl Struct {
     /// Returns a builder for StructDef
-    pub const fn builder() -> StructDefBuilder {
-        StructDefBuilder::new()
+    pub const fn builder() -> StructBuilder {
+        StructBuilder::new()
     }
 }
 
 /// Builder for StructDef
-pub struct StructDefBuilder {
+pub struct StructBuilder {
     kind: Option<StructKind>,
-    fields: Option<&'static [Field]>,
+    fields: &'static [Field],
 }
 
-impl StructDefBuilder {
+impl StructBuilder {
     /// Creates a new StructDefBuilder
     #[allow(clippy::new_without_default)]
     pub const fn new() -> Self {
         Self {
             kind: None,
-            fields: None,
+            fields: &[],
         }
+    }
+    /// Sets the kind to Unit and returns self
+    pub const fn unit(mut self) -> Self {
+        self.kind = Some(StructKind::Unit);
+        self
+    }
+
+    /// Sets the kind to Tuple and returns self
+    pub const fn tuple(mut self) -> Self {
+        self.kind = Some(StructKind::Tuple);
+        self
+    }
+
+    /// Sets the kind to Struct and returns self
+    pub const fn struct_(mut self) -> Self {
+        self.kind = Some(StructKind::Struct);
+        self
     }
 
     /// Sets the kind for the StructDef
@@ -43,7 +60,7 @@ impl StructDefBuilder {
 
     /// Sets the fields for the StructDef
     pub const fn fields(mut self, fields: &'static [Field]) -> Self {
-        self.fields = Some(fields);
+        self.fields = fields;
         self
     }
 
@@ -51,7 +68,7 @@ impl StructDefBuilder {
     pub const fn build(self) -> Struct {
         Struct {
             kind: self.kind.unwrap(),
-            fields: self.fields.unwrap(),
+            fields: self.fields,
         }
     }
 }
