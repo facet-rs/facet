@@ -1,6 +1,6 @@
 extern crate alloc;
 use crate::{ReflectError, ValueId};
-use core::alloc::Layout;
+use core::{alloc::Layout, marker::PhantomData};
 use facet_core::{Def, Facet, FieldError, OpaqueConst, OpaqueUninit, Shape, Variant};
 use std::collections::HashMap;
 
@@ -67,21 +67,21 @@ struct IState {
 }
 
 /// A work-in-progress heap-allocated value
-pub struct Wip {
+pub struct Wip<'a> {
     /// frees the memory when dropped
     guard: Guard,
-
-    /// the shape of the value
-    shape: &'static Shape,
 
     /// stack of frames to keep track of deeply nested initialization
     frames: Vec<Frame>,
 
     /// keeps track of initialization of out-of-tree frames
     istates: HashMap<ValueId, IState>,
+
+    /// lifetime of the shortest reference we hold
+    phantom: PhantomData<&'a ()>,
 }
 
-impl Wip {
+impl<'a> Wip<'a> {
     /// Allocates a new value of the given shape
     pub fn alloc_shape(shape: &'static Shape) -> Self {
         let data = shape.allocate();
@@ -91,7 +91,6 @@ impl Wip {
         };
         Self {
             guard,
-            shape,
             frames: vec![Frame {
                 data,
                 shape,
@@ -99,6 +98,7 @@ impl Wip {
                 istate: Default::default(),
             }],
             istates: HashMap::new(),
+            phantom: PhantomData,
         }
     }
 
@@ -124,7 +124,7 @@ impl Wip {
     }
 
     /// Asserts everything is initialized
-    pub fn build(mut self) -> Result<HeapValue, ReflectError> {
+    pub fn build(mut self) -> Result<HeapValue<'a>, ReflectError> {
         let mut root: Option<Frame> = None;
         while let Some(frame) = self.pop_inner() {
             if let Some(old_root) = root.replace(frame) {
@@ -172,6 +172,7 @@ impl Wip {
         Ok(HeapValue {
             guard: self.guard,
             shape,
+            phantom: PhantomData,
         })
     }
 
@@ -185,7 +186,7 @@ impl Wip {
     ///
     /// * `Ok(Self)` if the field was successfully selected and pushed.
     /// * `Err(ReflectError)` if the current frame is not a struct or the field doesn't exist.
-    pub fn field_named(&mut self, name: &str) -> Result<&mut Self, ReflectError> {
+    pub fn field_named(mut self, name: &str) -> Result<Self, ReflectError> {
         let frame = self.frames.last_mut().unwrap();
         let shape = frame.shape;
         let Def::Struct(def) = shape.def else {
@@ -225,7 +226,10 @@ impl Wip {
     ///
     /// * `Ok(Self)` if the value was successfully put into the frame.
     /// * `Err(ReflectError)` if there was an error putting the value into the frame.
-    pub fn put<T: Facet>(&mut self, t: T) -> Result<&mut Self, ReflectError> {
+    pub fn put<'val, T: Facet + 'val>(mut self, t: T) -> Result<Wip<'val>, ReflectError>
+    where
+        'a: 'val,
+    {
         let Some(frame) = self.frames.last_mut() else {
             return Err(ReflectError::OperationFailed {
                 shape: T::SHAPE,
@@ -264,7 +268,7 @@ impl Wip {
     }
 
     /// Puts the default value in the currrent frame.
-    pub fn put_default(&mut self) -> Result<&mut Self, ReflectError> {
+    pub fn put_default(mut self) -> Result<Self, ReflectError> {
         let Some(frame) = self.frames.last_mut() else {
             return Err(ReflectError::OperationFailed {
                 shape: <()>::SHAPE,
@@ -329,23 +333,12 @@ impl Wip {
     }
 
     /// Pops the current frame — goes back up one level
-    pub fn pop(&mut self) -> Result<&mut Self, ReflectError> {
+    pub fn pop(mut self) -> Result<Self, ReflectError> {
         let Some(frame) = self.pop_inner() else {
             return Err(ReflectError::InvariantViolation);
         };
         self.track(frame);
         Ok(self)
-    }
-
-    /// Finish with this wip (validate that exactly one frame remains)
-    pub fn finish(&self) -> Result<(), ReflectError> {
-        if self.frames.len() != 1 {
-            return Err(ReflectError::OperationFailed {
-                shape: self.shape,
-                operation: "Wip finished with incorrect number of frames",
-            });
-        }
-        Ok(())
     }
 }
 
@@ -434,14 +427,15 @@ impl ISet {
 }
 
 /// A type-erased value stored on the heap
-pub struct HeapValue {
+pub struct HeapValue<'a> {
     guard: Guard,
     shape: &'static Shape,
+    phantom: PhantomData<&'a ()>,
 }
 
-impl HeapValue {
+impl<'a> HeapValue<'a> {
     /// Turn this heapvalue into a concrete type
-    pub fn materialize<T: Facet>(self) -> Result<T, ReflectError> {
+    pub fn materialize<T: Facet + 'a>(self) -> Result<T, ReflectError> {
         if self.shape != T::SHAPE {
             return Err(ReflectError::WrongShape {
                 expected: self.shape,
@@ -456,7 +450,7 @@ impl HeapValue {
     }
 }
 
-impl HeapValue {
+impl HeapValue<'_> {
     /// Formats the value using its Display implementation, if available
     pub fn fmt_display(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if let Some(display_fn) = self.shape.vtable.display {
@@ -476,19 +470,19 @@ impl HeapValue {
     }
 }
 
-impl core::fmt::Display for HeapValue {
+impl core::fmt::Display for HeapValue<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.fmt_display(f)
     }
 }
 
-impl core::fmt::Debug for HeapValue {
+impl core::fmt::Debug for HeapValue<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.fmt_debug(f)
     }
 }
 
-impl PartialEq for HeapValue {
+impl PartialEq for HeapValue<'_> {
     fn eq(&self, other: &Self) -> bool {
         if self.shape != other.shape {
             return false;
@@ -506,7 +500,7 @@ impl PartialEq for HeapValue {
     }
 }
 
-impl PartialOrd for HeapValue {
+impl PartialOrd for HeapValue<'_> {
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         if self.shape != other.shape {
             return None;

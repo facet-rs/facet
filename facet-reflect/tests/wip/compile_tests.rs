@@ -66,6 +66,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+eyre = "0.6"
 facet = {{ path = "{}" }}
 facet-reflect = {{ path = "{}" }}
     "#,
@@ -159,25 +160,7 @@ fn test_poke_lifetime_error() {
     // Define the test case
     let test = CompilationTest {
         name: "poke_lifetime_error",
-        source: r#"
-use facet::Facet;
-use facet_reflect::WipValue;
-
-fn main() {
-    #[derive(Debug, Facet)]
-    struct Foo<'a> {
-        s: &'a str,
-    }
-
-    let wip = WipValue::alloc::<Foo>();
-    let v = {
-        let s = "abc".to_string();
-        let foo = Foo { s: &s };
-        wip.put(foo).unwrap().build().unwrap().materialize::<Foo>().unwrap()
-    };
-    dbg!(v);
-}
-        "#,
+        source: include_str!("compile_tests/lifetimes.rs"),
         expected_errors: &["error[E0597]: `s` does not live long enough"],
     };
 

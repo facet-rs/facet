@@ -180,6 +180,7 @@ We can build it fully through reflection using the slot-based initialization API
 
 ```rust
 use facet::Facet;
+use facet_reflect::Wip;
 
 #[derive(Debug, PartialEq, Eq, Facet)]
 struct FooBar {
@@ -187,30 +188,20 @@ struct FooBar {
     bar: String,
 }
 
-use facet_reflect::PokeValueUninit;
-
-# fn main() {
-// Allocate memory for a struct - returns a PokeValueUninit and a Guard that ensures proper cleanup
-let poke = PokeValueUninit::alloc::<FooBar>();
-
-// Convert to a struct handler
-let poke = poke.into_struct().unwrap();
-
-// Set field values by name using the slot API
-// Each operation returns the parent context after setting the value
-let poke = poke.field_by_name("foo").unwrap().set(42u64).unwrap().into_struct_uninit();
-let poke = poke
-    .field_by_name("bar")
-    .unwrap()
-    .set(String::from("Hello, World!"))
-    .unwrap()
-    .into_struct_uninit();
-
-// Build the final struct
-let foo_bar = poke.build::<FooBar>(Some(guard)).unwrap();
+# fn main() -> eyre::Result<()> {
+let foo_bar = Wip::alloc::<FooBar>()
+    .field_named("foo")?
+    .put(42u64)?
+    .pop()?
+    .field_named("bar")?
+    .put(String::from("Hello, World!"))?
+    .pop()?
+    .build()?
+    .materialize::<FooBar>()?;
 
 // Now we can use the constructed value
 println!("{}", foo_bar.bar);
+# Ok(())
 # }
 ```
 

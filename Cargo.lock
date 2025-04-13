@@ -82,6 +82,7 @@ name = "facet"
 version = "0.2.0"
 dependencies = [
  "cargo-husky",
+ "eyre",
  "facet-core",
  "facet-derive",
  "facet-reflect",

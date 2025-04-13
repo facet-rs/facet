@@ -24,4 +24,5 @@ default = ["std"]
 
 [dev-dependencies]
 cargo-husky = { version = "1.5.0", default-features = false, features = ["user-hooks"] }
+eyre = { version = "0.6.12", default-features = false }
 facet-reflect = { path = "../facet-reflect", version = "0.6.2" }

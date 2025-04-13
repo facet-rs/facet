@@ -85,8 +85,7 @@ where
     }
 
     // Test default_in_place
-    let mut wip = Wip::alloc::<T>();
-    if wip.put_default().is_ok() {
+    if let Ok(wip) = Wip::alloc::<T>().put_default() {
         let val = wip.build().unwrap();
         facts.insert(Fact::Default);
         eprintln!("Default:   {}", format!("{:?}", val).style(remarkable));
