@@ -1,5 +1,5 @@
 use facet::Facet;
-use facet_reflect::{Bob, Wip};
+use facet_reflect::Wip;
 
 #[derive(Facet, PartialEq, Eq, Debug)]
 struct Outer {
@@ -87,7 +87,7 @@ fn lifetimes() -> eyre::Result<()> {
         let s = "abc".to_string();
         let foo = Foo { s: &s };
         bob.put(foo)?.finish()?;
-        wip.build()?.materialize::<Foo>()?;
+        wip.build()?.materialize::<Foo>()?
     };
     dbg!(v);
 

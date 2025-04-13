@@ -82,10 +82,6 @@ pub struct Wip {
 }
 
 impl Wip {
-    fn data(&self) -> OpaqueUninit<'static> {
-        OpaqueUninit::new(self.guard.ptr)
-    }
-
     /// Allocates a new value of the given shape
     pub fn alloc_shape(shape: &'static Shape) -> Self {
         let data = shape.allocate();
