@@ -14,77 +14,77 @@ pub mod styles {
 
     /// Get a red style
     pub fn red() -> Style {
-        Style::new().with_red()
+        Style::new().fg_red()
     }
 
     /// Get a green style
     pub fn green() -> Style {
-        Style::new().with_green()
+        Style::new().fg_green()
     }
 
     /// Get a blue style
     pub fn blue() -> Style {
-        Style::new().with_blue()
+        Style::new().fg_blue()
     }
 
     /// Get a yellow style
     pub fn yellow() -> Style {
-        Style::new().with_yellow()
+        Style::new().fg_yellow()
     }
 
     /// Get a magenta style
     pub fn magenta() -> Style {
-        Style::new().with_magenta()
+        Style::new().fg_magenta()
     }
 
     /// Get a cyan style
     pub fn cyan() -> Style {
-        Style::new().with_cyan()
+        Style::new().fg_cyan()
     }
 
     /// Get a white style
     pub fn white() -> Style {
-        Style::new().with_white()
+        Style::new().fg_white()
     }
 
     /// Get a black style
     pub fn black() -> Style {
-        Style::new().with_black()
+        Style::new().fg_black()
     }
 
     /// Get a bright red style
     pub fn bright_red() -> Style {
-        Style::new().with_bright_red()
+        Style::new().fg_bright_red()
     }
 
     /// Get a bright green style
     pub fn bright_green() -> Style {
-        Style::new().with_bright_green()
+        Style::new().fg_bright_green()
     }
 
     /// Get a bright blue style
     pub fn bright_blue() -> Style {
-        Style::new().with_bright_blue()
+        Style::new().fg_bright_blue()
     }
 
     /// Get a bright yellow style
     pub fn bright_yellow() -> Style {
-        Style::new().with_bright_yellow()
+        Style::new().fg_bright_yellow()
     }
 
     /// Get a bright magenta style
     pub fn bright_magenta() -> Style {
-        Style::new().with_bright_magenta()
+        Style::new().fg_bright_magenta()
     }
 
     /// Get a bright cyan style
     pub fn bright_cyan() -> Style {
-        Style::new().with_bright_cyan()
+        Style::new().fg_bright_cyan()
     }
 
     /// Get a bright white style
     pub fn bright_white() -> Style {
-        Style::new().with_bright_white()
+        Style::new().fg_bright_white()
     }
 
     /// Get a bold style
@@ -106,98 +106,116 @@ pub mod styles {
 /// Extensions for creating styles with common colors
 pub trait ColorStyle {
     /// Create a new style with red foreground color
-    fn with_red(self) -> Style;
+    fn fg_red(self) -> Style;
     /// Create a new style with green foreground color
-    fn with_green(self) -> Style;
+    fn fg_green(self) -> Style;
     /// Create a new style with blue foreground color
-    fn with_blue(self) -> Style;
+    fn fg_blue(self) -> Style;
     /// Create a new style with yellow foreground color
-    fn with_yellow(self) -> Style;
+    fn fg_yellow(self) -> Style;
     /// Create a new style with magenta foreground color
-    fn with_magenta(self) -> Style;
+    fn fg_magenta(self) -> Style;
     /// Create a new style with cyan foreground color
-    fn with_cyan(self) -> Style;
+    fn fg_cyan(self) -> Style;
     /// Create a new style with white foreground color
-    fn with_white(self) -> Style;
+    fn fg_white(self) -> Style;
     /// Create a new style with black foreground color
-    fn with_black(self) -> Style;
+    fn fg_black(self) -> Style;
     /// Create a new style with bright red foreground color
-    fn with_bright_red(self) -> Style;
+    fn fg_bright_red(self) -> Style;
     /// Create a new style with bright green foreground color
-    fn with_bright_green(self) -> Style;
+    fn fg_bright_green(self) -> Style;
     /// Create a new style with bright blue foreground color
-    fn with_bright_blue(self) -> Style;
+    fn fg_bright_blue(self) -> Style;
     /// Create a new style with bright yellow foreground color
-    fn with_bright_yellow(self) -> Style;
+    fn fg_bright_yellow(self) -> Style;
     /// Create a new style with bright magenta foreground color
-    fn with_bright_magenta(self) -> Style;
+    fn fg_bright_magenta(self) -> Style;
     /// Create a new style with bright cyan foreground color
-    fn with_bright_cyan(self) -> Style;
+    fn fg_bright_cyan(self) -> Style;
     /// Create a new style with bright white foreground color
-    fn with_bright_white(self) -> Style;
+    fn fg_bright_white(self) -> Style;
+    /// Create a new style with bold formatting
+    fn fg_bold(self) -> Style;
+    /// Create a new style with dimmed formatting
+    fn fg_dimmed(self) -> Style;
+    /// Create a new style with underline formatting
+    fn fg_underline(self) -> Style;
 }
 
 impl ColorStyle for Style {
-    fn with_red(self) -> Style {
+    fn fg_red(self) -> Style {
         self.fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::Red)))
     }
 
-    fn with_green(self) -> Style {
+    fn fg_green(self) -> Style {
         self.fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::Green)))
     }
 
-    fn with_blue(self) -> Style {
+    fn fg_blue(self) -> Style {
         self.fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::Blue)))
     }
 
-    fn with_yellow(self) -> Style {
+    fn fg_yellow(self) -> Style {
         self.fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::Yellow)))
     }
 
-    fn with_magenta(self) -> Style {
+    fn fg_magenta(self) -> Style {
         self.fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::Magenta)))
     }
 
-    fn with_cyan(self) -> Style {
+    fn fg_cyan(self) -> Style {
         self.fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::Cyan)))
     }
 
-    fn with_white(self) -> Style {
+    fn fg_white(self) -> Style {
         self.fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::White)))
     }
 
-    fn with_black(self) -> Style {
+    fn fg_black(self) -> Style {
         self.fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::Black)))
     }
 
-    fn with_bright_red(self) -> Style {
+    fn fg_bright_red(self) -> Style {
         self.fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::BrightRed)))
     }
 
-    fn with_bright_green(self) -> Style {
+    fn fg_bright_green(self) -> Style {
         self.fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::BrightGreen)))
     }
 
-    fn with_bright_blue(self) -> Style {
+    fn fg_bright_blue(self) -> Style {
         self.fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::BrightBlue)))
     }
 
-    fn with_bright_yellow(self) -> Style {
+    fn fg_bright_yellow(self) -> Style {
         self.fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::BrightYellow)))
     }
 
-    fn with_bright_magenta(self) -> Style {
+    fn fg_bright_magenta(self) -> Style {
         self.fg_color(Some(anstyle::Color::Ansi(
             anstyle::AnsiColor::BrightMagenta,
         )))
     }
 
-    fn with_bright_cyan(self) -> Style {
+    fn fg_bright_cyan(self) -> Style {
         self.fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::BrightCyan)))
     }
 
-    fn with_bright_white(self) -> Style {
+    fn fg_bright_white(self) -> Style {
         self.fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::BrightWhite)))
+    }
+
+    fn fg_bold(self) -> Style {
+        self.bold()
+    }
+
+    fn fg_dimmed(self) -> Style {
+        self.dimmed()
+    }
+
+    fn fg_underline(self) -> Style {
+        self.underline()
     }
 }
 
@@ -326,69 +344,69 @@ pub trait Stylize {
         Self: Sized;
 }
 
-impl<T: Display> Stylize for T {
+impl<T> Stylize for T {
     fn style(self, style: Style) -> Styled<Self> {
         Styled { value: self, style }
     }
 
     fn red(self) -> Styled<Self> {
-        self.style(Style::new().with_red())
+        self.style(Style::new().fg_red())
     }
 
     fn green(self) -> Styled<Self> {
-        self.style(Style::new().with_green())
+        self.style(Style::new().fg_green())
     }
 
     fn blue(self) -> Styled<Self> {
-        self.style(Style::new().with_blue())
+        self.style(Style::new().fg_blue())
     }
 
     fn yellow(self) -> Styled<Self> {
-        self.style(Style::new().with_yellow())
+        self.style(Style::new().fg_yellow())
     }
 
     fn magenta(self) -> Styled<Self> {
-        self.style(Style::new().with_magenta())
+        self.style(Style::new().fg_magenta())
     }
 
     fn cyan(self) -> Styled<Self> {
-        self.style(Style::new().with_cyan())
+        self.style(Style::new().fg_cyan())
     }
 
     fn white(self) -> Styled<Self> {
-        self.style(Style::new().with_white())
+        self.style(Style::new().fg_white())
     }
 
     fn black(self) -> Styled<Self> {
-        self.style(Style::new().with_black())
+        self.style(Style::new().fg_black())
     }
 
     fn bright_red(self) -> Styled<Self> {
-        self.style(Style::new().with_bright_red())
+        self.style(Style::new().fg_bright_red())
     }
 
     fn bright_green(self) -> Styled<Self> {
-        self.style(Style::new().with_bright_green())
+        self.style(Style::new().fg_bright_green())
     }
 
     fn bright_blue(self) -> Styled<Self> {
-        self.style(Style::new().with_bright_blue())
+        self.style(Style::new().fg_bright_blue())
     }
 
     fn bright_yellow(self) -> Styled<Self> {
-        self.style(Style::new().with_bright_yellow())
+        self.style(Style::new().fg_bright_yellow())
     }
 
     fn bright_magenta(self) -> Styled<Self> {
-        self.style(Style::new().with_bright_magenta())
+        self.style(Style::new().fg_bright_magenta())
     }
 
     fn bright_cyan(self) -> Styled<Self> {
-        self.style(Style::new().with_bright_cyan())
+        self.style(Style::new().fg_bright_cyan())
     }
 
     fn bright_white(self) -> Styled<Self> {
-        self.style(Style::new().with_bright_white())
+        self.style(Style::new().fg_bright_white())
     }
 
     fn bold(self) -> Styled<Self> {

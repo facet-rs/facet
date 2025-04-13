@@ -12,10 +12,10 @@ impl Log for SimpleLogger {
     fn log(&self, record: &Record) {
         // Create style based on log level
         let level_style = match record.level() {
-            Level::Error => Style::new().with_red(),
-            Level::Warn => Style::new().with_yellow(),
-            Level::Info => Style::new().with_green(),
-            Level::Debug => Style::new().with_cyan(),
+            Level::Error => Style::new().fg_red(),
+            Level::Warn => Style::new().fg_yellow(),
+            Level::Info => Style::new().fg_green(),
+            Level::Debug => Style::new().fg_cyan(),
             Level::Trace => Style::new().dimmed(),
         };
 

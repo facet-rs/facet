@@ -40,7 +40,7 @@ println!("{}", "Bold and red".red().style(facet_ansi::Style::new().bold()));
 ### Using the Style Module
 
 ```rust
-use facet_ansi::{Stylize, styles};
+use facet_ansi::{Stylize, ColorStyle, styles};
 
 # fn main() {
 // Use pre-defined styles
@@ -51,7 +51,7 @@ println!("{}", "Warning message".style(warning_style));
 println!("{}", "Error message".style(error_style));
 
 // Create custom styles
-let custom_style = facet_ansi::Style::new().with_green().bold().underline();
+let custom_style = facet_ansi::Style::new().fg_green().bold().underline();
 println!("{}", "Custom styled text".style(custom_style));
 # }
 ```
