@@ -2,7 +2,7 @@ use facet_core::{Def, Facet, FieldError, OpaqueConst};
 
 use crate::ReflectError;
 
-use super::{PokeStructUninit, PokeValueUninit};
+use super::{HeapVal, PokeStructUninit, PokeValueUninit};
 
 #[derive(Debug)]
 /// Represents the parent container during the initialization process.
@@ -11,7 +11,7 @@ use super::{PokeStructUninit, PokeValueUninit};
 /// navigate back up the initialization hierarchy when completing a field.
 pub enum Parent<'mem> {
     /// An uninitialized struct that we're in the process of building.
-    StructUninit(PokeStructUninit<'mem>),
+    StructUninit(HeapVal<PokeStructUninit<'mem>>),
     /// A struct field that itself contains a struct we're initializing.
     StructSlot(Box<StructSlot<'mem>>),
 }
@@ -36,7 +36,7 @@ impl<'mem> Parent<'mem> {
     }
 
     /// Returns the parent, assuming it's a PokeStructUninit
-    pub fn into_struct_uninit(self) -> PokeStructUninit<'mem> {
+    pub fn into_struct_uninit(self) -> HeapVal<PokeStructUninit<'mem>> {
         if let Parent::StructUninit(storage) = self {
             storage
         } else {

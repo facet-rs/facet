@@ -183,7 +183,7 @@ fn test_alloc_and_build() -> eyre::Result<()> {
     let poke = poke.field_by_name("y")?.set(24i32)?.into_struct_uninit();
 
     // Build the final value
-    let point: Point = poke.build(None)?;
+    let point: Point = poke.materialize()?;
 
     assert_eq!(point, Point { x: 42, y: 24 });
     Ok(())
@@ -209,8 +209,7 @@ fn test_nested_initialization() -> eyre::Result<()> {
     let poke = poke.field_by_name("y")?.set(0i32)?.into_struct_slot();
     let poke = poke.finish()?.into_struct_uninit();
 
-    // Build the final value
-    let named_point: NamedPoint = poke.build(None)?;
+    let named_point: NamedPoint = poke.materialize()?;
 
     assert_eq!(named_point.name, "Origin");
     assert_eq!(named_point.point, Point { x: 0, y: 0 });
