@@ -21,5 +21,5 @@ pub use map::*;
 mod option;
 pub use option::*;
 
-mod smart_pointer;
-pub use smart_pointer::*;
+mod smartptr;
+pub use smartptr::*;

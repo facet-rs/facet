@@ -60,103 +60,6 @@ impl<'mem> PeekValue<'mem> {
         }
     }
 
-    /// Compares this scalar with another and returns their ordering
-    ///
-    /// # Returns
-    ///
-    /// `None` if comparison is not supported for this scalar type
-    #[inline]
-    // Note: we cannot implement `Ord` for `PeekValue` because the underlying shape might
-    // not implement `Ord` — unlike the `PartialOrd` case where we can just pretend it
-    // could not order two specific values.
-    #[expect(clippy::should_implement_trait)]
-    pub fn cmp(&self, other: &PeekValue<'_>) -> Option<Ordering> {
-        unsafe {
-            self.shape
-                .vtable
-                .ord
-                .map(|ord_fn| ord_fn(self.data, other.data))
-        }
-    }
-
-    /// Returns true if this scalar is greater than the other scalar
-    ///
-    /// # Returns
-    ///
-    /// `false` if comparison is not supported for this scalar type
-    #[inline]
-    pub fn gt(&self, other: &PeekValue<'_>) -> bool {
-        self.cmp(other)
-            .map(|ordering| ordering == Ordering::Greater)
-            .unwrap_or(false)
-    }
-
-    /// Returns true if this scalar is greater than or equal to the other scalar
-    ///
-    /// # Returns
-    ///
-    /// `false` if comparison is not supported for this scalar type
-    #[inline]
-    pub fn gte(&self, other: &PeekValue<'_>) -> bool {
-        self.cmp(other)
-            .map(|ordering| ordering == Ordering::Greater || ordering == Ordering::Equal)
-            .unwrap_or(false)
-    }
-
-    /// Returns true if this scalar is less than the other scalar
-    ///
-    /// # Returns
-    ///
-    /// `false` if comparison is not supported for this scalar type
-    #[inline]
-    pub fn lt(&self, other: &PeekValue<'_>) -> bool {
-        self.cmp(other)
-            .map(|ordering| ordering == Ordering::Less)
-            .unwrap_or(false)
-    }
-
-    /// Returns true if this scalar is less than or equal to the other scalar
-    ///
-    /// # Returns
-    ///
-    /// `false` if comparison is not supported for this scalar type
-    #[inline(always)]
-    pub fn lte(&self, other: &PeekValue<'_>) -> bool {
-        self.cmp(other)
-            .map(|ordering| ordering == Ordering::Less || ordering == Ordering::Equal)
-            .unwrap_or(false)
-    }
-
-    /// Formats this scalar for display
-    ///
-    /// # Returns
-    ///
-    /// `None` if display formatting is not supported for this scalar type
-    #[inline(always)]
-    pub fn display(&self, f: &mut core::fmt::Formatter<'_>) -> Option<core::fmt::Result> {
-        unsafe {
-            self.shape
-                .vtable
-                .display
-                .map(|display_fn| display_fn(self.data, f))
-        }
-    }
-
-    /// Formats this scalar for debug
-    ///
-    /// # Returns
-    ///
-    /// `None` if debug formatting is not supported for this scalar type
-    #[inline(always)]
-    pub fn debug(&self, f: &mut core::fmt::Formatter<'_>) -> Option<core::fmt::Result> {
-        unsafe {
-            self.shape
-                .vtable
-                .debug
-                .map(|debug_fn| debug_fn(self.data, f))
-        }
-    }
-
     /// Hashes this scalar
     ///
     /// # Returns
@@ -320,5 +223,20 @@ impl core::cmp::PartialOrd for PeekValue<'_> {
         }
         let partial_ord_fn = self.shape.vtable.partial_ord?;
         unsafe { partial_ord_fn(self.data, other.data) }
+    }
+}
+
+impl core::hash::Hash for PeekValue<'_> {
+    fn hash<H: core::hash::Hasher>(&self, hasher: &mut H) {
+        if let Some(hash_fn) = self.shape.vtable.hash {
+            let hasher_opaque = Opaque::new(hasher);
+            unsafe {
+                hash_fn(self.data, hasher_opaque, |opaque, bytes| {
+                    opaque.as_mut::<H>().write(bytes)
+                })
+            };
+        } else {
+            panic!("Hashing is not supported for this shape");
+        }
     }
 }
