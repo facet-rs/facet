@@ -15,15 +15,6 @@ pub fn peek_option(shape: &'static Shape) -> Option<OptionDef> {
     }
 }
 
-impl<'mem> core::ops::Deref for PeekOption<'mem> {
-    type Target = crate::PeekValue<'mem>;
-
-    #[inline(always)]
-    fn deref(&self) -> &Self::Target {
-        &self.value
-    }
-}
-
 impl<'mem> PeekOption<'mem> {
     /// Create a new peek option
     pub(crate) fn new(value: crate::PeekValue<'mem>, def: OptionDef) -> Self {
@@ -55,10 +46,12 @@ impl<'mem> PeekOption<'mem> {
     }
 
     /// Returns the inner value as a Peek if the option is Some, None otherwise
-    pub fn value(self) -> Option<crate::Peek<'mem>> {
+    pub fn value(self) -> Option<crate::PeekValue<'mem>> {
         unsafe {
-            (self.vtable().get_value_fn)(self.value.data())
-                .map(|inner_data| crate::Peek::unchecked_new(inner_data, self.def.t))
+            (self.vtable().get_value_fn)(self.value.data()).map(|inner_data| crate::PeekValue {
+                data: inner_data,
+                shape: self.def.t,
+            })
         }
     }
 }

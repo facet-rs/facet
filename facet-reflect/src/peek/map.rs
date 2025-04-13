@@ -1,7 +1,5 @@
 use facet_core::{MapDef, Opaque, OpaqueConst};
 
-use crate::Peek;
-
 use super::PeekValue;
 
 /// Iterator over key-value pairs in a `PeekMap`
@@ -11,15 +9,21 @@ pub struct PeekMapIter<'mem> {
 }
 
 impl<'mem> Iterator for PeekMapIter<'mem> {
-    type Item = (Peek<'mem>, Peek<'mem>);
+    type Item = (PeekValue<'mem>, PeekValue<'mem>);
 
     fn next(&mut self) -> Option<Self::Item> {
         unsafe {
             let next = (self.map.def.vtable.iter_vtable.next)(self.iter);
             next.map(|(key_ptr, value_ptr)| {
                 (
-                    Peek::unchecked_new(key_ptr, self.map.def.k),
-                    Peek::unchecked_new(value_ptr, self.map.def.v),
+                    PeekValue {
+                        data: key_ptr,
+                        shape: self.map.def.k,
+                    },
+                    PeekValue {
+                        data: value_ptr,
+                        shape: self.map.def.v,
+                    },
                 )
             })
         }
@@ -33,7 +37,7 @@ impl Drop for PeekMapIter<'_> {
 }
 
 impl<'mem> IntoIterator for &'mem PeekMap<'mem> {
-    type Item = (Peek<'mem>, Peek<'mem>);
+    type Item = (PeekValue<'mem>, PeekValue<'mem>);
     type IntoIter = PeekMapIter<'mem>;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -44,17 +48,9 @@ impl<'mem> IntoIterator for &'mem PeekMap<'mem> {
 /// Lets you read from a map (implements read-only [`facet_core::MapVTable`] proxies)
 #[derive(Clone, Copy)]
 pub struct PeekMap<'mem> {
-    value: PeekValue<'mem>,
-    def: MapDef,
-}
+    pub(crate) value: PeekValue<'mem>,
 
-impl<'mem> core::ops::Deref for PeekMap<'mem> {
-    type Target = PeekValue<'mem>;
-
-    #[inline(always)]
-    fn deref(&self) -> &Self::Target {
-        &self.value
-    }
+    pub(crate) def: MapDef,
 }
 
 impl<'mem> PeekMap<'mem> {
@@ -82,11 +78,14 @@ impl<'mem> PeekMap<'mem> {
     }
 
     /// Get a value from the map for the given key
-    pub fn get<'k>(&self, key: &'k impl facet_core::Facet) -> Option<Peek<'mem>> {
+    pub fn get<'k>(&self, key: &'k impl facet_core::Facet) -> Option<PeekValue<'mem>> {
         unsafe {
             let key_ptr = OpaqueConst::new(key);
             let value_ptr = (self.def.vtable.get_value_ptr_fn)(self.value.data(), key_ptr)?;
-            Some(Peek::unchecked_new(value_ptr, self.def.v))
+            Some(PeekValue {
+                data: value_ptr,
+                shape: self.def.v,
+            })
         }
     }
 

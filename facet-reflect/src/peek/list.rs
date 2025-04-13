@@ -1,5 +1,3 @@
-use crate::Peek;
-
 use super::PeekValue;
 use facet_core::ListDef;
 
@@ -11,7 +9,7 @@ pub struct PeekListIter<'mem> {
 }
 
 impl<'mem> Iterator for PeekListIter<'mem> {
-    type Item = Peek<'mem>;
+    type Item = PeekValue<'mem>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.index >= self.len {
@@ -31,7 +29,7 @@ impl<'mem> Iterator for PeekListIter<'mem> {
 impl ExactSizeIterator for PeekListIter<'_> {}
 
 impl<'mem> IntoIterator for &'mem PeekList<'mem> {
-    type Item = Peek<'mem>;
+    type Item = PeekValue<'mem>;
     type IntoIter = PeekListIter<'mem>;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -42,17 +40,8 @@ impl<'mem> IntoIterator for &'mem PeekList<'mem> {
 /// Lets you read from a list (implements read-only [`facet_core::ListVTable`] proxies)
 #[derive(Clone, Copy)]
 pub struct PeekList<'mem> {
-    value: PeekValue<'mem>,
-    def: ListDef,
-}
-
-impl<'mem> core::ops::Deref for PeekList<'mem> {
-    type Target = PeekValue<'mem>;
-
-    #[inline(always)]
-    fn deref(&self) -> &Self::Target {
-        &self.value
-    }
+    pub(crate) value: PeekValue<'mem>,
+    pub(crate) def: ListDef,
 }
 
 impl<'mem> PeekList<'mem> {
@@ -70,19 +59,21 @@ impl<'mem> PeekList<'mem> {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
-
     /// Get an item from the list at the specified index
     ///
     /// # Panics
     ///
     /// Panics if the index is out of bounds
-    pub fn item_at(&self, index: usize) -> Option<Peek<'mem>> {
+    pub fn item_at(&self, index: usize) -> Option<PeekValue<'mem>> {
         if index >= self.len() {
             return None;
         }
 
         let item_ptr = unsafe { (self.def.vtable.get_item_ptr)(self.value.data(), index) };
-        Some(unsafe { Peek::unchecked_new(item_ptr, self.def.t) })
+        Some(PeekValue {
+            data: item_ptr,
+            shape: self.def.t,
+        })
     }
 
     /// Returns an iterator over the list

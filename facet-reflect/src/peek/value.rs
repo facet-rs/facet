@@ -1,7 +1,9 @@
 use core::cmp::Ordering;
-use facet_core::{Facet, Opaque, OpaqueConst, Shape, TypeNameOpts, ValueVTable};
+use facet_core::{Def, Facet, Opaque, OpaqueConst, Shape, TypeNameOpts, ValueVTable};
 
-use crate::ScalarType;
+use crate::{ReflectError, ScalarType};
+
+use super::{PeekEnum, PeekList, PeekMap, PeekSmartPointer, PeekStruct};
 
 /// Lets you read from a value (implements read-only [`ValueVTable`] proxies)
 #[derive(Clone, Copy)]
@@ -206,12 +208,6 @@ impl<'mem> PeekValue<'mem> {
         self.data
     }
 
-    /// Wraps this scalar back into a `Peek`
-    #[inline(always)]
-    pub fn wrap(self) -> Peek<'mem> {
-        unsafe { Peek::unchecked_new(self.data, self.shape) }
-    }
-
     /// Get the scalar type if set.
     pub fn scalar_type(&self) -> Option<ScalarType> {
         ScalarType::try_from_shape(self.shape)
@@ -225,6 +221,53 @@ impl<'mem> PeekValue<'mem> {
     pub fn get<T: Facet>(&self) -> &T {
         self.shape.assert_type::<T>();
         unsafe { self.data.as_ref::<T>() }
+    }
+
+    /// Tries to identify this value as a struct
+    pub fn into_struct(self) -> Result<PeekStruct<'mem>, ReflectError> {
+        if let Def::Struct(def) = self.shape.def {
+            Ok(PeekStruct { value: self, def })
+        } else {
+            Err(ReflectError::WasNotA { name: "struct" })
+        }
+    }
+
+    /// Tries to identify this value as an enum
+    pub fn into_enum(self) -> Result<PeekEnum<'mem>, ReflectError> {
+        if let Def::Enum(def) = self.shape.def {
+            Ok(PeekEnum { value: self, def })
+        } else {
+            Err(ReflectError::WasNotA { name: "enum" })
+        }
+    }
+
+    /// Tries to identify this value as a map
+    pub fn into_map(self) -> Result<PeekMap<'mem>, ReflectError> {
+        if let Def::Map(def) = self.shape.def {
+            Ok(PeekMap { value: self, def })
+        } else {
+            Err(ReflectError::WasNotA { name: "map" })
+        }
+    }
+
+    /// Tries to identify this value as a list
+    pub fn into_list(self) -> Result<PeekList<'mem>, ReflectError> {
+        if let Def::List(def) = self.shape.def {
+            Ok(PeekList { value: self, def })
+        } else {
+            Err(ReflectError::WasNotA { name: "list" })
+        }
+    }
+
+    /// Tries to identify this value as a smart pointer
+    pub fn into_smart_pointer(self) -> Result<PeekSmartPointer<'mem>, ReflectError> {
+        if let Def::SmartPointer(def) = self.shape.def {
+            Ok(PeekSmartPointer { value: self, def })
+        } else {
+            Err(ReflectError::WasNotA {
+                name: "smart pointer",
+            })
+        }
     }
 }
 

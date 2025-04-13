@@ -1,4 +1,4 @@
-use facet_core::{EnumDef, EnumRepr, OpaqueConst, Shape, Variant};
+use facet_core::{EnumDef, EnumRepr, Shape, Variant};
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
@@ -13,8 +13,10 @@ pub struct PeekEnum<'mem> {
     /// Note that this stores both the discriminant and the variant data
     /// (if any), and the layout depends on the enum representation.
     /// Use [`Self::variant_data`] to get a pointer to the variant data.
-    value: crate::PeekValue<'mem>,
-    def: EnumDef,
+    pub(crate) value: crate::PeekValue<'mem>,
+
+    /// The definition of the enum.
+    pub(crate) def: EnumDef,
 }
 
 /// Returns the enum definition if the shape represents an enum, None otherwise
