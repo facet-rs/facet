@@ -25,7 +25,7 @@ members = [
     "facet-pretty",
     # "facet-toml",
     "facet-urlencoded",
-    # "facet-yaml",
+    "facet-yaml",
 ]
 exclude = ["sample"]
 resolver = "3"

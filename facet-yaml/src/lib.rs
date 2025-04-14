@@ -1,15 +1,18 @@
 #![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 
-use facet_core::{Facet, Opaque};
-use facet_reflect::{PokeUninit, ScalarType};
+use facet_core::{Def, Facet};
+use facet_reflect::Wip;
 use yaml_rust2::{Yaml, YamlLoader};
 
 /// Deserializes a YAML string into a value of type `T` that implements `Facet`.
 pub fn from_str<T: Facet>(yaml: &str) -> Result<T, AnyErr> {
-    let (poke, _guard) = PokeUninit::alloc::<T>();
-    let opaque = from_str_opaque(poke, yaml)?;
-    Ok(unsafe { opaque.read::<T>() })
+    let wip = Wip::alloc::<T>();
+    let wip = from_str_value(wip, yaml)?;
+    let heap_value = wip.build().map_err(|e| AnyErr(e.to_string()))?;
+    heap_value
+        .materialize::<T>()
+        .map_err(|e| AnyErr(e.to_string()))
 }
 
 /// Any error
@@ -64,57 +67,54 @@ fn yaml_to_u64(ty: &Yaml) -> Result<u64, AnyErr> {
     }
 }
 
-fn from_str_opaque<'mem>(poke: PokeUninit<'mem>, yaml: &str) -> Result<Opaque<'mem>, AnyErr> {
+fn from_str_value<'a>(wip: Wip<'a>, yaml: &str) -> Result<Wip<'a>, AnyErr> {
     let docs = YamlLoader::load_from_str(yaml).map_err(|e| e.to_string())?;
     if docs.len() != 1 {
         return Err("Expected exactly one YAML document".into());
     }
-    deserialize_value(poke, &docs[0])
+    deserialize_value(wip, &docs[0])
 }
 
-fn deserialize_value<'mem>(poke: PokeUninit<'mem>, value: &Yaml) -> Result<Opaque<'mem>, AnyErr> {
-    let opaque = match poke {
-        PokeUninit::Scalar(ps) => match ps.scalar_type() {
-            Some(ScalarType::U64) => {
+fn deserialize_value<'a>(mut wip: Wip<'a>, value: &Yaml) -> Result<Wip<'a>, AnyErr> {
+    let shape = wip.shape();
+    match shape.def {
+        Def::Scalar(_) => {
+            if shape.is_type::<u64>() {
                 let u = yaml_to_u64(value)?;
-                ps.put(u).data()
-            }
-            Some(ScalarType::String) => {
+                wip = wip.put(u).map_err(|e| AnyErr(e.to_string()))?;
+            } else if shape.is_type::<String>() {
                 let s = value
                     .as_str()
                     .ok_or_else(|| AnyErr(format!("Expected string, got: {}", yaml_type(value))))?
                     .to_string();
-                ps.put(s).data()
+                wip = wip.put(s).map_err(|e| AnyErr(e.to_string()))?;
+            } else {
+                return Err(AnyErr(format!("Unsupported scalar type: {}", shape)));
             }
-            Some(_) | None => {
-                return Err(format!("Unsupported scalar type: {}", ps.shape()).into());
-            }
-        },
-        PokeUninit::List(_) => todo!(),
-        PokeUninit::Map(_) => todo!(),
-        PokeUninit::Struct(mut ps) => match value {
-            Yaml::Hash(hash) => {
+        }
+        Def::List(_) => todo!(),
+        Def::Map(_) => todo!(),
+        Def::Struct(_) => {
+            if let Yaml::Hash(hash) = value {
                 for (k, v) in hash {
-                    let k = k
-                        .as_str()
-                        .ok_or_else(|| format!("Expected string key, got: {}", yaml_type(k)))?;
-                    let (index, field_poke) = ps
-                        .field_by_name(k)
-                        .map_err(|e| format!("Field '{}' error: {}", k, e))?;
-                    let _v = deserialize_value(field_poke, v)
-                        .map_err(|e| format!("Error deserializing field '{}': {}", k, e))?;
-                    unsafe {
-                        ps.mark_initialized(index);
-                    }
+                    let k = k.as_str().ok_or_else(|| {
+                        AnyErr(format!("Expected string key, got: {}", yaml_type(k)))
+                    })?;
+                    let field_index = wip
+                        .field_index(k)
+                        .ok_or_else(|| AnyErr(format!("Field '{}' not found", k)))?;
+                    wip = wip
+                        .field(field_index)
+                        .map_err(|e| AnyErr(format!("Field '{}' error: {}", k, e)))?;
+                    wip = deserialize_value(wip, v)?;
+                    wip = wip.pop().map_err(|e| AnyErr(e.to_string()))?;
                 }
-                ps.build_in_place()
+            } else {
+                return Err(AnyErr(format!("Expected a YAML hash, got: {:?}", value)));
             }
-            _ => {
-                return Err(format!("Expected a YAML hash, got: {:?}", value).into());
-            }
-        },
-        PokeUninit::Enum(_) => todo!(),
-        _ => todo!("unsupported poke type"),
-    };
-    Ok(opaque)
+        }
+        Def::Enum(_) => todo!(),
+        _ => return Err(AnyErr(format!("Unsupported type: {:?}", shape))),
+    }
+    Ok(wip)
 }
