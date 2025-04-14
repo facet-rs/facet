@@ -186,7 +186,6 @@ dependencies = [
  "facet-core",
  "facet-samplelibc",
  "facet-testhelpers",
- "indexmap",
  "log",
  "tempfile",
 ]
