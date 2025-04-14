@@ -400,7 +400,7 @@ pub(crate) fn gen_struct_field(
     format!(
         "::facet::Field::builder()
     .name(\"{field_name}\")
-    .shape(::facet::shape_of(&|s: &{struct_name}<{generics}>| &s.{field_name}))
+    .shape(|| ::facet::shape_of(&|s: &{struct_name}<{generics}>| &s.{field_name}))
     .offset(::core::mem::offset_of!({struct_name}<{generics}>, {field_name}))
     .flags({flags})
     .attributes(&[{attributes}])

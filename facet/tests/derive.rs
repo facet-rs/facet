@@ -45,14 +45,14 @@ fn simple_struct() {
 
             let foo_field = &fields[0];
             assert_eq!(foo_field.name, "foo");
-            assert_eq!(foo_field.shape.layout.size(), 4);
-            assert_eq!(foo_field.shape.layout.align(), 4);
+            assert_eq!(foo_field.shape().layout.size(), 4);
+            assert_eq!(foo_field.shape().layout.align(), 4);
             assert_eq!(foo_field.offset, offset_of!(Blah, foo));
 
             let bar_field = &fields[1];
             assert_eq!(bar_field.name, "bar");
-            assert_eq!(bar_field.shape.layout.size(), 24);
-            assert_eq!(bar_field.shape.layout.align(), 8);
+            assert_eq!(bar_field.shape().layout.size(), 24);
+            assert_eq!(bar_field.shape().layout.align(), 8);
             assert_eq!(bar_field.offset, offset_of!(Blah, bar));
         } else {
             panic!("Expected Struct innards");
@@ -430,7 +430,7 @@ fn macroed_type() {
             Def::Struct(sd) => {
                 assert_eq!(sd.fields.len(), 1);
                 let field = sd.fields[0];
-                let shape_name = format!("{}", field.shape);
+                let shape_name = format!("{}", field.shape());
                 assert_eq!(shape_name, "u32");
                 eprintln!("Shape {shape} looks correct");
             }
@@ -476,7 +476,7 @@ fn array_field() {
             let variant = &e.variants[0];
             let fields = &variant.data.fields;
             let field = &fields[0];
-            match field.shape.def {
+            match field.shape().def {
                 Def::List(ld) => {
                     let len =
                         unsafe { (ld.vtable.len)(OpaqueConst::new(std::ptr::dangling::<u8>())) };

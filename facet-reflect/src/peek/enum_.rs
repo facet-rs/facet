@@ -140,7 +140,7 @@ impl<'mem> PeekEnum<'mem> {
         let field_data = unsafe { self.value.data().field(field.offset) };
         Some(crate::Peek {
             data: field_data,
-            shape: field.shape,
+            shape: field.shape(),
         })
     }
 
@@ -171,7 +171,7 @@ impl<'mem> PeekEnum<'mem> {
             let field_data = unsafe { self.value.data().field(field.offset) };
             let peek = crate::Peek {
                 data: field_data,
-                shape: field.shape,
+                shape: field.shape(),
             };
             (field, peek)
         })

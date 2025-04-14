@@ -36,7 +36,7 @@ macro_rules! field {
     ($idx:tt, $ty:ty,) => {
         Field::builder()
             .name(stringify!($idx))
-            .shape($crate::shape_of(&|t: &$ty| &t.$idx))
+            .shape(|| $crate::shape_of(&|t: &$ty| &t.$idx))
             .offset(core::mem::offset_of!($ty, $idx))
             .flags(FieldFlags::EMPTY)
             .build()

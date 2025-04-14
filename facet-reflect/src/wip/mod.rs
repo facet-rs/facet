@@ -303,7 +303,7 @@ impl<'a> Wip<'a> {
 
         let mut frame = Frame {
             data: field_data,
-            shape: field.shape,
+            shape: field.shape(),
             index: Some(index),
             istate: IState::new(self.frames.len()),
         };
@@ -311,7 +311,7 @@ impl<'a> Wip<'a> {
             "[{}] Selecting field {} ({}#{}) of {}",
             self.frames.len(),
             field.name.blue(),
-            field.shape.green(),
+            field.shape().green(),
             index.yellow(),
             shape.blue(),
         );
@@ -424,7 +424,7 @@ impl<'a> Wip<'a> {
                 Def::Struct(sd) => {
                     for (i, field) in sd.fields.iter().enumerate() {
                         if frame.istate.fields.has(i) {
-                            if let Some(drop_fn) = field.shape.vtable.drop_in_place {
+                            if let Some(drop_fn) = field.shape().vtable.drop_in_place {
                                 unsafe {
                                     let field_ptr = frame.data.as_mut_byte_ptr().add(field.offset);
                                     drop_fn(Opaque::new(field_ptr));
@@ -437,7 +437,7 @@ impl<'a> Wip<'a> {
                     if let Some(variant) = &frame.istate.variant {
                         for (i, field) in variant.data.fields.iter().enumerate() {
                             if frame.istate.fields.has(i) {
-                                if let Some(drop_fn) = field.shape.vtable.drop_in_place {
+                                if let Some(drop_fn) = field.shape().vtable.drop_in_place {
                                     unsafe {
                                         let field_ptr =
                                             frame.data.as_mut_byte_ptr().add(field.offset);

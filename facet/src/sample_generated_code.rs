@@ -33,7 +33,7 @@ unsafe impl crate::Facet for KitchenSinkStruct {
             [
                 crate::Field::builder()
                     .name("basic_field")
-                    .shape(crate::shape_of(&(|s: &KitchenSinkStruct| &s.basic_field)))
+                    .shape(|| crate::shape_of(&(|s: &KitchenSinkStruct| &s.basic_field)))
                     .offset({
                         builtin # offset_of(KitchenSinkStruct<>, basic_field)
                     })
@@ -43,9 +43,7 @@ unsafe impl crate::Facet for KitchenSinkStruct {
                     .build(),
                 crate::Field::builder()
                     .name("sensitive_field")
-                    .shape(crate::shape_of(
-                        &(|s: &KitchenSinkStruct| &s.sensitive_field),
-                    ))
+                    .shape(|| crate::shape_of(&(|s: &KitchenSinkStruct| &s.sensitive_field)))
                     .offset({
                         builtin # offset_of(KitchenSinkStruct<>, sensitive_field)
                     })
@@ -55,7 +53,7 @@ unsafe impl crate::Facet for KitchenSinkStruct {
                     .build(),
                 crate::Field::builder()
                     .name("tuple_field")
-                    .shape(crate::shape_of(&(|s: &KitchenSinkStruct| &s.tuple_field)))
+                    .shape(|| crate::shape_of(&(|s: &KitchenSinkStruct| &s.tuple_field)))
                     .offset({
                         builtin # offset_of(KitchenSinkStruct<>, tuple_field)
                     })
@@ -65,7 +63,7 @@ unsafe impl crate::Facet for KitchenSinkStruct {
                     .build(),
                 crate::Field::builder()
                     .name("array_field")
-                    .shape(crate::shape_of(&(|s: &KitchenSinkStruct| &s.array_field)))
+                    .shape(|| crate::shape_of(&(|s: &KitchenSinkStruct| &s.array_field)))
                     .offset({
                         builtin # offset_of(KitchenSinkStruct<>, array_field)
                     })
@@ -75,7 +73,7 @@ unsafe impl crate::Facet for KitchenSinkStruct {
                     .build(),
                 crate::Field::builder()
                     .name("slice_field")
-                    .shape(crate::shape_of(&(|s: &KitchenSinkStruct| &s.slice_field)))
+                    .shape(|| crate::shape_of(&(|s: &KitchenSinkStruct| &s.slice_field)))
                     .offset({
                         builtin # offset_of(KitchenSinkStruct<>, slice_field)
                     })
@@ -85,7 +83,7 @@ unsafe impl crate::Facet for KitchenSinkStruct {
                     .build(),
                 crate::Field::builder()
                     .name("vec_field")
-                    .shape(crate::shape_of(&(|s: &KitchenSinkStruct| &s.vec_field)))
+                    .shape(|| crate::shape_of(&(|s: &KitchenSinkStruct| &s.vec_field)))
                     .offset({
                         builtin # offset_of(KitchenSinkStruct<>, vec_field)
                     })
@@ -95,9 +93,7 @@ unsafe impl crate::Facet for KitchenSinkStruct {
                     .build(),
                 crate::Field::builder()
                     .name("nested_struct_field")
-                    .shape(crate::shape_of(
-                        &(|s: &KitchenSinkStruct| &s.nested_struct_field),
-                    ))
+                    .shape(|| crate::shape_of(&(|s: &KitchenSinkStruct| &s.nested_struct_field)))
                     .offset({
                         builtin # offset_of(KitchenSinkStruct<>,
                                                                         nested_struct_field)
@@ -437,7 +433,7 @@ unsafe impl crate::Facet for Point {
             [
                 crate::Field::builder()
                     .name("x")
-                    .shape(crate::shape_of(&(|s: &Point| &s.x)))
+                    .shape(|| crate::shape_of(&(|s: &Point| &s.x)))
                     .offset({
                         builtin # offset_of(Point<>, x)
                     })
@@ -446,7 +442,7 @@ unsafe impl crate::Facet for Point {
                     .build(),
                 crate::Field::builder()
                     .name("y")
-                    .shape(crate::shape_of(&(|s: &Point| &s.y)))
+                    .shape(|| crate::shape_of(&(|s: &Point| &s.y)))
                     .offset({
                         builtin # offset_of(Point<>, y)
                     })
@@ -455,7 +451,7 @@ unsafe impl crate::Facet for Point {
                     .build(),
                 crate::Field::builder()
                     .name("metadata")
-                    .shape(crate::shape_of(&(|s: &Point| &s.metadata)))
+                    .shape(|| crate::shape_of(&(|s: &Point| &s.metadata)))
                     .offset({
                         builtin # offset_of(Point<>, metadata)
                     })
@@ -1198,9 +1194,10 @@ unsafe impl crate::Facet for KitchenSinkEnum {
                                                                     {
                                                                         let fields: &'static [crate::Field] =
                                                                             &const {
-                                                                                        [crate::Field::builder().name("_0").shape(crate::shape_of(&(|s:
-                                                                                                                                    &__ShadowKitchenSinkEnum_TupleVariantSimple<>|
-                                                                                                                                &s._0))).offset({
+                                                                                        [crate::Field::builder().name("_0").shape(||
+                                                                                                                        crate::shape_of(&(|s:
+                                                                                                                                        &__ShadowKitchenSinkEnum_TupleVariantSimple<>|
+                                                                                                                                    &s._0))).offset({
                                                                                                                     builtin # offset_of(__ShadowKitchenSinkEnum_TupleVariantSimple<>,
                                                                                                                         _0)
                                                                                                                 }).flags(crate::FieldFlags::EMPTY).attributes(&[]).build()]
@@ -1212,21 +1209,24 @@ unsafe impl crate::Facet for KitchenSinkEnum {
                                                                     {
                                                                         let fields: &'static [crate::Field] =
                                                                             &const {
-                                                                                        [crate::Field::builder().name("_0").shape(crate::shape_of(&(|s:
-                                                                                                                                    &__ShadowKitchenSinkEnum_TupleVariantMulti<>|
-                                                                                                                                &s._0))).offset({
+                                                                                        [crate::Field::builder().name("_0").shape(||
+                                                                                                                        crate::shape_of(&(|s:
+                                                                                                                                        &__ShadowKitchenSinkEnum_TupleVariantMulti<>|
+                                                                                                                                    &s._0))).offset({
                                                                                                                     builtin # offset_of(__ShadowKitchenSinkEnum_TupleVariantMulti<>,
                                                                                                                         _0)
                                                                                                                 }).flags(crate::FieldFlags::EMPTY).attributes(&[]).build(),
-                                                                                                crate::Field::builder().name("_1").shape(crate::shape_of(&(|s:
-                                                                                                                                    &__ShadowKitchenSinkEnum_TupleVariantMulti<>|
-                                                                                                                                &s._1))).offset({
+                                                                                                crate::Field::builder().name("_1").shape(||
+                                                                                                                        crate::shape_of(&(|s:
+                                                                                                                                        &__ShadowKitchenSinkEnum_TupleVariantMulti<>|
+                                                                                                                                    &s._1))).offset({
                                                                                                                     builtin # offset_of(__ShadowKitchenSinkEnum_TupleVariantMulti<>,
                                                                                                                         _1)
                                                                                                                 }).flags(crate::FieldFlags::EMPTY).attributes(&[]).build(),
-                                                                                                crate::Field::builder().name("_2").shape(crate::shape_of(&(|s:
-                                                                                                                                    &__ShadowKitchenSinkEnum_TupleVariantMulti<>|
-                                                                                                                                &s._2))).offset({
+                                                                                                crate::Field::builder().name("_2").shape(||
+                                                                                                                        crate::shape_of(&(|s:
+                                                                                                                                        &__ShadowKitchenSinkEnum_TupleVariantMulti<>|
+                                                                                                                                    &s._2))).offset({
                                                                                                                     builtin # offset_of(__ShadowKitchenSinkEnum_TupleVariantMulti<>,
                                                                                                                         _2)
                                                                                                                 }).flags(crate::FieldFlags::EMPTY).attributes(&[]).build()]
@@ -1240,15 +1240,17 @@ unsafe impl crate::Facet for KitchenSinkEnum {
                                                                     {
                                                                         let fields: &'static [crate::Field] =
                                                                             &const {
-                                                                                        [crate::Field::builder().name("width").shape(crate::shape_of(&(|s:
-                                                                                                                                        &__ShadowKitchenSinkEnum_StructVariant<>|
-                                                                                                                                    &s.width))).offset({
+                                                                                        [crate::Field::builder().name("width").shape(||
+                                                                                                                            crate::shape_of(&(|s:
+                                                                                                                                            &__ShadowKitchenSinkEnum_StructVariant<>|
+                                                                                                                                        &s.width))).offset({
                                                                                                                         builtin # offset_of(__ShadowKitchenSinkEnum_StructVariant<>,
                                                                                                                             width)
                                                                                                                     }).flags(crate::FieldFlags::EMPTY).attributes(&[]).doc(&[" The width dimension, crucial for rendering."]).build(),
-                                                                                                crate::Field::builder().name("height").shape(crate::shape_of(&(|s:
-                                                                                                                                        &__ShadowKitchenSinkEnum_StructVariant<>|
-                                                                                                                                    &s.height))).offset({
+                                                                                                crate::Field::builder().name("height").shape(||
+                                                                                                                            crate::shape_of(&(|s:
+                                                                                                                                            &__ShadowKitchenSinkEnum_StructVariant<>|
+                                                                                                                                        &s.height))).offset({
                                                                                                                         builtin # offset_of(__ShadowKitchenSinkEnum_StructVariant<>,
                                                                                                                             height)
                                                                                                                     }).flags(crate::FieldFlags::EMPTY).attributes(&[]).doc(&[" The height dimension, also crucial for rendering."]).build()]
@@ -1258,9 +1260,10 @@ unsafe impl crate::Facet for KitchenSinkEnum {
                                                                     {
                                                                         let fields: &'static [crate::Field] =
                                                                             &const {
-                                                                                        [crate::Field::builder().name("_0").shape(crate::shape_of(&(|s:
-                                                                                                                                    &__ShadowKitchenSinkEnum_SensitiveTupleVariant<>|
-                                                                                                                                &s._0))).offset({
+                                                                                        [crate::Field::builder().name("_0").shape(||
+                                                                                                                        crate::shape_of(&(|s:
+                                                                                                                                        &__ShadowKitchenSinkEnum_SensitiveTupleVariant<>|
+                                                                                                                                    &s._0))).offset({
                                                                                                                     builtin # offset_of(__ShadowKitchenSinkEnum_SensitiveTupleVariant<>,
                                                                                                                         _0)
                                                                                                                 }).flags(crate::FieldFlags::EMPTY).attributes(&[]).build()]
@@ -1270,15 +1273,17 @@ unsafe impl crate::Facet for KitchenSinkEnum {
                                                                     {
                                                                         let fields: &'static [crate::Field] =
                                                                             &const {
-                                                                                        [crate::Field::builder().name("payload").shape(crate::shape_of(&(|s:
-                                                                                                                                        &__ShadowKitchenSinkEnum_StructVariantWithSensitiveField<>|
-                                                                                                                                    &s.payload))).offset({
+                                                                                        [crate::Field::builder().name("payload").shape(||
+                                                                                                                            crate::shape_of(&(|s:
+                                                                                                                                            &__ShadowKitchenSinkEnum_StructVariantWithSensitiveField<>|
+                                                                                                                                        &s.payload))).offset({
                                                                                                                         builtin # offset_of(__ShadowKitchenSinkEnum_StructVariantWithSensitiveField<>,
                                                                                                                             payload)
                                                                                                                     }).flags(crate::FieldFlags::EMPTY).attributes(&[]).doc(&[" The main data payload, publicly accessible."]).build(),
-                                                                                                crate::Field::builder().name("checksum").shape(crate::shape_of(&(|s:
-                                                                                                                                        &__ShadowKitchenSinkEnum_StructVariantWithSensitiveField<>|
-                                                                                                                                    &s.checksum))).offset({
+                                                                                                crate::Field::builder().name("checksum").shape(||
+                                                                                                                            crate::shape_of(&(|s:
+                                                                                                                                            &__ShadowKitchenSinkEnum_StructVariantWithSensitiveField<>|
+                                                                                                                                        &s.checksum))).offset({
                                                                                                                         builtin # offset_of(__ShadowKitchenSinkEnum_StructVariantWithSensitiveField<>,
                                                                                                                             checksum)
                                                                                                                     }).flags(crate::FieldFlags::SENSITIVE).attributes(&[crate::FieldAttribute::Sensitive]).doc(&[" The sensitive checksum for integrity verification."]).build()]
@@ -1288,9 +1293,10 @@ unsafe impl crate::Facet for KitchenSinkEnum {
                                                                     {
                                                                         let fields: &'static [crate::Field] =
                                                                             &const {
-                                                                                        [crate::Field::builder().name("_0").shape(crate::shape_of(&(|s:
-                                                                                                                                    &__ShadowKitchenSinkEnum_ArbitraryVariant<>|
-                                                                                                                                &s._0))).offset({
+                                                                                        [crate::Field::builder().name("_0").shape(||
+                                                                                                                        crate::shape_of(&(|s:
+                                                                                                                                        &__ShadowKitchenSinkEnum_ArbitraryVariant<>|
+                                                                                                                                    &s._0))).offset({
                                                                                                                     builtin # offset_of(__ShadowKitchenSinkEnum_ArbitraryVariant<>,
                                                                                                                         _0)
                                                                                                                 }).flags(crate::FieldFlags::EMPTY).attributes(&[]).build()]
@@ -1300,9 +1306,10 @@ unsafe impl crate::Facet for KitchenSinkEnum {
                                                                     {
                                                                         let fields: &'static [crate::Field] =
                                                                             &const {
-                                                                                        [crate::Field::builder().name("_0").shape(crate::shape_of(&(|s:
-                                                                                                                                    &__ShadowKitchenSinkEnum_NestedEnumVariant<>|
-                                                                                                                                &s._0))).offset({
+                                                                                        [crate::Field::builder().name("_0").shape(||
+                                                                                                                        crate::shape_of(&(|s:
+                                                                                                                                        &__ShadowKitchenSinkEnum_NestedEnumVariant<>|
+                                                                                                                                    &s._0))).offset({
                                                                                                                     builtin # offset_of(__ShadowKitchenSinkEnum_NestedEnumVariant<>,
                                                                                                                         _0)
                                                                                                                 }).flags(crate::FieldFlags::EMPTY).attributes(&[]).build()]
@@ -1679,9 +1686,9 @@ unsafe impl crate::Facet for SubEnum {
                                                                     {
                                                                         let fields: &'static [crate::Field] =
                                                                             &const {
-                                                                                        [crate::Field::builder().name("_0").shape(crate::shape_of(&(|s:
-                                                                                                                                    &__ShadowSubEnum_OptionB<>|
-                                                                                                                                &s._0))).offset({
+                                                                                        [crate::Field::builder().name("_0").shape(||
+                                                                                                                        crate::shape_of(&(|s: &__ShadowSubEnum_OptionB<>|
+                                                                                                                                    &s._0))).offset({
                                                                                                                     builtin # offset_of(__ShadowSubEnum_OptionB<>, _0)
                                                                                                                 }).flags(crate::FieldFlags::EMPTY).attributes(&[]).build()]
                                                                                     };
@@ -1690,9 +1697,9 @@ unsafe impl crate::Facet for SubEnum {
                                                                     {
                                                                         let fields: &'static [crate::Field] =
                                                                             &const {
-                                                                                        [crate::Field::builder().name("_0").shape(crate::shape_of(&(|s:
-                                                                                                                                    &__ShadowSubEnum_SensitiveOption<>|
-                                                                                                                                &s._0))).offset({
+                                                                                        [crate::Field::builder().name("_0").shape(||
+                                                                                                                        crate::shape_of(&(|s: &__ShadowSubEnum_SensitiveOption<>|
+                                                                                                                                    &s._0))).offset({
                                                                                                                     builtin # offset_of(__ShadowSubEnum_SensitiveOption<>, _0)
                                                                                                                 }).flags(crate::FieldFlags::EMPTY).attributes(&[]).build()]
                                                                                     };
@@ -1701,9 +1708,9 @@ unsafe impl crate::Facet for SubEnum {
                                                                     {
                                                                         let fields: &'static [crate::Field] =
                                                                             &const {
-                                                                                        [crate::Field::builder().name("_0").shape(crate::shape_of(&(|s:
-                                                                                                                                    &__ShadowSubEnum_ArbitraryOption<>|
-                                                                                                                                &s._0))).offset({
+                                                                                        [crate::Field::builder().name("_0").shape(||
+                                                                                                                        crate::shape_of(&(|s: &__ShadowSubEnum_ArbitraryOption<>|
+                                                                                                                                    &s._0))).offset({
                                                                                                                     builtin # offset_of(__ShadowSubEnum_ArbitraryOption<>, _0)
                                                                                                                 }).flags(crate::FieldFlags::EMPTY).attributes(&[]).build()]
                                                                                     };

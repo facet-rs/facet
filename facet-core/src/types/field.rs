@@ -9,8 +9,8 @@ pub struct Field {
     /// key for the struct field (for tuples and tuple-structs, this is the 0-based index)
     pub name: &'static str,
 
-    /// schema of the inner type
-    pub shape: &'static Shape,
+    /// shape of the inner type
+    pub shape: fn() -> &'static Shape,
 
     /// offset of the field in the struct (obtained through `core::mem::offset_of`)
     pub offset: usize,
@@ -26,6 +26,11 @@ pub struct Field {
 }
 
 impl Field {
+    /// Returns the shape of the inner type
+    pub fn shape(&self) -> &'static Shape {
+        (self.shape)()
+    }
+
     /// Returns a builder for Field
     pub const fn builder() -> FieldBuilder {
         FieldBuilder::new()
@@ -35,7 +40,7 @@ impl Field {
 /// Builder for Field
 pub struct FieldBuilder {
     name: Option<&'static str>,
-    shape: Option<&'static Shape>,
+    shape: Option<fn() -> &'static Shape>,
     offset: Option<usize>,
     flags: Option<FieldFlags>,
     attributes: &'static [FieldAttribute],
@@ -74,7 +79,7 @@ impl FieldBuilder {
     }
 
     /// Sets the shape for the Field
-    pub const fn shape(mut self, shape: &'static Shape) -> Self {
+    pub const fn shape(mut self, shape: fn() -> &'static Shape) -> Self {
         self.shape = Some(shape);
         self
     }

@@ -48,7 +48,7 @@ pub(super) fn generate_tuples_impls() -> String {
     w!("    ($idx:tt, $ty:ty,) => {{\n");
     w!("        Field::builder()\n");
     w!("            .name(stringify!($idx))\n");
-    w!("            .shape($crate::shape_of(&|t: &$ty| &t.$idx))\n");
+    w!("            .shape(|| $crate::shape_of(&|t: &$ty| &t.$idx))\n");
     w!("            .offset(core::mem::offset_of!($ty, $idx))\n");
     w!("            .flags(FieldFlags::EMPTY)\n");
     w!("            .build()\n");

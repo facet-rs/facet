@@ -1,17 +1,28 @@
+use facet::Facet;
+use std::sync::Arc;
+
+#[derive(Facet)]
+
+struct Recursive {
+    next: Option<Arc<Recursive>>,
+}
+
 #[derive(Debug)]
 struct ShapeLike {
-    next: Option<&'static ShapeLike>,
+    next: Option<fn() -> &'static ShapeLike>,
 }
 
 impl FacetLike for () {
-    const SHAPE_LIKE: &'static ShapeLike = const {
-        static EMPTY_TUPLE_SHAPE: ShapeLike = {
-            ShapeLike {
-                next: Some(&EMPTY_TUPLE_SHAPE),
-            }
-        };
+    const SHAPE_LIKE: &'static ShapeLike = &const {
+        ShapeLike {
+            next: Some(|| Self::SHAPE_LIKE),
+        }
+    };
+}
 
-        &EMPTY_TUPLE_SHAPE
+impl<T: FacetLike> FacetLike for Vec<T> {
+    const SHAPE_LIKE: &'static ShapeLike = &ShapeLike {
+        next: Some(|| T::SHAPE_LIKE),
     };
 }
 

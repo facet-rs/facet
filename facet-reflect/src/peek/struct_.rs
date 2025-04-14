@@ -35,7 +35,7 @@ impl<'mem> PeekStruct<'mem> {
                 let field_data = self.value.data().field(field.offset);
                 Peek {
                     data: field_data,
-                    shape: field.shape,
+                    shape: field.shape(),
                 }
             })
             .ok_or(FieldError::IndexOutOfBounds)
