@@ -2,14 +2,14 @@
 <picture>
 <source srcset="https://github.com/facet-rs/facet/raw/main/static/logo-v2/logo-only.webp">
 <img src="https://github.com/facet-rs/facet/raw/main/static/logo-v2/logo-only.png" height="35" alt="Facet logo - a reflection library for Rust">
-</picture> &nbsp; facet
+</picture> &nbsp; facet2
 </h1>
 
 [![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
 [![free of syn](https://img.shields.io/badge/free%20of-syn-hotpink)](https://github.com/fasterthanlime/free-of-syn)
-[![crates.io](https://img.shields.io/crates/v/facet.svg)](https://crates.io/crates/facet)
-[![documentation](https://docs.rs/facet/badge.svg)](https://docs.rs/facet)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet.svg)](./LICENSE)
+[![crates.io](https://img.shields.io/crates/v/facet2.svg)](https://crates.io/crates/facet2)
+[![documentation](https://docs.rs/facet2/badge.svg)](https://docs.rs/facet2)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet2.svg)](./LICENSE)
 
 _Logo by [Misiasart](https://misiasart.com/)_
 
