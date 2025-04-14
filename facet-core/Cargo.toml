@@ -10,11 +10,11 @@ description = "Core types and traits for the facet ecosystem"
 keywords = ["reflection", "core"]
 categories = ["development-tools"]
 
-[dependencies]
-impls = "1.0.3"
-bitflags = "2.4.1"
-
 [features]
 std = ["alloc"]
 alloc = []
 default = ["std"]
+
+[dependencies]
+impls = "1.0.3"
+bitflags = "2.4.1"

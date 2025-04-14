@@ -10,17 +10,17 @@ description = "Re-exports the Facet trait and derive macros, along with Shape an
 keywords = ["facet", "introspection", "reflection"]
 categories = ["development-tools"]
 
-[dependencies]
-facet-core = { path = "../facet-core", version = "0.5.3", default-features = false }
-facet-derive = { path = "../facet-derive", version = "0.1.20" }
-facet-reflect = { path = "../facet-reflect", version = "0.6.2", optional = true }
-
 [features]
 reflect = ["dep:facet-reflect"]   # Enables reflection via Peek and Poke types
 testfeat = []                     # Does nothing, only used for tests
 std = ["facet-core/std", "alloc"] # Uses libstd and alloc
 alloc = ["facet-core/alloc"]      # Enables alloc support
 default = ["std"]
+
+[dependencies]
+facet-core = { path = "../facet-core", version = "0.5.3", default-features = false }
+facet-derive = { path = "../facet-derive", version = "0.1.20" }
+facet-reflect = { path = "../facet-reflect", version = "0.6.2", optional = true }
 
 [dev-dependencies]
 cargo-husky = { version = "1.5.0", default-features = false, features = ["user-hooks"] }
