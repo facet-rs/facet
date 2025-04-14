@@ -511,3 +511,24 @@ fn struct_impls_drop() {
     // let bar = bf.bar;
     // drop(bf.foo);
 }
+
+#[test]
+fn opaque_arc() {
+    #[allow(dead_code)]
+    pub struct NotDerivingFacet(u64);
+
+    #[derive(Facet)]
+    pub struct Handle(#[facet(opaque)] std::sync::Arc<NotDerivingFacet>);
+
+    let shape = Handle::SHAPE;
+    match shape.def {
+        Def::Struct(sd) => {
+            assert_eq!(sd.fields.len(), 1);
+            let field = sd.fields[0];
+            let shape_name = format!("{}", field.shape());
+            assert_eq!(shape_name, "Arc");
+            eprintln!("Shape {shape} looks correct");
+        }
+        _ => unreachable!(),
+    }
+}

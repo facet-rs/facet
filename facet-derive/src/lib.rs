@@ -20,6 +20,7 @@ keyword! {
     KFacet = "facet";
     KSensitive = "sensitive";
     KInvariants = "invariants";
+    KOpaque = "opaque";
 }
 
 operator! {
@@ -70,6 +71,7 @@ unsynn! {
     enum FacetInner {
         Sensitive(KSensitive),
         Invariants(InvariantInner),
+        Opaque(KOpaque),
         Other(Vec<TokenTree>)
     }
 
@@ -362,6 +364,7 @@ pub(crate) fn gen_struct_field(
     let mut flags = "::facet::FieldFlags::EMPTY";
     let mut attribute_list: Vec<String> = vec![];
     let mut doc_lines: Vec<&str> = vec![];
+    let mut shape_of = "shape_of";
     for attr in attrs {
         match &attr.body.content {
             AttributeInner::Facet(facet_attr) => match &facet_attr.inner.content {
@@ -371,6 +374,9 @@ pub(crate) fn gen_struct_field(
                 }
                 FacetInner::Invariants(_invariant_inner) => {
                     panic!("fields cannot have invariants")
+                }
+                FacetInner::Opaque(_kopaque) => {
+                    shape_of = "shape_of_opaque";
                 }
                 FacetInner::Other(tt) => {
                     attribute_list.push(format!(
@@ -400,7 +406,7 @@ pub(crate) fn gen_struct_field(
     format!(
         "::facet::Field::builder()
     .name(\"{field_name}\")
-    .shape(|| ::facet::shape_of(&|s: &{struct_name}<{generics}>| &s.{field_name}))
+    .shape(|| ::facet::{shape_of}(&|s: &{struct_name}<{generics}>| &s.{field_name}))
     .offset(::core::mem::offset_of!({struct_name}<{generics}>, {field_name}))
     .flags({flags})
     .attributes(&[{attributes}])

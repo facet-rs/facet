@@ -5,6 +5,17 @@ pub const fn shape_of<TStruct, TField: Facet>(_f: &dyn Fn(&TStruct) -> &TField) 
     TField::SHAPE
 }
 
+#[doc(hidden)]
+pub const fn shape_of_opaque<TStruct, TField>(_f: &dyn Fn(&TStruct) -> &TField) -> &'static Shape
+where
+    Opaque<TField>: Facet,
+{
+    Opaque::<TField>::SHAPE
+}
+
+/// Helper type for opaque members
+pub struct Opaque<T>(T);
+
 /// Creates a `ValueVTable` for a given type.
 ///
 /// This macro generates a `ValueVTable` with implementations for various traits

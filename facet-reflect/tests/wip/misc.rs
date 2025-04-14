@@ -405,3 +405,31 @@ fn wip_map() -> eyre::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn wip_opaque_arc() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub struct NotDerivingFacet(u64);
+
+    #[derive(Facet)]
+    pub struct Handle(#[facet(opaque)] std::sync::Arc<NotDerivingFacet>);
+
+    #[derive(Facet)]
+    pub struct Container {
+        inner: Handle,
+    }
+
+    // Test switching variants
+    let result = Wip::alloc::<Container>()
+        .field_named("inner")?
+        .put(Handle(std::sync::Arc::new(NotDerivingFacet(35))))?
+        .pop()?
+        .build()?
+        .materialize::<Container>()?;
+
+    assert_eq!(*result.inner.0, NotDerivingFacet(35));
+
+    Ok(())
+}
