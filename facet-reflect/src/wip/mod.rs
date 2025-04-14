@@ -493,6 +493,10 @@ impl<'a> Wip<'a> {
 
 impl Drop for Wip<'_> {
     fn drop(&mut self) {
+        while let Some(frame) = self.frames.pop() {
+            self.track(frame);
+        }
+
         log::trace!(
             "[{}] 🚯 Dropping, was tracking {} istates",
             self.frames.len(),

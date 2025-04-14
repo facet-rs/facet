@@ -105,6 +105,8 @@ fn readme_sample() -> eyre::Result<()> {
 
 #[test]
 fn build_with_invariants() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
     #[derive(Facet, PartialEq, Debug)]
     #[facet(invariants = "invariants")]
     struct MyNonZeroU8(u8);
@@ -124,5 +126,40 @@ fn build_with_invariants() -> eyre::Result<()> {
     let result = Wip::alloc::<MyNonZeroU8>().put(MyNonZeroU8(0))?.build();
     assert!(result.is_err());
 
+    Ok(())
+}
+
+#[test]
+fn put_vec_no_leak_1() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    let w = Wip::alloc::<Vec<String>>();
+    let w = w.put(vec!["a".to_string()])?;
+    // let it drop: the fields should be deinitialized, and the memory for the Wip should be freed
+    drop(w);
+    Ok(())
+}
+
+#[test]
+fn put_vec_no_leak_2() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    let w = Wip::alloc::<Vec<String>>();
+    let w = w.put(vec!["a".to_string()])?;
+    let w = w.build()?;
+    // let it drop: the entire value should be deinitialized, and the memory for the Wip should be freed
+    drop(w);
+    Ok(())
+}
+
+#[test]
+fn put_vec_no_leak_3() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    let w = Wip::alloc::<Vec<String>>();
+    let w = w.put(vec!["a".to_string()])?;
+    let w = w.build()?;
+    let v = w.materialize::<Vec<String>>()?;
+    assert_eq!(v, vec!["a".to_string()]);
     Ok(())
 }
