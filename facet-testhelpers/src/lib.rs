@@ -1,3 +1,9 @@
+#![warn(missing_docs)]
+#![warn(clippy::std_instead_of_core)]
+#![warn(clippy::std_instead_of_alloc)]
+#![forbid(unsafe_code)]
+#![doc = include_str!("../README.md")]
+
 use facet_ansi::{ColorStyle, Style, Stylize};
 use log::{Level, LevelFilter, Log, Metadata, Record};
 use std::io::Write;
@@ -35,6 +41,7 @@ impl Log for SimpleLogger {
     }
 }
 
+/// Installs color-backtrace (except on miri), and sets up a simple logger.
 pub fn setup() {
     #[cfg(not(miri))]
     color_backtrace::install();

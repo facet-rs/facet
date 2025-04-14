@@ -1,11 +1,12 @@
 //! Pretty printer implementation for Facet types
 
-use std::{
-    collections::{HashMap, VecDeque},
+use alloc::collections::VecDeque;
+use core::{
     fmt::{self, Write},
-    hash::{DefaultHasher, Hash, Hasher},
+    hash::{Hash, Hasher},
     str,
 };
+use std::{collections::HashMap, hash::DefaultHasher};
 
 use facet_core::{Def, Facet, FieldFlags, StructKind, TypeNameOpts};
 use facet_reflect::{ConstValue, ValueId};

@@ -1,6 +1,7 @@
 #![warn(missing_docs)]
 #![warn(clippy::std_instead_of_core)]
 #![warn(clippy::std_instead_of_alloc)]
+#![forbid(unsafe_code)]
 #![doc = include_str!("../README.md")]
 
 use core::fmt::{self, Debug, Display, Formatter};

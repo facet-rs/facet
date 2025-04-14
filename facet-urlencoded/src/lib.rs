@@ -1,4 +1,5 @@
 #![warn(missing_docs)]
+#![forbid(unsafe_code)]
 #![doc = include_str!("../README.md")]
 
 use facet_core::{Def, Facet};

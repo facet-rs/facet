@@ -1,6 +1,7 @@
 //! Color generation utilities for pretty-printing
 
-use std::hash::{DefaultHasher, Hash, Hasher};
+use core::hash::{Hash, Hasher};
+use std::hash::DefaultHasher;
 
 /// RGB color representation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

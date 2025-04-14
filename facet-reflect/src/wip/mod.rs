@@ -210,8 +210,8 @@ impl<'a> Wip<'a> {
 
         let guard = self.guard.take().unwrap();
 
-        // don't double-drop the fields
-        core::mem::forget(self);
+        // don't double-drop the fields!
+        self.istates.clear();
 
         Ok(HeapValue {
             guard: Some(guard),
