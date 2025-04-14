@@ -134,11 +134,10 @@ println!("{}", vec![alice, bob, carol].pretty());
 ```
 
 ```bash
-facet on  main [!?] via 🦀 v1.86.0
-❯ cargo run --example various_vecs
-   Compiling facet-pretty v0.1.2 (/Users/amos/bearcove/facet/facet-pretty)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.15s
-     Running `target/debug/examples/various_vecs`
+facet on  main [$!] via 🦀 v1.86.0
+❯ cargo run --example vec_person
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `target/debug/examples/vec_person`
 Vec<Person> [
   Person {
     name: Alice,
@@ -275,28 +274,22 @@ eprintln!("args: {}", args.pretty());
 ```
 
 ```bash
-facet on  args [!] via 🦀 v1.86.0
-❯ RUST_LOG=info nt run --no-capture test_arg_parse
+
+facet on  main [$+] via 🦀 v1.86.0
+❯ cargo nextest run --no-capture test_arg_parse
     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
 ────────────
- Nextest run ID a8ab7183-8333-465f-a94f-6036576f19c2 with nextest profile: default
-    Starting 1 test across 30 binaries (66 tests skipped)
+ Nextest run ID 7147e23a-815c-4a9b-8981-1c72ea8c95a7 with nextest profile: default
+    Starting 1 test across 19 binaries (87 tests skipped)
        START             facet-args::simple test_arg_parse
-[INFO  simple] Logging and color backtrace initialized
 
 running 1 test
+✂️
 args: Args {
   path: example.rs,
   verbose: true,
   concurrency: 14,
 }
-test test_arg_parse ... ok
-
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-
-        PASS [   0.005s] facet-args::simple test_arg_parse
-────────────
-     Summary [   0.005s] 1 test run: 1 passed, 66 skipped
 ```
 
 ## Use cases: augmenting static analysis/debuggers
@@ -413,18 +406,31 @@ The main `facet` crate re-exports symbols from:
 
 For struct manipulation and reflection, the following is available:
 
-- [facet-reflect](https://github.com/facet-rs/facet/tree/main/facet-reflect), which allows reading from and writing to shapes implementing the `Facet` trait. This crate combines the functionality of the former `facet-peek` and `facet-poke` crates, providing a unified interface for reflection and manipulation of `Facet` types.
+- [facet-reflect](https://github.com/facet-rs/facet/tree/main/facet-reflect),
+  allows building values of arbitrary shapes in safe code, respecting invariants.
+  It also allows peeking at existing values.
+- [facet-pretty](https://github.com/facet-rs/facet/tree/main/facet-pretty) is able to pretty-print Facet types.
 
 facet supports deserialization from multiple data formats through dedicated crates:
 
 - [facet-json](https://github.com/facet-rs/facet/tree/main/facet-json): JSON deserialization
 - [facet-yaml](https://github.com/facet-rs/facet/tree/main/facet-yaml): YAML deserialization
+- [facet-toml](https://github.com/facet-rs/facet/tree/main/facet-toml): TOML deserialization
 - [facet-msgpack](https://github.com/facet-rs/facet/tree/main/facet-msgpack): MessagePack deserialization
 - [facet-urlencoded](https://github.com/facet-rs/facet/tree/main/facet-urlencoded): URL-encoded form data deserialization
 - [facet-args](https://github.com/facet-rs/facet/tree/main/facet-args): CLI arguments (a-la clap)
 
-Additionally:
+Internal crates include:
 
-- [facet-pretty](https://github.com/facet-rs/facet/tree/main/facet-pretty) is able to pretty-print Facet types.
 - [facet-codegen](https://github.com/facet-rs/facet/tree/main/facet-codegen) is internal and generates some of the code of `facet-core`
+- [facet-ansi] for lightweight support for colors in terminals
+- [facet-testhelpers] a simpler log logger and color-backtrace configured with the lightweight btparse backend
 
+## License
+
+Licensed under either of:
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](https://github.com/facet-rs/facet/blob/main/LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license ([LICENSE-MIT](https://github.com/facet-rs/facet/blob/main/LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
+
+at your option.

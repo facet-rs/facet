@@ -42,3 +42,11 @@ Thanks to all individual and corporate sponsors, without whom this work could no
 Lightweight test helpers: a log facade that always does tracing (with colors),
 and color-backtrace using the btparse backend.
 
+## License
+
+Licensed under either of:
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](https://github.com/facet-rs/facet/blob/main/LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license ([LICENSE-MIT](https://github.com/facet-rs/facet/blob/main/LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
+
+at your option.

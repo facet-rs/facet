@@ -16,7 +16,7 @@ That one checks for UB, memory unsafety, etc.
 
 ## Generated code
 
-Do not edit `README.md` files directly, edit `README.md.j2` in the respective
+Do not edit `README.md` files directly, edit `README.md.in` in the respective
 folders.
 
 Similarly, don't edit `tuples_impls.rs`, edit the `tuples_impls.rs.j2` next to
