@@ -12,7 +12,7 @@ categories = ["development-tools", "rust-patterns"]
 
 [features]
 default = ["std"]
-std = ["alloc", "indexmap"]
+std = ["alloc", "dep:indexmap"]
 alloc = []
 
 [dependencies]
