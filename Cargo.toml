@@ -30,6 +30,7 @@ members = [
     "facet-toml",
     "facet-urlencoded",
     "facet-yaml",
+    "facet-jsonschema",
 ]
 exclude = ["sample"]
 resolver = "3"
