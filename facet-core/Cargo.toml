@@ -11,9 +11,9 @@ keywords = ["reflection", "core"]
 categories = ["development-tools"]
 
 [features]
+default = ["std"]
 std = ["alloc"]
 alloc = []
-default = ["std"]
 
 [dependencies]
 impls = "1.0.3"

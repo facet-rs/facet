@@ -11,11 +11,11 @@ keywords = ["facet", "introspection", "reflection"]
 categories = ["development-tools"]
 
 [features]
+default = ["std"]
 reflect = ["dep:facet-reflect"]   # Enables reflection via Peek and Poke types
 testfeat = []                     # Does nothing, only used for tests
 std = ["facet-core/std", "alloc"] # Uses libstd and alloc
 alloc = ["facet-core/alloc"]      # Enables alloc support
-default = ["std"]
 
 [dependencies]
 facet-core = { path = "../facet-core", version = "0.5.3", default-features = false }
