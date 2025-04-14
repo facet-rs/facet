@@ -123,6 +123,11 @@ impl<'a> Wip<'a> {
         self.istates.insert(frame.id(), frame.istate);
     }
 
+    /// Returns the shape of the current frame
+    pub fn shape(&self) -> &'static Shape {
+        self.frames.last().unwrap().shape
+    }
+
     /// Asserts everything is initialized and that invariants are upheld (if any)
     pub fn build(mut self) -> Result<HeapValue<'a>, ReflectError> {
         let mut root: Option<Frame> = None;

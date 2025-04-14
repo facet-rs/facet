@@ -24,7 +24,7 @@ members = [
     # "facet-msgpack",
     "facet-pretty",
     # "facet-toml",
-    # "facet-urlencoded",
+    "facet-urlencoded",
     # "facet-yaml",
 ]
 exclude = ["sample"]
