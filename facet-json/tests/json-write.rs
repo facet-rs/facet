@@ -1,3 +1,5 @@
+#![cfg(feature = "std")]
+
 use std::num::NonZero;
 
 use facet::Facet;

@@ -28,6 +28,7 @@ nostd:
     cargo check --no-default-features --features alloc -p facet-core --target-dir target/nostd-w-alloc
     cargo check --no-default-features --features alloc -p facet --target-dir target/nostd-w-alloc
     cargo check --no-default-features --features alloc -p facet-reflect --target-dir target/nostd-w-alloc
+    cargo check --no-default-features --features alloc -p facet-json --target-dir target/nostd-w-alloc
 
 nostd-ci:
     #!/usr/bin/env -S bash -euo pipefail

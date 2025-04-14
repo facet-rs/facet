@@ -10,9 +10,14 @@ description = "JSON serialization and deserialization support for Facet traits"
 keywords = ["facet", "json", "serialization", "deserialization"]
 categories = ["encoding", "development-tools"]
 
+[features]
+std = ["facet-core/std", "facet-reflect/std", "alloc"] # Uses libstd and alloc
+alloc = ["facet-core/alloc", "facet-reflect/alloc"]    # Enables alloc support
+default = ["std"]
+
 [dependencies]
-facet-core = { version = "0.5.3", path = "../facet-core" }
-facet-reflect = { version = "0.6.2", path = "../facet-reflect" }
+facet-core = { version = "0.5.3", path = "../facet-core", default-features = false }
+facet-reflect = { version = "0.6.2", path = "../facet-reflect", default-features = false }
 log = "0.4.27"
 
 [dev-dependencies]
