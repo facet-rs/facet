@@ -61,7 +61,6 @@ fn test_encoded_characters() {
 }
 
 #[test]
-#[should_panic(expected = "Field 'TestStruct::field2' was not initialized")]
 fn test_missing_field_light() {
     facet_testhelpers::setup();
 
@@ -73,8 +72,24 @@ fn test_missing_field_light() {
 
     let query_string = "field1=value";
 
-    // This should panic because the 'field2' field is not initialized
-    let _params: TestStruct = from_str(query_string).expect("Failed to parse URL encoded data");
+    // This should return an error because field2 is not initialized
+    let result = from_str::<TestStruct>(query_string);
+
+    assert!(result.is_err());
+    if let Err(err) = result {
+        match err {
+            crate::UrlEncodedError::ReflectError(reflect_err) => {
+                // Convert to string and check if it contains the expected message
+                let err_msg = format!("{}", reflect_err);
+                assert!(
+                    err_msg.contains("Field 'TestStruct::field2' was not initialized"),
+                    "Expected error about uninitialized field, got: {}",
+                    err_msg
+                );
+            }
+            _ => panic!("Expected ReflectError, got: {:?}", err),
+        }
+    }
 }
 
 #[test]
@@ -140,13 +155,30 @@ fn test_nested_struct() {
 }
 
 #[test]
-#[should_panic(expected = "Field 'Address::city' was not initialized")]
 fn test_partial_nested_struct() {
+    facet_testhelpers::setup();
+
     // Missing some nested fields
     let query_string = "user[name]=John+Doe&user[age]=30&user[address][street]=123+Main+St&user[address][zip]=12345&product_id=ABC123&quantity=2";
 
-    // This should panic because some required nested fields are missing
-    let _order: OrderForm = from_str(query_string).expect("Failed to parse partial nested struct");
+    // This should return an error because the city field is not initialized
+    let result = from_str::<OrderForm>(query_string);
+
+    assert!(result.is_err());
+    if let Err(err) = result {
+        match err {
+            crate::UrlEncodedError::ReflectError(reflect_err) => {
+                // Convert to string and check if it contains the expected message
+                let err_msg = format!("{}", reflect_err);
+                assert!(
+                    err_msg.contains("Field 'Address::city' was not initialized"),
+                    "Expected error about uninitialized field, got: {}",
+                    err_msg
+                );
+            }
+            _ => panic!("Expected ReflectError, got: {:?}", err),
+        }
+    }
 }
 
 #[test]

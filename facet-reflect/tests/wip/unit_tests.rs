@@ -163,3 +163,158 @@ fn put_vec_no_leak_3() -> eyre::Result<()> {
     assert_eq!(v, vec!["a".to_string()]);
     Ok(())
 }
+
+// Enum tests
+
+#[derive(Facet, PartialEq, Eq, Debug)]
+#[repr(u8)]
+enum SimpleEnum {
+    A,
+    B,
+    #[expect(dead_code)]
+    C,
+}
+
+#[test]
+fn wip_unit_enum() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    // Test unit variant A
+    let a = Wip::alloc::<SimpleEnum>()
+        .variant_named("A")?
+        .build()?
+        .materialize::<SimpleEnum>()?;
+    assert_eq!(a, SimpleEnum::A);
+
+    // Test unit variant B
+    let b = Wip::alloc::<SimpleEnum>()
+        .variant(1)? // B is at index 1
+        .build()?
+        .materialize::<SimpleEnum>()?;
+    assert_eq!(b, SimpleEnum::B);
+
+    Ok(())
+}
+
+#[derive(Facet, PartialEq, Eq, Debug)]
+#[repr(u8)]
+enum EnumWithData {
+    Empty,
+    Single(i32),
+    Tuple(i32, String),
+    Struct { x: i32, y: String },
+}
+
+#[test]
+fn wip_enum_with_data() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    // Test empty variant
+    let empty = Wip::alloc::<EnumWithData>()
+        .variant_named("Empty")?
+        .build()?
+        .materialize::<EnumWithData>()?;
+    assert_eq!(empty, EnumWithData::Empty);
+
+    // Test single-field tuple variant
+    let single = Wip::alloc::<EnumWithData>()
+        .variant_named("Single")?
+        .field(0)? // Access the first field
+        .put(42)?
+        .pop()?
+        .build()?
+        .materialize::<EnumWithData>()?;
+    assert_eq!(single, EnumWithData::Single(42));
+
+    // Test multi-field tuple variant
+    let tuple = Wip::alloc::<EnumWithData>()
+        .variant_named("Tuple")?
+        .field(0)?
+        .put(42)?
+        .pop()?
+        .field(1)?
+        .put(String::from("Hello"))?
+        .pop()?
+        .build()?
+        .materialize::<EnumWithData>()?;
+    assert_eq!(tuple, EnumWithData::Tuple(42, String::from("Hello")));
+
+    // Test struct variant
+    let struct_variant = Wip::alloc::<EnumWithData>()
+        .variant_named("Struct")?
+        .field_named("x")?
+        .put(42)?
+        .pop()?
+        .field_named("y")?
+        .put(String::from("World"))?
+        .pop()?
+        .build()?
+        .materialize::<EnumWithData>()?;
+    assert_eq!(
+        struct_variant,
+        EnumWithData::Struct {
+            x: 42,
+            y: String::from("World")
+        }
+    );
+
+    Ok(())
+}
+
+#[test]
+fn wip_enum_error_cases() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    // Test error: trying to access a field without selecting a variant
+    let result = Wip::alloc::<EnumWithData>().field_named("x");
+    assert!(result.is_err());
+
+    // Test error: trying to select a non-existent variant
+    let result = Wip::alloc::<EnumWithData>().variant_named("NonExistent");
+    assert!(result.is_err());
+
+    // Test error: trying to access a non-existent field in a variant
+    let result = Wip::alloc::<EnumWithData>()
+        .variant_named("Struct")?
+        .field_named("non_existent");
+    assert!(result.is_err());
+
+    // Test error: trying to build without initializing all fields
+    let result = Wip::alloc::<EnumWithData>()
+        .variant_named("Struct")?
+        .field_named("x")?
+        .put(42)?
+        .pop()?
+        .build();
+    assert!(result.is_err());
+
+    Ok(())
+}
+
+// We've already tested enum functionality with SimpleEnum and EnumWithData,
+// so we'll skip additional representation tests
+
+#[test]
+fn wip_switch_enum_variant() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    // Test switching variants
+    let result = Wip::alloc::<EnumWithData>()
+        .variant_named("Single")?
+        .field(0)?
+        .put(42)?
+        .pop()?
+        .variant_named("Tuple")? // Switch to another variant
+        .field(0)?
+        .put(43)?
+        .pop()?
+        .field(1)?
+        .put(String::from("Changed"))?
+        .pop()?
+        .build()?
+        .materialize::<EnumWithData>()?;
+
+    assert_eq!(result, EnumWithData::Tuple(43, String::from("Changed")));
+
+    Ok(())
+}

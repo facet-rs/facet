@@ -5,6 +5,8 @@ use facet_ansi::Stylize;
 use facet_core::{Def, Facet, FieldError, Opaque, OpaqueConst, OpaqueUninit, Shape, Variant};
 use indexmap::IndexMap;
 
+mod enum_;
+
 /// Represents a frame in the initialization stack
 pub struct Frame {
     /// The value we're initializing
@@ -181,7 +183,14 @@ impl<'a> Wip<'a> {
         for (id, is) in &self.istates {
             let field_count = match id.shape.def {
                 Def::Struct(def) => def.fields.len(),
-                Def::Enum(_) => todo!(),
+                Def::Enum(_) => {
+                    if let Some(variant) = &is.variant {
+                        variant.data.fields.len()
+                    } else {
+                        // If no variant is selected, we should have zero fields initialized
+                        0
+                    }
+                }
                 _ => 1,
             };
             if !is.fields.are_all_set(field_count) {
@@ -189,15 +198,30 @@ impl<'a> Wip<'a> {
                     Def::Struct(sd) => {
                         for (i, field) in sd.fields.iter().enumerate() {
                             if !is.fields.has(i) {
-                                panic!("Field '{}::{}' was not initialized", id.shape, field.name);
+                                return Err(ReflectError::UninitializedField {
+                                    shape: id.shape,
+                                    field_name: field.name,
+                                });
                             }
                         }
                     }
                     Def::Enum(_) => {
-                        todo!()
+                        if let Some(variant) = &is.variant {
+                            for (i, field) in variant.data.fields.iter().enumerate() {
+                                if !is.fields.has(i) {
+                                    return Err(ReflectError::UninitializedEnumField {
+                                        shape: id.shape,
+                                        field_name: field.name,
+                                        variant_name: variant.name,
+                                    });
+                                }
+                            }
+                        } else {
+                            return Err(ReflectError::NoVariantSelected { shape: id.shape });
+                        }
                     }
                     Def::Scalar(_) => {
-                        panic!("Field was not initialized for scalar {}", id.shape);
+                        return Err(ReflectError::UninitializedScalar { shape: id.shape });
                     }
                     _ => {}
                 }
@@ -224,7 +248,7 @@ impl<'a> Wip<'a> {
         })
     }
 
-    /// Selects a field of a struct by index and pushes it onto the frame stack.
+    /// Selects a field of a struct or enum variant by index and pushes it onto the frame stack.
     ///
     /// # Arguments
     ///
@@ -233,21 +257,49 @@ impl<'a> Wip<'a> {
     /// # Returns
     ///
     /// * `Ok(Self)` if the field was successfully selected and pushed.
-    /// * `Err(ReflectError)` if the current frame is not a struct or the field doesn't exist.
+    /// * `Err(ReflectError)` if the current frame is not a struct or an enum with a selected variant,
+    ///   or if the field doesn't exist.
     pub fn field(mut self, index: usize) -> Result<Self, ReflectError> {
         let frame = self.frames.last_mut().unwrap();
         let shape = frame.shape;
-        let Def::Struct(def) = shape.def else {
-            return Err(ReflectError::WasNotA { name: "struct" });
+
+        let (field, field_offset) = match shape.def {
+            Def::Struct(def) => {
+                if index >= def.fields.len() {
+                    return Err(ReflectError::FieldError {
+                        shape,
+                        field_error: FieldError::NoSuchField,
+                    });
+                }
+                let field = &def.fields[index];
+                (field, field.offset)
+            }
+            Def::Enum(_) => {
+                let Some(variant) = frame.istate.variant.as_ref() else {
+                    return Err(ReflectError::OperationFailed {
+                        shape,
+                        operation: "tried to access a field but no variant was selected",
+                    });
+                };
+
+                if index >= variant.data.fields.len() {
+                    return Err(ReflectError::FieldError {
+                        shape,
+                        field_error: FieldError::NoSuchField,
+                    });
+                }
+
+                let field = &variant.data.fields[index];
+                (field, field.offset)
+            }
+            _ => {
+                return Err(ReflectError::WasNotA {
+                    name: "struct or enum",
+                });
+            }
         };
-        if index >= def.fields.len() {
-            return Err(ReflectError::FieldError {
-                shape,
-                field_error: FieldError::NoSuchField,
-            });
-        }
-        let field = &def.fields[index];
-        let field_data = unsafe { frame.data.field_uninit_at(field.offset) };
+
+        let field_data = unsafe { frame.data.field_uninit_at(field_offset) };
 
         let mut frame = Frame {
             data: field_data,
@@ -275,7 +327,7 @@ impl<'a> Wip<'a> {
         Ok(self)
     }
 
-    /// Finds the index of a field in a struct by name.
+    /// Finds the index of a field in a struct or enum variant by name.
     ///
     /// # Arguments
     ///
@@ -284,17 +336,22 @@ impl<'a> Wip<'a> {
     /// # Returns
     ///
     /// * `Some(usize)` if the field was found.
-    /// * `None` if the current frame is not a struct or the field doesn't exist.
+    /// * `None` if the current frame is not a struct or an enum with a selected variant,
+    ///   or if the field doesn't exist.
     pub fn field_index(&self, name: &str) -> Option<usize> {
         let frame = self.frames.last()?;
-        if let Def::Struct(def) = frame.shape.def {
-            def.fields.iter().position(|f| f.name == name)
-        } else {
-            None
+        match frame.shape.def {
+            Def::Struct(def) => def.fields.iter().position(|f| f.name == name),
+            Def::Enum(_) => {
+                // Get the selected variant
+                let variant = frame.istate.variant.as_ref()?;
+                variant.data.fields.iter().position(|f| f.name == name)
+            }
+            _ => None,
         }
     }
 
-    /// Selects a field of a struct by name and pushes it onto the frame stack.
+    /// Selects a field of a struct or enum variant by name and pushes it onto the frame stack.
     ///
     /// # Arguments
     ///
@@ -303,14 +360,27 @@ impl<'a> Wip<'a> {
     /// # Returns
     ///
     /// * `Ok(Self)` if the field was successfully selected and pushed.
-    /// * `Err(ReflectError)` if the current frame is not a struct or the field doesn't exist.
+    /// * `Err(ReflectError)` if the current frame is not a struct or an enum with a selected variant,
+    ///   or if the field doesn't exist.
     pub fn field_named(self, name: &str) -> Result<Self, ReflectError> {
         let frame = self.frames.last().unwrap();
         let shape = frame.shape;
+
+        // For enums, ensure a variant is selected
+        if let Def::Enum(_) = shape.def {
+            if frame.istate.variant.is_none() {
+                return Err(ReflectError::OperationFailed {
+                    shape,
+                    operation: "tried to access a field by name but no variant was selected",
+                });
+            }
+        }
+
         let index = self.field_index(name).ok_or(ReflectError::FieldError {
             shape,
             field_error: FieldError::NoSuchField,
         })?;
+
         self.field(index)
     }
 
@@ -345,10 +415,47 @@ impl<'a> Wip<'a> {
 
         // de-initialize partially initialized fields
         if frame.istate.variant.is_some() || frame.istate.fields.is_any_set() {
-            todo!(
-                "we should de-initialize partially initialized fields for {}",
+            log::trace!(
+                "De-initializing partially initialized fields for {}",
                 frame.shape
             );
+
+            match frame.shape.def {
+                Def::Struct(sd) => {
+                    for (i, field) in sd.fields.iter().enumerate() {
+                        if frame.istate.fields.has(i) {
+                            if let Some(drop_fn) = field.shape.vtable.drop_in_place {
+                                unsafe {
+                                    let field_ptr = frame.data.as_mut_byte_ptr().add(field.offset);
+                                    drop_fn(Opaque::new(field_ptr));
+                                }
+                            }
+                        }
+                    }
+                }
+                Def::Enum(_) => {
+                    if let Some(variant) = &frame.istate.variant {
+                        for (i, field) in variant.data.fields.iter().enumerate() {
+                            if frame.istate.fields.has(i) {
+                                if let Some(drop_fn) = field.shape.vtable.drop_in_place {
+                                    unsafe {
+                                        let field_ptr =
+                                            frame.data.as_mut_byte_ptr().add(field.offset);
+                                        drop_fn(Opaque::new(field_ptr));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    // For scalar types, nothing to do if not fully initialized
+                }
+            }
+
+            // Reset initialization state
+            frame.istate.variant = None;
+            frame.istate.fields.clear();
         }
 
         unsafe {

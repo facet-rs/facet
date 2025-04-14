@@ -31,6 +31,36 @@ pub enum ReflectError {
         name: &'static str,
     },
 
+    /// A field was not initialized during build
+    UninitializedField {
+        /// The shape containing the field
+        shape: &'static Shape,
+        /// The name of the field that wasn't initialized
+        field_name: &'static str,
+    },
+
+    /// A field in an enum variant was not initialized during build
+    UninitializedEnumField {
+        /// The enum shape
+        shape: &'static Shape,
+        /// The name of the field that wasn't initialized
+        field_name: &'static str,
+        /// The name of the variant containing the field
+        variant_name: &'static str,
+    },
+
+    /// An enum had no variant selected during build
+    NoVariantSelected {
+        /// The enum shape
+        shape: &'static Shape,
+    },
+
+    /// A scalar value was not initialized during build
+    UninitializedScalar {
+        /// The scalar shape
+        shape: &'static Shape,
+    },
+
     /// An invariant of the reflection system was violated.
     InvariantViolation {
         /// The invariant that was violated.
@@ -86,6 +116,26 @@ impl core::fmt::Display for ReflectError {
                 write!(f, "Wrong shape: expected {}, but got {}", expected, actual)
             }
             ReflectError::WasNotA { name } => write!(f, "Was not a {}", name),
+            ReflectError::UninitializedField { shape, field_name } => {
+                write!(f, "Field '{}::{}' was not initialized", shape, field_name)
+            }
+            ReflectError::UninitializedEnumField {
+                shape,
+                field_name,
+                variant_name,
+            } => {
+                write!(
+                    f,
+                    "Field '{}::{}' in variant '{}' was not initialized",
+                    shape, field_name, variant_name
+                )
+            }
+            ReflectError::NoVariantSelected { shape } => {
+                write!(f, "Enum '{}' had no variant selected", shape)
+            }
+            ReflectError::UninitializedScalar { shape } => {
+                write!(f, "Scalar '{}' was not initialized", shape)
+            }
             ReflectError::InvariantViolation { invariant } => {
                 write!(f, "Invariant violation: {}", invariant)
             }
