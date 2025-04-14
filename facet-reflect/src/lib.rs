@@ -10,9 +10,9 @@ extern crate alloc;
 mod error;
 pub use error::*;
 
-#[cfg(feature = "std")]
+#[cfg(feature = "alloc")]
 mod wip;
-#[cfg(feature = "std")]
+#[cfg(feature = "alloc")]
 pub use wip::*;
 
 mod peek;

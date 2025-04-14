@@ -111,7 +111,7 @@ impl<'a> Wip<'a> {
         };
         Self {
             guard: Some(guard),
-            frames: vec![Frame {
+            frames: alloc::vec![Frame {
                 data,
                 shape,
                 index: None,
@@ -621,7 +621,7 @@ impl Drop for Wip<'_> {
             );
         }
 
-        let mut depths: Vec<usize> = self.istates.values().map(|is| is.depth).collect();
+        let mut depths: alloc::vec::Vec<usize> = self.istates.values().map(|is| is.depth).collect();
         depths.sort_unstable();
         depths.dedup();
 
@@ -629,7 +629,7 @@ impl Drop for Wip<'_> {
             log::trace!("Dropping istates with depth {}", depth.yellow(),);
 
             // Find and drop values at this depth level
-            let mut to_remove = Vec::new();
+            let mut to_remove = alloc::vec::Vec::new();
             self.istates.retain(|id, is| {
                 if is.depth == *depth {
                     log::trace!(
