@@ -144,18 +144,19 @@ impl<'mem> PeekEnum<'mem> {
         })
     }
 
-    /// Returns a PeekValue handle to a field of a tuple or struct variant by name
-    pub fn field_by_name(self, field_name: &str) -> Option<crate::ConstValue<'mem>> {
+    /// Returns the index of a field in the active variant by name
+    pub fn field_index(self, field_name: &str) -> Option<usize> {
         let variant = self.active_variant();
-
-        // Find the field index by name
-        let index = variant
+        variant
             .data
             .fields
             .iter()
-            .position(|f| f.name == field_name)?;
+            .position(|f| f.name == field_name)
+    }
 
-        // Use the field method to get the field by index
+    /// Returns a PeekValue handle to a field of a tuple or struct variant by name
+    pub fn field_by_name(self, field_name: &str) -> Option<crate::ConstValue<'mem>> {
+        let index = self.field_index(field_name)?;
         self.field(index)
     }
 

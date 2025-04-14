@@ -225,6 +225,25 @@ impl<'a> Wip<'a> {
         Ok(self)
     }
 
+    /// Finds the index of a field in a struct by name.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name of the field to find.
+    ///
+    /// # Returns
+    ///
+    /// * `Some(usize)` if the field was found.
+    /// * `None` if the current frame is not a struct or the field doesn't exist.
+    pub fn field_index(&self, name: &str) -> Option<usize> {
+        let frame = self.frames.last()?;
+        if let Def::Struct(def) = frame.shape.def {
+            def.fields.iter().position(|f| f.name == name)
+        } else {
+            None
+        }
+    }
+
     /// Selects a field of a struct by name and pushes it onto the frame stack.
     ///
     /// # Arguments
@@ -238,17 +257,10 @@ impl<'a> Wip<'a> {
     pub fn field_named(self, name: &str) -> Result<Self, ReflectError> {
         let frame = self.frames.last().unwrap();
         let shape = frame.shape;
-        let Def::Struct(def) = shape.def else {
-            return Err(ReflectError::WasNotA { name: "struct" });
-        };
-        let index =
-            def.fields
-                .iter()
-                .position(|f| f.name == name)
-                .ok_or(ReflectError::FieldError {
-                    shape,
-                    field_error: FieldError::NoSuchField,
-                })?;
+        let index = self.field_index(name).ok_or(ReflectError::FieldError {
+            shape,
+            field_error: FieldError::NoSuchField,
+        })?;
         self.field(index)
     }
 

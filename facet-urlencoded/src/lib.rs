@@ -173,14 +173,12 @@ fn deserialize_value<'mem>(
 
             // Process flat fields
             for key in values.keys() {
-                if let Ok(field_wip) = wip.field_named(key) {
+                if let Some(index) = wip.field_index(key) {
                     let value = values.get(key).unwrap(); // Safe because we're iterating over keys
-                    wip = deserialize_scalar_field(key, value, field_wip)?;
+                    let field = wip.field(index)?;
+                    wip = deserialize_scalar_field(key, value, field)?;
                 } else {
-                    // TODO: skip unknown fields, needs to change
-                    // the signature of field_named to return `Self` too.
-                    // or decide that `&mut` is enough.
-                    panic!("Unknown field: {}", key);
+                    trace!("Unknown field: {}", key);
                 }
             }
 
