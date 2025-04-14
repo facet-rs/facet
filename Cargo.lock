@@ -177,6 +177,7 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-reflect",
+ "facet-testhelpers",
  "form_urlencoded",
  "log",
 ]

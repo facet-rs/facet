@@ -30,6 +30,8 @@ struct OrderForm {
 
 #[test]
 fn test_basic_urlencoded() {
+    facet_testhelpers::setup();
+
     let query_string = "query=rust+programming&page=2";
 
     let params: SearchParams = from_str(query_string).expect("Failed to parse URL encoded data");
@@ -44,6 +46,8 @@ fn test_basic_urlencoded() {
 
 #[test]
 fn test_encoded_characters() {
+    facet_testhelpers::setup();
+
     let query_string = "query=rust%20programming%21&page=3";
 
     let params: SearchParams = from_str(query_string).expect("Failed to parse URL encoded data");
@@ -57,16 +61,26 @@ fn test_encoded_characters() {
 }
 
 #[test]
-#[should_panic(expected = "Field 'SearchParams::page' was not initialized")]
-fn test_missing_field() {
-    let query_string = "query=rust+programming";
+#[should_panic(expected = "Field 'TestStruct::field2' was not initialized")]
+fn test_missing_field_light() {
+    facet_testhelpers::setup();
 
-    // This should panic because the 'page' field is not initialized
-    let _params: SearchParams = from_str(query_string).expect("Failed to parse URL encoded data");
+    #[derive(Debug, Facet, PartialEq)]
+    struct TestStruct {
+        field1: String,
+        field2: String,
+    }
+
+    let query_string = "field1=value";
+
+    // This should panic because the 'field2' field is not initialized
+    let _params: TestStruct = from_str(query_string).expect("Failed to parse URL encoded data");
 }
 
 #[test]
 fn test_unknown_field() {
+    facet_testhelpers::setup();
+
     let query_string = "query=rust+programming&page=2&unknown=value";
 
     let params: SearchParams = from_str(query_string).expect("Failed to parse URL encoded data");
@@ -81,6 +95,8 @@ fn test_unknown_field() {
 
 #[test]
 fn test_invalid_number() {
+    facet_testhelpers::setup();
+
     let query_string = "query=rust+programming&page=not_a_number";
 
     let result = from_str::<SearchParams>(query_string);
@@ -99,6 +115,8 @@ fn test_invalid_number() {
 
 #[test]
 fn test_nested_struct() {
+    facet_testhelpers::setup();
+
     let query_string = "user[name]=John+Doe&user[age]=30&user[address][street]=123+Main+St&user[address][city]=Anytown&user[address][zip]=12345&product_id=ABC123&quantity=2";
 
     let order: OrderForm = from_str(query_string).expect("Failed to parse URL encoded data");

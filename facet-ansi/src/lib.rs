@@ -228,10 +228,11 @@ pub struct Styled<T> {
 impl<T: Display> Display for Styled<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         if self.style == Style::new() {
-            write!(f, "{}", self.value)
+            Display::fmt(&self.value, f)
         } else {
-            // anstyle's Style implements Display which handles all the formatting
-            write!(f, "{}{}{}", self.style, self.value, anstyle::Reset)
+            write!(f, "{}", self.style)?;
+            Display::fmt(&self.value, f)?;
+            write!(f, "{}", anstyle::Reset)
         }
     }
 }
@@ -239,9 +240,23 @@ impl<T: Display> Display for Styled<T> {
 impl<T: Debug> Debug for Styled<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         if self.style == Style::new() {
-            write!(f, "{:?}", self.value)
+            Debug::fmt(&self.value, f)
         } else {
-            write!(f, "{}{:?}{}", self.style, self.value, anstyle::Reset)
+            write!(f, "{}", self.style)?;
+            Debug::fmt(&self.value, f)?;
+            write!(f, "{}", anstyle::Reset)
+        }
+    }
+}
+
+impl<T: fmt::Binary> fmt::Binary for Styled<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        if self.style == Style::new() {
+            fmt::Binary::fmt(&self.value, f)
+        } else {
+            write!(f, "{}", self.style)?;
+            fmt::Binary::fmt(&self.value, f)?;
+            write!(f, "{}", anstyle::Reset)
         }
     }
 }

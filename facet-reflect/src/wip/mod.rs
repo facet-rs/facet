@@ -1,6 +1,7 @@
 extern crate alloc;
 use crate::{ReflectError, ValueId};
 use core::{alloc::Layout, marker::PhantomData};
+use facet_ansi::Stylize;
 use facet_core::{Def, Facet, FieldError, Opaque, OpaqueConst, OpaqueUninit, Shape, Variant};
 use indexmap::IndexMap;
 
@@ -109,13 +110,27 @@ impl<'a> Wip<'a> {
 
     fn pop_inner(&mut self) -> Option<Frame> {
         let frame = self.frames.pop()?;
-        if frame.is_fully_initialized() {
+        let frame_shape = frame.shape;
+
+        let init = frame.is_fully_initialized();
+        log::trace!(
+            "[{}] {} popped, {} initialized",
+            self.frames.len(),
+            frame_shape.blue(),
+            if init {
+                "✅ fully".green()
+            } else {
+                "🚧 partially".red()
+            }
+        );
+        if init {
             if let Some(parent) = self.frames.last_mut() {
                 if let Some(index) = frame.index {
                     parent.istate.fields.set(index);
                 }
             }
         }
+
         Some(frame)
     }
 
@@ -148,7 +163,7 @@ impl<'a> Wip<'a> {
 
         self.istates.insert(root.id(), root.istate);
 
-        for (id, is) in self.istates.drain(..) {
+        for (id, is) in &self.istates {
             let field_count = match id.shape.def {
                 Def::Struct(def) => def.fields.len(),
                 Def::Enum(_) => todo!(),
@@ -218,7 +233,20 @@ impl<'a> Wip<'a> {
             index: Some(index),
             istate: Default::default(),
         };
+        log::trace!(
+            "[{}] Selecting field {} ({}#{}) of {}",
+            self.frames.len(),
+            field.name.blue(),
+            field.shape.green(),
+            index.yellow(),
+            shape.blue(),
+        );
         if let Some(iset) = self.istates.shift_remove(&frame.id()) {
+            log::trace!(
+                "[{}] Restoring saved state for {}",
+                self.frames.len(),
+                frame.id().shape.blue()
+            );
             frame.istate = iset;
         }
         self.frames.push(frame);
@@ -354,12 +382,21 @@ impl<'a> Wip<'a> {
     ) -> Result<(), ReflectError> {
         if let Some(index) = index {
             let parent_index = self.frames.len().saturating_sub(2);
+            let num_frames = self.frames.len();
             let Some(parent) = self.frames.get_mut(parent_index) else {
                 return Err(ReflectError::OperationFailed {
                     shape,
                     operation: "was supposed to mark a field as initialized, but there was no parent frame",
                 });
             };
+            let parent_shape = parent.shape;
+            log::trace!(
+                "[{}] {}.{} initialized with {}",
+                num_frames,
+                parent_shape.blue(),
+                index.yellow(),
+                shape.green()
+            );
 
             if matches!(parent.shape.def, Def::Enum(_)) && parent.istate.variant.is_none() {
                 return Err(ReflectError::OperationFailed {
@@ -392,92 +429,20 @@ impl<'a> Wip<'a> {
 
 impl Drop for Wip<'_> {
     fn drop(&mut self) {
-        // FIXME: pretty sure the drop order is wrong
+        log::trace!(
+            "[{}] 🚯 Dropping, was tracking {} istates",
+            self.frames.len(),
+            self.istates.len()
+        );
 
-        // Uninitialize fields that were already initialized
-        for frame in &mut self.frames {
-            // For each frame, we need to drop initialized fields
-            match frame.shape.def {
-                Def::Struct(sd) => {
-                    // For structs, check each field and drop if initialized
-                    for (i, field) in sd.fields.iter().enumerate() {
-                        if frame.istate.fields.has(i) {
-                            if let Some(drop_fn) = field.shape.vtable.drop_in_place {
-                                unsafe {
-                                    let field_data = frame.data.field_uninit_at(field.offset);
-                                    drop_fn(Opaque::new(field_data.as_mut_byte_ptr()));
-                                }
-                            }
-                        }
-                    }
-                }
-                Def::Enum(_) => {
-                    // For enums, check if a variant is chosen and drop its initialized fields
-                    if let Some(variant) = &frame.istate.variant {
-                        for (i, field) in variant.data.fields.iter().enumerate() {
-                            if frame.istate.fields.has(i) {
-                                if let Some(drop_fn) = field.shape.vtable.drop_in_place {
-                                    unsafe {
-                                        let field_data = frame.data.field_uninit_at(field.offset);
-                                        drop_fn(Opaque::new(field_data.as_mut_byte_ptr()));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                // For other types like scalars, drop if initialized
-                _ => {
-                    if frame.istate.fields.has(0) {
-                        if let Some(drop_fn) = frame.shape.vtable.drop_in_place {
-                            unsafe {
-                                drop_fn(Opaque::new(frame.data.as_mut_byte_ptr()));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Also check out-of-tree frames in istates
-        for (id, istate) in &self.istates {
-            match id.shape.def {
-                Def::Struct(sd) => {
-                    for (i, field) in sd.fields.iter().enumerate() {
-                        if istate.fields.has(i) {
-                            if let Some(drop_fn) = field.shape.vtable.drop_in_place {
-                                unsafe {
-                                    let ptr = id.ptr.wrapping_add(field.offset as usize);
-                                    drop_fn(Opaque::new(ptr as *mut u8));
-                                }
-                            }
-                        }
-                    }
-                }
-                Def::Enum(_) => {
-                    if let Some(variant) = &istate.variant {
-                        for (i, field) in variant.data.fields.iter().enumerate() {
-                            if istate.fields.has(i) {
-                                if let Some(drop_fn) = field.shape.vtable.drop_in_place {
-                                    unsafe {
-                                        let ptr = id.ptr.wrapping_add(field.offset as usize);
-                                        drop_fn(Opaque::new(ptr as *mut u8));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                _ => {
-                    if istate.fields.has(0) {
-                        if let Some(drop_fn) = id.shape.vtable.drop_in_place {
-                            unsafe {
-                                drop_fn(Opaque::new(id.ptr as *mut u8));
-                            }
-                        }
-                    }
-                }
-            }
+        for (id, is) in &self.istates {
+            log::trace!(
+                "[{}] {}: variant={:?} initialized={:016b}",
+                self.frames.len(),
+                id.shape.blue(),
+                is.variant.yellow(),
+                is.fields.0.bright_magenta()
+            );
         }
     }
 }
