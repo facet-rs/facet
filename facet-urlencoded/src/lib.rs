@@ -90,8 +90,21 @@ fn from_str_value<'mem>(
         nested_values.insert(&key, value.to_string());
     }
 
+    // Create pre-initialized structure so that we have all the required fields
+    // for better error reporting when fields are missing
+    initialize_nested_structures(&mut nested_values);
+
     // Process the deserialization
     deserialize_value(wip, &nested_values)
+}
+
+/// Ensures that all nested structures have entries in the NestedValues
+/// This helps ensure we get better error reporting when fields are missing
+fn initialize_nested_structures(nested: &mut NestedValues) {
+    // Go through each nested value and recursively initialize it
+    for nested_value in nested.nested.values_mut() {
+        initialize_nested_structures(nested_value);
+    }
 }
 
 /// Internal helper struct to represent nested values from URL-encoded data
@@ -171,6 +184,8 @@ fn deserialize_value<'mem>(
 
             let mut wip = wip;
 
+
+
             // Process flat fields
             for key in values.keys() {
                 if let Some(index) = wip.field_index(key) {
@@ -179,6 +194,17 @@ fn deserialize_value<'mem>(
                     wip = deserialize_scalar_field(key, value, field)?;
                 } else {
                     trace!("Unknown field: {}", key);
+                }
+            }
+
+            // Process nested fields
+            for key in values.nested.keys() {
+                if let Some(index) = wip.field_index(key) {
+                    let nested_values = values.nested.get(key).unwrap(); // Safe because we're iterating over keys
+                    let field = wip.field(index)?;
+                    wip = deserialize_nested_field(key, nested_values, field)?;
+                } else {
+                    trace!("Unknown nested field: {}", key);
                 }
             }
 
@@ -225,6 +251,49 @@ fn deserialize_scalar_field<'mem>(
             error!("Expected scalar field");
             Err(UrlEncodedError::UnsupportedShape(format!(
                 "Expected scalar for field '{}'",
+                key
+            )))
+        }
+    }
+}
+
+/// Helper function to deserialize a nested field
+fn deserialize_nested_field<'mem>(
+    key: &str,
+    nested_values: &NestedValues,
+    wip: Wip<'mem>,
+) -> Result<Wip<'mem>, UrlEncodedError> {
+    match wip.shape().def {
+        Def::Struct(_sd) => {
+            trace!("Deserializing nested struct field: {}", key);
+            
+            let mut current_wip = wip;
+            
+            // Process flat fields in the nested structure
+            for nested_key in nested_values.keys() {
+                if let Some(index) = current_wip.field_index(nested_key) {
+                    let value = nested_values.get(nested_key).unwrap(); // Safe because we're iterating over keys
+                    let field_wip = current_wip.field(index)?;
+                    current_wip = deserialize_scalar_field(nested_key, value, field_wip)?
+                }
+            }
+            
+            // Process deeper nested fields
+            for nested_key in nested_values.nested.keys() {
+                if let Some(index) = current_wip.field_index(nested_key) {
+                    let deeper_nested = nested_values.nested.get(nested_key).unwrap(); // Safe because we're iterating over keys
+                    let field_wip = current_wip.field(index)?;
+                    current_wip = deserialize_nested_field(nested_key, deeper_nested, field_wip)?;
+                }
+            }
+            
+            // Return to parent level
+            Ok(current_wip.pop()?)
+        }
+        _ => {
+            error!("Expected struct field for nested value");
+            Err(UrlEncodedError::UnsupportedShape(format!(
+                "Expected struct for nested field '{}'",
                 key
             )))
         }

@@ -122,10 +122,10 @@ fn test_nested_struct() {
 }
 
 #[test]
-#[should_panic(expected = "Field 'city' was not initialized")]
+#[should_panic(expected = "Field 'Address::city' was not initialized")]
 fn test_partial_nested_struct() {
     // Missing some nested fields
-    let query_string = "user[name]=John+Doe&user[age]=30&user[address][street]=123+Main+St&product_id=ABC123&quantity=2";
+    let query_string = "user[name]=John+Doe&user[age]=30&user[address][street]=123+Main+St&user[address][zip]=12345&product_id=ABC123&quantity=2";
 
     // This should panic because some required nested fields are missing
     let _order: OrderForm = from_str(query_string).expect("Failed to parse partial nested struct");
