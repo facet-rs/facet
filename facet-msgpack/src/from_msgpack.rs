@@ -29,7 +29,9 @@ use log::trace;
 /// assert_eq!(user, User { id: 42, username: "user123".to_string() });
 /// ```
 pub fn from_slice<T: Facet>(msgpack: &[u8]) -> Result<T, DecodeError> {
-    from_slice_value(Wip::alloc::<T>(), msgpack)?.materialize::<T>()
+    from_slice_value(Wip::alloc::<T>(), msgpack)?
+        .materialize::<T>()
+        .map_err(|e| DecodeError::UnsupportedType(e.to_string()))
 }
 
 /// Alias for from_slice for backward compatibility
@@ -83,7 +85,10 @@ pub fn from_slice_value<'mem>(
     msgpack: &'mem [u8],
 ) -> Result<HeapValue<'mem>, DecodeError> {
     let mut decoder = Decoder::new(msgpack);
-    decoder.deserialize_value(wip)?.build()
+    decoder
+        .deserialize_value(wip)?
+        .build()
+        .map_err(|e| DecodeError::UnsupportedType(e.to_string()))
 }
 
 struct Decoder<'input> {
@@ -214,6 +219,7 @@ impl<'input> Decoder<'input> {
     /// - array32 (0xdd): array with up to 4294967295 elements
     ///
     /// Ref: <https://github.com/msgpack/msgpack/blob/master/spec.md#formats-array>
+    #[allow(dead_code)]
     fn decode_array_len(&mut self) -> Result<usize, DecodeError> {
         let prefix = self.decode_u8()?;
 
@@ -244,6 +250,7 @@ impl<'input> Decoder<'input> {
     /// - nil (0xc0): nil/null value
     ///
     /// Ref: <https://github.com/msgpack/msgpack/blob/master/spec.md#formats-nil>
+    #[allow(dead_code)]
     fn decode_nil(&mut self) -> Result<(), DecodeError> {
         match self.decode_u8()? {
             MSGPACK_NIL => Ok(()),
@@ -253,6 +260,7 @@ impl<'input> Decoder<'input> {
 
     /// Peeks at the next byte to check if it's a nil value without advancing the offset.
     /// Returns true if the next value is nil, false otherwise.
+    #[allow(dead_code)]
     fn peek_nil(&mut self) -> Result<bool, DecodeError> {
         if self.offset >= self.input.len() {
             return Err(DecodeError::InsufficientData);
@@ -442,7 +450,7 @@ impl<'input> Decoder<'input> {
                     return Err(DecodeError::UnsupportedType(format!("{}", shape)));
                 }
             }
-            Def::Struct(sd) => {
+            Def::Struct(_) => {
                 trace!("Deserializing struct");
                 let map_len = self.decode_map_len()?;
 

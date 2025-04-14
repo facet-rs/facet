@@ -32,9 +32,9 @@ fn peek_struct() {
         .expect("Should have a text field");
 
     // Test field values
-    let number_value = number_field.get::<i32>();
+    let number_value = number_field.get::<i32>().unwrap();
     assert_eq!(*number_value, 42);
 
-    let text_value = text_field.get::<String>();
-    assert_eq!(text_value.as_str(), "hello");
+    let text_value = text_field.get::<String>().unwrap();
+    assert_eq!(text_value, "hello");
 }

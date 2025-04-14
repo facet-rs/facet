@@ -20,9 +20,9 @@ fn test_peek_map_basics() {
     assert!(peek_map.contains_key(&"c"));
     assert!(!peek_map.contains_key(&"d"));
 
-    assert_eq!(peek_map.get(&"a").unwrap().get::<i32>(), &1);
-    assert_eq!(peek_map.get(&"b").unwrap().get::<i32>(), &2);
-    assert_eq!(peek_map.get(&"c").unwrap().get::<i32>(), &3);
+    assert_eq!(peek_map.get(&"a").unwrap().get::<i32>().unwrap(), &1);
+    assert_eq!(peek_map.get(&"b").unwrap().get::<i32>().unwrap(), &2);
+    assert_eq!(peek_map.get(&"c").unwrap().get::<i32>().unwrap(), &3);
     assert!(peek_map.get(&"d").is_none());
 }
 
@@ -51,7 +51,12 @@ fn test_peek_map_iteration() {
     let peek_map = peek_value.into_map().unwrap();
     let mut entries: Vec<_> = peek_map
         .iter()
-        .map(|(k, v)| (k.get::<&str>().to_string(), *v.get::<i32>()))
+        .map(|(k, v)| {
+            (
+                k.get::<&str>().unwrap().to_string(),
+                *v.get::<i32>().unwrap(),
+            )
+        })
         .collect();
     entries.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -74,7 +79,7 @@ fn test_peek_map_different_types() {
     assert!(peek_map.contains_key(&2));
     assert!(!peek_map.contains_key(&3));
 
-    assert_eq!(peek_map.get(&1).unwrap().get::<&str>(), &"one");
-    assert_eq!(peek_map.get(&2).unwrap().get::<&str>(), &"two");
+    assert_eq!(peek_map.get(&1).unwrap().get::<&str>().unwrap(), &"one");
+    assert_eq!(peek_map.get(&2).unwrap().get::<&str>().unwrap(), &"two");
     assert!(peek_map.get(&3).is_none());
 }

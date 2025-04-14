@@ -162,9 +162,7 @@ impl<'mem> PeekEnum<'mem> {
 
     /// Iterates over all fields in this enum variant, providing both field metadata and value
     #[inline]
-    pub fn fields(
-        self,
-    ) -> impl Iterator<Item = (&'static facet_core::Field, crate::Peek<'mem>)> {
+    pub fn fields(self) -> impl Iterator<Item = (&'static facet_core::Field, crate::Peek<'mem>)> {
         let variant = self.active_variant();
         let fields = &variant.data.fields;
 

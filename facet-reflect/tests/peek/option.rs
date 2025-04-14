@@ -19,7 +19,7 @@ fn peek_option() {
 
     // Get the inner value
     let inner_value = peek_option.value().expect("Should have a value");
-    let value = inner_value.get::<i32>();
+    let value = inner_value.get::<i32>().unwrap();
     assert_eq!(*value, 42);
 
     // Test with None value

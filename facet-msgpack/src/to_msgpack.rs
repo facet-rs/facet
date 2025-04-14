@@ -43,15 +43,22 @@ fn serialize<W: Write>(pv: Peek<'_>, writer: &mut W) -> io::Result<()> {
                 let value = pv.get::<i16>().unwrap();
                 write_i16(writer, *value)
             } else if pv.shape().is_type::<i8>() {
-                let value = pv.get::<i8>().unwrap();
+                let value = pv
+                    .get::<i8>()
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
                 write_i8(writer, *value)
             } else {
-                todo!("Unsupported scalar type: {}", pv.shape())
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("Unsupported scalar type: {}", pv.shape()),
+                ));
             }
         }
         Def::Struct(sd) => {
             trace!("Serializing struct");
-            let ps = pv.into_struct()?;
+            let ps = pv
+                .into_struct()
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
             // Write map header
             let fields = sd.fields;
@@ -64,9 +71,10 @@ fn serialize<W: Write>(pv: Peek<'_>, writer: &mut W) -> io::Result<()> {
             }
             Ok(())
         }
-        _ => {
-            todo!("Unsupported type: {:?}", peek)
-        }
+        _ => Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("Unsupported type: {:?}", pv.shape()),
+        )),
     }
 }
 

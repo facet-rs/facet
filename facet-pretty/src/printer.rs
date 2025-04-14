@@ -623,7 +623,7 @@ impl PrettyPrinter {
                     // Get the byte
                     let byte_value = list.get(item_index).unwrap();
                     // Get the byte value as u8
-                    let byte = byte_value.get::<u8>();
+                    let byte = byte_value.get::<u8>().unwrap_or(&0);
 
                     // Generate a color for this byte based on its value
                     let mut hasher = DefaultHasher::new();
@@ -637,7 +637,7 @@ impl PrettyPrinter {
                     }
 
                     // Display the byte in hex format
-                    write!(f, "{:02x}", byte)?;
+                    write!(f, "{:02x}", *byte)?;
 
                     // Reset color if needed
                     // Reset color already handled by stylize

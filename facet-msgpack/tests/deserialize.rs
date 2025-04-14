@@ -22,7 +22,7 @@ fn it_works() {
         0x00, 0x00, 0x00, 0x1e, // 30
     ];
 
-    let result: TestStruct = facet_msgpack::from_str(&data).unwrap();
+    let result: TestStruct = facet_msgpack::from_slice(&data).unwrap();
     assert_eq!(
         result,
         TestStruct {
