@@ -145,6 +145,7 @@ impl NestedValues {
         self.flat.get(key)
     }
 
+    #[expect(dead_code)]
     fn get_nested(&self, key: &str) -> Option<&NestedValues> {
         self.nested.get(key)
     }
@@ -153,6 +154,7 @@ impl NestedValues {
         self.flat.keys()
     }
 
+    #[expect(dead_code)]
     fn nested_keys(&self) -> impl Iterator<Item = &String> {
         self.nested.keys()
     }
