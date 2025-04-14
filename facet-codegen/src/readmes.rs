@@ -23,11 +23,11 @@ pub(crate) fn generate_readme_files(opts: Options) -> bool {
     // Process each crate in the workspace
     for entry in entries {
         let entry = entry.expect("Failed to read directory entry");
-        let path = entry.path();
+        let crate_path = entry.path();
 
         // Skip non-directories and entries starting with '.' or '_'
-        if !path.is_dir()
-            || path.file_name().is_some_and(|name| {
+        if !crate_path.is_dir()
+            || crate_path.file_name().is_some_and(|name| {
                 let name = name.to_string_lossy();
                 name.starts_with('.') || name.starts_with('_')
             })
@@ -36,13 +36,13 @@ pub(crate) fn generate_readme_files(opts: Options) -> bool {
         }
 
         // Skip target directory
-        let dir_name = path.file_name().unwrap().to_string_lossy();
+        let dir_name = crate_path.file_name().unwrap().to_string_lossy();
         if dir_name == "target" {
             continue;
         }
 
         // Check if this is a crate directory (has a Cargo.toml)
-        let cargo_toml_path = path.join("Cargo.toml");
+        let cargo_toml_path = crate_path.join("Cargo.toml");
         if !cargo_toml_path.exists() {
             continue;
         }
@@ -54,11 +54,23 @@ pub(crate) fn generate_readme_files(opts: Options) -> bool {
         let template_path = if crate_name == "facet" {
             Path::new(template_name).to_path_buf()
         } else {
-            path.join(template_name)
+            crate_path.join(template_name)
         };
 
         if template_path.exists() {
-            process_readme_template(&path, &template_path, &mut has_diffs, opts.clone());
+            // Get crate name from directory name
+            let crate_name = crate_path
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_string();
+            process_readme_template(
+                &crate_name,
+                &crate_path,
+                &template_path,
+                &mut has_diffs,
+                opts.clone(),
+            );
             generated_crates.push(crate_name);
         } else {
             error!("🚫 Missing template: {}", template_path.display().red());
@@ -82,6 +94,7 @@ pub(crate) fn generate_readme_files(opts: Options) -> bool {
     }
 
     process_readme_template(
+        "facet",
         &workspace_dir,
         &workspace_template_path,
         &mut has_diffs,
@@ -116,24 +129,18 @@ pub(crate) fn generate_readme_files(opts: Options) -> bool {
 }
 
 fn process_readme_template(
+    crate_name: &str,
     crate_path: &Path,
     template_path: &Path,
     has_diffs: &mut bool,
     opts: Options,
 ) {
-    // Get crate name from directory name
-    let crate_name = crate_path
-        .file_name()
-        .unwrap()
-        .to_string_lossy()
-        .to_string();
-
     // Read the template
     let template_content = fs_err::read_to_string(template_path)
         .unwrap_or_else(|_| panic!("Failed to read template file: {:?}", template_path));
 
     // Combine header, template content, and footer
-    let header = generate_header(&crate_name);
+    let header = generate_header(crate_name);
     let footer = generate_footer();
     let content = format!("{}\n{}\n{}", header, template_content, footer);
 
