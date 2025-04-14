@@ -58,13 +58,26 @@ impl Frame {
 }
 
 /// Initialization state
-#[derive(Default)]
 struct IState {
     /// Variant chosen — for everything except enums, this stays None
     variant: Option<Variant>,
 
     /// Fields that were initialized. For scalars, we only track 0
     fields: ISet,
+
+    /// The depth of the frame in the stack
+    depth: usize,
+}
+
+impl IState {
+    /// Creates a new `IState` with the given depth.
+    pub fn new(depth: usize) -> Self {
+        Self {
+            variant: None,
+            fields: Default::default(),
+            depth,
+        }
+    }
 }
 
 /// A work-in-progress heap-allocated value
@@ -96,7 +109,7 @@ impl<'a> Wip<'a> {
                 data,
                 shape,
                 index: None,
-                istate: Default::default(),
+                istate: IState::new(0),
             }],
             istates: Default::default(),
             phantom: PhantomData,
@@ -231,7 +244,7 @@ impl<'a> Wip<'a> {
             data: field_data,
             shape: field.shape,
             index: Some(index),
-            istate: Default::default(),
+            istate: IState::new(self.frames.len()),
         };
         log::trace!(
             "[{}] Selecting field {} ({}#{}) of {}",
@@ -437,11 +450,11 @@ impl Drop for Wip<'_> {
 
         for (id, is) in &self.istates {
             log::trace!(
-                "[{}] {}: variant={:?} initialized={:016b}",
-                self.frames.len(),
+                "[{}]: variant={:?} initialized={:016b} {}",
+                is.depth.yellow(),
+                is.variant.green(),
+                is.fields.0.bright_magenta(),
                 id.shape.blue(),
-                is.variant.yellow(),
-                is.fields.0.bright_magenta()
             );
         }
     }
