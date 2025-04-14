@@ -20,7 +20,7 @@ pub(crate) fn number<T: NumCast>(item: &Item) -> Result<T, AnyErr> {
             .ok_or_else(|| format!("Cannot convert float to {}", std::any::type_name::<T>()))?),
         Value::Integer(i) => Ok(T::from(*i.value())
             .ok_or_else(|| format!("Cannot convert integer to {}", std::any::type_name::<T>()))?),
-        _ => Err(format!("Cannot convert {} to u64", v.type_name()).into()),
+        _ => Err(format!("Cannot convert {} to a number", v.type_name()).into()),
     }
 }
 
@@ -32,7 +32,7 @@ pub(crate) fn boolean(item: &Item) -> Result<bool, AnyErr> {
 
     match v {
         Value::Boolean(boolean) => Ok(*boolean.value()),
-        _ => Err(format!("Cannot convert {} to u64", v.type_name()).into()),
+        _ => Err(format!("Cannot convert {} to a bool", v.type_name()).into()),
     }
 }
 
