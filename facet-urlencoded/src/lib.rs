@@ -184,8 +184,6 @@ fn deserialize_value<'mem>(
 
             let mut wip = wip;
 
-
-
             // Process flat fields
             for key in values.keys() {
                 if let Some(index) = wip.field_index(key) {
@@ -266,9 +264,9 @@ fn deserialize_nested_field<'mem>(
     match wip.shape().def {
         Def::Struct(_sd) => {
             trace!("Deserializing nested struct field: {}", key);
-            
+
             let mut current_wip = wip;
-            
+
             // Process flat fields in the nested structure
             for nested_key in nested_values.keys() {
                 if let Some(index) = current_wip.field_index(nested_key) {
@@ -277,7 +275,7 @@ fn deserialize_nested_field<'mem>(
                     current_wip = deserialize_scalar_field(nested_key, value, field_wip)?
                 }
             }
-            
+
             // Process deeper nested fields
             for nested_key in nested_values.nested.keys() {
                 if let Some(index) = current_wip.field_index(nested_key) {
@@ -286,7 +284,7 @@ fn deserialize_nested_field<'mem>(
                     current_wip = deserialize_nested_field(nested_key, deeper_nested, field_wip)?;
                 }
             }
-            
+
             // Return to parent level
             Ok(current_wip.pop()?)
         }

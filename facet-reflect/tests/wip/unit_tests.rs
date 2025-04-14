@@ -44,6 +44,38 @@ fn wip_nested() -> eyre::Result<()> {
 }
 
 #[test]
+fn wip_nested_out_of_order() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    let v = Wip::alloc::<Outer>()
+        .field_named("inner")?
+        .field_named("x")?
+        .put(42)?
+        .pop()?
+        .pop()?
+        .field_named("name")?
+        .put(String::from("Hello, world!"))?
+        .pop()?
+        .field_named("inner")?
+        .field_named("b")?
+        .put(43)?
+        .pop()?
+        .pop()?
+        .build()?
+        .materialize::<Outer>()?;
+
+    assert_eq!(
+        v,
+        Outer {
+            name: String::from("Hello, world!"),
+            inner: Inner { x: 42, b: 43 }
+        }
+    );
+
+    Ok(())
+}
+
+#[test]
 fn readme_sample() -> eyre::Result<()> {
     facet_testhelpers::setup();
 

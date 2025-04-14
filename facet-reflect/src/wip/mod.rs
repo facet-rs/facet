@@ -2,7 +2,7 @@ extern crate alloc;
 use crate::{ReflectError, ValueId};
 use core::{alloc::Layout, marker::PhantomData};
 use facet_core::{Def, Facet, FieldError, Opaque, OpaqueConst, OpaqueUninit, Shape, Variant};
-use std::collections::HashMap;
+use indexmap::IndexMap;
 
 /// Represents a frame in the initialization stack
 pub struct Frame {
@@ -75,7 +75,7 @@ pub struct Wip<'a> {
     frames: alloc::vec::Vec<Frame>,
 
     /// keeps track of initialization of out-of-tree frames
-    istates: HashMap<ValueId, IState>,
+    istates: IndexMap<ValueId, IState>,
 
     /// lifetime of the shortest reference we hold
     phantom: PhantomData<&'a ()>,
@@ -97,7 +97,7 @@ impl<'a> Wip<'a> {
                 index: None,
                 istate: Default::default(),
             }],
-            istates: HashMap::new(),
+            istates: Default::default(),
             phantom: PhantomData,
         }
     }
@@ -148,7 +148,7 @@ impl<'a> Wip<'a> {
 
         self.istates.insert(root.id(), root.istate);
 
-        for (id, is) in self.istates.drain() {
+        for (id, is) in self.istates.drain(..) {
             let field_count = match id.shape.def {
                 Def::Struct(def) => def.fields.len(),
                 Def::Enum(_) => todo!(),
@@ -218,7 +218,7 @@ impl<'a> Wip<'a> {
             index: Some(index),
             istate: Default::default(),
         };
-        if let Some(iset) = self.istates.remove(&frame.id()) {
+        if let Some(iset) = self.istates.shift_remove(&frame.id()) {
             frame.istate = iset;
         }
         self.frames.push(frame);
