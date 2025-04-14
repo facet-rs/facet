@@ -69,7 +69,7 @@ struct IState {
 /// A work-in-progress heap-allocated value
 pub struct Wip<'a> {
     /// frees the memory when dropped
-    guard: Guard,
+    guard: Option<Guard>,
 
     /// stack of frames to keep track of deeply nested initialization
     frames: alloc::vec::Vec<Frame>,
@@ -90,7 +90,7 @@ impl<'a> Wip<'a> {
             layout: shape.layout,
         };
         Self {
-            guard,
+            guard: Some(guard),
             frames: vec![Frame {
                 data,
                 shape,
@@ -181,7 +181,7 @@ impl<'a> Wip<'a> {
         }
 
         Ok(HeapValue {
-            guard: Some(self.guard),
+            guard: Some(self.guard.take().unwrap()),
             shape,
             phantom: PhantomData,
         })
@@ -387,6 +387,98 @@ impl<'a> Wip<'a> {
         };
         self.track(frame);
         Ok(self)
+    }
+}
+
+impl Drop for Wip<'_> {
+    fn drop(&mut self) {
+        // FIXME: pretty sure the drop order is wrong
+
+        // Uninitialize fields that were already initialized
+        for frame in &mut self.frames {
+            // For each frame, we need to drop initialized fields
+            match frame.shape.def {
+                Def::Struct(sd) => {
+                    // For structs, check each field and drop if initialized
+                    for (i, field) in sd.fields.iter().enumerate() {
+                        if frame.istate.fields.has(i) {
+                            if let Some(drop_fn) = field.shape.vtable.drop_in_place {
+                                unsafe {
+                                    let field_data = frame.data.field_uninit_at(field.offset);
+                                    drop_fn(Opaque::new(field_data.as_mut_byte_ptr()));
+                                }
+                            }
+                        }
+                    }
+                }
+                Def::Enum(_) => {
+                    // For enums, check if a variant is chosen and drop its initialized fields
+                    if let Some(variant) = &frame.istate.variant {
+                        for (i, field) in variant.data.fields.iter().enumerate() {
+                            if frame.istate.fields.has(i) {
+                                if let Some(drop_fn) = field.shape.vtable.drop_in_place {
+                                    unsafe {
+                                        let field_data = frame.data.field_uninit_at(field.offset);
+                                        drop_fn(Opaque::new(field_data.as_mut_byte_ptr()));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // For other types like scalars, drop if initialized
+                _ => {
+                    if frame.istate.fields.has(0) {
+                        if let Some(drop_fn) = frame.shape.vtable.drop_in_place {
+                            unsafe {
+                                drop_fn(Opaque::new(frame.data.as_mut_byte_ptr()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Also check out-of-tree frames in istates
+        for (id, istate) in &self.istates {
+            match id.shape.def {
+                Def::Struct(sd) => {
+                    for (i, field) in sd.fields.iter().enumerate() {
+                        if istate.fields.has(i) {
+                            if let Some(drop_fn) = field.shape.vtable.drop_in_place {
+                                unsafe {
+                                    let ptr = id.ptr.wrapping_add(field.offset as usize);
+                                    drop_fn(Opaque::new(ptr as *mut u8));
+                                }
+                            }
+                        }
+                    }
+                }
+                Def::Enum(_) => {
+                    if let Some(variant) = &istate.variant {
+                        for (i, field) in variant.data.fields.iter().enumerate() {
+                            if istate.fields.has(i) {
+                                if let Some(drop_fn) = field.shape.vtable.drop_in_place {
+                                    unsafe {
+                                        let ptr = id.ptr.wrapping_add(field.offset as usize);
+                                        drop_fn(Opaque::new(ptr as *mut u8));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    if istate.fields.has(0) {
+                        if let Some(drop_fn) = id.shape.vtable.drop_in_place {
+                            unsafe {
+                                drop_fn(Opaque::new(id.ptr as *mut u8));
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
