@@ -1,2 +1,2 @@
 
-Allows building values, via [`Wip`], and inspecting existing values, via [`Peek`].
+Allows building values, via `Wip`, and inspecting existing values, via `PeekValue`.
