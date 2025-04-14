@@ -43,23 +43,21 @@ Provides CLI argument parsing (WIP).
 
 ```rust
 use facet_pretty::FacetPretty;
+use facet::Facet;
 
-#[test]
-fn test_arg_parse() {
-    use facet::Facet;
+#[derive(Facet)]
+struct Args {
+    #[facet(positional)]
+    path: String,
 
-    #[derive(Facet)]
-    struct Args {
-        #[facet(positional)]
-        path: String,
+    #[facet(named, short = 'v')]
+    verbose: bool,
 
-        #[facet(named, short = 'v')]
-        verbose: bool,
+    #[facet(named, short = 'j')]
+    concurrency: usize,
+}
 
-        #[facet(named, short = 'j')]
-        concurrency: usize,
-    }
-
+fn main() {
     let args: Args = facet_args::from_slice(&["--verbose", "--concurrency", "14", "example.rs"]);
     eprintln!("args: {}", args.pretty());
 }

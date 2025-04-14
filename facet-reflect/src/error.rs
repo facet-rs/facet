@@ -32,7 +32,10 @@ pub enum ReflectError {
     },
 
     /// An invariant of the reflection system was violated.
-    InvariantViolation,
+    InvariantViolation {
+        /// The invariant that was violated.
+        invariant: &'static str,
+    },
 
     /// Attempted to set a value to its default, but the value doesn't implement `Default`.
     MissingCharacteristic {
@@ -83,7 +86,9 @@ impl core::fmt::Display for ReflectError {
                 write!(f, "Wrong shape: expected {}, but got {}", expected, actual)
             }
             ReflectError::WasNotA { name } => write!(f, "Was not a {}", name),
-            ReflectError::InvariantViolation => write!(f, "Invariant violation"),
+            ReflectError::InvariantViolation { invariant } => {
+                write!(f, "Invariant violation: {}", invariant)
+            }
             ReflectError::MissingCharacteristic {
                 shape,
                 characteristic,

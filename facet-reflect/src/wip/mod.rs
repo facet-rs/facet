@@ -18,6 +18,8 @@ pub struct Frame {
     index: Option<usize>,
 
     /// Tracking which of our fields are initialized
+    /// TODO: I'm not sure we should track "ourselves" as initialized — we always have the
+    /// parent to look out for, right now we're tracking children in two states, which isn't ideal
     istate: IState,
 }
 
@@ -204,7 +206,9 @@ impl<'a> Wip<'a> {
 
         if let Some(invariant_fn) = shape.vtable.invariants {
             if !unsafe { invariant_fn(OpaqueConst::new(data.as_byte_ptr())) } {
-                return Err(ReflectError::InvariantViolation);
+                return Err(ReflectError::InvariantViolation {
+                    invariant: "Custom validation function returned false",
+                });
             }
         }
 
@@ -361,6 +365,42 @@ impl<'a> Wip<'a> {
         Ok(self)
     }
 
+    /// Tries to parse the current frame's value from a string
+    pub fn parse(mut self, s: &str) -> Result<Self, ReflectError> {
+        let Some(frame) = self.frames.last_mut() else {
+            return Err(ReflectError::OperationFailed {
+                shape: <()>::SHAPE,
+                operation: "tried to parse value but there was no frame",
+            });
+        };
+
+        let shape = frame.shape;
+        let index = frame.index;
+
+        let Some(parse_fn) = frame.shape.vtable.parse else {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "type does not implement Parse",
+            });
+        };
+        match unsafe { (parse_fn)(s, frame.data) } {
+            Ok(_res) => {
+                unsafe {
+                    frame.mark_fully_initialized();
+                }
+
+                // mark the field as initialized
+                self.mark_field_as_initialized(shape, index)?;
+
+                Ok(self)
+            }
+            Err(_) => Err(ReflectError::OperationFailed {
+                shape,
+                operation: "parsing",
+            }),
+        }
+    }
+
     /// Puts the default value in the currrent frame.
     pub fn put_default(mut self) -> Result<Self, ReflectError> {
         let Some(frame) = self.frames.last_mut() else {
@@ -437,9 +477,15 @@ impl<'a> Wip<'a> {
 
     /// Pops the current frame — goes back up one level
     pub fn pop(mut self) -> Result<Self, ReflectError> {
-        let Some(frame) = self.pop_inner() else {
-            return Err(ReflectError::InvariantViolation);
-        };
+        let frame = match self.frames.len() {
+            0 => Err(ReflectError::InvariantViolation {
+                invariant: "No frame to pop",
+            }),
+            1 => Err(ReflectError::InvariantViolation {
+                invariant: "The last frame should be popped through build",
+            }),
+            _ => Ok(self.pop_inner().unwrap()),
+        }?;
         self.track(frame);
         Ok(self)
     }

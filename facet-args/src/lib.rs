@@ -7,24 +7,27 @@
 use facet_core::{Def, Facet, FieldAttribute};
 use facet_reflect::{ReflectError, Wip};
 
-fn parse_field<'mem>(field: Wip<'mem>, value: &str) -> Result<Wip<'mem>, ReflectError> {
-    let field_shape = field.shape();
-    log::trace!("Field shape: {}", field_shape);
-
-    match field_shape.def {
+fn parse_field<'mem>(wip: Wip<'mem>, value: &str) -> Result<Wip<'mem>, ReflectError> {
+    let shape = wip.shape();
+    match shape.def {
         Def::Scalar(_) => {
-            if field_shape.is_type::<String>() {
-                return field.put(value.to_string());
-            }
-            if field_shape.is_type::<bool>() {
+            if shape.is_type::<String>() {
+                wip.put(value.to_string())
+            } else if shape.is_type::<bool>() {
                 log::trace!("Boolean field detected, setting to true");
-                return field.put(value.to_lowercase() == "true");
+                wip.put(value.to_lowercase() == "true")
+            } else {
+                wip.parse(value)
             }
-            panic!("should use `parse` impl here")
         }
-        def => def,
-    };
-    panic!("not a scalar, what do");
+        _def => {
+            return Err(ReflectError::OperationFailed {
+                shape,
+                operation: "parsing field",
+            });
+        }
+    }?
+    .pop()
 }
 
 /// Parses command-line arguments
@@ -71,8 +74,6 @@ pub fn from_slice<T: Facet>(s: &[&str]) -> T {
                 }
             }
         }
-
-        wip = wip.pop().unwrap();
     }
     wip.build().unwrap().materialize().unwrap()
 }
