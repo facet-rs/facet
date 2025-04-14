@@ -1,8 +1,5 @@
 //! Allows reading from shapes
 
-#[cfg(feature = "alloc")]
-extern crate alloc;
-
 mod value;
 pub use value::*;
 

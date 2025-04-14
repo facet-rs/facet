@@ -1,4 +1,3 @@
-extern crate alloc;
 use crate::{ReflectError, ValueId};
 use core::{alloc::Layout, marker::PhantomData};
 use facet_ansi::Stylize;

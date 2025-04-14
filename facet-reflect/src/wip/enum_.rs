@@ -1,5 +1,3 @@
-extern crate alloc;
-
 use facet_ansi::Stylize;
 use facet_core::{Def, FieldError, Variant};
 

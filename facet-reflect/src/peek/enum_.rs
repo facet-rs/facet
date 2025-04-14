@@ -1,8 +1,5 @@
 use facet_core::{EnumDef, EnumRepr, Shape, Variant};
 
-#[cfg(feature = "alloc")]
-extern crate alloc;
-
 /// Lets you read from an enum (implements read-only enum operations)
 #[derive(Clone, Copy)]
 pub struct PeekEnum<'mem> {
