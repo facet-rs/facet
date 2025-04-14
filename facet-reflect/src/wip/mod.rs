@@ -208,8 +208,13 @@ impl<'a> Wip<'a> {
             }
         }
 
+        let guard = self.guard.take().unwrap();
+
+        // don't double-drop the fields
+        core::mem::forget(self);
+
         Ok(HeapValue {
-            guard: Some(self.guard.take().unwrap()),
+            guard: Some(guard),
             shape,
             phantom: PhantomData,
         })
@@ -447,7 +452,6 @@ impl Drop for Wip<'_> {
             self.frames.len(),
             self.istates.len()
         );
-
         for (id, is) in &self.istates {
             log::trace!(
                 "[{}]: variant={:?} initialized={:016b} {}",
@@ -456,6 +460,55 @@ impl Drop for Wip<'_> {
                 is.fields.0.bright_magenta(),
                 id.shape.blue(),
             );
+        }
+
+        let mut depths: Vec<usize> = self.istates.values().map(|is| is.depth).collect();
+        depths.sort_unstable();
+        depths.dedup();
+
+        for depth in depths.iter().rev() {
+            log::trace!("Dropping istates with depth {}", depth.yellow(),);
+
+            // Find and drop values at this depth level
+            let mut to_remove = Vec::new();
+            self.istates.retain(|id, is| {
+                if is.depth == *depth {
+                    log::trace!(
+                        "Dropping value ID with shape {} and fields {:016b}",
+                        id.shape.blue(),
+                        is.fields.0.bright_magenta()
+                    );
+
+                    if !is.fields.is_any_set() {
+                        log::trace!("  Skipping drop: no fields were initialized");
+                        to_remove.push(*id);
+                        return false;
+                    }
+
+                    if matches!(id.shape.def, Def::Struct(_) | Def::Enum(_)) {
+                        // if it's a composite, rely on the fact that each individual field was deinitialized
+                        log::trace!("  Skipping composite type drop: individual fields already deinitialized");
+                        to_remove.push(*id);
+                        return false;
+                    }
+
+                    if let Some(drop_fn) = id.shape.vtable.drop_in_place {
+                        // Only drop if some fields were initialized
+                        if is.fields.is_any_set() {
+                            log::trace!("  Calling drop_in_place function for {}", id.shape.green());
+                            unsafe {
+                                drop_fn(Opaque::new(id.ptr as *mut u8));
+                            }
+                        }
+                    } else {
+                        log::trace!("  No drop_in_place function available for {}", id.shape.red());
+                    }
+
+                    to_remove.push(*id);
+                    return false;
+                }
+                true
+            });
         }
     }
 }
