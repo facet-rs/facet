@@ -16,8 +16,8 @@ struct Args {
     concurrency: usize,
 }
 
-fn main() {
-    let args: Args = facet_args::from_slice(&["--verbose", "--concurrency", "14", "example.rs"]);
-    eprintln!("args: {}", args.pretty());
-}
+# fn main() {
+let args: Args = facet_args::from_slice(&["--verbose", "--concurrency", "14", "example.rs"]);
+eprintln!("args: {}", args.pretty());
+# }
 ```
