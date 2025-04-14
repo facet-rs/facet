@@ -57,7 +57,7 @@ fn test_encoded_characters() {
 }
 
 #[test]
-#[should_panic(expected = "Field 'page' was not initialized")]
+#[should_panic(expected = "Field 'SearchParams::page' was not initialized")]
 fn test_missing_field() {
     let query_string = "query=rust+programming";
 

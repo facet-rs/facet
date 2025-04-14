@@ -143,6 +143,11 @@ impl<'a> Wip<'a> {
             });
         };
 
+        let shape = root.shape;
+        let data = unsafe { root.data.assume_init() };
+
+        self.istates.insert(root.id(), root.istate);
+
         for (id, is) in self.istates.drain() {
             let field_count = match id.shape.def {
                 Def::Struct(def) => def.fields.len(),
@@ -152,10 +157,9 @@ impl<'a> Wip<'a> {
             if !is.fields.are_all_set(field_count) {
                 match id.shape.def {
                     Def::Struct(sd) => {
-                        eprintln!("fields were not initialized for struct {}", id.shape);
                         for (i, field) in sd.fields.iter().enumerate() {
                             if !is.fields.has(i) {
-                                eprintln!("  {}", field.name);
+                                panic!("Field '{}::{}' was not initialized", id.shape, field.name);
                             }
                         }
                     }
@@ -163,16 +167,12 @@ impl<'a> Wip<'a> {
                         todo!()
                     }
                     Def::Scalar(_) => {
-                        eprintln!("fields were not initialized for scalar {}", id.shape);
+                        panic!("Field was not initialized for scalar {}", id.shape);
                     }
                     _ => {}
                 }
-                panic!("some fields were not initialized")
             }
         }
-
-        let shape = root.shape;
-        let data = unsafe { root.data.assume_init() };
 
         if let Some(invariant_fn) = shape.vtable.invariants {
             if !unsafe { invariant_fn(OpaqueConst::new(data.as_byte_ptr())) } {
@@ -187,31 +187,29 @@ impl<'a> Wip<'a> {
         })
     }
 
-    /// Selects a field of a struct by name and pushes it onto the frame stack.
+    /// Selects a field of a struct by index and pushes it onto the frame stack.
     ///
     /// # Arguments
     ///
-    /// * `name` - The name of the field to select.
+    /// * `index` - The index of the field to select.
     ///
     /// # Returns
     ///
     /// * `Ok(Self)` if the field was successfully selected and pushed.
     /// * `Err(ReflectError)` if the current frame is not a struct or the field doesn't exist.
-    pub fn field_named(mut self, name: &str) -> Result<Self, ReflectError> {
+    pub fn field(mut self, index: usize) -> Result<Self, ReflectError> {
         let frame = self.frames.last_mut().unwrap();
         let shape = frame.shape;
         let Def::Struct(def) = shape.def else {
             return Err(ReflectError::WasNotA { name: "struct" });
         };
-        let (index, field) = def
-            .fields
-            .iter()
-            .enumerate()
-            .find(|(_, f)| f.name == name)
-            .ok_or(ReflectError::FieldError {
+        if index >= def.fields.len() {
+            return Err(ReflectError::FieldError {
                 shape,
                 field_error: FieldError::NoSuchField,
-            })?;
+            });
+        }
+        let field = &def.fields[index];
         let field_data = unsafe { frame.data.field_uninit_at(field.offset) };
 
         let mut frame = Frame {
@@ -225,6 +223,33 @@ impl<'a> Wip<'a> {
         }
         self.frames.push(frame);
         Ok(self)
+    }
+
+    /// Selects a field of a struct by name and pushes it onto the frame stack.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name of the field to select.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Self)` if the field was successfully selected and pushed.
+    /// * `Err(ReflectError)` if the current frame is not a struct or the field doesn't exist.
+    pub fn field_named(self, name: &str) -> Result<Self, ReflectError> {
+        let frame = self.frames.last().unwrap();
+        let shape = frame.shape;
+        let Def::Struct(def) = shape.def else {
+            return Err(ReflectError::WasNotA { name: "struct" });
+        };
+        let index =
+            def.fields
+                .iter()
+                .position(|f| f.name == name)
+                .ok_or(ReflectError::FieldError {
+                    shape,
+                    field_error: FieldError::NoSuchField,
+                })?;
+        self.field(index)
     }
 
     /// Puts a value of type `T` into the current frame.
