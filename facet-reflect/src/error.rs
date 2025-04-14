@@ -25,10 +25,13 @@ pub enum ReflectError {
         actual: &'static Shape,
     },
 
-    /// Attempted to perform an operation that expected a struct on a non-struct value.
+    /// Attempted to perform an operation that expected a struct or something
     WasNotA {
         /// The name of the expected type.
-        name: &'static str,
+        expected: &'static str,
+
+        /// The type we got instead
+        actual: &'static Shape,
     },
 
     /// A field was not initialized during build
@@ -115,7 +118,9 @@ impl core::fmt::Display for ReflectError {
             ReflectError::WrongShape { expected, actual } => {
                 write!(f, "Wrong shape: expected {}, but got {}", expected, actual)
             }
-            ReflectError::WasNotA { name } => write!(f, "Was not a {}", name),
+            ReflectError::WasNotA { expected, actual } => {
+                write!(f, "Wrong shape: expected {}, but got {}", expected, actual)
+            }
             ReflectError::UninitializedField { shape, field_name } => {
                 write!(f, "Field '{}::{}' was not initialized", shape, field_name)
             }

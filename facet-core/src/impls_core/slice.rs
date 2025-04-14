@@ -9,32 +9,29 @@ where
         Shape::builder()
             .id(ConstTypeId::of::<&[T]>())
             .layout(Layout::new::<&[T]>())
-            .def(Def::List(
-                ListDef::builder()
+            .def(Def::Slice(
+                SliceDef::builder()
                     .vtable(
                         &const {
-                            ListVTable::builder()
-                        .push(|_, _| {
-                            panic!("Cannot push to &[T]");
-                        })
-                        .len(|ptr| unsafe {
-                            let slice = ptr.get::<&[T]>();
-                            slice.len()
-                        })
-                        .get_item_ptr(|ptr, index| unsafe {
-                            let slice = ptr.get::<&[T]>();
-                            let len = slice.len();
-                            if index >= len {
-                                panic!(
-                                    "Index out of bounds: the len is {len} but the index is {index}"
-                                );
-                            }
-                            OpaqueConst::new(slice.as_ptr().add(index))
-                        })
-                        .build()
+                            SliceVTable::builder()
+                                .len(|ptr| unsafe {
+                                    let slice = ptr.get::<&[T]>();
+                                    slice.len()
+                                })
+                                .get_item_ptr(|ptr, index| unsafe {
+                                    let slice = ptr.get::<&[T]>();
+                                    let len = slice.len();
+                                    if index >= len {
+                                        panic!(
+                                            "Index out of bounds: the len is {len} but the index is {index}"
+                                        );
+                                    }
+                                    OpaqueConst::new(slice.as_ptr().add(index))
+                                })
+                                .build()
                         },
                     )
-                    .t(T::SHAPE)
+                    .t(|| T::SHAPE)
                     .build(),
             ))
             .vtable(

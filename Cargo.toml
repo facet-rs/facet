@@ -20,7 +20,7 @@ members = [
 
     # formats / ecosystem
     "facet-args",
-    # "facet-json",
+    "facet-json",
     "facet-msgpack",
     "facet-pretty",
     "facet-toml",

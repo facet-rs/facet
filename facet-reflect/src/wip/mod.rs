@@ -1,12 +1,24 @@
 use crate::{ReflectError, ValueId};
-use core::{alloc::Layout, marker::PhantomData};
+use core::{alloc::Layout, fmt, marker::PhantomData};
 use facet_ansi::Stylize;
 use facet_core::{Def, Facet, FieldError, Opaque, OpaqueConst, OpaqueUninit, Shape, Variant};
 use flat_map::FlatMap;
 
 mod enum_;
-
 mod flat_map;
+
+fn def_kind(def: &Def) -> &'static str {
+    match def {
+        Def::Scalar(_) => "scalar",
+        Def::Struct(_) => "struct",
+        Def::Map(_) => "map",
+        Def::List(_) => "list",
+        Def::Enum(_) => "enum",
+        Def::Option(_) => "option",
+        Def::SmartPointer(_) => "smart_ptr",
+        _ => "other",
+    }
+}
 
 /// Represents a frame in the initialization stack
 pub struct Frame {
@@ -24,6 +36,28 @@ pub struct Frame {
     /// TODO: I'm not sure we should track "ourselves" as initialized — we always have the
     /// parent to look out for, right now we're tracking children in two states, which isn't ideal
     istate: IState,
+}
+
+struct DebugToDisplay<T>(T);
+
+impl<T> fmt::Debug for DebugToDisplay<T>
+where
+    T: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl fmt::Debug for Frame {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Frame")
+            .field("shape", &DebugToDisplay(&self.shape))
+            .field("kind", &def_kind(&self.shape.def))
+            .field("index", &self.index)
+            .field("mode", &self.istate.mode)
+            .finish()
+    }
 }
 
 impl Frame {
@@ -72,6 +106,9 @@ struct IState {
 
     /// The depth of the frame in the stack
     depth: usize,
+
+    /// The special mode of this frame (if any)
+    mode: FrameMode,
 }
 
 impl IState {
@@ -81,8 +118,22 @@ impl IState {
             variant: None,
             fields: Default::default(),
             depth,
+            mode: FrameMode::Normal,
         }
     }
+}
+
+/// Represents the special mode a frame can be in
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameMode {
+    /// Normal frame
+    Normal,
+    /// Frame represents a list element
+    ListElement,
+    /// Frame represents a map key
+    MapKey,
+    /// Frame represents a map value with the given key frame index
+    MapValue(usize),
 }
 
 /// A work-in-progress heap-allocated value
@@ -101,6 +152,11 @@ pub struct Wip<'a> {
 }
 
 impl<'a> Wip<'a> {
+    /// Returns the number of frames on the stack
+    pub fn frames_count(&self) -> usize {
+        self.frames.len()
+    }
+
     /// Allocates a new value of the given shape
     pub fn alloc_shape(shape: &'static Shape) -> Self {
         let data = shape.allocate();
@@ -131,7 +187,7 @@ impl<'a> Wip<'a> {
         let frame_shape = frame.shape;
 
         let init = frame.is_fully_initialized();
-        log::trace!(
+        trace!(
             "[{}] {} popped, {} initialized",
             self.frames.len(),
             frame_shape.blue(),
@@ -159,6 +215,11 @@ impl<'a> Wip<'a> {
     /// Returns the shape of the current frame
     pub fn shape(&self) -> &'static Shape {
         self.frames.last().unwrap().shape
+    }
+
+    /// Returns the mode of the current frame
+    pub fn mode(&self) -> FrameMode {
+        self.frames.last().unwrap().istate.mode
     }
 
     /// Asserts everything is initialized and that invariants are upheld (if any)
@@ -295,7 +356,8 @@ impl<'a> Wip<'a> {
             }
             _ => {
                 return Err(ReflectError::WasNotA {
-                    name: "struct or enum",
+                    expected: "struct or enum",
+                    actual: shape,
                 });
             }
         };
@@ -308,7 +370,7 @@ impl<'a> Wip<'a> {
             index: Some(index),
             istate: IState::new(self.frames.len()),
         };
-        log::trace!(
+        trace!(
             "[{}] Selecting field {} ({}#{}) of {}",
             self.frames.len(),
             field.name.blue(),
@@ -317,7 +379,7 @@ impl<'a> Wip<'a> {
             shape.blue(),
         );
         if let Some(iset) = self.istates.remove(&frame.id()) {
-            log::trace!(
+            trace!(
                 "[{}] Restoring saved state for {}",
                 self.frames.len(),
                 frame.id().shape.blue()
@@ -416,7 +478,7 @@ impl<'a> Wip<'a> {
 
         // de-initialize partially initialized fields
         if frame.istate.variant.is_some() || frame.istate.fields.is_any_set() {
-            log::trace!(
+            trace!(
                 "De-initializing partially initialized fields for {}",
                 frame.shape
             );
@@ -469,6 +531,8 @@ impl<'a> Wip<'a> {
 
         // mark the field as initialized
         self.mark_field_as_initialized(shape, index)?;
+
+        trace!("[{}] Just put a {} value", self.frames.len(), shape.green());
 
         Ok(self)
     }
@@ -556,7 +620,7 @@ impl<'a> Wip<'a> {
                 });
             };
             let parent_shape = parent.shape;
-            log::trace!(
+            trace!(
                 "[{}] {}.{} initialized with {}",
                 num_frames,
                 parent_shape.blue(),
@@ -583,6 +647,392 @@ impl<'a> Wip<'a> {
         Ok(())
     }
 
+    /// Returns the shape of the element type for a list/array
+    pub fn element_shape(&self) -> Result<&'static Shape, ReflectError> {
+        let frame = self.frames.last().unwrap();
+        let shape = frame.shape;
+
+        match shape.def {
+            Def::List(list_def) => Ok(list_def.t()),
+            _ => Err(ReflectError::WasNotA {
+                expected: "list or array",
+                actual: shape,
+            }),
+        }
+    }
+
+    /// Returns the shape of the key type for a map
+    pub fn key_shape(&self) -> Result<&'static Shape, ReflectError> {
+        let frame = self.frames.last().unwrap();
+        let shape = frame.shape;
+
+        match shape.def {
+            Def::Map(map_def) => Ok(map_def.k),
+            _ => Err(ReflectError::WasNotA {
+                expected: "map",
+                actual: shape,
+            }),
+        }
+    }
+
+    /// Creates an empty list without pushing any elements
+    pub fn put_empty_list(mut self) -> Result<Self, ReflectError> {
+        let Some(frame) = self.frames.last_mut() else {
+            return Err(ReflectError::OperationFailed {
+                shape: <()>::SHAPE,
+                operation: "tried to create empty list but there was no frame",
+            });
+        };
+
+        if !matches!(frame.shape.def, Def::List(_)) {
+            return Err(ReflectError::WasNotA {
+                expected: "list or array",
+                actual: frame.shape,
+            });
+        }
+
+        let vtable = frame.shape.vtable;
+
+        // Initialize an empty list
+        let Some(default_in_place) = vtable.default_in_place else {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "list type does not implement Default",
+            });
+        };
+
+        unsafe {
+            default_in_place(frame.data);
+            frame.mark_fully_initialized();
+        }
+
+        let shape = frame.shape;
+        let index = frame.index;
+
+        // Mark the field as initialized
+        self.mark_field_as_initialized(shape, index)?;
+
+        Ok(self)
+    }
+
+    /// Creates an empty map without pushing any entries
+    pub fn put_empty_map(mut self) -> Result<Self, ReflectError> {
+        let Some(frame) = self.frames.last_mut() else {
+            return Err(ReflectError::OperationFailed {
+                shape: <()>::SHAPE,
+                operation: "tried to create empty map but there was no frame",
+            });
+        };
+
+        if !matches!(frame.shape.def, Def::Map(_)) {
+            return Err(ReflectError::WasNotA {
+                expected: "map or hash map",
+                actual: frame.shape,
+            });
+        }
+
+        let vtable = frame.shape.vtable;
+
+        // Initialize an empty map
+        let Some(default_in_place) = vtable.default_in_place else {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "map type does not implement Default",
+            });
+        };
+
+        unsafe {
+            default_in_place(frame.data);
+            frame.mark_fully_initialized();
+        }
+
+        let shape = frame.shape;
+        let index = frame.index;
+
+        // Mark the field as initialized
+        self.mark_field_as_initialized(shape, index)?;
+
+        Ok(self)
+    }
+
+    /// Begins pushback mode for a list/array, allowing elements to be added one by one
+    pub fn begin_pushback(mut self) -> Result<Self, ReflectError> {
+        let Some(frame) = self.frames.last_mut() else {
+            return Err(ReflectError::OperationFailed {
+                shape: <()>::SHAPE,
+                operation: "tried to begin pushback but there was no frame",
+            });
+        };
+
+        if !matches!(frame.shape.def, Def::List(_)) {
+            return Err(ReflectError::WasNotA {
+                expected: "list or array",
+                actual: frame.shape,
+            });
+        }
+
+        let vtable = frame.shape.vtable;
+
+        // Initialize an empty list if it's not already initialized
+        if !frame.istate.fields.has(0) {
+            let Some(default_in_place) = vtable.default_in_place else {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "list type does not implement Default",
+                });
+            };
+
+            unsafe {
+                default_in_place(frame.data);
+                frame.istate.fields.set(0);
+            }
+        }
+
+        Ok(self)
+    }
+
+    /// Begins insertion mode for a map, allowing key-value pairs to be added one by one
+    pub fn begin_map_insert(mut self) -> Result<Self, ReflectError> {
+        let Some(frame) = self.frames.last_mut() else {
+            return Err(ReflectError::OperationFailed {
+                shape: <()>::SHAPE,
+                operation: "tried to begin map insertion but there was no frame",
+            });
+        };
+
+        if !matches!(frame.shape.def, Def::Map(_)) {
+            return Err(ReflectError::WasNotA {
+                expected: "map or hash map",
+                actual: frame.shape,
+            });
+        }
+
+        let vtable = frame.shape.vtable;
+
+        // Initialize an empty map if it's not already initialized
+        if !frame.istate.fields.has(0) {
+            let Some(default_in_place) = vtable.default_in_place else {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "map type does not implement Default",
+                });
+            };
+
+            unsafe {
+                default_in_place(frame.data);
+                frame.istate.fields.set(0);
+            }
+        }
+
+        Ok(self)
+    }
+
+    /// Pushes a new element onto the list/array
+    ///
+    /// This creates a new frame for the element. When this frame is popped,
+    /// the element will be added to the list.
+    pub fn push(mut self) -> Result<Self, ReflectError> {
+        // Make sure we're initializing a list
+        let frame = self.frames.last().unwrap();
+        let list_shape = frame.shape;
+
+        if !matches!(list_shape.def, Def::List(_)) {
+            return Err(ReflectError::WasNotA {
+                expected: "list or array",
+                actual: list_shape,
+            });
+        }
+
+        // If the list isn't initialized yet, initialize it
+        if !frame.istate.fields.has(0) {
+            self = self.begin_pushback()?;
+        }
+
+        // Get the element type
+        let element_shape = self.element_shape()?;
+
+        // Allocate memory for the element
+        let element_data = element_shape.allocate();
+
+        // Create a new frame for the element
+        let mut element_frame = Frame {
+            data: element_data,
+            shape: element_shape,
+            index: None, // No need for an index since we're using mode
+            istate: IState::new(self.frames.len()),
+        };
+
+        // Mark this as a list element
+        element_frame.istate.mode = FrameMode::ListElement;
+
+        trace!(
+            "[{}] Pushing element of type {} to list {}",
+            self.frames.len(),
+            element_shape.green(),
+            list_shape.blue(),
+        );
+
+        if let Some(iset) = self.istates.remove(&element_frame.id()) {
+            trace!(
+                "[{}] Restoring saved state for {}",
+                self.frames.len(),
+                element_frame.id().shape.blue()
+            );
+            element_frame.istate = iset;
+        }
+
+        self.frames.push(element_frame);
+        Ok(self)
+    }
+
+    /// Pushes a new key frame for a map entry
+    ///
+    /// This creates a new frame for the key. After setting the key value,
+    /// call `push_map_value` to create a frame for the corresponding value.
+    pub fn push_map_key(mut self) -> Result<Self, ReflectError> {
+        // Make sure we're initializing a map
+        let frame = self.frames.last().unwrap();
+        let map_shape = frame.shape;
+
+        if !matches!(map_shape.def, Def::Map(_)) {
+            return Err(ReflectError::WasNotA {
+                expected: "map or hash map",
+                actual: map_shape,
+            });
+        }
+
+        // If the map isn't initialized yet, initialize it
+        if !frame.istate.fields.has(0) {
+            self = self.begin_map_insert()?;
+        }
+
+        // Get the key type
+        let key_shape = self.key_shape()?;
+
+        // Allocate memory for the key
+        let key_data = key_shape.allocate();
+
+        // Create a new frame for the key
+        let mut key_frame = Frame {
+            data: key_data,
+            shape: key_shape,
+            index: None,
+            istate: IState::new(self.frames.len()),
+        };
+
+        // Mark this as a map key
+        key_frame.istate.mode = FrameMode::MapKey;
+
+        trace!(
+            "[{}] Pushing key of type {} for map {}",
+            self.frames.len(),
+            key_shape.green(),
+            map_shape.blue(),
+        );
+
+        if let Some(iset) = self.istates.remove(&key_frame.id()) {
+            trace!(
+                "[{}] Restoring saved state for {}",
+                self.frames.len(),
+                key_frame.id().shape.blue()
+            );
+            key_frame.istate = iset;
+        }
+
+        self.frames.push(key_frame);
+        Ok(self)
+    }
+
+    /// Pushes a new value frame for a map entry
+    ///
+    /// This should be called after pushing and initializing a key frame.
+    /// When the value frame is popped, the key-value pair will be added to the map.
+    pub fn push_map_value(mut self) -> Result<Self, ReflectError> {
+        trace!("Wants to push map value. Frames = ");
+        for (i, f) in self.frames.iter().enumerate() {
+            trace!("Frame {}: {:?}", i, f);
+        }
+
+        // First, ensure we have a valid key frame
+        if self.frames.len() < 2 {
+            return Err(ReflectError::OperationFailed {
+                shape: <()>::SHAPE,
+                operation: "tried to push map value but there was no key frame",
+            });
+        }
+
+        // Check the frame before the last to ensure it's a map key
+        let key_frame_index = self.frames.len() - 1;
+        let key_frame = &self.frames[key_frame_index];
+
+        // Verify the current frame is a key frame
+        match key_frame.istate.mode {
+            FrameMode::MapKey => {} // Valid - continue
+            _ => {
+                return Err(ReflectError::OperationFailed {
+                    shape: key_frame.shape,
+                    operation: "current frame is not a map key",
+                });
+            }
+        }
+
+        // Check that the key is fully initialized
+        if !key_frame.is_fully_initialized() {
+            return Err(ReflectError::OperationFailed {
+                shape: key_frame.shape,
+                operation: "map key is not fully initialized",
+            });
+        }
+
+        // Get the parent map frame to verify we're working with a map
+        let map_frame_index = self.frames.len() - 2;
+        let map_frame = &self.frames[map_frame_index];
+        let map_shape = map_frame.shape;
+
+        let Def::Map(map_def) = map_shape.def else {
+            return Err(ReflectError::WasNotA {
+                expected: "map",
+                actual: map_frame.shape,
+            });
+        };
+
+        let value_shape = map_def.v;
+
+        // Allocate memory for the value
+        let value_data = value_shape.allocate();
+
+        // Create a new frame for the value
+        let mut value_frame = Frame {
+            data: value_data,
+            shape: value_shape,
+            index: None,
+            istate: IState::new(self.frames.len()),
+        };
+
+        // Mark this as a map value and store the key frame index
+        value_frame.istate.mode = FrameMode::MapValue(key_frame_index);
+
+        trace!(
+            "[{}] Pushing value of type {} for map {} with key type {}",
+            self.frames.len(),
+            value_shape.green(),
+            map_shape.blue(),
+            key_frame.shape.yellow(),
+        );
+
+        if let Some(iset) = self.istates.remove(&value_frame.id()) {
+            trace!(
+                "[{}] Restoring saved state for {}",
+                self.frames.len(),
+                value_frame.id().shape.blue()
+            );
+            value_frame.istate = iset;
+        }
+
+        self.frames.push(value_frame);
+        Ok(self)
+    }
+
     /// Pops the current frame — goes back up one level
     pub fn pop(mut self) -> Result<Self, ReflectError> {
         let frame = match self.frames.len() {
@@ -594,6 +1044,141 @@ impl<'a> Wip<'a> {
             }),
             _ => Ok(self.pop_inner().unwrap()),
         }?;
+
+        // Handle special frame modes
+        match frame.istate.mode {
+            // Handle list element frames
+            FrameMode::ListElement if frame.is_fully_initialized() => {
+                // This was a list element, so we need to push it to the parent list
+                // Capture frame length and parent shape before mutable borrow
+                let frame_len = self.frames.len();
+
+                // Get parent frame
+                let parent_frame = self.frames.last_mut().unwrap();
+                let parent_shape = parent_frame.shape;
+
+                // Make sure the parent is a list
+                match parent_shape.def {
+                    Def::List(_) => {
+                        // Get the list vtable from the ListDef
+                        if let Def::List(list_def) = parent_shape.def {
+                            let list_vtable = list_def.vtable;
+                            trace!(
+                                "[{}] Pushing element to list {}",
+                                frame_len,
+                                parent_shape.blue()
+                            );
+                            unsafe {
+                                // Convert the frame data pointer to Opaque and call push function from vtable
+                                (list_vtable.push)(
+                                    Opaque::new(parent_frame.data.as_mut_byte_ptr()),
+                                    Opaque::new(frame.data.as_mut_byte_ptr()),
+                                );
+
+                                // now let's deallocate the value
+                                alloc::alloc::dealloc(
+                                    frame.data.as_mut_byte_ptr(),
+                                    frame.shape.layout,
+                                );
+
+                                // and make sure we don't drop in place (it's been moved!)
+                                return Ok(self);
+                            }
+                        } else {
+                            return Err(ReflectError::OperationFailed {
+                                shape: parent_frame.shape,
+                                operation: "parent frame is not a list type",
+                            });
+                        }
+                    }
+                    _ => {
+                        return Err(ReflectError::WasNotA {
+                            expected: "list or array",
+                            actual: frame.shape,
+                        });
+                    }
+                }
+            }
+
+            // Handle map value frames
+            FrameMode::MapValue(key_frame_index) if frame.is_fully_initialized() => {
+                // This was a map value, so we need to insert the key-value pair into the map
+
+                // Now let's remove the key frame from the frames array
+                let key_frame = self.frames.remove(key_frame_index);
+                let key_istate = key_frame.istate;
+
+                // Make sure the key is fully initialized
+                if !key_istate.fields.is_any_set() {
+                    return Err(ReflectError::OperationFailed {
+                        shape: frame.shape,
+                        operation: "key is not initialized when popping value frame",
+                    });
+                }
+
+                // Get parent map frame
+                let frame_len = self.frames.len();
+                let parent_frame = self.frames.last_mut().unwrap();
+                let parent_shape = parent_frame.shape;
+
+                // Make sure the parent is a map
+                match parent_shape.def {
+                    Def::Map(_) => {
+                        // Get the map vtable from the MapDef
+                        if let Def::Map(map_def) = parent_shape.def {
+                            trace!(
+                                "[{}] Inserting key-value pair into map {}",
+                                frame_len,
+                                parent_shape.blue()
+                            );
+                            unsafe {
+                                // Call the map's insert function with the key and value
+                                (map_def.vtable.insert_fn)(
+                                    parent_frame.data.assume_init(),
+                                    key_frame.data.assume_init(),
+                                    Opaque::new(frame.data.as_mut_byte_ptr()),
+                                );
+
+                                // now let's deallocate the key and the value
+                                alloc::alloc::dealloc(
+                                    key_frame.data.as_mut_byte_ptr(),
+                                    key_frame.shape.layout,
+                                );
+                                alloc::alloc::dealloc(
+                                    frame.data.as_mut_byte_ptr(),
+                                    frame.shape.layout,
+                                );
+                            }
+
+                            // now make sure the value frame doesn't accidentally end up tracked
+                            return Ok(self);
+                        } else {
+                            return Err(ReflectError::OperationFailed {
+                                shape: parent_frame.shape,
+                                operation: "parent frame is not a map type",
+                            });
+                        }
+                    }
+                    _ => {
+                        return Err(ReflectError::WasNotA {
+                            expected: "map or hash map",
+                            actual: frame.shape,
+                        });
+                    }
+                }
+            }
+
+            // Map keys are just tracked, they don't need special handling when popped
+            // FIXME: that's not true, we need to deallocate them at least??
+            FrameMode::MapKey => {}
+
+            // Normal frame
+            FrameMode::Normal => {}
+
+            // Uninitialized special frames
+            _ => {}
+        }
+
         self.track(frame);
         Ok(self)
     }
@@ -628,7 +1213,6 @@ impl Drop for Wip<'_> {
             log::trace!("Dropping istates with depth {}", depth.yellow(),);
 
             // Find and drop values at this depth level
-            let mut to_remove = alloc::vec::Vec::new();
             self.istates.retain(|id, is| {
                 if is.depth == *depth {
                     log::trace!(
@@ -637,32 +1221,44 @@ impl Drop for Wip<'_> {
                         is.fields.0.bright_magenta()
                     );
 
-                    if !is.fields.is_any_set() {
-                        log::trace!("  Skipping drop: no fields were initialized");
-                        to_remove.push(*id);
-                        return false;
+                    if is.fields.is_any_set() {
+                        if matches!(id.shape.def, Def::Struct(_) | Def::Enum(_)) {
+                            // if it's a composite, rely on the fact that each individual field was deinitialized
+                            log::trace!("  Skipping composite type drop: individual fields already deinitialized");
+                            return false;
+                        }
+
+                        if let Some(drop_fn) = id.shape.vtable.drop_in_place {
+                            // Only drop if some fields were initialized
+                            if is.fields.is_any_set() {
+                                log::trace!(
+                                    "  Calling drop_in_place function for {}",
+                                    id.shape.green()
+                                );
+                                unsafe {
+                                    drop_fn(Opaque::new(id.ptr as *mut u8));
+                                }
+                            }
+                        } else {
+                            log::trace!(
+                                "  No drop_in_place function available for {}",
+                                id.shape.red()
+                            );
+                        }
                     }
 
-                    if matches!(id.shape.def, Def::Struct(_) | Def::Enum(_)) {
-                        // if it's a composite, rely on the fact that each individual field was deinitialized
-                        log::trace!("  Skipping composite type drop: individual fields already deinitialized");
-                        to_remove.push(*id);
-                        return false;
-                    }
-
-                    if let Some(drop_fn) = id.shape.vtable.drop_in_place {
-                        // Only drop if some fields were initialized
-                        if is.fields.is_any_set() {
-                            log::trace!("  Calling drop_in_place function for {}", id.shape.green());
+                    match is.mode {
+                        FrameMode::MapKey | FrameMode::MapValue(_) | FrameMode::ListElement => {
+                            // hey we initialized those, we have to free them
                             unsafe {
-                                drop_fn(Opaque::new(id.ptr as *mut u8));
+                                trace!("  Freeing {}", id.shape.green());
+                                alloc::alloc::dealloc(id.ptr as *mut u8, id.shape.layout);
                             }
                         }
-                    } else {
-                        log::trace!("  No drop_in_place function available for {}", id.shape.red());
+                        _ => {
+                        }
                     }
 
-                    to_remove.push(*id);
                     return false;
                 }
                 true
@@ -693,6 +1289,7 @@ impl Drop for Guard {
 }
 
 use facet_core::Field;
+use log::trace;
 
 /// Keeps track of which fields were initialized, up to 64 fields
 #[derive(Clone, Copy, Default, Debug)]

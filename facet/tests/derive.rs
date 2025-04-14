@@ -1,5 +1,5 @@
 use core::{fmt::Debug, mem::offset_of};
-use facet::{Def, Facet, FieldFlags, OpaqueConst, Shape, Struct, StructKind};
+use facet::{Def, Facet, FieldFlags, Shape, Struct, StructKind};
 
 #[test]
 fn unit_struct() {
@@ -477,10 +477,8 @@ fn array_field() {
             let fields = &variant.data.fields;
             let field = &fields[0];
             match field.shape().def {
-                Def::List(ld) => {
-                    let len =
-                        unsafe { (ld.vtable.len)(OpaqueConst::new(std::ptr::dangling::<u8>())) };
-                    assert_eq!(len, 4);
+                Def::Array(ad) => {
+                    assert_eq!(ad.n, 4);
                     eprintln!("Shape {shape} looks correct");
                 }
                 _ => unreachable!(),

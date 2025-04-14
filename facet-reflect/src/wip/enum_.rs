@@ -18,7 +18,10 @@ impl Wip<'_> {
         let frame = self.frames.last_mut().unwrap();
         let shape = frame.shape;
         let Def::Enum(def) = shape.def else {
-            return Err(ReflectError::WasNotA { name: "enum" });
+            return Err(ReflectError::WasNotA {
+                expected: "enum",
+                actual: shape,
+            });
         };
 
         if index >= def.variants.len() {
@@ -83,7 +86,10 @@ impl Wip<'_> {
         let frame = self.frames.last().unwrap();
         let shape = frame.shape;
         let Def::Enum(def) = shape.def else {
-            return Err(ReflectError::WasNotA { name: "enum" });
+            return Err(ReflectError::WasNotA {
+                expected: "enum",
+                actual: shape,
+            });
         };
 
         let index =

@@ -153,27 +153,24 @@ where
                     builder.build()
                 },
             )
-            .def(Def::List(
-                ListDef::builder()
+            .def(Def::Array(
+                ArrayDef::builder()
                     .vtable(
                         &const {
-                            ListVTable::builder()
-                        .push(|_, _| {
-                            panic!("Cannot push to [T; {L}]");
-                        })
-                        .len(|_| L)
-                        .get_item_ptr(|ptr, index| unsafe {
-                            if index >= L {
-                                panic!(
-                                    "Index out of bounds: the len is {L} but the index is {index}"
-                                );
-                            }
-                            OpaqueConst::new(ptr.as_ptr::<[T; L]>())
-                        })
-                        .build()
+                            ArrayVTable::builder()
+                                .get_item_ptr(|ptr, index| unsafe {
+                                    if index >= L {
+                                        panic!(
+                                            "Index out of bounds: the len is {L} but the index is {index}"
+                                        );
+                                    }
+                                    OpaqueConst::new(ptr.as_ptr::<[T; L]>())
+                                })
+                                .build()
                         },
                     )
-                    .t(T::SHAPE)
+                    .n(L)
+                    .t(|| T::SHAPE)
                     .build(),
             ))
             .build()

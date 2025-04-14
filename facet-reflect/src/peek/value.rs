@@ -184,7 +184,10 @@ impl<'mem> Peek<'mem> {
         if let Def::Struct(def) = self.shape.def {
             Ok(PeekStruct { value: self, def })
         } else {
-            Err(ReflectError::WasNotA { name: "struct" })
+            Err(ReflectError::WasNotA {
+                expected: "struct",
+                actual: self.shape,
+            })
         }
     }
 
@@ -193,7 +196,10 @@ impl<'mem> Peek<'mem> {
         if let Def::Enum(def) = self.shape.def {
             Ok(PeekEnum { value: self, def })
         } else {
-            Err(ReflectError::WasNotA { name: "enum" })
+            Err(ReflectError::WasNotA {
+                expected: "enum",
+                actual: self.shape,
+            })
         }
     }
 
@@ -202,7 +208,10 @@ impl<'mem> Peek<'mem> {
         if let Def::Map(def) = self.shape.def {
             Ok(PeekMap { value: self, def })
         } else {
-            Err(ReflectError::WasNotA { name: "map" })
+            Err(ReflectError::WasNotA {
+                expected: "map",
+                actual: self.shape,
+            })
         }
     }
 
@@ -211,7 +220,10 @@ impl<'mem> Peek<'mem> {
         if let Def::List(def) = self.shape.def {
             Ok(PeekList { value: self, def })
         } else {
-            Err(ReflectError::WasNotA { name: "list" })
+            Err(ReflectError::WasNotA {
+                expected: "list",
+                actual: self.shape,
+            })
         }
     }
 
@@ -221,7 +233,8 @@ impl<'mem> Peek<'mem> {
             Ok(PeekSmartPointer { value: self, def })
         } else {
             Err(ReflectError::WasNotA {
-                name: "smart pointer",
+                expected: "smart pointer",
+                actual: self.shape,
             })
         }
     }
@@ -231,7 +244,10 @@ impl<'mem> Peek<'mem> {
         if let Def::Option(def) = self.shape.def {
             Ok(super::PeekOption { value: self, def })
         } else {
-            Err(ReflectError::WasNotA { name: "option" })
+            Err(ReflectError::WasNotA {
+                expected: "option",
+                actual: self.shape,
+            })
         }
     }
 }

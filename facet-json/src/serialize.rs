@@ -1,365 +1,362 @@
-use facet_reflect::{Peek, PeekValue};
-use log::trace;
-use std::collections::VecDeque;
+use core::num::NonZero;
+use facet_core::{Def, Facet};
+use facet_reflect::Peek;
 use std::io::{self, Write};
-use std::num::NonZero;
 
-macro_rules! prim {
-    ($pv:expr, $writer:expr, $type:ty) => {
-        if $pv.shape().is_type::<$type>() {
-            let value = unsafe { $pv.data().as_ref::<$type>() };
-            return write!($writer, "{}", value);
-        }
-    };
+/// Serializes a value to JSON
+pub fn to_string<T: Facet>(value: &T) -> String {
+    let peek = Peek::new(value);
+    let mut output = Vec::new();
+    serialize(&peek, &mut output).unwrap();
+    String::from_utf8(output).unwrap()
 }
 
-macro_rules! prims {
-    ($pv:expr, $writer:expr, $type:ty, $($types:ty),*) => {
-        prim!($pv, $writer, $type);
-        prims!($pv, $writer, $($types),*);
-    };
-    ($pv:expr, $writer:expr, $type:ty) => {
-        prim!($pv, $writer, $type);
-    };
+/// Serializes a Peek instance to JSON
+pub fn peek_to_string(peek: &Peek<'_>) -> String {
+    let mut output = Vec::new();
+    serialize(peek, &mut output).unwrap();
+    String::from_utf8(output).unwrap()
 }
 
-macro_rules! int {
-    ($pv:expr, $writer:expr, $type:ty) => {
-        prim!($pv, $writer, $type);
-        prim!($pv, $writer, NonZero<$type>);
-    };
+/// Serializes a value to a writer in JSON format
+pub fn to_writer<T: Facet, W: Write>(value: &T, writer: &mut W) -> io::Result<()> {
+    let peek = Peek::new(value);
+    serialize(&peek, writer)
 }
 
-macro_rules! ints {
-    ($pv:expr, $writer:expr, $type:ty, $($types:ty),*) => {
-        int!($pv, $writer, $type);
-        ints!($pv, $writer, $($types),*);
-    };
-    ($pv:expr, $writer:expr, $type:ty) => {
-        int!($pv, $writer, $type);
-    };
+/// Serializes a Peek instance to a writer in JSON format
+pub fn peek_to_writer<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()> {
+    serialize(peek, writer)
 }
 
-macro_rules! string {
-    ($pv:expr, $writer:expr, $type:ty) => {
-        if $pv.shape().is_type::<$type>() {
-            let value = unsafe { $pv.data().as_ref::<$type>() };
-            return write!($writer, "\"{}\"", value.escape_debug());
-        }
-    };
-}
-
-macro_rules! strings {
-    ($pv:expr, $writer:expr, $type:ty, $($types:ty),*) => {
-        string!($pv, $writer, $type);
-        strings!($pv, $writer, $($types),*);
-    };
-    ($pv:expr, $writer:expr, $type:ty) => {
-        string!($pv, $writer, $type);
-    };
-}
-
-fn peek_value_to_json<W: Write>(pv: PeekValue, writer: &mut W) -> io::Result<()> {
-    if pv.shape().is_type::<()>() {
-        return write!(writer, "null");
+/// The core serialization function
+fn serialize<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()> {
+    match peek.shape().def {
+        Def::Scalar(_) => serialize_scalar(peek, writer),
+        Def::Struct(_) => serialize_struct(peek, writer),
+        Def::List(_) => serialize_list(peek, writer),
+        Def::Map(_) => serialize_map(peek, writer),
+        Def::Enum(_) => serialize_enum(peek, writer),
+        Def::Option(_) => serialize_option(peek, writer),
+        _ => Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("Unsupported type: {}", peek.shape()),
+        )),
     }
-    prims!(pv, writer, bool, f32, f64);
-    ints!(
-        pv, writer, u8, i8, u16, i16, u32, i32, u64, i64, u128, i128, usize, isize
-    );
-    strings!(pv, writer, String, std::borrow::Cow<'_, str>, &str);
-
-    write!(writer, "\"<unsupported type>\"")?;
-    Ok(())
 }
 
-/// Serializes any Facet type to JSON
-pub fn to_json<W: Write>(peek: Peek<'_>, writer: &mut W, indent: bool) -> io::Result<()> {
-    #[derive(Debug)]
-    enum StackItem<'mem> {
-        Value {
-            peek: Peek<'mem>,
-            level: usize,
-        },
-        StructField {
-            field_name: String,
-            peek: Peek<'mem>,
-            level: usize,
-            is_first: bool,
-        },
-        StructEnd {
-            level: usize,
-            had_fields: bool,
-        },
-        ListItem {
-            peek: Peek<'mem>,
-            level: usize,
-            is_first: bool,
-        },
-        ListEnd {
-            level: usize,
-            had_items: bool,
-        },
-        MapEntry {
-            key: Peek<'mem>,
-            value: Peek<'mem>,
-            level: usize,
-            is_first: bool,
-        },
-        MapEnd {
-            level: usize,
-            had_entries: bool,
-        },
+/// Serializes a scalar value to JSON
+fn serialize_scalar<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()> {
+    // Handle basic scalar types
+    if peek.shape().is_type::<bool>() {
+        let value = peek.get::<bool>().unwrap();
+        write!(writer, "{}", if *value { "true" } else { "false" })
+    } else if peek.shape().is_type::<String>() {
+        let value = peek.get::<String>().unwrap();
+        write_json_string(writer, value)
+    } else if peek.shape().is_type::<&str>() {
+        let value = peek.get::<&str>().unwrap();
+        write_json_string(writer, value)
+    } else if peek.shape().is_type::<alloc::borrow::Cow<'_, str>>() {
+        let value = peek.get::<alloc::borrow::Cow<'_, str>>().unwrap();
+        write_json_string(writer, value)
     }
+    // Integer types
+    else if peek.shape().is_type::<u8>() {
+        let value = peek.get::<u8>().unwrap();
+        write!(writer, "{}", value)
+    } else if peek.shape().is_type::<u16>() {
+        let value = peek.get::<u16>().unwrap();
+        write!(writer, "{}", value)
+    } else if peek.shape().is_type::<u32>() {
+        let value = peek.get::<u32>().unwrap();
+        write!(writer, "{}", value)
+    } else if peek.shape().is_type::<u64>() {
+        let value = peek.get::<u64>().unwrap();
+        write!(writer, "{}", value)
+    } else if peek.shape().is_type::<usize>() {
+        let value = peek.get::<usize>().unwrap();
+        write!(writer, "{}", value)
+    } else if peek.shape().is_type::<i8>() {
+        let value = peek.get::<i8>().unwrap();
+        write!(writer, "{}", value)
+    } else if peek.shape().is_type::<i16>() {
+        let value = peek.get::<i16>().unwrap();
+        write!(writer, "{}", value)
+    } else if peek.shape().is_type::<i32>() {
+        let value = peek.get::<i32>().unwrap();
+        write!(writer, "{}", value)
+    } else if peek.shape().is_type::<i64>() {
+        let value = peek.get::<i64>().unwrap();
+        write!(writer, "{}", value)
+    } else if peek.shape().is_type::<isize>() {
+        let value = peek.get::<isize>().unwrap();
+        write!(writer, "{}", value)
+    }
+    // NonZero types
+    else if peek.shape().is_type::<NonZero<u8>>() {
+        let value = peek.get::<NonZero<u8>>().unwrap();
+        write!(writer, "{}", value)
+    } else if peek.shape().is_type::<NonZero<u16>>() {
+        let value = peek.get::<NonZero<u16>>().unwrap();
+        write!(writer, "{}", value)
+    } else if peek.shape().is_type::<NonZero<u32>>() {
+        let value = peek.get::<NonZero<u32>>().unwrap();
+        write!(writer, "{}", value)
+    } else if peek.shape().is_type::<NonZero<u64>>() {
+        let value = peek.get::<NonZero<u64>>().unwrap();
+        write!(writer, "{}", value)
+    } else if peek.shape().is_type::<NonZero<usize>>() {
+        let value = peek.get::<NonZero<usize>>().unwrap();
+        write!(writer, "{}", value)
+    } else if peek.shape().is_type::<NonZero<i8>>() {
+        let value = peek.get::<NonZero<i8>>().unwrap();
+        write!(writer, "{}", value)
+    } else if peek.shape().is_type::<NonZero<i16>>() {
+        let value = peek.get::<NonZero<i16>>().unwrap();
+        write!(writer, "{}", value)
+    } else if peek.shape().is_type::<NonZero<i32>>() {
+        let value = peek.get::<NonZero<i32>>().unwrap();
+        write!(writer, "{}", value)
+    } else if peek.shape().is_type::<NonZero<i64>>() {
+        let value = peek.get::<NonZero<i64>>().unwrap();
+        write!(writer, "{}", value)
+    } else if peek.shape().is_type::<NonZero<isize>>() {
+        let value = peek.get::<NonZero<isize>>().unwrap();
+        write!(writer, "{}", value)
+    }
+    // Float types
+    else if peek.shape().is_type::<f32>() {
+        let value = peek.get::<f32>().unwrap();
+        write!(writer, "{}", value)
+    } else if peek.shape().is_type::<f64>() {
+        let value = peek.get::<f64>().unwrap();
+        write!(writer, "{}", value)
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("Unsupported scalar type: {}", peek.shape()),
+        ))
+    }
+}
 
-    let mut stack: VecDeque<StackItem> = VecDeque::new();
-    stack.push_back(StackItem::Value { peek, level: 0 });
+/// Serializes a struct to JSON
+fn serialize_struct<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()> {
+    let struct_peek = peek
+        .into_struct()
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Not a struct: {}", e)))?;
 
-    while let Some(item) = stack.pop_front() {
-        match item {
-            StackItem::Value { peek, level } => {
-                match peek {
-                    Peek::Value(pv) => {
-                        peek_value_to_json(pv, writer)?;
-                    }
-                    Peek::Struct(ps) => {
-                        write!(writer, "{{")?;
-                        if indent {
-                            writeln!(writer)?
-                        }
+    write!(writer, "{{")?;
 
-                        let fields: Vec<_> = ps.fields().collect();
-                        stack.push_front(StackItem::StructEnd {
-                            level,
-                            had_fields: !fields.is_empty(),
-                        });
-
-                        // Push fields in reverse order so they'll be processed in the correct order
-                        for (i, field) in fields.into_iter().enumerate().rev() {
-                            stack.push_front(StackItem::StructField {
-                                field_name: field.0.to_string(),
-                                peek: field.1,
-                                level,
-                                is_first: i == 0,
-                            });
-                        }
-                    }
-                    Peek::List(pl) => {
-                        write!(writer, "[")?;
-                        if indent {
-                            writeln!(writer)?
-                        }
-
-                        let mut items = Vec::new();
-                        let mut index = 0;
-                        while let Some(item) = pl.item_at(index) {
-                            items.push(item);
-                            index += 1;
-                        }
-
-                        stack.push_front(StackItem::ListEnd {
-                            level,
-                            had_items: !items.is_empty(),
-                        });
-
-                        // Push items in reverse order
-                        for (i, item) in items.into_iter().enumerate().rev() {
-                            stack.push_front(StackItem::ListItem {
-                                peek: item,
-                                level,
-                                is_first: i == 0,
-                            });
-                        }
-                    }
-                    Peek::Map(pm) => {
-                        write!(writer, "{{")?;
-                        if indent {
-                            writeln!(writer)?
-                        }
-
-                        // Collect entries using the iterator and convert them to the format expected by MapEntry
-                        let entries: Vec<(PeekValue<'_>, Peek<'_>)> = pm
-                            .iter()
-                            .map(|(key, value)| (key.as_value(), value))
-                            .collect();
-
-                        stack.push_front(StackItem::MapEnd {
-                            level,
-                            had_entries: !entries.is_empty(),
-                        });
-
-                        // Push entries in reverse order
-                        for (i, (key, value)) in entries.into_iter().enumerate().rev() {
-                            stack.push_front(StackItem::MapEntry {
-                                key: Peek::Value(key),
-                                value,
-                                level,
-                                is_first: i == 0,
-                            });
-                        }
-                    }
-                    Peek::Option(popt) => {
-                        if let Some(p) = popt.value() {
-                            peek_value_to_json(p.as_value(), writer)?
-                        } else {
-                            write!(writer, "null")?
-                        }
-                    }
-                    _ => todo!("unsupported peek type: {:?}", peek),
-                }
-            }
-            StackItem::StructField {
-                field_name,
-                peek,
-                level,
-                is_first,
-            } => {
-                if !is_first {
-                    write!(writer, ",")?;
-                    if indent {
-                        writeln!(writer)?
-                    }
-                }
-
-                if indent {
-                    write!(writer, "{:indent$}", "", indent = (level + 1) * 2)?
-                }
-                write!(writer, "\"{}\":", field_name)?;
-                if indent {
-                    write!(writer, " ")?
-                }
-
-                stack.push_front(StackItem::Value {
-                    peek,
-                    level: level + 1,
-                });
-            }
-            StackItem::StructEnd { level, had_fields } => {
-                if had_fields && indent {
-                    writeln!(writer)?;
-                    write!(writer, "{:indent$}", "", indent = level * 2)?
-                }
-                write!(writer, "}}")?
-            }
-            StackItem::ListItem {
-                peek,
-                level,
-                is_first,
-            } => {
-                if !is_first {
-                    write!(writer, ",")?;
-                    if indent {
-                        writeln!(writer)?
-                    }
-                }
-
-                if indent {
-                    write!(writer, "{:indent$}", "", indent = (level + 1) * 2)?
-                }
-
-                stack.push_front(StackItem::Value {
-                    peek,
-                    level: level + 1,
-                });
-            }
-            StackItem::ListEnd { level, had_items } => {
-                if had_items && indent {
-                    writeln!(writer)?;
-                    write!(writer, "{:indent$}", "", indent = level * 2)?
-                }
-                write!(writer, "]")?
-            }
-            StackItem::MapEntry {
-                key,
-                value,
-                level,
-                is_first,
-            } => {
-                if !is_first {
-                    write!(writer, ",")?;
-                    if indent {
-                        writeln!(writer)?
-                    }
-                }
-
-                if indent {
-                    write!(writer, "{:indent$}", "", indent = (level + 1) * 2)?
-                }
-
-                // Process key first (inline with no indentation)
-                let mut temp_writer = Vec::new();
-                let mut temp_stack = VecDeque::new();
-                temp_stack.push_back(StackItem::Value {
-                    peek: key,
-                    level: 0,
-                });
-
-                while let Some(temp_item) = temp_stack.pop_front() {
-                    match temp_item {
-                        StackItem::Value { peek, level: _ } => match peek {
-                            Peek::Value(pv) => {
-                                trace!("{:?}", pv.shape());
-                                peek_value_to_json(pv, &mut temp_writer)?
-                            }
-                            _ => write!(&mut temp_writer, "\"<complex_key>\"")?,
-                        },
-                        _ => {
-                            // This should not happen for simple key serialization
-                            write!(&mut temp_writer, "\"<invalid_key>\"")?
-                        }
-                    }
-                }
-
-                let key_string = String::from_utf8(temp_writer).unwrap();
-                write!(writer, "{}:", key_string)?;
-
-                if indent {
-                    write!(writer, " ")?
-                }
-
-                stack.push_front(StackItem::Value {
-                    peek: value,
-                    level: level + 1,
-                });
-            }
-            StackItem::MapEnd { level, had_entries } => {
-                if had_entries && indent {
-                    writeln!(writer)?;
-                    write!(writer, "{:indent$}", "", indent = level * 2)?
-                }
-                write!(writer, "}}")?
-            }
+    let mut first = true;
+    for (field, field_peek) in struct_peek.fields() {
+        if !first {
+            write!(writer, ",")?;
         }
+        first = false;
+
+        // Write field name
+        write_json_string(writer, field.name)?;
+        write!(writer, ":")?;
+
+        // Write field value
+        serialize(&field_peek, writer)?;
     }
+
+    write!(writer, "}}")?;
 
     Ok(())
 }
 
-/// Serializes any Facet type to JSON and returns it as a String
-///
-/// # Example
-///
-/// ```rust
-/// use facet::Facet;
-/// use facet_reflect::Peek;
-/// use facet_json::to_json_string;
-///
-/// #[derive(facet::Facet)]
-/// struct Foo {
-///   bar: String,
-///   baz: u32,
-/// }
-///
-/// let foo = Foo {
-///   bar: "Hello, World!".to_string(),
-///   baz: 42,
-/// };
-/// let foo = Peek::new(&foo);
-///
-/// println!("{}", to_json_string(foo, true));
-/// ```
-pub fn to_json_string(peek: Peek<'_>, indent: bool) -> String {
-    let mut buffer = Vec::new();
-    to_json(peek, &mut buffer, indent).unwrap();
-    String::from_utf8(buffer).unwrap()
+/// Serializes a list to JSON
+fn serialize_list<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()> {
+    let list_peek = peek
+        .into_list()
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Not a list: {}", e)))?;
+
+    write!(writer, "[")?;
+
+    let mut first = true;
+    for item_peek in list_peek.iter() {
+        if !first {
+            write!(writer, ",")?;
+        }
+        first = false;
+
+        serialize(&item_peek, writer)?;
+    }
+
+    write!(writer, "]")?;
+
+    Ok(())
+}
+
+/// Serializes a map to JSON
+fn serialize_map<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()> {
+    let map_peek = peek
+        .into_map()
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Not a map: {}", e)))?;
+
+    write!(writer, "{{")?;
+
+    let mut first = true;
+    for (key, value) in map_peek.iter() {
+        if !first {
+            write!(writer, ",")?;
+        }
+        first = false;
+
+        // For map, keys must be converted to strings
+        match key.shape().def {
+            Def::Scalar(_) => {
+                // Try to convert key to string
+                if key.shape().is_type::<String>() {
+                    let key_str = key.get::<String>().unwrap();
+                    write_json_string(writer, key_str)?;
+                } else {
+                    // For other scalar types, use their Display implementation
+                    write!(writer, "\"{}\"", key)?;
+                }
+            }
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("Map keys must be scalar types, got: {}", key.shape()),
+                ));
+            }
+        }
+
+        write!(writer, ":")?;
+
+        // Write map value
+        serialize(&value, writer)?;
+    }
+
+    write!(writer, "}}")?;
+
+    Ok(())
+}
+
+/// Serializes an enum to JSON
+fn serialize_enum<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()> {
+    let enum_peek = peek
+        .into_enum()
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Not an enum: {}", e)))?;
+
+    let variant = enum_peek.active_variant();
+    let variant_name = variant.name;
+
+    // Check if this is a unit variant or a variant with data
+    if variant.data.fields.is_empty() {
+        // Unit variant - just output the name as a string
+        write_json_string(writer, variant_name)
+    } else {
+        // Variant with data - output as an object with a single key
+        write!(writer, "{{")?;
+        write_json_string(writer, variant_name)?;
+        write!(writer, ":")?;
+
+        // If it's a single-field tuple variant, output just the value
+        if variant.data.fields.len() == 1 {
+            let field = enum_peek.field(0).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::Other, "Failed to access enum field")
+            })?;
+            serialize(&field, writer)?;
+        } else {
+            // Multi-field variant - output as an array or object depending on variant type
+            let is_struct = variant
+                .data
+                .fields
+                .iter()
+                .any(|f| !f.name.starts_with("__"));
+
+            if is_struct {
+                // Struct variant - output as an object
+                write!(writer, "{{")?;
+
+                let mut first = true;
+                for i in 0..variant.data.fields.len() {
+                    let field = enum_peek.field(i).ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::Other,
+                            format!("Failed to access enum field {}", i),
+                        )
+                    })?;
+                    let field_name = variant.data.fields[i].name;
+
+                    if !first {
+                        write!(writer, ",")?;
+                    }
+                    first = false;
+
+                    write_json_string(writer, field_name)?;
+                    write!(writer, ":")?;
+                    serialize(&field, writer)?;
+                }
+
+                write!(writer, "}}")?
+            } else {
+                // Tuple variant - output as an array
+                write!(writer, "[")?;
+
+                let mut first = true;
+                for i in 0..variant.data.fields.len() {
+                    if !first {
+                        write!(writer, ",")?;
+                    }
+                    first = false;
+
+                    let field = enum_peek.field(i).ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::Other,
+                            format!("Failed to access enum field {}", i),
+                        )
+                    })?;
+                    serialize(&field, writer)?;
+                }
+
+                write!(writer, "]")?;
+            }
+        }
+
+        write!(writer, "}}")?;
+        Ok(())
+    }
+}
+
+/// Serializes an `Option<T>` to JSON
+fn serialize_option<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()> {
+    let option_peek = peek
+        .into_option()
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Not an option: {}", e)))?;
+
+    if option_peek.is_none() {
+        write!(writer, "null")
+    } else {
+        let value = option_peek
+            .value()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Failed to get option value"))?;
+        serialize(&value, writer)
+    }
+}
+
+/// Properly escapes and writes a JSON string
+fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
+    write!(writer, "\"")?;
+
+    for c in s.chars() {
+        match c {
+            '"' => write!(writer, "\\\"")?,
+            '\\' => write!(writer, "\\\\")?,
+            '\n' => write!(writer, "\\n")?,
+            '\r' => write!(writer, "\\r")?,
+            '\t' => write!(writer, "\\t")?,
+            '\u{08}' => write!(writer, "\\b")?,
+            '\u{0C}' => write!(writer, "\\f")?,
+            c if c.is_control() => write!(writer, "\\u{:04x}", c as u32)?,
+            c => write!(writer, "{}", c)?,
+        }
+    }
+
+    write!(writer, "\"")
 }

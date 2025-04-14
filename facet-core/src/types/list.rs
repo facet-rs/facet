@@ -10,7 +10,7 @@ pub struct ListDef {
     /// vtable for interacting with the list
     pub vtable: &'static ListVTable,
     /// shape of the items in the list
-    pub t: &'static Shape,
+    pub t: fn() -> &'static Shape,
 }
 
 impl ListDef {
@@ -18,12 +18,17 @@ impl ListDef {
     pub const fn builder() -> ListDefBuilder {
         ListDefBuilder::new()
     }
+
+    /// Returns the shape of the items in the list
+    pub fn t(&self) -> &'static Shape {
+        (self.t)()
+    }
 }
 
 /// Builder for ListDef
 pub struct ListDefBuilder {
     vtable: Option<&'static ListVTable>,
-    t: Option<&'static Shape>,
+    t: Option<fn() -> &'static Shape>,
 }
 
 impl ListDefBuilder {
@@ -43,7 +48,7 @@ impl ListDefBuilder {
     }
 
     /// Sets the item shape for the ListDef
-    pub const fn t(mut self, t: &'static Shape) -> Self {
+    pub const fn t(mut self, t: fn() -> &'static Shape) -> Self {
         self.t = Some(t);
         self
     }

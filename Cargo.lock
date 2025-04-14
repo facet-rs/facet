@@ -40,9 +40,9 @@ checksum = "7b02b629252fe8ef6460461409564e2c21d0c8e77e0944f3d189ff06c4e932ad"
 
 [[package]]
 name = "cc"
-version = "1.2.18"
+version = "1.2.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "525046617d8376e3db1deffb079e91cef90a89fc3ca5c185bbf8c9ecdd15cd5c"
+checksum = "8e3a13707ac958681c13b39b458c073d0d9bc8a22cb1b2f4c8e55eb72c13f362"
 dependencies = [
  "shlex",
 ]
@@ -153,6 +153,17 @@ version = "0.1.20"
 dependencies = [
  "facet-core",
  "unsynn",
+]
+
+[[package]]
+name = "facet-json"
+version = "0.2.2"
+dependencies = [
+ "facet",
+ "facet-core",
+ "facet-reflect",
+ "facet-testhelpers",
+ "log",
 ]
 
 [[package]]

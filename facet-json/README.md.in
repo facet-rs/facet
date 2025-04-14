@@ -2,57 +2,6 @@ JSON serialization and deserialization for [facet](https://crates.io/crates/face
 
 ## Usage
 
-### Serialization Example
+Don't use it! Duh.
 
-```rust
-use facet::Facet;
-use facet_reflect::Peek;
-use facet_json::to_json_string;
-
-#[derive(facet::Facet)]
-struct Person {
-    name: String,
-    age: u32,
-}
-
-// Create a struct to serialize
-let person = Person {
-    name: "Alice".to_string(),
-    age: 30,
-};
-
-// Create a Peek object from the struct
-let peek = Peek::new(&person);
-
-// Serialize to JSON (true = pretty-print)
-let json = to_json_string(peek, true);
-
-println!("{}", json);
-// Output:
-// {
-//   "name": "Alice",
-//   "age": 30
-// }
-```
-
-### Deserialization Example
-
-```rust
-use facet::Facet;
-use facet_json::from_str;
-
-#[derive(facet::Facet, Debug)]
-struct Person {
-    name: String,
-    age: u32,
-}
-
-// JSON string to deserialize
-let json = r#"{"name":"Bob","age":25}"#;
-
-// Deserialize the JSON to a Person struct
-let person: Person = from_str(json).unwrap();
-
-println!("{:?}", person);
-// Output: Person { name: "Bob", age: 25 }
-```
+(No but for real it's being rewritten)

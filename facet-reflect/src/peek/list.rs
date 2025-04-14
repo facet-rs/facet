@@ -72,7 +72,7 @@ impl<'mem> PeekList<'mem> {
         let item_ptr = unsafe { (self.def.vtable.get_item_ptr)(self.value.data(), index) };
         Some(Peek {
             data: item_ptr,
-            shape: self.def.t,
+            shape: self.def.t(),
         })
     }
 

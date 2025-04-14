@@ -1,7 +1,6 @@
 use std::num::NonZero;
 
 use facet::Facet;
-use facet_json::{to_json, to_json_string};
 use facet_reflect::Peek;
 
 #[test]
@@ -22,19 +21,16 @@ fn test_to_json() {
     };
 
     let expected_json = r#"{"variable":"x","slope":-3.5,"intercept":-5}"#;
-    let expected_json_indented = r#"{
-  "variable": "x",
-  "slope": -3.5,
-  "intercept": -5
-}"#;
 
-    for (indent, expected) in [(true, expected_json_indented), (false, expected_json)] {
-        let mut buffer = Vec::new();
-        let peek = Peek::new(&test_struct);
-        to_json(peek, &mut buffer, indent).unwrap();
-        let json = String::from_utf8(buffer).unwrap();
-        assert_eq!(json, expected);
-    }
+    // Test without indentation (using to_string)
+    let json = facet_json::to_string(&test_struct);
+    assert_eq!(json, expected_json);
+
+    // Test with indentation (using to_writer directly with a custom writer)
+    let mut buffer = Vec::new();
+    facet_json::to_writer(&test_struct, &mut buffer).unwrap();
+    let json = String::from_utf8(buffer).unwrap();
+    assert_eq!(json, expected_json);
 }
 
 #[test]
@@ -50,9 +46,7 @@ fn test_nonzero() {
         foo: const { NonZero::new(1).unwrap() },
     };
 
-    let peek = Peek::new(&test_struct);
-    let json = to_json_string(peek, false);
-
+    let json = facet_json::to_string(&test_struct);
     assert_eq!(json, r#"{"foo":1}"#);
 }
 
@@ -64,17 +58,17 @@ fn test_hashmap_to_json() {
     json_data.insert("foo", "bar");
 
     let expected_json = r#"{"foo":"bar"}"#;
-    let expected_json_indented = r#"{
-  "foo": "bar"
-}"#;
 
-    for (indent, expected) in [(true, expected_json_indented), (false, expected_json)] {
-        let mut buffer = Vec::new();
-        let peek = Peek::new(&json_data);
-        to_json(peek, &mut buffer, indent).unwrap();
-        let json = String::from_utf8(buffer).unwrap();
-        assert_eq!(json, expected);
-    }
+    // Using peek_to_string
+    let peek = Peek::new(&json_data);
+    let json = facet_json::peek_to_string(&peek);
+    assert_eq!(json, expected_json);
+
+    // Using peek_to_writer
+    let mut buffer = Vec::new();
+    facet_json::peek_to_writer(&peek, &mut buffer).unwrap();
+    let json = String::from_utf8(buffer).unwrap();
+    assert_eq!(json, expected_json);
 }
 
 #[test]
@@ -88,8 +82,7 @@ fn test_static_strings() {
 
     let test_struct = StaticFoo { foo: "foo" };
 
-    let peek = Peek::new(&test_struct);
-    let json = to_json_string(peek, false);
+    let json = facet_json::to_string(&test_struct);
     assert_eq!(json, r#"{"foo":"foo"}"#);
 
     #[derive(Debug, PartialEq, Clone, Facet)]
@@ -99,16 +92,12 @@ fn test_static_strings() {
 
     let test_struct = OptStaticFoo { foo: None };
 
-    let peek = Peek::new(&test_struct);
-    let json = to_json_string(peek, false);
-
+    let json = facet_json::to_string(&test_struct);
     assert_eq!(json, r#"{"foo":null}"#);
 
     let test_struct = OptStaticFoo { foo: Some("foo") };
 
-    let peek = Peek::new(&test_struct);
-    let json = to_json_string(peek, false);
-
+    let json = facet_json::to_string(&test_struct);
     assert_eq!(json, r#"{"foo":"foo"}"#);
 
     #[derive(Debug, PartialEq, Clone, Facet)]
@@ -120,8 +109,6 @@ fn test_static_strings() {
         foo: std::borrow::Cow::from("foo"),
     };
 
-    let peek = Peek::new(&test_struct);
-    let json = to_json_string(peek, false);
-
+    let json = facet_json::to_string(&test_struct);
     assert_eq!(json, r#"{"foo":"foo"}"#);
 }

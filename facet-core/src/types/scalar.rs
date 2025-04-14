@@ -155,7 +155,6 @@ pub struct NumberAffinity {
 /// Represents whether a numeric type is signed or unsigned
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
-#[non_exhaustive]
 pub enum Signedness {
     /// Signed numeric type
     Signed,

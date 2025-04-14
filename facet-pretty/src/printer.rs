@@ -248,7 +248,7 @@ impl PrettyPrinter {
                             // Print the list name
                             self.write_type_name(f, &item.value)?;
 
-                            if list.def().t.is_type::<u8>() && self.list_u8_as_bytes {
+                            if list.def().t().is_type::<u8>() && self.list_u8_as_bytes {
                                 // Push back the item with the next state to continue processing list items
                                 item.state = StackState::ProcessBytesItem { item_index: 0 };
                                 writeln!(f)?;

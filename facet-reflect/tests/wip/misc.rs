@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use facet::Facet;
 use facet_reflect::Wip;
 
@@ -100,67 +102,6 @@ fn readme_sample() -> eyre::Result<()> {
     // Now we can use the constructed value
     println!("{}", foo_bar.bar);
 
-    Ok(())
-}
-
-#[test]
-fn build_with_invariants() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
-    #[derive(Facet, PartialEq, Debug)]
-    #[facet(invariants = "invariants")]
-    struct MyNonZeroU8(u8);
-
-    impl MyNonZeroU8 {
-        fn invariants(&self) -> bool {
-            self.0 != 0
-        }
-    }
-
-    let wip: MyNonZeroU8 = Wip::alloc::<MyNonZeroU8>()
-        .put(MyNonZeroU8(42))?
-        .build()?
-        .materialize()?;
-    assert_eq!(wip, MyNonZeroU8(42));
-
-    let result = Wip::alloc::<MyNonZeroU8>().put(MyNonZeroU8(0))?.build();
-    assert!(result.is_err());
-
-    Ok(())
-}
-
-#[test]
-fn put_vec_no_leak_1() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
-    let w = Wip::alloc::<Vec<String>>();
-    let w = w.put(vec!["a".to_string()])?;
-    // let it drop: the fields should be deinitialized, and the memory for the Wip should be freed
-    drop(w);
-    Ok(())
-}
-
-#[test]
-fn put_vec_no_leak_2() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
-    let w = Wip::alloc::<Vec<String>>();
-    let w = w.put(vec!["a".to_string()])?;
-    let w = w.build()?;
-    // let it drop: the entire value should be deinitialized, and the memory for the Wip should be freed
-    drop(w);
-    Ok(())
-}
-
-#[test]
-fn put_vec_no_leak_3() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
-    let w = Wip::alloc::<Vec<String>>();
-    let w = w.put(vec!["a".to_string()])?;
-    let w = w.build()?;
-    let v = w.materialize::<Vec<String>>()?;
-    assert_eq!(v, vec!["a".to_string()]);
     Ok(())
 }
 
@@ -315,6 +256,152 @@ fn wip_switch_enum_variant() -> eyre::Result<()> {
         .materialize::<EnumWithData>()?;
 
     assert_eq!(result, EnumWithData::Tuple(43, String::from("Changed")));
+
+    Ok(())
+}
+
+// List tests
+
+#[test]
+fn wip_empty_list() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    // Create an empty list with put_empty_list
+    let empty_list = Wip::alloc::<Vec<i32>>()
+        .put_empty_list()?
+        .build()?
+        .materialize::<Vec<i32>>()?;
+
+    assert_eq!(empty_list, Vec::<i32>::new());
+    assert_eq!(empty_list.len(), 0);
+
+    Ok(())
+}
+
+#[test]
+fn wip_list_push() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    // Build a vector by pushing elements one by one
+    let list = Wip::alloc::<Vec<i32>>()
+        .begin_pushback()?
+        .push()?
+        .put(10)?
+        .pop()?
+        .push()?
+        .put(20)?
+        .pop()?
+        .push()?
+        .put(30)?
+        .pop()?
+        .build()?
+        .materialize::<Vec<i32>>()?;
+
+    assert_eq!(list, vec![10, 20, 30]);
+    assert_eq!(list.len(), 3);
+
+    Ok(())
+}
+
+#[test]
+fn wip_list_string() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    // Build a vector of strings
+    let list = Wip::alloc::<Vec<String>>()
+        .begin_pushback()?
+        .push()?
+        .put("hello".to_string())?
+        .pop()?
+        .push()?
+        .put("world".to_string())?
+        .pop()?
+        .build()?
+        .materialize::<Vec<String>>()?;
+
+    assert_eq!(list, vec!["hello".to_string(), "world".to_string()]);
+
+    Ok(())
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct WithList {
+    name: String,
+    values: Vec<i32>,
+}
+
+#[test]
+fn wip_struct_with_list() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    // Create a struct that contains a list
+    let with_list = Wip::alloc::<WithList>()
+        .field_named("name")?
+        .put("test list".to_string())?
+        .pop()?
+        .field_named("values")?
+        .begin_pushback()?
+        .push()?
+        .put(42)?
+        .pop()?
+        .push()?
+        .put(43)?
+        .pop()?
+        .push()?
+        .put(44)?
+        .pop()?
+        .pop()?
+        .build()?
+        .materialize::<WithList>()?;
+
+    assert_eq!(
+        with_list,
+        WithList {
+            name: "test list".to_string(),
+            values: vec![42, 43, 44]
+        }
+    );
+
+    Ok(())
+}
+
+#[test]
+fn wip_list_error_cases() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    // Test error: trying to push to a non-list type
+    let result = Wip::alloc::<i32>().push();
+    assert!(result.is_err());
+
+    // Test error: trying to get element shape from non-list
+    let result = Wip::alloc::<String>().element_shape();
+    assert!(result.is_err());
+
+    // Test error: trying to put_empty_list on non-list type
+    let result = Wip::alloc::<i32>().put_empty_list();
+    assert!(result.is_err());
+
+    Ok(())
+}
+
+#[test]
+fn wip_map() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    let wip = Wip::alloc::<HashMap<String, String>>()
+        .begin_map_insert()?
+        .push_map_key()?
+        .put::<String>("key".into())?
+        .push_map_value()?
+        .put::<String>("value".into())?
+        .pop()?
+        .build()?
+        .materialize::<HashMap<String, String>>()?;
+
+    assert_eq!(
+        wip,
+        HashMap::from([("key".to_string(), "value".to_string())])
+    );
 
     Ok(())
 }

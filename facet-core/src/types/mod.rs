@@ -14,6 +14,12 @@ pub use struct_::*;
 mod enum_;
 pub use enum_::*;
 
+mod array;
+pub use array::*;
+
+mod slice;
+pub use slice::*;
+
 mod list;
 pub use list::*;
 
@@ -238,6 +244,16 @@ pub enum Def {
     ///
     /// e.g. `Vec<T>`
     List(ListDef),
+
+    /// Fixed-size array of heterogenous values
+    ///
+    /// e.g. `[T; 32]`
+    Array(ArrayDef),
+
+    /// Slice — a reference to a contiguous sequence of elements
+    ///
+    /// e.g. `&[T]`
+    Slice(SliceDef),
 
     /// Enum with variants
     ///
