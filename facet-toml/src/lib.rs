@@ -89,12 +89,17 @@ fn deserialize_as_struct<'a>(mut wip: Wip<'a>, item: &Item) -> Result<Wip<'a>, A
 
 fn deserialize_as_enum<'a>(wip: Wip<'a>, item: &Item) -> Result<Wip<'a>, AnyErr> {
     if item.is_value() {
-        let value = item
+        let variant_name = item
             .as_str()
             .ok_or_else(|| AnyErr(format!("Expected string, got: {}", item.type_name())))?;
 
-        // Shape check is done inside parse
-        wip.parse(value).map_err(|e| AnyErr(e.to_string()))
+        // Use variant_named to select the variant by name
+        wip.variant_named(variant_name).map_err(|e| {
+            AnyErr(format!(
+                "Error selecting enum variant '{}': {}",
+                variant_name, e
+            ))
+        })
     } else {
         // TODO: Handle non-unit enum variants
         Err(AnyErr("Non-unit enum variants not yet supported".into()))
