@@ -44,7 +44,6 @@ unsafe impl<T: Facet> Facet for alloc::sync::Arc<T> {
     };
 }
 
-#[cfg(feature = "alloc")]
 unsafe impl<T: Facet> Facet for alloc::sync::Weak<T> {
     const SHAPE: &'static crate::Shape = &const {
         crate::Shape::builder()
