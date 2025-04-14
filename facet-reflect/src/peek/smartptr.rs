@@ -1,6 +1,6 @@
 use facet_core::SmartPointerDef;
 
-use super::ConstValue;
+use super::Peek;
 
 /// Represents a smart pointer that can be peeked at during memory inspection.
 ///
@@ -8,7 +8,7 @@ use super::ConstValue;
 pub struct PeekSmartPointer<'mem> {
     /// The value being pointed to by this smart pointer.
     #[expect(dead_code)]
-    pub(crate) value: ConstValue<'mem>,
+    pub(crate) value: Peek<'mem>,
 
     /// The definition of this smart pointer type.
     pub(crate) def: SmartPointerDef,

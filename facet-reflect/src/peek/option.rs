@@ -4,7 +4,7 @@ use facet_core::{OptionDef, OptionVTable};
 #[derive(Clone, Copy)]
 pub struct PeekOption<'mem> {
     /// the underlying value
-    pub(crate) value: crate::ConstValue<'mem>,
+    pub(crate) value: crate::Peek<'mem>,
 
     /// the definition of the option
     pub(crate) def: OptionDef,
@@ -36,9 +36,9 @@ impl<'mem> PeekOption<'mem> {
     }
 
     /// Returns the inner value as a Peek if the option is Some, None otherwise
-    pub fn value(self) -> Option<crate::ConstValue<'mem>> {
+    pub fn value(self) -> Option<crate::Peek<'mem>> {
         unsafe {
-            (self.vtable().get_value_fn)(self.value.data()).map(|inner_data| crate::ConstValue {
+            (self.vtable().get_value_fn)(self.value.data()).map(|inner_data| crate::Peek {
                 data: inner_data,
                 shape: self.def.t,
             })

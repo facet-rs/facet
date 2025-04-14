@@ -12,6 +12,14 @@ pub enum Error {
     InvalidData,
     /// Encountered a field name that isn't recognized
     UnknownField(String),
+    /// Required field is missing from the input
+    MissingField(String),
+    /// Integer value is too large for the target type
+    IntegerOverflow,
+    /// Shape is not supported for deserialization
+    UnsupportedShape(String),
+    /// Type is not supported for deserialization
+    UnsupportedType(String),
 }
 
 impl fmt::Display for Error {
@@ -21,6 +29,14 @@ impl fmt::Display for Error {
             Error::InsufficientData => write!(f, "Insufficient data to decode"),
             Error::InvalidData => write!(f, "Invalid MessagePack data"),
             Error::UnknownField(field) => write!(f, "Unknown field: {}", field),
+            Error::MissingField(field) => write!(f, "Missing required field: {}", field),
+            Error::IntegerOverflow => write!(f, "Integer value too large for target type"),
+            Error::UnsupportedShape(shape) => {
+                write!(f, "Unsupported shape for deserialization: {}", shape)
+            }
+            Error::UnsupportedType(typ) => {
+                write!(f, "Unsupported type for deserialization: {}", typ)
+            }
         }
     }
 }

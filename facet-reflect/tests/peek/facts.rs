@@ -2,7 +2,7 @@ use std::{cmp::Ordering, collections::HashSet};
 
 use facet::Facet;
 use facet_ansi::{ColorStyle, Style, Stylize as _};
-use facet_reflect::{ConstValue, Wip};
+use facet_reflect::{Peek, Wip};
 
 fn check_facts<T>(val1: T, val2: T, expected_facts: HashSet<Fact>)
 where
@@ -34,8 +34,8 @@ where
         .join(" + ");
     eprintln!("{} {}", trait_str, "======".yellow());
 
-    let l = ConstValue::new(&val1);
-    let r = ConstValue::new(&val2);
+    let l = Peek::new(&val1);
+    let r = Peek::new(&val2);
 
     let remarkable = Style::new().fg_blue();
 
@@ -229,6 +229,8 @@ impl Display for Fact {
 
 #[test]
 fn test_integer_traits() {
+    facet_testhelpers::setup();
+
     facet_testhelpers::setup();
 
     // i32 implements Debug, PartialEq, and Ord

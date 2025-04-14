@@ -141,6 +141,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-msgpack"
+version = "0.3.0"
+dependencies = [
+ "facet",
+ "facet-core",
+ "facet-reflect",
+ "facet-testhelpers",
+ "log",
+]
+
+[[package]]
 name = "facet-pretty"
 version = "0.3.0"
 dependencies = [

@@ -1,4 +1,4 @@
-use super::ConstValue;
+use super::Peek;
 use facet_core::ListDef;
 
 /// Iterator over a `PeekList`
@@ -9,7 +9,7 @@ pub struct PeekListIter<'mem> {
 }
 
 impl<'mem> Iterator for PeekListIter<'mem> {
-    type Item = ConstValue<'mem>;
+    type Item = Peek<'mem>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.index >= self.len {
@@ -29,7 +29,7 @@ impl<'mem> Iterator for PeekListIter<'mem> {
 impl ExactSizeIterator for PeekListIter<'_> {}
 
 impl<'mem> IntoIterator for &'mem PeekList<'mem> {
-    type Item = ConstValue<'mem>;
+    type Item = Peek<'mem>;
     type IntoIter = PeekListIter<'mem>;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -40,13 +40,13 @@ impl<'mem> IntoIterator for &'mem PeekList<'mem> {
 /// Lets you read from a list (implements read-only [`facet_core::ListVTable`] proxies)
 #[derive(Clone, Copy)]
 pub struct PeekList<'mem> {
-    pub(crate) value: ConstValue<'mem>,
+    pub(crate) value: Peek<'mem>,
     pub(crate) def: ListDef,
 }
 
 impl<'mem> PeekList<'mem> {
     /// Creates a new peek list
-    pub fn new(value: ConstValue<'mem>, def: ListDef) -> Self {
+    pub fn new(value: Peek<'mem>, def: ListDef) -> Self {
         Self { value, def }
     }
 
@@ -64,13 +64,13 @@ impl<'mem> PeekList<'mem> {
     /// # Panics
     ///
     /// Panics if the index is out of bounds
-    pub fn get(&self, index: usize) -> Option<ConstValue<'mem>> {
+    pub fn get(&self, index: usize) -> Option<Peek<'mem>> {
         if index >= self.len() {
             return None;
         }
 
         let item_ptr = unsafe { (self.def.vtable.get_item_ptr)(self.value.data(), index) };
-        Some(ConstValue {
+        Some(Peek {
             data: item_ptr,
             shape: self.def.t,
         })

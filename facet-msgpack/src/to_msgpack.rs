@@ -1,4 +1,5 @@
-use facet_core::Facet;
+use facet_core::{Def, Facet};
+
 use facet_reflect::Peek;
 use log::trace;
 use std::io::{self, Write};
@@ -12,51 +13,53 @@ pub fn to_vec<T: Facet>(value: &T) -> Vec<u8> {
 }
 
 /// Serializes any Facet type to a writer in MessagePack format
-fn serialize<W: Write>(peek: Peek<'_>, writer: &mut W) -> io::Result<()> {
-    match peek {
-        Peek::Value(pv) => {
+fn serialize<W: Write>(pv: Peek<'_>, writer: &mut W) -> io::Result<()> {
+    let shape = pv.shape();
+    match shape.def {
+        Def::Scalar(_) => {
             trace!("Serializing scalar");
             if pv.shape().is_type::<String>() {
-                let value = unsafe { pv.data().as_ref::<String>() };
+                let value = pv.get::<String>().unwrap();
                 write_str(writer, value)
             } else if pv.shape().is_type::<u64>() {
-                let value = unsafe { pv.data().as_ref::<u64>() };
+                let value = pv.get::<u64>().unwrap();
                 write_u64(writer, *value)
             } else if pv.shape().is_type::<u32>() {
-                let value = unsafe { pv.data().as_ref::<u32>() };
+                let value = pv.get::<u32>().unwrap();
                 write_u32(writer, *value)
             } else if pv.shape().is_type::<u16>() {
-                let value = unsafe { pv.data().as_ref::<u16>() };
+                let value = pv.get::<u16>().unwrap();
                 write_u16(writer, *value)
             } else if pv.shape().is_type::<u8>() {
-                let value = unsafe { pv.data().as_ref::<u8>() };
+                let value = pv.get::<u8>().unwrap();
                 write_u8(writer, *value)
             } else if pv.shape().is_type::<i64>() {
-                let value = unsafe { pv.data().as_ref::<i64>() };
+                let value = pv.get::<i64>().unwrap();
                 write_i64(writer, *value)
             } else if pv.shape().is_type::<i32>() {
-                let value = unsafe { pv.data().as_ref::<i32>() };
+                let value = pv.get::<i32>().unwrap();
                 write_i32(writer, *value)
             } else if pv.shape().is_type::<i16>() {
-                let value = unsafe { pv.data().as_ref::<i16>() };
+                let value = pv.get::<i16>().unwrap();
                 write_i16(writer, *value)
             } else if pv.shape().is_type::<i8>() {
-                let value = unsafe { pv.data().as_ref::<i8>() };
+                let value = pv.get::<i8>().unwrap();
                 write_i8(writer, *value)
             } else {
                 todo!("Unsupported scalar type: {}", pv.shape())
             }
         }
-        Peek::Struct(ps) => {
+        Def::Struct(sd) => {
             trace!("Serializing struct");
+            let ps = pv.into_struct()?;
 
             // Write map header
-            let fields: Vec<_> = ps.fields().collect();
+            let fields = sd.fields;
             write_map_len(writer, fields.len())?;
 
             // Write fields
-            for (name, field_peek) in fields {
-                write_str(writer, name)?;
+            for (field, field_peek) in ps.fields() {
+                write_str(writer, field.name)?;
                 serialize(field_peek, writer)?;
             }
             Ok(())

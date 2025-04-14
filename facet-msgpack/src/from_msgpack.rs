@@ -1,8 +1,8 @@
 use crate::constants::*;
 use crate::errors::Error as DecodeError;
 
-use facet_core::{Facet, Opaque};
-use facet_reflect::PokeUninit;
+use facet_core::{Def, Facet};
+use facet_reflect::{HeapValue, Wip};
 use log::trace;
 
 /// Deserializes MessagePack-encoded data into a type that implements `Facet`.
@@ -28,29 +28,26 @@ use log::trace;
 /// let user: User = from_str(&msgpack_data).unwrap();
 /// assert_eq!(user, User { id: 42, username: "user123".to_string() });
 /// ```
-pub fn from_str<T: Facet>(msgpack: &[u8]) -> Result<T, DecodeError> {
-    // Allocate a Poke for type T
-    let (poke, _guard) = PokeUninit::alloc::<T>();
-
-    // Deserialize the MessagePack into the Poke
-    let opaque = from_slice_opaque(poke, msgpack)?;
-
-    // Convert the Opaque to the concrete type T
-    let result = unsafe { opaque.read::<T>() };
-
-    Ok(result)
+pub fn from_slice<T: Facet>(msgpack: &[u8]) -> Result<T, DecodeError> {
+    from_slice_value(Wip::alloc::<T>(), msgpack)?.materialize::<T>()
 }
 
-/// Deserializes MessagePack-encoded data into a Facet Partial.
+/// Alias for from_slice for backward compatibility
+#[deprecated(since = "0.1.0", note = "Use from_slice instead")]
+pub fn from_str<T: Facet>(msgpack: &[u8]) -> Result<T, DecodeError> {
+    from_slice(msgpack)
+}
+
+/// Deserializes MessagePack-encoded data into a Facet value.
 ///
-/// This function takes a MessagePack byte array and populates a Partial object
-/// according to the shape description provided by the Partial.
+/// This function takes a MessagePack byte array and populates a Wip object
+/// according to the shape description, returning an Opaque value.
 ///
 /// # Example
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_msgpack::from_str;
+/// use facet_msgpack::from_slice;
 ///
 /// #[derive(Debug, Facet, PartialEq)]
 /// struct User {
@@ -65,74 +62,28 @@ pub fn from_str<T: Facet>(msgpack: &[u8]) -> Result<T, DecodeError> {
 ///     0x73, 0x65, 0x72, 0x31, 0x32, 0x33
 /// ];
 ///
-/// let user: User = from_str(&msgpack_data).unwrap();
+/// let user: User = from_slice(&msgpack_data).unwrap();
 /// assert_eq!(user, User { id: 42, username: "user123".to_string() });
 /// ```
 ///
 /// # Parameters
-/// * `partial` - A mutable reference to a Partial object that will be filled with deserialized data
+/// * `wip` - A Wip object that will be filled with deserialized data
 /// * `msgpack` - A byte slice containing MessagePack-encoded data
 ///
 /// # Returns
-/// * `Ok(())` if deserialization was successful
+/// * `Ok(Opaque)` containing the deserialized data if successful
 /// * `Err(DecodeError)` if an error occurred during deserialization
 ///
 /// # MessagePack Format
 /// This implementation follows the MessagePack specification:
 /// <https://github.com/msgpack/msgpack/blob/master/spec.md>
 #[allow(clippy::needless_lifetimes)]
-pub fn from_slice_opaque<'mem>(
-    poke: PokeUninit<'mem>,
-    msgpack: &[u8],
-) -> Result<Opaque<'mem>, DecodeError> {
+pub fn from_slice_value<'mem>(
+    wip: Wip<'mem>,
+    msgpack: &'mem [u8],
+) -> Result<HeapValue<'mem>, DecodeError> {
     let mut decoder = Decoder::new(msgpack);
-
-    fn deserialize_value<'mem>(
-        decoder: &mut Decoder,
-        poke: PokeUninit<'mem>,
-    ) -> Result<Opaque<'mem>, DecodeError> {
-        let shape = poke.shape();
-        trace!("Deserializing {:?}", shape);
-
-        let opaque = match poke {
-            PokeUninit::Scalar(pv) => {
-                trace!("Deserializing scalar");
-                if pv.shape().is_type::<String>() {
-                    let s = decoder.decode_string()?;
-                    let data = pv.put(s);
-                    data
-                } else if pv.shape().is_type::<u64>() {
-                    let n = decoder.decode_u64()?;
-                    pv.put(n)
-                } else {
-                    todo!("Unsupported scalar type: {}", pv.shape())
-                }
-                .data()
-            }
-            PokeUninit::Struct(mut ps) => {
-                trace!("Deserializing struct");
-                let map_len = decoder.decode_map_len()?;
-
-                for _ in 0..map_len {
-                    let key = decoder.decode_string()?;
-                    let (index, field_poke) = ps
-                        .field_by_name(&key)
-                        .map_err(|_| DecodeError::UnknownField(key))?;
-
-                    deserialize_value(decoder, field_poke)?;
-                    unsafe { ps.mark_initialized(index) };
-                }
-                ps.build_in_place()
-            }
-            _ => {
-                todo!("Unsupported shape: {:?}", shape)
-            }
-        };
-
-        Ok(opaque)
-    }
-
-    deserialize_value(&mut decoder, poke)
+    decoder.deserialize_value(wip)?.build()
 }
 
 struct Decoder<'input> {
@@ -254,5 +205,271 @@ impl<'input> Decoder<'input> {
             MSGPACK_MAP32 => Ok(self.decode_u32()? as usize),
             _ => Err(DecodeError::UnexpectedType),
         }
+    }
+
+    /// Decodes a MessagePack-encoded array length.
+    /// Handles the following MessagePack types:
+    /// - fixarray (0x90 - 0x9f): array with up to 15 elements
+    /// - array16 (0xdc): array with up to 65535 elements
+    /// - array32 (0xdd): array with up to 4294967295 elements
+    ///
+    /// Ref: <https://github.com/msgpack/msgpack/blob/master/spec.md#formats-array>
+    fn decode_array_len(&mut self) -> Result<usize, DecodeError> {
+        let prefix = self.decode_u8()?;
+
+        match prefix {
+            prefix @ MSGPACK_FIXARRAY_MIN..=MSGPACK_FIXARRAY_MAX => Ok((prefix & 0x0f) as usize),
+            MSGPACK_ARRAY16 => Ok(self.decode_u16()? as usize),
+            MSGPACK_ARRAY32 => Ok(self.decode_u32()? as usize),
+            _ => Err(DecodeError::UnexpectedType),
+        }
+    }
+
+    /// Decodes a MessagePack-encoded boolean value.
+    /// Handles the following MessagePack types:
+    /// - true (0xc3): boolean true
+    /// - false (0xc2): boolean false
+    ///
+    /// Ref: <https://github.com/msgpack/msgpack/blob/master/spec.md#formats-bool>
+    fn decode_bool(&mut self) -> Result<bool, DecodeError> {
+        match self.decode_u8()? {
+            MSGPACK_TRUE => Ok(true),
+            MSGPACK_FALSE => Ok(false),
+            _ => Err(DecodeError::UnexpectedType),
+        }
+    }
+
+    /// Decodes a MessagePack-encoded nil value.
+    /// Handles the following MessagePack types:
+    /// - nil (0xc0): nil/null value
+    ///
+    /// Ref: <https://github.com/msgpack/msgpack/blob/master/spec.md#formats-nil>
+    fn decode_nil(&mut self) -> Result<(), DecodeError> {
+        match self.decode_u8()? {
+            MSGPACK_NIL => Ok(()),
+            _ => Err(DecodeError::UnexpectedType),
+        }
+    }
+
+    /// Peeks at the next byte to check if it's a nil value without advancing the offset.
+    /// Returns true if the next value is nil, false otherwise.
+    fn peek_nil(&mut self) -> Result<bool, DecodeError> {
+        if self.offset >= self.input.len() {
+            return Err(DecodeError::InsufficientData);
+        }
+        Ok(self.input[self.offset] == MSGPACK_NIL)
+    }
+
+    /// Skips a MessagePack value of any type.
+    /// This is used when encountering unknown field names in a struct.
+    fn skip_value(&mut self) -> Result<(), DecodeError> {
+        let prefix = self.decode_u8()?;
+
+        match prefix {
+            // String formats
+            prefix @ MSGPACK_FIXSTR_MIN..=MSGPACK_FIXSTR_MAX => {
+                let len = (prefix & 0x1f) as usize;
+                if self.offset + len > self.input.len() {
+                    return Err(DecodeError::InsufficientData);
+                }
+                self.offset += len;
+                Ok(())
+            }
+            MSGPACK_STR8 => {
+                let len = self.decode_u8()? as usize;
+                if self.offset + len > self.input.len() {
+                    return Err(DecodeError::InsufficientData);
+                }
+                self.offset += len;
+                Ok(())
+            }
+            MSGPACK_STR16 => {
+                let len = self.decode_u16()? as usize;
+                if self.offset + len > self.input.len() {
+                    return Err(DecodeError::InsufficientData);
+                }
+                self.offset += len;
+                Ok(())
+            }
+            MSGPACK_STR32 => {
+                let len = self.decode_u32()? as usize;
+                if self.offset + len > self.input.len() {
+                    return Err(DecodeError::InsufficientData);
+                }
+                self.offset += len;
+                Ok(())
+            }
+
+            // Integer formats
+            MSGPACK_UINT8 => {
+                self.offset += 1;
+                Ok(())
+            }
+            MSGPACK_UINT16 => {
+                self.offset += 2;
+                Ok(())
+            }
+            MSGPACK_UINT32 => {
+                self.offset += 4;
+                Ok(())
+            }
+            MSGPACK_UINT64 => {
+                self.offset += 8;
+                Ok(())
+            }
+            MSGPACK_INT8 => {
+                self.offset += 1;
+                Ok(())
+            }
+            MSGPACK_INT16 => {
+                self.offset += 2;
+                Ok(())
+            }
+            MSGPACK_INT32 => {
+                self.offset += 4;
+                Ok(())
+            }
+            MSGPACK_INT64 => {
+                self.offset += 8;
+                Ok(())
+            }
+            // Fixed integers are already handled by decode_u8
+
+            // Boolean and nil
+            MSGPACK_NIL | MSGPACK_TRUE | MSGPACK_FALSE => Ok(()),
+
+            // Map format
+            prefix @ MSGPACK_FIXMAP_MIN..=MSGPACK_FIXMAP_MAX => {
+                let len = (prefix & 0x0f) as usize;
+                for _ in 0..len {
+                    self.skip_value()?; // Skip key
+                    self.skip_value()?; // Skip value
+                }
+                Ok(())
+            }
+            MSGPACK_MAP16 => {
+                let len = self.decode_u16()? as usize;
+                for _ in 0..len {
+                    self.skip_value()?; // Skip key
+                    self.skip_value()?; // Skip value
+                }
+                Ok(())
+            }
+            MSGPACK_MAP32 => {
+                let len = self.decode_u32()? as usize;
+                for _ in 0..len {
+                    self.skip_value()?; // Skip key
+                    self.skip_value()?; // Skip value
+                }
+                Ok(())
+            }
+
+            // Array format
+            prefix @ MSGPACK_FIXARRAY_MIN..=MSGPACK_FIXARRAY_MAX => {
+                let len = (prefix & 0x0f) as usize;
+                for _ in 0..len {
+                    self.skip_value()?;
+                }
+                Ok(())
+            }
+            MSGPACK_ARRAY16 => {
+                let len = self.decode_u16()? as usize;
+                for _ in 0..len {
+                    self.skip_value()?;
+                }
+                Ok(())
+            }
+            MSGPACK_ARRAY32 => {
+                let len = self.decode_u32()? as usize;
+                for _ in 0..len {
+                    self.skip_value()?;
+                }
+                Ok(())
+            }
+
+            _ => Err(DecodeError::UnexpectedType),
+        }
+    }
+
+    fn deserialize_value(&mut self, wip: Wip<'input>) -> Result<Wip<'input>, DecodeError> {
+        let shape = wip.shape();
+        trace!("Deserializing {:?}", shape);
+
+        let wip = match shape.def {
+            Def::Scalar(_) => {
+                trace!("Deserializing scalar");
+                if shape.is_type::<String>() {
+                    let s = self.decode_string()?;
+                    wip.put(s).unwrap()
+                } else if shape.is_type::<u64>() {
+                    let n = self.decode_u64()?;
+                    wip.put(n).unwrap()
+                } else if shape.is_type::<u32>() {
+                    let n = self.decode_u64()?;
+                    if n > u32::MAX as u64 {
+                        return Err(DecodeError::IntegerOverflow);
+                    }
+                    wip.put(n as u32).unwrap()
+                } else if shape.is_type::<u16>() {
+                    let n = self.decode_u64()?;
+                    if n > u16::MAX as u64 {
+                        return Err(DecodeError::IntegerOverflow);
+                    }
+                    wip.put(n as u16).unwrap()
+                } else if shape.is_type::<u8>() {
+                    let n = self.decode_u64()?;
+                    if n > u8::MAX as u64 {
+                        return Err(DecodeError::IntegerOverflow);
+                    }
+                    wip.put(n as u8).unwrap()
+                } else if shape.is_type::<i64>() {
+                    // This is a simplification - need to implement proper int decoding
+                    let n = self.decode_u64()?;
+                    if n > i64::MAX as u64 {
+                        return Err(DecodeError::IntegerOverflow);
+                    }
+                    wip.put(n as i64).unwrap()
+                } else if shape.is_type::<i32>() {
+                    let n = self.decode_u64()?;
+                    if n > i32::MAX as u64 {
+                        return Err(DecodeError::IntegerOverflow);
+                    }
+                    wip.put(n as i32).unwrap()
+                } else if shape.is_type::<bool>() {
+                    let b = self.decode_bool()?;
+                    wip.put(b).unwrap()
+                } else {
+                    return Err(DecodeError::UnsupportedType(format!("{}", shape)));
+                }
+            }
+            Def::Struct(sd) => {
+                trace!("Deserializing struct");
+                let map_len = self.decode_map_len()?;
+
+                let mut wip = wip;
+                for _ in 0..map_len {
+                    let key = self.decode_string()?;
+                    match wip.field_index(&key) {
+                        Some(index) => {
+                            wip = self
+                                .deserialize_value(wip.field(index).unwrap())?
+                                .pop()
+                                .unwrap();
+                        }
+                        None => {
+                            // Skip unknown field value
+                            self.skip_value()?;
+                            trace!("Skipping unknown field: {}", key);
+                        }
+                    }
+                }
+                wip
+            }
+            _ => {
+                return Err(DecodeError::UnsupportedShape(format!("{:?}", shape)));
+            }
+        };
+
+        Ok(wip)
     }
 }

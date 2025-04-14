@@ -1,12 +1,12 @@
 use facet_core::{Field, FieldError, Struct};
 
-use crate::ConstValue;
+use crate::Peek;
 
 /// Lets you read from a struct (implements read-only struct operations)
 #[derive(Clone, Copy)]
 pub struct PeekStruct<'mem> {
     /// the underlying value
-    pub(crate) value: ConstValue<'mem>,
+    pub(crate) value: Peek<'mem>,
 
     /// the definition of the struct!
     pub(crate) def: Struct,
@@ -27,13 +27,13 @@ impl<'mem> PeekStruct<'mem> {
 
     /// Returns the value of the field at the given index
     #[inline(always)]
-    pub fn field(&self, index: usize) -> Result<ConstValue<'mem>, FieldError> {
+    pub fn field(&self, index: usize) -> Result<Peek<'mem>, FieldError> {
         self.def
             .fields
             .get(index)
             .map(|field| unsafe {
                 let field_data = self.value.data().field(field.offset);
-                ConstValue {
+                Peek {
                     data: field_data,
                     shape: field.shape,
                 }
@@ -43,7 +43,7 @@ impl<'mem> PeekStruct<'mem> {
 
     /// Gets the value of the field with the given name
     #[inline]
-    pub fn field_by_name(&self, name: &str) -> Result<ConstValue<'mem>, FieldError> {
+    pub fn field_by_name(&self, name: &str) -> Result<Peek<'mem>, FieldError> {
         for (i, field) in self.def.fields.iter().enumerate() {
             if field.name == name {
                 return self.field(i);
@@ -54,7 +54,7 @@ impl<'mem> PeekStruct<'mem> {
 
     /// Iterates over all fields in this struct, providing both name and value
     #[inline]
-    pub fn fields(&self) -> impl Iterator<Item = (&'static Field, ConstValue<'mem>)> + '_ {
+    pub fn fields(&self) -> impl Iterator<Item = (&'static Field, Peek<'mem>)> + '_ {
         (0..self.field_count()).filter_map(|i| {
             let field = self.def.fields.get(i)?;
             let value = self.field(i).ok()?;
