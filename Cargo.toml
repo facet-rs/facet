@@ -23,7 +23,7 @@ members = [
     # "facet-json",
     "facet-msgpack",
     "facet-pretty",
-    # "facet-toml",
+    "facet-toml",
     "facet-urlencoded",
     "facet-yaml",
 ]

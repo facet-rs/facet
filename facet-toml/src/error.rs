@@ -2,7 +2,7 @@
 
 /// Any error
 #[derive(Debug, Clone)]
-pub struct AnyErr(String);
+pub struct AnyErr(pub(crate) String);
 
 impl core::fmt::Display for AnyErr {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
