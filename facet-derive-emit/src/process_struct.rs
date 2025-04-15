@@ -9,7 +9,7 @@ use super::*;
 ///     bar: String,
 /// }
 /// ```
-pub(crate) fn process_struct(parsed: Struct) -> proc_macro::TokenStream {
+pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     let struct_name = parsed.name.to_string();
 
     // Generate field definitions
@@ -157,5 +157,5 @@ unsafe impl<{generics_def}> ::facet::Facet for {struct_name}<{generics_use}> {wh
         "#
     );
 
-    output.into_token_stream().into()
+    output.into_token_stream()
 }

@@ -1,0 +1,175 @@
+use facet_derive_parse::*;
+
+mod process_enum;
+mod process_struct;
+
+pub fn facet_derive(input: TokenStream) -> TokenStream {
+    let mut i = input.to_token_iter();
+
+    // Parse as TypeDecl
+    match i.parse::<Cons<AdtDecl, EndOfStream>>() {
+        Ok(it) => match it.first {
+            AdtDecl::Struct(parsed) => process_struct::process_struct(parsed),
+            AdtDecl::Enum(parsed) => process_enum::process_enum(parsed),
+        },
+        Err(err) => {
+            panic!(
+                "Could not parse type declaration: {}\nError: {}",
+                input, err
+            );
+        }
+    }
+}
+
+fn generics_split_for_impl(generics: Option<&GenericParams>) -> (String, String) {
+    let Some(generics) = generics else {
+        return ("".to_string(), "".to_string());
+    };
+    let mut generics_impl = Vec::new();
+    let mut generics_target = Vec::new();
+
+    for param in generics.params.0.iter() {
+        match &param.value {
+            GenericParam::Type {
+                name,
+                bounds,
+                default: _,
+            } => {
+                let name = name.to_string();
+                let mut impl_ = name.clone();
+                if let Some(bounds) = bounds {
+                    impl_.push_str(&format!(": {}", VerbatimDisplay(&bounds.second)));
+                }
+                generics_impl.push(impl_);
+                generics_target.push(name);
+            }
+            GenericParam::Lifetime { name, bounds } => {
+                let name = name.to_string();
+                let mut impl_ = name.clone();
+                if let Some(bounds) = bounds {
+                    impl_.push_str(&format!(": {}", VerbatimDisplay(&bounds.second)));
+                }
+                generics_impl.push(impl_);
+                generics_target.push(name);
+            }
+            GenericParam::Const {
+                _const,
+                name,
+                _colon,
+                typ,
+                default: _,
+            } => {
+                let name = name.to_string();
+                generics_impl.push(format!("const {}: {}", name, VerbatimDisplay(typ)));
+                generics_target.push(name);
+            }
+        }
+    }
+    let generics_impl = generics_impl.join(", ");
+    let generics_target = generics_target.join(", ");
+    (generics_impl, generics_target)
+}
+
+/// Converts PascalCase to UPPER_SNAKE_CASE
+pub(crate) fn to_upper_snake_case(input: &str) -> String {
+    input
+        .chars()
+        .enumerate()
+        .fold(String::new(), |mut acc, (i, c)| {
+            if c.is_uppercase() {
+                if i > 0 {
+                    acc.push('_');
+                }
+                acc.push(c.to_ascii_uppercase());
+            } else {
+                acc.push(c.to_ascii_uppercase());
+            }
+            acc
+        })
+}
+
+/// Generate a static declaration that exports the crate
+pub(crate) fn generate_static_decl(type_name: &str) -> String {
+    format!(
+        "#[used]\nstatic {}_SHAPE: &'static ::facet::Shape = <{} as ::facet::Facet>::SHAPE;",
+        to_upper_snake_case(type_name),
+        type_name
+    )
+}
+
+pub(crate) fn build_maybe_doc(attrs: &[Attribute]) -> String {
+    let doc_lines: Vec<_> = attrs
+        .iter()
+        .filter_map(|attr| match &attr.body.content {
+            AttributeInner::Doc(doc_inner) => Some(doc_inner.value.value()),
+            _ => None,
+        })
+        .collect();
+
+    if doc_lines.is_empty() {
+        String::new()
+    } else {
+        format!(r#".doc(&[{}])"#, doc_lines.join(","))
+    }
+}
+
+pub(crate) fn gen_struct_field(
+    field_name: &str,
+    struct_name: &str,
+    generics: &str,
+    attrs: &[Attribute],
+) -> String {
+    // Determine field flags
+    let mut flags = "::facet::FieldFlags::EMPTY";
+    let mut attribute_list: Vec<String> = vec![];
+    let mut doc_lines: Vec<&str> = vec![];
+    let mut shape_of = "shape_of";
+    for attr in attrs {
+        match &attr.body.content {
+            AttributeInner::Facet(facet_attr) => match &facet_attr.inner.content {
+                FacetInner::Sensitive(_ksensitive) => {
+                    flags = "::facet::FieldFlags::SENSITIVE";
+                    attribute_list.push("::facet::FieldAttribute::Sensitive".to_string());
+                }
+                FacetInner::Invariants(_invariant_inner) => {
+                    panic!("fields cannot have invariants")
+                }
+                FacetInner::Opaque(_kopaque) => {
+                    shape_of = "shape_of_opaque";
+                }
+                FacetInner::Other(tt) => {
+                    attribute_list.push(format!(
+                        r#"::facet::FieldAttribute::Arbitrary({:?})"#,
+                        tt.tokens_to_string()
+                    ));
+                }
+            },
+            AttributeInner::Doc(doc_inner) => doc_lines.push(doc_inner.value.value()),
+            AttributeInner::Repr(_) => {
+                // muffin
+            }
+            AttributeInner::Any(_) => {
+                // muffin two
+            }
+        }
+    }
+    let attributes = attribute_list.join(",");
+
+    let maybe_field_doc = if doc_lines.is_empty() {
+        String::new()
+    } else {
+        format!(r#".doc(&[{}])"#, doc_lines.join(","))
+    };
+
+    // Generate each field definition
+    format!(
+        "::facet::Field::builder()
+    .name(\"{field_name}\")
+    .shape(|| ::facet::{shape_of}(&|s: &{struct_name}<{generics}>| &s.{field_name}))
+    .offset(::core::mem::offset_of!({struct_name}<{generics}>, {field_name}))
+    .flags({flags})
+    .attributes(&[{attributes}])
+    {maybe_field_doc}
+    .build()"
+    )
+}

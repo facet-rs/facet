@@ -20,7 +20,7 @@ categories = ["development-tools", "encoding"]
 proc-macro = true
 
 [dependencies]
-unsynn = "0.0.26"
+facet-derive-emit = { version = "0.3.0", path = "../facet-derive-emit" }
 
 # cf. https://hachyderm.io/@epage/114141126315983016
 [target.'cfg(any())'.dependencies]

@@ -1,0 +1,20 @@
+[package]
+name = "facet-derive-emit"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Proc macro for emitting derived 'Facet' trait code in facet"
+keywords = [
+    "reflection",
+    "introspection",
+    "serialization",
+    "deserialization",
+    "derive",
+]
+categories = ["development-tools", "encoding"]
+
+[dependencies]
+facet-derive-parse = { version = "0.3.0", path = "../facet-derive-parse" }

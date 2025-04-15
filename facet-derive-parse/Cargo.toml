@@ -1,0 +1,20 @@
+[package]
+name = "facet-derive-parse"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Parser support for facet-derive's macro expansion"
+keywords = [
+    "reflection",
+    "introspection",
+    "serialization",
+    "deserialization",
+    "derive",
+]
+categories = ["development-tools", "encoding"]
+
+[dependencies]
+unsynn = "0.0.26"

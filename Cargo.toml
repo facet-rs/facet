@@ -2,8 +2,12 @@
 members = [
     # core
     "facet-core",
-    "facet-derive",
     "facet",
+
+    # derive macro
+    "facet-derive-parse",
+    "facet-derive-emit",
+    "facet-derive",
 
     # reflection
     "facet-reflect",

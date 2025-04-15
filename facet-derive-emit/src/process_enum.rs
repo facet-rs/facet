@@ -1,5 +1,4 @@
 use super::*;
-use unsynn::*;
 
 // mirrors facet_core::types::EnumRepr
 #[derive(Clone, Copy)]
@@ -68,7 +67,7 @@ type EnumVariant = Delimited<EnumVariantLike, Comma>;
 ///     Custom { r: u8, g: u8, b: u8 }
 /// }
 /// ```
-pub(crate) fn process_enum(parsed: Enum) -> proc_macro::TokenStream {
+pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     let enum_name = parsed.name.to_string();
     let (generics_def, generics_use) = generics_split_for_impl(parsed.generics.as_ref());
     let where_clauses = parsed
@@ -121,7 +120,6 @@ pub(crate) fn process_enum(parsed: Enum) -> proc_macro::TokenStream {
             _ => {
                 return r#"compile_error!("Facet only supports enums with a primitive representation (e.g. #[repr(u8)]) or C-style (e.g. #[repr(C)]")"#
             .into_token_stream()
-            .into();
             }
         }
     }
@@ -149,7 +147,6 @@ pub(crate) fn process_enum(parsed: Enum) -> proc_macro::TokenStream {
         _ => {
             return r#"compile_error!("Enums must have an explicit representation (e.g. #[repr(u8)] or #[repr(C)]) to be used with Facet")"#
             .into_token_stream()
-            .into();
         }
     };
 
@@ -206,7 +203,7 @@ unsafe impl<{generics_def}> ::facet::Facet for {enum_name}<{generics_use}> {wher
     // Don't use panic for debugging as it makes code unreachable
 
     // Return the generated code
-    output.into_token_stream().into()
+    output.into_token_stream()
 }
 
 /// C-style enums (i.e. #[repr(C)], #[repr(C, u*)] and #[repr(C, i*)]) are laid out

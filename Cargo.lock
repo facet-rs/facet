@@ -172,6 +172,20 @@ name = "facet-derive"
 version = "0.1.20"
 dependencies = [
  "facet-core",
+ "facet-derive-emit",
+]
+
+[[package]]
+name = "facet-derive-emit"
+version = "0.3.0"
+dependencies = [
+ "facet-derive-parse",
+]
+
+[[package]]
+name = "facet-derive-parse"
+version = "0.3.0"
+dependencies = [
  "unsynn",
 ]
 
