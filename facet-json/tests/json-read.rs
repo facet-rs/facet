@@ -21,6 +21,9 @@ fn json_read_simple_struct() {
     };
     assert_eq!(s.name, "Alice");
     assert_eq!(s.age, 30);
+    assert_eq!(s.hobbies.len(), 2);
+    assert_eq!(s.hobbies[0], "reading");
+    assert_eq!(s.hobbies[1], "coding");
 }
 
 // #[test]

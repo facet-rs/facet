@@ -1,7 +1,10 @@
 use facet_ansi::Stylize as _;
-use facet_core::Facet;
-use facet_reflect::Wip;
+use facet_core::{Def, Facet, ScalarAffinity};
+use facet_reflect::{HeapValue, Wip};
 use log::trace;
+
+use alloc::string::String;
+use alloc::vec::Vec;
 
 /// A JSON parse error, with context. Never would've guessed huh.
 #[derive(Debug)]
@@ -31,6 +34,8 @@ pub enum JsonErrorKind {
     UnexpectedEof,
     /// An unexpected character was encountered in the input.
     UnexpectedCharacter(char),
+    /// A number is out of range.
+    NumberOutOfRange(f64),
 }
 
 impl core::fmt::Display for JsonParseErrorWithContext<'_> {
@@ -69,8 +74,7 @@ pub fn from_str<T: Facet>(json: &str) -> Result<T, JsonParseErrorWithContext<'_>
 /// A result containing the deserialized value of type `T` or a `JsonParseErrorWithContext`.
 pub fn from_slice<T: Facet>(json: &[u8]) -> Result<T, JsonParseErrorWithContext<'_>> {
     let wip = Wip::alloc::<T>();
-    let wip = from_slice_wip(wip, json)?;
-    let heap_value = wip.build().unwrap();
+    let heap_value = from_slice_wip(wip, json)?;
     Ok(heap_value.materialize::<T>().unwrap())
 }
 
@@ -87,7 +91,7 @@ pub fn from_slice<T: Facet>(json: &[u8]) -> Result<T, JsonParseErrorWithContext<
 pub fn from_slice_wip<'input, 'a>(
     mut wip: Wip<'a>,
     input: &'input [u8],
-) -> Result<Wip<'a>, JsonParseErrorWithContext<'input>> {
+) -> Result<HeapValue<'a>, JsonParseErrorWithContext<'input>> {
     let mut pos = 0;
 
     macro_rules! err {
@@ -157,14 +161,13 @@ pub fn from_slice_wip<'input, 'a>(
     let mut stack: Vec<Expect> = Vec::new();
     stack.push(Expect::Value(WhyValue::TopLevel));
 
-    'main: loop {
+    loop {
         let frame_count = wip.frames_count();
         let expect = match stack.pop() {
             Some(expect) => expect,
             None => {
                 if frame_count == 1 {
-                    // we're done!
-                    break;
+                    return Ok(wip.build().unwrap());
                 } else {
                     bail!(JsonErrorKind::UnexpectedEof);
                 }
@@ -178,7 +181,7 @@ pub fn from_slice_wip<'input, 'a>(
         pos += 1;
 
         match expect {
-            Expect::Value(_why_value) => {
+            Expect::Value(why) => {
                 match c {
                     b'{' => {
                         let Some(c) = input.get(pos).copied() else {
@@ -187,10 +190,7 @@ pub fn from_slice_wip<'input, 'a>(
                         match c {
                             b'}' => {
                                 pos += 1;
-                                if frame_count == 1 {
-                                    // alright, we're done!
-                                    break 'main;
-                                } else {
+                                if frame_count > 1 {
                                     // just finished reading a value I guess
                                     wip = wip.pop().unwrap();
                                 }
@@ -208,6 +208,8 @@ pub fn from_slice_wip<'input, 'a>(
                         let Some(c) = input.get(pos).copied() else {
                             bail!(JsonErrorKind::UnexpectedEof);
                         };
+
+                        wip = wip.begin_pushback().unwrap();
                         match c {
                             b']' => {
                                 // an array just closed, somewhere
@@ -242,7 +244,29 @@ pub fn from_slice_wip<'input, 'a>(
                                 }
                             }
                         }
-                        trace!("Parsed string value: {:?}", value.yellow());
+                        trace!(
+                            "Parsed string value: {:?} for shape {}",
+                            (&value).yellow(),
+                            wip.shape()
+                        );
+
+                        match why {
+                            WhyValue::TopLevel => {
+                                wip = wip.parse(&value).unwrap();
+                            }
+                            WhyValue::ArrayElement => {
+                                wip = wip.push().unwrap();
+                                wip = wip.parse(&value).unwrap();
+                                wip = wip.pop().unwrap();
+                            }
+                            WhyValue::ObjectValue => {
+                                wip = wip.parse(&value).unwrap();
+                                wip = wip.pop().unwrap();
+                            }
+                            WhyValue::ObjectKey => {
+                                wip = wip.field_named(&value).unwrap();
+                            }
+                        }
                     }
                     b'0'..=b'9' => {
                         let start = pos - 1;
@@ -259,6 +283,58 @@ pub fn from_slice_wip<'input, 'a>(
                         trace!("Parsed number value: {:?}", number.yellow());
                         let number = number.parse::<f64>().unwrap();
                         trace!("Parsed number value: {:?}", number.yellow());
+
+                        let shape = wip.shape();
+                        match shape.def {
+                            Def::Scalar(sd) => match sd.affinity {
+                                ScalarAffinity::Number(_na) => {
+                                    if shape.is_type::<u8>() {
+                                        if number >= 0.0 && number <= u8::MAX as f64 {
+                                            let value = number as u8;
+                                            wip = wip.put::<u8>(value).unwrap();
+                                        } else {
+                                            bailp!(JsonErrorKind::NumberOutOfRange(number));
+                                        }
+                                    } else if shape.is_type::<u16>() {
+                                        if number >= 0.0 && number <= u16::MAX as f64 {
+                                            let value = number as u16;
+                                            wip = wip.put::<u16>(value).unwrap();
+                                        } else {
+                                            bailp!(JsonErrorKind::NumberOutOfRange(number));
+                                        }
+                                    } else if shape.is_type::<u32>() {
+                                        if number >= 0.0 && number <= u32::MAX as f64 {
+                                            let value = number as u32;
+                                            wip = wip.put::<u32>(value).unwrap();
+                                        } else {
+                                            bailp!(JsonErrorKind::NumberOutOfRange(number));
+                                        }
+                                    } else if shape.is_type::<u64>() {
+                                        if number >= 0.0 && number <= u64::MAX as f64 {
+                                            let value = number as u64;
+                                            wip = wip.put::<u64>(value).unwrap();
+                                        } else {
+                                            bailp!(JsonErrorKind::NumberOutOfRange(number));
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    todo!()
+                                }
+                            },
+                            _ => {
+                                todo!()
+                            }
+                        }
+
+                        match why {
+                            WhyValue::TopLevel => {}
+                            WhyValue::ObjectKey => todo!(),
+                            WhyValue::ObjectValue => {
+                                wip = wip.pop().unwrap();
+                            }
+                            WhyValue::ArrayElement => todo!(),
+                        }
                     }
                     c => {
                         bailp!(JsonErrorKind::UnexpectedCharacter(c as char));
@@ -295,6 +371,9 @@ pub fn from_slice_wip<'input, 'a>(
                         match why {
                             WhyComma::Object => {
                                 // we finished the object, neat
+                                if frame_count > 1 {
+                                    wip = wip.pop().unwrap();
+                                }
                             }
                             _ => {
                                 bailp!(JsonErrorKind::UnexpectedCharacter(c as char));
@@ -305,6 +384,7 @@ pub fn from_slice_wip<'input, 'a>(
                         match why {
                             WhyComma::Array => {
                                 // we finished the array, neat
+                                wip = wip.pop().unwrap();
                             }
                             _ => {
                                 bailp!(JsonErrorKind::UnexpectedCharacter(c as char));
@@ -318,5 +398,4 @@ pub fn from_slice_wip<'input, 'a>(
             },
         }
     }
-    Ok(wip)
 }
