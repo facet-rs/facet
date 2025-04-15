@@ -77,7 +77,6 @@ gen *args:
     cargo run -p facet-dev gen -- {{args}}
 
 code-quality: gen
-    cargo fmt --all
     just absolve
 
 code-quality-ci:
