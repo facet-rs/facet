@@ -151,8 +151,6 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         );
     }
 
-    let generics = &parsed.generics;
-
     // Generate the impl
     let output = format!(
         r#"
