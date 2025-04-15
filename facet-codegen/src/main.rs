@@ -140,10 +140,7 @@ pub fn enqueue_readme_jobs(sender: std::sync::mpsc::Sender<Job>) {
             let readme_path = crate_path.join("README.md");
 
             // Read old_content from README.md if exists, otherwise None
-            let old_content = match fs::read(&readme_path) {
-                Ok(data) => Some(data),
-                Err(_) => None,
-            };
+            let old_content = fs::read(&readme_path).ok();
 
             // Build the job
             let job = Job {
@@ -186,10 +183,7 @@ pub fn enqueue_readme_jobs(sender: std::sync::mpsc::Sender<Job>) {
         let readme_path = workspace_dir.join("README.md");
 
         // Read old_content from README.md if exists, otherwise None
-        let old_content = match fs::read(&readme_path) {
-            Ok(data) => Some(data),
-            Err(_) => None,
-        };
+        let old_content = fs::read(&readme_path).ok();
 
         // Build the job
         let job = Job {
@@ -224,10 +218,7 @@ pub fn enqueue_tuple_job(sender: std::sync::mpsc::Sender<Job>) {
     let content = output.into_bytes();
 
     // Attempt to read existing file
-    let old_content = match fs::read(&base_path) {
-        Ok(data) => Some(data),
-        Err(_) => None,
-    };
+    let old_content = fs::read(base_path).ok();
 
     let job = Job {
         path: base_path.to_path_buf(),
@@ -253,10 +244,7 @@ pub fn enqueue_sample_job(sender: std::sync::mpsc::Sender<Job>) {
     let content = code.into_bytes();
 
     // Attempt to read existing file
-    let old_content = match fs::read(&target_path) {
-        Ok(data) => Some(data),
-        Err(_) => None,
-    };
+    let old_content = fs::read(&target_path).ok();
 
     let job = Job {
         path: target_path,
@@ -294,7 +282,7 @@ pub fn enqueue_rustfmt_jobs(sender: std::sync::mpsc::Sender<Job>, staged_files: 
         };
 
         // Format the content via rustfmt (edition 2024)
-        let mut cmd = Command::new("rustfmt")
+        let cmd = Command::new("rustfmt")
             .arg("--edition")
             .arg("2024")
             .arg("--emit")
@@ -361,7 +349,7 @@ pub fn enqueue_rustfmt_jobs(sender: std::sync::mpsc::Sender<Job>, staged_files: 
     }
 }
 
-pub fn show_jobs_and_apply_if_consent_is_given(jobs: &mut Vec<Job>) {
+pub fn show_jobs_and_apply_if_consent_is_given(jobs: &mut [Job]) {
     use console::{Emoji, style};
     use dialoguer::{Select, theme::ColorfulTheme};
     // Emojis for display

@@ -113,11 +113,9 @@ pub fn cargo_expand_and_format() -> String {
     let expanded_code = format!("{}\n#![allow(warnings)]\n{}", doc_comments, expanded_code);
 
     // Ensure a trailing newline for consistency
-    let expanded_code = if expanded_code.is_empty() {
+    if expanded_code.is_empty() {
         String::new()
     } else {
         format!("{}\n", expanded_code)
-    };
-
-    expanded_code
+    }
 }
