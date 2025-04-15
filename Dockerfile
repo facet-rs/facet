@@ -25,7 +25,10 @@ RUN apt-get update && apt-get install -y curl && \
     rm -rf /var/lib/apt/lists/*
 
 # Install tools using cargo-binstall
-RUN cargo binstall -y just cargo-nextest cargo-tarpaulin
+RUN cargo binstall -y just cargo-nextest
+
+# Install cargo-tarpaulin from source
+RUN cargo install --locked cargo-tarpaulin
 
 # Set environment variables
 ENV CARGO_INCREMENTAL=0
