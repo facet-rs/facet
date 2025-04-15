@@ -264,6 +264,7 @@ pub fn enqueue_readme_jobs(sender: std::sync::mpsc::Sender<Job>) {
 }
 
 pub fn enqueue_tuple_job(sender: std::sync::mpsc::Sender<Job>) {
+    use std::process::{Command, Stdio};
     use std::time::Instant;
 
     // Path where tuple impls should be written
@@ -274,8 +275,50 @@ pub fn enqueue_tuple_job(sender: std::sync::mpsc::Sender<Job>) {
     // Generate the tuple impls code
     let start = Instant::now();
     let output = tuples::generate();
-    let content = output.into_bytes();
     let duration = start.elapsed();
+
+    // Format content via rustfmt edition 2024
+    let mut rustfmt_cmd = Command::new("rustfmt")
+        .arg("--edition")
+        .arg("2024")
+        .arg("--emit")
+        .arg("stdout")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to start rustfmt");
+
+    {
+        use std::io::Write;
+        let stdin = rustfmt_cmd
+            .stdin
+            .as_mut()
+            .expect("failed to open rustfmt stdin");
+        stdin
+            .write_all(output.as_bytes())
+            .expect("failed to write to rustfmt stdin");
+    }
+
+    let rustfmt_output = rustfmt_cmd
+        .wait_with_output()
+        .expect("failed to read rustfmt stdout");
+
+    if !rustfmt_output.status.success() {
+        let stderr = String::from_utf8_lossy(&rustfmt_output.stderr);
+        error!(
+            "rustfmt failed formatting {}: {}",
+            base_path.display(),
+            stderr
+        );
+    }
+
+    let content = if rustfmt_output.status.success() {
+        rustfmt_output.stdout
+    } else {
+        output.into_bytes()
+    };
+
     let size_mb = (content.len() as f64) / (1024.0 * 1024.0);
     let secs = duration.as_secs_f64();
     let mbps = if secs > 0.0 { size_mb / secs } else { 0.0 };
