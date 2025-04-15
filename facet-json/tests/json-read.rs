@@ -1,26 +1,26 @@
 // use std::num::NonZero;
 
-// use facet::Facet;
-// use facet_json::from_str;
+use facet::Facet;
+use facet_json::from_str;
 
-// #[test]
-// fn json_read_simple_struct() {
-//     facet_testhelpers::setup();
+#[test]
+fn json_read_simple_struct() {
+    facet_testhelpers::setup();
 
-//     #[derive(Facet)]
-//     struct TestStruct {
-//         name: String,
-//         age: u64,
-//     }
-//     let json = r#"{"name": "Alice", "age": 30}"#;
+    #[derive(Facet)]
+    struct TestStruct {
+        name: String,
+        age: u64,
+    }
+    let json = r#"{"name": "Alice", "age": 30}"#;
 
-//     let s: TestStruct = match from_str(json) {
-//         Ok(s) => s,
-//         Err(e) => panic!("Error deserializing JSON: {}", e),
-//     };
-//     assert_eq!(s.name, "Alice");
-//     assert_eq!(s.age, 30);
-// }
+    let s: TestStruct = match from_str(json) {
+        Ok(s) => s,
+        Err(e) => panic!("Error deserializing JSON: {}", e),
+    };
+    assert_eq!(s.name, "Alice");
+    assert_eq!(s.age, 30);
+}
 
 // #[test]
 // fn json_read_empty_struct() {

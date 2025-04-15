@@ -160,6 +160,7 @@ name = "facet-json"
 version = "0.2.2"
 dependencies = [
  "facet",
+ "facet-ansi",
  "facet-core",
  "facet-reflect",
  "facet-testhelpers",
