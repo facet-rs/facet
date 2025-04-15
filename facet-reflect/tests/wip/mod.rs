@@ -21,3 +21,6 @@ mod struct_leak;
 
 #[cfg(feature = "std")]
 mod put_vec_leak;
+
+#[cfg(feature = "std")]
+mod option_leak;

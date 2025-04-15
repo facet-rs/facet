@@ -16,6 +16,7 @@ std = ["alloc"]
 alloc = []
 
 [dependencies]
+bitflags = "2.9.0"
 facet-ansi = { path = "../facet-ansi" }
 facet-core = { path = "../facet-core", version = "0.5.3" }
 log = "0.4.27"

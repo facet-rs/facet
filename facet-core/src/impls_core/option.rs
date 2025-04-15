@@ -1,7 +1,8 @@
-use core::alloc::Layout;
+use core::{alloc::Layout, mem::MaybeUninit};
 
 use crate::{
-    ConstTypeId, Def, Facet, OptionDef, OptionVTable, PtrConst, Shape, value_vtable_inner,
+    ConstTypeId, Def, Facet, OptionDef, OptionVTable, PtrConst, PtrUninit, Shape,
+    value_vtable_inner,
 };
 
 unsafe impl<T: Facet> Facet for Option<T> {
@@ -11,29 +12,29 @@ unsafe impl<T: Facet> Facet for Option<T> {
             .layout(Layout::new::<Self>())
             .def(Def::Option(
                 OptionDef::builder()
-                    .t(T::SHAPE)
+                    .t(|| T::SHAPE)
                     .vtable(
                         const {
-                            &OptionVTable {
-                                is_some_fn: |option| unsafe { option.get::<Option<T>>().is_some() },
-                                get_value_fn: |option| unsafe {
+                            &OptionVTable::builder()
+                                .is_some(|option| unsafe { option.get::<Option<T>>().is_some() })
+                                .get_value(|option| unsafe {
                                     option
                                         .get::<Option<T>>()
                                         .as_ref()
                                         .map(|t| PtrConst::new(t as *const T))
-                                },
-                                init_some_fn: |option, value| unsafe {
+                                })
+                                .init_some(|option, value| unsafe {
                                     option.put(Option::Some(value.read::<T>()))
-                                },
-                                init_none_fn: |option| unsafe { option.put(<Option<T>>::None) },
-                                replace_with_fn: |option, value| unsafe {
+                                })
+                                .init_none(|option| unsafe { option.put(<Option<T>>::None) })
+                                .replace_with(|option, value| unsafe {
                                     let option = option.as_mut::<Option<T>>();
                                     match value {
                                         Some(value) => option.replace(value.read::<T>()),
                                         None => option.take(),
                                     };
-                                },
-                            }
+                                })
+                                .build()
                         },
                     )
                     .build(),
@@ -68,6 +69,19 @@ unsafe impl<T: Facet> Facet for Option<T> {
                                 write!(f, "None")?;
                             }
                             Ok(())
+                        });
+                    }
+
+                    if T::SHAPE.is_from_str() {
+                        vtable.parse = Some(|str, target| {
+                            let mut t = MaybeUninit::<T>::uninit();
+                            let parse = unsafe { T::SHAPE.vtable.parse.unwrap_unchecked() };
+                            let _res = unsafe { (parse)(str, PtrUninit::new(t.as_mut_ptr()))? };
+                            // res points to t so we can't drop it yet. the option is not initialized though
+                            unsafe {
+                                target.put(Some(t.assume_init()));
+                                Ok(target.assume_init())
+                            }
                         });
                     }
 

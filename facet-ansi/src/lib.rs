@@ -263,6 +263,18 @@ impl<T: fmt::Binary> fmt::Binary for Styled<T> {
     }
 }
 
+impl<T: fmt::Pointer> fmt::Pointer for Styled<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        if self.style == Style::new() {
+            fmt::Pointer::fmt(&self.value, f)
+        } else {
+            write!(f, "{}", self.style)?;
+            fmt::Pointer::fmt(&self.value, f)?;
+            write!(f, "{}", anstyle::Reset)
+        }
+    }
+}
+
 /// Extension trait for styling any Display value.
 pub trait Stylize {
     /// Apply a style to a value.

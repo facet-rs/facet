@@ -432,3 +432,85 @@ fn wip_opaque_arc() -> eyre::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn wip_put_option_explicit_some() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    // Test switching variants
+    let result = Wip::alloc::<Option<u64>>()
+        .put::<Option<u64>>(Some(42))?
+        .build()?
+        .materialize::<Option<u64>>()?;
+
+    assert_eq!(result, Some(42));
+
+    Ok(())
+}
+
+#[test]
+fn wip_put_option_explicit_none() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    let result = Wip::alloc::<Option<u64>>()
+        .put::<Option<u64>>(None)?
+        .build()?
+        .materialize::<Option<u64>>()?;
+
+    assert_eq!(result, None);
+
+    Ok(())
+}
+
+#[test]
+fn wip_put_option_implicit_some() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    // Test switching variants
+    let result = Wip::alloc::<Option<u64>>()
+        .put::<u64>(42)?
+        .build()?
+        .materialize::<Option<u64>>()?;
+
+    assert_eq!(result, Some(42));
+
+    Ok(())
+}
+
+#[test]
+fn wip_parse_option() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    // Test switching variants
+    let result = Wip::alloc::<Option<f64>>()
+        .parse("8.13")?
+        .build()?
+        .materialize::<Option<f64>>()?;
+
+    assert_eq!(result, Some(8.13));
+
+    Ok(())
+}
+
+#[test]
+fn wip_option_explicit_some_through_push_some() -> eyre::Result<()> {
+    #[derive(Facet, Debug, PartialEq, Eq)]
+    struct Foo {
+        foo: u32,
+    }
+
+    facet_testhelpers::setup();
+
+    // Test switching variants
+    let result = Wip::alloc::<Option<Foo>>()
+        .push_some()?
+        .field_named("foo")?
+        .put::<u32>(42)?
+        .pop()?
+        .build()?
+        .materialize::<Option<Foo>>()?;
+
+    assert_eq!(result, Some(Foo { foo: 42 }));
+
+    Ok(())
+}

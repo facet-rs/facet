@@ -11,7 +11,7 @@ pub struct OptionDef {
     pub vtable: &'static OptionVTable,
 
     /// shape of the inner type of the option
-    pub t: &'static Shape,
+    pub t: fn() -> &'static Shape,
 }
 
 impl OptionDef {
@@ -19,12 +19,17 @@ impl OptionDef {
     pub const fn builder() -> OptionDefBuilder {
         OptionDefBuilder::new()
     }
+
+    /// Returns the inner type shape of the option
+    pub fn t(&self) -> &'static Shape {
+        (self.t)()
+    }
 }
 
 /// Builder for OptionDef
 pub struct OptionDefBuilder {
     vtable: Option<&'static OptionVTable>,
-    t: Option<&'static Shape>,
+    t: Option<fn() -> &'static Shape>,
 }
 
 impl OptionDefBuilder {
@@ -44,7 +49,7 @@ impl OptionDefBuilder {
     }
 
     /// Sets the inner type shape for the OptionDef
-    pub const fn t(mut self, t: &'static Shape) -> Self {
+    pub const fn t(mut self, t: fn() -> &'static Shape) -> Self {
         self.t = Some(t);
         self
     }
@@ -105,6 +110,7 @@ pub type OptionReplaceWithFn =
 
 /// Virtual table for `Option<T>`
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[non_exhaustive]
 #[repr(C)]
 pub struct OptionVTable {
     /// cf. [`OptionIsSomeFn`]

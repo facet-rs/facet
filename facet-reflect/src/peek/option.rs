@@ -40,7 +40,7 @@ impl<'mem> PeekOption<'mem> {
         unsafe {
             (self.vtable().get_value_fn)(self.value.data()).map(|inner_data| crate::Peek {
                 data: inner_data,
-                shape: self.def.t,
+                shape: self.def.t(),
             })
         }
     }

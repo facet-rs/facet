@@ -75,7 +75,7 @@ impl<'mem> PtrUninit<'mem> {
     /// - Within bounds of the allocated object
     /// - Properly aligned for the type being pointed to
     /// - Point to initialized data of the correct type
-    pub unsafe fn field_init(self, offset: usize) -> PtrMut<'mem> {
+    pub unsafe fn field_init_at(self, offset: usize) -> PtrMut<'mem> {
         PtrMut(
             unsafe { NonNull::new_unchecked(self.0.add(offset)) },
             PhantomData,

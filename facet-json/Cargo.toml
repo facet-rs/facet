@@ -22,5 +22,7 @@ facet-reflect = { version = "0.6.2", path = "../facet-reflect", default-features
 log = "0.4.27"
 
 [dev-dependencies]
+eyre = "0.6.12"
 facet = { path = "../facet" }
 facet-testhelpers = { version = "0.1.2", path = "../facet-testhelpers" }
+insta = { git = "https://github.com/mitsuhiko/insta" }
