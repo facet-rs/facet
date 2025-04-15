@@ -238,6 +238,11 @@ pub enum Def {
     /// e.g. `struct Struct { field: u32 }`, `struct TupleStruct(u32, u32);`, `(u32, u32)`
     Struct(Struct),
 
+    /// Enum with variants
+    ///
+    /// e.g. `enum Enum { Variant1, Variant2 }`
+    Enum(EnumDef),
+
     /// Map — keys are dynamic (and strings, sorry), values are homogeneous
     ///
     /// e.g. `Map<String, T>`
@@ -257,11 +262,6 @@ pub enum Def {
     ///
     /// e.g. `&[T]`
     Slice(SliceDef),
-
-    /// Enum with variants
-    ///
-    /// e.g. `enum Enum { Variant1, Variant2 }`
-    Enum(EnumDef),
 
     /// Option
     ///

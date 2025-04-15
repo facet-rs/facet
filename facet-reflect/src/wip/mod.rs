@@ -238,10 +238,9 @@ impl<'a> Wip<'a> {
         };
 
         let shape = root.shape;
-        let data = unsafe { root.data.assume_init() };
-
         self.istates.insert(root.id(), root.istate);
 
+        // check if initialized
         for (id, is) in self.istates.iter() {
             let field_count = match id.shape.def {
                 Def::Struct(def) => def.fields.len(),
@@ -249,8 +248,8 @@ impl<'a> Wip<'a> {
                     if let Some(variant) = &is.variant {
                         variant.data.fields.len()
                     } else {
-                        // If no variant is selected, we should have zero fields initialized
-                        0
+                        // If no variant is selected, return an error
+                        return Err(ReflectError::NoVariantSelected { shape: id.shape });
                     }
                 }
                 _ => 1,
@@ -282,14 +281,15 @@ impl<'a> Wip<'a> {
                             return Err(ReflectError::NoVariantSelected { shape: id.shape });
                         }
                     }
-                    Def::Scalar(_) => {
-                        return Err(ReflectError::UninitializedScalar { shape: id.shape });
+                    _ => {
+                        return Err(ReflectError::UninitializedValue { shape: id.shape });
                     }
-                    _ => {}
                 }
             }
         }
 
+        // check if invariants hold
+        let data = unsafe { root.data.assume_init() };
         if let Some(invariant_fn) = shape.vtable.invariants {
             if !unsafe { invariant_fn(PtrConst::new(data.as_byte_ptr())) } {
                 return Err(ReflectError::InvariantViolation {
@@ -298,10 +298,11 @@ impl<'a> Wip<'a> {
             }
         }
 
-        let guard = self.guard.take().unwrap();
-
-        // don't double-drop the fields!
+        // don't double-drop the fields
         self.istates.clear();
+
+        // transfer ownership of the data to the HeapValue
+        let guard = self.guard.take().unwrap();
 
         Ok(HeapValue {
             guard: Some(guard),

@@ -59,7 +59,7 @@ pub enum ReflectError {
     },
 
     /// A scalar value was not initialized during build
-    UninitializedScalar {
+    UninitializedValue {
         /// The scalar shape
         shape: &'static Shape,
     },
@@ -138,8 +138,8 @@ impl core::fmt::Display for ReflectError {
             ReflectError::NoVariantSelected { shape } => {
                 write!(f, "Enum '{}' had no variant selected", shape)
             }
-            ReflectError::UninitializedScalar { shape } => {
-                write!(f, "Scalar '{}' was not initialized", shape)
+            ReflectError::UninitializedValue { shape } => {
+                write!(f, "Value '{}' was not initialized", shape)
             }
             ReflectError::InvariantViolation { invariant } => {
                 write!(f, "Invariant violation: {}", invariant)

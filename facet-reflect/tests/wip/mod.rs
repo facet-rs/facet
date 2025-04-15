@@ -2,6 +2,9 @@
 mod compile_tests;
 
 #[cfg(feature = "std")]
+mod no_uninit;
+
+#[cfg(feature = "std")]
 mod misc;
 
 #[cfg(feature = "std")]
