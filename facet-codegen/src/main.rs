@@ -1,14 +1,21 @@
-use std::io::Write;
-use std::path::Path;
-use std::process;
-
-mod fmt_staged;
-mod gen_tuple_impl;
-mod readmes;
-
+use crate::Options;
+use crate::write_if_different;
 use facet_ansi::Stylize as _;
+use facet_ansi::Stylize as _;
+use facet_ansi::Stylize as _;
+use log::{error, info};
 use log::{error, info, warn};
 use similar::{ChangeTag, TextDiff};
+use std::fs;
+use std::io::Write;
+use std::io::{self, Write};
+use std::path::Path;
+use std::path::Path;
+use std::path::PathBuf;
+use std::process;
+use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 fn main() {
     facet_testhelpers::setup();
@@ -395,14 +402,6 @@ fn generate_tuple_impls(has_diffs: &mut bool, opts: Options) {
         );
     }
 }
-
-use std::fs;
-use std::io::{self, Write};
-use std::path::PathBuf;
-use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex};
-
-use facet_ansi::Stylize as _;
 
 // --- Data structures ---
 
@@ -1137,14 +1136,6 @@ pub(super) fn generate_tuples_impls() -> String {
 
     s
 }
-
-use facet_ansi::Stylize as _;
-use log::{error, info};
-use std::path::Path;
-use std::time::Instant;
-
-use crate::Options;
-use crate::write_if_different;
 
 pub(crate) fn generate_readme_files(opts: Options) -> bool {
     let mut has_diffs = false;
