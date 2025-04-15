@@ -487,3 +487,27 @@ fn array_field() {
         _ => unreachable!(),
     }
 }
+
+#[test]
+fn struct_impls_drop() {
+    #[derive(Facet)]
+    struct BarFoo {
+        bar: u32,
+        foo: String,
+    }
+
+    // this makes it impossible to "partially move out" of barfoo, see
+    // code below. it's the reason why `shape_of` takes a &TStruct and returns a &TField.
+    impl Drop for BarFoo {
+        fn drop(&mut self) {
+            eprintln!("Dropping BarFoo");
+        }
+    }
+
+    // let bf = BarFoo {
+    //     bar: 42,
+    //     foo: "Hello".to_string(),
+    // };
+    // let bar = bf.bar;
+    // drop(bf.foo);
+}
