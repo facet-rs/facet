@@ -6,6 +6,7 @@
 
 use core::fmt::{self, Debug, Display, Formatter};
 
+use anstyle::AnsiColor;
 // Re-export Style from anstyle
 pub use anstyle::Style;
 
@@ -354,8 +355,18 @@ pub trait Stylize {
     where
         Self: Sized;
 
+    /// Apply italic style to a value.
+    fn italic(self) -> Styled<Self>
+    where
+        Self: Sized;
+
     /// Apply dimmed style to a value.
-    fn dimmed(self) -> Styled<Self>
+    fn dim(self) -> Styled<Self>
+    where
+        Self: Sized;
+
+    /// Apply black background style to a value.
+    fn on_black(self) -> Styled<Self>
     where
         Self: Sized;
 }
@@ -433,7 +444,15 @@ impl<T> Stylize for T {
         self.style(Style::new().underline())
     }
 
-    fn dimmed(self) -> Styled<Self> {
+    fn italic(self) -> Styled<Self> {
+        self.style(Style::new().italic())
+    }
+
+    fn dim(self) -> Styled<Self> {
         self.style(Style::new().dimmed())
+    }
+
+    fn on_black(self) -> Styled<Self> {
+        self.style(Style::new().bg_color(Some(anstyle::Color::Ansi(AnsiColor::Black))))
     }
 }

@@ -54,15 +54,6 @@ fn main() {
         local_has_diffs
     });
 
-    let staged_files_clone = staged_files.clone();
-    let opts_clone_fmt = opts.clone();
-    let fmt_result = std::thread::spawn(move || {
-        if !staged_files_clone.is_empty() {
-            fmt_staged::format_and_stage_files(&staged_files_clone, opts_clone_fmt.check);
-        }
-        // returns ()
-    });
-
     // Collect results and update has_diffs
     has_diffs |= tuple_impls_result
         .join()

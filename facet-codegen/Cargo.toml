@@ -12,6 +12,7 @@ keywords = ["code-generation", "templates"]
 categories = ["development-tools"]
 
 [dependencies]
+console = "0.15.11"
 facet-ansi = { version = "0.2.0", path = "../facet-ansi" }
 facet-testhelpers = { version = "0.1.2", path = "../facet-testhelpers" }
 fs-err = "3.1.0"

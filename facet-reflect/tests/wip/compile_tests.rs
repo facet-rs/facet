@@ -46,7 +46,7 @@ fn run_compilation_test(test: &CompilationTest) {
     let project_dir = temp_dir.path();
     println!(
         "{}",
-        format!("  Project directory: {}", project_dir.display()).dimmed()
+        format!("  Project directory: {}", project_dir.display()).dim()
     );
 
     // Get absolute paths to the facet crates

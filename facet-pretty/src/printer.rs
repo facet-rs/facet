@@ -768,7 +768,7 @@ impl PrettyPrinter {
     /// Write styled punctuation to formatter
     fn write_punctuation<W: fmt::Write>(&self, f: &mut W, text: &str) -> fmt::Result {
         if self.use_colors {
-            write!(f, "{}", text.dimmed())
+            write!(f, "{}", text.dim())
         } else {
             write!(f, "{}", text)
         }
@@ -784,7 +784,7 @@ impl PrettyPrinter {
     /// Write styled comment to formatter
     fn write_comment<W: fmt::Write>(&self, f: &mut W, text: &str) -> fmt::Result {
         if self.use_colors {
-            write!(f, "{}", text.dimmed())
+            write!(f, "{}", text.dim())
         } else {
             write!(f, "{}", text)
         }
