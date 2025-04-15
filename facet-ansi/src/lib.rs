@@ -138,11 +138,11 @@ pub trait ColorStyle {
     /// Create a new style with bright white foreground color
     fn fg_bright_white(self) -> Style;
     /// Create a new style with bold formatting
-    fn fg_bold(self) -> Style;
+    fn with_bold(self) -> Style;
     /// Create a new style with dimmed formatting
-    fn fg_dimmed(self) -> Style;
+    fn with_dimmed(self) -> Style;
     /// Create a new style with underline formatting
-    fn fg_underline(self) -> Style;
+    fn with_underline(self) -> Style;
 }
 
 impl ColorStyle for Style {
@@ -208,15 +208,15 @@ impl ColorStyle for Style {
         self.fg_color(Some(anstyle::Color::Ansi(anstyle::AnsiColor::BrightWhite)))
     }
 
-    fn fg_bold(self) -> Style {
+    fn with_bold(self) -> Style {
         self.bold()
     }
 
-    fn fg_dimmed(self) -> Style {
+    fn with_dimmed(self) -> Style {
         self.dimmed()
     }
 
-    fn fg_underline(self) -> Style {
+    fn with_underline(self) -> Style {
         self.underline()
     }
 }

@@ -1,4 +1,4 @@
-use facet_ansi::Stylize as _;
+use facet_ansi::{ColorStyle as _, Style, Stylize as _};
 use log::{LevelFilter, debug, error, warn};
 use similar::ChangeTag;
 use std::fs;
@@ -6,6 +6,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+mod menu;
 mod readme;
 mod sample;
 mod tuples;
@@ -461,9 +462,6 @@ pub fn show_jobs_and_apply_if_consent_is_given(jobs: &mut [Job]) {
     use console::{Emoji, style};
     use std::io::{self, Write};
 
-    // Use menu crate (https://docs.rs/menu/)
-    use menu::{Item, ItemType, Menu, Runner};
-
     // Emojis for display
     static ACTION_REQUIRED: Emoji<'_, '_> = Emoji("🚧", "");
     static DIFF: Emoji<'_, '_> = Emoji("📝", "");
@@ -519,145 +517,100 @@ pub fn show_jobs_and_apply_if_consent_is_given(jobs: &mut [Job]) {
         );
     }
 
-    // Handler functions as standalone functions (for menu crate API)
-    fn apply_changes_callback(_args: &menu::Parameter, user_data: &mut Vec<Job>) -> Result<(), menu::Error> {
-        use console::style;
-        static OK: Emoji<'_, '_> = Emoji("✅", "");
-        static CANCEL: Emoji<'_, '_> = Emoji("❌", "");
-        println!();
-        for job in user_data.iter() {
-            if let Err(e) = std::fs::write(&job.path, &job.new_content) {
-                eprintln!("{} Failed to write {}: {}", CANCEL, job.path.display(), e);
-                std::process::exit(1);
-            } else {
-                let add_status = std::process::Command::new("git")
-                    .arg("add")
-                    .arg(&job.path)
-                    .status();
-                if let Err(e) = add_status {
-                    eprintln!("{} Failed to stage {}: {}", CANCEL, job.path.display(), e);
-                    std::process::exit(1);
+    let jobs_vec = jobs.to_vec();
+
+    // Define menu items as a Vec<MenuItem>
+    static MENU_LABEL: &str = "facet-dev fixed some files for you:";
+    let menu_items = [
+        menu::MenuItem {
+            label: "[y]es: 🚀 Apply the above fixes".to_string(),
+            action: "apply".to_string(),
+            style: Style::new().fg_green().with_bold(),
+        },
+        menu::MenuItem {
+            label: "[d]iff: 🔍 Show details of all diffs".to_string(),
+            action: "diff".to_string(),
+            style: Style::new().fg_cyan(),
+        },
+        menu::MenuItem {
+            label: "[c]ontinue: ➡️ Continue with the commit without applying fixes".to_string(),
+            action: "continue".to_string(),
+            style: Style::new().fg_yellow(),
+        },
+        menu::MenuItem {
+            label: "[a]bort: 💥 Exit with error (this'll abort the commit)".to_string(),
+            action: "abort".to_string(),
+            style: Style::new().fg_red(),
+        },
+    ];
+
+    loop {
+        let action =
+            menu::show_menu(MENU_LABEL, &menu_items[..]).unwrap_or_else(|| "apply".to_string());
+        match action.as_str() {
+            "apply" => {
+                for job in &jobs_vec {
+                    print!(
+                        "{} Applying {} ... ",
+                        OK,
+                        style(job.path.display()).yellow()
+                    );
+                    io::stdout().flush().unwrap();
+                    match job.apply() {
+                        Ok(_) => {
+                            println!("{}", "ok".green());
+                        }
+                        Err(e) => {
+                            println!("{} {}", CANCEL, format!("failed: {e}").red());
+                        }
+                    }
                 }
                 println!(
-                    "{} {} updated and staged.",
+                    "{} {}",
                     OK,
-                    style(job.path.display()).green()
+                    style("All fixes applied and staged!").green().bold()
                 );
+                std::process::exit(0);
             }
-        }
-        println!("{} All changes applied and staged.", OK);
-        std::process::exit(0);
-    }
-    fn show_diffs_callback(_args: &menu::Parameter, user_data: &mut Vec<Job>) -> Result<(), menu::Error> {
-        use console::style;
-        static DIFF: Emoji<'_, '_> = Emoji("📝", "");
-        println!("\n{}\n", style("Showing diffs...").bold());
-        for job in user_data.iter() {
-            println!(
-                "\n{} Diff for {}:",
-                DIFF,
-                style(job.path.display()).bold().blue()
-            );
-            job.show_diff();
-        }
-        println!("\n-- End of diffs --");
-        Ok(())
-    }
-    fn cancel_callback(_args: &menu::Parameter, _user_data: &mut Vec<Job>) -> Result<(), menu::Error> {
-        static CANCEL: Emoji<'_, '_> = Emoji("❌", "");
-        println!("{} Changes were not applied.", CANCEL);
-        std::process::exit(0);
-    }
-    fn abort_callback(_args: &menu::Parameter, _user_data: &mut Vec<Job>) -> Result<(), menu::Error> {
-        static CANCEL: Emoji<'_, '_> = Emoji("❌", "");
-        println!("{} Aborted.", CANCEL);
-        std::process::exit(1);
-    }
-
-    // The menu expects a mutable Vec for parameter passing; collect jobs into a Vec
-    let mut jobs_vec = jobs.to_vec();
-
-    // Define menu items
-    static MENU_LABEL: &str = "What do you want to do?";
-    let apply_item = Item {
-        command: "apply",
-        help: Some("🚀 Apply the above changes"),
-        item_type: ItemType::Callback {
-            function: apply_changes_callback,
-            parameters: &[],
-        },
-    };
-    let diff_item = Item {
-        command: "diff",
-        help: Some("🔍 Diff: Show details of all diffs"),
-        item_type: ItemType::Callback {
-            function: show_diffs_callback,
-            parameters: &[],
-        },
-    };
-    let cancel_item = Item {
-        command: "cancel",
-        help: Some("🛑 Cancel: Abort without changing files"),
-        item_type: ItemType::Callback {
-            function: cancel_callback,
-            parameters: &[],
-        },
-    };
-    let abort_item = Item {
-        command: "abort",
-        help: Some("💥 Abort: Exit with error"),
-        item_type: ItemType::Callback {
-            function: abort_callback,
-            parameters: &[],
-        },
-    };
-    let items = [&apply_item, &diff_item, &cancel_item, &abort_item];
-    let menu = Menu {
-        label: MENU_LABEL,
-        items: &items,
-        entry: None,
-        exit: None,
-    };
-
-    // Create a buffer for input
-    let mut buffer = [0u8; 64];
-    let mut runner = Runner::new(menu, &mut buffer, io::stdout(), &mut jobs_vec);
-
-    // Menu description
-    println!();
-    let joined_cmds = items
-        .iter()
-        .map(|i| i.command.to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
-    println!(
-        "Type one of: {}.",
-        joined_cmds
-    );
-    println!("Or type {} for help.", style("help").cyan());
-
-    // Main menu interaction loop
-    loop {
-        print!("{} > ", style(MENU_LABEL).dim());
-        io::stdout().flush().ok();
-        let mut input = String::new();
-        if io::stdin().read_line(&mut input).is_err() {
-            println!("Failed to read input.");
-            continue;
-        }
-        let input_trim = input.trim();
-        // Process the input
-        match runner.run(input_trim.as_bytes()) {
-            Ok(_) => {
-                // Continue running or exit (callbacks handle exit)
+            "diff" => {
+                println!(
+                    "\n{} {}\n",
+                    DIFF,
+                    style("Showing diffs for all changed/generated files:")
+                        .magenta()
+                        .bold()
+                );
+                for job in &jobs_vec {
+                    println!(
+                        "{} {}\n{}",
+                        DIFF,
+                        style(job.path.display()).yellow(),
+                        style("───────────────────────────────────────────────").dim()
+                    );
+                    job.show_diff();
+                }
+                // After showing diffs, continue loop to show menu again
             }
-            Err(e) => {
-                println!("{}", style(format!("Menu error: {:?}", e)).red());
+            "continue" => {
+                println!(
+                    "{} {}",
+                    CANCEL,
+                    style("Continuing without applying fixes.").yellow().bold()
+                );
+                return;
             }
+            "abort" => {
+                println!(
+                    "{} {}",
+                    CANCEL,
+                    style("Aborting. No changes made.").red().bold()
+                );
+                std::process::exit(1);
+            }
+            _ => todo!(),
         }
     }
 }
-
 
 #[derive(Debug, Clone)]
 struct Options {
@@ -667,6 +620,7 @@ struct Options {
 fn main() {
     facet_testhelpers::setup();
     // Accept allowed log levels: trace, debug, error, warn, info
+    log::set_max_level(LevelFilter::Info);
     if let Ok(log_level) = std::env::var("RUST_LOG") {
         let allowed = ["trace", "debug", "error", "warn", "info"];
         let log_level_lc = log_level.to_lowercase();
@@ -680,9 +634,6 @@ fn main() {
                 _ => LevelFilter::Info,
             };
             log::set_max_level(level);
-        } else {
-            // Default to Info if not allowed
-            log::set_max_level(LevelFilter::Info);
         }
     }
 
