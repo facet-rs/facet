@@ -705,8 +705,21 @@ fn main() {
     let staged_files = match collect_staged_files() {
         Ok(sf) => sf,
         Err(e) => {
-            error!("Failed to collect staged files: {e}");
-            std::process::exit(1);
+            if std::env::var("GITHUB_ACTIONS").is_ok() {
+                // In GitHub Actions, continue without error.
+                error!("Failed to collect staged files: {e} (continuing due to GITHUB_ACTIONS)");
+                StagedFiles {
+                    clean: Vec::new(),
+                    dirty: Vec::new(),
+                    unstaged: Vec::new(),
+                }
+            } else {
+                error!(
+                    "Failed to collect staged files: {e}\n\
+                    This tool requires Git to be installed and a Git repository initialized."
+                );
+                std::process::exit(1);
+            }
         }
     };
 
