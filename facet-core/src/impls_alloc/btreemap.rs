@@ -125,6 +125,9 @@ where
                     .vtable(
                         &const {
                             MapVTable::builder()
+                                .init_in_place_with_capacity(|uninit, _capacity| unsafe {
+                                    uninit.put(Self::new())
+                                })
                                 .insert(|ptr, key, value| unsafe {
                                     let map = ptr.as_mut::<BTreeMap<K, V>>();
                                     let k = key.read::<K>();
