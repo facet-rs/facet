@@ -16,4 +16,6 @@ facet-ansi = { version = "0.2.0", path = "../facet-ansi" }
 facet-testhelpers = { version = "0.1.2", path = "../facet-testhelpers" }
 fs-err = "3.1.0"
 log = "0.4.27"
+num_cpus = "1.16.0"
+rayon = "1.10.0"
 similar = { version = "2.4.0", features = ["inline"] }

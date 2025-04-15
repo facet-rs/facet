@@ -13,10 +13,7 @@ prepush: clippy test
 
 ci: precommit prepush docs msrv miri
 
-genfmt: lockfile codegen fmtfix absolve
-
-fmtfix:
-    cargo fmt --all
+genfmt: lockfile codegen absolve
 
 nostd:
     # Run alloc but no-std checks with specified target directory

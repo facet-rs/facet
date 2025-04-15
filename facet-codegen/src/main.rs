@@ -2,6 +2,7 @@ use std::io::Write;
 use std::path::Path;
 use std::process;
 
+mod fmt_staged;
 mod gen_tuple_impl;
 mod readmes;
 
@@ -26,7 +27,16 @@ fn main() {
         panic!();
     }
 
-    // Run all three code generation tasks in parallel
+    // Collect staged, not dirty files before running parallel tasks
+    let staged_files = match fmt_staged::collect_staged_files() {
+        Ok(files) => files,
+        Err(e) => {
+            error!("Failed to collect staged files: {e}");
+            process::exit(1);
+        }
+    };
+
+    // Run four tasks in parallel: three codegen tasks, and formatting
     let opts_clone1 = opts.clone();
     let tuple_impls_result = std::thread::spawn(move || {
         let mut local_has_diffs = false;
@@ -44,6 +54,15 @@ fn main() {
         local_has_diffs
     });
 
+    let staged_files_clone = staged_files.clone();
+    let opts_clone_fmt = opts.clone();
+    let fmt_result = std::thread::spawn(move || {
+        if !staged_files_clone.is_empty() {
+            fmt_staged::format_and_stage_files(&staged_files_clone, opts_clone_fmt.check);
+        }
+        // returns ()
+    });
+
     // Collect results and update has_diffs
     has_diffs |= tuple_impls_result
         .join()
@@ -54,6 +73,9 @@ fn main() {
     has_diffs |= sample_code_result
         .join()
         .expect("sample_code thread panicked");
+
+    // Wait for fmt thread
+    fmt_result.join().expect("fmt_staged thread panicked");
 
     if opts.check && has_diffs {
         // Print a big banner with error message about generated files
@@ -299,17 +321,17 @@ fn check_diff(path: &Path, new_content: &[u8]) -> bool {
     false
 }
 
-fn write_if_different(path: &Path, content: Vec<u8>, check_mode: bool) -> bool {
+pub(crate) fn write_if_different(path: &Path, content: Vec<u8>, check_mode: bool) -> bool {
     let is_different = check_diff(path, &content);
     if check_mode {
-        is_different
-    } else if is_different {
+        return is_different;
+    }
+    if is_different {
         info!("Overwriting {} (had changes)", path.display().blue());
         fs_err::write(path, content).expect("Failed to write file");
-        true
-    } else {
-        false
+        return true;
     }
+    false
 }
 
 fn generate_tuple_impls(has_diffs: &mut bool, opts: Options) {
