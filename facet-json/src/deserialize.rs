@@ -109,17 +109,19 @@ pub fn from_slice_wip<'input, 'a>(
         let frame_count = wip.frames_count();
         let expect = match stack.pop() {
             Some(expect) => expect,
-            None => bail!(JsonErrorKind::UnexpectedEof),
+            None => {
+                if frame_count == 1 {
+                    // we're done!
+                    break;
+                } else {
+                    bail!(JsonErrorKind::UnexpectedEof);
+                }
+            }
         };
         trace!("[{frame_count}] Expecting {expect:?}");
 
         let Some(c) = input.get(pos).copied() else {
-            if frame_count == 1 {
-                // alright, we're done!
-                break;
-            } else {
-                bail!(JsonErrorKind::UnexpectedEof);
-            }
+            bail!(JsonErrorKind::UnexpectedEof);
         };
         pos += 1;
 
@@ -144,6 +146,7 @@ pub fn from_slice_wip<'input, 'a>(
                             }
                             _ => {
                                 // okay, next we expect a "key: value"
+                                stack.push(Expect::Separator(Separator::Comma(WhyComma::Object)));
                                 stack.push(Expect::Value(WhyValue::ObjectValue));
                                 stack.push(Expect::Separator(Separator::Colon));
                                 stack.push(Expect::Value(WhyValue::ObjectKey));
@@ -172,6 +175,23 @@ pub fn from_slice_wip<'input, 'a>(
                                 }
                             }
                         }
+                        trace!("Parsed string value: {:?}", value.yellow());
+                    }
+                    b'0'..=b'9' => {
+                        let start = pos - 1;
+                        while let Some(c) = input.get(pos) {
+                            match c {
+                                b'0'..=b'9' => {
+                                    pos += 1;
+                                }
+                                _ => break,
+                            }
+                        }
+                        let number = &input[start..pos];
+                        let number = core::str::from_utf8(number).unwrap();
+                        trace!("Parsed number value: {:?}", number.yellow());
+                        let number = number.parse::<f64>().unwrap();
+                        trace!("Parsed number value: {:?}", number.yellow());
                     }
                     c => {
                         bail!(JsonErrorKind::UnexpectedCharacter(c as char));
@@ -187,9 +207,24 @@ pub fn from_slice_wip<'input, 'a>(
                         bail!(JsonErrorKind::UnexpectedCharacter(c as char));
                     }
                 },
-                Separator::Comma(_why) => match c {
+                Separator::Comma(why) => match c {
                     b',' => {
                         pos += 1;
+                        match why {
+                            WhyComma::Array => {
+                                stack.push(Expect::Value(WhyValue::ArrayElement));
+                            }
+                            WhyComma::Object => {
+                                // looks like we're in for another round of object parsing
+                                stack.push(Expect::Separator(Separator::Comma(WhyComma::Object)));
+                                stack.push(Expect::Value(WhyValue::ObjectValue));
+                                stack.push(Expect::Separator(Separator::Colon));
+                                stack.push(Expect::Value(WhyValue::ObjectKey));
+                            }
+                        }
+                    }
+                    b'}' => {
+                        // we finished the object, neat
                     }
                     _ => {
                         bail!(JsonErrorKind::UnexpectedCharacter(c as char));
