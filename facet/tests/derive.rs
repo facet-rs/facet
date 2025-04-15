@@ -532,3 +532,23 @@ fn opaque_arc() {
         _ => unreachable!(),
     }
 }
+
+#[test]
+fn vec_wrapper() {
+    #[derive(Facet)]
+    struct VecWrapper<T> {
+        data: Vec<T>,
+    }
+
+    let shape = VecWrapper::<u32>::SHAPE;
+    match shape.def {
+        Def::Struct(sd) => {
+            assert_eq!(sd.fields.len(), 1);
+            let field = sd.fields[0];
+            let shape_name = format!("{}", field.shape());
+            assert_eq!(shape_name, "Vec<u32>");
+            eprintln!("Shape {shape} looks correct");
+        }
+        _ => unreachable!(),
+    }
+}
