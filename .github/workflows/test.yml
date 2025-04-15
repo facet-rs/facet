@@ -245,7 +245,9 @@ jobs:
       - name: ✨ Gather coverage
         shell: bash
         run: |
-          cargo tarpaulin --output-dir coverage --out lcov
+          cargo llvm-cov --no-report nextest
+          cargo llvm-cov --no-report --doc
+          cargo llvm-cov report --doctests --lcov --output-path lcov.info
 
       - name: ✨ Publish to Coveralls
         uses: coverallsapp/github-action@master
