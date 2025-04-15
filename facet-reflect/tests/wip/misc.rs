@@ -421,7 +421,6 @@ fn wip_opaque_arc() -> eyre::Result<()> {
         inner: Handle,
     }
 
-    // Test switching variants
     let result = Wip::alloc::<Container>()
         .field_named("inner")?
         .put(Handle(std::sync::Arc::new(NotDerivingFacet(35))))?
