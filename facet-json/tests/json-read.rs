@@ -11,8 +11,9 @@ fn json_read_simple_struct() {
     struct TestStruct {
         name: String,
         age: u64,
+        hobbies: Vec<String>,
     }
-    let json = r#"{"name": "Alice", "age": 30}"#;
+    let json = r#"{"name": "Alice", "age": 30, "hobbies": ["reading", "coding"]}"#;
 
     let s: TestStruct = match from_str(json) {
         Ok(s) => s,

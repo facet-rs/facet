@@ -1,5 +1,3 @@
-use core::f32::consts::E;
-
 use facet_ansi::Stylize as _;
 use facet_core::Facet;
 use facet_reflect::Wip;
@@ -14,6 +12,13 @@ pub struct JsonParseErrorWithContext<'input> {
 }
 
 impl<'input> JsonParseErrorWithContext<'input> {
+    /// Creates a new `JsonParseErrorWithContext`.
+    ///
+    /// # Arguments
+    ///
+    /// * `kind` - The kind of JSON error encountered.
+    /// * `input` - The original input being parsed.
+    /// * `pos` - The position in the input where the error occurred.
     pub fn new(kind: JsonErrorKind, input: &'input [u8], pos: usize) -> Self {
         Self { input, pos, kind }
     }
@@ -22,7 +27,9 @@ impl<'input> JsonParseErrorWithContext<'input> {
 /// An error kind for JSON parsing.
 #[derive(Debug)]
 pub enum JsonErrorKind {
+    /// The input ended unexpectedly while parsing JSON.
     UnexpectedEof,
+    /// An unexpected character was encountered in the input.
     UnexpectedCharacter(char),
 }
 
@@ -52,6 +59,14 @@ pub fn from_str<T: Facet>(json: &str) -> Result<T, JsonParseErrorWithContext<'_>
 }
 
 /// Deserialize JSON from a slice
+///
+/// # Arguments
+///
+/// * `json` - A slice of bytes representing the JSON input.
+///
+/// # Returns
+///
+/// A result containing the deserialized value of type `T` or a `JsonParseErrorWithContext`.
 pub fn from_slice<T: Facet>(json: &[u8]) -> Result<T, JsonParseErrorWithContext<'_>> {
     let wip = Wip::alloc::<T>();
     let wip = from_slice_wip(wip, json)?;
@@ -60,11 +75,21 @@ pub fn from_slice<T: Facet>(json: &[u8]) -> Result<T, JsonParseErrorWithContext<
 }
 
 /// Deserialize a JSON string into a Wip object.
+///
+/// # Arguments
+///
+/// * `wip` - A mutable Wip object to deserialize into.
+/// * `input` - A byte slice representing the JSON input.
+///
+/// # Returns
+///
+/// A result containing the updated `Wip` or a `JsonParseErrorWithContext`.
 pub fn from_slice_wip<'input, 'a>(
     mut wip: Wip<'a>,
     input: &'input [u8],
 ) -> Result<Wip<'a>, JsonParseErrorWithContext<'input>> {
     let mut pos = 0;
+
     macro_rules! err {
         ($kind:expr) => {
             Err(JsonParseErrorWithContext::new($kind, input, pos))
@@ -76,29 +101,56 @@ pub fn from_slice_wip<'input, 'a>(
         };
     }
 
+    /// err "previous char"
+    macro_rules! errp {
+        ($kind:expr) => {
+            Err(JsonParseErrorWithContext::new($kind, input, pos - 1))
+        };
+    }
+    /// bail "previous char"
+    macro_rules! bailp {
+        ($kind:expr) => {
+            return errp!($kind);
+        };
+    }
+
+    /// Indicates why we are expecting a value in the parsing stack.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum WhyValue {
+        /// At the top level of the JSON input.
         TopLevel,
+        /// Expecting an object key.
         ObjectKey,
+        /// Expecting an object value.
         ObjectValue,
+        /// Expecting an array element.
         ArrayElement,
     }
 
+    /// Indicates the context for a comma separator in JSON (object or array).
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum WhyComma {
+        /// A comma in an object context.
         Object,
+        /// A comma in an array context.
         Array,
     }
 
+    /// Indicates the type of separator expected (colon or comma).
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum Separator {
+        /// Expecting a colon separator in object key-value pairs.
         Colon,
+        /// Expecting a comma separator (in objects or arrays).
         Comma(WhyComma),
     }
 
+    /// Represents the next expected token or structure while parsing.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum Expect {
+        /// Expecting a value, with its reason/context.
         Value(WhyValue),
+        /// Expecting a separator (colon or comma).
         Separator(Separator),
     }
 
@@ -129,7 +181,6 @@ pub fn from_slice_wip<'input, 'a>(
             Expect::Value(_why_value) => {
                 match c {
                     b'{' => {
-                        // we definitely expect some next character
                         let Some(c) = input.get(pos).copied() else {
                             bail!(JsonErrorKind::UnexpectedEof);
                         };
@@ -150,6 +201,22 @@ pub fn from_slice_wip<'input, 'a>(
                                 stack.push(Expect::Value(WhyValue::ObjectValue));
                                 stack.push(Expect::Separator(Separator::Colon));
                                 stack.push(Expect::Value(WhyValue::ObjectKey));
+                            }
+                        }
+                    }
+                    b'[' => {
+                        let Some(c) = input.get(pos).copied() else {
+                            bail!(JsonErrorKind::UnexpectedEof);
+                        };
+                        match c {
+                            b']' => {
+                                // an array just closed, somewhere
+                                pos += 1;
+                            }
+                            _ => {
+                                // okay, next we expect an item and a separator (or the end of the array)
+                                stack.push(Expect::Separator(Separator::Comma(WhyComma::Array)));
+                                stack.push(Expect::Value(WhyValue::ArrayElement));
                             }
                         }
                     }
@@ -194,7 +261,7 @@ pub fn from_slice_wip<'input, 'a>(
                         trace!("Parsed number value: {:?}", number.yellow());
                     }
                     c => {
-                        bail!(JsonErrorKind::UnexpectedCharacter(c as char));
+                        bailp!(JsonErrorKind::UnexpectedCharacter(c as char));
                     }
                 }
             }
@@ -204,7 +271,7 @@ pub fn from_slice_wip<'input, 'a>(
                         pos += 1;
                     }
                     _ => {
-                        bail!(JsonErrorKind::UnexpectedCharacter(c as char));
+                        bailp!(JsonErrorKind::UnexpectedCharacter(c as char));
                     }
                 },
                 Separator::Comma(why) => match c {
@@ -212,6 +279,7 @@ pub fn from_slice_wip<'input, 'a>(
                         pos += 1;
                         match why {
                             WhyComma::Array => {
+                                stack.push(Expect::Separator(Separator::Comma(WhyComma::Array)));
                                 stack.push(Expect::Value(WhyValue::ArrayElement));
                             }
                             WhyComma::Object => {
@@ -224,10 +292,27 @@ pub fn from_slice_wip<'input, 'a>(
                         }
                     }
                     b'}' => {
-                        // we finished the object, neat
+                        match why {
+                            WhyComma::Object => {
+                                // we finished the object, neat
+                            }
+                            _ => {
+                                bailp!(JsonErrorKind::UnexpectedCharacter(c as char));
+                            }
+                        }
+                    }
+                    b']' => {
+                        match why {
+                            WhyComma::Array => {
+                                // we finished the array, neat
+                            }
+                            _ => {
+                                bailp!(JsonErrorKind::UnexpectedCharacter(c as char));
+                            }
+                        }
                     }
                     _ => {
-                        bail!(JsonErrorKind::UnexpectedCharacter(c as char));
+                        bailp!(JsonErrorKind::UnexpectedCharacter(c as char));
                     }
                 },
             },
