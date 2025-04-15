@@ -579,3 +579,25 @@ fn struct_with_equal_defaults() {
         "#
     ));
 }
+
+#[test]
+fn generic_bounds_t() {
+    insta::assert_snapshot!(expand(
+        r#"
+        struct Foo<T> where T: Copy {
+            inner: Vec<T>,
+        }
+        "#
+    ));
+}
+
+#[test]
+fn generic_bounds_k_v() {
+    insta::assert_snapshot!(expand(
+        r#"
+        struct Foo<K, V> where K: Eq + Hash {
+            inner: HashMap<K, V>,
+        }
+        "#
+    ));
+}

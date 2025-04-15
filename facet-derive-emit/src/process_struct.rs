@@ -73,7 +73,35 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         String::new()
     };
     let maybe_container_doc = build_maybe_doc(&parsed.attributes);
-    let where_clauses = where_clauses.map_or(String::new(), ToString::to_string);
+
+    let mut where_clauses_s: Vec<String> = vec![];
+    if let Some(wc) = where_clauses {
+        for c in &wc.clauses.0 {
+            where_clauses_s.push(c.value.to_string())
+        }
+    }
+
+    if let Some(generics) = &parsed.generics {
+        for p in &generics.params.0 {
+            match &p.value {
+                GenericParam::Lifetime { .. } => {
+                    // ignore for now
+                }
+                GenericParam::Const { .. } => {
+                    // ignore for now
+                }
+                GenericParam::Type { name, .. } => {
+                    where_clauses_s.push(format!("{name}: ::facet::Facet"));
+                }
+            }
+        }
+    }
+
+    let where_clauses = if where_clauses_s.is_empty() {
+        "".to_string()
+    } else {
+        format!("where {}", where_clauses_s.join(", "))
+    };
 
     let mut invariant_maybe = "".to_string();
     let invariant_attrs = parsed
@@ -122,6 +150,8 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
             "#
         );
     }
+
+    let generics = &parsed.generics;
 
     // Generate the impl
     let output = format!(

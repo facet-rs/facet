@@ -59,9 +59,10 @@ pub type Bounds = Cons<Colon, VerbatimUntil<Either<Comma, Eq, Gt>>>;
 unsynn! {
     /// Parses either a `TokenTree` or `<...>` grouping (which is not a [`Group`] as far as proc-macros
     /// are concerned).
+    #[derive(Clone)]
     pub struct AngleTokenTree(
         #[allow(clippy::type_complexity)] // look,
-        pub  Either<Cons<Lt, Vec<Cons<Except<Gt>, AngleTokenTree>>, Gt>, TokenTree>,
+        pub Either<Cons<Lt, Vec<Cons<Except<Gt>, AngleTokenTree>>, Gt>, TokenTree>,
     );
 
     /// Represents an algebraic data type (ADT) declaration, which can be either a struct or enum.
@@ -211,6 +212,7 @@ unsynn! {
 
     /// Represents a `where` clause attached to a definition.
     /// e.g., `where T: Trait, 'a: 'b`.
+    #[derive(Clone)]
     pub struct WhereClauses {
         /// The `where` keyword.
         pub _kw_where: KWhere,
@@ -220,6 +222,7 @@ unsynn! {
 
     /// Represents a single predicate within a `where` clause.
     /// e.g., `T: Trait` or `'a: 'b`.
+    #[derive(Clone)]
     pub struct WhereClause {
         // FIXME: This likely breaks for absolute `::` paths
         /// The type or lifetime being constrained (e.g., `T` or `'a`).
