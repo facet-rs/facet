@@ -253,20 +253,4 @@ impl<'mem> PtrMut<'mem> {
     pub unsafe fn replace<T>(self, value: T) -> Self {
         unsafe { self.drop_in_place::<T>().put(value) }
     }
-
-    /// Copies data from the source pointer to this location
-    ///
-    /// # Safety
-    ///
-    /// - The destination pointer must be properly aligned and point to allocated memory
-    ///   that can be safely written to.
-    /// - The source pointer must point to properly initialized data.
-    /// - Both pointers must refer to objects of the same type and size.
-    pub unsafe fn write(self, source: PtrConst<'_>) -> Self {
-        unsafe {
-            let size = core::mem::size_of_val(&*source.as_byte_ptr());
-            core::ptr::copy_nonoverlapping(source.as_byte_ptr(), self.0.as_ptr(), size);
-            self
-        }
-    }
 }
