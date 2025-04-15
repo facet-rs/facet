@@ -247,7 +247,8 @@ jobs:
         run: |
           cargo llvm-cov --no-report nextest
           cargo llvm-cov --no-report --doc
-          cargo llvm-cov report --doctests --lcov --output-path lcov.info
+          mkdir coverage
+          cargo llvm-cov report --doctests --lcov --output-path coverage/lcov.info
 
       - name: ✨ Publish to Coveralls
         uses: coverallsapp/github-action@master
