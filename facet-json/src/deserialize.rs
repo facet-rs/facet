@@ -3,6 +3,7 @@ use facet_core::{Def, Facet, ScalarAffinity};
 use facet_reflect::{HeapValue, Wip};
 use log::trace;
 
+use crate::alloc::string::ToString;
 use alloc::string::String;
 use alloc::vec::Vec;
 
