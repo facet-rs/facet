@@ -1,4 +1,5 @@
 /target
+.docs-cache
 .aider*
 *~lock~
 /templates/output.rs

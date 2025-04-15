@@ -10,7 +10,7 @@ mod readme;
 mod sample;
 mod tuples;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Job {
     pub path: PathBuf,
     pub old_content: Option<Vec<u8>>,
@@ -459,7 +459,11 @@ pub fn enqueue_rustfmt_jobs(sender: std::sync::mpsc::Sender<Job>, staged_files: 
 
 pub fn show_jobs_and_apply_if_consent_is_given(jobs: &mut [Job]) {
     use console::{Emoji, style};
-    use dialoguer::{Select, theme::ColorfulTheme};
+    use std::io::{self, Write};
+
+    // Use menu crate (https://docs.rs/menu/)
+    use menu::{Item, ItemType, Menu, Runner};
+
     // Emojis for display
     static ACTION_REQUIRED: Emoji<'_, '_> = Emoji("🚧", "");
     static DIFF: Emoji<'_, '_> = Emoji("📝", "");
@@ -515,83 +519,145 @@ pub fn show_jobs_and_apply_if_consent_is_given(jobs: &mut [Job]) {
         );
     }
 
-    // Menu options and hotkeys
-    const APPLY: usize = 0;
-    const DIFFV: usize = 1;
-    const CANCELV: usize = 2;
-    const ABORT: usize = 3;
-    let choices = [
-        "🚀 Apply: Apply the above changes",
-        "🔍 Diff: Show details of all diffs",
-        "🛑 Cancel: Abort without changing files",
-        "💥 Abort: Exit with error",
-    ];
-
-    let theme = ColorfulTheme::default();
-
-    let mut selected = 0;
-    loop {
-        let choice = Select::with_theme(&theme)
-            .with_prompt("What do you want to do?")
-            .items(&choices)
-            .default(selected)
-            .interact()
-            .unwrap_or(CANCELV);
-
-        selected = choice;
-
-        match selected {
-            APPLY => {
-                println!();
-                for job in jobs.iter() {
-                    if let Err(e) = std::fs::write(&job.path, &job.new_content) {
-                        eprintln!("{} Failed to write {}: {}", CANCEL, job.path.display(), e);
-                        std::process::exit(1);
-                    } else {
-                        // Stage the file after updating
-                        let add_status = std::process::Command::new("git")
-                            .arg("add")
-                            .arg(&job.path)
-                            .status();
-                        if let Err(e) = add_status {
-                            eprintln!("{} Failed to stage {}: {}", CANCEL, job.path.display(), e);
-                            std::process::exit(1);
-                        }
-                        println!(
-                            "{} {} updated and staged.",
-                            OK,
-                            style(job.path.display()).green()
-                        );
-                    }
-                }
-                println!("{} All changes applied and staged.", OK);
-                break;
-            }
-            DIFFV => {
-                println!("\n{}\n", style("Showing diffs...").bold());
-                for job in jobs.iter() {
-                    println!(
-                        "\n{} Diff for {}:",
-                        DIFF,
-                        style(job.path.display()).bold().blue()
-                    );
-                    job.show_diff();
-                }
-                println!("\n-- End of diffs --");
-                // Stay in menu
-            }
-            CANCELV => {
-                println!("{} Changes were not applied.", CANCEL);
-                std::process::exit(0);
-            }
-            ABORT => {
-                println!("{} Aborted.", CANCEL);
+    // Handler functions as standalone functions (for menu crate API)
+    fn apply_changes_callback(_args: &menu::Parameter, user_data: &mut Vec<Job>) -> Result<(), menu::Error> {
+        use console::style;
+        static OK: Emoji<'_, '_> = Emoji("✅", "");
+        static CANCEL: Emoji<'_, '_> = Emoji("❌", "");
+        println!();
+        for job in user_data.iter() {
+            if let Err(e) = std::fs::write(&job.path, &job.new_content) {
+                eprintln!("{} Failed to write {}: {}", CANCEL, job.path.display(), e);
                 std::process::exit(1);
+            } else {
+                let add_status = std::process::Command::new("git")
+                    .arg("add")
+                    .arg(&job.path)
+                    .status();
+                if let Err(e) = add_status {
+                    eprintln!("{} Failed to stage {}: {}", CANCEL, job.path.display(), e);
+                    std::process::exit(1);
+                }
+                println!(
+                    "{} {} updated and staged.",
+                    OK,
+                    style(job.path.display()).green()
+                );
             }
-            _ => {}
+        }
+        println!("{} All changes applied and staged.", OK);
+        std::process::exit(0);
+    }
+    fn show_diffs_callback(_args: &menu::Parameter, user_data: &mut Vec<Job>) -> Result<(), menu::Error> {
+        use console::style;
+        static DIFF: Emoji<'_, '_> = Emoji("📝", "");
+        println!("\n{}\n", style("Showing diffs...").bold());
+        for job in user_data.iter() {
+            println!(
+                "\n{} Diff for {}:",
+                DIFF,
+                style(job.path.display()).bold().blue()
+            );
+            job.show_diff();
+        }
+        println!("\n-- End of diffs --");
+        Ok(())
+    }
+    fn cancel_callback(_args: &menu::Parameter, _user_data: &mut Vec<Job>) -> Result<(), menu::Error> {
+        static CANCEL: Emoji<'_, '_> = Emoji("❌", "");
+        println!("{} Changes were not applied.", CANCEL);
+        std::process::exit(0);
+    }
+    fn abort_callback(_args: &menu::Parameter, _user_data: &mut Vec<Job>) -> Result<(), menu::Error> {
+        static CANCEL: Emoji<'_, '_> = Emoji("❌", "");
+        println!("{} Aborted.", CANCEL);
+        std::process::exit(1);
+    }
+
+    // The menu expects a mutable Vec for parameter passing; collect jobs into a Vec
+    let mut jobs_vec = jobs.to_vec();
+
+    // Define menu items
+    static MENU_LABEL: &str = "What do you want to do?";
+    let apply_item = Item {
+        command: "apply",
+        help: Some("🚀 Apply the above changes"),
+        item_type: ItemType::Callback {
+            function: apply_changes_callback,
+            parameters: &[],
+        },
+    };
+    let diff_item = Item {
+        command: "diff",
+        help: Some("🔍 Diff: Show details of all diffs"),
+        item_type: ItemType::Callback {
+            function: show_diffs_callback,
+            parameters: &[],
+        },
+    };
+    let cancel_item = Item {
+        command: "cancel",
+        help: Some("🛑 Cancel: Abort without changing files"),
+        item_type: ItemType::Callback {
+            function: cancel_callback,
+            parameters: &[],
+        },
+    };
+    let abort_item = Item {
+        command: "abort",
+        help: Some("💥 Abort: Exit with error"),
+        item_type: ItemType::Callback {
+            function: abort_callback,
+            parameters: &[],
+        },
+    };
+    let items = [&apply_item, &diff_item, &cancel_item, &abort_item];
+    let menu = Menu {
+        label: MENU_LABEL,
+        items: &items,
+        entry: None,
+        exit: None,
+    };
+
+    // Create a buffer for input
+    let mut buffer = [0u8; 64];
+    let mut runner = Runner::new(menu, &mut buffer, io::stdout(), &mut jobs_vec);
+
+    // Menu description
+    println!();
+    let joined_cmds = items
+        .iter()
+        .map(|i| i.command.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    println!(
+        "Type one of: {}.",
+        joined_cmds
+    );
+    println!("Or type {} for help.", style("help").cyan());
+
+    // Main menu interaction loop
+    loop {
+        print!("{} > ", style(MENU_LABEL).dim());
+        io::stdout().flush().ok();
+        let mut input = String::new();
+        if io::stdin().read_line(&mut input).is_err() {
+            println!("Failed to read input.");
+            continue;
+        }
+        let input_trim = input.trim();
+        // Process the input
+        match runner.run(input_trim.as_bytes()) {
+            Ok(_) => {
+                // Continue running or exit (callbacks handle exit)
+            }
+            Err(e) => {
+                println!("{}", style(format!("Menu error: {:?}", e)).red());
+            }
         }
     }
 }
+
 
 #[derive(Debug, Clone)]
 struct Options {
