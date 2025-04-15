@@ -9,14 +9,14 @@ on:
 
 jobs:
   code-quality:
-    runs-on: depot-ubuntu-24.04-arm-16
+    runs-on: blacksmith-16vcpu-ubuntu-2204-arm
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: useblacksmith/rust-cache@v3
 
       - name: ✨ Run code quality checks
         shell: bash
@@ -24,14 +24,14 @@ jobs:
           just code-quality-ci
 
   test:
-    runs-on: depot-ubuntu-24.04-arm-16
+    runs-on: blacksmith-16vcpu-ubuntu-2204-arm
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: useblacksmith/rust-cache@v3
 
       - name: ✨ Run tests
         shell: bash
@@ -39,14 +39,14 @@ jobs:
           just test-ci
 
   nostd:
-    runs-on: depot-ubuntu-24.04-arm-16
+    runs-on: blacksmith-16vcpu-ubuntu-2204-arm
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: useblacksmith/rust-cache@v3
 
       - name: ✨ Run nostd tests
         shell: bash
@@ -54,14 +54,14 @@ jobs:
           just nostd-ci
 
   doc-tests:
-    runs-on: depot-ubuntu-24.04-arm-16
+    runs-on: blacksmith-16vcpu-ubuntu-2204-arm
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: useblacksmith/rust-cache@v3
 
       - name: ✨ Run doc tests
         shell: bash
@@ -69,14 +69,14 @@ jobs:
           just doc-tests-ci
 
   miri:
-    runs-on: depot-ubuntu-24.04-arm-32
+    runs-on: blacksmith-32vcpu-ubuntu-2204-arm
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-miri
     steps:
       - uses: actions/checkout@v4
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: useblacksmith/rust-cache@v3
 
       - name: ✨ Run miri
         shell: bash
@@ -85,14 +85,14 @@ jobs:
           just miri
 
   msrv:
-    runs-on: depot-ubuntu-24.04-arm-16
+    runs-on: blacksmith-16vcpu-ubuntu-2204-arm
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: useblacksmith/rust-cache@v3
 
       - uses: taiki-e/install-action@cargo-hack
 
@@ -102,14 +102,14 @@ jobs:
           just msrv
 
   minimal-versions:
-    runs-on: depot-ubuntu-24.04-arm-16
+    runs-on: blacksmith-16vcpu-ubuntu-2204-arm
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: useblacksmith/rust-cache@v3
 
       - name: ✨ Check minimal versions
         shell: bash
@@ -122,14 +122,14 @@ jobs:
           cargo check --workspace --all-features --locked --keep-going
 
   docs:
-    runs-on: depot-ubuntu-24.04-arm-16
+    runs-on: blacksmith-16vcpu-ubuntu-2204-arm
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: useblacksmith/rust-cache@v3
 
       - name: ✨ Check documentation
         shell: bash
@@ -139,14 +139,14 @@ jobs:
           just docs
 
   lockfile:
-    runs-on: depot-ubuntu-24.04-arm-16
+    runs-on: blacksmith-2vcpu-ubuntu-2204-arm
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: useblacksmith/rust-cache@v3
 
       - name: ✨ Check lockfile is updated
         shell: bash
@@ -154,7 +154,7 @@ jobs:
           cargo update --workspace --locked
 
   clippy:
-    runs-on: depot-ubuntu-24.04-arm-16
+    runs-on: blacksmith-16vcpu-ubuntu-2204-arm
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
@@ -163,7 +163,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: useblacksmith/rust-cache@v3
 
       - name: Install SARIF tools
         shell: bash
@@ -189,14 +189,14 @@ jobs:
           cargo clippy --workspace --all-features --all-targets --keep-going -- -D warnings --allow deprecated
 
   coverage:
-    runs-on: depot-ubuntu-24.04-arm-32
+    runs-on: blacksmith-16vcpu-ubuntu-2204-arm
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: useblacksmith/rust-cache@v3
 
       - name: ✨ Gather coverage
         shell: bash
