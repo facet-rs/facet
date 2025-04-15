@@ -1,5 +1,5 @@
 use facet_ansi::Stylize as _;
-use log::{error, warn};
+use log::{LevelFilter, debug, error, warn};
 use similar::ChangeTag;
 use std::fs;
 use std::io::{self, Write};
@@ -263,12 +263,28 @@ pub fn enqueue_readme_jobs(sender: std::sync::mpsc::Sender<Job>) {
 }
 
 pub fn enqueue_tuple_job(sender: std::sync::mpsc::Sender<Job>) {
+    use std::time::Instant;
+
     // Path where tuple impls should be written
     let base_path = Path::new("facet-core/src/impls_core/tuple.rs");
 
+    debug!("Generating tuple impls for {}", base_path.display().blue());
+
     // Generate the tuple impls code
+    let start = Instant::now();
     let output = tuples::generate();
     let content = output.into_bytes();
+    let duration = start.elapsed();
+    let size_mb = (content.len() as f64) / (1024.0 * 1024.0);
+    let secs = duration.as_secs_f64();
+    let mbps = if secs > 0.0 { size_mb / secs } else { 0.0 };
+    debug!(
+        "Generated and formatted tuple impls for {}: {:.2} MiB in {:.2} s ({:.2} MiB/s)",
+        base_path.display().blue(),
+        size_mb,
+        secs,
+        mbps.bright_magenta()
+    );
 
     // Attempt to read existing file
     let old_content = fs::read(base_path).ok();
@@ -285,16 +301,36 @@ pub fn enqueue_tuple_job(sender: std::sync::mpsc::Sender<Job>) {
 }
 
 pub fn enqueue_sample_job(sender: std::sync::mpsc::Sender<Job>) {
+    use log::trace;
+    use std::time::Instant;
+
     // Path where sample generated code should be written
+    let rel_path = std::path::PathBuf::from("facet/src/sample_generated_code.rs");
     let workspace_dir = std::env::current_dir().unwrap();
-    let target_path = workspace_dir
-        .join("facet")
-        .join("src")
-        .join("sample_generated_code.rs");
+    let target_path = workspace_dir.join(&rel_path);
+
+    trace!(
+        "Expanding sample code at {:?}",
+        target_path.display().blue()
+    );
+    let start = Instant::now();
 
     // Generate the sample expanded and formatted code
     let code = sample::cargo_expand_and_format();
     let content = code.into_bytes();
+    let size_mb = (content.len() as f64) / (1024.0 * 1024.0);
+
+    let duration = start.elapsed();
+    let secs = duration.as_secs_f64();
+    let mbps = if secs > 0.0 { size_mb / secs } else { 0.0 };
+
+    debug!(
+        "Generated and formatted sample code for {}: {:.2} MiB in {:.2} s ({:.2} MiB/s)",
+        rel_path.display().blue(),
+        size_mb,
+        secs,
+        mbps.bright_magenta()
+    );
 
     // Attempt to read existing file
     let old_content = fs::read(&target_path).ok();
@@ -311,6 +347,9 @@ pub fn enqueue_sample_job(sender: std::sync::mpsc::Sender<Job>) {
 }
 
 pub fn enqueue_rustfmt_jobs(sender: std::sync::mpsc::Sender<Job>, staged_files: &StagedFiles) {
+    use log::trace;
+    use std::time::Instant;
+
     for path in &staged_files.clean {
         // Only process .rs files
         if let Some(ext) = path.extension() {
@@ -320,6 +359,8 @@ pub fn enqueue_rustfmt_jobs(sender: std::sync::mpsc::Sender<Job>, staged_files: 
         } else {
             continue;
         }
+
+        trace!("rustfmt: formatting {}", path.display());
 
         let original = match fs::read(path) {
             Ok(val) => val,
@@ -334,7 +375,10 @@ pub fn enqueue_rustfmt_jobs(sender: std::sync::mpsc::Sender<Job>, staged_files: 
             }
         };
 
+        let size_mb = (original.len() as f64) / (1024.0 * 1024.0);
+
         // Format the content via rustfmt (edition 2024)
+        let start = Instant::now();
         let cmd = Command::new("rustfmt")
             .arg("--edition")
             .arg("2024")
@@ -374,6 +418,17 @@ pub fn enqueue_rustfmt_jobs(sender: std::sync::mpsc::Sender<Job>, staged_files: 
                 continue;
             }
         };
+
+        let duration = start.elapsed();
+        let secs = duration.as_secs_f64();
+        let mbps = if secs > 0.0 { size_mb / secs } else { 0.0 };
+        debug!(
+            "rustfmt: {} formatted {:.2} MiB in {:.2} s ({:.2} MiB/s)",
+            path.display(),
+            size_mb,
+            secs,
+            mbps.magenta()
+        );
 
         if !output.status.success() {
             error!(
@@ -545,10 +600,34 @@ struct Options {
 
 fn main() {
     facet_testhelpers::setup();
+    // Accept allowed log levels: trace, debug, error, warn, info
+    if let Ok(log_level) = std::env::var("RUST_LOG") {
+        let allowed = ["trace", "debug", "error", "warn", "info"];
+        let log_level_lc = log_level.to_lowercase();
+        if allowed.contains(&log_level_lc.as_str()) {
+            let level = match log_level_lc.as_str() {
+                "trace" => LevelFilter::Trace,
+                "debug" => LevelFilter::Debug,
+                "info" => LevelFilter::Info,
+                "warn" => LevelFilter::Warn,
+                "error" => LevelFilter::Error,
+                _ => LevelFilter::Info,
+            };
+            log::set_max_level(level);
+        } else {
+            // Default to Info if not allowed
+            log::set_max_level(LevelFilter::Info);
+        }
+    }
 
-    let opts = Options {
-        check: std::env::args().any(|arg| arg == "--check"),
-    };
+    // Parse opts from args
+    let args: Vec<String> = std::env::args().collect();
+    let mut opts = Options { check: false };
+    for arg in &args[1..] {
+        if arg == "--check" || arg == "-c" {
+            opts.check = true;
+        }
+    }
 
     // Check if current directory has a Cargo.toml with [workspace]
     let cargo_toml_path = std::env::current_dir().unwrap().join("Cargo.toml");
@@ -562,6 +641,14 @@ fn main() {
         );
         std::process::exit(1);
     }
+
+    let staged_files = match collect_staged_files() {
+        Ok(sf) => sf,
+        Err(e) => {
+            error!("Failed to collect staged files: {e}");
+            std::process::exit(1);
+        }
+    };
 
     // Use a channel to collect jobs from all tasks.
     use std::sync::mpsc;
@@ -580,6 +667,11 @@ fn main() {
     let handle_sample = std::thread::spawn(move || {
         enqueue_sample_job(send3);
     });
+    // Rustfmt job: enqueue formatting for staged .rs files
+    let send4 = sender.clone();
+    let handle_rustfmt = std::thread::spawn(move || {
+        enqueue_rustfmt_jobs(send4, &staged_files);
+    });
 
     // Drop original sender so the channel closes when all workers finish
     drop(sender);
@@ -594,6 +686,7 @@ fn main() {
     handle_readme.join().unwrap();
     handle_tuple.join().unwrap();
     handle_sample.join().unwrap();
+    handle_rustfmt.join().unwrap();
 
     if jobs.is_empty() {
         println!("{}", "No codegen changes detected.".green().bold());
@@ -667,8 +760,11 @@ fn main() {
 
 #[derive(Debug)]
 pub struct StagedFiles {
+    /// Files that are staged (in the index) and not dirty (working tree matches index).
     pub clean: Vec<PathBuf>,
+    /// Files that are staged and dirty (index does NOT match working tree).
     pub dirty: Vec<PathBuf>,
+    /// Files that are untracked or unstaged (not added to the index).
     pub unstaged: Vec<PathBuf>,
 }
 
@@ -680,20 +776,6 @@ pub struct FormatCandidate {
     pub original: Vec<u8>,
     pub formatted: Vec<u8>,
     pub diff: Option<String>,
-}
-
-#[derive(Debug)]
-pub struct FormatResult {
-    pub success: bool,
-    pub applied: bool,
-    pub path: PathBuf,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UserAction {
-    Fix,
-    ShowDiff,
-    Skip,
 }
 
 pub fn collect_staged_files() -> io::Result<StagedFiles> {
@@ -708,30 +790,59 @@ pub fn collect_staged_files() -> io::Result<StagedFiles> {
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
 
+    log::trace!("Parsing {} output:", "`git status --porcelain`".blue());
+    log::trace!("---\n{}\n---", stdout);
+
     let mut clean = Vec::new();
     let mut dirty = Vec::new();
     let mut unstaged = Vec::new();
 
     for line in stdout.lines() {
+        log::trace!("Parsing git status line: {:?}", line.dim());
         // E.g. "M  src/main.rs", "A  foo.rs", "AM foo/bar.rs"
         if line.len() < 3 {
+            log::trace!("Skipping short line: {:?}", line.dim());
             continue;
         }
         let x = line.chars().next().unwrap();
         let y = line.chars().nth(1).unwrap();
         let path = line[3..].to_string();
 
+        log::trace!(
+            "x: {:?}, y: {:?}, path: {:?}",
+            x.magenta(),
+            y.cyan(),
+            (&path).dim()
+        );
+
         // Staged and not dirty (to be formatted/committed)
         if x != ' ' && x != '?' && y == ' ' {
-            clean.push(PathBuf::from(path));
+            log::debug!(
+                "{} {}",
+                "-> clean (staged, not dirty):".green().bold(),
+                path.as_str().blue()
+            );
+            clean.push(PathBuf::from(&path));
         }
         // Staged + dirty (index does not match worktree; skip and warn)
         else if x != ' ' && x != '?' && y != ' ' {
-            dirty.push(PathBuf::from(path));
+            log::debug!(
+                "{} {}",
+                "-> dirty (staged and dirty):".yellow().bold(),
+                path.as_str().blue()
+            );
+            dirty.push(PathBuf::from(&path));
         }
         // Untracked or unstaged files (may be useful for warning)
         else if x == '?' {
-            unstaged.push(PathBuf::from(path));
+            log::debug!(
+                "{} {}",
+                "-> unstaged/untracked:".cyan().bold(),
+                path.as_str().blue()
+            );
+            unstaged.push(PathBuf::from(&path));
+        } else {
+            log::debug!("{} {}", "-> not categorized:".red(), path.as_str().blue());
         }
     }
     Ok(StagedFiles {
