@@ -13,7 +13,7 @@ prepush: clippy test
 
 ci: precommit prepush docs msrv miri
 
-genfmt: lockfile codegen absolve
+genfmt: lockfile gen absolve
 
 nostd:
     # Run alloc but no-std checks with specified target directory
@@ -76,7 +76,10 @@ doc-tests-ci *args:
     cmd_group "cargo test --doc {{args}}"
 
 codegen *args:
-    cargo run -p facet-codegen -- {{args}}
+    gen {{args}}
+
+gen *args:
+    cargo run -p facet-dev gen -- {{args}}
 
 code-quality: codegen
     cargo fmt --check --all

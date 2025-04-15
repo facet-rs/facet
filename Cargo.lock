@@ -203,23 +203,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-codegen"
-version = "0.1.1"
-dependencies = [
- "atty",
- "console",
- "dialoguer",
- "facet-ansi",
- "facet-testhelpers",
- "fs-err",
- "log",
- "num_cpus",
- "rayon",
- "similar",
- "termion",
-]
-
-[[package]]
 name = "facet-core"
 version = "0.5.3"
 dependencies = [
@@ -233,6 +216,23 @@ version = "0.1.20"
 dependencies = [
  "facet-core",
  "unsynn",
+]
+
+[[package]]
+name = "facet-dev"
+version = "0.1.1"
+dependencies = [
+ "atty",
+ "console",
+ "dialoguer",
+ "facet-ansi",
+ "facet-testhelpers",
+ "fs-err",
+ "log",
+ "num_cpus",
+ "rayon",
+ "similar",
+ "termion",
 ]
 
 [[package]]

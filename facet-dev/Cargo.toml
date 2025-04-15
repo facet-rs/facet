@@ -1,5 +1,5 @@
 [package]
-name = "facet-codegen"
+name = "facet-dev"
 publish = false
 version = "0.1.1"
 authors.workspace = true
@@ -7,7 +7,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Code generation utilities for Facet"
+description = "Internal development utilities for Facet"
 keywords = ["code-generation", "templates"]
 categories = ["development-tools"]
 

@@ -9,7 +9,7 @@ members = [
     "facet-reflect",
 
     # dev helpers
-    "facet-codegen",
+    "facet-dev",
 
     # test helpers
     "facet-testhelpers",

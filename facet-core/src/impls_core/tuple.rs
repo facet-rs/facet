@@ -4,8 +4,8 @@
 use core::{alloc::Layout, fmt};
 
 use crate::{
-    Characteristic, ConstTypeId, Def, Facet, Field, FieldFlags, PtrConst, Shape, Struct,
-    TypeNameOpts, ValueVTable,
+    Characteristic, ConstTypeId, Def, Facet, Field, FieldFlags, PtrConst, Shape,
+    Struct, TypeNameOpts, ValueVTable,
 };
 
 #[inline(always)]
@@ -45,12 +45,12 @@ macro_rules! field {
 
 unsafe impl<T0> Facet for (T0,)
 where
-    T0: Facet,
+    T0: Facet
 {
     const SHAPE: &'static Shape = &const {
         fn type_name<T0>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result
         where
-            T0: Facet,
+            T0: Facet
         {
             write_type_name_list(f, opts, "(", ", ", ")", &[T0::SHAPE])
         }
@@ -70,7 +70,10 @@ where
                             write!(f, "(")?;
                             unsafe {
                                 let ptr = &value.0 as *const T0;
-                                (T0::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T0::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ")")
                         });
@@ -95,7 +98,9 @@ where
             .def(Def::Struct({
                 Struct::builder()
                     .tuple()
-                    .fields(&const { [field!(0, (T0,),)] })
+                    .fields(
+                        &const { [field!(0, (T0,),)] }
+                    )
                     .build()
             }))
             .build()
@@ -104,13 +109,13 @@ where
 unsafe impl<T0, T1> Facet for (T0, T1)
 where
     T0: Facet,
-    T1: Facet,
+    T1: Facet
 {
     const SHAPE: &'static Shape = &const {
         fn type_name<T0, T1>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result
         where
             T0: Facet,
-            T1: Facet,
+    T1: Facet
         {
             write_type_name_list(f, opts, "(", ", ", ")", &[T0::SHAPE, T1::SHAPE])
         }
@@ -122,12 +127,10 @@ where
                 &const {
                     let mut builder = ValueVTable::builder()
                         .type_name(type_name::<T0, T1>)
-                        .marker_traits({
-                            T0::SHAPE
-                                .vtable
-                                .marker_traits
+                        .marker_traits(                        {
+                            T0::SHAPE.vtable.marker_traits
                                 .intersection(T1::SHAPE.vtable.marker_traits)
-                        });
+                    });
 
                     if Characteristic::Eq.all(&[T0::SHAPE, T1::SHAPE]) {
                         builder = builder.debug(|value, f| {
@@ -135,12 +138,18 @@ where
                             write!(f, "(")?;
                             unsafe {
                                 let ptr = &value.0 as *const T0;
-                                (T0::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T0::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.1 as *const T1;
-                                (T1::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T1::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ")")
                         });
@@ -177,7 +186,10 @@ where
             .def(Def::Struct({
                 Struct::builder()
                     .tuple()
-                    .fields(&const { [field!(0, (T0, T1,),), field!(1, (T0, T1,),)] })
+                    .fields(
+                        &const { [field!(0, (T0, T1,),),
+                        field!(1, (T0, T1,),)] }
+                    )
                     .build()
             }))
             .build()
@@ -187,14 +199,14 @@ unsafe impl<T0, T1, T2> Facet for (T0, T1, T2)
 where
     T0: Facet,
     T1: Facet,
-    T2: Facet,
+    T2: Facet
 {
     const SHAPE: &'static Shape = &const {
         fn type_name<T0, T1, T2>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result
         where
             T0: Facet,
-            T1: Facet,
-            T2: Facet,
+    T1: Facet,
+    T2: Facet
         {
             write_type_name_list(f, opts, "(", ", ", ")", &[T0::SHAPE, T1::SHAPE, T2::SHAPE])
         }
@@ -206,13 +218,11 @@ where
                 &const {
                     let mut builder = ValueVTable::builder()
                         .type_name(type_name::<T0, T1, T2>)
-                        .marker_traits({
-                            T0::SHAPE
-                                .vtable
-                                .marker_traits
+                        .marker_traits(                        {
+                            T0::SHAPE.vtable.marker_traits
                                 .intersection(T1::SHAPE.vtable.marker_traits)
                                 .intersection(T2::SHAPE.vtable.marker_traits)
-                        });
+                    });
 
                     if Characteristic::Eq.all(&[T0::SHAPE, T1::SHAPE, T2::SHAPE]) {
                         builder = builder.debug(|value, f| {
@@ -220,17 +230,26 @@ where
                             write!(f, "(")?;
                             unsafe {
                                 let ptr = &value.0 as *const T0;
-                                (T0::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T0::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.1 as *const T1;
-                                (T1::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T1::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.2 as *const T2;
-                                (T2::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T2::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ")")
                         });
@@ -280,13 +299,9 @@ where
                 Struct::builder()
                     .tuple()
                     .fields(
-                        &const {
-                            [
-                                field!(0, (T0, T1, T2,),),
-                                field!(1, (T0, T1, T2,),),
-                                field!(2, (T0, T1, T2,),),
-                            ]
-                        },
+                        &const { [field!(0, (T0, T1, T2,),),
+                        field!(1, (T0, T1, T2,),),
+                        field!(2, (T0, T1, T2,),)] }
                     )
                     .build()
             }))
@@ -298,15 +313,15 @@ where
     T0: Facet,
     T1: Facet,
     T2: Facet,
-    T3: Facet,
+    T3: Facet
 {
     const SHAPE: &'static Shape = &const {
         fn type_name<T0, T1, T2, T3>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result
         where
             T0: Facet,
-            T1: Facet,
-            T2: Facet,
-            T3: Facet,
+    T1: Facet,
+    T2: Facet,
+    T3: Facet
         {
             write_type_name_list(
                 f,
@@ -314,7 +329,9 @@ where
                 "(",
                 ", ",
                 ")",
-                &[T0::SHAPE, T1::SHAPE, T2::SHAPE, T3::SHAPE],
+                &[
+                    T0::SHAPE, T1::SHAPE, T2::SHAPE, T3::SHAPE,
+                ],
             )
         }
 
@@ -325,14 +342,12 @@ where
                 &const {
                     let mut builder = ValueVTable::builder()
                         .type_name(type_name::<T0, T1, T2, T3>)
-                        .marker_traits({
-                            T0::SHAPE
-                                .vtable
-                                .marker_traits
+                        .marker_traits(                        {
+                            T0::SHAPE.vtable.marker_traits
                                 .intersection(T1::SHAPE.vtable.marker_traits)
                                 .intersection(T2::SHAPE.vtable.marker_traits)
                                 .intersection(T3::SHAPE.vtable.marker_traits)
-                        });
+                    });
 
                     if Characteristic::Eq.all(&[T0::SHAPE, T1::SHAPE, T2::SHAPE, T3::SHAPE]) {
                         builder = builder.debug(|value, f| {
@@ -340,22 +355,34 @@ where
                             write!(f, "(")?;
                             unsafe {
                                 let ptr = &value.0 as *const T0;
-                                (T0::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T0::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.1 as *const T1;
-                                (T1::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T1::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.2 as *const T2;
-                                (T2::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T2::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.3 as *const T3;
-                                (T3::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T3::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ")")
                         });
@@ -422,7 +449,7 @@ where
                                 field!(0, (T0, T1, T2, T3,),),
                                 field!(1, (T0, T1, T2, T3,),),
                                 field!(2, (T0, T1, T2, T3,),),
-                                field!(3, (T0, T1, T2, T3,),),
+                                field!(3, (T0, T1, T2, T3,),)
                             ]
                         },
                     )
@@ -437,16 +464,16 @@ where
     T1: Facet,
     T2: Facet,
     T3: Facet,
-    T4: Facet,
+    T4: Facet
 {
     const SHAPE: &'static Shape = &const {
         fn type_name<T0, T1, T2, T3, T4>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result
         where
             T0: Facet,
-            T1: Facet,
-            T2: Facet,
-            T3: Facet,
-            T4: Facet,
+    T1: Facet,
+    T2: Facet,
+    T3: Facet,
+    T4: Facet
         {
             write_type_name_list(
                 f,
@@ -454,7 +481,9 @@ where
                 "(",
                 ", ",
                 ")",
-                &[T0::SHAPE, T1::SHAPE, T2::SHAPE, T3::SHAPE, T4::SHAPE],
+                &[
+                    T0::SHAPE, T1::SHAPE, T2::SHAPE, T3::SHAPE, T4::SHAPE,
+                ],
             )
         }
 
@@ -465,49 +494,56 @@ where
                 &const {
                     let mut builder = ValueVTable::builder()
                         .type_name(type_name::<T0, T1, T2, T3, T4>)
-                        .marker_traits({
-                            T0::SHAPE
-                                .vtable
-                                .marker_traits
+                        .marker_traits(                        {
+                            T0::SHAPE.vtable.marker_traits
                                 .intersection(T1::SHAPE.vtable.marker_traits)
                                 .intersection(T2::SHAPE.vtable.marker_traits)
                                 .intersection(T3::SHAPE.vtable.marker_traits)
                                 .intersection(T4::SHAPE.vtable.marker_traits)
-                        });
+                    });
 
-                    if Characteristic::Eq.all(&[
-                        T0::SHAPE,
-                        T1::SHAPE,
-                        T2::SHAPE,
-                        T3::SHAPE,
-                        T4::SHAPE,
-                    ]) {
+                    if Characteristic::Eq.all(&[T0::SHAPE, T1::SHAPE, T2::SHAPE, T3::SHAPE, T4::SHAPE]) {
                         builder = builder.debug(|value, f| {
                             let value = unsafe { value.get::<(T0, T1, T2, T3, T4)>() };
                             write!(f, "(")?;
                             unsafe {
                                 let ptr = &value.0 as *const T0;
-                                (T0::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T0::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.1 as *const T1;
-                                (T1::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T1::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.2 as *const T2;
-                                (T2::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T2::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.3 as *const T3;
-                                (T3::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T3::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.4 as *const T4;
-                                (T4::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T4::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ")")
                         });
@@ -587,7 +623,7 @@ where
                                 field!(1, (T0, T1, T2, T3, T4,),),
                                 field!(2, (T0, T1, T2, T3, T4,),),
                                 field!(3, (T0, T1, T2, T3, T4,),),
-                                field!(4, (T0, T1, T2, T3, T4,),),
+                                field!(4, (T0, T1, T2, T3, T4,),)
                             ]
                         },
                     )
@@ -603,20 +639,17 @@ where
     T2: Facet,
     T3: Facet,
     T4: Facet,
-    T5: Facet,
+    T5: Facet
 {
     const SHAPE: &'static Shape = &const {
-        fn type_name<T0, T1, T2, T3, T4, T5>(
-            f: &mut fmt::Formatter,
-            opts: TypeNameOpts,
-        ) -> fmt::Result
+        fn type_name<T0, T1, T2, T3, T4, T5>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result
         where
             T0: Facet,
-            T1: Facet,
-            T2: Facet,
-            T3: Facet,
-            T4: Facet,
-            T5: Facet,
+    T1: Facet,
+    T2: Facet,
+    T3: Facet,
+    T4: Facet,
+    T5: Facet
         {
             write_type_name_list(
                 f,
@@ -625,12 +658,7 @@ where
                 ", ",
                 ")",
                 &[
-                    T0::SHAPE,
-                    T1::SHAPE,
-                    T2::SHAPE,
-                    T3::SHAPE,
-                    T4::SHAPE,
-                    T5::SHAPE,
+                    T0::SHAPE, T1::SHAPE, T2::SHAPE, T3::SHAPE, T4::SHAPE, T5::SHAPE,
                 ],
             )
         }
@@ -642,56 +670,67 @@ where
                 &const {
                     let mut builder = ValueVTable::builder()
                         .type_name(type_name::<T0, T1, T2, T3, T4, T5>)
-                        .marker_traits({
-                            T0::SHAPE
-                                .vtable
-                                .marker_traits
+                        .marker_traits(                        {
+                            T0::SHAPE.vtable.marker_traits
                                 .intersection(T1::SHAPE.vtable.marker_traits)
                                 .intersection(T2::SHAPE.vtable.marker_traits)
                                 .intersection(T3::SHAPE.vtable.marker_traits)
                                 .intersection(T4::SHAPE.vtable.marker_traits)
                                 .intersection(T5::SHAPE.vtable.marker_traits)
-                        });
+                    });
 
                     if Characteristic::Eq.all(&[
-                        T0::SHAPE,
-                        T1::SHAPE,
-                        T2::SHAPE,
-                        T3::SHAPE,
-                        T4::SHAPE,
-                        T5::SHAPE,
+                        T0::SHAPE, T1::SHAPE, T2::SHAPE, T3::SHAPE, T4::SHAPE, T5::SHAPE,
                     ]) {
                         builder = builder.debug(|value, f| {
                             let value = unsafe { value.get::<(T0, T1, T2, T3, T4, T5)>() };
                             write!(f, "(")?;
                             unsafe {
                                 let ptr = &value.0 as *const T0;
-                                (T0::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T0::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.1 as *const T1;
-                                (T1::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T1::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.2 as *const T2;
-                                (T2::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T2::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.3 as *const T3;
-                                (T3::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T3::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.4 as *const T4;
-                                (T4::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T4::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.5 as *const T5;
-                                (T5::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T5::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ")")
                         });
@@ -784,7 +823,7 @@ where
                                 field!(2, (T0, T1, T2, T3, T4, T5,),),
                                 field!(3, (T0, T1, T2, T3, T4, T5,),),
                                 field!(4, (T0, T1, T2, T3, T4, T5,),),
-                                field!(5, (T0, T1, T2, T3, T4, T5,),),
+                                field!(5, (T0, T1, T2, T3, T4, T5,),)
                             ]
                         },
                     )
@@ -801,21 +840,18 @@ where
     T3: Facet,
     T4: Facet,
     T5: Facet,
-    T6: Facet,
+    T6: Facet
 {
     const SHAPE: &'static Shape = &const {
-        fn type_name<T0, T1, T2, T3, T4, T5, T6>(
-            f: &mut fmt::Formatter,
-            opts: TypeNameOpts,
-        ) -> fmt::Result
+        fn type_name<T0, T1, T2, T3, T4, T5, T6>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result
         where
             T0: Facet,
-            T1: Facet,
-            T2: Facet,
-            T3: Facet,
-            T4: Facet,
-            T5: Facet,
-            T6: Facet,
+    T1: Facet,
+    T2: Facet,
+    T3: Facet,
+    T4: Facet,
+    T5: Facet,
+    T6: Facet
         {
             write_type_name_list(
                 f,
@@ -824,13 +860,7 @@ where
                 ", ",
                 ")",
                 &[
-                    T0::SHAPE,
-                    T1::SHAPE,
-                    T2::SHAPE,
-                    T3::SHAPE,
-                    T4::SHAPE,
-                    T5::SHAPE,
-                    T6::SHAPE,
+                    T0::SHAPE, T1::SHAPE, T2::SHAPE, T3::SHAPE, T4::SHAPE, T5::SHAPE, T6::SHAPE,
                 ],
             )
         }
@@ -842,63 +872,76 @@ where
                 &const {
                     let mut builder = ValueVTable::builder()
                         .type_name(type_name::<T0, T1, T2, T3, T4, T5, T6>)
-                        .marker_traits({
-                            T0::SHAPE
-                                .vtable
-                                .marker_traits
+                        .marker_traits(                        {
+                            T0::SHAPE.vtable.marker_traits
                                 .intersection(T1::SHAPE.vtable.marker_traits)
                                 .intersection(T2::SHAPE.vtable.marker_traits)
                                 .intersection(T3::SHAPE.vtable.marker_traits)
                                 .intersection(T4::SHAPE.vtable.marker_traits)
                                 .intersection(T5::SHAPE.vtable.marker_traits)
                                 .intersection(T6::SHAPE.vtable.marker_traits)
-                        });
+                    });
 
                     if Characteristic::Eq.all(&[
-                        T0::SHAPE,
-                        T1::SHAPE,
-                        T2::SHAPE,
-                        T3::SHAPE,
-                        T4::SHAPE,
-                        T5::SHAPE,
-                        T6::SHAPE,
+                        T0::SHAPE, T1::SHAPE, T2::SHAPE, T3::SHAPE, T4::SHAPE, T5::SHAPE, T6::SHAPE,
                     ]) {
                         builder = builder.debug(|value, f| {
                             let value = unsafe { value.get::<(T0, T1, T2, T3, T4, T5, T6)>() };
                             write!(f, "(")?;
                             unsafe {
                                 let ptr = &value.0 as *const T0;
-                                (T0::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T0::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.1 as *const T1;
-                                (T1::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T1::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.2 as *const T2;
-                                (T2::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T2::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.3 as *const T3;
-                                (T3::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T3::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.4 as *const T4;
-                                (T4::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T4::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.5 as *const T5;
-                                (T5::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T5::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.6 as *const T6;
-                                (T6::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T6::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ")")
                         });
@@ -1004,7 +1047,7 @@ where
                                 field!(3, (T0, T1, T2, T3, T4, T5, T6,),),
                                 field!(4, (T0, T1, T2, T3, T4, T5, T6,),),
                                 field!(5, (T0, T1, T2, T3, T4, T5, T6,),),
-                                field!(6, (T0, T1, T2, T3, T4, T5, T6,),),
+                                field!(6, (T0, T1, T2, T3, T4, T5, T6,),)
                             ]
                         },
                     )
@@ -1022,22 +1065,19 @@ where
     T4: Facet,
     T5: Facet,
     T6: Facet,
-    T7: Facet,
+    T7: Facet
 {
     const SHAPE: &'static Shape = &const {
-        fn type_name<T0, T1, T2, T3, T4, T5, T6, T7>(
-            f: &mut fmt::Formatter,
-            opts: TypeNameOpts,
-        ) -> fmt::Result
+        fn type_name<T0, T1, T2, T3, T4, T5, T6, T7>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result
         where
             T0: Facet,
-            T1: Facet,
-            T2: Facet,
-            T3: Facet,
-            T4: Facet,
-            T5: Facet,
-            T6: Facet,
-            T7: Facet,
+    T1: Facet,
+    T2: Facet,
+    T3: Facet,
+    T4: Facet,
+    T5: Facet,
+    T6: Facet,
+    T7: Facet
         {
             write_type_name_list(
                 f,
@@ -1046,14 +1086,7 @@ where
                 ", ",
                 ")",
                 &[
-                    T0::SHAPE,
-                    T1::SHAPE,
-                    T2::SHAPE,
-                    T3::SHAPE,
-                    T4::SHAPE,
-                    T5::SHAPE,
-                    T6::SHAPE,
-                    T7::SHAPE,
+                    T0::SHAPE, T1::SHAPE, T2::SHAPE, T3::SHAPE, T4::SHAPE, T5::SHAPE, T6::SHAPE, T7::SHAPE,
                 ],
             )
         }
@@ -1065,10 +1098,8 @@ where
                 &const {
                     let mut builder = ValueVTable::builder()
                         .type_name(type_name::<T0, T1, T2, T3, T4, T5, T6, T7>)
-                        .marker_traits({
-                            T0::SHAPE
-                                .vtable
-                                .marker_traits
+                        .marker_traits(                        {
+                            T0::SHAPE.vtable.marker_traits
                                 .intersection(T1::SHAPE.vtable.marker_traits)
                                 .intersection(T2::SHAPE.vtable.marker_traits)
                                 .intersection(T3::SHAPE.vtable.marker_traits)
@@ -1076,59 +1107,76 @@ where
                                 .intersection(T5::SHAPE.vtable.marker_traits)
                                 .intersection(T6::SHAPE.vtable.marker_traits)
                                 .intersection(T7::SHAPE.vtable.marker_traits)
-                        });
+                    });
 
                     if Characteristic::Eq.all(&[
-                        T0::SHAPE,
-                        T1::SHAPE,
-                        T2::SHAPE,
-                        T3::SHAPE,
-                        T4::SHAPE,
-                        T5::SHAPE,
-                        T6::SHAPE,
-                        T7::SHAPE,
+                        T0::SHAPE, T1::SHAPE, T2::SHAPE, T3::SHAPE, T4::SHAPE, T5::SHAPE, T6::SHAPE, T7::SHAPE,
                     ]) {
                         builder = builder.debug(|value, f| {
                             let value = unsafe { value.get::<(T0, T1, T2, T3, T4, T5, T6, T7)>() };
                             write!(f, "(")?;
                             unsafe {
                                 let ptr = &value.0 as *const T0;
-                                (T0::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T0::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.1 as *const T1;
-                                (T1::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T1::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.2 as *const T2;
-                                (T2::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T2::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.3 as *const T3;
-                                (T3::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T3::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.4 as *const T4;
-                                (T4::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T4::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.5 as *const T5;
-                                (T5::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T5::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.6 as *const T6;
-                                (T6::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T6::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.7 as *const T7;
-                                (T7::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T7::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ")")
                         });
@@ -1247,7 +1295,7 @@ where
                                 field!(4, (T0, T1, T2, T3, T4, T5, T6, T7,),),
                                 field!(5, (T0, T1, T2, T3, T4, T5, T6, T7,),),
                                 field!(6, (T0, T1, T2, T3, T4, T5, T6, T7,),),
-                                field!(7, (T0, T1, T2, T3, T4, T5, T6, T7,),),
+                                field!(7, (T0, T1, T2, T3, T4, T5, T6, T7,),)
                             ]
                         },
                     )
@@ -1266,23 +1314,20 @@ where
     T5: Facet,
     T6: Facet,
     T7: Facet,
-    T8: Facet,
+    T8: Facet
 {
     const SHAPE: &'static Shape = &const {
-        fn type_name<T0, T1, T2, T3, T4, T5, T6, T7, T8>(
-            f: &mut fmt::Formatter,
-            opts: TypeNameOpts,
-        ) -> fmt::Result
+        fn type_name<T0, T1, T2, T3, T4, T5, T6, T7, T8>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result
         where
             T0: Facet,
-            T1: Facet,
-            T2: Facet,
-            T3: Facet,
-            T4: Facet,
-            T5: Facet,
-            T6: Facet,
-            T7: Facet,
-            T8: Facet,
+    T1: Facet,
+    T2: Facet,
+    T3: Facet,
+    T4: Facet,
+    T5: Facet,
+    T6: Facet,
+    T7: Facet,
+    T8: Facet
         {
             write_type_name_list(
                 f,
@@ -1291,15 +1336,7 @@ where
                 ", ",
                 ")",
                 &[
-                    T0::SHAPE,
-                    T1::SHAPE,
-                    T2::SHAPE,
-                    T3::SHAPE,
-                    T4::SHAPE,
-                    T5::SHAPE,
-                    T6::SHAPE,
-                    T7::SHAPE,
-                    T8::SHAPE,
+                    T0::SHAPE, T1::SHAPE, T2::SHAPE, T3::SHAPE, T4::SHAPE, T5::SHAPE, T6::SHAPE, T7::SHAPE, T8::SHAPE,
                 ],
             )
         }
@@ -1311,10 +1348,8 @@ where
                 &const {
                     let mut builder = ValueVTable::builder()
                         .type_name(type_name::<T0, T1, T2, T3, T4, T5, T6, T7, T8>)
-                        .marker_traits({
-                            T0::SHAPE
-                                .vtable
-                                .marker_traits
+                        .marker_traits(                        {
+                            T0::SHAPE.vtable.marker_traits
                                 .intersection(T1::SHAPE.vtable.marker_traits)
                                 .intersection(T2::SHAPE.vtable.marker_traits)
                                 .intersection(T3::SHAPE.vtable.marker_traits)
@@ -1323,66 +1358,84 @@ where
                                 .intersection(T6::SHAPE.vtable.marker_traits)
                                 .intersection(T7::SHAPE.vtable.marker_traits)
                                 .intersection(T8::SHAPE.vtable.marker_traits)
-                        });
+                    });
 
                     if Characteristic::Eq.all(&[
-                        T0::SHAPE,
-                        T1::SHAPE,
-                        T2::SHAPE,
-                        T3::SHAPE,
-                        T4::SHAPE,
-                        T5::SHAPE,
-                        T6::SHAPE,
-                        T7::SHAPE,
-                        T8::SHAPE,
+                        T0::SHAPE, T1::SHAPE, T2::SHAPE, T3::SHAPE, T4::SHAPE, T5::SHAPE, T6::SHAPE, T7::SHAPE, T8::SHAPE,
                     ]) {
                         builder = builder.debug(|value, f| {
-                            let value =
-                                unsafe { value.get::<(T0, T1, T2, T3, T4, T5, T6, T7, T8)>() };
+                            let value = unsafe { value.get::<(T0, T1, T2, T3, T4, T5, T6, T7, T8)>() };
                             write!(f, "(")?;
                             unsafe {
                                 let ptr = &value.0 as *const T0;
-                                (T0::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T0::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.1 as *const T1;
-                                (T1::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T1::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.2 as *const T2;
-                                (T2::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T2::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.3 as *const T3;
-                                (T3::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T3::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.4 as *const T4;
-                                (T4::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T4::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.5 as *const T5;
-                                (T5::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T5::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.6 as *const T6;
-                                (T6::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T6::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.7 as *const T7;
-                                (T7::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T7::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.8 as *const T8;
-                                (T8::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T8::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ")")
                         });
@@ -1514,7 +1567,7 @@ where
                                 field!(5, (T0, T1, T2, T3, T4, T5, T6, T7, T8,),),
                                 field!(6, (T0, T1, T2, T3, T4, T5, T6, T7, T8,),),
                                 field!(7, (T0, T1, T2, T3, T4, T5, T6, T7, T8,),),
-                                field!(8, (T0, T1, T2, T3, T4, T5, T6, T7, T8,),),
+                                field!(8, (T0, T1, T2, T3, T4, T5, T6, T7, T8,),)
                             ]
                         },
                     )
@@ -1523,8 +1576,7 @@ where
             .build()
     };
 }
-unsafe impl<T0, T1, T2, T3, T4, T5, T6, T7, T8, T9> Facet
-    for (T0, T1, T2, T3, T4, T5, T6, T7, T8, T9)
+unsafe impl<T0, T1, T2, T3, T4, T5, T6, T7, T8, T9> Facet for (T0, T1, T2, T3, T4, T5, T6, T7, T8, T9)
 where
     T0: Facet,
     T1: Facet,
@@ -1535,24 +1587,21 @@ where
     T6: Facet,
     T7: Facet,
     T8: Facet,
-    T9: Facet,
+    T9: Facet
 {
     const SHAPE: &'static Shape = &const {
-        fn type_name<T0, T1, T2, T3, T4, T5, T6, T7, T8, T9>(
-            f: &mut fmt::Formatter,
-            opts: TypeNameOpts,
-        ) -> fmt::Result
+        fn type_name<T0, T1, T2, T3, T4, T5, T6, T7, T8, T9>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result
         where
             T0: Facet,
-            T1: Facet,
-            T2: Facet,
-            T3: Facet,
-            T4: Facet,
-            T5: Facet,
-            T6: Facet,
-            T7: Facet,
-            T8: Facet,
-            T9: Facet,
+    T1: Facet,
+    T2: Facet,
+    T3: Facet,
+    T4: Facet,
+    T5: Facet,
+    T6: Facet,
+    T7: Facet,
+    T8: Facet,
+    T9: Facet
         {
             write_type_name_list(
                 f,
@@ -1561,16 +1610,7 @@ where
                 ", ",
                 ")",
                 &[
-                    T0::SHAPE,
-                    T1::SHAPE,
-                    T2::SHAPE,
-                    T3::SHAPE,
-                    T4::SHAPE,
-                    T5::SHAPE,
-                    T6::SHAPE,
-                    T7::SHAPE,
-                    T8::SHAPE,
-                    T9::SHAPE,
+                    T0::SHAPE, T1::SHAPE, T2::SHAPE, T3::SHAPE, T4::SHAPE, T5::SHAPE, T6::SHAPE, T7::SHAPE, T8::SHAPE, T9::SHAPE,
                 ],
             )
         }
@@ -1582,10 +1622,8 @@ where
                 &const {
                     let mut builder = ValueVTable::builder()
                         .type_name(type_name::<T0, T1, T2, T3, T4, T5, T6, T7, T8, T9>)
-                        .marker_traits({
-                            T0::SHAPE
-                                .vtable
-                                .marker_traits
+                        .marker_traits(                        {
+                            T0::SHAPE.vtable.marker_traits
                                 .intersection(T1::SHAPE.vtable.marker_traits)
                                 .intersection(T2::SHAPE.vtable.marker_traits)
                                 .intersection(T3::SHAPE.vtable.marker_traits)
@@ -1595,72 +1633,92 @@ where
                                 .intersection(T7::SHAPE.vtable.marker_traits)
                                 .intersection(T8::SHAPE.vtable.marker_traits)
                                 .intersection(T9::SHAPE.vtable.marker_traits)
-                        });
+                    });
 
                     if Characteristic::Eq.all(&[
-                        T0::SHAPE,
-                        T1::SHAPE,
-                        T2::SHAPE,
-                        T3::SHAPE,
-                        T4::SHAPE,
-                        T5::SHAPE,
-                        T6::SHAPE,
-                        T7::SHAPE,
-                        T8::SHAPE,
-                        T9::SHAPE,
+                        T0::SHAPE, T1::SHAPE, T2::SHAPE, T3::SHAPE, T4::SHAPE, T5::SHAPE, T6::SHAPE, T7::SHAPE, T8::SHAPE, T9::SHAPE,
                     ]) {
                         builder = builder.debug(|value, f| {
-                            let value =
-                                unsafe { value.get::<(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9)>() };
+                            let value = unsafe { value.get::<(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9)>() };
                             write!(f, "(")?;
                             unsafe {
                                 let ptr = &value.0 as *const T0;
-                                (T0::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T0::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.1 as *const T1;
-                                (T1::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T1::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.2 as *const T2;
-                                (T2::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T2::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.3 as *const T3;
-                                (T3::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T3::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.4 as *const T4;
-                                (T4::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T4::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.5 as *const T5;
-                                (T5::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T5::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.6 as *const T6;
-                                (T6::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T6::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.7 as *const T7;
-                                (T7::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T7::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.8 as *const T8;
-                                (T8::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T8::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.9 as *const T9;
-                                (T9::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T9::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ")")
                         });
@@ -1805,7 +1863,7 @@ where
                                 field!(6, (T0, T1, T2, T3, T4, T5, T6, T7, T8, T9,),),
                                 field!(7, (T0, T1, T2, T3, T4, T5, T6, T7, T8, T9,),),
                                 field!(8, (T0, T1, T2, T3, T4, T5, T6, T7, T8, T9,),),
-                                field!(9, (T0, T1, T2, T3, T4, T5, T6, T7, T8, T9,),),
+                                field!(9, (T0, T1, T2, T3, T4, T5, T6, T7, T8, T9,),)
                             ]
                         },
                     )
@@ -1814,8 +1872,7 @@ where
             .build()
     };
 }
-unsafe impl<T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10> Facet
-    for (T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10)
+unsafe impl<T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10> Facet for (T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10)
 where
     T0: Facet,
     T1: Facet,
@@ -1827,25 +1884,22 @@ where
     T7: Facet,
     T8: Facet,
     T9: Facet,
-    T10: Facet,
+    T10: Facet
 {
     const SHAPE: &'static Shape = &const {
-        fn type_name<T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10>(
-            f: &mut fmt::Formatter,
-            opts: TypeNameOpts,
-        ) -> fmt::Result
+        fn type_name<T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result
         where
             T0: Facet,
-            T1: Facet,
-            T2: Facet,
-            T3: Facet,
-            T4: Facet,
-            T5: Facet,
-            T6: Facet,
-            T7: Facet,
-            T8: Facet,
-            T9: Facet,
-            T10: Facet,
+    T1: Facet,
+    T2: Facet,
+    T3: Facet,
+    T4: Facet,
+    T5: Facet,
+    T6: Facet,
+    T7: Facet,
+    T8: Facet,
+    T9: Facet,
+    T10: Facet
         {
             write_type_name_list(
                 f,
@@ -1854,44 +1908,20 @@ where
                 ", ",
                 ")",
                 &[
-                    T0::SHAPE,
-                    T1::SHAPE,
-                    T2::SHAPE,
-                    T3::SHAPE,
-                    T4::SHAPE,
-                    T5::SHAPE,
-                    T6::SHAPE,
-                    T7::SHAPE,
-                    T8::SHAPE,
-                    T9::SHAPE,
-                    T10::SHAPE,
+                    T0::SHAPE, T1::SHAPE, T2::SHAPE, T3::SHAPE, T4::SHAPE, T5::SHAPE, T6::SHAPE, T7::SHAPE, T8::SHAPE, T9::SHAPE, T10::SHAPE,
                 ],
             )
         }
 
         Shape::builder()
-            .id(ConstTypeId::of::<(
-                T0,
-                T1,
-                T2,
-                T3,
-                T4,
-                T5,
-                T6,
-                T7,
-                T8,
-                T9,
-                T10,
-            )>())
+            .id(ConstTypeId::of::<(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10)>())
             .layout(Layout::new::<(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10)>())
             .vtable(
                 &const {
                     let mut builder = ValueVTable::builder()
                         .type_name(type_name::<T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10>)
-                        .marker_traits({
-                            T0::SHAPE
-                                .vtable
-                                .marker_traits
+                        .marker_traits(                        {
+                            T0::SHAPE.vtable.marker_traits
                                 .intersection(T1::SHAPE.vtable.marker_traits)
                                 .intersection(T2::SHAPE.vtable.marker_traits)
                                 .intersection(T3::SHAPE.vtable.marker_traits)
@@ -1902,88 +1932,107 @@ where
                                 .intersection(T8::SHAPE.vtable.marker_traits)
                                 .intersection(T9::SHAPE.vtable.marker_traits)
                                 .intersection(T10::SHAPE.vtable.marker_traits)
-                        });
+                    });
 
                     if Characteristic::Eq.all(&[
-                        T0::SHAPE,
-                        T1::SHAPE,
-                        T2::SHAPE,
-                        T3::SHAPE,
-                        T4::SHAPE,
-                        T5::SHAPE,
-                        T6::SHAPE,
-                        T7::SHAPE,
-                        T8::SHAPE,
-                        T9::SHAPE,
-                        T10::SHAPE,
+                        T0::SHAPE, T1::SHAPE, T2::SHAPE, T3::SHAPE, T4::SHAPE, T5::SHAPE, T6::SHAPE, T7::SHAPE, T8::SHAPE, T9::SHAPE, T10::SHAPE,
                     ]) {
                         builder = builder.debug(|value, f| {
-                            let value = unsafe {
-                                value.get::<(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10)>()
-                            };
+                            let value = unsafe { value.get::<(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10)>() };
                             write!(f, "(")?;
                             unsafe {
                                 let ptr = &value.0 as *const T0;
-                                (T0::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T0::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.1 as *const T1;
-                                (T1::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T1::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.2 as *const T2;
-                                (T2::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T2::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.3 as *const T3;
-                                (T3::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T3::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.4 as *const T4;
-                                (T4::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T4::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.5 as *const T5;
-                                (T5::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T5::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.6 as *const T6;
-                                (T6::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T6::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.7 as *const T7;
-                                (T7::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T7::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.8 as *const T8;
-                                (T8::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T8::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.9 as *const T9;
-                                (T9::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T9::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.10 as *const T10;
-                                (T10::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T10::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ")")
                         });
 
                         builder = builder.eq(|a, b| {
-                            let a =
-                                unsafe { a.get::<(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10)>() };
-                            let b =
-                                unsafe { b.get::<(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10)>() };
+                            let a = unsafe { a.get::<(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10)>() };
+                            let b = unsafe { b.get::<(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10)>() };
 
                             // Compare element 0
                             unsafe {
@@ -2134,7 +2183,7 @@ where
                                 field!(7, (T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10,),),
                                 field!(8, (T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10,),),
                                 field!(9, (T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10,),),
-                                field!(10, (T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10,),),
+                                field!(10, (T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10,),)
                             ]
                         },
                     )
@@ -2143,8 +2192,7 @@ where
             .build()
     };
 }
-unsafe impl<T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11> Facet
-    for (T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11)
+unsafe impl<T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11> Facet for (T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11)
 where
     T0: Facet,
     T1: Facet,
@@ -2157,26 +2205,23 @@ where
     T8: Facet,
     T9: Facet,
     T10: Facet,
-    T11: Facet,
+    T11: Facet
 {
     const SHAPE: &'static Shape = &const {
-        fn type_name<T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11>(
-            f: &mut fmt::Formatter,
-            opts: TypeNameOpts,
-        ) -> fmt::Result
+        fn type_name<T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result
         where
             T0: Facet,
-            T1: Facet,
-            T2: Facet,
-            T3: Facet,
-            T4: Facet,
-            T5: Facet,
-            T6: Facet,
-            T7: Facet,
-            T8: Facet,
-            T9: Facet,
-            T10: Facet,
-            T11: Facet,
+    T1: Facet,
+    T2: Facet,
+    T3: Facet,
+    T4: Facet,
+    T5: Facet,
+    T6: Facet,
+    T7: Facet,
+    T8: Facet,
+    T9: Facet,
+    T10: Facet,
+    T11: Facet
         {
             write_type_name_list(
                 f,
@@ -2185,59 +2230,20 @@ where
                 ", ",
                 ")",
                 &[
-                    T0::SHAPE,
-                    T1::SHAPE,
-                    T2::SHAPE,
-                    T3::SHAPE,
-                    T4::SHAPE,
-                    T5::SHAPE,
-                    T6::SHAPE,
-                    T7::SHAPE,
-                    T8::SHAPE,
-                    T9::SHAPE,
-                    T10::SHAPE,
-                    T11::SHAPE,
+                    T0::SHAPE, T1::SHAPE, T2::SHAPE, T3::SHAPE, T4::SHAPE, T5::SHAPE, T6::SHAPE, T7::SHAPE, T8::SHAPE, T9::SHAPE, T10::SHAPE, T11::SHAPE,
                 ],
             )
         }
 
         Shape::builder()
-            .id(ConstTypeId::of::<(
-                T0,
-                T1,
-                T2,
-                T3,
-                T4,
-                T5,
-                T6,
-                T7,
-                T8,
-                T9,
-                T10,
-                T11,
-            )>())
-            .layout(Layout::new::<(
-                T0,
-                T1,
-                T2,
-                T3,
-                T4,
-                T5,
-                T6,
-                T7,
-                T8,
-                T9,
-                T10,
-                T11,
-            )>())
+            .id(ConstTypeId::of::<(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11)>())
+            .layout(Layout::new::<(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11)>())
             .vtable(
                 &const {
                     let mut builder = ValueVTable::builder()
                         .type_name(type_name::<T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11>)
-                        .marker_traits({
-                            T0::SHAPE
-                                .vtable
-                                .marker_traits
+                        .marker_traits(                        {
+                            T0::SHAPE.vtable.marker_traits
                                 .intersection(T1::SHAPE.vtable.marker_traits)
                                 .intersection(T2::SHAPE.vtable.marker_traits)
                                 .intersection(T3::SHAPE.vtable.marker_traits)
@@ -2249,96 +2255,115 @@ where
                                 .intersection(T9::SHAPE.vtable.marker_traits)
                                 .intersection(T10::SHAPE.vtable.marker_traits)
                                 .intersection(T11::SHAPE.vtable.marker_traits)
-                        });
+                    });
 
                     if Characteristic::Eq.all(&[
-                        T0::SHAPE,
-                        T1::SHAPE,
-                        T2::SHAPE,
-                        T3::SHAPE,
-                        T4::SHAPE,
-                        T5::SHAPE,
-                        T6::SHAPE,
-                        T7::SHAPE,
-                        T8::SHAPE,
-                        T9::SHAPE,
-                        T10::SHAPE,
-                        T11::SHAPE,
+                        T0::SHAPE, T1::SHAPE, T2::SHAPE, T3::SHAPE, T4::SHAPE, T5::SHAPE, T6::SHAPE, T7::SHAPE, T8::SHAPE, T9::SHAPE, T10::SHAPE, T11::SHAPE,
                     ]) {
                         builder = builder.debug(|value, f| {
-                            let value = unsafe {
-                                value.get::<(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11)>()
-                            };
+                            let value = unsafe { value.get::<(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11)>() };
                             write!(f, "(")?;
                             unsafe {
                                 let ptr = &value.0 as *const T0;
-                                (T0::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T0::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.1 as *const T1;
-                                (T1::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T1::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.2 as *const T2;
-                                (T2::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T2::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.3 as *const T3;
-                                (T3::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T3::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.4 as *const T4;
-                                (T4::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T4::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.5 as *const T5;
-                                (T5::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T5::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.6 as *const T6;
-                                (T6::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T6::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.7 as *const T7;
-                                (T7::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T7::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.8 as *const T8;
-                                (T8::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T8::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.9 as *const T9;
-                                (T9::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T9::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.10 as *const T10;
-                                (T10::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T10::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ", ")?;
                             unsafe {
                                 let ptr = &value.11 as *const T11;
-                                (T11::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)
+                                (T11::SHAPE.vtable.debug.unwrap_unchecked())(
+                                    PtrConst::new(ptr),
+                                    f,
+                                )
                             }?;
                             write!(f, ")")
                         });
 
                         builder = builder.eq(|a, b| {
-                            let a = unsafe {
-                                a.get::<(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11)>()
-                            };
-                            let b = unsafe {
-                                b.get::<(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11)>()
-                            };
+                            let a = unsafe { a.get::<(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11)>() };
+                            let b = unsafe { b.get::<(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11)>() };
 
                             // Compare element 0
                             unsafe {
@@ -2502,7 +2527,7 @@ where
                                 field!(8, (T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11,),),
                                 field!(9, (T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11,),),
                                 field!(10, (T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11,),),
-                                field!(11, (T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11,),),
+                                field!(11, (T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11,),)
                             ]
                         },
                     )

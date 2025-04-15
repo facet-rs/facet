@@ -18,6 +18,13 @@ pub struct Job {
 }
 
 impl Job {
+    pub fn is_noop(&self) -> bool {
+        match &self.old_content {
+            Some(old) => &self.new_content == old,
+            None => self.new_content.is_empty(),
+        }
+    }
+
     /// Computes a summary of the diff between old_content and new_content.
     /// Returns (num_plus, num_minus): plus lines (insertions), minus lines (deletions).
     pub fn diff_plus_minus(&self) -> (usize, usize) {
@@ -361,7 +368,12 @@ pub fn show_jobs_and_apply_if_consent_is_given(jobs: &mut [Job]) {
     jobs.sort_by_key(|job| job.path.clone());
 
     if jobs.is_empty() {
-        println!("{}", style("No changes to apply.").green().bold());
+        println!(
+            "{}",
+            style("All generated files are up-to-date and all Rust files are formatted properly")
+                .green()
+                .bold()
+        );
         return;
     }
 
@@ -384,10 +396,21 @@ pub fn show_jobs_and_apply_if_consent_is_given(jobs: &mut [Job]) {
         .magenta()
     );
     for (idx, job) in jobs.iter().enumerate() {
+        let (plus, minus) = job.diff_plus_minus();
         println!(
-            "  {}. {}",
+            "  {}. {} {}{}",
             style(idx + 1).bold().cyan(),
-            style(job.path.display()).yellow()
+            style(job.path.display()).yellow(),
+            if plus > 0 {
+                format!("+{}", plus).green().to_string()
+            } else {
+                String::new()
+            },
+            if minus > 0 {
+                format!(" -{}", minus).red().to_string()
+            } else {
+                String::new()
+            }
         );
     }
 
@@ -425,10 +448,23 @@ pub fn show_jobs_and_apply_if_consent_is_given(jobs: &mut [Job]) {
                         eprintln!("{} Failed to write {}: {}", CANCEL, job.path.display(), e);
                         std::process::exit(1);
                     } else {
-                        println!("{} {} updated.", OK, style(job.path.display()).green());
+                        // Stage the file after updating
+                        let add_status = std::process::Command::new("git")
+                            .arg("add")
+                            .arg(&job.path)
+                            .status();
+                        if let Err(e) = add_status {
+                            eprintln!("{} Failed to stage {}: {}", CANCEL, job.path.display(), e);
+                            std::process::exit(1);
+                        }
+                        println!(
+                            "{} {} updated and staged.",
+                            OK,
+                            style(job.path.display()).green()
+                        );
                     }
                 }
-                println!("{} All changes applied.", OK);
+                println!("{} All changes applied and staged.", OK);
                 break;
             }
             DIFFV => {
@@ -596,6 +632,8 @@ fn main() {
             println!("{}", "✅ All generated files up to date.".green().bold());
         }
     } else {
+        // Remove no-op jobs (where the content is unchanged).
+        jobs.retain(|job| !job.is_noop());
         show_jobs_and_apply_if_consent_is_given(&mut jobs);
     }
 }
