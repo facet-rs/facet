@@ -502,21 +502,20 @@ pub fn enqueue_rustfmt_jobs(sender: std::sync::mpsc::Sender<Job>, staged_files: 
 }
 
 pub fn show_jobs_and_apply_if_consent_is_given(jobs: &mut [Job]) {
-    use console::{Emoji, style};
     use std::io::{self, Write};
 
     // Emojis for display
-    static ACTION_REQUIRED: Emoji<'_, '_> = Emoji("🚧", "");
-    static DIFF: Emoji<'_, '_> = Emoji("📝", "");
-    static OK: Emoji<'_, '_> = Emoji("✅", "");
-    static CANCEL: Emoji<'_, '_> = Emoji("❌", "");
+    const ACTION_REQUIRED: &str = "🚧";
+    const DIFF: &str = "📝";
+    const OK: &str = "✅";
+    const CANCEL: &str = "🛑";
 
     jobs.sort_by_key(|job| job.path.clone());
 
     if jobs.is_empty() {
         println!(
             "{}",
-            style("All generated files are up-to-date and all Rust files are formatted properly")
+            "All generated files are up-to-date and all Rust files are formatted properly"
                 .green()
                 .bold()
         );
@@ -525,28 +524,25 @@ pub fn show_jobs_and_apply_if_consent_is_given(jobs: &mut [Job]) {
 
     println!(
         "\n{}\n{}\n",
-        style(format!(
-            "{} GENERATION CHANGES {}",
-            ACTION_REQUIRED, ACTION_REQUIRED
-        ))
-        .on_black()
-        .bold()
-        .yellow()
-        .italic()
-        .underlined(),
-        style(format!(
+        format!("{} GENERATION CHANGES {}", ACTION_REQUIRED, ACTION_REQUIRED)
+            .on_black()
+            .bold()
+            .yellow()
+            .italic()
+            .underline(),
+        format!(
             "The following {} file{} would be updated/generated:",
             jobs.len(),
             if jobs.len() == 1 { "" } else { "s" }
-        ))
+        )
         .magenta()
     );
     for (idx, job) in jobs.iter().enumerate() {
         let (plus, minus) = job.diff_plus_minus();
         println!(
             "  {}. {} {}{}",
-            style(idx + 1).bold().cyan(),
-            style(job.path.display()).yellow(),
+            (idx + 1).bold().cyan(),
+            job.path.display().yellow(),
             if plus > 0 {
                 format!("+{}", plus).green().to_string()
             } else {
@@ -593,11 +589,7 @@ pub fn show_jobs_and_apply_if_consent_is_given(jobs: &mut [Job]) {
         match action.as_str() {
             "apply" => {
                 for job in &jobs_vec {
-                    print!(
-                        "{} Applying {} ... ",
-                        OK,
-                        style(job.path.display()).yellow()
-                    );
+                    print!("{} Applying {} ... ", OK, job.path.display().yellow());
                     io::stdout().flush().unwrap();
                     match job.apply() {
                         Ok(_) => {
@@ -608,18 +600,14 @@ pub fn show_jobs_and_apply_if_consent_is_given(jobs: &mut [Job]) {
                         }
                     }
                 }
-                println!(
-                    "{} {}",
-                    OK,
-                    style("All fixes applied and staged!").green().bold()
-                );
+                println!("{} {}", OK, "All fixes applied and staged!".green().bold());
                 std::process::exit(0);
             }
             "diff" => {
                 println!(
                     "\n{} {}\n",
                     DIFF,
-                    style("Showing diffs for all changed/generated files:")
+                    "Showing diffs for all changed/generated files:"
                         .magenta()
                         .bold()
                 );
@@ -627,8 +615,8 @@ pub fn show_jobs_and_apply_if_consent_is_given(jobs: &mut [Job]) {
                     println!(
                         "{} {}\n{}",
                         DIFF,
-                        style(job.path.display()).yellow(),
-                        style("───────────────────────────────────────────────").dim()
+                        job.path.display().yellow(),
+                        "───────────────────────────────────────────────".dim()
                     );
                     job.show_diff();
                 }
@@ -638,16 +626,12 @@ pub fn show_jobs_and_apply_if_consent_is_given(jobs: &mut [Job]) {
                 println!(
                     "{} {}",
                     CANCEL,
-                    style("Continuing without applying fixes.").yellow().bold()
+                    "Continuing without applying fixes.".yellow().bold()
                 );
                 return;
             }
             "abort" => {
-                println!(
-                    "{} {}",
-                    CANCEL,
-                    style("Aborting. No changes made.").red().bold()
-                );
+                println!("{} {}", CANCEL, "Aborting. No changes made.".red().bold());
                 std::process::exit(1);
             }
             _ => todo!(),
