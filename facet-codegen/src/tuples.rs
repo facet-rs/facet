@@ -1,4 +1,6 @@
-pub(super) fn generate_tuples_impls() -> String {
+/// Generate implementations for tuples. It's highly repetitive and hard to get done with only
+/// declarative macros. So that's why it's generated.
+pub fn generate() -> String {
     use std::fmt::Write;
     let mut s = String::with_capacity(65536);
 

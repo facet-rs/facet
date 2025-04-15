@@ -1,6 +1,6 @@
 pub struct GenerateReadmeOpts {
-    crate_name: String,
-    input: String,
+    pub crate_name: String,
+    pub input: String,
 }
 
 pub fn generate(opts: GenerateReadmeOpts) -> String {
