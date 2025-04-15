@@ -9,10 +9,10 @@ on:
 
 jobs:
   code-quality:
-    runs-on: blacksmith-16vcpu-ubuntu-2204-arm
+    runs-on: blacksmith-16vcpu-ubuntu-2204
 
     container:
-      image: ghcr.io/facet-rs/facet-ci:latest
+      image: ghcr.io/facet-rs/facet-ci:latest-amd64
       env:
         BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
         BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
@@ -28,10 +28,10 @@ jobs:
           just code-quality-ci
 
   test:
-    runs-on: blacksmith-16vcpu-ubuntu-2204-arm
+    runs-on: blacksmith-16vcpu-ubuntu-2204
 
     container:
-      image: ghcr.io/facet-rs/facet-ci:latest
+      image: ghcr.io/facet-rs/facet-ci:latest-amd64
       env:
         BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
         BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
@@ -47,10 +47,10 @@ jobs:
           just test-ci
 
   nostd:
-    runs-on: blacksmith-16vcpu-ubuntu-2204-arm
+    runs-on: blacksmith-16vcpu-ubuntu-2204
 
     container:
-      image: ghcr.io/facet-rs/facet-ci:latest
+      image: ghcr.io/facet-rs/facet-ci:latest-amd64
       env:
         BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
         BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
@@ -66,10 +66,10 @@ jobs:
           just nostd-ci
 
   doc-tests:
-    runs-on: blacksmith-16vcpu-ubuntu-2204-arm
+    runs-on: blacksmith-16vcpu-ubuntu-2204
 
     container:
-      image: ghcr.io/facet-rs/facet-ci:latest
+      image: ghcr.io/facet-rs/facet-ci:latest-amd64
       env:
         BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
         BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
@@ -85,10 +85,10 @@ jobs:
           just doc-tests-ci
 
   miri:
-    runs-on: blacksmith-32vcpu-ubuntu-2204-arm
+    runs-on: blacksmith-32vcpu-ubuntu-2204
 
     container:
-      image: ghcr.io/facet-rs/facet-ci:latest-miri
+      image: ghcr.io/facet-rs/facet-ci:latest-amd64-miri
       env:
         BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
         BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
@@ -105,10 +105,10 @@ jobs:
           just miri
 
   msrv:
-    runs-on: blacksmith-16vcpu-ubuntu-2204-arm
+    runs-on: blacksmith-16vcpu-ubuntu-2204
 
     container:
-      image: ghcr.io/facet-rs/facet-ci:latest
+      image: ghcr.io/facet-rs/facet-ci:latest-amd64
       env:
         BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
         BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
@@ -126,10 +126,10 @@ jobs:
           just msrv
 
   minimal-versions:
-    runs-on: blacksmith-16vcpu-ubuntu-2204-arm
+    runs-on: blacksmith-16vcpu-ubuntu-2204
 
     container:
-      image: ghcr.io/facet-rs/facet-ci:latest
+      image: ghcr.io/facet-rs/facet-ci:latest-amd64
       env:
         BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
         BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
@@ -150,10 +150,10 @@ jobs:
           cargo check --workspace --all-features --locked --keep-going
 
   docs:
-    runs-on: blacksmith-16vcpu-ubuntu-2204-arm
+    runs-on: blacksmith-16vcpu-ubuntu-2204
 
     container:
-      image: ghcr.io/facet-rs/facet-ci:latest
+      image: ghcr.io/facet-rs/facet-ci:latest-amd64
       env:
         BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
         BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
@@ -171,10 +171,10 @@ jobs:
           just docs
 
   lockfile:
-    runs-on: blacksmith-2vcpu-ubuntu-2204-arm
+    runs-on: blacksmith-2vcpu-ubuntu-2204
 
     container:
-      image: ghcr.io/facet-rs/facet-ci:latest
+      image: ghcr.io/facet-rs/facet-ci:latest-amd64
       env:
         BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
         BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
@@ -190,10 +190,10 @@ jobs:
           cargo update --workspace --locked
 
   clippy:
-    runs-on: blacksmith-16vcpu-ubuntu-2204-arm
+    runs-on: blacksmith-16vcpu-ubuntu-2204
 
     container:
-      image: ghcr.io/facet-rs/facet-ci:latest
+      image: ghcr.io/facet-rs/facet-ci:latest-amd64
       env:
         BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
         BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
@@ -229,10 +229,10 @@ jobs:
           cargo clippy --workspace --all-features --all-targets --keep-going -- -D warnings --allow deprecated
 
   coverage:
-    runs-on: blacksmith-16vcpu-ubuntu-2204-arm
+    runs-on: blacksmith-16vcpu-ubuntu-2204
 
     container:
-      image: ghcr.io/facet-rs/facet-ci:latest
+      image: ghcr.io/facet-rs/facet-ci:latest-amd64
       env:
         BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
         BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
