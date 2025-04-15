@@ -94,4 +94,9 @@ impl<'mem> PeekMap<'mem> {
         let iter = unsafe { (self.def.vtable.iter_fn)(self.value.data()) };
         PeekMapIter { map: self, iter }
     }
+
+    /// Def getter
+    pub fn def(&self) -> MapDef {
+        self.def
+    }
 }
