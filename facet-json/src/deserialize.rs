@@ -36,6 +36,8 @@ pub enum JsonErrorKind {
     UnexpectedCharacter(char),
     /// A number is out of range.
     NumberOutOfRange(f64),
+    /// An unexpected String was encountered in the input.
+    StringAsNumber(String),
 }
 
 impl core::fmt::Display for JsonParseErrorWithContext<'_> {
@@ -316,6 +318,14 @@ pub fn from_slice_wip<'input, 'a>(
                                         } else {
                                             bailp!(JsonErrorKind::NumberOutOfRange(number));
                                         }
+                                    }
+                                }
+                                ScalarAffinity::String(_sa) => {
+                                    if shape.is_type::<String>() {
+                                        let value = number.to_string();
+                                        bailp!(JsonErrorKind::StringAsNumber(value));
+                                    } else {
+                                        todo!()
                                     }
                                 }
                                 _ => {
