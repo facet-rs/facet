@@ -51,7 +51,7 @@ fn deserialize_as_struct<'a>(mut wip: Wip<'a>, item: &Item) -> Result<Wip<'a>, A
     trace!("Deserializing {}", "struct".blue());
 
     // Parse as a the inner struct type if item is a single value and the struct is a unit struct
-    if item.is_value() {
+    if item.is_value() && !item.is_inline_table() {
         // Only allow unit structs
         let shape = wip.shape();
         if let Def::Struct(def) = shape.def {
@@ -221,34 +221,140 @@ fn build_enum_from_variant_name<'a>(
     Ok(wip)
 }
 
-fn deserialize_as_list<'a>(mut _wip: Wip<'a>, _item: &Item) -> Result<Wip<'a>, AnyErr> {
-    trace!("Deserializing {}", "array".blue());
+fn deserialize_as_list<'a>(mut wip: Wip<'a>, item: &Item) -> Result<Wip<'a>, AnyErr> {
+    trace!("Deserializing {}", "list".blue());
 
-    trace!("Finished deserializing {}", "array".blue());
+    // Get the TOML item as an array
+    let Some(item) = item.as_array() else {
+        return Err(AnyErr(format!(
+            "Item is not an array but a {}",
+            item.type_name()
+        )));
+    };
 
-    todo!();
+    if item.is_empty() {
+        // Only put an empty list
+        return wip
+            .put_empty_list()
+            .map_err(|e| AnyErr(format!("Can not put empty list: {e}")));
+    }
+
+    // Start the list
+    wip = wip
+        .begin_pushback()
+        .map_err(|e| format!("Can not start filling list: {e}"))?;
+
+    // Loop over all items in the TOML list
+    for value in item.iter() {
+        // Start the field
+        wip = wip
+            .push()
+            .map_err(|e| format!("Can not start field: {e}"))?;
+
+        wip = deserialize_item(
+            wip,
+            // TODO: remove clone
+            &Item::Value(value.clone()),
+        )?;
+
+        // Finish the field
+        wip = wip
+            .pop()
+            .map_err(|e| format!("Can not finish field: {e}"))?;
+    }
+
+    trace!("Finished deserializing {}", "list".blue());
+
+    Ok(wip)
 }
 
-fn deserialize_as_map<'a>(mut _wip: Wip<'a>, _item: &Item) -> Result<Wip<'a>, AnyErr> {
-    trace!("Deserializing {}", "ap".blue());
+fn deserialize_as_map<'a>(mut wip: Wip<'a>, item: &Item) -> Result<Wip<'a>, AnyErr> {
+    trace!("Deserializing {}", "map".blue());
 
-    trace!("Finished deserializing {}", "ap".blue());
+    // We expect a table to fill a map
+    let table = item.as_table_like().ok_or_else(|| {
+        AnyErr(format!(
+            "Expected table like structure, got {}",
+            item.type_name()
+        ))
+    })?;
 
-    todo!();
+    if table.is_empty() {
+        // Only put an empty map
+        return wip
+            .put_empty_map()
+            .map_err(|e| AnyErr(format!("Can not put empty map: {e}")));
+    }
+
+    // Start the map
+    wip = wip
+        .begin_map_insert()
+        .map_err(|e| format!("Can not start filling map: {e}"))?;
+
+    // Loop over all items in the TOML list
+    for (k, v) in table.iter() {
+        // Start the key
+        wip = wip
+            .push_map_key()
+            .map_err(|e| format!("Can not start field: {e}"))?;
+
+        trace!("Push {} {}", "key".cyan(), k.cyan().bold());
+
+        // Deserialize the key
+        match ScalarType::try_from_shape(wip.shape())
+            .ok_or_else(|| format!("Unsupported scalar type: {}", wip.shape()))?
+        {
+            #[cfg(feature = "std")]
+            ScalarType::String => {
+                wip = wip.put(k.to_string()).map_err(|e| AnyErr(e.to_string()))?
+            }
+            #[cfg(feature = "std")]
+            ScalarType::CowStr => {
+                wip = wip
+                    .put(std::borrow::Cow::Owned(k.to_string()))
+                    .map_err(|e| AnyErr(e.to_string()))?
+            }
+            _ => {
+                return Err(AnyErr(format!(
+                    "Can not convert {} to map key",
+                    wip.shape()
+                )));
+            }
+        };
+
+        trace!("Push {}", "value".cyan());
+
+        // Start the value
+        wip = wip
+            .push_map_value()
+            .map_err(|e| format!("Can not start value: {e}"))?;
+
+        // Deserialize the value
+        wip = deserialize_item(wip, v)?;
+
+        // Finish the key
+        wip = wip
+            .pop()
+            .map_err(|e| format!("Can not finish value: {e}"))?;
+    }
+
+    trace!("Finished deserializing {}", "map".blue());
+
+    Ok(wip)
 }
 
 fn deserialize_as_option<'a>(mut _wip: Wip<'a>, _item: &Item) -> Result<Wip<'a>, AnyErr> {
-    trace!("Deserializing {}", "ption".blue());
+    trace!("Deserializing {}", "option".blue());
 
-    trace!("Finished deserializing {}", "ption".blue());
+    trace!("Finished deserializing {}", "option".blue());
 
     todo!();
 }
 
 fn deserialize_as_smartpointer<'a>(mut _wip: Wip<'a>, _item: &Item) -> Result<Wip<'a>, AnyErr> {
-    trace!("Deserializing {}", "smart".blue());
+    trace!("Deserializing {}", "smart pointer".blue());
 
-    trace!("Finished deserializing {}", "smart".blue());
+    trace!("Finished deserializing {}", "smart pointer".blue());
 
     todo!();
 }
