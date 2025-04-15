@@ -48,18 +48,64 @@ impl Job {
     }
 
     pub fn show_diff(&self) {
+        use facet_ansi::Stylize as _;
         use similar::{ChangeTag, TextDiff};
+
+        let context_lines = 3;
+
         let old = match &self.old_content {
             Some(bytes) => String::from_utf8_lossy(bytes),
             None => "".into(),
         };
         let new = String::from_utf8_lossy(&self.new_content);
         let diff = TextDiff::from_lines(&old, &new);
-        for change in diff.iter_all_changes() {
+
+        // Collect the changes for random access
+        let changes: Vec<_> = diff.iter_all_changes().collect();
+
+        // Identify the indices of changes (added/removed lines)
+        let mut change_indices = vec![];
+        for (i, change) in changes.iter().enumerate() {
             match change.tag() {
-                ChangeTag::Insert => print!("{}", format!("+{}", change).green()),
-                ChangeTag::Delete => print!("{}", format!("-{}", change).red()),
-                ChangeTag::Equal => print!(" {}", change),
+                ChangeTag::Insert | ChangeTag::Delete => change_indices.push(i),
+                _ => {}
+            }
+        }
+
+        let mut show_line = vec![false; changes.len()];
+        // Mark lines to show: up to context_lines before/after each change
+        for &idx in &change_indices {
+            let start = idx.saturating_sub(context_lines);
+            let end = (idx + context_lines + 1).min(changes.len());
+            #[allow(clippy::needless_range_loop)]
+            for i in start..end {
+                show_line[i] = true;
+            }
+        }
+
+        // Always show a few lines at the top and bottom of the diff for context,
+        // in case the first or last lines are not changes.
+        #[allow(clippy::needless_range_loop)]
+        for i in 0..context_lines.min(changes.len()) {
+            show_line[i] = true;
+        }
+        #[allow(clippy::needless_range_loop)]
+        for i in changes.len().saturating_sub(context_lines)..changes.len() {
+            show_line[i] = true;
+        }
+
+        let mut last_was_ellipsis = false;
+        for (i, change) in changes.iter().enumerate() {
+            if show_line[i] {
+                match change.tag() {
+                    ChangeTag::Insert => print!("{}", format!("    +{}", change).green()),
+                    ChangeTag::Delete => print!("{}", format!("    -{}", change).red()),
+                    ChangeTag::Equal => print!("{}", format!("    {}", change).dim()),
+                }
+                last_was_ellipsis = false;
+            } else if !last_was_ellipsis {
+                println!("{}", "    ...".dim());
+                last_was_ellipsis = true;
             }
         }
         println!();
@@ -420,17 +466,16 @@ pub fn show_jobs_and_apply_if_consent_is_given(jobs: &mut [Job]) {
     const CANCELV: usize = 2;
     const ABORT: usize = 3;
     let choices = [
-        "✅ Apply: Apply the above changes",
-        "📝 Diff: Show details of all diffs",
-        "❌ Cancel: Abort without changing files",
-        "❌ Abort: Exit with error",
+        "🚀 Apply: Apply the above changes",
+        "🔍 Diff: Show details of all diffs",
+        "🛑 Cancel: Abort without changing files",
+        "💥 Abort: Exit with error",
     ];
 
     let theme = ColorfulTheme::default();
 
     let mut selected = 0;
     loop {
-        // Use dialoguer's Select menu for interaction
         let choice = Select::with_theme(&theme)
             .with_prompt("What do you want to do?")
             .items(&choices)
@@ -475,7 +520,7 @@ pub fn show_jobs_and_apply_if_consent_is_given(jobs: &mut [Job]) {
                         DIFF,
                         style(job.path.display()).bold().blue()
                     );
-                    show_diff_for_job(job);
+                    job.show_diff();
                 }
                 println!("\n-- End of diffs --");
                 // Stay in menu
@@ -491,24 +536,6 @@ pub fn show_jobs_and_apply_if_consent_is_given(jobs: &mut [Job]) {
             _ => {}
         }
     }
-}
-
-fn show_diff_for_job(job: &Job) {
-    use similar::{ChangeTag, TextDiff};
-    let old = match &job.old_content {
-        Some(bytes) => String::from_utf8_lossy(bytes),
-        None => "".into(),
-    };
-    let new = String::from_utf8_lossy(&job.new_content);
-    let diff = TextDiff::from_lines(&old, &new);
-    for change in diff.iter_all_changes() {
-        match change.tag() {
-            ChangeTag::Insert => print!("{}", format!("+{}", change).green()),
-            ChangeTag::Delete => print!("{}", format!("-{}", change).red()),
-            ChangeTag::Equal => print!(" {}", change),
-        }
-    }
-    println!();
 }
 
 #[derive(Debug, Clone)]
