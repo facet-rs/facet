@@ -1,4 +1,4 @@
-use crate::opaque::OpaqueConst;
+use crate::ptr::PtrConst;
 
 use super::Shape;
 
@@ -68,14 +68,14 @@ impl SliceDefBuilder {
 /// # Safety
 ///
 /// The `slice` parameter must point to aligned, initialized memory of the correct type.
-pub type SliceLenFn = unsafe fn(slice: OpaqueConst) -> usize;
+pub type SliceLenFn = unsafe fn(slice: PtrConst) -> usize;
 
 /// Get pointer to the item at the given index. Panics if out of bounds.
 ///
 /// # Safety
 ///
 /// The `slice` parameter must point to aligned, initialized memory of the correct type.
-pub type SliceGetItemPtrFn = unsafe fn(slice: OpaqueConst, index: usize) -> OpaqueConst;
+pub type SliceGetItemPtrFn = unsafe fn(slice: PtrConst, index: usize) -> PtrConst;
 
 /// Virtual table for a slice-like type (like `Vec<T>`,
 /// but also `HashSet<T>`, etc.)

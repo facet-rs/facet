@@ -1,7 +1,7 @@
 use core::alloc::Layout;
 
 use crate::{
-    ConstTypeId, Def, Facet, KnownSmartPointer, OpaqueConst, SmartPointerDef, SmartPointerFlags,
+    ConstTypeId, Def, Facet, KnownSmartPointer, PtrConst, SmartPointerDef, SmartPointerFlags,
     SmartPointerVTable, value_vtable,
 };
 
@@ -21,7 +21,7 @@ unsafe impl<T: Facet> Facet for alloc::sync::Arc<T> {
                             SmartPointerVTable::builder()
                                 .borrow_fn(|opaque| {
                                     let ptr = Self::as_ptr(unsafe { opaque.get() });
-                                    OpaqueConst::new(ptr)
+                                    PtrConst::new(ptr)
                                 })
                                 .new_into_fn(|this, ptr| {
                                     let t = unsafe { ptr.read::<T>() };

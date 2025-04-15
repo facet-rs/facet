@@ -234,13 +234,13 @@ impl_facet_for_integer!(
     u8,
     ScalarAffinity::number()
         .unsigned_integer(8)
-        .min(OpaqueConst::new(&raw const MIN_U8))
-        .max(OpaqueConst::new(&raw const MAX_U8))
+        .min(PtrConst::new(&raw const MIN_U8))
+        .max(PtrConst::new(&raw const MAX_U8))
         .build(),
     ScalarAffinity::number()
         .unsigned_integer(8)
-        .min(OpaqueConst::new(&raw const MIN_NZ_U8))
-        .max(OpaqueConst::new(&raw const MAX_NZ_U8))
+        .min(PtrConst::new(&raw const MIN_NZ_U8))
+        .max(PtrConst::new(&raw const MAX_NZ_U8))
         .build()
 );
 
@@ -248,13 +248,13 @@ impl_facet_for_integer!(
     i8,
     ScalarAffinity::number()
         .signed_integer(8)
-        .min(OpaqueConst::new(&raw const MIN_I8))
-        .max(OpaqueConst::new(&raw const MAX_I8))
+        .min(PtrConst::new(&raw const MIN_I8))
+        .max(PtrConst::new(&raw const MAX_I8))
         .build(),
     ScalarAffinity::number()
         .signed_integer(8)
-        .min(OpaqueConst::new(&raw const MIN_NZ_I8))
-        .max(OpaqueConst::new(&raw const MAX_NZ_I8))
+        .min(PtrConst::new(&raw const MIN_NZ_I8))
+        .max(PtrConst::new(&raw const MAX_NZ_I8))
         .build()
 );
 
@@ -262,13 +262,13 @@ impl_facet_for_integer!(
     u16,
     ScalarAffinity::number()
         .unsigned_integer(16)
-        .min(OpaqueConst::new(&raw const MIN_U16))
-        .max(OpaqueConst::new(&raw const MAX_U16))
+        .min(PtrConst::new(&raw const MIN_U16))
+        .max(PtrConst::new(&raw const MAX_U16))
         .build(),
     ScalarAffinity::number()
         .unsigned_integer(16)
-        .min(OpaqueConst::new(&raw const MIN_NZ_U16))
-        .max(OpaqueConst::new(&raw const MAX_NZ_U16))
+        .min(PtrConst::new(&raw const MIN_NZ_U16))
+        .max(PtrConst::new(&raw const MAX_NZ_U16))
         .build()
 );
 
@@ -276,13 +276,13 @@ impl_facet_for_integer!(
     i16,
     ScalarAffinity::number()
         .signed_integer(16)
-        .min(OpaqueConst::new(&raw const MIN_I16))
-        .max(OpaqueConst::new(&raw const MAX_I16))
+        .min(PtrConst::new(&raw const MIN_I16))
+        .max(PtrConst::new(&raw const MAX_I16))
         .build(),
     ScalarAffinity::number()
         .signed_integer(16)
-        .min(OpaqueConst::new(&raw const MIN_NZ_I16))
-        .max(OpaqueConst::new(&raw const MAX_NZ_I16))
+        .min(PtrConst::new(&raw const MIN_NZ_I16))
+        .max(PtrConst::new(&raw const MAX_NZ_I16))
         .build()
 );
 
@@ -290,13 +290,13 @@ impl_facet_for_integer!(
     u32,
     ScalarAffinity::number()
         .unsigned_integer(32)
-        .min(OpaqueConst::new(&raw const MIN_U32))
-        .max(OpaqueConst::new(&raw const MAX_U32))
+        .min(PtrConst::new(&raw const MIN_U32))
+        .max(PtrConst::new(&raw const MAX_U32))
         .build(),
     ScalarAffinity::number()
         .unsigned_integer(32)
-        .min(OpaqueConst::new(&raw const MIN_NZ_U32))
-        .max(OpaqueConst::new(&raw const MAX_NZ_U32))
+        .min(PtrConst::new(&raw const MIN_NZ_U32))
+        .max(PtrConst::new(&raw const MAX_NZ_U32))
         .build()
 );
 
@@ -304,13 +304,13 @@ impl_facet_for_integer!(
     i32,
     ScalarAffinity::number()
         .signed_integer(32)
-        .min(OpaqueConst::new(&raw const MIN_I32))
-        .max(OpaqueConst::new(&raw const MAX_I32))
+        .min(PtrConst::new(&raw const MIN_I32))
+        .max(PtrConst::new(&raw const MAX_I32))
         .build(),
     ScalarAffinity::number()
         .signed_integer(32)
-        .min(OpaqueConst::new(&raw const MIN_NZ_I32))
-        .max(OpaqueConst::new(&raw const MAX_NZ_I32))
+        .min(PtrConst::new(&raw const MIN_NZ_I32))
+        .max(PtrConst::new(&raw const MAX_NZ_I32))
         .build()
 );
 
@@ -318,13 +318,13 @@ impl_facet_for_integer!(
     u64,
     ScalarAffinity::number()
         .unsigned_integer(64)
-        .min(OpaqueConst::new(&raw const MIN_U64))
-        .max(OpaqueConst::new(&raw const MAX_U64))
+        .min(PtrConst::new(&raw const MIN_U64))
+        .max(PtrConst::new(&raw const MAX_U64))
         .build(),
     ScalarAffinity::number()
         .unsigned_integer(64)
-        .min(OpaqueConst::new(&raw const MIN_NZ_U64))
-        .max(OpaqueConst::new(&raw const MAX_NZ_U64))
+        .min(PtrConst::new(&raw const MIN_NZ_U64))
+        .max(PtrConst::new(&raw const MAX_NZ_U64))
         .build()
 );
 
@@ -332,13 +332,13 @@ impl_facet_for_integer!(
     i64,
     ScalarAffinity::number()
         .signed_integer(64)
-        .min(OpaqueConst::new(&raw const MIN_I64))
-        .max(OpaqueConst::new(&raw const MAX_I64))
+        .min(PtrConst::new(&raw const MIN_I64))
+        .max(PtrConst::new(&raw const MAX_I64))
         .build(),
     ScalarAffinity::number()
         .signed_integer(64)
-        .min(OpaqueConst::new(&raw const MIN_NZ_I64))
-        .max(OpaqueConst::new(&raw const MAX_NZ_I64))
+        .min(PtrConst::new(&raw const MIN_NZ_I64))
+        .max(PtrConst::new(&raw const MAX_NZ_I64))
         .build()
 );
 
@@ -346,13 +346,13 @@ impl_facet_for_integer!(
     u128,
     ScalarAffinity::number()
         .unsigned_integer(128)
-        .min(OpaqueConst::new(&raw const MIN_U128))
-        .max(OpaqueConst::new(&raw const MAX_U128))
+        .min(PtrConst::new(&raw const MIN_U128))
+        .max(PtrConst::new(&raw const MAX_U128))
         .build(),
     ScalarAffinity::number()
         .unsigned_integer(128)
-        .min(OpaqueConst::new(&raw const MIN_NZ_U128))
-        .max(OpaqueConst::new(&raw const MAX_NZ_U128))
+        .min(PtrConst::new(&raw const MIN_NZ_U128))
+        .max(PtrConst::new(&raw const MAX_NZ_U128))
         .build()
 );
 
@@ -360,13 +360,13 @@ impl_facet_for_integer!(
     i128,
     ScalarAffinity::number()
         .signed_integer(128)
-        .min(OpaqueConst::new(&raw const MIN_I128))
-        .max(OpaqueConst::new(&raw const MAX_I128))
+        .min(PtrConst::new(&raw const MIN_I128))
+        .max(PtrConst::new(&raw const MAX_I128))
         .build(),
     ScalarAffinity::number()
         .signed_integer(128)
-        .min(OpaqueConst::new(&raw const MIN_NZ_I128))
-        .max(OpaqueConst::new(&raw const MAX_NZ_I128))
+        .min(PtrConst::new(&raw const MIN_NZ_I128))
+        .max(PtrConst::new(&raw const MAX_NZ_I128))
         .build()
 );
 
@@ -374,13 +374,13 @@ impl_facet_for_integer!(
     usize,
     ScalarAffinity::number()
         .unsigned_integer(core::mem::size_of::<usize>() * 8)
-        .min(OpaqueConst::new(&raw const MIN_USIZE))
-        .max(OpaqueConst::new(&raw const MAX_USIZE))
+        .min(PtrConst::new(&raw const MIN_USIZE))
+        .max(PtrConst::new(&raw const MAX_USIZE))
         .build(),
     ScalarAffinity::number()
         .unsigned_integer(core::mem::size_of::<usize>() * 8)
-        .min(OpaqueConst::new(&raw const MIN_NZ_USIZE))
-        .max(OpaqueConst::new(&raw const MAX_NZ_USIZE))
+        .min(PtrConst::new(&raw const MIN_NZ_USIZE))
+        .max(PtrConst::new(&raw const MAX_NZ_USIZE))
         .build()
 );
 
@@ -388,13 +388,13 @@ impl_facet_for_integer!(
     isize,
     ScalarAffinity::number()
         .signed_integer(core::mem::size_of::<isize>() * 8)
-        .min(OpaqueConst::new(&raw const MIN_ISIZE))
-        .max(OpaqueConst::new(&raw const MAX_ISIZE))
+        .min(PtrConst::new(&raw const MIN_ISIZE))
+        .max(PtrConst::new(&raw const MAX_ISIZE))
         .build(),
     ScalarAffinity::number()
         .signed_integer(core::mem::size_of::<isize>() * 8)
-        .min(OpaqueConst::new(&raw const MIN_NZ_ISIZE))
-        .max(OpaqueConst::new(&raw const MAX_NZ_ISIZE))
+        .min(PtrConst::new(&raw const MIN_NZ_ISIZE))
+        .max(PtrConst::new(&raw const MAX_NZ_ISIZE))
         .build()
 );
 
@@ -428,14 +428,14 @@ unsafe impl Facet for f32 {
                     .affinity(
                         ScalarAffinity::number()
                             .float(1, 8, f32::MANTISSA_DIGITS as usize - 1, false)
-                            .min(OpaqueConst::new(&raw const MIN_F32))
-                            .max(OpaqueConst::new(&raw const MAX_F32))
-                            .positive_infinity(OpaqueConst::new(&raw const POSITIVE_INFINITY_F32))
-                            .negative_infinity(OpaqueConst::new(&raw const NEGATIVE_INFINITY_F32))
-                            .nan_sample(OpaqueConst::new(&raw const NAN_F32))
-                            .positive_zero(OpaqueConst::new(&raw const POSITIVE_ZERO_F32))
-                            .negative_zero(OpaqueConst::new(&raw const NEGATIVE_ZERO_F32))
-                            .epsilon(OpaqueConst::new(&raw const EPSILON_F32))
+                            .min(PtrConst::new(&raw const MIN_F32))
+                            .max(PtrConst::new(&raw const MAX_F32))
+                            .positive_infinity(PtrConst::new(&raw const POSITIVE_INFINITY_F32))
+                            .negative_infinity(PtrConst::new(&raw const NEGATIVE_INFINITY_F32))
+                            .nan_sample(PtrConst::new(&raw const NAN_F32))
+                            .positive_zero(PtrConst::new(&raw const POSITIVE_ZERO_F32))
+                            .negative_zero(PtrConst::new(&raw const NEGATIVE_ZERO_F32))
+                            .epsilon(PtrConst::new(&raw const EPSILON_F32))
                             .build(),
                     )
                     .build(),
@@ -455,14 +455,14 @@ unsafe impl Facet for f64 {
                     .affinity(
                         ScalarAffinity::number()
                             .float(1, 11, f64::MANTISSA_DIGITS as usize - 1, false)
-                            .min(OpaqueConst::new(&raw const MIN_F64))
-                            .max(OpaqueConst::new(&raw const MAX_F64))
-                            .positive_infinity(OpaqueConst::new(&raw const POSITIVE_INFINITY_F64))
-                            .negative_infinity(OpaqueConst::new(&raw const NEGATIVE_INFINITY_F64))
-                            .nan_sample(OpaqueConst::new(&raw const NAN_F64))
-                            .positive_zero(OpaqueConst::new(&raw const POSITIVE_ZERO_F64))
-                            .negative_zero(OpaqueConst::new(&raw const NEGATIVE_ZERO_F64))
-                            .epsilon(OpaqueConst::new(&raw const EPSILON_F64))
+                            .min(PtrConst::new(&raw const MIN_F64))
+                            .max(PtrConst::new(&raw const MAX_F64))
+                            .positive_infinity(PtrConst::new(&raw const POSITIVE_INFINITY_F64))
+                            .negative_infinity(PtrConst::new(&raw const NEGATIVE_INFINITY_F64))
+                            .nan_sample(PtrConst::new(&raw const NAN_F64))
+                            .positive_zero(PtrConst::new(&raw const POSITIVE_ZERO_F64))
+                            .negative_zero(PtrConst::new(&raw const NEGATIVE_ZERO_F64))
+                            .epsilon(PtrConst::new(&raw const EPSILON_F64))
                             .build(),
                     )
                     .build(),

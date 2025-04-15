@@ -32,7 +32,7 @@ where
                             for (idx, value) in value.iter().enumerate() {
                                 unsafe {
                                     (T::SHAPE.vtable.display.unwrap_unchecked())(
-                                        OpaqueConst::new(value),
+                                        PtrConst::new(value),
                                         f,
                                     )?
                                 };
@@ -51,7 +51,7 @@ where
                             for (idx, value) in value.iter().enumerate() {
                                 unsafe {
                                     (T::SHAPE.vtable.debug.unwrap_unchecked())(
-                                        OpaqueConst::new(value),
+                                        PtrConst::new(value),
                                         f,
                                     )?
                                 };
@@ -68,8 +68,8 @@ where
                             let b = unsafe { b.get::<[T; L]>() };
                             zip(a, b).all(|(a, b)| unsafe {
                                 (T::SHAPE.vtable.eq.unwrap_unchecked())(
-                                    OpaqueConst::new(a),
-                                    OpaqueConst::new(b),
+                                    PtrConst::new(a),
+                                    PtrConst::new(b),
                                 )
                             })
                         });
@@ -97,7 +97,7 @@ where
                             let src = src.get::<[T; L]>();
                             let stride = T::SHAPE.layout.pad_to_align().size();
                             for (idx, src) in src.iter().enumerate() {
-                                (t_cip)(OpaqueConst::new(src), dst.field_uninit_at(idx * stride));
+                                (t_cip)(PtrConst::new(src), dst.field_uninit_at(idx * stride));
                             }
                             dst.assume_init()
                         });
@@ -109,8 +109,8 @@ where
                             zip(a, b)
                                 .find_map(|(a, b)| unsafe {
                                     match (T::SHAPE.vtable.partial_ord.unwrap_unchecked())(
-                                        OpaqueConst::new(a),
-                                        OpaqueConst::new(b),
+                                        PtrConst::new(a),
+                                        PtrConst::new(b),
                                     ) {
                                         Some(Ordering::Equal) => None,
                                         c => Some(c),
@@ -126,8 +126,8 @@ where
                             zip(a, b)
                                 .find_map(|(a, b)| unsafe {
                                     match (T::SHAPE.vtable.ord.unwrap_unchecked())(
-                                        OpaqueConst::new(a),
-                                        OpaqueConst::new(b),
+                                        PtrConst::new(a),
+                                        PtrConst::new(b),
                                     ) {
                                         Ordering::Equal => None,
                                         c => Some(c),
@@ -142,7 +142,7 @@ where
                             for value in value {
                                 unsafe {
                                     (T::SHAPE.vtable.hash.unwrap_unchecked())(
-                                        OpaqueConst::new(value),
+                                        PtrConst::new(value),
                                         state,
                                         hasher,
                                     )
@@ -164,7 +164,7 @@ where
                                             "Index out of bounds: the len is {L} but the index is {index}"
                                         );
                                     }
-                                    OpaqueConst::new(ptr.as_ptr::<[T; L]>())
+                                    PtrConst::new(ptr.as_ptr::<[T; L]>())
                                 })
                                 .build()
                         },

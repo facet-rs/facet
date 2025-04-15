@@ -14,7 +14,7 @@ pub(super) fn generate_tuples_impls() -> String {
 
     w!("use core::{{alloc::Layout, fmt}};\n\n");
     w!("use crate::{{\n");
-    w!("    Characteristic, ConstTypeId, Def, Facet, Field, FieldFlags, OpaqueConst, Shape,\n");
+    w!("    Characteristic, ConstTypeId, Def, Facet, Field, FieldFlags, PtrConst, Shape,\n");
     w!("    Struct, TypeNameOpts, ValueVTable,\n");
     w!("}};
 \n");
@@ -190,7 +190,7 @@ pub(super) fn generate_tuples_impls() -> String {
                 "                                (T{0}::SHAPE.vtable.debug.unwrap_unchecked())(\n",
                 i
             );
-            w!("                                    OpaqueConst::new(ptr),\n");
+            w!("                                    PtrConst::new(ptr),\n");
             w!("                                    f,\n");
             w!("                                )\n");
             w!("                            }}?;\n");
@@ -231,8 +231,8 @@ pub(super) fn generate_tuples_impls() -> String {
                 "                                if !(T{0}::SHAPE.vtable.eq.unwrap_unchecked())(\n",
                 i
             );
-            w!("                                    OpaqueConst::new(a_ptr),\n");
-            w!("                                    OpaqueConst::new(b_ptr),\n");
+            w!("                                    PtrConst::new(a_ptr),\n");
+            w!("                                    PtrConst::new(b_ptr),\n");
             w!("                                ) {{\n");
             w!("                                    return false;\n");
             w!("                                }}\n");
@@ -248,11 +248,11 @@ pub(super) fn generate_tuples_impls() -> String {
             last
         );
         w!(
-            "                                    OpaqueConst::new(&a.{0} as *const T{0}),\n",
+            "                                    PtrConst::new(&a.{0} as *const T{0}),\n",
             last
         );
         w!(
-            "                                    OpaqueConst::new(&b.{0} as *const T{0}),\n",
+            "                                    PtrConst::new(&b.{0} as *const T{0}),\n",
             last
         );
         w!("                                )\n");

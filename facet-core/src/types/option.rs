@@ -1,5 +1,5 @@
 use super::Shape;
-use crate::opaque::{Opaque, OpaqueConst, OpaqueUninit};
+use crate::ptr::{PtrConst, PtrMut, PtrUninit};
 
 /// Describes an Option — including a vtable to query and alter its state,
 /// and the inner shape (the `T` in `Option<T>`).
@@ -63,7 +63,7 @@ impl OptionDefBuilder {
 /// # Safety
 ///
 /// The `option` parameter must point to aligned, initialized memory of the correct type.
-pub type OptionIsSomeFn = for<'option> unsafe fn(option: OpaqueConst<'option>) -> bool;
+pub type OptionIsSomeFn = for<'option> unsafe fn(option: PtrConst<'option>) -> bool;
 
 /// Get the value contained in an option, if present
 ///
@@ -71,7 +71,7 @@ pub type OptionIsSomeFn = for<'option> unsafe fn(option: OpaqueConst<'option>) -
 ///
 /// The `option` parameter must point to aligned, initialized memory of the correct type.
 pub type OptionGetValueFn =
-    for<'option> unsafe fn(option: OpaqueConst<'option>) -> Option<OpaqueConst<'option>>;
+    for<'option> unsafe fn(option: PtrConst<'option>) -> Option<PtrConst<'option>>;
 
 /// Initialize an option with Some(value)
 ///
@@ -81,10 +81,8 @@ pub type OptionGetValueFn =
 /// The function must properly initialize the memory.
 /// `value` is moved out of (with [`core::ptr::read`]) — it should be deallocated
 /// afterwards but NOT dropped.
-pub type OptionInitSomeFn = for<'option> unsafe fn(
-    option: OpaqueUninit<'option>,
-    value: OpaqueConst<'_>,
-) -> Opaque<'option>;
+pub type OptionInitSomeFn =
+    for<'option> unsafe fn(option: PtrUninit<'option>, value: PtrConst<'_>) -> PtrMut<'option>;
 
 /// Initialize an option with None
 ///
@@ -92,7 +90,7 @@ pub type OptionInitSomeFn = for<'option> unsafe fn(
 ///
 /// The `option` parameter must point to uninitialized memory of sufficient size.
 /// The function must properly initialize the memory.
-pub type OptionInitNoneFn = unsafe fn(option: OpaqueUninit) -> Opaque;
+pub type OptionInitNoneFn = unsafe fn(option: PtrUninit) -> PtrMut;
 
 /// Replace an existing option with a new value
 ///
@@ -103,7 +101,7 @@ pub type OptionInitNoneFn = unsafe fn(option: OpaqueUninit) -> Opaque;
 /// If replacing with Some, `value` is moved out of (with [`core::ptr::read`]) —
 /// it should be deallocated afterwards but NOT dropped.
 pub type OptionReplaceWithFn =
-    for<'option> unsafe fn(option: Opaque<'option>, value: Option<OpaqueConst<'_>>);
+    for<'option> unsafe fn(option: PtrMut<'option>, value: Option<PtrConst<'_>>);
 
 /// Virtual table for `Option<T>`
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]

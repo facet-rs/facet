@@ -1,7 +1,7 @@
 use crate::{ReflectError, ValueId};
 use core::{alloc::Layout, fmt, marker::PhantomData};
 use facet_ansi::Stylize;
-use facet_core::{Def, Facet, FieldError, Opaque, OpaqueConst, OpaqueUninit, Shape, Variant};
+use facet_core::{Def, Facet, FieldError, PtrConst, PtrMut, PtrUninit, Shape, Variant};
 use flat_map::FlatMap;
 
 mod enum_;
@@ -23,7 +23,7 @@ fn def_kind(def: &Def) -> &'static str {
 /// Represents a frame in the initialization stack
 pub struct Frame {
     /// The value we're initializing
-    data: OpaqueUninit<'static>,
+    data: PtrUninit<'static>,
 
     /// The shape of the value
     shape: &'static Shape,
@@ -291,7 +291,7 @@ impl<'a> Wip<'a> {
         }
 
         if let Some(invariant_fn) = shape.vtable.invariants {
-            if !unsafe { invariant_fn(OpaqueConst::new(data.as_byte_ptr())) } {
+            if !unsafe { invariant_fn(PtrConst::new(data.as_byte_ptr())) } {
                 return Err(ReflectError::InvariantViolation {
                     invariant: "Custom validation function returned false",
                 });
@@ -490,7 +490,7 @@ impl<'a> Wip<'a> {
                             if let Some(drop_fn) = field.shape().vtable.drop_in_place {
                                 unsafe {
                                     let field_ptr = frame.data.as_mut_byte_ptr().add(field.offset);
-                                    drop_fn(Opaque::new(field_ptr));
+                                    drop_fn(PtrMut::new(field_ptr));
                                 }
                             }
                         }
@@ -504,7 +504,7 @@ impl<'a> Wip<'a> {
                                     unsafe {
                                         let field_ptr =
                                             frame.data.as_mut_byte_ptr().add(field.offset);
-                                        drop_fn(Opaque::new(field_ptr));
+                                        drop_fn(PtrMut::new(field_ptr));
                                     }
                                 }
                             }
@@ -1071,8 +1071,8 @@ impl<'a> Wip<'a> {
                             unsafe {
                                 // Convert the frame data pointer to Opaque and call push function from vtable
                                 (list_vtable.push)(
-                                    Opaque::new(parent_frame.data.as_mut_byte_ptr()),
-                                    Opaque::new(frame.data.as_mut_byte_ptr()),
+                                    PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
+                                    PtrMut::new(frame.data.as_mut_byte_ptr()),
                                 );
 
                                 // now let's deallocate the value
@@ -1136,7 +1136,7 @@ impl<'a> Wip<'a> {
                                 (map_def.vtable.insert_fn)(
                                     parent_frame.data.assume_init(),
                                     key_frame.data.assume_init(),
-                                    Opaque::new(frame.data.as_mut_byte_ptr()),
+                                    PtrMut::new(frame.data.as_mut_byte_ptr()),
                                 );
 
                                 // now let's deallocate the key and the value
@@ -1236,7 +1236,7 @@ impl Drop for Wip<'_> {
                                     id.shape.green()
                                 );
                                 unsafe {
-                                    drop_fn(Opaque::new(id.ptr as *mut u8));
+                                    drop_fn(PtrMut::new(id.ptr as *mut u8));
                                 }
                             }
                         } else {
@@ -1363,7 +1363,7 @@ impl Drop for HeapValue<'_> {
     fn drop(&mut self) {
         if let Some(guard) = self.guard.take() {
             if let Some(drop_fn) = self.shape.vtable.drop_in_place {
-                unsafe { drop_fn(Opaque::new(guard.ptr)) };
+                unsafe { drop_fn(PtrMut::new(guard.ptr)) };
             }
             drop(guard);
         }
@@ -1381,7 +1381,7 @@ impl<'a> HeapValue<'a> {
         }
 
         let guard = self.guard.take().unwrap();
-        let data = OpaqueConst::new(guard.ptr);
+        let data = PtrConst::new(guard.ptr);
         let res = unsafe { data.read::<T>() };
         drop(guard); // free memory (but don't drop in place)
         Ok(res)
@@ -1392,7 +1392,7 @@ impl HeapValue<'_> {
     /// Formats the value using its Display implementation, if available
     pub fn fmt_display(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if let Some(display_fn) = self.shape.vtable.display {
-            unsafe { display_fn(OpaqueConst::new(self.guard.as_ref().unwrap().ptr), f) }
+            unsafe { display_fn(PtrConst::new(self.guard.as_ref().unwrap().ptr), f) }
         } else {
             write!(f, "⟨{}⟩", self.shape)
         }
@@ -1401,7 +1401,7 @@ impl HeapValue<'_> {
     /// Formats the value using its Debug implementation, if available
     pub fn fmt_debug(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if let Some(debug_fn) = self.shape.vtable.debug {
-            unsafe { debug_fn(OpaqueConst::new(self.guard.as_ref().unwrap().ptr), f) }
+            unsafe { debug_fn(PtrConst::new(self.guard.as_ref().unwrap().ptr), f) }
         } else {
             write!(f, "⟨{}⟩", self.shape)
         }
@@ -1428,8 +1428,8 @@ impl PartialEq for HeapValue<'_> {
         if let Some(eq_fn) = self.shape.vtable.eq {
             unsafe {
                 eq_fn(
-                    OpaqueConst::new(self.guard.as_ref().unwrap().ptr),
-                    OpaqueConst::new(other.guard.as_ref().unwrap().ptr),
+                    PtrConst::new(self.guard.as_ref().unwrap().ptr),
+                    PtrConst::new(other.guard.as_ref().unwrap().ptr),
                 )
             }
         } else {
@@ -1446,8 +1446,8 @@ impl PartialOrd for HeapValue<'_> {
         if let Some(partial_ord_fn) = self.shape.vtable.partial_ord {
             unsafe {
                 partial_ord_fn(
-                    OpaqueConst::new(self.guard.as_ref().unwrap().ptr),
-                    OpaqueConst::new(other.guard.as_ref().unwrap().ptr),
+                    PtrConst::new(self.guard.as_ref().unwrap().ptr),
+                    PtrConst::new(other.guard.as_ref().unwrap().ptr),
                 )
             }
         } else {

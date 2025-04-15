@@ -9,7 +9,7 @@ pub use ::impls::impls;
 use core::fmt::{self, Debug};
 use core::marker::PhantomData;
 
-use crate::opaque::{Opaque, OpaqueUninit};
+use crate::ptr::{PtrMut, PtrUninit};
 
 /// A wrapper type used for auto-deref specialization.
 ///
@@ -116,10 +116,10 @@ pub trait SpezDefaultInPlaceYes {
     ///
     /// This function operates on uninitialized memory and requires that `target`
     /// has sufficient space allocated for type `T`.
-    unsafe fn spez_default_in_place<'mem>(&self, target: OpaqueUninit<'mem>) -> Opaque<'mem>;
+    unsafe fn spez_default_in_place<'mem>(&self, target: PtrUninit<'mem>) -> PtrMut<'mem>;
 }
 impl<T: Default> SpezDefaultInPlaceYes for &SpezEmpty<T> {
-    unsafe fn spez_default_in_place<'mem>(&self, target: OpaqueUninit<'mem>) -> Opaque<'mem> {
+    unsafe fn spez_default_in_place<'mem>(&self, target: PtrUninit<'mem>) -> PtrMut<'mem> {
         unsafe { target.put(<T as Default>::default()) }
     }
 }
@@ -135,10 +135,10 @@ pub trait SpezDefaultInPlaceNo {
     ///
     /// This function is marked unsafe as it deals with uninitialized memory,
     /// but it should never be reachable in practice.
-    unsafe fn spez_default_in_place<'mem>(&self, _target: OpaqueUninit<'mem>) -> Opaque<'mem>;
+    unsafe fn spez_default_in_place<'mem>(&self, _target: PtrUninit<'mem>) -> PtrMut<'mem>;
 }
 impl<T> SpezDefaultInPlaceNo for SpezEmpty<T> {
-    unsafe fn spez_default_in_place<'mem>(&self, _target: OpaqueUninit<'mem>) -> Opaque<'mem> {
+    unsafe fn spez_default_in_place<'mem>(&self, _target: PtrUninit<'mem>) -> PtrMut<'mem> {
         unreachable!()
     }
 }
@@ -158,10 +158,10 @@ pub trait SpezCloneIntoYes {
     ///
     /// This function operates on uninitialized memory and requires that `target`
     /// has sufficient space allocated for type `T`.
-    unsafe fn spez_clone_into<'mem>(&self, target: OpaqueUninit<'mem>) -> Opaque<'mem>;
+    unsafe fn spez_clone_into<'mem>(&self, target: PtrUninit<'mem>) -> PtrMut<'mem>;
 }
 impl<T: Clone> SpezCloneIntoYes for &Spez<T> {
-    unsafe fn spez_clone_into<'mem>(&self, target: OpaqueUninit<'mem>) -> Opaque<'mem> {
+    unsafe fn spez_clone_into<'mem>(&self, target: PtrUninit<'mem>) -> PtrMut<'mem> {
         unsafe { target.put(self.0.clone()) }
     }
 }
@@ -177,10 +177,10 @@ pub trait SpezCloneIntoNo {
     ///
     /// This function is marked unsafe as it deals with uninitialized memory,
     /// but it should never be reachable in practice.
-    unsafe fn spez_clone_into<'mem>(&self, _target: OpaqueUninit<'mem>) -> Opaque<'mem>;
+    unsafe fn spez_clone_into<'mem>(&self, _target: PtrUninit<'mem>) -> PtrMut<'mem>;
 }
 impl<T> SpezCloneIntoNo for Spez<T> {
-    unsafe fn spez_clone_into<'mem>(&self, _target: OpaqueUninit<'mem>) -> Opaque<'mem> {
+    unsafe fn spez_clone_into<'mem>(&self, _target: PtrUninit<'mem>) -> PtrMut<'mem> {
         unreachable!()
     }
 }
@@ -200,10 +200,10 @@ pub trait SpezParseYes {
     ///
     /// This function operates on uninitialized memory and requires that `target`
     /// has sufficient space allocated for type `T`.
-    unsafe fn spez_parse(&self, s: &str, target: OpaqueUninit) -> Result<(), ParseError>;
+    unsafe fn spez_parse(&self, s: &str, target: PtrUninit) -> Result<(), ParseError>;
 }
 impl<T: core::str::FromStr> SpezParseYes for &SpezEmpty<T> {
-    unsafe fn spez_parse(&self, s: &str, target: OpaqueUninit) -> Result<(), ParseError> {
+    unsafe fn spez_parse(&self, s: &str, target: PtrUninit) -> Result<(), ParseError> {
         match <T as core::str::FromStr>::from_str(s) {
             Ok(value) => {
                 unsafe { target.put(value) };
@@ -227,10 +227,10 @@ pub trait SpezParseNo {
     ///
     /// This function is marked unsafe as it deals with uninitialized memory,
     /// but it should never be reachable in practice.
-    unsafe fn spez_parse(&self, _s: &str, _target: OpaqueUninit) -> Result<(), ParseError>;
+    unsafe fn spez_parse(&self, _s: &str, _target: PtrUninit) -> Result<(), ParseError>;
 }
 impl<T> SpezParseNo for SpezEmpty<T> {
-    unsafe fn spez_parse(&self, _s: &str, _target: OpaqueUninit) -> Result<(), ParseError> {
+    unsafe fn spez_parse(&self, _s: &str, _target: PtrUninit) -> Result<(), ParseError> {
         unreachable!()
     }
 }

@@ -1,4 +1,4 @@
-use crate::opaque::{Opaque, OpaqueConst, OpaqueUninit};
+use crate::ptr::{PtrConst, PtrMut, PtrUninit};
 
 use super::Shape;
 
@@ -69,7 +69,7 @@ impl ListDefBuilder {
 /// The `list` parameter must point to uninitialized memory of sufficient size.
 /// The function must properly initialize the memory.
 pub type ListInitInPlaceWithCapacityFn =
-    for<'mem> unsafe fn(list: OpaqueUninit<'mem>, capacity: usize) -> Opaque<'mem>;
+    for<'mem> unsafe fn(list: PtrUninit<'mem>, capacity: usize) -> PtrMut<'mem>;
 
 /// Push an item to the list
 ///
@@ -78,7 +78,7 @@ pub type ListInitInPlaceWithCapacityFn =
 /// The `list` parameter must point to aligned, initialized memory of the correct type.
 /// `item` is moved out of (with [`core::ptr::read`]) — it should be deallocated
 /// afterwards but NOT dropped.
-pub type ListPushFn = unsafe fn(list: Opaque, item: Opaque);
+pub type ListPushFn = unsafe fn(list: PtrMut, item: PtrMut);
 // FIXME: this forces allocating item separately, copying it, and then dropping it — it's not great.
 
 /// Get the number of items in the list
@@ -86,14 +86,14 @@ pub type ListPushFn = unsafe fn(list: Opaque, item: Opaque);
 /// # Safety
 ///
 /// The `list` parameter must point to aligned, initialized memory of the correct type.
-pub type ListLenFn = unsafe fn(list: OpaqueConst) -> usize;
+pub type ListLenFn = unsafe fn(list: PtrConst) -> usize;
 
 /// Get pointer to the item at the given index. Panics if out of bounds.
 ///
 /// # Safety
 ///
 /// The `list` parameter must point to aligned, initialized memory of the correct type.
-pub type ListGetItemPtrFn = unsafe fn(list: OpaqueConst, index: usize) -> OpaqueConst;
+pub type ListGetItemPtrFn = unsafe fn(list: PtrConst, index: usize) -> PtrConst;
 
 /// Virtual table for a list-like type (like `Vec<T>`,
 /// but also `HashSet<T>`, etc.)

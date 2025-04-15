@@ -1,7 +1,7 @@
 use core::alloc::Layout;
 
 use crate::{
-    ConstTypeId, Def, Facet, KnownSmartPointer, OpaqueConst, SmartPointerDef, SmartPointerFlags,
+    ConstTypeId, Def, Facet, KnownSmartPointer, PtrConst, SmartPointerDef, SmartPointerFlags,
     SmartPointerVTable, value_vtable,
 };
 
@@ -20,7 +20,7 @@ unsafe impl<T: Facet> Facet for core::ptr::NonNull<T> {
                             SmartPointerVTable::builder()
                                 .borrow_fn(|opaque| {
                                     let ptr = unsafe { opaque.get::<Self>().as_ptr() };
-                                    OpaqueConst::new(ptr)
+                                    PtrConst::new(ptr)
                                 })
                                 .new_into_fn(|this, ptr| {
                                     let ptr = unsafe { ptr.read::<*mut T>() };

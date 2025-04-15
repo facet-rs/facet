@@ -82,19 +82,19 @@ Let's examine how the `PartialOrd` trait is conditionally implemented using both
 For arrays like `[T; 1]`, we need to check if the inner type `T` implements `PartialOrd`. Since this is a generic type, we use compile-time evaluation of `SHAPE`:
 
 ```rust
-# use facet::{OpaqueConst, Shape, Facet};
+# use facet::{PtrConst, Shape, Facet};
 # use core::cmp::Ordering;
 fn create_array_shape<T: Facet>() {
     let vtable = {
         // Implementation of partial_ord for arrays
         let partial_ord = if T::SHAPE.vtable.partial_ord.is_some() {
-            Some(|a: OpaqueConst, b: OpaqueConst| {
+            Some(|a: PtrConst, b: PtrConst| {
                 let a = unsafe { a.get::<[T; 1]>() };
                 let b = unsafe { b.get::<[T; 1]>() };
                 unsafe {
                     (T::SHAPE.vtable.partial_ord.unwrap_unchecked())(
-                        OpaqueConst::new(&a[0]),
-                        OpaqueConst::new(&b[0]),
+                        PtrConst::new(&a[0]),
+                        PtrConst::new(&b[0]),
                     )
                 }
             })
@@ -120,7 +120,7 @@ For non-generic types, we use the `value_vtable` macro which leverages auto-dere
 
 ```rust
 # // This is a simplified version of what happens in the actual code
-# use facet::OpaqueConst;
+# use facet::PtrConst;
 
 # #[macro_export]
 # macro_rules! value_vtable {
@@ -128,7 +128,7 @@ For non-generic types, we use the `value_vtable` macro which leverages auto-dere
 #         {
 #             // Other vtable fields would be here...
             let partial_ord = if facet::spez::impls!($type_name: core::cmp::PartialOrd) {
-                Some(|left: OpaqueConst, right: OpaqueConst| {
+                Some(|left: PtrConst, right: PtrConst| {
                     use facet::spez::*;
                     (&&Spez(unsafe { left.get::<$type_name>() }))
                         .spez_partial_cmp(&&Spez(unsafe { right.get::<$type_name>() }))

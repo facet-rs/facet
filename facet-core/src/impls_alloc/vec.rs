@@ -37,7 +37,7 @@ where
                                 }
                                 unsafe {
                                     (T::SHAPE.vtable.debug.unwrap_unchecked())(
-                                        OpaqueConst::new(item),
+                                        PtrConst::new(item),
                                         f,
                                     )?;
                                 }
@@ -55,8 +55,8 @@ where
                             }
                             for (item_a, item_b) in a.iter().zip(b.iter()) {
                                 if !(T::SHAPE.vtable.eq.unwrap_unchecked())(
-                                    OpaqueConst::new(item_a),
-                                    OpaqueConst::new(item_b),
+                                    PtrConst::new(item_a),
+                                    PtrConst::new(item_b),
                                 ) {
                                     return false;
                                 }
@@ -73,7 +73,7 @@ where
                             let mut hasher = HasherProxy::new(hasher_this, hasher_write_fn);
                             vec.len().hash(&mut hasher);
                             for item in vec {
-                                (t_hash)(OpaqueConst::new(item), hasher_this, hasher_write_fn);
+                                (t_hash)(PtrConst::new(item), hasher_this, hasher_write_fn);
                             }
                         });
                     }
@@ -113,7 +113,7 @@ where
                                             "Index out of bounds: the len is {len} but the index is {index}"
                                         );
                                     }
-                                    OpaqueConst::new(vec.as_ptr().add(index))
+                                    PtrConst::new(vec.as_ptr().add(index))
                                 })
                                 .build()
                         },

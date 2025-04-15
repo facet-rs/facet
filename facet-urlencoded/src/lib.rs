@@ -73,7 +73,7 @@ pub fn from_str<T: Facet>(urlencoded: &str) -> Result<T, UrlEncodedError> {
     Ok(val.materialize::<T>()?)
 }
 
-/// Deserializes a URL encoded form data string into an `Opaque` value.
+/// Deserializes a URL encoded form data string into an heap-allocated value.
 ///
 /// This is the lower-level function that works with `Wip` directly.
 fn from_str_value<'mem>(

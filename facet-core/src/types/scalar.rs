@@ -1,4 +1,4 @@
-use crate::OpaqueConst;
+use crate::PtrConst;
 
 /// Definition for scalar types
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -151,30 +151,30 @@ pub struct NumberAffinity {
     pub bits: NumberBits,
 
     /// Minimum representable value
-    pub min: OpaqueConst<'static>,
+    pub min: PtrConst<'static>,
 
     /// Maximum representable value
-    pub max: OpaqueConst<'static>,
+    pub max: PtrConst<'static>,
 
     /// Positive infinity representable value
-    pub positive_infinity: Option<OpaqueConst<'static>>,
+    pub positive_infinity: Option<PtrConst<'static>>,
 
     /// Negative infinity representable value
-    pub negative_infinity: Option<OpaqueConst<'static>>,
+    pub negative_infinity: Option<PtrConst<'static>>,
 
     /// Example NaN (Not a Number) value.
     /// Why sample? Because there are many NaN values, and we need to provide a representative one.
-    pub nan_sample: Option<OpaqueConst<'static>>,
+    pub nan_sample: Option<PtrConst<'static>>,
 
     /// Positive zero representation. If there's only one zero, only set this one.
-    pub positive_zero: Option<OpaqueConst<'static>>,
+    pub positive_zero: Option<PtrConst<'static>>,
 
     /// Negative zero representation
-    pub negative_zero: Option<OpaqueConst<'static>>,
+    pub negative_zero: Option<PtrConst<'static>>,
 
     /// "Machine epsilon" (<https://en.wikipedia.org/wiki/Machine_epsilon>), AKA relative
     /// approximation error, if relevant
-    pub epsilon: Option<OpaqueConst<'static>>,
+    pub epsilon: Option<PtrConst<'static>>,
 }
 
 /// Represents whether a numeric type is signed or unsigned
@@ -244,14 +244,14 @@ impl NumberAffinity {
 #[repr(C)]
 pub struct NumberAffinityBuilder {
     limits: Option<NumberBits>,
-    min: Option<OpaqueConst<'static>>,
-    max: Option<OpaqueConst<'static>>,
-    positive_infinity: Option<OpaqueConst<'static>>,
-    negative_infinity: Option<OpaqueConst<'static>>,
-    nan_sample: Option<OpaqueConst<'static>>,
-    positive_zero: Option<OpaqueConst<'static>>,
-    negative_zero: Option<OpaqueConst<'static>>,
-    epsilon: Option<OpaqueConst<'static>>,
+    min: Option<PtrConst<'static>>,
+    max: Option<PtrConst<'static>>,
+    positive_infinity: Option<PtrConst<'static>>,
+    negative_infinity: Option<PtrConst<'static>>,
+    nan_sample: Option<PtrConst<'static>>,
+    positive_zero: Option<PtrConst<'static>>,
+    negative_zero: Option<PtrConst<'static>>,
+    epsilon: Option<PtrConst<'static>>,
 }
 
 impl NumberAffinityBuilder {
@@ -320,49 +320,49 @@ impl NumberAffinityBuilder {
     }
 
     /// Sets the min value for the NumberAffinity
-    pub const fn min(mut self, min: OpaqueConst<'static>) -> Self {
+    pub const fn min(mut self, min: PtrConst<'static>) -> Self {
         self.min = Some(min);
         self
     }
 
     /// Sets the max value for the NumberAffinity
-    pub const fn max(mut self, max: OpaqueConst<'static>) -> Self {
+    pub const fn max(mut self, max: PtrConst<'static>) -> Self {
         self.max = Some(max);
         self
     }
 
     /// Sets the positive infinity value for the NumberAffinity
-    pub const fn positive_infinity(mut self, value: OpaqueConst<'static>) -> Self {
+    pub const fn positive_infinity(mut self, value: PtrConst<'static>) -> Self {
         self.positive_infinity = Some(value);
         self
     }
 
     /// Sets the negative infinity value for the NumberAffinity
-    pub const fn negative_infinity(mut self, value: OpaqueConst<'static>) -> Self {
+    pub const fn negative_infinity(mut self, value: PtrConst<'static>) -> Self {
         self.negative_infinity = Some(value);
         self
     }
 
     /// Sets the NaN sample value for the NumberAffinity
-    pub const fn nan_sample(mut self, value: OpaqueConst<'static>) -> Self {
+    pub const fn nan_sample(mut self, value: PtrConst<'static>) -> Self {
         self.nan_sample = Some(value);
         self
     }
 
     /// Sets the positive zero value for the NumberAffinity
-    pub const fn positive_zero(mut self, value: OpaqueConst<'static>) -> Self {
+    pub const fn positive_zero(mut self, value: PtrConst<'static>) -> Self {
         self.positive_zero = Some(value);
         self
     }
 
     /// Sets the negative zero value for the NumberAffinity
-    pub const fn negative_zero(mut self, value: OpaqueConst<'static>) -> Self {
+    pub const fn negative_zero(mut self, value: PtrConst<'static>) -> Self {
         self.negative_zero = Some(value);
         self
     }
 
     /// Sets the relative uncertainty for the NumberAffinity
-    pub const fn epsilon(mut self, value: OpaqueConst<'static>) -> Self {
+    pub const fn epsilon(mut self, value: PtrConst<'static>) -> Self {
         self.epsilon = Some(value);
         self
     }
@@ -677,19 +677,19 @@ pub struct TimeAffinity {
     /// What serves as the reference, or "time zero"
     /// for implementations that don't depend on an epoch in the traditionnal sense,
     /// the first moment of year 1AD can be used
-    epoch: Option<OpaqueConst<'static>>,
+    epoch: Option<PtrConst<'static>>,
 
     /// The first moment representable
-    min: Option<OpaqueConst<'static>>,
+    min: Option<PtrConst<'static>>,
 
     /// The last moment representable
-    max: Option<OpaqueConst<'static>>,
+    max: Option<PtrConst<'static>>,
 
     /// The moment immediately after the epoch,
     /// serving as a proxy for the smallest interval of time representable
     /// (do use None if this interval depends on when in time the interval occurs, e.g. if someone
     /// ever decides to store a timestamp on floating-point numbers)
-    granularity: Option<OpaqueConst<'static>>,
+    granularity: Option<PtrConst<'static>>,
 
     // TODO: the following solution leaves a LOT to desire.
     // Some examples of things where this breaks:
@@ -704,13 +704,13 @@ pub struct TimeAffinity {
     /// Specify how long the interval elements (hour, minute, etc.) are
     /// (all represented as moments separated from the epoch by said intervals)
     /// the intervals MUST be of increasing length. (TODO bikeshedding for this line)
-    interval_elements: Option<&'static [OpaqueConst<'static>]>,
+    interval_elements: Option<&'static [PtrConst<'static>]>,
 
     /// the minimum interval between timezone-local times which correspond to the same global time
     /// (planet-local time? I mean duh that's what global means right?)
     /// store a copy of the epoch for a lack of timezone support, and None for "it's more
     /// complicated than that".
-    timezone_granularity: Option<OpaqueConst<'static>>,
+    timezone_granularity: Option<PtrConst<'static>>,
 }
 
 impl TimeAffinity {
@@ -723,12 +723,12 @@ impl TimeAffinity {
 /// Builder for UuidAffinity
 #[repr(C)]
 pub struct TimeAffinityBuilder {
-    epoch: Option<OpaqueConst<'static>>,
-    min: Option<OpaqueConst<'static>>,
-    max: Option<OpaqueConst<'static>>,
-    granularity: Option<OpaqueConst<'static>>,
-    interval_elements: Option<&'static [OpaqueConst<'static>]>,
-    timezone_granularity: Option<OpaqueConst<'static>>,
+    epoch: Option<PtrConst<'static>>,
+    min: Option<PtrConst<'static>>,
+    max: Option<PtrConst<'static>>,
+    granularity: Option<PtrConst<'static>>,
+    interval_elements: Option<&'static [PtrConst<'static>]>,
+    timezone_granularity: Option<PtrConst<'static>>,
 }
 
 impl TimeAffinityBuilder {
@@ -746,25 +746,25 @@ impl TimeAffinityBuilder {
     }
 
     /// Sets the epoch for the TimeAffinity
-    pub const fn epoch(mut self, epoch: OpaqueConst<'static>) -> Self {
+    pub const fn epoch(mut self, epoch: PtrConst<'static>) -> Self {
         self.epoch = Some(epoch);
         self
     }
 
     /// Sets the min value for the TimeAffinity
-    pub const fn min(mut self, min: OpaqueConst<'static>) -> Self {
+    pub const fn min(mut self, min: PtrConst<'static>) -> Self {
         self.min = Some(min);
         self
     }
 
     /// Sets the max value for the TimeAffinity
-    pub const fn max(mut self, max: OpaqueConst<'static>) -> Self {
+    pub const fn max(mut self, max: PtrConst<'static>) -> Self {
         self.max = Some(max);
         self
     }
 
     /// Sets the granularity for the TimeAffinity
-    pub const fn granularity(mut self, granularity: OpaqueConst<'static>) -> Self {
+    pub const fn granularity(mut self, granularity: PtrConst<'static>) -> Self {
         self.granularity = Some(granularity);
         self
     }
@@ -772,17 +772,14 @@ impl TimeAffinityBuilder {
     /// Sets the interval elements for the TimeAffinity
     pub const fn interval_elements(
         mut self,
-        interval_elements: &'static [OpaqueConst<'static>],
+        interval_elements: &'static [PtrConst<'static>],
     ) -> Self {
         self.interval_elements = Some(interval_elements);
         self
     }
 
     /// Sets the timezone granularity for the TimeAffinity
-    pub const fn timezone_granularity(
-        mut self,
-        timezone_granularity: OpaqueConst<'static>,
-    ) -> Self {
+    pub const fn timezone_granularity(mut self, timezone_granularity: PtrConst<'static>) -> Self {
         self.timezone_granularity = Some(timezone_granularity);
         self
     }

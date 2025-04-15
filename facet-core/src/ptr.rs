@@ -6,9 +6,9 @@ use core::{marker::PhantomData, ptr::NonNull};
 
 /// A type-erased pointer to an uninitialized value
 #[derive(Debug, Clone, Copy)]
-pub struct OpaqueUninit<'mem>(*mut u8, PhantomData<&'mem mut ()>);
+pub struct PtrUninit<'mem>(*mut u8, PhantomData<&'mem mut ()>);
 
-impl<'mem> OpaqueUninit<'mem> {
+impl<'mem> PtrUninit<'mem> {
     /// Create a new opaque pointer from a mutable pointer
     ///
     /// This is safe because it's generic over T
@@ -30,9 +30,9 @@ impl<'mem> OpaqueUninit<'mem> {
     /// # Safety
     ///
     /// The pointer must actually be pointing to initialized memory of the correct type.
-    pub unsafe fn assume_init(self) -> Opaque<'mem> {
+    pub unsafe fn assume_init(self) -> PtrMut<'mem> {
         let ptr = unsafe { NonNull::new_unchecked(self.0) };
-        Opaque(ptr, PhantomData)
+        PtrMut(ptr, PhantomData)
     }
 
     /// Write a value to this location and convert to an initialized pointer
@@ -41,7 +41,7 @@ impl<'mem> OpaqueUninit<'mem> {
     ///
     /// The pointer must be properly aligned for T and point to allocated memory
     /// that can be safely written to.
-    pub unsafe fn put<T>(self, value: T) -> Opaque<'mem> {
+    pub unsafe fn put<T>(self, value: T) -> PtrMut<'mem> {
         unsafe {
             core::ptr::write(self.0 as *mut T, value);
             self.assume_init()
@@ -63,8 +63,8 @@ impl<'mem> OpaqueUninit<'mem> {
     /// # Safety
     ///
     /// Offset is within the bounds of the allocated memory
-    pub unsafe fn field_uninit_at(self, offset: usize) -> OpaqueUninit<'mem> {
-        OpaqueUninit(unsafe { self.0.byte_add(offset) }, PhantomData)
+    pub unsafe fn field_uninit_at(self, offset: usize) -> PtrUninit<'mem> {
+        PtrUninit(unsafe { self.0.byte_add(offset) }, PhantomData)
     }
 
     /// Returns a pointer with the given offset added, assuming it's initialized
@@ -75,8 +75,8 @@ impl<'mem> OpaqueUninit<'mem> {
     /// - Within bounds of the allocated object
     /// - Properly aligned for the type being pointed to
     /// - Point to initialized data of the correct type
-    pub unsafe fn field_init(self, offset: usize) -> Opaque<'mem> {
-        Opaque(
+    pub unsafe fn field_init(self, offset: usize) -> PtrMut<'mem> {
+        PtrMut(
             unsafe { NonNull::new_unchecked(self.0.add(offset)) },
             PhantomData,
         )
@@ -87,12 +87,12 @@ impl<'mem> OpaqueUninit<'mem> {
 ///
 /// Cannot be null. May be dangling (for ZSTs)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct OpaqueConst<'mem>(NonNull<u8>, PhantomData<&'mem ()>);
+pub struct PtrConst<'mem>(NonNull<u8>, PhantomData<&'mem ()>);
 
-unsafe impl Send for OpaqueConst<'_> {}
-unsafe impl Sync for OpaqueConst<'_> {}
+unsafe impl Send for PtrConst<'_> {}
+unsafe impl Sync for PtrConst<'_> {}
 
-impl<'mem> OpaqueConst<'mem> {
+impl<'mem> PtrConst<'mem> {
     /// Create a new opaque const pointer from a raw pointer
     ///
     /// # Safety
@@ -135,8 +135,8 @@ impl<'mem> OpaqueConst<'mem> {
     ///
     /// Offset must be within the bounds of the allocated memory,
     /// and the resulting pointer must be properly aligned.
-    pub const unsafe fn field(self, offset: usize) -> OpaqueConst<'mem> {
-        OpaqueConst(
+    pub const unsafe fn field(self, offset: usize) -> PtrConst<'mem> {
+        PtrConst(
             unsafe { NonNull::new_unchecked(self.0.as_ptr().byte_add(offset)) },
             PhantomData,
         )
@@ -155,9 +155,9 @@ impl<'mem> OpaqueConst<'mem> {
 
 /// A type-erased pointer to an initialized value
 #[derive(Clone, Copy)]
-pub struct Opaque<'mem>(NonNull<u8>, PhantomData<&'mem mut ()>);
+pub struct PtrMut<'mem>(NonNull<u8>, PhantomData<&'mem mut ()>);
 
-impl<'mem> Opaque<'mem> {
+impl<'mem> PtrMut<'mem> {
     /// Create a new opaque pointer from a raw pointer
     ///
     /// # Safety
@@ -215,8 +215,8 @@ impl<'mem> Opaque<'mem> {
     }
 
     /// Make a const ptr out of this mut ptr
-    pub const fn as_const<'borrow: 'mem>(self) -> OpaqueConst<'borrow> {
-        OpaqueConst(self.0, PhantomData)
+    pub const fn as_const<'borrow: 'mem>(self) -> PtrConst<'borrow> {
+        PtrConst(self.0, PhantomData)
     }
 
     /// Exposes [`core::ptr::read`]
@@ -237,9 +237,9 @@ impl<'mem> Opaque<'mem> {
     /// The memory must be properly initialized and aligned for type `T`.
     /// After calling this function, the memory should not be accessed again
     /// until it is properly reinitialized.
-    pub unsafe fn drop_in_place<T>(self) -> OpaqueUninit<'mem> {
+    pub unsafe fn drop_in_place<T>(self) -> PtrUninit<'mem> {
         unsafe { core::ptr::drop_in_place(self.as_mut::<T>()) }
-        OpaqueUninit(self.0.as_ptr(), PhantomData)
+        PtrUninit(self.0.as_ptr(), PhantomData)
     }
 
     /// Write a value to this location after dropping the existing value
@@ -262,7 +262,7 @@ impl<'mem> Opaque<'mem> {
     ///   that can be safely written to.
     /// - The source pointer must point to properly initialized data.
     /// - Both pointers must refer to objects of the same type and size.
-    pub unsafe fn write(self, source: OpaqueConst<'_>) -> Self {
+    pub unsafe fn write(self, source: PtrConst<'_>) -> Self {
         unsafe {
             let size = core::mem::size_of_val(&*source.as_byte_ptr());
             core::ptr::copy_nonoverlapping(source.as_byte_ptr(), self.0.as_ptr(), size);

@@ -1,4 +1,4 @@
-use crate::opaque::{Opaque, OpaqueConst, OpaqueUninit};
+use crate::ptr::{PtrConst, PtrMut, PtrUninit};
 use bitflags::bitflags;
 use core::cmp::Ordering;
 
@@ -70,7 +70,7 @@ impl TypeNameOpts {
 /// # Safety
 ///
 /// The `value` parameter must point to aligned, initialized memory of the correct type.
-pub type InvariantsFn = for<'mem> unsafe fn(value: OpaqueConst<'mem>) -> bool;
+pub type InvariantsFn = for<'mem> unsafe fn(value: PtrConst<'mem>) -> bool;
 
 //======== Memory Management ========
 
@@ -79,7 +79,7 @@ pub type InvariantsFn = for<'mem> unsafe fn(value: OpaqueConst<'mem>) -> bool;
 /// # Safety
 ///
 /// The `value` parameter must point to aligned, initialized memory of the correct type.
-pub type DropInPlaceFn = for<'mem> unsafe fn(value: Opaque<'mem>) -> OpaqueUninit<'mem>;
+pub type DropInPlaceFn = for<'mem> unsafe fn(value: PtrMut<'mem>) -> PtrUninit<'mem>;
 
 /// Function to clone a value into another already-allocated value
 ///
@@ -87,19 +87,17 @@ pub type DropInPlaceFn = for<'mem> unsafe fn(value: Opaque<'mem>) -> OpaqueUnini
 ///
 /// The `source` parameter must point to aligned, initialized memory of the correct type.
 /// The `target` parameter has the correct layout and alignment, but points to
-/// uninitialized memory. The function returns the same pointer wrapped in an [`Opaque`].
-pub type CloneIntoFn = for<'src, 'dst> unsafe fn(
-    source: OpaqueConst<'src>,
-    target: OpaqueUninit<'dst>,
-) -> Opaque<'dst>;
+/// uninitialized memory. The function returns the same pointer wrapped in an [`PtrMut`].
+pub type CloneIntoFn =
+    for<'src, 'dst> unsafe fn(source: PtrConst<'src>, target: PtrUninit<'dst>) -> PtrMut<'dst>;
 
 /// Function to set a value to its default in-place
 ///
 /// # Safety
 ///
 /// The `target` parameter has the correct layout and alignment, but points to
-/// uninitialized memory. The function returns the same pointer wrapped in an [`Opaque`].
-pub type DefaultInPlaceFn = for<'mem> unsafe fn(target: OpaqueUninit<'mem>) -> Opaque<'mem>;
+/// uninitialized memory. The function returns the same pointer wrapped in an [`PtrMut`].
+pub type DefaultInPlaceFn = for<'mem> unsafe fn(target: PtrUninit<'mem>) -> PtrMut<'mem>;
 
 //======== Conversion ========
 
@@ -111,9 +109,9 @@ pub type DefaultInPlaceFn = for<'mem> unsafe fn(target: OpaqueUninit<'mem>) -> O
 ///
 /// The `target` parameter has the correct layout and alignment, but points to
 /// uninitialized memory. If this function succeeds, it should return `Ok` with the
-/// same pointer wrapped in an [`Opaque`]. If parsing fails, it returns `Err` with an error.
+/// same pointer wrapped in an [`PtrMut`]. If parsing fails, it returns `Err` with an error.
 pub type ParseFn =
-    for<'mem> unsafe fn(s: &str, target: OpaqueUninit<'mem>) -> Result<Opaque<'mem>, ParseError>;
+    for<'mem> unsafe fn(s: &str, target: PtrUninit<'mem>) -> Result<PtrMut<'mem>, ParseError>;
 
 /// Error returned by [`ParseFn`]
 #[non_exhaustive]
@@ -139,11 +137,11 @@ impl core::error::Error for ParseError {}
 ///
 /// The `target` parameter has the correct layout and alignment, but points to
 /// uninitialized memory. If this function succeeds, it should return `Ok` with the
-/// same pointer wrapped in an [`Opaque`]. If conversion fails, it returns `Err` with an error.
+/// same pointer wrapped in an [`PtrMut`]. If conversion fails, it returns `Err` with an error.
 pub type TryFromFn = for<'src, 'mem> unsafe fn(
-    source: OpaqueConst<'src>,
-    target: OpaqueUninit<'mem>,
-) -> Result<Opaque<'mem>, TryFromError>;
+    source: PtrConst<'src>,
+    target: PtrUninit<'mem>,
+) -> Result<PtrMut<'mem>, TryFromError>;
 
 /// Error type for TryFrom conversion failures
 #[non_exhaustive]
@@ -189,7 +187,7 @@ impl core::error::Error for TryFromError {}
 /// # Safety
 ///
 /// Both `left` and `right` parameters must point to aligned, initialized memory of the correct type.
-pub type PartialEqFn = for<'l, 'r> unsafe fn(left: OpaqueConst<'l>, right: OpaqueConst<'r>) -> bool;
+pub type PartialEqFn = for<'l, 'r> unsafe fn(left: PtrConst<'l>, right: PtrConst<'r>) -> bool;
 
 /// Function to compare two values and return their ordering if comparable
 ///
@@ -197,14 +195,14 @@ pub type PartialEqFn = for<'l, 'r> unsafe fn(left: OpaqueConst<'l>, right: Opaqu
 ///
 /// Both `left` and `right` parameters must point to aligned, initialized memory of the correct type.
 pub type PartialOrdFn =
-    for<'l, 'r> unsafe fn(left: OpaqueConst<'l>, right: OpaqueConst<'r>) -> Option<Ordering>;
+    for<'l, 'r> unsafe fn(left: PtrConst<'l>, right: PtrConst<'r>) -> Option<Ordering>;
 
 /// Function to compare two values and return their ordering
 ///
 /// # Safety
 ///
 /// Both `left` and `right` parameters must point to aligned, initialized memory of the correct type.
-pub type CmpFn = for<'l, 'r> unsafe fn(left: OpaqueConst<'l>, right: OpaqueConst<'r>) -> Ordering;
+pub type CmpFn = for<'l, 'r> unsafe fn(left: PtrConst<'l>, right: PtrConst<'r>) -> Ordering;
 
 //======== Hashing ========
 
@@ -215,8 +213,8 @@ pub type CmpFn = for<'l, 'r> unsafe fn(left: OpaqueConst<'l>, right: OpaqueConst
 /// The `value` parameter must point to aligned, initialized memory of the correct type.
 /// The hasher pointer must be a valid pointer to a Hasher trait object.
 pub type HashFn = for<'mem> unsafe fn(
-    value: OpaqueConst<'mem>,
-    hasher_this: Opaque<'mem>,
+    value: PtrConst<'mem>,
+    hasher_this: PtrMut<'mem>,
     hasher_write_fn: HasherWriteFn,
 );
 
@@ -225,13 +223,13 @@ pub type HashFn = for<'mem> unsafe fn(
 /// # Safety
 ///
 /// The `hasher_self` parameter must be a valid pointer to a hasher
-pub type HasherWriteFn = for<'mem> unsafe fn(hasher_self: Opaque<'mem>, bytes: &[u8]);
+pub type HasherWriteFn = for<'mem> unsafe fn(hasher_self: PtrMut<'mem>, bytes: &[u8]);
 
 /// Provides an implementation of [`core::hash::Hasher`] for a given hasher pointer and write function
 ///
 /// See [`HashFn`] for more details on the parameters.
 pub struct HasherProxy<'a> {
-    hasher_this: Opaque<'a>,
+    hasher_this: PtrMut<'a>,
     hasher_write_fn: HasherWriteFn,
 }
 
@@ -242,7 +240,7 @@ impl<'a> HasherProxy<'a> {
     ///
     /// The `hasher_this` parameter must be a valid pointer to a Hasher trait object.
     /// The `hasher_write_fn` parameter must be a valid function pointer.
-    pub unsafe fn new(hasher_this: Opaque<'a>, hasher_write_fn: HasherWriteFn) -> Self {
+    pub unsafe fn new(hasher_this: PtrMut<'a>, hasher_write_fn: HasherWriteFn) -> Self {
         Self {
             hasher_this,
             hasher_write_fn,
@@ -287,10 +285,8 @@ bitflags! {
 /// # Safety
 ///
 /// The `value` parameter must point to aligned, initialized memory of the correct type.
-pub type DisplayFn = for<'mem> unsafe fn(
-    value: OpaqueConst<'mem>,
-    f: &mut core::fmt::Formatter,
-) -> core::fmt::Result;
+pub type DisplayFn =
+    for<'mem> unsafe fn(value: PtrConst<'mem>, f: &mut core::fmt::Formatter) -> core::fmt::Result;
 
 /// Function to format a value for debug.
 /// If this returns None, the shape did not implement Debug.
@@ -298,10 +294,8 @@ pub type DisplayFn = for<'mem> unsafe fn(
 /// # Safety
 ///
 /// The `value` parameter must point to aligned, initialized memory of the correct type.
-pub type DebugFn = for<'mem> unsafe fn(
-    value: OpaqueConst<'mem>,
-    f: &mut core::fmt::Formatter,
-) -> core::fmt::Result;
+pub type DebugFn =
+    for<'mem> unsafe fn(value: PtrConst<'mem>, f: &mut core::fmt::Formatter) -> core::fmt::Result;
 
 /// VTable for common operations that can be performed on any shape
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

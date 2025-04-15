@@ -1,7 +1,7 @@
 use core::alloc::Layout;
 
 use crate::{
-    ConstTypeId, Def, Facet, OpaqueConst, OptionDef, OptionVTable, Shape, value_vtable_inner,
+    ConstTypeId, Def, Facet, OptionDef, OptionVTable, PtrConst, Shape, value_vtable_inner,
 };
 
 unsafe impl<T: Facet> Facet for Option<T> {
@@ -20,7 +20,7 @@ unsafe impl<T: Facet> Facet for Option<T> {
                                     option
                                         .get::<Option<T>>()
                                         .as_ref()
-                                        .map(|t| OpaqueConst::new(t as *const T))
+                                        .map(|t| PtrConst::new(t as *const T))
                                 },
                                 init_some_fn: |option, value| unsafe {
                                     option.put(Option::Some(value.read::<T>()))
@@ -59,7 +59,7 @@ unsafe impl<T: Facet> Facet for Option<T> {
                                 write!(f, "Some(")?;
                                 unsafe {
                                     (T::SHAPE.vtable.debug.unwrap_unchecked())(
-                                        OpaqueConst::new(value),
+                                        PtrConst::new(value),
                                         f,
                                     )?;
                                 }

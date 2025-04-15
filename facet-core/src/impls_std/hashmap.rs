@@ -3,7 +3,7 @@ use core::{alloc::Layout, hash::Hash};
 use std::collections::HashMap;
 use std::hash::RandomState;
 
-use crate::opaque::{Opaque, OpaqueConst};
+use crate::ptr::{PtrConst, PtrMut};
 
 use crate::{
     ConstTypeId, Def, Facet, MapDef, MapIterVTable, MapVTable, MarkerTraits, ScalarAffinity,
@@ -11,7 +11,7 @@ use crate::{
 };
 
 struct HashMapIterator<'mem, K> {
-    map: OpaqueConst<'mem>,
+    map: PtrConst<'mem>,
     keys: VecDeque<&'mem K>,
 }
 
@@ -60,9 +60,9 @@ where
                                 if i > 0 {
                                     write!(f, ", ")?;
                                 }
-                                (k_debug)(OpaqueConst::new(key as *const _), f)?;
+                                (k_debug)(PtrConst::new(key as *const _), f)?;
                                 write!(f, ": ")?;
-                                (v_debug)(OpaqueConst::new(val as *const _), f)?;
+                                (v_debug)(PtrConst::new(val as *const _), f)?;
                             }
                             write!(f, "}}")
                         });
@@ -83,8 +83,8 @@ where
                                 && a.iter().all(|(key_a, val_a)| {
                                     b.get(key_a).is_some_and(|val_b| {
                                         (v_eq)(
-                                            OpaqueConst::new(val_a as *const _),
-                                            OpaqueConst::new(val_b as *const _),
+                                            PtrConst::new(val_a as *const _),
+                                            PtrConst::new(val_b as *const _),
                                         )
                                     })
                                 })
@@ -101,7 +101,7 @@ where
                             for (k, v) in map {
                                 k.hash(&mut hasher);
                                 (v_hash)(
-                                    OpaqueConst::new(v as *const _),
+                                    PtrConst::new(v as *const _),
                                     hasher_this,
                                     hasher_write_fn,
                                 );
@@ -139,13 +139,13 @@ where
                                 })
                                 .get_value_ptr(|ptr, key| unsafe {
                                     let map = ptr.get::<HashMap<K, V>>();
-                                    map.get(key.get()).map(|v| OpaqueConst::new(v as *const _))
+                                    map.get(key.get()).map(|v| PtrConst::new(v as *const _))
                                 })
                                 .iter(|ptr| unsafe {
                                     let map = ptr.get::<HashMap<K, V>>();
                                     let keys: VecDeque<&K> = map.keys().collect();
                                     let iter_state = Box::new(HashMapIterator { map: ptr, keys });
-                                    Opaque::new(Box::into_raw(iter_state) as *mut u8)
+                                    PtrMut::new(Box::into_raw(iter_state) as *mut u8)
                                 })
                                 .iter_vtable(
                                     MapIterVTable::builder()
@@ -155,8 +155,8 @@ where
                                             while let Some(key) = state.keys.pop_front() {
                                                 if let Some(value) = map.get(key) {
                                                     return Some((
-                                                        OpaqueConst::new(key as *const K),
-                                                        OpaqueConst::new(value as *const V),
+                                                        PtrConst::new(key as *const K),
+                                                        PtrConst::new(value as *const V),
                                                     ));
                                                 }
                                             }

@@ -11,8 +11,8 @@ mod macros;
 pub use macros::*;
 
 // Opaque pointer utilities
-mod opaque;
-pub use opaque::*;
+mod ptr;
+pub use ptr::*;
 
 // Specialization utilities
 pub mod spez;

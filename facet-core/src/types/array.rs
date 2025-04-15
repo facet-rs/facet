@@ -1,4 +1,4 @@
-use crate::opaque::OpaqueConst;
+use crate::ptr::PtrConst;
 
 use super::Shape;
 
@@ -80,7 +80,7 @@ impl ArrayDefBuilder {
 /// # Safety
 ///
 /// The `array` parameter must point to aligned, initialized memory of the correct type.
-pub type ArrayGetItemPtrFn = unsafe fn(array: OpaqueConst, index: usize) -> OpaqueConst;
+pub type ArrayGetItemPtrFn = unsafe fn(array: PtrConst, index: usize) -> PtrConst;
 
 /// Virtual table for a list-like type (like `Vec<T>`,
 /// but also `HashSet<T>`, etc.)

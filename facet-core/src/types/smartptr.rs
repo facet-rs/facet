@@ -1,6 +1,6 @@
 use bitflags::bitflags;
 
-use crate::{Opaque, OpaqueConst, OpaqueUninit};
+use crate::{PtrConst, PtrMut, PtrUninit};
 
 use super::Shape;
 
@@ -161,7 +161,7 @@ bitflags! {
 /// `strong.assume_init()` is returned as part of the Option if the upgrade succeeds.
 /// `None` is returned if this is not a type of smart pointer that supports upgrades.
 pub type UpgradeIntoFn =
-    for<'ptr> unsafe fn(weak: Opaque<'ptr>, strong: OpaqueUninit<'ptr>) -> Option<Opaque<'ptr>>;
+    for<'ptr> unsafe fn(weak: PtrMut<'ptr>, strong: PtrUninit<'ptr>) -> Option<PtrMut<'ptr>>;
 
 /// Downgrades a strong pointer to a weak one.
 ///
@@ -175,12 +175,12 @@ pub type UpgradeIntoFn =
 ///
 /// `weak.assume_init()` is returned if the downgrade succeeds.
 pub type DowngradeIntoFn =
-    for<'ptr> unsafe fn(strong: Opaque<'ptr>, weak: OpaqueUninit<'ptr>) -> Opaque<'ptr>;
+    for<'ptr> unsafe fn(strong: PtrMut<'ptr>, weak: PtrUninit<'ptr>) -> PtrMut<'ptr>;
 
 /// Tries to obtain a reference to the inner value of the smart pointer.
 ///
 /// Weak pointers don't even have that function in their vtable.
-pub type BorrowFn = for<'ptr> unsafe fn(opaque: OpaqueConst<'ptr>) -> OpaqueConst<'ptr>;
+pub type BorrowFn = for<'ptr> unsafe fn(opaque: PtrConst<'ptr>) -> PtrConst<'ptr>;
 
 /// Creates a new smart pointer wrapping the given value. Writes the smart pointer
 /// into the given `this`.
@@ -196,21 +196,21 @@ pub type BorrowFn = for<'ptr> unsafe fn(opaque: OpaqueConst<'ptr>) -> OpaqueCons
 /// After calling this, `ptr` has been moved out of, and must be
 /// deallocated (but not dropped).
 pub type NewIntoFn =
-    for<'ptr> unsafe fn(this: OpaqueUninit<'ptr>, ptr: OpaqueConst<'ptr>) -> Opaque<'ptr>;
+    for<'ptr> unsafe fn(this: PtrUninit<'ptr>, ptr: PtrConst<'ptr>) -> PtrMut<'ptr>;
 
 /// Type-erased result of locking a mutex-like smart pointer
 pub struct LockResult<'ptr> {
     /// The data that was locked
-    data: Opaque<'ptr>,
+    data: PtrMut<'ptr>,
     /// The guard that protects the data
-    guard: OpaqueConst<'ptr>,
+    guard: PtrConst<'ptr>,
     /// The vtable for the guard
     guard_vtable: &'static LockGuardVTable,
 }
 
 impl<'ptr> LockResult<'ptr> {
     /// Returns a reference to the locked data
-    pub fn data(&self) -> &Opaque<'ptr> {
+    pub fn data(&self) -> &PtrMut<'ptr> {
         &self.data
     }
 }
@@ -226,17 +226,17 @@ impl Drop for LockResult<'_> {
 /// Functions for manipulating a guard
 pub struct LockGuardVTable {
     /// Drops the guard in place
-    pub drop_in_place: for<'ptr> unsafe fn(guard: OpaqueConst<'ptr>),
+    pub drop_in_place: for<'ptr> unsafe fn(guard: PtrConst<'ptr>),
 }
 
 /// Acquires a lock on a mutex-like smart pointer
-pub type LockFn = for<'ptr> unsafe fn(opaque: OpaqueConst<'ptr>) -> Result<LockResult<'ptr>, ()>;
+pub type LockFn = for<'ptr> unsafe fn(opaque: PtrConst<'ptr>) -> Result<LockResult<'ptr>, ()>;
 
 /// Acquires a read lock on a reader-writer lock-like smart pointer
-pub type ReadFn = for<'ptr> unsafe fn(opaque: OpaqueConst<'ptr>) -> Result<LockResult<'ptr>, ()>;
+pub type ReadFn = for<'ptr> unsafe fn(opaque: PtrConst<'ptr>) -> Result<LockResult<'ptr>, ()>;
 
 /// Acquires a write lock on a reader-writer lock-like smart pointer
-pub type WriteFn = for<'ptr> unsafe fn(opaque: OpaqueConst<'ptr>) -> Result<LockResult<'ptr>, ()>;
+pub type WriteFn = for<'ptr> unsafe fn(opaque: PtrConst<'ptr>) -> Result<LockResult<'ptr>, ()>;
 
 /// Functions for interacting with a smart pointer
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

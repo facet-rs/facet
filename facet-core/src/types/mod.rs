@@ -210,8 +210,8 @@ impl Shape {
     /// Heap-allocate a value of this shape
     #[cfg(feature = "alloc")]
     #[inline]
-    pub fn allocate(&self) -> crate::opaque::OpaqueUninit<'static> {
-        crate::opaque::OpaqueUninit::new(if self.layout.size() == 0 {
+    pub fn allocate(&self) -> crate::ptr::PtrUninit<'static> {
+        crate::ptr::PtrUninit::new(if self.layout.size() == 0 {
             core::ptr::without_provenance_mut(self.layout.align())
         } else {
             // SAFETY: We have checked that layout's size is non-zero

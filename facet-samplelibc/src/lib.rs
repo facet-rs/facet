@@ -1,14 +1,14 @@
 #![allow(clippy::disallowed_names)]
 
-use facet::{Facet, Opaque, Shape};
+use facet::{Facet, PtrMut, Shape};
 
 unsafe extern "C" {
     pub unsafe fn get_library_message() -> *const std::ffi::c_char;
     pub unsafe fn get_foo() -> *mut Foo;
 }
 
-pub fn get_foo_and_shape() -> (Opaque<'static>, &'static Shape) {
-    (unsafe { Opaque::new(get_foo()) }, Foo::SHAPE)
+pub fn get_foo_and_shape() -> (PtrMut<'static>, &'static Shape) {
+    (unsafe { PtrMut::new(get_foo()) }, Foo::SHAPE)
 }
 
 pub fn print_global_foo() {

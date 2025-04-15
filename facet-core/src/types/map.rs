@@ -1,4 +1,4 @@
-use crate::opaque::{Opaque, OpaqueConst, OpaqueUninit};
+use crate::ptr::{PtrConst, PtrMut, PtrUninit};
 
 use super::Shape;
 
@@ -75,7 +75,7 @@ impl MapDefBuilder {
 /// The `map` parameter must point to uninitialized memory of sufficient size.
 /// The function must properly initialize the memory.
 pub type MapInitInPlaceWithCapacityFn =
-    for<'mem> unsafe fn(map: OpaqueUninit<'mem>, capacity: usize) -> Opaque<'mem>;
+    for<'mem> unsafe fn(map: PtrUninit<'mem>, capacity: usize) -> PtrMut<'mem>;
 
 /// Insert a key-value pair into the map
 ///
@@ -85,14 +85,14 @@ pub type MapInitInPlaceWithCapacityFn =
 /// `key` and `value` are moved out of (with [`core::ptr::read`]) — they should be deallocated
 /// afterwards but NOT dropped.
 pub type MapInsertFn =
-    for<'map, 'key, 'value> unsafe fn(map: Opaque<'map>, key: Opaque<'key>, value: Opaque<'value>);
+    for<'map, 'key, 'value> unsafe fn(map: PtrMut<'map>, key: PtrMut<'key>, value: PtrMut<'value>);
 
 /// Get the number of entries in the map
 ///
 /// # Safety
 ///
 /// The `map` parameter must point to aligned, initialized memory of the correct type.
-pub type MapLenFn = for<'map> unsafe fn(map: OpaqueConst<'map>) -> usize;
+pub type MapLenFn = for<'map> unsafe fn(map: PtrConst<'map>) -> usize;
 
 /// Check if the map contains a key
 ///
@@ -100,24 +100,22 @@ pub type MapLenFn = for<'map> unsafe fn(map: OpaqueConst<'map>) -> usize;
 ///
 /// The `map` parameter must point to aligned, initialized memory of the correct type.
 pub type MapContainsKeyFn =
-    for<'map, 'key> unsafe fn(map: OpaqueConst<'map>, key: OpaqueConst<'key>) -> bool;
+    for<'map, 'key> unsafe fn(map: PtrConst<'map>, key: PtrConst<'key>) -> bool;
 
 /// Get pointer to a value for a given key, returns None if not found
 ///
 /// # Safety
 ///
 /// The `map` parameter must point to aligned, initialized memory of the correct type.
-pub type MapGetValuePtrFn = for<'map, 'key> unsafe fn(
-    map: OpaqueConst<'map>,
-    key: OpaqueConst<'key>,
-) -> Option<OpaqueConst<'map>>;
+pub type MapGetValuePtrFn =
+    for<'map, 'key> unsafe fn(map: PtrConst<'map>, key: PtrConst<'key>) -> Option<PtrConst<'map>>;
 
 /// Get an iterator over the map
 ///
 /// # Safety
 ///
 /// The `map` parameter must point to aligned, initialized memory of the correct type.
-pub type MapIterFn = for<'map> unsafe fn(map: OpaqueConst<'map>) -> Opaque<'map>;
+pub type MapIterFn = for<'map> unsafe fn(map: PtrConst<'map>) -> PtrMut<'map>;
 
 /// Get the next key-value pair from the iterator
 ///
@@ -125,14 +123,14 @@ pub type MapIterFn = for<'map> unsafe fn(map: OpaqueConst<'map>) -> Opaque<'map>
 ///
 /// The `iter` parameter must point to aligned, initialized memory of the correct type.
 pub type MapIterNextFn =
-    for<'iter> unsafe fn(iter: Opaque<'iter>) -> Option<(OpaqueConst<'iter>, OpaqueConst<'iter>)>;
+    for<'iter> unsafe fn(iter: PtrMut<'iter>) -> Option<(PtrConst<'iter>, PtrConst<'iter>)>;
 
 /// Deallocate the iterator
 ///
 /// # Safety
 ///
 /// The `iter` parameter must point to aligned, initialized memory of the correct type.
-pub type MapIterDeallocFn = for<'iter> unsafe fn(iter: Opaque<'iter>);
+pub type MapIterDeallocFn = for<'iter> unsafe fn(iter: PtrMut<'iter>);
 
 /// VTable for an iterator over a map
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]

@@ -1,5 +1,5 @@
 use core::cmp::Ordering;
-use facet_core::{Def, Facet, Opaque, OpaqueConst, Shape, TypeNameOpts, ValueVTable};
+use facet_core::{Def, Facet, PtrConst, PtrMut, Shape, TypeNameOpts, ValueVTable};
 
 use crate::{ReflectError, ScalarType};
 
@@ -34,7 +34,7 @@ impl core::fmt::Debug for ValueId {
 #[derive(Clone, Copy)]
 pub struct Peek<'mem> {
     /// Underlying data
-    pub(crate) data: OpaqueConst<'mem>,
+    pub(crate) data: PtrConst<'mem>,
 
     /// Shape of the value
     pub(crate) shape: &'static Shape,
@@ -44,7 +44,7 @@ impl<'mem> Peek<'mem> {
     /// Creates a new `PeekValue` instance for a value of type `T`.
     pub fn new<T: Facet + 'mem>(t: &'mem T) -> Self {
         Self {
-            data: OpaqueConst::new(t as *const T),
+            data: PtrConst::new(t as *const T),
             shape: T::SHAPE,
         }
     }
@@ -56,7 +56,7 @@ impl<'mem> Peek<'mem> {
     /// This function is unsafe because it doesn't check if the provided data
     /// and shape are compatible. The caller must ensure that the data is valid
     /// for the given shape.
-    pub unsafe fn unchecked_new(data: OpaqueConst<'mem>, shape: &'static Shape) -> Self {
+    pub unsafe fn unchecked_new(data: PtrConst<'mem>, shape: &'static Shape) -> Self {
         Self { data, shape }
     }
 
@@ -116,7 +116,7 @@ impl<'mem> Peek<'mem> {
     pub fn hash<H: core::hash::Hasher>(&self, hasher: &mut H) -> bool {
         unsafe {
             if let Some(hash_fn) = self.shape.vtable.hash {
-                let hasher_opaque = Opaque::new(hasher);
+                let hasher_opaque = PtrMut::new(hasher);
                 hash_fn(self.data, hasher_opaque, |opaque, bytes| {
                     opaque.as_mut::<H>().write(bytes)
                 });
@@ -154,7 +154,7 @@ impl<'mem> Peek<'mem> {
 
     /// Returns the data
     #[inline(always)]
-    pub const fn data(&self) -> OpaqueConst<'mem> {
+    pub const fn data(&self) -> PtrConst<'mem> {
         self.data
     }
 
@@ -298,7 +298,7 @@ impl core::cmp::PartialOrd for Peek<'_> {
 impl core::hash::Hash for Peek<'_> {
     fn hash<H: core::hash::Hasher>(&self, hasher: &mut H) {
         if let Some(hash_fn) = self.shape.vtable.hash {
-            let hasher_opaque = Opaque::new(hasher);
+            let hasher_opaque = PtrMut::new(hasher);
             unsafe {
                 hash_fn(self.data, hasher_opaque, |opaque, bytes| {
                     opaque.as_mut::<H>().write(bytes)

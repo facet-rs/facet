@@ -1,11 +1,11 @@
-use facet_core::{MapDef, Opaque, OpaqueConst};
+use facet_core::{MapDef, PtrConst, PtrMut};
 
 use super::Peek;
 
 /// Iterator over key-value pairs in a `PeekMap`
 pub struct PeekMapIter<'mem> {
     map: PeekMap<'mem>,
-    iter: Opaque<'mem>,
+    iter: PtrMut<'mem>,
 }
 
 impl<'mem> Iterator for PeekMapIter<'mem> {
@@ -72,7 +72,7 @@ impl<'mem> PeekMap<'mem> {
     /// Check if the map contains a key
     pub fn contains_key(&self, key: &impl facet_core::Facet) -> bool {
         unsafe {
-            let key_ptr = OpaqueConst::new(key);
+            let key_ptr = PtrConst::new(key);
             (self.def.vtable.contains_key_fn)(self.value.data(), key_ptr)
         }
     }
@@ -80,7 +80,7 @@ impl<'mem> PeekMap<'mem> {
     /// Get a value from the map for the given key
     pub fn get<'k>(&self, key: &'k impl facet_core::Facet) -> Option<Peek<'mem>> {
         unsafe {
-            let key_ptr = OpaqueConst::new(key);
+            let key_ptr = PtrConst::new(key);
             let value_ptr = (self.def.vtable.get_value_ptr_fn)(self.value.data(), key_ptr)?;
             Some(Peek {
                 data: value_ptr,
