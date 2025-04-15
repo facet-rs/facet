@@ -13,6 +13,10 @@ jobs:
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
+      env:
+        BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
+        BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
+        GITHUB_REPO_NAME: ${{ env.GITHUB_REPO_NAME }}
     steps:
       - uses: actions/checkout@v4
 
@@ -28,6 +32,10 @@ jobs:
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
+      env:
+        BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
+        BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
+        GITHUB_REPO_NAME: ${{ env.GITHUB_REPO_NAME }}
     steps:
       - uses: actions/checkout@v4
 
@@ -43,6 +51,10 @@ jobs:
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
+      env:
+        BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
+        BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
+        GITHUB_REPO_NAME: ${{ env.GITHUB_REPO_NAME }}
     steps:
       - uses: actions/checkout@v4
 
@@ -58,6 +70,10 @@ jobs:
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
+      env:
+        BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
+        BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
+        GITHUB_REPO_NAME: ${{ env.GITHUB_REPO_NAME }}
     steps:
       - uses: actions/checkout@v4
 
@@ -73,6 +89,10 @@ jobs:
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-miri
+      env:
+        BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
+        BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
+        GITHUB_REPO_NAME: ${{ env.GITHUB_REPO_NAME }}
     steps:
       - uses: actions/checkout@v4
 
@@ -89,6 +109,10 @@ jobs:
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
+      env:
+        BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
+        BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
+        GITHUB_REPO_NAME: ${{ env.GITHUB_REPO_NAME }}
     steps:
       - uses: actions/checkout@v4
 
@@ -106,6 +130,10 @@ jobs:
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
+      env:
+        BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
+        BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
+        GITHUB_REPO_NAME: ${{ env.GITHUB_REPO_NAME }}
     steps:
       - uses: actions/checkout@v4
 
@@ -126,6 +154,10 @@ jobs:
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
+      env:
+        BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
+        BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
+        GITHUB_REPO_NAME: ${{ env.GITHUB_REPO_NAME }}
     steps:
       - uses: actions/checkout@v4
 
@@ -143,6 +175,10 @@ jobs:
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
+      env:
+        BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
+        BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
+        GITHUB_REPO_NAME: ${{ env.GITHUB_REPO_NAME }}
     steps:
       - uses: actions/checkout@v4
 
@@ -158,6 +194,10 @@ jobs:
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
+      env:
+        BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
+        BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
+        GITHUB_REPO_NAME: ${{ env.GITHUB_REPO_NAME }}
     permissions:
       security-events: write # to upload sarif results
     steps:
@@ -193,6 +233,10 @@ jobs:
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest
+      env:
+        BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
+        BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
+        GITHUB_REPO_NAME: ${{ env.GITHUB_REPO_NAME }}
     steps:
       - uses: actions/checkout@v4
 
