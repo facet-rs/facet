@@ -35,8 +35,11 @@ Thanks to all individual and corporate sponsors, without whom this work could no
 <source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v2/zed-dark.svg">
 <img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v2/zed-light.svg" height="40" alt="Zed">
 </picture>
-</a> <a href="https://depot.dev?utm_source=facet">
-    <img src="https://depot.dev/badges/built-with-depot.svg" alt="built with depot">
+</a> <a href="https://www.blacksmith.sh?utm_source=facet">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v2/blacksmith-dark.svg">
+<img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v2/blacksmith-light.svg" height="40" alt="built with blacksmith">
+</picture>
 </a> </p>
 
 Parses Rust syntax for [facet-derive](https://github.com/facet-rs/facet/tree/main/facet-derive)
