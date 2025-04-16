@@ -13,7 +13,7 @@ categories = ["encoding", "development-tools"]
 [features]
 std = ["facet-core/std", "facet-reflect/std", "alloc"] # Uses libstd and alloc
 alloc = ["facet-core/alloc", "facet-reflect/alloc"]    # Enables alloc support
-rich-diagnostics = ["ariadne"]
+rich-diagnostics = ["ariadne", "alloc"]
 default = ["std", "rich-diagnostics"]
 
 [dependencies]
