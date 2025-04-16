@@ -7,7 +7,7 @@ use typeid::ConstTypeId;
 unsafe impl Facet for ConstTypeId {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
-            .id(ConstTypeId::of::<ConstTypeId>())
+            .id(ConstTypeId::of::<Self>())
             .layout(Layout::new::<Self>())
             .def(Def::Scalar(
                 ScalarDef::builder()
@@ -22,7 +22,7 @@ unsafe impl Facet for ConstTypeId {
 unsafe impl Facet for () {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
-            .id(ConstTypeId::of::<()>())
+            .id(ConstTypeId::of::<Self>())
             .layout(Layout::new::<Self>())
             .def(Def::Scalar(
                 ScalarDef::builder()
@@ -53,7 +53,7 @@ unsafe impl<T: ?Sized> Facet for core::marker::PhantomData<T> {
 unsafe impl Facet for alloc::string::String {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
-            .id(ConstTypeId::of::<alloc::string::String>())
+            .id(ConstTypeId::of::<Self>())
             .layout(Layout::new::<Self>())
             .def(Def::Scalar(
                 ScalarDef::builder()
@@ -72,7 +72,7 @@ unsafe impl Facet for alloc::string::String {
 unsafe impl Facet for char {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
-            .id(ConstTypeId::of::<char>())
+            .id(ConstTypeId::of::<Self>())
             .layout(Layout::new::<Self>())
             .def(Def::Scalar(
                 ScalarDef::builder()
@@ -87,7 +87,7 @@ unsafe impl Facet for char {
 unsafe impl Facet for &str {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
-            .id(ConstTypeId::of::<&str>())
+            .id(ConstTypeId::of::<Self>())
             .layout(Layout::new::<Self>())
             .def(Def::Scalar(
                 ScalarDef::builder()
@@ -103,7 +103,7 @@ unsafe impl Facet for &str {
 unsafe impl Facet for alloc::borrow::Cow<'_, str> {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
-            .id(ConstTypeId::of::<alloc::borrow::Cow<'_, str>>())
+            .id(ConstTypeId::of::<Self>())
             .layout(Layout::new::<Self>())
             .def(Def::Scalar(
                 ScalarDef::builder()
@@ -121,7 +121,7 @@ unsafe impl Facet for alloc::borrow::Cow<'_, str> {
 unsafe impl Facet for bool {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
-            .id(ConstTypeId::of::<bool>())
+            .id(ConstTypeId::of::<Self>())
             .layout(Layout::new::<Self>())
             .def(Def::Scalar(
                 ScalarDef::builder()

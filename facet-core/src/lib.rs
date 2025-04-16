@@ -28,6 +28,9 @@ mod impls_alloc;
 #[cfg(feature = "std")]
 mod impls_std;
 
+#[cfg(feature = "camino")]
+mod impls_camino;
+
 // Const type Id
 mod typeid;
 pub use typeid::*;

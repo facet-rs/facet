@@ -33,6 +33,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "387e80962b798815a2b5c4bcfdb6bf626fa922ffe9f74e373103b858738e9f31"
 
 [[package]]
+name = "camino"
+version = "1.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b96ec4966b5813e2c0507c1f86115c8c5abaadc3980879c3424042a02fd1ad3"
+
+[[package]]
 name = "cargo-husky"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -182,6 +188,7 @@ name = "facet-core"
 version = "0.7.0"
 dependencies = [
  "bitflags",
+ "camino",
  "impls",
 ]
 

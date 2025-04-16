@@ -74,6 +74,8 @@ pub enum ScalarAffinity {
     Other(OtherAffinity),
     /// Character scalar affinity
     Char(CharAffinity),
+    /// Path scalar affinity (file/disk paths)
+    Path(PathAffinity),
 }
 
 impl ScalarAffinity {
@@ -135,6 +137,11 @@ impl ScalarAffinity {
     /// Returns a CharAffinityBuilder
     pub const fn char() -> CharAffinityBuilder {
         CharAffinityBuilder::new()
+    }
+
+    /// Returns a PathAffinityBuilder
+    pub const fn path() -> PathAffinityBuilder {
+        PathAffinityBuilder::new()
     }
 }
 
@@ -884,5 +891,35 @@ impl CharAffinityBuilder {
     /// Builds the ScalarAffinity
     pub const fn build(self) -> ScalarAffinity {
         ScalarAffinity::Char(CharAffinity {})
+    }
+}
+
+/// Definition for path scalar affinities
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[repr(C)]
+#[non_exhaustive]
+pub struct PathAffinity {}
+
+impl PathAffinity {
+    /// Returns a builder for PathAffinity
+    pub const fn builder() -> PathAffinityBuilder {
+        PathAffinityBuilder::new()
+    }
+}
+
+/// Builder for PathAffinity
+#[repr(C)]
+pub struct PathAffinityBuilder {}
+
+impl PathAffinityBuilder {
+    /// Creates a new PathAffinityBuilder
+    #[allow(clippy::new_without_default)]
+    pub const fn new() -> Self {
+        Self {}
+    }
+
+    /// Builds the ScalarAffinity
+    pub const fn build(self) -> ScalarAffinity {
+        ScalarAffinity::Path(PathAffinity {})
     }
 }
