@@ -1,8 +1,10 @@
 <h1>
 <picture>
-<source srcset="https://github.com/facet-rs/facet/raw/main/static/logo-v2/logo-only.webp">
-<img src="https://github.com/facet-rs/facet/raw/main/static/logo-v2/logo-only.png" height="35" alt="Facet logo - a reflection library for Rust">
-</picture> &nbsp; facet-derive
+    <source type="image/webp" media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/logo-v2/facet-dark.webp">
+    <source type="image/png" media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/logo-v2/facet-dark.png">
+    <source type="image/webp" srcset="https://github.com/facet-rs/facet/raw/main/static/logo-v2/facet-light.webp">
+    <img src="https://github.com/facet-rs/facet/raw/main/static/logo-v2/facet-light.png" height="35" alt="Facet logo - a reflection library for Rust">
+</picture>
 </h1>
 
 [![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
