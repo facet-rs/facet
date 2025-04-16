@@ -1,5 +1,5 @@
 use core::num::NonZero;
-use facet_core::{Def, Facet};
+use facet_core::{Def, Facet, FieldAttribute};
 use facet_reflect::Peek;
 use std::io::{self, Write};
 
@@ -155,8 +155,21 @@ fn serialize_struct<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()>
         }
         first = false;
 
+        // Check for rename attribute
+        let field_name = field
+            .attributes
+            .iter()
+            .find_map(|attr| {
+                if let FieldAttribute::Rename(name) = attr {
+                    Some(*name)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(field.name);
+
         // Write field name
-        write_json_string(writer, field.name)?;
+        write_json_string(writer, field_name)?;
         write!(writer, ":")?;
 
         // Write field value

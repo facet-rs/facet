@@ -5,7 +5,7 @@ use core::num::{
 
 #[cfg(feature = "rich-diagnostics")]
 use ariadne::{Color, Config, IndexType, Label, Report, ReportKind, Source};
-use facet_core::{Def, Facet, ScalarAffinity};
+use facet_core::{Def, Facet, FieldAttribute, ScalarAffinity};
 use facet_reflect::{HeapValue, Wip};
 use log::trace;
 use yansi::Paint as _;
@@ -47,6 +47,7 @@ impl<'input> JsonParseErrorWithContext<'input> {
             JsonErrorKind::UnexpectedCharacter(c) => format!("Unexpected character: '{}'", c),
             JsonErrorKind::NumberOutOfRange(n) => format!("Number out of range: {}", n),
             JsonErrorKind::StringAsNumber(s) => format!("Expected a string but got number: {}", s),
+            JsonErrorKind::UnknownField(f) => format!("Unknown field: {}", f),
         }
     }
 }
@@ -62,6 +63,8 @@ pub enum JsonErrorKind {
     NumberOutOfRange(f64),
     /// An unexpected String was encountered in the input.
     StringAsNumber(String),
+    /// An unexpected field name was encountered in the input.
+    UnknownField(String),
 }
 
 #[cfg(not(feature = "rich-diagnostics"))]
@@ -353,7 +356,34 @@ pub fn from_slice_wip<'input, 'a>(
                                 wip = wip.pop().unwrap();
                             }
                             WhyValue::ObjectKey => {
-                                wip = wip.field_named(&value).unwrap();
+                                // Look for field with matching name or rename attribute
+                                let field_shape = wip.shape();
+                                if let Def::Struct(struct_def) = field_shape.def {
+                                    let field = struct_def.fields.iter().find(|f| {
+                                        // Check original name
+                                        if f.name == value {
+                                            return true;
+                                        }
+
+                                        // Check rename attribute
+                                        f.attributes.iter().any(|attr| {
+                                            if let FieldAttribute::Rename(rename) = attr {
+                                                rename == &value
+                                            } else {
+                                                false
+                                            }
+                                        })
+                                    });
+
+                                    if let Some(field) = field {
+                                        wip = wip.field_named(field.name).unwrap();
+                                    } else {
+                                        // Field not found - original or renamed
+                                        bail!(JsonErrorKind::UnknownField(value.to_string()));
+                                    }
+                                } else {
+                                    wip = wip.field_named(&value).unwrap();
+                                }
                             }
                         }
                     }

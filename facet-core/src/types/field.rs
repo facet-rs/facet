@@ -54,6 +54,8 @@ pub struct FieldBuilder {
 pub enum FieldAttribute {
     /// Marks field as containing sensitive information
     Sensitive,
+    /// Specifies an alternative name for the field (for serialization/deserialization)
+    Rename(&'static str),
     /// Custom field attribute containing arbitrary text
     Arbitrary(&'static str),
 }

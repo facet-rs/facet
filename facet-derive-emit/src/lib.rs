@@ -138,10 +138,17 @@ pub(crate) fn gen_struct_field(
                     shape_of = "shape_of_opaque";
                 }
                 FacetInner::Other(tt) => {
-                    attribute_list.push(format!(
-                        r#"::facet::FieldAttribute::Arbitrary({:?})"#,
-                        tt.tokens_to_string()
-                    ));
+                    let attr_str = tt.tokens_to_string();
+                    let attr_fmt = match attr_str.find('=') {
+                        Some(equal_pos) if attr_str[..equal_pos].trim() == "rename" => {
+                            let value = attr_str[equal_pos + 1..].trim().trim_matches('"');
+                            format!(r#"::facet::FieldAttribute::Rename({:?})"#, value)
+                        }
+                        _ => {
+                            format!(r#"::facet::FieldAttribute::Arbitrary({:?})"#, attr_str)
+                        }
+                    };
+                    attribute_list.push(attr_fmt);
                 }
             },
             AttributeInner::Doc(doc_inner) => doc_lines.push(doc_inner.value.value()),
