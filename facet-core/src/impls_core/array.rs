@@ -10,6 +10,12 @@ where
         Shape::builder()
             .id(ConstTypeId::of::<[T; L]>())
             .layout(Layout::new::<[T; L]>())
+            .type_params(&[
+                TypeParam {
+                    name: "T",
+                    shape: || T::SHAPE,
+                }
+            ])
             .vtable(
                 &const {
                     let mut builder = ValueVTable::builder()

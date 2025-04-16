@@ -297,3 +297,10 @@ pub struct TypeParam {
     /// The shape of the type parameter (e.g. `String`)
     pub shape: fn() -> &'static Shape,
 }
+
+impl TypeParam {
+    /// Returns the shape of the type parameter.
+    pub fn shape(&self) -> &'static Shape {
+        (self.shape)()
+    }
+}
