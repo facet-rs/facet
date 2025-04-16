@@ -91,6 +91,7 @@ impl core::fmt::Display for JsonParseErrorWithContext<'_> {
 
         let (span_start, span_end) = match &self.kind {
             JsonErrorKind::StringAsNumber(s) => (self.pos - s.len(), self.pos),
+            JsonErrorKind::UnknownField(f) => (self.pos - f.len() - 1, self.pos - 1),
             _ => {
                 let span_end = if self.pos < self.input.len() {
                     self.pos + 1

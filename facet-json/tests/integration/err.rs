@@ -71,3 +71,22 @@ fn bad_json_6_string_as_number_subpath() -> eyre::Result<()> {
     insta::assert_snapshot!(err);
     Ok(())
 }
+
+#[test]
+fn unknown_field_with_rename() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Debug)]
+    struct RenamedFields {
+        #[facet(rename = "new_name")]
+        original_name: String,
+    }
+
+    // This should fail because "wrong_name" doesn't match either the original field name
+    // or the renamed field name
+    let json = r#"{"wrong_name": "value"}"#;
+    let err = from_str::<RenamedFields>(json).unwrap_err();
+    insta::assert_snapshot!(err);
+
+    Ok(())
+}

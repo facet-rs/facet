@@ -210,3 +210,76 @@ fn test_from_json_with_option() {
     assert_eq!(test_struct.age, None);
     assert_eq!(test_struct.inner.as_ref().map(|i| i.foo), Some(42));
 }
+
+#[test]
+fn test_field_rename_deserialization() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Greetings {
+        #[facet(rename = "bonjour")]
+        hello: String,
+
+        #[facet(rename = "au_revoir")]
+        goodbye: String,
+    }
+
+    let json = r#"{"bonjour":"monde","au_revoir":"world"}"#;
+
+    let result: Greetings = match from_str(json) {
+        Ok(s) => s,
+        Err(e) => panic!("Error deserializing JSON: {}", e),
+    };
+
+    assert_eq!(result.hello, "monde");
+    assert_eq!(result.goodbye, "world");
+}
+
+#[test]
+fn test_field_rename_roundtrip() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Greetings {
+        #[facet(rename = "bonjour")]
+        hello: String,
+    }
+
+    let original = Greetings {
+        hello: "monde".to_string(),
+    };
+
+    let json = facet_json::to_string(&original);
+    assert_eq!(json, r#"{"bonjour":"monde"}"#);
+
+    let roundtrip: Greetings = from_str(&json).unwrap();
+    assert_eq!(original, roundtrip);
+}
+
+#[test]
+fn test_field_rename_with_special_chars() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct SpecialNames {
+        #[facet(rename = "kebab-case")]
+        kebab_case: String,
+
+        #[facet(rename = "snake_case")]
+        original_snake: String,
+
+        #[facet(rename = "camelCase")]
+        camel_case: String,
+    }
+
+    let json = r#"{"kebab-case":"dash","snake_case":"underscore","camelCase":"hump"}"#;
+
+    let result: SpecialNames = match from_str(json) {
+        Ok(s) => s,
+        Err(e) => panic!("Error deserializing JSON: {}", e),
+    };
+
+    assert_eq!(result.kebab_case, "dash");
+    assert_eq!(result.original_snake, "underscore");
+    assert_eq!(result.camel_case, "hump");
+}
