@@ -235,6 +235,7 @@ fn test_field_rename_deserialization() {
     assert_eq!(result.goodbye, "world");
 }
 
+#[cfg(feature = "std")]
 #[test]
 fn test_field_rename_roundtrip() {
     facet_testhelpers::setup();
