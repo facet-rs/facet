@@ -44,6 +44,7 @@ unsafe impl<T: ?Sized> Facet for core::marker::PhantomData<T> {
                     .affinity(ScalarAffinity::empty().build())
                     .build(),
             ))
+            // TODO: we might be able to do something with specialization re: the shape of T?
             .vtable(value_vtable!((), |f, _opts| write!(f, "PhantomData")))
             .build()
     };

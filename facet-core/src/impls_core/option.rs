@@ -10,6 +10,10 @@ unsafe impl<T: Facet> Facet for Option<T> {
         Shape::builder()
             .id(ConstTypeId::of::<Self>())
             .layout(Layout::new::<Self>())
+            .type_params(&[crate::TypeParam {
+                name: "T",
+                shape: || T::SHAPE,
+            }])
             .def(Def::Option(
                 OptionDef::builder()
                     .t(|| T::SHAPE)

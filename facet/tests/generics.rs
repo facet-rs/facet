@@ -145,6 +145,19 @@ fn type_params_hash_map_string_u8() {
 }
 
 #[test]
+fn type_params_btreemap_u8_i32() {
+    use std::collections::BTreeMap;
+    let shape = BTreeMap::<u8, i32>::SHAPE;
+    assert_eq!(shape.type_params.len(), 2);
+    let k = &shape.type_params[0];
+    let v = &shape.type_params[1];
+    assert_eq!(k.name, "K");
+    assert_eq!(v.name, "V");
+    assert_eq!(k.shape(), u8::SHAPE);
+    assert_eq!(v.shape(), i32::SHAPE);
+}
+
+#[test]
 fn type_params_option_bool() {
     let shape = Option::<bool>::SHAPE;
     assert_eq!(shape.type_params.len(), 1);
@@ -157,6 +170,16 @@ fn type_params_option_bool() {
 fn type_params_arc_string() {
     use std::sync::Arc;
     let shape = Arc::<String>::SHAPE;
+    assert_eq!(shape.type_params.len(), 1);
+    let t = &shape.type_params[0];
+    assert_eq!(t.name, "T");
+    assert_eq!(t.shape(), String::SHAPE);
+}
+
+#[test]
+fn type_params_weak_string() {
+    use std::sync::Weak;
+    let shape = Weak::<String>::SHAPE;
     assert_eq!(shape.type_params.len(), 1);
     let t = &shape.type_params[0];
     assert_eq!(t.name, "T");
@@ -182,4 +205,39 @@ fn type_params_slice_ref_bool() {
     assert_eq!(t.name, "T");
     // The shape of the referent is a slice ([bool])
     assert_eq!(format!("{}", t.shape()), "[bool]");
+}
+
+#[test]
+fn type_params_opaque() {
+    use facet::Opaque;
+
+    let shape = Opaque::<std::sync::Arc<u64>>::SHAPE;
+    assert_eq!(shape.type_params.len(), 1);
+    let t = &shape.type_params[0];
+    assert_eq!(t.name, "T");
+    assert_eq!(t.shape(), <std::sync::Arc<u64>>::SHAPE);
+}
+
+#[test]
+fn type_params_phantomdata() {
+    use std::marker::PhantomData;
+
+    let shape = PhantomData::<u32>::SHAPE;
+    // PhantomData has a single type parameter, usually named "T"
+    assert_eq!(shape.type_params.len(), 1);
+    let t = &shape.type_params[0];
+    assert_eq!(t.name, "T");
+    assert_eq!(t.shape(), u32::SHAPE);
+}
+
+#[test]
+fn type_params_nonnull_u8() {
+    use std::ptr::NonNull;
+
+    let shape = NonNull::<u8>::SHAPE;
+    // NonNull has a single type parameter, usually named "T"
+    assert_eq!(shape.type_params.len(), 1);
+    let t = &shape.type_params[0];
+    assert_eq!(t.name, "T");
+    assert_eq!(t.shape(), u8::SHAPE);
 }

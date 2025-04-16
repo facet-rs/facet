@@ -10,6 +10,10 @@ unsafe impl<T: Facet> Facet for alloc::sync::Arc<T> {
         crate::Shape::builder()
             .id(ConstTypeId::of::<Self>())
             .layout(Layout::new::<Self>())
+            .type_params(&[crate::TypeParam {
+                name: "T",
+                shape: || T::SHAPE,
+            }])
             .def(Def::SmartPointer(
                 SmartPointerDef::builder()
                     .pointee(T::SHAPE)
@@ -49,6 +53,10 @@ unsafe impl<T: Facet> Facet for alloc::sync::Weak<T> {
         crate::Shape::builder()
             .id(ConstTypeId::of::<Self>())
             .layout(Layout::new::<Self>())
+            .type_params(&[crate::TypeParam {
+                name: "T",
+                shape: || T::SHAPE,
+            }])
             .def(Def::SmartPointer(
                 SmartPointerDef::builder()
                     .pointee(T::SHAPE)

@@ -7,7 +7,7 @@ use crate::ptr::{PtrConst, PtrMut};
 
 use crate::{
     ConstTypeId, Def, Facet, MapDef, MapIterVTable, MapVTable, MarkerTraits, ScalarAffinity,
-    ScalarDef, Shape, ValueVTable, value_vtable,
+    ScalarDef, Shape, TypeParam, ValueVTable, value_vtable,
 };
 
 struct HashMapIterator<'mem, K> {
@@ -25,6 +25,20 @@ where
         Shape::builder()
             .id(ConstTypeId::of::<HashMap<K, V, S>>())
             .layout(Layout::new::<HashMap<K, V>>())
+            .type_params(&[
+                TypeParam {
+                    name: "K",
+                    shape: || K::SHAPE,
+                },
+                TypeParam {
+                    name: "V",
+                    shape: || V::SHAPE,
+                },
+                TypeParam {
+                    name: "S",
+                    shape: || S::SHAPE,
+                },
+            ])
             .vtable(
                 &const {
                     let mut builder = ValueVTable::builder()

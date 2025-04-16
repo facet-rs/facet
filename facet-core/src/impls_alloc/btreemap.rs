@@ -24,6 +24,16 @@ where
         Shape::builder()
             .id(ConstTypeId::of::<BTreeMap<K, V>>())
             .layout(Layout::new::<BTreeMap<K, V>>())
+            .type_params(&[
+                crate::TypeParam {
+                    name: "K",
+                    shape: || K::SHAPE,
+                },
+                crate::TypeParam {
+                    name: "V",
+                    shape: || V::SHAPE,
+                },
+            ])
             .vtable(
                 &const {
                     let mut builder = ValueVTable::builder()

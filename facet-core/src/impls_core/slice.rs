@@ -9,6 +9,12 @@ where
         Shape::builder()
             .id(ConstTypeId::of::<&[T]>())
             .layout(Layout::new::<&[T]>())
+            .type_params(&[
+                TypeParam {
+                    name: "T",
+                    shape: || T::SHAPE,
+                }
+            ])
             .def(Def::Slice(
                 SliceDef::builder()
                     .vtable(
