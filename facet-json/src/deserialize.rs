@@ -3,6 +3,7 @@ use core::num::{
     NonZeroU64, NonZeroUsize,
 };
 
+#[cfg(feature = "rich-diagnostics")]
 use ariadne::{Color, Label, Report, ReportKind, Source};
 use facet_core::{Def, Facet, ScalarAffinity};
 use facet_reflect::{HeapValue, Wip};
@@ -39,6 +40,16 @@ impl<'input> JsonParseErrorWithContext<'input> {
             path,
         }
     }
+
+    /// Returns a human-readable error message for this JSON error.
+    pub fn message(&self) -> String {
+        match &self.kind {
+            JsonErrorKind::UnexpectedEof => "Unexpected end of file".to_string(),
+            JsonErrorKind::UnexpectedCharacter(c) => format!("Unexpected character: '{}'", c),
+            JsonErrorKind::NumberOutOfRange(n) => format!("Number out of range: {}", n),
+            JsonErrorKind::StringAsNumber(s) => format!("Expected a string but got number: {}", s),
+        }
+    }
 }
 
 /// An error kind for JSON parsing.
@@ -54,6 +65,20 @@ pub enum JsonErrorKind {
     StringAsNumber(String),
 }
 
+#[cfg(not(feature = "rich-diagnostics"))]
+impl core::fmt::Display for JsonParseErrorWithContext<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "{} at byte {} in path {}",
+            self.message(),
+            self.pos,
+            self.path
+        )
+    }
+}
+
+#[cfg(feature = "rich-diagnostics")]
 impl core::fmt::Display for JsonParseErrorWithContext<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let Ok(input_str) = core::str::from_utf8(self.input) else {
@@ -77,15 +102,8 @@ impl core::fmt::Display for JsonParseErrorWithContext<'_> {
         let mut report = Report::build(ReportKind::Error, (source_id, span_start..span_end))
             .with_message(format!("Error at {}", self.path.fg(Color::Yellow)));
 
-        let error_message = match &self.kind {
-            JsonErrorKind::UnexpectedEof => "Unexpected end of file".to_string(),
-            JsonErrorKind::UnexpectedCharacter(c) => format!("Unexpected character: '{}'", c),
-            JsonErrorKind::NumberOutOfRange(n) => format!("Number out of range: {}", n),
-            JsonErrorKind::StringAsNumber(s) => format!("Expected a string but got number: {}", s),
-        };
-
         let label = Label::new((source_id, span_start..span_end))
-            .with_message(error_message)
+            .with_message(self.message())
             .with_color(Color::Red);
 
         report = report.with_label(label);

@@ -13,10 +13,11 @@ categories = ["encoding", "development-tools"]
 [features]
 std = ["facet-core/std", "facet-reflect/std", "alloc"] # Uses libstd and alloc
 alloc = ["facet-core/alloc", "facet-reflect/alloc"]    # Enables alloc support
-default = ["std"]
+rich-diagnostics = ["ariadne"]
+default = ["std", "rich-diagnostics"]
 
 [dependencies]
-ariadne = "0.5.1"
+ariadne = { version = "=0.5.1", optional = true }
 facet-core = { version = "0.8.0", path = "../facet-core", default-features = false }
 facet-reflect = { version = "0.8.0", path = "../facet-reflect", default-features = false }
 log = "0.4.27"
