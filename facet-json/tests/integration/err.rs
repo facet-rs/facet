@@ -6,6 +6,12 @@ struct Foo {
     foo: u32,
 }
 
+#[derive(Facet, Debug)]
+struct FooBar {
+    foo: u64,
+    bar: String,
+}
+
 #[test]
 fn bad_json_1() -> eyre::Result<()> {
     facet_testhelpers::setup();
@@ -52,6 +58,16 @@ fn bad_json_5() -> eyre::Result<()> {
 
     let json = "\n  }\n// and then some";
     let err = from_str::<Foo>(json).unwrap_err();
+    insta::assert_snapshot!(err);
+    Ok(())
+}
+
+#[test]
+fn bad_json_6_string_as_number_subpath() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    let json = r#"{"foo": 42, "bar": 42}"#;
+    let err = from_str::<FooBar>(json).unwrap_err();
     insta::assert_snapshot!(err);
     Ok(())
 }
