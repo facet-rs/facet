@@ -67,18 +67,12 @@ pub struct Shape {
     /// into a map or fetching a value from a list.
     pub def: Def,
 
+    /// Generic parameters for the shape
+    pub type_params: &'static [TypeParam],
+
     /// Doc comment lines, collected by facet-derive. Note that they tend to
     /// start with a space.
     pub doc: &'static [&'static str],
-}
-
-/// Builder for [`Shape`]
-pub struct ShapeBuilder {
-    id: Option<ConstTypeId>,
-    layout: Option<Layout>,
-    vtable: Option<&'static ValueVTable>,
-    def: Option<Def>,
-    doc: &'static [&'static str],
 }
 
 impl Shape {
@@ -104,6 +98,16 @@ impl Shape {
     }
 }
 
+/// Builder for [`Shape`]
+pub struct ShapeBuilder {
+    id: Option<ConstTypeId>,
+    layout: Option<Layout>,
+    vtable: Option<&'static ValueVTable>,
+    def: Option<Def>,
+    type_params: &'static [TypeParam],
+    doc: &'static [&'static str],
+}
+
 impl ShapeBuilder {
     /// Creates a new `ShapeBuilder` with all fields set to `None`.
     #[allow(clippy::new_without_default)]
@@ -113,6 +117,7 @@ impl ShapeBuilder {
             layout: None,
             vtable: None,
             def: None,
+            type_params: &[],
             doc: &[],
         }
     }
@@ -145,6 +150,13 @@ impl ShapeBuilder {
         self
     }
 
+    /// Sets the `type_params` field of the `ShapeBuilder`.
+    #[inline]
+    pub const fn type_params(mut self, type_params: &'static [TypeParam]) -> Self {
+        self.type_params = type_params;
+        self
+    }
+
     /// Sets the `doc` field of the `ShapeBuilder`.
     #[inline]
     pub const fn doc(mut self, doc: &'static [&'static str]) -> Self {
@@ -163,6 +175,7 @@ impl ShapeBuilder {
             id: self.id.unwrap(),
             layout: self.layout.unwrap(),
             vtable: self.vtable.unwrap(),
+            type_params: self.type_params,
             def: self.def.unwrap(),
             doc: self.doc,
         }
@@ -270,4 +283,17 @@ pub enum Def {
 
     /// Smart pointers, like `Arc<T>`, `Rc<T>`, etc.
     SmartPointer(SmartPointerDef),
+}
+
+/// Represents a lifetime parameter, e.g., `'a` or `'a: 'b + 'c`.
+///
+/// Note: these are subject to change — it's a bit too stringly-typed for now.
+#[non_exhaustive]
+#[derive(Debug, Clone)]
+pub struct TypeParam {
+    /// The name of the type parameter (e.g., `T`).
+    pub name: &'static str,
+
+    /// The shape of the type parameter (e.g. `String`)
+    pub shape: fn() -> &'static Shape,
 }
