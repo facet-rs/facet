@@ -2,5 +2,6 @@
 source: facet-json/tests/integration/err.rs
 expression: err
 ---
+Error at [93m$[0m:
 [2m     1[0m  }
         [31m⎩[0m [94mUnexpectedCharacter('}')[0m

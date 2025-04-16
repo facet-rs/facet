@@ -18,6 +18,7 @@ pub struct JsonParseErrorWithContext<'input> {
     input: &'input [u8],
     pos: usize,
     kind: JsonErrorKind,
+    path: String,
 }
 
 impl<'input> JsonParseErrorWithContext<'input> {
@@ -28,8 +29,13 @@ impl<'input> JsonParseErrorWithContext<'input> {
     /// * `kind` - The kind of JSON error encountered.
     /// * `input` - The original input being parsed.
     /// * `pos` - The position in the input where the error occurred.
-    pub fn new(kind: JsonErrorKind, input: &'input [u8], pos: usize) -> Self {
-        Self { input, pos, kind }
+    pub fn new(kind: JsonErrorKind, input: &'input [u8], pos: usize, path: String) -> Self {
+        Self {
+            input,
+            pos,
+            kind,
+            path,
+        }
     }
 }
 
@@ -53,6 +59,7 @@ impl core::fmt::Display for JsonParseErrorWithContext<'_> {
         };
 
         writeln!(f)?;
+        writeln!(f, "Error at {}:", self.path.clone().bright_yellow())?;
 
         let mut pos = self.pos as isize;
         let mut line_start = 0;
@@ -128,7 +135,12 @@ pub fn from_slice_wip<'input, 'a>(
 
     macro_rules! err {
         ($kind:expr) => {
-            Err(JsonParseErrorWithContext::new($kind, input, pos))
+            Err(JsonParseErrorWithContext::new(
+                $kind,
+                input,
+                pos,
+                wip.path(),
+            ))
         };
     }
     macro_rules! bail {

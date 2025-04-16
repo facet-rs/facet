@@ -8,6 +8,8 @@ use flat_map::FlatMap;
 use log::trace;
 use yansi::Paint as _;
 
+use alloc::string::String;
+
 mod iset;
 pub use iset::*;
 
@@ -197,6 +199,13 @@ struct IState {
 
     /// If true, must be freed when dropped
     flags: FrameFlags,
+
+    /// The current index for list elements
+    list_index: Option<usize>,
+
+    /// The current key for map elements
+    #[allow(dead_code)]
+    map_key: Option<String>,
 }
 
 bitflags! {
@@ -227,7 +236,23 @@ impl IState {
             depth,
             mode,
             flags,
+            list_index: None,
+            map_key: None,
         }
+    }
+
+    /// Sets the list index and returns self for method chaining
+    #[allow(dead_code)]
+    pub fn with_list_index(mut self, index: usize) -> Self {
+        self.list_index = Some(index);
+        self
+    }
+
+    /// Sets the map key and returns self for method chaining
+    #[allow(dead_code)]
+    pub fn with_map_key(mut self, key: String) -> Self {
+        self.map_key = Some(key);
+        self
     }
 }
 
@@ -1693,6 +1718,71 @@ impl<'a> Wip<'a> {
             _ => {}
         }
         frame
+    }
+
+    #[allow(rustdoc::broken_intra_doc_links)]
+    /// Returns the current path in the JSON document as a string.
+    /// For example: "$.users[0].name"
+    pub fn path(&self) -> String {
+        let mut path = String::from("$");
+
+        for (i, frame) in self.frames.iter().enumerate() {
+            // Skip the root frame
+            if i == 0 {
+                continue;
+            }
+
+            match frame.istate.mode {
+                FrameMode::ListElement => {
+                    // For arrays, we use bracket notation with index
+                    if let Some(index) = frame.istate.list_index {
+                        path.push_str(&format!("[{}]", index));
+                    } else {
+                        path.push_str("[?]");
+                    }
+                }
+                FrameMode::MapKey => {
+                    path.push_str(".key");
+                }
+                FrameMode::MapValue { index: _ } => {
+                    path.push_str(".value");
+                }
+                FrameMode::OptionSome => {
+                    path.push_str(".some");
+                }
+                FrameMode::OptionNone => {
+                    path.push_str(".none");
+                }
+                FrameMode::Root => {
+                    // Root doesn't add to the path
+                }
+                FrameMode::Normal => {
+                    // For struct fields, we use dot notation with field name
+                    if let Some(index) = frame.field_index_in_parent {
+                        // Find the parent frame to get the field name
+                        if let Some(parent) = self.frames.get(i - 1) {
+                            if let Def::Struct(sd) = parent.shape.def {
+                                if index < sd.fields.len() {
+                                    let field_name = sd.fields[index].name;
+                                    path.push('.');
+                                    path.push_str(field_name);
+                                }
+                            } else if let Def::Enum(_) = parent.shape.def {
+                                if let Some(variant) = &parent.istate.variant {
+                                    if index < variant.data.fields.len() {
+                                        let field_name = variant.data.fields[index].name;
+                                        path.push('.');
+                                        path.push_str(field_name);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        path
     }
 }
 
