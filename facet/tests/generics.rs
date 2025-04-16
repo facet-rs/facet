@@ -162,3 +162,24 @@ fn type_params_arc_string() {
     assert_eq!(t.name, "T");
     assert_eq!(t.shape(), String::SHAPE);
 }
+
+#[test]
+fn type_params_array_f32_12() {
+    let shape = <[f32; 12]>::SHAPE;
+    // Arrays have a single type parameter, usually called "T"
+    assert_eq!(shape.type_params.len(), 1);
+    let t = &shape.type_params[0];
+    assert_eq!(t.name, "T");
+    assert_eq!(t.shape(), f32::SHAPE);
+}
+
+#[test]
+fn type_params_slice_ref_bool() {
+    let shape = <&[bool]>::SHAPE;
+    // Reference has a type param for referent, named "T"
+    assert_eq!(shape.type_params.len(), 1);
+    let t = &shape.type_params[0];
+    assert_eq!(t.name, "T");
+    // The shape of the referent is a slice ([bool])
+    assert_eq!(format!("{}", t.shape()), "[bool]");
+}
