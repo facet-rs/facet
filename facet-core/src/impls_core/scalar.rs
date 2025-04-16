@@ -1,6 +1,7 @@
 use crate::value_vtable;
 use crate::*;
 use core::alloc::Layout;
+use core::marker::Sized;
 use core::num::NonZero;
 use typeid::ConstTypeId;
 

@@ -1,6 +1,11 @@
-use core::alloc::Layout;
+use ::core::{
+    alloc::Layout,
+    mem::drop,
+    option::Option::{None, Some},
+    write,
+};
 
-use alloc::{
+use ::alloc::{
     boxed::Box,
     collections::{BTreeMap, VecDeque},
 };

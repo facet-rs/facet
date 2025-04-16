@@ -1,4 +1,5 @@
 use crate::PtrConst;
+use ::core::option::Option::{None, Some};
 
 /// Definition for scalar types
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]

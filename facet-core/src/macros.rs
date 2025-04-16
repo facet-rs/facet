@@ -51,6 +51,8 @@ macro_rules! value_vtable {
 macro_rules! value_vtable_inner {
     ($type_name:ty, $type_name_fn:expr) => {
         const {
+            use core::marker::Sized;
+
             let mut builder = $crate::ValueVTable::builder()
                 .type_name($type_name_fn)
                 .drop_in_place(|data| unsafe { data.drop_in_place::<$type_name>() });

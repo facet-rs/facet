@@ -106,6 +106,7 @@ unsafe impl crate::Facet for KitchenSinkStruct {
         };
         let vtable = &const {
             let mut vtable = const {
+                use core::marker::Sized;
                 let mut builder = ::facet_core::ValueVTable::builder()
                     .type_name(|f, _opts| ::core::fmt::Write::write_str(f, "KitchenSinkStruct"))
                     .drop_in_place(|data| unsafe { data.drop_in_place::<Self>() });
@@ -463,6 +464,7 @@ unsafe impl crate::Facet for Point {
         };
         let vtable = &const {
             let mut vtable = const {
+                use core::marker::Sized;
                 let mut builder = ::facet_core::ValueVTable::builder()
                     .type_name(|f, _opts| ::core::fmt::Write::write_str(f, "Point"))
                     .drop_in_place(|data| unsafe { data.drop_in_place::<Self>() });
@@ -865,6 +867,7 @@ unsafe impl crate::Facet for KitchenSinkEnum {
             _0: SubEnum,
         }
         crate::Shape::builder().id(crate::ConstTypeId::of::<Self>()).layout(::core::alloc::Layout::new::<Self>()).vtable(&const {
+                                                use core::marker::Sized;
                                                 let mut builder =
                                                     ::facet_core::ValueVTable::builder().type_name(|f, _opts|
                                                                 ::core::fmt::Write::write_str(f,
@@ -1357,6 +1360,7 @@ unsafe impl crate::Facet for SubEnum {
             _0: u8,
         }
         crate::Shape::builder().id(crate::ConstTypeId::of::<Self>()).layout(::core::alloc::Layout::new::<Self>()).vtable(&const {
+                                                use core::marker::Sized;
                                                 let mut builder =
                                                     ::facet_core::ValueVTable::builder().type_name(|f, _opts|
                                                                 ::core::fmt::Write::write_str(f,

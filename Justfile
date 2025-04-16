@@ -14,16 +14,18 @@ prepush: clippy test
 ci: precommit prepush docs msrv miri
 
 nostd:
-    # Run alloc but no-std checks with specified target directory and target triple
-    cargo check --no-default-features -p facet-core --target-dir target/nostd --target thumbv6m-none-eabi
-    cargo check --no-default-features -p facet --target-dir target/nostd --target thumbv6m-none-eabi
-    cargo check --no-default-features -p facet-reflect --target-dir target/nostd --target thumbv6m-none-eabi
+    rustup target add thumbv7em-none-eabi
 
     # Run alloc but no-std checks with specified target directory and target triple
-    cargo check --no-default-features --features alloc -p facet-core --target-dir target/nostd-w-alloc --target thumbv6m-none-eabi
-    cargo check --no-default-features --features alloc -p facet --target-dir target/nostd-w-alloc --target thumbv6m-none-eabi
-    cargo check --no-default-features --features alloc -p facet-reflect --target-dir target/nostd-w-alloc --target thumbv6m-none-eabi
-    cargo check --no-default-features --features alloc -p facet-json --target-dir target/nostd-w-alloc --target thumbv6m-none-eabi
+    cargo check --no-default-features -p facet-core --target-dir target/nostd --target thumbv7em-none-eabi
+    cargo check --no-default-features -p facet --target-dir target/nostd --target thumbv7em-none-eabi
+    cargo check --no-default-features -p facet-reflect --target-dir target/nostd --target thumbv7em-none-eabi
+
+    # Run alloc but no-std checks with specified target directory and target triple
+    cargo check --no-default-features --features alloc -p facet-core --target-dir target/nostd-w-alloc --target thumbv7em-none-eabi
+    cargo check --no-default-features --features alloc -p facet --target-dir target/nostd-w-alloc --target thumbv7em-none-eabi
+    cargo check --no-default-features --features alloc -p facet-reflect --target-dir target/nostd-w-alloc --target thumbv7em-none-eabi
+    cargo check --no-default-features --features alloc -p facet-json --target-dir target/nostd-w-alloc --target thumbv7em-none-eabi
 
 nostd-ci:
     #!/usr/bin/env -S bash -euo pipefail

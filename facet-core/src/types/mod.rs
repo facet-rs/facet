@@ -1,6 +1,7 @@
 //! structs and vtable definitions used by Facet
 
 use core::alloc::Layout;
+use core::prelude::rust_2024::derive;
 
 mod characteristic;
 pub use characteristic::*;
@@ -182,13 +183,13 @@ impl ShapeBuilder {
     }
 }
 
-impl PartialEq for Shape {
+impl ::core::cmp::PartialEq for Shape {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
 }
 
-impl Eq for Shape {}
+impl ::core::cmp::Eq for Shape {}
 
 impl core::hash::Hash for Shape {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {

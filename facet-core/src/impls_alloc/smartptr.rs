@@ -1,4 +1,4 @@
-use core::alloc::Layout;
+use core::{alloc::Layout, write};
 
 use crate::{
     ConstTypeId, Def, Facet, KnownSmartPointer, Opaque, PtrConst, SmartPointerDef,

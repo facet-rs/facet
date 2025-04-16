@@ -1,6 +1,11 @@
 use crate::*;
-use core::alloc::Layout;
-use core::{cmp::Ordering, iter::zip};
+use ::core::{
+    alloc::Layout,
+    cmp::Ordering,
+    iter::zip,
+    option::Option::{None, Some},
+    panic, write,
+};
 
 unsafe impl<T, const L: usize> Facet for [T; L]
 where
