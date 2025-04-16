@@ -7,12 +7,12 @@ use core::{
     str,
 };
 use std::{collections::HashMap, hash::DefaultHasher};
+use yansi::Paint as _;
 
 use facet_core::{Def, Facet, FieldFlags, StructKind, TypeNameOpts};
 use facet_reflect::{Peek, ValueId};
 
 use crate::color::ColorGenerator;
-use facet_ansi::Stylize;
 
 /// A formatter for pretty-printing Facet types
 pub struct PrettyPrinter {

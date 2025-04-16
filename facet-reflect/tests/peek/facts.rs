@@ -1,8 +1,8 @@
 use std::{cmp::Ordering, collections::HashSet};
 
 use facet::Facet;
-use facet_ansi::{ColorStyle, Style, Stylize as _};
 use facet_reflect::{Peek, Wip};
+use yansi::{Paint as _, Style};
 
 fn check_facts<T>(val1: T, val2: T, expected_facts: HashSet<Fact>)
 where
@@ -37,19 +37,19 @@ where
     let l = Peek::new(&val1);
     let r = Peek::new(&val2);
 
-    let remarkable = Style::new().fg_blue();
+    let remarkable = Style::new().blue();
 
     // Format display representation
     if l.shape().vtable.display.is_some() {
         facts.insert(Fact::Display);
-        let display_str = format!("{} vs {}", l.style(remarkable), r.style(remarkable));
+        let display_str = format!("{} vs {}", l.paint(remarkable), r.paint(remarkable));
         eprintln!("Display:   {}", display_str);
     }
 
     // Format debug representation
     if l.shape().vtable.debug.is_some() {
         facts.insert(Fact::Debug);
-        let debug_str = format!("{:?} vs {:?}", l.style(remarkable), r.style(remarkable));
+        let debug_str = format!("{:?} vs {:?}", l.paint(remarkable), r.paint(remarkable));
         eprintln!("Debug:     {}", debug_str);
     }
 
@@ -58,9 +58,9 @@ where
         facts.insert(Fact::EqualAnd { l_eq_r: eq_result });
         let eq_str = format!(
             "{:?} {} {:?}",
-            l.style(remarkable),
+            l.paint(remarkable),
             if eq_result { "==" } else { "!=" }.yellow(),
-            r.style(remarkable),
+            r.paint(remarkable),
         );
         eprintln!("Equality:  {}", eq_str);
     }
@@ -77,9 +77,9 @@ where
         };
         let cmp_str = format!(
             "{:?} {} {:?}",
-            l.style(remarkable),
+            l.paint(remarkable),
             cmp_symbol.yellow(),
-            r.style(remarkable),
+            r.paint(remarkable),
         );
         eprintln!("Ordering:  {}", cmp_str);
     }
@@ -88,7 +88,7 @@ where
     if let Ok(wip) = Wip::alloc::<T>().put_default() {
         let val = wip.build().unwrap();
         facts.insert(Fact::Default);
-        eprintln!("Default:   {}", format!("{:?}", val).style(remarkable));
+        eprintln!("Default:   {}", format!("{:?}", val).paint(remarkable));
     }
 
     // Test clone
@@ -104,7 +104,7 @@ where
         expected_facts == facts,
         "{} for {}: ({:?} vs {:?})\n{}\n{}",
         "Facts mismatch".red().bold(),
-        name.style(remarkable),
+        name.paint(remarkable),
         l.red(),
         r.blue(),
         expected_minus_actual

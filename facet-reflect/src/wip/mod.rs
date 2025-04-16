@@ -3,10 +3,10 @@ use alloc::{format, string::ToString};
 use alloc::{vec, vec::Vec};
 use bitflags::bitflags;
 use core::{fmt, marker::PhantomData};
-use facet_ansi::Stylize;
 use facet_core::{Def, Facet, FieldError, PtrConst, PtrMut, PtrUninit, Shape, Variant};
 use flat_map::FlatMap;
 use log::trace;
+use yansi::Paint as _;
 
 mod iset;
 pub use iset::*;
@@ -170,7 +170,7 @@ impl Frame {
 
     /// Marks the frame as uninitialized (all fields unset and variant reset)
     unsafe fn mark_uninitialized(&mut self) {
-        self.istate.fields.clear();
+        ISet::clear(&mut self.istate.fields);
         self.istate.variant = None;
     }
 
@@ -534,7 +534,7 @@ impl<'a> Wip<'a> {
             );
         }
 
-        self.istates.clear(); // Prevent Drop from running on the successfully built value.
+        FlatMap::clear(&mut self.istates); // Prevent Drop from running on the successfully built value.
 
         Ok(HeapValue {
             guard: Some(guard),
@@ -784,7 +784,7 @@ impl<'a> Wip<'a> {
 
             // Reset initialization state
             frame.istate.variant = None;
-            frame.istate.fields.clear();
+            ISet::clear(&mut frame.istate.fields);
         }
 
         unsafe {

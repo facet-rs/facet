@@ -17,7 +17,6 @@ members = [
 
     # test helpers
     "facet-testhelpers",
-    "facet-ansi",
 
     # test libs
     "facet-samplelibc",

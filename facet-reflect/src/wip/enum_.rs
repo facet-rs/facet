@@ -1,7 +1,7 @@
-use facet_ansi::Stylize;
 use facet_core::{Def, FieldError, Variant};
+use yansi::Paint as _;
 
-use crate::{ReflectError, Wip};
+use crate::{ISet, ReflectError, Wip};
 
 impl Wip<'_> {
     /// Selects a variant of an enum by index.
@@ -34,7 +34,7 @@ impl Wip<'_> {
         let variant = def.variants[index];
 
         // Reset the field initialization state since we're selecting a new variant
-        frame.istate.fields.clear();
+        ISet::clear(&mut frame.istate.fields);
 
         // Write the discriminant value based on the enum's representation
         let discriminant = variant.discriminant;

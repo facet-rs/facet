@@ -3,10 +3,10 @@ use core::num::{
     NonZeroU64, NonZeroUsize,
 };
 
-use facet_ansi::Stylize as _;
 use facet_core::{Def, Facet, ScalarAffinity};
 use facet_reflect::{HeapValue, Wip};
 use log::trace;
+use yansi::Paint as _;
 
 use crate::alloc::string::ToString;
 use alloc::string::String;
@@ -69,7 +69,7 @@ impl core::fmt::Display for JsonParseErrorWithContext<'_> {
                         "{:width$} {} {:?}",
                         "",
                         "⎩".red(),
-                        (&self.kind).bright_blue(),
+                        self.kind.bright_blue(),
                         width = (pos as usize + 6), // 6 for line numbers, 1 for spaces
                     )?;
                 }
@@ -290,7 +290,7 @@ pub fn from_slice_wip<'input, 'a>(
                         }
                         trace!(
                             "Parsed string value: {:?} for shape {}",
-                            (&value).yellow(),
+                            value.yellow(),
                             wip.shape()
                         );
 

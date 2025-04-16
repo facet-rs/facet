@@ -1,4 +1,4 @@
-use facet_ansi::{Style, Stylize};
+use yansi::{Paint as _, Style};
 
 /// A menu item
 pub struct MenuItem {
@@ -32,7 +32,7 @@ pub fn show_menu(question: &str, items: &[MenuItem]) -> Option<String> {
                 while let Some(&next_ch) = chars.peek() {
                     if next_ch == ']' {
                         chars.next(); // consume ']'
-                        print!("[{}]", shortcut.style(item.style));
+                        print!("[{}]", shortcut.paint(item.style));
                         break;
                     } else {
                         shortcut.push(next_ch);

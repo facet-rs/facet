@@ -1,6 +1,7 @@
-use facet_ansi::Stylize;
 use std::fs;
 use std::path::Path;
+
+use yansi::Paint as _;
 
 /// Test case structure for compilation tests
 struct CompilationTest {

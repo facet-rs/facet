@@ -17,14 +17,13 @@ alloc = []
 
 [dependencies]
 bitflags = "2.9.0"
-facet-ansi = { path = "../facet-ansi", version = "0.8.0" }
 facet-core = { path = "../facet-core", version = "0.8.0" }
 log = "0.4.27"
+yansi = "1.0.1"
 
 [dev-dependencies]
 eyre = "0.6.12"
 facet = { path = "../facet" }
-facet-ansi = { path = "../facet-ansi" }
 facet-samplelibc = { path = "../facet-samplelibc" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 log = "0.4.27"

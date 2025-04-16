@@ -1,10 +1,10 @@
-use facet_ansi::{ColorStyle as _, Style, Stylize as _};
 use log::{LevelFilter, debug, error, warn};
 use similar::ChangeTag;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use yansi::{Paint as _, Style};
 
 mod menu;
 mod readme;
@@ -49,7 +49,6 @@ impl Job {
     }
 
     pub fn show_diff(&self) {
-        use facet_ansi::Stylize as _;
         use similar::{ChangeTag, TextDiff};
 
         let context_lines = 3;
@@ -564,22 +563,22 @@ pub fn show_jobs_and_apply_if_consent_is_given(jobs: &mut [Job]) {
         menu::MenuItem {
             label: "[y]es: 🚀 Apply the above fixes".to_string(),
             action: "apply".to_string(),
-            style: Style::new().fg_green().with_bold(),
+            style: Style::new().green().bold(),
         },
         menu::MenuItem {
             label: "[d]iff: 🔍 Show details of all diffs".to_string(),
             action: "diff".to_string(),
-            style: Style::new().fg_cyan(),
+            style: Style::new().cyan(),
         },
         menu::MenuItem {
             label: "[c]ontinue: ➡️ Continue with the commit without applying fixes".to_string(),
             action: "continue".to_string(),
-            style: Style::new().fg_yellow(),
+            style: Style::new().yellow(),
         },
         menu::MenuItem {
             label: "[a]bort: 💥 Exit with error (this'll abort the commit)".to_string(),
             action: "abort".to_string(),
-            style: Style::new().fg_red(),
+            style: Style::new().red(),
         },
     ];
 
@@ -869,7 +868,7 @@ pub fn collect_staged_files() -> io::Result<StagedFiles> {
             "x: {:?}, y: {:?}, path: {:?}",
             x.magenta(),
             y.cyan(),
-            (&path).dim()
+            path.dim()
         );
 
         // Staged and not dirty (to be formatted/committed)

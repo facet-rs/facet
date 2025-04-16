@@ -3,12 +3,6 @@
 version = 4
 
 [[package]]
-name = "anstyle"
-version = "1.0.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "55cc3b69f167a1ef2e161439aa98aed94e6028e5f9a59be9a6ffb47aef1651f9"
-
-[[package]]
 name = "arraydeque"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -165,13 +159,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-ansi"
-version = "0.8.0"
-dependencies = [
- "anstyle",
-]
-
-[[package]]
 name = "facet-args"
 version = "0.8.0"
 dependencies = [
@@ -220,7 +207,6 @@ dependencies = [
 name = "facet-dev"
 version = "0.1.1"
 dependencies = [
- "facet-ansi",
  "facet-testhelpers",
  "fs-err",
  "log",
@@ -228,6 +214,7 @@ dependencies = [
  "rayon",
  "similar",
  "termion",
+ "yansi",
 ]
 
 [[package]]
@@ -236,12 +223,12 @@ version = "0.8.0"
 dependencies = [
  "eyre",
  "facet",
- "facet-ansi",
  "facet-core",
  "facet-reflect",
  "facet-testhelpers",
  "insta",
  "log",
+ "yansi",
 ]
 
 [[package]]
@@ -260,9 +247,9 @@ name = "facet-pretty"
 version = "0.8.0"
 dependencies = [
  "facet",
- "facet-ansi",
  "facet-core",
  "facet-reflect",
+ "yansi",
 ]
 
 [[package]]
@@ -272,12 +259,12 @@ dependencies = [
  "bitflags",
  "eyre",
  "facet",
- "facet-ansi",
  "facet-core",
  "facet-samplelibc",
  "facet-testhelpers",
  "log",
  "tempfile",
+ "yansi",
 ]
 
 [[package]]
@@ -293,8 +280,8 @@ name = "facet-testhelpers"
 version = "0.8.0"
 dependencies = [
  "color-backtrace",
- "facet-ansi",
  "log",
+ "yansi",
 ]
 
 [[package]]
@@ -302,13 +289,13 @@ name = "facet-toml"
 version = "0.8.0"
 dependencies = [
  "facet",
- "facet-ansi",
  "facet-core",
  "facet-reflect",
  "facet-testhelpers",
  "log",
  "num-traits",
  "toml_edit",
+ "yansi",
 ]
 
 [[package]]
@@ -786,3 +773,9 @@ dependencies = [
  "encoding_rs",
  "hashlink",
 ]
+
+[[package]]
+name = "yansi"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"

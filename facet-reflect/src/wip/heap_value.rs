@@ -1,7 +1,8 @@
 use crate::ReflectError;
 use core::{alloc::Layout, marker::PhantomData};
-use facet_ansi::Stylize as _;
+
 use facet_core::{Facet, PtrConst, PtrMut, Shape};
+use yansi::Paint as _;
 
 /// A type-erased value stored on the heap
 pub struct HeapValue<'a> {

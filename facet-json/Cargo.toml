@@ -16,10 +16,10 @@ alloc = ["facet-core/alloc", "facet-reflect/alloc"]    # Enables alloc support
 default = ["std"]
 
 [dependencies]
-facet-ansi = { version = "0.8.0", path = "../facet-ansi" }
 facet-core = { version = "0.8.0", path = "../facet-core", default-features = false }
 facet-reflect = { version = "0.8.0", path = "../facet-reflect", default-features = false }
 log = "0.4.27"
+yansi = "1.0.1"
 
 [dev-dependencies]
 eyre = "0.6.12"

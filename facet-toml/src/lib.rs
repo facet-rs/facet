@@ -7,11 +7,11 @@ mod to_scalar;
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use error::AnyErr;
-use facet_ansi::Stylize as _;
 use facet_core::{Def, Facet, StructKind};
 use facet_reflect::{ScalarType, Wip};
 use log::trace;
 use toml_edit::{DocumentMut, Item, TomlError};
+use yansi::Paint as _;
 
 /// Deserializes a TOML string into a value of type `T` that implements `Facet`.
 pub fn from_str<T: Facet>(toml: &str) -> Result<T, AnyErr> {

@@ -19,7 +19,7 @@ categories = ["development-tools", "visualization", "command-line-utilities"]
 [dependencies]
 facet-core = { version = "0.8.0", path = "../facet-core" }
 facet-reflect = { version = "0.8.0", path = "../facet-reflect" }
-facet-ansi = { version = "0.8.0", path = "../facet-ansi" }
+yansi = "1.0.1"
 
 [dev-dependencies]
 facet = { path = "../facet" }

@@ -12,7 +12,6 @@ keywords = ["code-generation", "templates"]
 categories = ["development-tools"]
 
 [dependencies]
-facet-ansi = { version = "0.8.0", path = "../facet-ansi" }
 facet-testhelpers = { version = "0.8.0", path = "../facet-testhelpers" }
 fs-err = "3.1.0"
 log = "0.4.27"
@@ -20,3 +19,4 @@ num_cpus = "1.16.0"
 rayon = "1.10.0"
 similar = { version = "2.4.0", features = ["inline"] }
 termion = "4.0.5"
+yansi = "1.0.1"

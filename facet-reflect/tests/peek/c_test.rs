@@ -1,5 +1,5 @@
-use facet_ansi::Stylize as _;
 use facet_reflect::Peek;
+use yansi::Paint as _;
 
 #[test]
 fn test_sample_libc() {
