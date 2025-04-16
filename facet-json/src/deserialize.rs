@@ -4,7 +4,7 @@ use core::num::{
 };
 
 #[cfg(feature = "rich-diagnostics")]
-use ariadne::{Color, Label, Report, ReportKind, Source};
+use ariadne::{Color, Config, IndexType, Label, Report, ReportKind, Source};
 use facet_core::{Def, Facet, ScalarAffinity};
 use facet_reflect::{HeapValue, Wip};
 use log::trace;
@@ -99,7 +99,8 @@ impl core::fmt::Display for JsonParseErrorWithContext<'_> {
         };
 
         let mut report = Report::build(ReportKind::Error, (source_id, span_start..span_end))
-            .with_message(format!("Error at {}", self.path.fg(Color::Yellow)));
+            .with_message(format!("Error at {}", self.path.fg(Color::Yellow)))
+            .with_config(Config::new().with_index_type(IndexType::Byte));
 
         let label = Label::new((source_id, span_start..span_end))
             .with_message(self.message())
