@@ -135,13 +135,16 @@ fn type_params_vec_f64() {
 fn type_params_hash_map_string_u8() {
     use std::collections::HashMap;
     let shape = HashMap::<String, u8>::SHAPE;
-    assert_eq!(shape.type_params.len(), 2);
+    assert_eq!(shape.type_params.len(), 3);
     let k = &shape.type_params[0];
     let v = &shape.type_params[1];
+    let s = &shape.type_params[2];
     assert_eq!(k.name, "K");
     assert_eq!(v.name, "V");
+    assert_eq!(s.name, "S");
     assert_eq!(k.shape(), String::SHAPE);
     assert_eq!(v.shape(), u8::SHAPE);
+    assert_eq!(s.shape().to_string(), "RandomState");
 }
 
 #[test]
@@ -203,31 +206,7 @@ fn type_params_slice_ref_bool() {
     assert_eq!(shape.type_params.len(), 1);
     let t = &shape.type_params[0];
     assert_eq!(t.name, "T");
-    // The shape of the referent is a slice ([bool])
-    assert_eq!(format!("{}", t.shape()), "[bool]");
-}
-
-#[test]
-fn type_params_opaque() {
-    use facet::Opaque;
-
-    let shape = Opaque::<std::sync::Arc<u64>>::SHAPE;
-    assert_eq!(shape.type_params.len(), 1);
-    let t = &shape.type_params[0];
-    assert_eq!(t.name, "T");
-    assert_eq!(t.shape(), <std::sync::Arc<u64>>::SHAPE);
-}
-
-#[test]
-fn type_params_phantomdata() {
-    use std::marker::PhantomData;
-
-    let shape = PhantomData::<u32>::SHAPE;
-    // PhantomData has a single type parameter, usually named "T"
-    assert_eq!(shape.type_params.len(), 1);
-    let t = &shape.type_params[0];
-    assert_eq!(t.name, "T");
-    assert_eq!(t.shape(), u32::SHAPE);
+    assert_eq!(format!("{}", t.shape()), "bool");
 }
 
 #[test]

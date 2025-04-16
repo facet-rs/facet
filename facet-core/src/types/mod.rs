@@ -288,7 +288,6 @@ pub enum Def {
 /// Represents a lifetime parameter, e.g., `'a` or `'a: 'b + 'c`.
 ///
 /// Note: these are subject to change — it's a bit too stringly-typed for now.
-#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct TypeParam {
     /// The name of the type parameter (e.g., `T`).

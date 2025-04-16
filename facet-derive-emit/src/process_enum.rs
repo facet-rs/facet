@@ -71,6 +71,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     let enum_name = parsed.name.to_string();
     let (generics_def, generics_use) = generics_split_for_impl(parsed.generics.as_ref());
     let where_clauses = build_where_clauses(parsed.clauses.as_ref(), parsed.generics.as_ref());
+    let type_params = build_type_params(parsed.generics.as_ref());
 
     // collect all `#repr(..)` attrs
     // either multiple attrs, or a single attr with multiple values
@@ -179,6 +180,7 @@ unsafe impl<{generics_def}> ::facet::Facet for {enum_name}<{generics_use}> {wher
         ::facet::Shape::builder()
             .id(::facet::ConstTypeId::of::<Self>())
             .layout(::core::alloc::Layout::new::<Self>())
+            {type_params}
             .vtable(::facet::value_vtable!(
                 Self,
                 |f, _opts| ::core::fmt::Write::write_str(f, "{enum_name}")

@@ -16,6 +16,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     let (generics_def, generics_use) = generics_split_for_impl(parsed.generics.as_ref());
     let kind;
     let where_clauses;
+    let type_params = build_type_params(parsed.generics.as_ref());
 
     let fields = match &parsed.kind {
         StructKind::Struct { clauses, fields } => {
@@ -145,6 +146,7 @@ unsafe impl<{generics_def}> ::facet::Facet for {struct_name}<{generics_use}> {wh
         ::facet::Shape::builder()
             .id(::facet::ConstTypeId::of::<Self>())
             .layout(::core::alloc::Layout::new::<Self>())
+            {type_params}
             .vtable(vtable)
             .def(::facet::Def::Struct(::facet::Struct::builder()
                 .kind({kind})

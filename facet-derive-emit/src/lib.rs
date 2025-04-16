@@ -207,3 +207,32 @@ fn build_where_clauses(
         format!("where {}", where_clauses_s.join(", "))
     }
 }
+
+fn build_type_params(generics: Option<&GenericParams>) -> String {
+    let mut type_params_s: Vec<String> = vec![];
+    if let Some(generics) = generics {
+        for p in &generics.params.0 {
+            match &p.value {
+                GenericParam::Lifetime { .. } => {
+                    // ignore for now
+                }
+                GenericParam::Const { .. } => {
+                    // ignore for now
+                }
+                GenericParam::Type { name, .. } => {
+                    type_params_s.push(format!(
+                        "::facet::TypeParam {{ name: {:?}, shape: || <{name} as ::facet::Facet>::SHAPE }}",
+                        // debug fmt because we want it to be quoted & escaped, but to_string because we don't want the `Ident { .. }`
+                        name.to_string()
+                    ));
+                }
+            }
+        }
+    }
+
+    if type_params_s.is_empty() {
+        "".to_string()
+    } else {
+        format!(".type_params(&[{}])", type_params_s.join(", "))
+    }
+}
