@@ -33,17 +33,17 @@ nostd-ci:
     export CARGO_TARGET_DIR=target/nostd
 
     # Run each check in its own group with the full command as the title
-    cmd_group "cargo check --no-default-features -p facet-core"
-    cmd_group "cargo check --no-default-features -p facet"
-    cmd_group "cargo check --no-default-features -p facet-reflect"
+    cmd_group "cargo check --no-default-features -p facet-core --target thumbv6m-none-eabi"
+    cmd_group "cargo check --no-default-features -p facet --target thumbv6m-none-eabi"
+    cmd_group "cargo check --no-default-features -p facet-reflect --target thumbv6m-none-eabi"
 
     # Set up target directory for alloc but no-std checks
     export CARGO_TARGET_DIR=target/nostd-w-alloc
 
     # Run each check in its own group with the full command as the title
-    cmd_group "cargo check --no-default-features --features alloc -p facet-core"
-    cmd_group "cargo check --no-default-features --features alloc -p facet"
-    cmd_group "cargo check --no-default-features --features alloc -p facet-reflect"
+    cmd_group "cargo check --no-default-features --features alloc -p facet-core --target thumbv6m-none-eabi"
+    cmd_group "cargo check --no-default-features --features alloc -p facet --target thumbv6m-none-eabi"
+    cmd_group "cargo check --no-default-features --features alloc -p facet-reflect --target thumbv6m-none-eabi"
 
 clippy-all:
     cargo clippy --workspace --all-targets --all-features -- -D warnings
