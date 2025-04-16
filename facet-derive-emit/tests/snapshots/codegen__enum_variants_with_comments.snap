@@ -18,6 +18,64 @@ unsafe impl ::facet::Facet for CommentedEnum {
             x: u32,
             y: String,
         }
+        let __facet_variants: &'static [::facet::Variant] = &const {
+            [
+                ::facet::Variant::builder()
+                    .name("A")
+                    .discriminant(0)
+                    .offset(0)
+                    .fields(::facet::Struct::builder().unit().build())
+                    .doc(&[" This is variant A"])
+                    .build(),
+                {
+                    let fields: &'static [::facet::Field] = &const {
+                        [::facet::Field::builder()
+                            .name("_0")
+                            .shape(|| ::facet::shape_of(&|s: &__ShadowCommentedEnum_B| &s._0))
+                            .offset(::core::mem::offset_of!(__ShadowCommentedEnum_B, _0))
+                            .flags(::facet::FieldFlags::EMPTY)
+                            .attributes(&[])
+                            .build()]
+                    };
+                    ::facet::Variant::builder()
+                        .name("B")
+                        .discriminant(1)
+                        .offset(0)
+                        .fields(::facet::Struct::builder().tuple().fields(fields).build())
+                        .doc(&[" This is variant B", " with multiple lines"])
+                        .build()
+                },
+                {
+                    let fields: &'static [::facet::Field] = &const {
+                        [
+                            ::facet::Field::builder()
+                                .name("x")
+                                .shape(|| ::facet::shape_of(&|s: &__ShadowCommentedEnum_C| &s.x))
+                                .offset(::core::mem::offset_of!(__ShadowCommentedEnum_C, x))
+                                .flags(::facet::FieldFlags::EMPTY)
+                                .attributes(&[])
+                                .doc(&[" This is field x"])
+                                .build(),
+                            ::facet::Field::builder()
+                                .name("y")
+                                .shape(|| ::facet::shape_of(&|s: &__ShadowCommentedEnum_C| &s.y))
+                                .offset(::core::mem::offset_of!(__ShadowCommentedEnum_C, y))
+                                .flags(::facet::FieldFlags::EMPTY)
+                                .attributes(&[])
+                                .doc(&[" This is field y"])
+                                .build(),
+                        ]
+                    };
+                    ::facet::Variant::builder()
+                        .name("C")
+                        .discriminant(2)
+                        .offset(0)
+                        .fields(::facet::Struct::builder().struct_().fields(fields).build())
+                        .doc(&[" This is variant C", " which has named fields"])
+                        .build()
+                },
+            ]
+        };
         ::facet::Shape::builder()
             .id(::facet::ConstTypeId::of::<Self>())
             .layout(::core::alloc::Layout::new::<Self>())
@@ -26,97 +84,7 @@ unsafe impl ::facet::Facet for CommentedEnum {
             }))
             .def(::facet::Def::Enum(
                 ::facet::EnumDef::builder()
-                    .variants(
-                        &const {
-                            [
-                                ::facet::Variant::builder()
-                                    .name("A")
-                                    .discriminant(0)
-                                    .offset(0)
-                                    .fields(::facet::Struct::builder().unit().build())
-                                    .doc(&[" This is variant A"])
-                                    .build(),
-                                {
-                                    let fields: &'static [::facet::Field] = &const {
-                                        [::facet::Field::builder()
-                                            .name("_0")
-                                            .shape(|| {
-                                                ::facet::shape_of(&|s: &__ShadowCommentedEnum_B| {
-                                                    &s._0
-                                                })
-                                            })
-                                            .offset(::core::mem::offset_of!(
-                                                __ShadowCommentedEnum_B,
-                                                _0
-                                            ))
-                                            .flags(::facet::FieldFlags::EMPTY)
-                                            .attributes(&[])
-                                            .build()]
-                                    };
-                                    ::facet::Variant::builder()
-                                        .name("B")
-                                        .discriminant(1)
-                                        .offset(0)
-                                        .fields(
-                                            ::facet::Struct::builder()
-                                                .tuple()
-                                                .fields(fields)
-                                                .build(),
-                                        )
-                                        .doc(&[" This is variant B", " with multiple lines"])
-                                        .build()
-                                },
-                                {
-                                    let fields: &'static [::facet::Field] = &const {
-                                        [
-                                            ::facet::Field::builder()
-                                                .name("x")
-                                                .shape(|| {
-                                                    ::facet::shape_of(
-                                                        &|s: &__ShadowCommentedEnum_C| &s.x,
-                                                    )
-                                                })
-                                                .offset(::core::mem::offset_of!(
-                                                    __ShadowCommentedEnum_C,
-                                                    x
-                                                ))
-                                                .flags(::facet::FieldFlags::EMPTY)
-                                                .attributes(&[])
-                                                .doc(&[" This is field x"])
-                                                .build(),
-                                            ::facet::Field::builder()
-                                                .name("y")
-                                                .shape(|| {
-                                                    ::facet::shape_of(
-                                                        &|s: &__ShadowCommentedEnum_C| &s.y,
-                                                    )
-                                                })
-                                                .offset(::core::mem::offset_of!(
-                                                    __ShadowCommentedEnum_C,
-                                                    y
-                                                ))
-                                                .flags(::facet::FieldFlags::EMPTY)
-                                                .attributes(&[])
-                                                .doc(&[" This is field y"])
-                                                .build(),
-                                        ]
-                                    };
-                                    ::facet::Variant::builder()
-                                        .name("C")
-                                        .discriminant(2)
-                                        .offset(0)
-                                        .fields(
-                                            ::facet::Struct::builder()
-                                                .struct_()
-                                                .fields(fields)
-                                                .build(),
-                                        )
-                                        .doc(&[" This is variant C", " which has named fields"])
-                                        .build()
-                                },
-                            ]
-                        },
-                    )
+                    .variants(__facet_variants)
                     .repr(::facet::EnumRepr::U8)
                     .build(),
             ))

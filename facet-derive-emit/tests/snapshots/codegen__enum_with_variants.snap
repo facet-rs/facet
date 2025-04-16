@@ -19,6 +19,78 @@ unsafe impl ::facet::Facet for EnumWithVariants {
             field1: i32,
             field2: String,
         }
+        let __facet_variants: &'static [::facet::Variant] = &const {
+            [
+                ::facet::Variant::builder()
+                    .name("Variant1")
+                    .discriminant(0)
+                    .offset(0)
+                    .fields(::facet::Struct::builder().unit().build())
+                    .build(),
+                {
+                    let fields: &'static [::facet::Field] = &const {
+                        [::facet::Field::builder()
+                            .name("_0")
+                            .shape(|| {
+                                ::facet::shape_of(&|s: &__ShadowEnumWithVariants_Variant2| &s._0)
+                            })
+                            .offset(::core::mem::offset_of!(
+                                __ShadowEnumWithVariants_Variant2,
+                                _0
+                            ))
+                            .flags(::facet::FieldFlags::EMPTY)
+                            .attributes(&[])
+                            .build()]
+                    };
+                    ::facet::Variant::builder()
+                        .name("Variant2")
+                        .discriminant(1)
+                        .offset(0)
+                        .fields(::facet::Struct::builder().tuple().fields(fields).build())
+                        .build()
+                },
+                {
+                    let fields: &'static [::facet::Field] = &const {
+                        [
+                            ::facet::Field::builder()
+                                .name("field1")
+                                .shape(|| {
+                                    ::facet::shape_of(&|s: &__ShadowEnumWithVariants_Variant3| {
+                                        &s.field1
+                                    })
+                                })
+                                .offset(::core::mem::offset_of!(
+                                    __ShadowEnumWithVariants_Variant3,
+                                    field1
+                                ))
+                                .flags(::facet::FieldFlags::EMPTY)
+                                .attributes(&[])
+                                .build(),
+                            ::facet::Field::builder()
+                                .name("field2")
+                                .shape(|| {
+                                    ::facet::shape_of(&|s: &__ShadowEnumWithVariants_Variant3| {
+                                        &s.field2
+                                    })
+                                })
+                                .offset(::core::mem::offset_of!(
+                                    __ShadowEnumWithVariants_Variant3,
+                                    field2
+                                ))
+                                .flags(::facet::FieldFlags::EMPTY)
+                                .attributes(&[])
+                                .build(),
+                        ]
+                    };
+                    ::facet::Variant::builder()
+                        .name("Variant3")
+                        .discriminant(2)
+                        .offset(0)
+                        .fields(::facet::Struct::builder().struct_().fields(fields).build())
+                        .build()
+                },
+            ]
+        };
         ::facet::Shape::builder()
             .id(::facet::ConstTypeId::of::<Self>())
             .layout(::core::alloc::Layout::new::<Self>())
@@ -27,96 +99,7 @@ unsafe impl ::facet::Facet for EnumWithVariants {
             }))
             .def(::facet::Def::Enum(
                 ::facet::EnumDef::builder()
-                    .variants(
-                        &const {
-                            [
-                                ::facet::Variant::builder()
-                                    .name("Variant1")
-                                    .discriminant(0)
-                                    .offset(0)
-                                    .fields(::facet::Struct::builder().unit().build())
-                                    .build(),
-                                {
-                                    let fields: &'static [::facet::Field] = &const {
-                                        [::facet::Field::builder()
-                                            .name("_0")
-                                            .shape(|| {
-                                                ::facet::shape_of(
-                                                    &|s: &__ShadowEnumWithVariants_Variant2| &s._0,
-                                                )
-                                            })
-                                            .offset(::core::mem::offset_of!(
-                                                __ShadowEnumWithVariants_Variant2,
-                                                _0
-                                            ))
-                                            .flags(::facet::FieldFlags::EMPTY)
-                                            .attributes(&[])
-                                            .build()]
-                                    };
-                                    ::facet::Variant::builder()
-                                        .name("Variant2")
-                                        .discriminant(1)
-                                        .offset(0)
-                                        .fields(
-                                            ::facet::Struct::builder()
-                                                .tuple()
-                                                .fields(fields)
-                                                .build(),
-                                        )
-                                        .build()
-                                },
-                                {
-                                    let fields: &'static [::facet::Field] = &const {
-                                        [
-                                            ::facet::Field::builder()
-                                                .name("field1")
-                                                .shape(|| {
-                                                    ::facet::shape_of(
-                                                        &|s: &__ShadowEnumWithVariants_Variant3| {
-                                                            &s.field1
-                                                        },
-                                                    )
-                                                })
-                                                .offset(::core::mem::offset_of!(
-                                                    __ShadowEnumWithVariants_Variant3,
-                                                    field1
-                                                ))
-                                                .flags(::facet::FieldFlags::EMPTY)
-                                                .attributes(&[])
-                                                .build(),
-                                            ::facet::Field::builder()
-                                                .name("field2")
-                                                .shape(|| {
-                                                    ::facet::shape_of(
-                                                        &|s: &__ShadowEnumWithVariants_Variant3| {
-                                                            &s.field2
-                                                        },
-                                                    )
-                                                })
-                                                .offset(::core::mem::offset_of!(
-                                                    __ShadowEnumWithVariants_Variant3,
-                                                    field2
-                                                ))
-                                                .flags(::facet::FieldFlags::EMPTY)
-                                                .attributes(&[])
-                                                .build(),
-                                        ]
-                                    };
-                                    ::facet::Variant::builder()
-                                        .name("Variant3")
-                                        .discriminant(2)
-                                        .offset(0)
-                                        .fields(
-                                            ::facet::Struct::builder()
-                                                .struct_()
-                                                .fields(fields)
-                                                .build(),
-                                        )
-                                        .build()
-                                },
-                            ]
-                        },
-                    )
+                    .variants(__facet_variants)
                     .repr(::facet::EnumRepr::U8)
                     .build(),
             ))

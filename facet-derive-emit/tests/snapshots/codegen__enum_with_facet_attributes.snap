@@ -23,6 +23,102 @@ unsafe impl ::facet::Facet for EnumWithAttributes {
             _discriminant: u16,
             value: i32,
         }
-        :: facet :: Shape :: builder () . id (:: facet :: ConstTypeId :: of ::< Self > ()) . layout (:: core :: alloc :: Layout :: new ::< Self > ()) . vtable (:: facet :: value_vtable ! (Self , | f , _opts | :: core :: fmt :: Write :: write_str (f , "EnumWithAttributes"))) . def (:: facet :: Def :: Enum (:: facet :: EnumDef :: builder () . variants (& const { [:: facet :: Variant :: builder () . name ("VariantA") . discriminant (0) . offset (0) . fields (:: facet :: Struct :: builder () . unit () . build ()) . build () , { let fields : &'static [:: facet :: Field] = & const { [:: facet :: Field :: builder () . name ("_0") . shape (|| :: facet :: shape_of (&| s : & __ShadowEnumWithAttributes_InternalVariant <>| & s . _0)) . offset (:: core :: mem :: offset_of ! (__ShadowEnumWithAttributes_InternalVariant <>, _0)) . flags (:: facet :: FieldFlags :: EMPTY) . attributes (& []) . build ()] } ; :: facet :: Variant :: builder () . name ("InternalVariant") . discriminant (1) . offset (0) . fields (:: facet :: Struct :: builder () . tuple () . fields (fields) . build ()) . build () } , { let fields : &'static [:: facet :: Field] = & const { [:: facet :: Field :: builder () . name ("secret") . shape (|| :: facet :: shape_of (&| s : & __ShadowEnumWithAttributes_VariantC <>| & s . secret)) . offset (:: core :: mem :: offset_of ! (__ShadowEnumWithAttributes_VariantC <>, secret)) . flags (:: facet :: FieldFlags :: SENSITIVE) . attributes (& [:: facet :: FieldAttribute :: Sensitive]) . build ()] } ; :: facet :: Variant :: builder () . name ("VariantC") . discriminant (2) . offset (0) . fields (:: facet :: Struct :: builder () . struct_ () . fields (fields) . build ()) . build () } , { let fields : &'static [:: facet :: Field] = & const { [:: facet :: Field :: builder () . name ("value") . shape (|| :: facet :: shape_of (&| s : & __ShadowEnumWithAttributes_VariantD <>| & s . value)) . offset (:: core :: mem :: offset_of ! (__ShadowEnumWithAttributes_VariantD <>, value)) . flags (:: facet :: FieldFlags :: EMPTY) . attributes (& [:: facet :: FieldAttribute :: Arbitrary ("default = \"forty_two\"")]) . build ()] } ; :: facet :: Variant :: builder () . name ("VariantD") . discriminant (3) . offset (0) . fields (:: facet :: Struct :: builder () . struct_ () . fields (fields) . build ()) . build () }] }) . repr (:: facet :: EnumRepr :: U16) . build ())) . build ()
+        let __facet_variants: &'static [::facet::Variant] = &const {
+            [
+                ::facet::Variant::builder()
+                    .name("VariantA")
+                    .discriminant(0)
+                    .offset(0)
+                    .fields(::facet::Struct::builder().unit().build())
+                    .build(),
+                {
+                    let fields: &'static [::facet::Field] = &const {
+                        [::facet::Field::builder()
+                            .name("_0")
+                            .shape(|| {
+                                ::facet::shape_of(
+                                    &|s: &__ShadowEnumWithAttributes_InternalVariant| &s._0,
+                                )
+                            })
+                            .offset(::core::mem::offset_of!(
+                                __ShadowEnumWithAttributes_InternalVariant,
+                                _0
+                            ))
+                            .flags(::facet::FieldFlags::EMPTY)
+                            .attributes(&[])
+                            .build()]
+                    };
+                    ::facet::Variant::builder()
+                        .name("InternalVariant")
+                        .discriminant(1)
+                        .offset(0)
+                        .fields(::facet::Struct::builder().tuple().fields(fields).build())
+                        .build()
+                },
+                {
+                    let fields: &'static [::facet::Field] = &const {
+                        [::facet::Field::builder()
+                            .name("secret")
+                            .shape(|| {
+                                ::facet::shape_of(&|s: &__ShadowEnumWithAttributes_VariantC| {
+                                    &s.secret
+                                })
+                            })
+                            .offset(::core::mem::offset_of!(
+                                __ShadowEnumWithAttributes_VariantC,
+                                secret
+                            ))
+                            .flags(::facet::FieldFlags::SENSITIVE)
+                            .attributes(&[::facet::FieldAttribute::Sensitive])
+                            .build()]
+                    };
+                    ::facet::Variant::builder()
+                        .name("VariantC")
+                        .discriminant(2)
+                        .offset(0)
+                        .fields(::facet::Struct::builder().struct_().fields(fields).build())
+                        .build()
+                },
+                {
+                    let fields: &'static [::facet::Field] = &const {
+                        [::facet::Field::builder()
+                            .name("value")
+                            .shape(|| {
+                                ::facet::shape_of(&|s: &__ShadowEnumWithAttributes_VariantD| {
+                                    &s.value
+                                })
+                            })
+                            .offset(::core::mem::offset_of!(
+                                __ShadowEnumWithAttributes_VariantD,
+                                value
+                            ))
+                            .flags(::facet::FieldFlags::EMPTY)
+                            .attributes(&[::facet::FieldAttribute::Arbitrary(
+                                "default = \"forty_two\"",
+                            )])
+                            .build()]
+                    };
+                    ::facet::Variant::builder()
+                        .name("VariantD")
+                        .discriminant(3)
+                        .offset(0)
+                        .fields(::facet::Struct::builder().struct_().fields(fields).build())
+                        .build()
+                },
+            ]
+        };
+        ::facet::Shape::builder()
+            .id(::facet::ConstTypeId::of::<Self>())
+            .layout(::core::alloc::Layout::new::<Self>())
+            .vtable(::facet::value_vtable!(Self, |f, _opts| {
+                ::core::fmt::Write::write_str(f, "EnumWithAttributes")
+            }))
+            .def(::facet::Def::Enum(
+                ::facet::EnumDef::builder()
+                    .variants(__facet_variants)
+                    .repr(::facet::EnumRepr::U16)
+                    .build(),
+            ))
+            .build()
     };
 }

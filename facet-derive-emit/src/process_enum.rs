@@ -177,6 +177,10 @@ unsafe impl<{generics_def}> ::facet::Facet for {enum_name}<{generics_use}> {wher
         // to ensure they're in scope for offset_of! macros
         {shadow_structs}
 
+        let __facet_variants: &'static [::facet::Variant] = &const {{[
+            {variants}
+        ]}};
+
         ::facet::Shape::builder()
             .id(::facet::ConstTypeId::of::<Self>())
             .layout(::core::alloc::Layout::new::<Self>())
@@ -188,7 +192,7 @@ unsafe impl<{generics_def}> ::facet::Facet for {enum_name}<{generics_use}> {wher
             .def(::facet::Def::Enum(::facet::EnumDef::builder()
                 // Use variant expressions that just reference the shadow structs
                 // which are now defined above
-                .variants(&const {{[ {variants} ]}})
+                .variants(__facet_variants)
                 .repr(::facet::EnumRepr::{repr_type})
                 .build()))
             {maybe_container_doc}

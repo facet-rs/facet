@@ -17,6 +17,45 @@ unsafe impl ::facet::Facet for Packet {
             _discriminant: u8,
             _0: Vec<u8>,
         }
+        let __facet_variants: &'static [::facet::Variant] = &const {
+            [
+                {
+                    let fields: &'static [::facet::Field] = &const {
+                        [::facet::Field::builder()
+                            .name("_0")
+                            .shape(|| ::facet::shape_of(&|s: &__ShadowPacket_Header| &s._0))
+                            .offset(::core::mem::offset_of!(__ShadowPacket_Header, _0))
+                            .flags(::facet::FieldFlags::EMPTY)
+                            .attributes(&[])
+                            .build()]
+                    };
+                    ::facet::Variant::builder()
+                        .name("Header")
+                        .discriminant(0)
+                        .offset(0)
+                        .fields(::facet::Struct::builder().tuple().fields(fields).build())
+                        .doc(&[" Array of bytes representing the header"])
+                        .build()
+                },
+                {
+                    let fields: &'static [::facet::Field] = &const {
+                        [::facet::Field::builder()
+                            .name("_0")
+                            .shape(|| ::facet::shape_of(&|s: &__ShadowPacket_Payload| &s._0))
+                            .offset(::core::mem::offset_of!(__ShadowPacket_Payload, _0))
+                            .flags(::facet::FieldFlags::EMPTY)
+                            .attributes(&[])
+                            .build()]
+                    };
+                    ::facet::Variant::builder()
+                        .name("Payload")
+                        .discriminant(1)
+                        .offset(0)
+                        .fields(::facet::Struct::builder().tuple().fields(fields).build())
+                        .build()
+                },
+            ]
+        };
         ::facet::Shape::builder()
             .id(::facet::ConstTypeId::of::<Self>())
             .layout(::core::alloc::Layout::new::<Self>())
@@ -25,71 +64,7 @@ unsafe impl ::facet::Facet for Packet {
             }))
             .def(::facet::Def::Enum(
                 ::facet::EnumDef::builder()
-                    .variants(
-                        &const {
-                            [
-                                {
-                                    let fields: &'static [::facet::Field] = &const {
-                                        [::facet::Field::builder()
-                                            .name("_0")
-                                            .shape(|| {
-                                                ::facet::shape_of(&|s: &__ShadowPacket_Header| {
-                                                    &s._0
-                                                })
-                                            })
-                                            .offset(::core::mem::offset_of!(
-                                                __ShadowPacket_Header,
-                                                _0
-                                            ))
-                                            .flags(::facet::FieldFlags::EMPTY)
-                                            .attributes(&[])
-                                            .build()]
-                                    };
-                                    ::facet::Variant::builder()
-                                        .name("Header")
-                                        .discriminant(0)
-                                        .offset(0)
-                                        .fields(
-                                            ::facet::Struct::builder()
-                                                .tuple()
-                                                .fields(fields)
-                                                .build(),
-                                        )
-                                        .doc(&[" Array of bytes representing the header"])
-                                        .build()
-                                },
-                                {
-                                    let fields: &'static [::facet::Field] = &const {
-                                        [::facet::Field::builder()
-                                            .name("_0")
-                                            .shape(|| {
-                                                ::facet::shape_of(&|s: &__ShadowPacket_Payload| {
-                                                    &s._0
-                                                })
-                                            })
-                                            .offset(::core::mem::offset_of!(
-                                                __ShadowPacket_Payload,
-                                                _0
-                                            ))
-                                            .flags(::facet::FieldFlags::EMPTY)
-                                            .attributes(&[])
-                                            .build()]
-                                    };
-                                    ::facet::Variant::builder()
-                                        .name("Payload")
-                                        .discriminant(1)
-                                        .offset(0)
-                                        .fields(
-                                            ::facet::Struct::builder()
-                                                .tuple()
-                                                .fields(fields)
-                                                .build(),
-                                        )
-                                        .build()
-                                },
-                            ]
-                        },
-                    )
+                    .variants(__facet_variants)
                     .repr(::facet::EnumRepr::U8)
                     .build(),
             ))
