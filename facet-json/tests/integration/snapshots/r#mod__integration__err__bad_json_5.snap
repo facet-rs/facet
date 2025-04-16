@@ -2,8 +2,10 @@
 source: facet-json/tests/integration/err.rs
 expression: err
 ---
-Error at [93m$[0m:
-[2m     1[0m 
-[2m     2[0m   }
-         [31m⎩[0m [94mUnexpectedCharacter('}')[0m
-[2m     3[0m // and then some
+[31mError:[0m Error at [33m$[0m
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m json:2:3 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m2 │[0m [38;5;249m [0m[38;5;249m [0m[31m}[0m
+ [38;5;240m  │[0m   [31m┬[0m  
+ [38;5;240m  │[0m   [31m╰[0m[31m─[0m[31m─[0m Unexpected character: '}'
+[38;5;246m───╯[0m

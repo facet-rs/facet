@@ -3,12 +3,14 @@ use core::num::{
     NonZeroU64, NonZeroUsize,
 };
 
+use ariadne::{Color, Label, Report, ReportKind, Source};
 use facet_core::{Def, Facet, ScalarAffinity};
 use facet_reflect::{HeapValue, Wip};
 use log::trace;
 use yansi::Paint as _;
 
 use crate::alloc::string::ToString;
+use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -54,40 +56,54 @@ pub enum JsonErrorKind {
 
 impl core::fmt::Display for JsonParseErrorWithContext<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let Ok(input) = core::str::from_utf8(self.input) else {
+        let Ok(input_str) = core::str::from_utf8(self.input) else {
             return write!(f, "(JSON input was invalid UTF-8)");
         };
 
-        writeln!(f)?;
-        writeln!(f, "Error at {}:", self.path.clone().bright_yellow())?;
+        let source_id = "json";
 
-        let mut pos = self.pos as isize;
-        let mut line_start = 0;
-        for (line_num, line) in input.lines().enumerate() {
-            let line_len = line.len();
-            let pos_line = pos >= 0 && pos <= line_len as isize;
-            let dist = (pos - line_start).abs();
-
-            if dist < 120 || pos_line {
-                writeln!(f, "{:>6} {}", (line_num + 1).dim(), line)?;
-                if pos_line {
-                    writeln!(
-                        f,
-                        "{:width$} {} {:?}",
-                        "",
-                        "⎩".red(),
-                        self.kind.bright_blue(),
-                        width = (pos as usize + 6), // 6 for line numbers, 1 for spaces
-                    )?;
-                }
-            } else if dist > 180 && pos < 0 {
-                break;
+        let (span_start, span_end) = match &self.kind {
+            JsonErrorKind::StringAsNumber(s) => (self.pos - s.len(), self.pos),
+            _ => {
+                let span_end = if self.pos < self.input.len() {
+                    self.pos + 1
+                } else {
+                    self.input.len()
+                };
+                (self.pos, span_end)
             }
+        };
 
-            pos -= (line_len + 1) as isize; // newline counts as one byte!
-            line_start += line_len as isize;
+        let mut report = Report::build(ReportKind::Error, (source_id, span_start..span_end))
+            .with_message(format!("Error at {}", self.path.fg(Color::Yellow)));
+
+        let error_message = match &self.kind {
+            JsonErrorKind::UnexpectedEof => "Unexpected end of file".to_string(),
+            JsonErrorKind::UnexpectedCharacter(c) => format!("Unexpected character: '{}'", c),
+            JsonErrorKind::NumberOutOfRange(n) => format!("Number out of range: {}", n),
+            JsonErrorKind::StringAsNumber(s) => format!("Expected a string but got number: {}", s),
+        };
+
+        let label = Label::new((source_id, span_start..span_end))
+            .with_message(error_message)
+            .with_color(Color::Red);
+
+        report = report.with_label(label);
+
+        let source = Source::from(input_str);
+
+        let mut writer = Vec::new();
+        let cache = (source_id, &source);
+
+        if report.finish().write(cache, &mut writer).is_err() {
+            return write!(f, "Error formatting with ariadne");
         }
-        Ok(())
+
+        if let Ok(output) = String::from_utf8(writer) {
+            write!(f, "{}", output)
+        } else {
+            write!(f, "Error converting ariadne output to string")
+        }
     }
 }
 
