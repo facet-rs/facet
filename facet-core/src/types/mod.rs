@@ -184,7 +184,7 @@ impl ShapeBuilder {
 
 impl PartialEq for Shape {
     fn eq(&self, other: &Self) -> bool {
-        self.def == other.def && self.layout == other.layout
+        self.id == other.id
     }
 }
 
