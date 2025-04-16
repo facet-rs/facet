@@ -70,10 +70,7 @@ type EnumVariant = Delimited<EnumVariantLike, Comma>;
 pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     let enum_name = parsed.name.to_string();
     let (generics_def, generics_use) = generics_split_for_impl(parsed.generics.as_ref());
-    let where_clauses = parsed
-        .clauses
-        .as_ref()
-        .map_or(String::new(), ToString::to_string);
+    let where_clauses = build_where_clauses(parsed.clauses.as_ref(), parsed.generics.as_ref());
 
     // collect all `#repr(..)` attrs
     // either multiple attrs, or a single attr with multiple values

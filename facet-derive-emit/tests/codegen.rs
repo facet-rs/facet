@@ -601,3 +601,52 @@ fn generic_bounds_k_v() {
         "#
     ));
 }
+
+#[test]
+fn generic_bounds_tuple_t() {
+    insta::assert_snapshot!(expand(
+        r#"
+        struct Foo<T>(Vec<T>);
+        "#
+    ));
+}
+
+#[test]
+fn enum_with_nested_generic_in_variant_one_level() {
+    // This test has a generic type nested one layer inside an enum variant.
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        #[repr(u8)]
+        enum OneLevelNested<T> {
+            VariantA(Result<T, String>),
+            VariantB(Option<T>),
+            // Also include a unit variant to check un-nested
+            Plain,
+        }
+        "#
+    ));
+}
+
+#[test]
+fn enum_with_nested_generic_in_variant_two_levels() {
+    // This test has a generic type nested two layers inside an enum variant.
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        #[repr(u8)]
+        enum DeeplyNested<T> {
+            LevelOne(
+                Option<
+                    Result<
+                        Vec<T>,
+                        String
+                    >
+                >
+            ),
+            // Another variant to prove non-nested still works.
+            Simple(T),
+        }
+        "#
+    ));
+}

@@ -173,3 +173,37 @@ pub(crate) fn gen_struct_field(
     .build()"
     )
 }
+
+fn build_where_clauses(
+    where_clauses: Option<&WhereClauses>,
+    generics: Option<&GenericParams>,
+) -> String {
+    let mut where_clauses_s: Vec<String> = vec![];
+    if let Some(wc) = where_clauses {
+        for c in &wc.clauses.0 {
+            where_clauses_s.push(c.value.to_string())
+        }
+    }
+
+    if let Some(generics) = generics {
+        for p in &generics.params.0 {
+            match &p.value {
+                GenericParam::Lifetime { .. } => {
+                    // ignore for now
+                }
+                GenericParam::Const { .. } => {
+                    // ignore for now
+                }
+                GenericParam::Type { name, .. } => {
+                    where_clauses_s.push(format!("{name}: ::facet::Facet"));
+                }
+            }
+        }
+    }
+
+    if where_clauses_s.is_empty() {
+        "".to_string()
+    } else {
+        format!("where {}", where_clauses_s.join(", "))
+    }
+}
