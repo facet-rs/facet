@@ -864,7 +864,7 @@ impl<'a> Wip<'a> {
         }
     }
 
-    /// Puts the default value in the currrent frame.
+    /// Puts the default value in the current frame.
     pub fn put_default(mut self) -> Result<Self, ReflectError> {
         let Some(frame) = self.frames.last_mut() else {
             return Err(ReflectError::OperationFailed {
@@ -1177,22 +1177,18 @@ impl<'a> Wip<'a> {
         Ok(self)
     }
 
-    /// Prepare to push an option
+    /// Prepare to push the `Some(T)` variant of an `Option<T>`.
     pub fn push_some(mut self) -> Result<Self, ReflectError> {
         // Make sure we're initializing an option
         let frame = self.frames.last().unwrap();
         let option_shape = frame.shape;
 
-        if !matches!(option_shape.def, Def::Option(_)) {
+        // Get the option definition
+        let Def::Option(option_def) = option_shape.def else {
             return Err(ReflectError::WasNotA {
                 expected: "option",
                 actual: option_shape,
             });
-        }
-
-        // Get the option definition
-        let Def::Option(option_def) = option_shape.def else {
-            unreachable!()
         };
 
         // Get the inner type of the option
