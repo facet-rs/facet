@@ -295,7 +295,7 @@ fn process_c_style_enum(
                     .name({variant_name:?})
                     .discriminant({discriminant_value})
                     .offset(::core::mem::offset_of!({shadow_repr_name}, _fields))
-                    .fields(::facet::Struct::builder().unit().build(),
+                    .fields(::facet::Struct::builder().unit().build())
                     {maybe_doc}
                     .build()",
                 ));
@@ -356,7 +356,7 @@ fn process_c_style_enum(
                             .name({variant_name:?})
                             .discriminant({discriminant_value})
                             .offset(::core::mem::offset_of!({shadow_repr_name}, _fields))
-                            .fields(::facet::Struct::builder().tuple().fields(fields).build(),
+                            .fields(::facet::Struct::builder().tuple().fields(fields).build())
                             {maybe_doc}
                             .build()
                     }}",
@@ -417,7 +417,7 @@ fn process_c_style_enum(
                             .name({variant_name:?})
                             .discriminant(discriminant_value)
                             .offset(::core::mem::offset_of!({shadow_repr_name}, _fields))
-                            .fields(::facet::Struct::builder().struct_().fields(fields).build(),
+                            .fields(::facet::Struct::builder().struct_().fields(fields).build())
                             {maybe_doc}
                             .build()
                     }}",
