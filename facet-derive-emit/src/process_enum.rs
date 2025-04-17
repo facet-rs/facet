@@ -342,7 +342,7 @@ fn process_c_style_enum(
                             &shadow_struct_name,
                             generics_use,
                             &field.value.attributes,
-                            Some(&variant_offset),
+                            Some("variant_offset"),
                         )
                     })
                     .collect::<Vec<String>>()
@@ -351,9 +351,10 @@ fn process_c_style_enum(
                 // Add variant expression - now with discriminant
                 variant_expressions.push(format!(
                     "{{
-                        let fields: &'static [::facet::Field] = &const {{[
-                            {fields}
-                        ]}};
+                        let fields: &'static [::facet::Field] = &const {{
+                            let variant_offset = {variant_offset};
+                            [{fields}]
+                        }};
 
                         ::facet::Variant::builder()
                             .name({variant_name:?})
@@ -406,7 +407,7 @@ fn process_c_style_enum(
                             &shadow_struct_name,
                             generics_use,
                             &field.value.attributes,
-                            Some(&variant_offset),
+                            Some("variant_offset"),
                         )
                     })
                     .collect::<Vec<String>>()
@@ -415,9 +416,10 @@ fn process_c_style_enum(
                 // Add variant expression - now with discriminant
                 variant_expressions.push(format!(
                     "{{
-                        let fields: &'static [::facet::Field] = &const {{[
-                            {fields}
-                        ]}};
+                        let fields: &'static [::facet::Field] = &const {{
+                            let variant_offset = {variant_offset};
+                            [{fields}]
+                        }};
 
                         ::facet::Variant::builder()
                             .name({variant_name:?})

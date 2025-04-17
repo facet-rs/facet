@@ -47,6 +47,8 @@ unsafe impl ::facet::Facet for EnumWithVariants {
                     .build(),
                 {
                     let fields: &'static [::facet::Field] = &const {
+                        let variant_offset =
+                            ::core::mem::offset_of!(__ShadowReprEnumWithVariants, _fields);
                         [::facet::Field::builder()
                             .name("_0")
                             .shape(|| {
@@ -56,10 +58,7 @@ unsafe impl ::facet::Facet for EnumWithVariants {
                             })
                             .offset(
                                 ::core::mem::offset_of!(__ShadowFieldEnumWithVariants_Variant2, _0)
-                                    + ::core::mem::offset_of!(
-                                        __ShadowReprEnumWithVariants,
-                                        _fields
-                                    ),
+                                    + variant_offset,
                             )
                             .flags(::facet::FieldFlags::EMPTY)
                             .attributes(&[])
@@ -74,6 +73,8 @@ unsafe impl ::facet::Facet for EnumWithVariants {
                 },
                 {
                     let fields: &'static [::facet::Field] = &const {
+                        let variant_offset =
+                            ::core::mem::offset_of!(__ShadowReprEnumWithVariants, _fields);
                         [
                             ::facet::Field::builder()
                                 .name("field1")
@@ -86,10 +87,7 @@ unsafe impl ::facet::Facet for EnumWithVariants {
                                     ::core::mem::offset_of!(
                                         __ShadowFieldEnumWithVariants_Variant3,
                                         field1
-                                    ) + ::core::mem::offset_of!(
-                                        __ShadowReprEnumWithVariants,
-                                        _fields
-                                    ),
+                                    ) + variant_offset,
                                 )
                                 .flags(::facet::FieldFlags::EMPTY)
                                 .attributes(&[])
@@ -105,10 +103,7 @@ unsafe impl ::facet::Facet for EnumWithVariants {
                                     ::core::mem::offset_of!(
                                         __ShadowFieldEnumWithVariants_Variant3,
                                         field2
-                                    ) + ::core::mem::offset_of!(
-                                        __ShadowReprEnumWithVariants,
-                                        _fields
-                                    ),
+                                    ) + variant_offset,
                                 )
                                 .flags(::facet::FieldFlags::EMPTY)
                                 .attributes(&[])
