@@ -13,11 +13,11 @@ categories = ["development-tools", "rust-patterns"]
 [features]
 default = ["std"]
 std = ["alloc"]
-alloc = ["owo-colors/alloc"]
+alloc = ["owo-colors/alloc", "facet-core/alloc"]
 
 [dependencies]
 bitflags = "2.9.0"
-facet-core = { path = "../facet-core", version = "0.8.0" }
+facet-core = { path = "../facet-core", version = "0.8.0", default-features = false }
 log = "0.4.27"
 owo-colors = "4.2.0"
 

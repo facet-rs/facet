@@ -8,15 +8,16 @@ use ariadne::{Color, Config, IndexType, Label, Report, ReportKind, Source};
 use facet_core::{Def, Facet, FieldAttribute, ScalarAffinity};
 use facet_reflect::{HeapValue, Wip};
 use log::trace;
-use yansi::Paint as _;
 
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use owo_colors::OwoColorize;
 
 /// A JSON parse error, with context. Never would've guessed huh.
 #[derive(Debug)]
 pub struct JsonParseErrorWithContext<'input> {
+    #[cfg_attr(not(feature = "rich-diagnostics"), allow(dead_code))]
     input: &'input [u8],
     pos: usize,
     kind: JsonErrorKind,
@@ -103,7 +104,7 @@ impl core::fmt::Display for JsonParseErrorWithContext<'_> {
         };
 
         let mut report = Report::build(ReportKind::Error, (source_id, span_start..span_end))
-            .with_message(format!("Error at {}", self.path.fg(Color::Yellow)))
+            .with_message(format!("Error at {}", self.path.yellow()))
             .with_config(Config::new().with_index_type(IndexType::Byte));
 
         let label = Label::new((source_id, span_start..span_end))

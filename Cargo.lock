@@ -239,7 +239,7 @@ dependencies = [
  "facet-testhelpers",
  "insta",
  "log",
- "yansi",
+ "owo-colors",
 ]
 
 [[package]]
