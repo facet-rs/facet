@@ -27,6 +27,9 @@ RUN apt-get update && apt-get install -y curl libssl-dev pkg-config && \
 # Install tools using cargo-binstall
 RUN cargo binstall -y just cargo-nextest cargo-llvm-cov
 
+# Add the thumbv8m.main-none-eabihf Rust target
+RUN rustup target add thumbv8m.main-none-eabihf
+
 # Set environment variables
 ENV CARGO_INCREMENTAL=0
 ENV CLICOLOR=1
