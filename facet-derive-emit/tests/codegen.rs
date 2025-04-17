@@ -650,3 +650,105 @@ fn enum_with_nested_generic_in_variant_two_levels() {
         "#
     ));
 }
+
+#[test]
+fn struct_with_renamed_field() {
+    // Test a struct with snake_case fields and camelCase rename attributes
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        struct Person {
+            #[facet(rename = "firstName")]
+            first_name: String,
+            #[facet(rename = "lastName")]
+            last_name: String,
+            age: u32,
+        }
+        "#
+    ));
+}
+
+#[test]
+fn tuple_struct_with_renamed_field() {
+    // Test a tuple struct with positional fields that use rename attributes to give descriptive names
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        struct Point(
+            #[facet(rename = "x_coordinate")]
+            f32,
+            #[facet(rename = "y_coordinate")]
+            f32,
+            #[facet(rename = "z_coordinate")]
+            f32,
+        );
+        "#
+    ));
+}
+
+#[test]
+fn enum_with_renamed_variants_and_fields() {
+    // Test an enum with renamed variants and fields, converting from Rust-idiomatic names to API-style names
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        #[repr(u8)]
+        enum ApiResponse {
+            #[facet(rename = "Success")]
+            Ok {
+                #[facet(rename = "responseData")]
+                data: String,
+            },
+            #[facet(rename = "Error")]
+            Err {
+                #[facet(rename = "errorCode")]
+                code: u32,
+                #[facet(rename = "errorMessage")]
+                message: String,
+            },
+        }
+        "#
+    ));
+}
+
+#[test]
+fn mixed_rename_and_sensitive_attributes() {
+    // Test combining rename attributes with sensitive attributes on the same fields
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        struct User {
+            #[facet(rename = "userName")]
+            name: String,
+            #[facet(rename = "userEmail", sensitive)]
+            email: String,
+            #[facet(sensitive)]
+            password: String,
+        }
+        "#
+    ));
+}
+
+#[test]
+fn enum_with_multiple_attributes_per_variant() {
+    // Test an enum with rename attributes on variants and fields, including mixed attributes
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        #[repr(u8)]
+        enum ConfigValue {
+            #[facet(rename = "TextValue")]
+            Text(String),
+            #[facet(rename = "NumberValue")]
+            Number {
+                #[facet(rename = "numValue")]
+                value: f64,
+                #[facet(rename = "unitName", sensitive)]
+                unit: String,
+            },
+            #[facet(rename = "BoolValue")]
+            Boolean(bool),
+        }
+        "#
+    ));
+}
