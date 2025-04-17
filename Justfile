@@ -14,16 +14,18 @@ prepush: clippy test
 ci: precommit prepush docs msrv miri
 
 nostd:
-    # Run alloc but no-std checks with specified target directory
-    cargo check --no-default-features -p facet-core --target-dir target/nostd
-    cargo check --no-default-features -p facet --target-dir target/nostd
-    cargo check --no-default-features -p facet-reflect --target-dir target/nostd
+    rustup target add thumbv8m.main-none-eabihf
 
     # Run alloc but no-std checks with specified target directory
-    cargo check --no-default-features --features alloc -p facet-core --target-dir target/nostd-w-alloc
-    cargo check --no-default-features --features alloc -p facet --target-dir target/nostd-w-alloc
-    cargo check --no-default-features --features alloc -p facet-reflect --target-dir target/nostd-w-alloc
-    cargo check --no-default-features --features alloc -p facet-json --target-dir target/nostd-w-alloc
+    cargo check --no-default-features -p facet-core --target-dir target/nostd --target thumbv8m.main-none-eabihf
+    cargo check --no-default-features -p facet --target-dir target/nostd --target thumbv8m.main-none-eabihf
+    cargo check --no-default-features -p facet-reflect --target-dir target/nostd --target thumbv8m.main-none-eabihf
+
+    # Run alloc but no-std checks with specified target directory
+    cargo check --no-default-features --features alloc -p facet-core --target-dir target/nostd-w-alloc --target thumbv8m.main-none-eabihf
+    cargo check --no-default-features --features alloc -p facet --target-dir target/nostd-w-alloc --target thumbv8m.main-none-eabihf
+    cargo check --no-default-features --features alloc -p facet-reflect --target-dir target/nostd-w-alloc --target thumbv8m.main-none-eabihf
+    cargo check --no-default-features --features alloc -p facet-json --target-dir target/nostd-w-alloc --target thumbv8m.main-none-eabihf
 
 nostd-ci:
     #!/usr/bin/env -S bash -euo pipefail
@@ -33,17 +35,17 @@ nostd-ci:
     export CARGO_TARGET_DIR=target/nostd
 
     # Run each check in its own group with the full command as the title
-    cmd_group "cargo check --no-default-features -p facet-core"
-    cmd_group "cargo check --no-default-features -p facet"
-    cmd_group "cargo check --no-default-features -p facet-reflect"
+    cmd_group "cargo check --no-default-features -p facet-core --target thumbv8m.main-none-eabihf"
+    cmd_group "cargo check --no-default-features -p facet --target thumbv8m.main-none-eabihf"
+    cmd_group "cargo check --no-default-features -p facet-reflect --target thumbv8m.main-none-eabihf"
 
     # Set up target directory for alloc but no-std checks
     export CARGO_TARGET_DIR=target/nostd-w-alloc
 
     # Run each check in its own group with the full command as the title
-    cmd_group "cargo check --no-default-features --features alloc -p facet-core"
-    cmd_group "cargo check --no-default-features --features alloc -p facet"
-    cmd_group "cargo check --no-default-features --features alloc -p facet-reflect"
+    cmd_group "cargo check --no-default-features --features alloc -p facet-core --target thumbv8m.main-none-eabihf"
+    cmd_group "cargo check --no-default-features --features alloc -p facet --target thumbv8m.main-none-eabihf"
+    cmd_group "cargo check --no-default-features --features alloc -p facet-reflect --target thumbv8m.main-none-eabihf"
 
 clippy-all:
     cargo clippy --workspace --all-targets --all-features -- -D warnings
