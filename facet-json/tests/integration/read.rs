@@ -291,13 +291,12 @@ fn test_field_rename_common_case_styles() {
 /// Serialization and deserialization with special symbol characters in field name
 #[test]
 #[cfg(feature = "std")]
-#[ignore]
 fn test_field_rename_with_symbol_chars_name() {
     facet_testhelpers::setup();
 
     #[derive(Debug, PartialEq, Facet)]
     struct SpecialCharsName {
-        #[facet(rename = "@#$%^&€")]
+        #[facet(rename = "@#$%^&")]
         special_chars: String,
     }
 
@@ -306,9 +305,55 @@ fn test_field_rename_with_symbol_chars_name() {
     };
 
     let json = facet_json::to_string(&test_struct);
-    assert_eq!(json, r#"{"@#$%^&€":"special value"}"#);
+    assert_eq!(json, r#"{"@#$%^&":"special value"}"#);
 
     let roundtrip: SpecialCharsName = facet_json::from_str(&json).unwrap();
+    assert_eq!(test_struct, roundtrip);
+}
+
+/// Serialization and deserialization with Unicode characters in field name (emoji)
+#[test]
+#[cfg(feature = "std")]
+fn test_field_rename_with_unicode_name_emoji() {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, PartialEq, Facet)]
+    struct EmojiCharsName {
+        #[facet(rename = "🏀")]
+        ball: String,
+    }
+
+    let test_struct = EmojiCharsName {
+        ball: "🏆".to_string(),
+    };
+
+    let json = facet_json::to_string(&test_struct);
+    assert_eq!(json, r#"{"🏀":"🏆"}"#);
+
+    let roundtrip: EmojiCharsName = facet_json::from_str(&json).unwrap();
+    assert_eq!(test_struct, roundtrip);
+}
+
+/// Serialization and deserialization with Unicode characters in field name (Euro sign)
+#[test]
+#[cfg(feature = "std")]
+fn test_field_rename_with_unicode_name_special_signs() {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, PartialEq, Facet)]
+    struct EmojiCharsName {
+        #[facet(rename = "€℮↑→↓↔↕")]
+        special_chars: String,
+    }
+
+    let test_struct = EmojiCharsName {
+        special_chars: "...".to_string(),
+    };
+
+    let json = facet_json::to_string(&test_struct);
+    assert_eq!(json, r#"{"€℮↑→↓↔↕":"..."}"#);
+
+    let roundtrip: EmojiCharsName = facet_json::from_str(&json).unwrap();
     assert_eq!(test_struct, roundtrip);
 }
 

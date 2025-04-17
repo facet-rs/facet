@@ -48,6 +48,7 @@ impl<'input> JsonParseErrorWithContext<'input> {
             JsonErrorKind::NumberOutOfRange(n) => format!("Number out of range: {}", n),
             JsonErrorKind::StringAsNumber(s) => format!("Expected a string but got number: {}", s),
             JsonErrorKind::UnknownField(f) => format!("Unknown field: {}", f),
+            JsonErrorKind::InvalidUtf8(e) => format!("Invalid UTF-8 encoding: {}", e),
         }
     }
 }
@@ -65,6 +66,8 @@ pub enum JsonErrorKind {
     StringAsNumber(String),
     /// An unexpected field name was encountered in the input.
     UnknownField(String),
+    /// A string that could not be built into valid UTF-8 Unicode
+    InvalidUtf8(String),
 }
 
 #[cfg(not(feature = "rich-diagnostics"))]
@@ -183,7 +186,7 @@ pub fn from_slice_wip<'input, 'a>(
     }
     macro_rules! bail {
         ($kind:expr) => {
-            return err!($kind);
+            return err!($kind)
         };
     }
 
@@ -317,8 +320,8 @@ pub fn from_slice_wip<'input, 'a>(
                     }
                     b'"' => {
                         pos += 1;
-                        // our value is a string
-                        let mut value = String::new();
+                        // Our value is a string: collect bytes first
+                        let mut bytes = Vec::new();
                         loop {
                             let Some(c) = input.get(pos).copied() else {
                                 bail!(JsonErrorKind::UnexpectedEof);
@@ -329,15 +332,33 @@ pub fn from_slice_wip<'input, 'a>(
                                     break;
                                 }
                                 b'\\' => {
-                                    pos += 2;
-                                    value.push('\\');
+                                    // Handle escape sequences
+                                    pos += 1;
+                                    if let Some(next) = input.get(pos) {
+                                        bytes.push(*next);
+                                        pos += 1;
+                                    } else {
+                                        bail!(JsonErrorKind::UnexpectedEof);
+                                    }
                                 }
                                 _ => {
+                                    bytes.push(c);
                                     pos += 1;
-                                    value.push(c as char);
                                 }
                             }
                         }
+
+                        // Convert collected bytes to string at once
+                        let value = match core::str::from_utf8(&bytes) {
+                            Ok(s) => s.to_string(),
+                            Err(e) => {
+                                bail!(JsonErrorKind::InvalidUtf8(format!(
+                                    "Invalid UTF-8 sequence: {}",
+                                    e
+                                )))
+                            }
+                        };
+
                         trace!(
                             "Parsed string value: {:?} for shape {}",
                             value.yellow(),
