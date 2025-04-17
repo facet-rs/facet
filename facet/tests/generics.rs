@@ -1,5 +1,3 @@
-use std::hash::Hash;
-
 use facet::{Def, Facet};
 
 #[test]
@@ -27,6 +25,7 @@ fn vec_wrapper() {
     assert_eq!(t.shape(), u32::SHAPE);
 }
 
+#[cfg(feature = "std")]
 #[test]
 fn hash_map_wrapper() {
     use std::collections::HashMap;
@@ -34,7 +33,7 @@ fn hash_map_wrapper() {
     #[derive(Facet)]
     struct HashMapWrapper<K, V>
     where
-        K: Hash + Eq + 'static,
+        K: core::hash::Hash + Eq + 'static,
         V: 'static,
     {
         map: HashMap<K, V>,
@@ -131,6 +130,7 @@ fn type_params_vec_f64() {
     assert_eq!(t.shape(), f64::SHAPE);
 }
 
+#[cfg(feature = "std")]
 #[test]
 fn type_params_hash_map_string_u8() {
     use std::collections::HashMap;
