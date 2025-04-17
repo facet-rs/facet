@@ -88,7 +88,6 @@ pub struct VariantBuilder {
     name: Option<&'static str>,
     discriminant: Option<i64>,
     fields: Option<Struct>,
-    offset: Option<usize>,
     doc: &'static [&'static str],
 }
 
@@ -100,7 +99,6 @@ impl VariantBuilder {
             name: None,
             discriminant: None,
             fields: None,
-            offset: None,
             doc: &[],
         }
     }
@@ -120,12 +118,6 @@ impl VariantBuilder {
     /// Sets the fields for the Variant
     pub const fn fields(mut self, fields: Struct) -> Self {
         self.fields = Some(fields);
-        self
-    }
-
-    /// Sets the offset for the Variant
-    pub const fn offset(mut self, offset: usize) -> Self {
-        self.offset = Some(offset);
         self
     }
 

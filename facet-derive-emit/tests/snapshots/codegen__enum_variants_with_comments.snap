@@ -1,6 +1,7 @@
 ---
 source: facet-derive-emit/tests/codegen.rs
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n        enum CommentedEnum {\n            /// This is variant A\n            #[allow(dead_code)]\n            A,\n            /// This is variant B\n            /// with multiple lines\n            #[allow(dead_code)]\n            B(u32),\n            /// This is variant C\n            /// which has named fields\n            #[allow(dead_code)]\n            C {\n                /// This is field x\n                x: u32,\n                /// This is field y\n                y: String,\n            },\n        }\n        \"#)"
+snapshot_kind: text
 ---
 #[used]
 static COMMENTED_ENUM_SHAPE: &'static ::facet::Shape = <CommentedEnum as ::facet::Facet>::SHAPE;
@@ -23,7 +24,6 @@ unsafe impl ::facet::Facet for CommentedEnum {
                 ::facet::Variant::builder()
                     .name("A")
                     .discriminant(0)
-                    .offset(0)
                     .fields(::facet::Struct::builder().unit().build())
                     .doc(&[" This is variant A"])
                     .build(),
@@ -40,7 +40,6 @@ unsafe impl ::facet::Facet for CommentedEnum {
                     ::facet::Variant::builder()
                         .name("B")
                         .discriminant(1)
-                        .offset(0)
                         .fields(::facet::Struct::builder().tuple().fields(fields).build())
                         .doc(&[" This is variant B", " with multiple lines"])
                         .build()
@@ -69,7 +68,6 @@ unsafe impl ::facet::Facet for CommentedEnum {
                     ::facet::Variant::builder()
                         .name("C")
                         .discriminant(2)
-                        .offset(0)
                         .fields(::facet::Struct::builder().struct_().fields(fields).build())
                         .doc(&[" This is variant C", " which has named fields"])
                         .build()

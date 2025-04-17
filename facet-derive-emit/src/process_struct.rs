@@ -33,6 +33,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                         &struct_name,
                         &generics_use,
                         &field.value.attributes,
+                        None,
                     )
                 })
                 .collect::<Vec<String>>()
@@ -56,6 +57,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                         &struct_name,
                         &generics_use,
                         &field.value.attributes,
+                        None,
                     )
                 })
                 .collect::<Vec<String>>()

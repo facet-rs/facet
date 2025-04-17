@@ -1,6 +1,7 @@
 ---
 source: facet-derive-emit/tests/codegen.rs
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(name = \"MyCoolEnum\", repr = \"u16\")]\n        #[repr(u16)] // Ensure repr matches if specified in facet attribute\n        enum EnumWithAttributes {\n            #[facet(name = \"FirstVariant\", discriminant = 10)]\n            VariantA,\n\n            #[facet(skip)]\n            InternalVariant(i32),\n\n            #[facet(deprecated = \"Use VariantD instead\")]\n            VariantC {\n                #[facet(sensitive)]\n                secret: String\n            },\n\n            VariantD {\n                 #[facet(default = \"forty_two\")]\n                 value: i32\n            },\n        }\n        \"#)"
+snapshot_kind: text
 ---
 #[used]
 static ENUM_WITH_ATTRIBUTES_SHAPE: &'static ::facet::Shape =
@@ -28,7 +29,6 @@ unsafe impl ::facet::Facet for EnumWithAttributes {
                 ::facet::Variant::builder()
                     .name("VariantA")
                     .discriminant(0)
-                    .offset(0)
                     .fields(::facet::Struct::builder().unit().build())
                     .build(),
                 {
@@ -51,7 +51,6 @@ unsafe impl ::facet::Facet for EnumWithAttributes {
                     ::facet::Variant::builder()
                         .name("InternalVariant")
                         .discriminant(1)
-                        .offset(0)
                         .fields(::facet::Struct::builder().tuple().fields(fields).build())
                         .build()
                 },
@@ -75,7 +74,6 @@ unsafe impl ::facet::Facet for EnumWithAttributes {
                     ::facet::Variant::builder()
                         .name("VariantC")
                         .discriminant(2)
-                        .offset(0)
                         .fields(::facet::Struct::builder().struct_().fields(fields).build())
                         .build()
                 },
@@ -101,7 +99,6 @@ unsafe impl ::facet::Facet for EnumWithAttributes {
                     ::facet::Variant::builder()
                         .name("VariantD")
                         .discriminant(3)
-                        .offset(0)
                         .fields(::facet::Struct::builder().struct_().fields(fields).build())
                         .build()
                 },

@@ -1,6 +1,7 @@
 ---
 source: facet-derive-emit/tests/codegen.rs
 expression: "expand(r#\"\n        #[allow(dead_code)]\n        #[derive(Facet)]\n        #[repr(u8)]\n        enum E<'a, T: Facet + core::hash::Hash, const C: usize = 3>\n        where\n            T: Debug, // Added Debug bound\n             [u8; C]: Debug, // Added Debug bound\n        {\n            Unit,\n            Tuple(T, core::marker::PhantomData<&'a [u8; C]>),\n            Record {\n                field: T,\n                phantom: core::marker::PhantomData<&'a ()>,\n                constant_val: [u8; C],\n            },\n        }\n        \"#)"
+snapshot_kind: text
 ---
 #[automatically_derived]
 unsafe impl<'a, T: Facet + core::hash::Hash, const C: usize> ::facet::Facet for E<'a, T, C>
@@ -38,7 +39,6 @@ where
                 ::facet::Variant::builder()
                     .name("Unit")
                     .discriminant(0)
-                    .offset(0)
                     .fields(::facet::Struct::builder().unit().build())
                     .build(),
                 {
@@ -63,7 +63,6 @@ where
                     ::facet::Variant::builder()
                         .name("Tuple")
                         .discriminant(1)
-                        .offset(0)
                         .fields(::facet::Struct::builder().tuple().fields(fields).build())
                         .build()
                 },
@@ -110,7 +109,6 @@ where
                     ::facet::Variant::builder()
                         .name("Record")
                         .discriminant(2)
-                        .offset(0)
                         .fields(::facet::Struct::builder().struct_().fields(fields).build())
                         .build()
                 },

@@ -294,7 +294,6 @@ fn process_c_style_enum(
                     "::facet::Variant::builder()
                     .name({variant_name:?})
                     .discriminant({discriminant_value})
-                    .offset(::core::mem::offset_of!({shadow_repr_name}, _fields))
                     .fields(::facet::Struct::builder().unit().build())
                     {maybe_doc}
                     .build()",
@@ -326,6 +325,9 @@ fn process_c_style_enum(
                     "#[repr(C)] struct {shadow_struct_name}<{generics_def}> {where_clauses} {{  {fields_with_types} }}",
                 ));
 
+                let variant_offset =
+                    format!("::core::mem::offset_of!({shadow_repr_name}, _fields)");
+
                 // Build the list of field types with calculated offsets
                 let fields = tuple
                     .fields
@@ -340,6 +342,7 @@ fn process_c_style_enum(
                             &shadow_struct_name,
                             generics_use,
                             &field.value.attributes,
+                            Some(&variant_offset),
                         )
                     })
                     .collect::<Vec<String>>()
@@ -355,7 +358,6 @@ fn process_c_style_enum(
                         ::facet::Variant::builder()
                             .name({variant_name:?})
                             .discriminant({discriminant_value})
-                            .offset(::core::mem::offset_of!({shadow_repr_name}, _fields))
                             .fields(::facet::Struct::builder().tuple().fields(fields).build())
                             {maybe_doc}
                             .build()
@@ -388,6 +390,9 @@ fn process_c_style_enum(
                     "#[repr(C)] struct {shadow_struct_name}<{generics_def}> {where_clauses} {{  {fields_with_types} }}"
                 ));
 
+                let variant_offset =
+                    format!("::core::mem::offset_of!({shadow_repr_name}, _fields)");
+
                 // Build the list of field types with calculated offsets
                 let fields = struct_var
                     .fields
@@ -401,6 +406,7 @@ fn process_c_style_enum(
                             &shadow_struct_name,
                             generics_use,
                             &field.value.attributes,
+                            Some(&variant_offset),
                         )
                     })
                     .collect::<Vec<String>>()
@@ -415,8 +421,7 @@ fn process_c_style_enum(
 
                         ::facet::Variant::builder()
                             .name({variant_name:?})
-                            .discriminant(discriminant_value)
-                            .offset(::core::mem::offset_of!({shadow_repr_name}, _fields))
+                            .discriminant({discriminant_value})
                             .fields(::facet::Struct::builder().struct_().fields(fields).build())
                             {maybe_doc}
                             .build()
@@ -466,7 +471,6 @@ fn process_primitive_enum(
                     "::facet::Variant::builder()
                     .name({variant_name:?})
                     .discriminant({discriminant_value})
-                    .offset(0)
                     .fields(::facet::Struct::builder().unit().build())
                     {maybe_doc}
                     .build()",
@@ -513,6 +517,7 @@ fn process_primitive_enum(
                             &shadow_struct_name,
                             generics_use,
                             &field.value.attributes,
+                            None,
                         )
                     })
                     .collect::<Vec<String>>()
@@ -528,7 +533,6 @@ fn process_primitive_enum(
                         ::facet::Variant::builder()
                             .name({variant_name:?})
                             .discriminant({discriminant_value})
-                            .offset(0)
                             .fields(::facet::Struct::builder().tuple().fields(fields).build())
                             {maybe_doc}
                             .build()
@@ -575,6 +579,7 @@ fn process_primitive_enum(
                             &shadow_struct_name,
                             generics_use,
                             &field.value.attributes,
+                            None,
                         )
                     })
                     .collect::<Vec<String>>()
@@ -592,7 +597,6 @@ fn process_primitive_enum(
                         ::facet::Variant::builder()
                             .name({variant_name:?})
                             .discriminant({discriminant_value})
-                            .offset(0)
                             .fields(::facet::Struct::builder().struct_().fields(fields).build())
                             {maybe_doc}
                             .build()

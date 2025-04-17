@@ -1,6 +1,7 @@
 ---
 source: facet-derive-emit/tests/codegen.rs
 expression: "expand(r#\"\n        /// Network packet types\n        #[derive(Facet)]\n        #[repr(u8)]\n        pub enum Packet {\n            /// Array of bytes representing the header\n            Header([u8; 4]),\n            Payload(Vec<u8>), // Add another variant for completeness\n        }\n        \"#)"
+snapshot_kind: text
 ---
 #[used]
 static PACKET_SHAPE: &'static ::facet::Shape = <Packet as ::facet::Facet>::SHAPE;
@@ -32,7 +33,6 @@ unsafe impl ::facet::Facet for Packet {
                     ::facet::Variant::builder()
                         .name("Header")
                         .discriminant(0)
-                        .offset(0)
                         .fields(::facet::Struct::builder().tuple().fields(fields).build())
                         .doc(&[" Array of bytes representing the header"])
                         .build()
@@ -50,7 +50,6 @@ unsafe impl ::facet::Facet for Packet {
                     ::facet::Variant::builder()
                         .name("Payload")
                         .discriminant(1)
-                        .offset(0)
                         .fields(::facet::Struct::builder().tuple().fields(fields).build())
                         .build()
                 },

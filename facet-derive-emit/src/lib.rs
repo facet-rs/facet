@@ -113,11 +113,16 @@ pub(crate) fn build_maybe_doc(attrs: &[Attribute]) -> String {
     }
 }
 
+/// Generates field definitions for a struct
+///
+/// `base_field_offset` applies a shift to the field offset, which is useful for
+/// generating fields for a struct that is part of a #[repr(C)] enum.
 pub(crate) fn gen_struct_field(
     field_name: &str,
     struct_name: &str,
     generics: &str,
     attrs: &[Attribute],
+    base_field_offset: Option<&str>,
 ) -> String {
     // Determine field flags
     let mut flags = "::facet::FieldFlags::EMPTY";
@@ -168,12 +173,16 @@ pub(crate) fn gen_struct_field(
         format!(r#".doc(&[{}])"#, doc_lines.join(","))
     };
 
+    let maybe_base_field_offset = base_field_offset
+        .map(|offset| format!(" + {offset}"))
+        .unwrap_or_default();
+
     // Generate each field definition
     format!(
         "::facet::Field::builder()
     .name(\"{field_name}\")
     .shape(|| ::facet::{shape_of}(&|s: &{struct_name}<{generics}>| &s.{field_name}))
-    .offset(::core::mem::offset_of!({struct_name}<{generics}>, {field_name}))
+    .offset(::core::mem::offset_of!({struct_name}<{generics}>, {field_name}){maybe_base_field_offset})
     .flags({flags})
     .attributes(&[{attributes}])
     {maybe_field_doc}

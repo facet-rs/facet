@@ -1,6 +1,7 @@
 ---
 source: facet-derive-emit/tests/codegen.rs
 expression: "expand(r#\"\n        /// This is an enum\n        #[derive(Facet)]\n        #[repr(u8)]\n        enum MyEnum {\n            #[allow(dead_code)]\n            A,\n            #[allow(dead_code)]\n            B,\n        }\n        \"#)"
+snapshot_kind: text
 ---
 #[used]
 static MY_ENUM_SHAPE: &'static ::facet::Shape = <MyEnum as ::facet::Facet>::SHAPE;
@@ -12,13 +13,11 @@ unsafe impl ::facet::Facet for MyEnum {
                 ::facet::Variant::builder()
                     .name("A")
                     .discriminant(0)
-                    .offset(0)
                     .fields(::facet::Struct::builder().unit().build())
                     .build(),
                 ::facet::Variant::builder()
                     .name("B")
                     .discriminant(1)
-                    .offset(0)
                     .fields(::facet::Struct::builder().unit().build())
                     .build(),
             ]

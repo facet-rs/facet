@@ -1,6 +1,7 @@
 ---
 source: facet-derive-emit/tests/codegen.rs
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n        enum DeeplyNested<T> {\n            LevelOne(\n                Option<\n                    Result<\n                        Vec<T>,\n                        String\n                    >\n                >\n            ),\n            // Another variant to prove non-nested still works.\n            Simple(T),\n        }\n        \"#)"
+snapshot_kind: text
 ---
 #[automatically_derived]
 unsafe impl<T> ::facet::Facet for DeeplyNested<T>
@@ -44,7 +45,6 @@ where
                     ::facet::Variant::builder()
                         .name("LevelOne")
                         .discriminant(0)
-                        .offset(0)
                         .fields(::facet::Struct::builder().tuple().fields(fields).build())
                         .build()
                 },
@@ -63,7 +63,6 @@ where
                     ::facet::Variant::builder()
                         .name("Simple")
                         .discriminant(1)
-                        .offset(0)
                         .fields(::facet::Struct::builder().tuple().fields(fields).build())
                         .build()
                 },

@@ -1,6 +1,7 @@
 ---
 source: facet-derive-emit/tests/codegen.rs
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(C)]\n        enum EnumWithVariants {\n            /// Comment A\n            Variant1,\n            /// Comment B\n            Variant2(i32),\n            Variant3 { field1: i32, field2: String },\n        }\n        \"#)"
+snapshot_kind: text
 ---
 #[used]
 static ENUM_WITH_VARIANTS_SHAPE: &'static ::facet::Shape =
@@ -41,10 +42,6 @@ unsafe impl ::facet::Facet for EnumWithVariants {
                 ::facet::Variant::builder()
                     .name("Variant1")
                     .discriminant(0)
-                    .offset(::core::mem::offset_of!(
-                        __ShadowReprEnumWithVariants,
-                        _fields
-                    ))
                     .fields(::facet::Struct::builder().unit().build())
                     .doc(&[" Comment A"])
                     .build(),
@@ -57,10 +54,13 @@ unsafe impl ::facet::Facet for EnumWithVariants {
                                     &s._0
                                 })
                             })
-                            .offset(::core::mem::offset_of!(
-                                __ShadowFieldEnumWithVariants_Variant2,
-                                _0
-                            ))
+                            .offset(
+                                ::core::mem::offset_of!(__ShadowFieldEnumWithVariants_Variant2, _0)
+                                    + ::core::mem::offset_of!(
+                                        __ShadowReprEnumWithVariants,
+                                        _fields
+                                    ),
+                            )
                             .flags(::facet::FieldFlags::EMPTY)
                             .attributes(&[])
                             .build()]
@@ -68,10 +68,6 @@ unsafe impl ::facet::Facet for EnumWithVariants {
                     ::facet::Variant::builder()
                         .name("Variant2")
                         .discriminant(1)
-                        .offset(::core::mem::offset_of!(
-                            __ShadowReprEnumWithVariants,
-                            _fields
-                        ))
                         .fields(::facet::Struct::builder().tuple().fields(fields).build())
                         .doc(&[" Comment B"])
                         .build()
@@ -86,10 +82,15 @@ unsafe impl ::facet::Facet for EnumWithVariants {
                                         &|s: &__ShadowFieldEnumWithVariants_Variant3| &s.field1,
                                     )
                                 })
-                                .offset(::core::mem::offset_of!(
-                                    __ShadowFieldEnumWithVariants_Variant3,
-                                    field1
-                                ))
+                                .offset(
+                                    ::core::mem::offset_of!(
+                                        __ShadowFieldEnumWithVariants_Variant3,
+                                        field1
+                                    ) + ::core::mem::offset_of!(
+                                        __ShadowReprEnumWithVariants,
+                                        _fields
+                                    ),
+                                )
                                 .flags(::facet::FieldFlags::EMPTY)
                                 .attributes(&[])
                                 .build(),
@@ -100,10 +101,15 @@ unsafe impl ::facet::Facet for EnumWithVariants {
                                         &|s: &__ShadowFieldEnumWithVariants_Variant3| &s.field2,
                                     )
                                 })
-                                .offset(::core::mem::offset_of!(
-                                    __ShadowFieldEnumWithVariants_Variant3,
-                                    field2
-                                ))
+                                .offset(
+                                    ::core::mem::offset_of!(
+                                        __ShadowFieldEnumWithVariants_Variant3,
+                                        field2
+                                    ) + ::core::mem::offset_of!(
+                                        __ShadowReprEnumWithVariants,
+                                        _fields
+                                    ),
+                                )
                                 .flags(::facet::FieldFlags::EMPTY)
                                 .attributes(&[])
                                 .build(),
@@ -111,11 +117,7 @@ unsafe impl ::facet::Facet for EnumWithVariants {
                     };
                     ::facet::Variant::builder()
                         .name("Variant3")
-                        .discriminant(discriminant_value)
-                        .offset(::core::mem::offset_of!(
-                            __ShadowReprEnumWithVariants,
-                            _fields
-                        ))
+                        .discriminant(2)
                         .fields(::facet::Struct::builder().struct_().fields(fields).build())
                         .build()
                 },
