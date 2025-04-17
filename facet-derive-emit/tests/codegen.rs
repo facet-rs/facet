@@ -33,7 +33,6 @@ fn tuple_struct() {
 
 #[test]
 fn simple_struct() {
-    // Renamed from struct_with_fields to match prompt
     insta::assert_snapshot!(expand(
         r#"
         #[derive(Facet)]
@@ -79,7 +78,6 @@ fn repr_c_enum() {
 
 #[test]
 fn struct_with_generics_simple() {
-    // Renamed from struct_with_generics
     insta::assert_snapshot!(expand(
         r#"
         #[derive(Facet)]
@@ -90,8 +88,6 @@ fn struct_with_generics_simple() {
         "#
     ));
 }
-
-// --- Added tests based on prompt ---
 
 #[test]
 fn struct_with_sensitive_field() {
