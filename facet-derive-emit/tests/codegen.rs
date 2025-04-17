@@ -61,6 +61,23 @@ fn enum_with_variants() {
 }
 
 #[test]
+fn repr_c_enum() {
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        #[repr(C)]
+        enum EnumWithVariants {
+            /// Comment A
+            Variant1,
+            /// Comment B
+            Variant2(i32),
+            Variant3 { field1: i32, field2: String },
+        }
+        "#
+    ));
+}
+
+#[test]
 fn struct_with_generics_simple() {
     // Renamed from struct_with_generics
     insta::assert_snapshot!(expand(
