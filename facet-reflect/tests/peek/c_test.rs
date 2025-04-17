@@ -1,5 +1,5 @@
 use facet_reflect::Peek;
-use yansi::Paint as _;
+use owo_colors::OwoColorize;
 
 #[test]
 fn test_sample_libc() {

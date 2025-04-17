@@ -1,5 +1,5 @@
 use facet_core::{Def, FieldError, Variant};
-use yansi::Paint as _;
+use owo_colors::OwoColorize;
 
 use crate::{ISet, ReflectError, Wip};
 

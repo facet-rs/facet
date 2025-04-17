@@ -1,4 +1,4 @@
-use core::alloc::Layout;
+use core::{alloc::Layout, write};
 
 use alloc::{
     boxed::Box,

@@ -2,7 +2,7 @@ use crate::ReflectError;
 use core::{alloc::Layout, marker::PhantomData};
 
 use facet_core::{Facet, PtrConst, PtrMut, Shape};
-use yansi::Paint as _;
+use owo_colors::OwoColorize as _;
 
 /// A type-erased value stored on the heap
 pub struct HeapValue<'a> {

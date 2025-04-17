@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use yansi::Paint as _;
+use owo_colors::OwoColorize;
 
 /// Test case structure for compilation tests
 struct CompilationTest {
@@ -47,7 +47,7 @@ fn run_compilation_test(test: &CompilationTest) {
     let project_dir = temp_dir.path();
     println!(
         "{}",
-        format!("  Project directory: {}", project_dir.display()).dim()
+        format!("  Project directory: {}", project_dir.display()).dimmed()
     );
 
     // Get absolute paths to the facet crates

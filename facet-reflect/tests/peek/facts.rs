@@ -2,7 +2,7 @@ use std::{cmp::Ordering, collections::HashSet};
 
 use facet::Facet;
 use facet_reflect::{Peek, Wip};
-use yansi::{Paint as _, Style};
+use owo_colors::{OwoColorize, Style};
 
 fn check_facts<T>(val1: T, val2: T, expected_facts: HashSet<Fact>)
 where
@@ -42,14 +42,14 @@ where
     // Format display representation
     if l.shape().vtable.display.is_some() {
         facts.insert(Fact::Display);
-        let display_str = format!("{} vs {}", l.paint(remarkable), r.paint(remarkable));
+        let display_str = format!("{} vs {}", l.style(remarkable), r.style(remarkable));
         eprintln!("Display:   {}", display_str);
     }
 
     // Format debug representation
     if l.shape().vtable.debug.is_some() {
         facts.insert(Fact::Debug);
-        let debug_str = format!("{:?} vs {:?}", l.paint(remarkable), r.paint(remarkable));
+        let debug_str = format!("{:?} vs {:?}", l.style(remarkable), r.style(remarkable));
         eprintln!("Debug:     {}", debug_str);
     }
 
@@ -58,9 +58,9 @@ where
         facts.insert(Fact::EqualAnd { l_eq_r: eq_result });
         let eq_str = format!(
             "{:?} {} {:?}",
-            l.paint(remarkable),
+            l.style(remarkable),
             if eq_result { "==" } else { "!=" }.yellow(),
-            r.paint(remarkable),
+            r.style(remarkable),
         );
         eprintln!("Equality:  {}", eq_str);
     }
@@ -77,9 +77,9 @@ where
         };
         let cmp_str = format!(
             "{:?} {} {:?}",
-            l.paint(remarkable),
+            l.style(remarkable),
             cmp_symbol.yellow(),
-            r.paint(remarkable),
+            r.style(remarkable),
         );
         eprintln!("Ordering:  {}", cmp_str);
     }
@@ -88,7 +88,7 @@ where
     if let Ok(wip) = Wip::alloc::<T>().put_default() {
         let val = wip.build().unwrap();
         facts.insert(Fact::Default);
-        eprintln!("Default:   {}", format!("{:?}", val).paint(remarkable));
+        eprintln!("Default:   {}", format!("{:?}", val).style(remarkable));
     }
 
     // Test clone
@@ -104,7 +104,7 @@ where
         expected_facts == facts,
         "{} for {}: ({:?} vs {:?})\n{}\n{}",
         "Facts mismatch".red().bold(),
-        name.paint(remarkable),
+        name.style(remarkable),
         l.red(),
         r.blue(),
         expected_minus_actual

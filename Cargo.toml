@@ -30,7 +30,7 @@ members = [
     "facet-urlencoded",
     "facet-yaml",
 ]
-exclude = ["sample"]
+exclude = ["sample", "nostd-consumer"]
 resolver = "3"
 
 [workspace.package]

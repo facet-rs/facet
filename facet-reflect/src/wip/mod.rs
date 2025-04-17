@@ -6,7 +6,7 @@ use core::{fmt, marker::PhantomData};
 use facet_core::{Def, Facet, FieldError, PtrConst, PtrMut, PtrUninit, Shape, Variant};
 use flat_map::FlatMap;
 use log::trace;
-use yansi::Paint as _;
+use owo_colors::OwoColorize;
 
 use alloc::string::String;
 
@@ -1485,9 +1485,9 @@ impl<'a> Wip<'a> {
             self.frames.len(),
             frame_shape.blue(),
             if init {
-                "✅ fully".green()
+                "✅ fully".style(owo_colors::Style::new().green())
             } else {
-                "🚧 partially".red()
+                "🚧 partially".style(owo_colors::Style::new().red())
             }
         );
         if init {
@@ -1809,9 +1809,9 @@ impl Drop for Wip<'_> {
                 frame.istate.flags.bright_magenta(),
                 frame.istate.mode.yellow(),
                 if frame.is_fully_initialized() {
-                    "✅".green()
+                    "✅"
                 } else {
-                    "❌".red()
+                    "❌"
                 }
             );
 
