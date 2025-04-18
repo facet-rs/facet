@@ -1,6 +1,6 @@
 [package]
 name = "facet-reflect"
-version = "0.9.0"
+version = "0.9.1"
 authors.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -18,7 +18,7 @@ categories = ["encoding", "parsing", "data-structures"]
 
 [dependencies]
 facet-core = { version = "0.9.0", path = "../facet-core" }
-facet-reflect = { version = "0.9.0", path = "../facet-reflect" }
+facet-reflect = { version = "0.9.1", path = "../facet-reflect" }
 log = "0.4.27"
 
 [dev-dependencies]
