@@ -232,10 +232,10 @@ fn process_c_style_enum(
     let shadow_discriminant_name = format!("__ShadowDiscriminant{enum_name}");
     let all_variant_names = variants
         .iter()
-        .map(|var_like| match &var_like.value {
-            EnumVariantLike::Unit(unit) => unit.name.to_string(),
-            EnumVariantLike::Tuple(tuple) => tuple.name.to_string(),
-            EnumVariantLike::Struct(struct_var) => struct_var.name.to_string(),
+        .map(|var_like| match &var_like.value.variant {
+            EnumVariantData::Unit(unit) => unit.name.to_string(),
+            EnumVariantData::Tuple(tuple) => tuple.name.to_string(),
+            EnumVariantData::Struct(struct_var) => struct_var.name.to_string(),
         })
         .collect::<Vec<_>>()
         .join(", ");
@@ -249,10 +249,10 @@ fn process_c_style_enum(
     let shadow_union_name = format!("__ShadowFields{enum_name}");
     let all_union_fields = variants
         .iter()
-        .map(|var_like| match &var_like.value {
-            EnumVariantLike::Unit(unit) => unit.name.to_string(),
-            EnumVariantLike::Tuple(tuple) => tuple.name.to_string(),
-            EnumVariantLike::Struct(struct_var) => struct_var.name.to_string(),
+        .map(|var_like| match &var_like.value.variant {
+            EnumVariantData::Unit(unit) => unit.name.to_string(),
+            EnumVariantData::Tuple(tuple) => tuple.name.to_string(),
+            EnumVariantData::Struct(struct_var) => struct_var.name.to_string(),
         })
         .map(|variant_name| {
             format!(
@@ -276,10 +276,15 @@ fn process_c_style_enum(
         }}",
     ));
 
-    // Process each variant using enumerate to get discriminant values
-    for (discriminant_value, var_like) in variants.iter().enumerate() {
-        match &var_like.value {
-            EnumVariantLike::Unit(unit) => {
+    // Discriminant values are either manually defined, or incremented from the last one
+    // See: <https://doc.rust-lang.org/reference/items/enumerations.html#implicit-discriminants>
+    let mut discriminant_value = 0;
+    for var_like in variants.iter() {
+        if let Some(x) = &var_like.value.discriminant {
+            discriminant_value = x.second.value();
+        }
+        match &var_like.value.variant {
+            EnumVariantData::Unit(unit) => {
                 let variant_name = unit.name.to_string();
                 let maybe_doc = build_maybe_doc(&unit.attributes);
 
@@ -299,7 +304,7 @@ fn process_c_style_enum(
                     .build()",
                 ));
             }
-            EnumVariantLike::Tuple(tuple) => {
+            EnumVariantData::Tuple(tuple) => {
                 let variant_name = tuple.name.to_string();
                 let maybe_doc = build_maybe_doc(&tuple.attributes);
 
@@ -364,7 +369,7 @@ fn process_c_style_enum(
                     }}",
                 ));
             }
-            EnumVariantLike::Struct(struct_var) => {
+            EnumVariantData::Struct(struct_var) => {
                 let variant_name = struct_var.name.to_string();
                 let maybe_doc = build_maybe_doc(&struct_var.attributes);
 
@@ -429,6 +434,7 @@ fn process_c_style_enum(
                 ));
             }
         }
+        discriminant_value += 1;
     }
 
     ProcessedEnumBody {
@@ -460,10 +466,15 @@ fn process_primitive_enum(
     let mut shadow_struct_defs = Vec::new();
     let mut variant_expressions = Vec::new();
 
-    // Process each variant using enumerate to get discriminant values
-    for (discriminant_value, var_like) in variants.iter().enumerate() {
-        match &var_like.value {
-            EnumVariantLike::Unit(unit) => {
+    // Discriminant values are either manually defined, or incremented from the last one
+    // See: <https://doc.rust-lang.org/reference/items/enumerations.html#implicit-discriminants>
+    let mut discriminant_value = 0;
+    for var_like in variants.iter() {
+        if let Some(x) = &var_like.value.discriminant {
+            discriminant_value = x.second.value();
+        }
+        match &var_like.value.variant {
+            EnumVariantData::Unit(unit) => {
                 let variant_name = unit.name.to_string();
                 let maybe_doc = build_maybe_doc(&unit.attributes);
 
@@ -476,7 +487,7 @@ fn process_primitive_enum(
                     .build()",
                 ));
             }
-            EnumVariantLike::Tuple(tuple) => {
+            EnumVariantData::Tuple(tuple) => {
                 let variant_name = tuple.name.to_string();
                 let maybe_doc = build_maybe_doc(&tuple.attributes);
 
@@ -539,7 +550,7 @@ fn process_primitive_enum(
                     }}",
                 ));
             }
-            EnumVariantLike::Struct(struct_var) => {
+            EnumVariantData::Struct(struct_var) => {
                 let variant_name = struct_var.name.to_string();
                 let maybe_doc = build_maybe_doc(&struct_var.attributes);
 
@@ -604,6 +615,7 @@ fn process_primitive_enum(
                 ));
             }
         }
+        discriminant_value += 1;
     }
 
     ProcessedEnumBody {

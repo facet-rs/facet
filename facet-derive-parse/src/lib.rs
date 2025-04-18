@@ -328,8 +328,17 @@ unsynn! {
         pub body: BraceGroupContaining<CommaDelimitedVec<EnumVariantLike>>,
     }
 
+    /// Represents a variant of an enum, including the optional discriminant value
+    pub struct EnumVariantLike {
+        /// The actual variant
+        pub variant: EnumVariantData,
+        /// The optional discriminant value
+        pub discriminant: Option<Cons<Eq, LiteralInteger>>
+
+    }
+
     /// Represents the different kinds of variants an enum can have.
-    pub enum EnumVariantLike {
+    pub enum EnumVariantData {
         /// A tuple-like variant, e.g., `Variant(u32, String)`.
         Tuple(TupleVariant),
         /// A struct-like variant, e.g., `Variant { field1: u32, field2: String }`.

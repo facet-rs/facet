@@ -60,6 +60,22 @@ fn enum_with_variants() {
 }
 
 #[test]
+fn enum_with_discriminants() {
+    insta::assert_snapshot!(expand(
+        r#"
+        #[repr(u8)]
+        #[derive(Facet)]
+        enum Test {
+          Red,
+          Blue = 7,
+          Green,
+          Yellow = 10,
+        }
+        "#
+    ));
+}
+
+#[test]
 fn repr_c_enum() {
     insta::assert_snapshot!(expand(
         r#"
