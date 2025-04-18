@@ -18,9 +18,6 @@ members = [
     # test helpers
     "facet-testhelpers",
 
-    # test libs
-    "facet-samplelibc",
-
     # formats / ecosystem
     "facet-args",
     "facet-json",
@@ -30,7 +27,7 @@ members = [
     "facet-urlencoded",
     "facet-yaml",
 ]
-exclude = ["sample", "nostd-consumer"]
+exclude = ["outside-workspace"]
 resolver = "3"
 
 [workspace.package]

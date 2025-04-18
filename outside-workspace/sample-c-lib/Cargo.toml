@@ -1,8 +1,10 @@
 [package]
-name = "sample"
+name = "sample-c-lib"
 publish = false
 edition = "2024"
 
+[build-dependencies]
+cc = "1.2.18"
+
 [dependencies]
-# This crate has publish=false, so it doesn't need to specify a version.
 facet = { path = "../facet" }

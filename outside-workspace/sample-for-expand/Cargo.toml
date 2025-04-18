@@ -1,0 +1,8 @@
+[package]
+name = "sample-for-expand"
+publish = false
+edition = "2024"
+
+[dependencies]
+# This crate has publish=false, so it doesn't need to specify a version.
+facet = { path = "../../facet" }

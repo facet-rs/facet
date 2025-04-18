@@ -4,7 +4,9 @@ pub fn cargo_expand_and_format() -> String {
     use std::io::Write;
 
     let workspace_dir = std::env::current_dir().unwrap();
-    let sample_dir = workspace_dir.join("sample");
+    let sample_dir = workspace_dir
+        .join("outside-workspace")
+        .join("sample-for-expand");
 
     // Run cargo expand command and measure execution time
     let start_time = std::time::Instant::now();

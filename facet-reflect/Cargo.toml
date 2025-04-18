@@ -24,7 +24,6 @@ owo-colors = "4.2.0"
 [dev-dependencies]
 eyre = "0.6.12"
 facet = { path = "../facet" }
-facet-samplelibc = { path = "../facet-samplelibc" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 log = "0.4.27"
 tempfile = "3.19.1"

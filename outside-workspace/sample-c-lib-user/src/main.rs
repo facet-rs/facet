@@ -2,7 +2,7 @@ use facet_reflect::Peek;
 use owo_colors::OwoColorize;
 
 #[test]
-fn test_sample_libc() {
+fn main() {
     facet_testhelpers::setup();
 
     if !cfg!(miri) {
