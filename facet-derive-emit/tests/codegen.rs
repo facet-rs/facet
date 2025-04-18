@@ -60,7 +60,7 @@ fn enum_with_variants() {
 }
 
 #[test]
-fn enum_with_discriminants() {
+fn enum_with_discriminants_decimal() {
     insta::assert_snapshot!(expand(
         r#"
         #[repr(u8)]
@@ -70,6 +70,57 @@ fn enum_with_discriminants() {
           Blue = 7,
           Green,
           Yellow = 10,
+        }
+        "#
+    ));
+}
+
+#[test]
+fn enum_with_discriminants_hexadecimal() {
+    insta::assert_snapshot!(expand(
+        r#"
+        #[repr(u16)]
+        #[derive(Facet)]
+        enum Color {
+          Red      = 0x01,
+          Blue     = 0x7F,
+          Green    = 0x80,
+          Yellow   = 0x10,
+          Magenta  = 0xfeed,
+          Cyan     = 0xBEEF,
+        }
+        "#
+    ));
+}
+
+#[test]
+fn enum_with_discriminants_binary() {
+    insta::assert_snapshot!(expand(
+        r#"
+        #[repr(u8)]
+        #[derive(Facet)]
+        enum BitFlags {
+          None = 0b0000_0000,
+          Read = 0b0000_0001,
+          Write = 0b0000_0010,
+          Execute = 0b0000_0100,
+          All = 0b0000_0111,
+        }
+        "#
+    ));
+}
+
+#[test]
+fn enum_with_discriminants_mixed_notations() {
+    insta::assert_snapshot!(expand(
+        r#"
+        #[repr(u32)]
+        #[derive(Facet)]
+        enum Status {
+            Ok = 1,
+            Warn = 0xA,
+            Error = 0b1111,
+            Timeout = 0o77,
         }
         "#
     ));

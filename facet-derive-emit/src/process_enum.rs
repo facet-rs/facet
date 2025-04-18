@@ -281,7 +281,7 @@ fn process_c_style_enum(
     let mut discriminant_value = 0;
     for var_like in variants.iter() {
         if let Some(x) = &var_like.value.discriminant {
-            discriminant_value = x.second.value();
+            discriminant_value = get_discriminant_value(&x.second);
         }
         match &var_like.value.variant {
             EnumVariantData::Unit(unit) => {
@@ -471,7 +471,7 @@ fn process_primitive_enum(
     let mut discriminant_value = 0;
     for var_like in variants.iter() {
         if let Some(x) = &var_like.value.discriminant {
-            discriminant_value = x.second.value();
+            discriminant_value = get_discriminant_value(&x.second);
         }
         match &var_like.value.variant {
             EnumVariantData::Unit(unit) => {
