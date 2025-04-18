@@ -73,6 +73,18 @@ pub struct Shape {
     /// Doc comment lines, collected by facet-derive. Note that they tend to
     /// start with a space.
     pub doc: &'static [&'static str],
+
+    /// Attributes that can be applied to a shape
+    pub attributes: &'static [ShapeAttribute],
+}
+
+/// An attribute that can be applied to a shape
+#[derive(Debug)]
+pub enum ShapeAttribute {
+    /// Specifies an alternative name for the field (for serialization/deserialization)
+    DenyUnknownFields,
+    /// Custom field attribute containing arbitrary text
+    Arbitrary(&'static str),
 }
 
 impl Shape {
@@ -106,6 +118,7 @@ pub struct ShapeBuilder {
     def: Option<Def>,
     type_params: &'static [TypeParam],
     doc: &'static [&'static str],
+    attributes: &'static [ShapeAttribute],
 }
 
 impl ShapeBuilder {
@@ -119,6 +132,7 @@ impl ShapeBuilder {
             def: None,
             type_params: &[],
             doc: &[],
+            attributes: &[],
         }
     }
 
@@ -164,6 +178,13 @@ impl ShapeBuilder {
         self
     }
 
+    /// Sets the `attributes` field of the `ShapeBuilder`.
+    #[inline]
+    pub const fn attributes(mut self, attributes: &'static [ShapeAttribute]) -> Self {
+        self.attributes = attributes;
+        self
+    }
+
     /// Builds a `Shape` from the `ShapeBuilder`.
     ///
     /// # Panics
@@ -178,6 +199,7 @@ impl ShapeBuilder {
             type_params: self.type_params,
             def: self.def.unwrap(),
             doc: self.doc,
+            attributes: self.attributes,
         }
     }
 }

@@ -775,3 +775,46 @@ fn test_nested_arrays() {
     assert_eq!(nested.matrix[1], vec![]);
     assert_eq!(nested.matrix[2], vec![4, 5]);
 }
+
+#[test]
+fn test_deny_unknown_fields() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Debug)]
+    #[facet(deny_unknown_fields)]
+    struct StrictStruct {
+        foo: String,
+        bar: i32,
+    }
+
+    // JSON with only expected fields
+    let json_ok = r#"{"foo":"abc","bar":42}"#;
+    let result_ok: Result<StrictStruct, _> = from_str(json_ok);
+    assert!(result_ok.is_ok());
+
+    // JSON with an unexpected extra field should generate an error
+    let json_extra = r#"{"foo":"abc","bar":42,"baz":true}"#;
+    let result_extra: Result<StrictStruct, _> = from_str(json_extra);
+    assert!(result_extra.is_err());
+}
+
+#[test]
+fn test_allow_unknown_fields() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Debug)]
+    struct PermissiveStruct {
+        foo: String,
+        bar: i32,
+    }
+
+    // JSON with only expected fields
+    let json_ok = r#"{"foo":"abc","bar":42}"#;
+    let result_ok: Result<PermissiveStruct, _> = from_str(json_ok);
+    result_ok.unwrap();
+
+    // JSON with an unexpected extra field should NOT generate an error
+    let json_extra = r#"{"foo":"abc","bar":42,"baz":[]}"#;
+    let result_extra: Result<PermissiveStruct, _> = from_str(json_extra);
+    result_extra.unwrap();
+}

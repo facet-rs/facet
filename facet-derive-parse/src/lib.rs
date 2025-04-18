@@ -32,6 +32,8 @@ keyword! {
     pub KInvariants = "invariants";
     /// The "opaque" keyword.
     pub KOpaque = "opaque";
+    /// The "deny_unknown_fields" keyword.
+    pub KDenyUnknownFields = "deny_unknown_fields";
 }
 
 operator! {
@@ -81,7 +83,7 @@ unsynn! {
         Pub(KPub),
     }
 
-    /// Represents an attribute annotation, typically in the form `#[attr]`.
+    /// Represents an attribute annotation on a field, typically in the form `#[attr]`.
     pub struct Attribute {
         /// The pound sign preceding the attribute.
         pub _pound: Pound,
@@ -117,6 +119,8 @@ unsynn! {
         Invariants(InvariantInner),
         /// An opaque attribute that specifies opaque information.
         Opaque(KOpaque),
+        /// A deny_unknown_fields attribute that specifies whether unknown fields are allowed.
+        DenyUnknownFields(KDenyUnknownFields),
         /// Any other attribute represented as a sequence of token trees.
         Other(Vec<TokenTree>),
     }

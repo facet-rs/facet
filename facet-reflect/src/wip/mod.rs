@@ -1,12 +1,16 @@
 use crate::{ReflectError, ValueId};
-use alloc::{format, string::ToString};
+use crate::{debug, trace};
+#[cfg(feature = "log")]
+use alloc::string::ToString;
+#[cfg(feature = "log")]
+use owo_colors::OwoColorize;
+
+use alloc::format;
 use alloc::{vec, vec::Vec};
 use bitflags::bitflags;
 use core::{fmt, marker::PhantomData};
 use facet_core::{Def, Facet, FieldError, PtrConst, PtrMut, PtrUninit, Shape, Variant};
 use flat_map::FlatMap;
-use log::trace;
-use owo_colors::OwoColorize;
 
 use alloc::string::String;
 
@@ -71,7 +75,6 @@ impl Frame {
                 self.shape.green(),
             );
             if self.shape.layout.size() != 0 {
-                trace!("Ok I swear we're deallocating it");
                 unsafe {
                     alloc::alloc::dealloc(self.data.as_mut_byte_ptr(), self.shape.layout);
                 }
@@ -346,7 +349,7 @@ impl<'a> Wip<'a> {
 
     /// Asserts everything is initialized and that invariants are upheld (if any)
     pub fn build(mut self) -> Result<HeapValue<'a>, ReflectError> {
-        trace!("[{}] ⚒️ It's BUILD time", self.frames.len());
+        debug!("[{}] ⚒️ It's BUILD time", self.frames.len());
 
         // 1. Track all frames currently on the stack into istates
         while let Some(frame) = self.pop_inner() {
@@ -355,7 +358,7 @@ impl<'a> Wip<'a> {
 
         // 2. Find the root frame
         let Some((root_id, _)) = self.istates.iter().find(|(_k, istate)| istate.depth == 0) else {
-            trace!("No root found, possibly already built or empty WIP");
+            debug!("No root found, possibly already built or empty WIP");
             return Err(ReflectError::OperationFailed {
                 shape: <()>::SHAPE,
                 operation: "tried to build a value but there was no root frame tracked",
@@ -426,15 +429,16 @@ impl<'a> Wip<'a> {
                     }
 
                     // If initialized, push children to check stack
-                    for (i, field) in sd.fields.iter().enumerate() {
+                    #[allow(clippy::unused_enumerate_index)]
+                    for (_i, field) in sd.fields.iter().enumerate() {
                         let field_shape = field.shape();
                         let field_ptr = unsafe { frame.data.field_init_at(field.offset) };
                         let field_id = ValueId::new(field_shape, field_ptr.as_byte_ptr());
 
                         if let Some(field_istate) = self.istates.remove(&field_id) {
-                            trace!(
+                            debug!(
                                 "Queueing struct field check: #{} '{}' of {}: shape={}, ptr={:p}",
-                                i.to_string().bright_cyan(),
+                                _i.to_string().bright_cyan(),
                                 field.name.bright_blue(),
                                 frame.shape.blue(),
                                 field_shape.green(),
@@ -465,7 +469,8 @@ impl<'a> Wip<'a> {
                         }
 
                         // If initialized, push children to check stack
-                        for (i, field) in variant.data.fields.iter().enumerate() {
+                        #[allow(clippy::unused_enumerate_index)]
+                        for (_i, field) in variant.data.fields.iter().enumerate() {
                             let field_shape = field.shape();
                             // Enum fields are potentially at different offsets depending on the variant layout.
                             // We assume the `frame.data` points to the start of the enum's data payload
@@ -474,9 +479,9 @@ impl<'a> Wip<'a> {
                             let field_id = ValueId::new(field_shape, field_ptr.as_byte_ptr());
 
                             if let Some(field_istate) = self.istates.remove(&field_id) {
-                                trace!(
+                                debug!(
                                     "Queueing enum field check: #{} '{}' of variant '{}' of {}: shape={}, ptr={:p}",
-                                    i.to_string().bright_cyan(),
+                                    _i.to_string().bright_cyan(),
                                     field.name.bright_blue(),
                                     variant.name.yellow(),
                                     frame.shape.blue(),
@@ -538,12 +543,12 @@ impl<'a> Wip<'a> {
         }
 
         // If we finished the loop, all reachable and non-moved frames are initialized.
-        trace!("All reachable frames checked and initialized.");
+        debug!("All reachable frames checked and initialized.");
 
         // 5. Check invariants on the root
         let data = unsafe { root_data_ptr.assume_init() };
         if let Some(invariant_fn) = root_shape.vtable.invariants {
-            trace!(
+            debug!(
                 "Checking invariants for root shape {} at {:p}",
                 root_shape.green(),
                 data.as_byte_ptr()
@@ -554,7 +559,7 @@ impl<'a> Wip<'a> {
                 });
             }
         } else {
-            trace!(
+            debug!(
                 "No invariants to check for root shape {}",
                 root_shape.blue()
             );
@@ -630,7 +635,7 @@ impl<'a> Wip<'a> {
             // we didn't have to allocate that field, it's a struct field, so it's not allocated
             istate: IState::new(self.frames.len(), FrameMode::Field, FrameFlags::EMPTY),
         };
-        trace!(
+        debug!(
             "[{}] Selecting field {} ({}#{}) of {}",
             self.frames.len(),
             field.name.blue(),
@@ -745,7 +750,7 @@ impl<'a> Wip<'a> {
         if !frame.shape.is_type::<T>() {
             // maybe we're putting into an Option<T> ?
             if frame.shape.is_type::<Option<T>>() {
-                trace!("Putting into an option!");
+                debug!("Putting into an option!");
                 let Def::Option(od) = frame.shape.def else {
                     unreachable!()
                 };
@@ -770,7 +775,7 @@ impl<'a> Wip<'a> {
                 // mark the field as initialized
                 self.mark_field_as_initialized(shape, index)?;
 
-                trace!("[{}] Just put a {} value", self.frames.len(), shape.green());
+                debug!("[{}] Just put a {} value", self.frames.len(), shape.green());
 
                 return Ok(self);
             }
@@ -783,7 +788,7 @@ impl<'a> Wip<'a> {
 
         // de-initialize partially initialized fields
         if frame.istate.variant.is_some() || frame.istate.fields.is_any_set() {
-            trace!(
+            debug!(
                 "De-initializing partially initialized fields for {}",
                 frame.shape
             );
@@ -837,7 +842,7 @@ impl<'a> Wip<'a> {
         // mark the field as initialized
         self.mark_field_as_initialized(shape, index)?;
 
-        trace!("[{}] Just put a {} value", self.frames.len(), shape.green());
+        debug!("[{}] Just put a {} value", self.frames.len(), shape.green());
 
         Ok(self)
     }
@@ -917,6 +922,7 @@ impl<'a> Wip<'a> {
     ) -> Result<(), ReflectError> {
         if let Some(index) = index {
             let parent_index = self.frames.len().saturating_sub(2);
+            #[cfg(feature = "log")]
             let num_frames = self.frames.len();
             let Some(parent) = self.frames.get_mut(parent_index) else {
                 return Err(ReflectError::OperationFailed {
@@ -924,6 +930,7 @@ impl<'a> Wip<'a> {
                     operation: "was supposed to mark a field as initialized, but there was no parent frame",
                 });
             };
+            #[cfg(feature = "log")]
             let parent_shape = parent.shape;
             trace!(
                 "[{}] {}.{} initialized with {}",
@@ -1364,6 +1371,7 @@ impl<'a> Wip<'a> {
     /// When the value frame is popped, the key-value pair will be added to the map.
     pub fn push_map_value(mut self) -> Result<Self, ReflectError> {
         trace!("Wants to push map value. Frames = ");
+        #[cfg(feature = "log")]
         for (i, f) in self.frames.iter().enumerate() {
             trace!("Frame {}: {:?}", i, f);
         }
@@ -1455,6 +1463,7 @@ impl<'a> Wip<'a> {
 
     fn pop_inner(&mut self) -> Option<Frame> {
         let mut frame = self.frames.pop()?;
+        #[cfg(feature = "log")]
         let frame_shape = frame.shape;
 
         let init = frame.is_fully_initialized();
@@ -1483,6 +1492,7 @@ impl<'a> Wip<'a> {
                 if frame.is_fully_initialized() {
                     // This was a list element, so we need to push it to the parent list
                     // Capture frame length and parent shape before mutable borrow
+                    #[cfg(feature = "log")]
                     let frame_len = self.frames.len();
 
                     // Get parent frame
@@ -1534,6 +1544,7 @@ impl<'a> Wip<'a> {
                 }
 
                 // Get parent map frame
+                #[cfg(feature = "log")]
                 let frame_len = self.frames.len();
                 let parent_frame = self.frames.last_mut().unwrap();
                 let parent_shape = parent_frame.shape;
@@ -1573,10 +1584,9 @@ impl<'a> Wip<'a> {
                 if frame.is_fully_initialized() {
                     trace!("Popping OptionSome (fully init'd)");
 
-                    // This was an option Some value, so we need to set it in the parent option
-                    let frame_len = self.frames.len();
-
                     // Get parent frame
+                    #[cfg(feature = "log")]
+                    let frames_len = self.frames.len();
                     let parent_frame = self.frames.last_mut().unwrap();
                     let parent_shape = parent_frame.shape;
 
@@ -1585,7 +1595,7 @@ impl<'a> Wip<'a> {
                         Def::Option(option_def) => {
                             trace!(
                                 "[{}] Setting Some value in option {}",
-                                frame_len,
+                                frames_len,
                                 parent_shape.blue()
                             );
                             unsafe {
@@ -1762,10 +1772,11 @@ impl<'a> Wip<'a> {
 
 impl Drop for Wip<'_> {
     fn drop(&mut self) {
+        trace!("🧹🧹🧹 WIP is dropping");
+
         while let Some(frame) = self.frames.pop() {
             self.track(frame);
         }
-        trace!("🧹 Whole WIP is dropping",);
 
         let Some((root_id, _)) = self.istates.iter().find(|(_k, istate)| istate.depth == 0) else {
             trace!("No root found, we probably built already");

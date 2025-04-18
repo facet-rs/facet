@@ -17,6 +17,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     let kind;
     let where_clauses;
     let type_params = build_type_params(parsed.generics.as_ref());
+    let set_attributes = build_container_attributes(&parsed.attributes);
 
     let fields = match &parsed.kind {
         StructKind::Struct { clauses, fields } => {
@@ -155,6 +156,7 @@ unsafe impl<{generics_def}> ::facet::Facet for {struct_name}<{generics_use}> {wh
                 .fields(fields)
                 .build()))
             {maybe_container_doc}
+            {set_attributes}
             .build()
     }};
 }}

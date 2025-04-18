@@ -143,6 +143,9 @@ pub(crate) fn gen_struct_field(
                 FacetInner::Opaque(_kopaque) => {
                     shape_of = "shape_of_opaque";
                 }
+                FacetInner::DenyUnknownFields(_) => {
+                    // not applicable on fields
+                }
                 FacetInner::Other(tt) => {
                     let attr_str = tt.tokens_to_string();
                     let attr_fmt = match attr_str.find('=') {
@@ -251,6 +254,41 @@ fn build_type_params(generics: Option<&GenericParams>) -> String {
         "".to_string()
     } else {
         format!(".type_params(&[{}])", type_params_s.join(", "))
+    }
+}
+
+fn build_container_attributes(attributes: &[Attribute]) -> String {
+    let mut items: Vec<&str> = vec![];
+
+    for attr in attributes {
+        match &attr.body.content {
+            AttributeInner::Facet(facet_attr) => match facet_attr.inner.content {
+                FacetInner::DenyUnknownFields(_) => {
+                    items.push("::facet::ShapeAttribute::DenyUnknownFields");
+                }
+                FacetInner::Sensitive(_) => {
+                    // TODO
+                }
+                FacetInner::Invariants(_) => {
+                    // dealt with elsewhere
+                }
+                FacetInner::Opaque(_) => {
+                    // TODO
+                }
+                FacetInner::Other(_) => {
+                    // TODO: add to arbitrary invariants
+                }
+            },
+            _ => {
+                // do nothing.
+            }
+        }
+    }
+
+    if items.is_empty() {
+        "".to_string()
+    } else {
+        format!(".attributes(&[{}])", items.join(", "))
     }
 }
 

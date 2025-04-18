@@ -3,9 +3,7 @@ use core::num::{
     NonZeroU64, NonZeroUsize,
 };
 
-#[cfg(feature = "rich-diagnostics")]
-use ariadne::{Color, Config, IndexType, Label, Report, ReportKind, Source};
-use facet_core::{Def, Facet, FieldAttribute, ScalarAffinity};
+use facet_core::{Def, Facet, FieldAttribute, ScalarAffinity, ShapeAttribute};
 use facet_reflect::{HeapValue, Wip};
 use log::trace;
 
@@ -14,126 +12,8 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use owo_colors::OwoColorize;
 
-/// A JSON parse error, with context. Never would've guessed huh.
-#[derive(Debug)]
-pub struct JsonParseErrorWithContext<'input> {
-    #[cfg_attr(not(feature = "rich-diagnostics"), allow(dead_code))]
-    input: &'input [u8],
-    pos: usize,
-    kind: JsonErrorKind,
-    path: String,
-}
-
-impl<'input> JsonParseErrorWithContext<'input> {
-    /// Creates a new `JsonParseErrorWithContext`.
-    ///
-    /// # Arguments
-    ///
-    /// * `kind` - The kind of JSON error encountered.
-    /// * `input` - The original input being parsed.
-    /// * `pos` - The position in the input where the error occurred.
-    pub fn new(kind: JsonErrorKind, input: &'input [u8], pos: usize, path: String) -> Self {
-        Self {
-            input,
-            pos,
-            kind,
-            path,
-        }
-    }
-
-    /// Returns a human-readable error message for this JSON error.
-    pub fn message(&self) -> String {
-        match &self.kind {
-            JsonErrorKind::UnexpectedEof => "Unexpected end of file".to_string(),
-            JsonErrorKind::UnexpectedCharacter(c) => format!("Unexpected character: '{}'", c),
-            JsonErrorKind::NumberOutOfRange(n) => format!("Number out of range: {}", n),
-            JsonErrorKind::StringAsNumber(s) => format!("Expected a string but got number: {}", s),
-            JsonErrorKind::UnknownField(f) => format!("Unknown field: {}", f),
-            JsonErrorKind::InvalidUtf8(e) => format!("Invalid UTF-8 encoding: {}", e),
-        }
-    }
-}
-
-/// An error kind for JSON parsing.
-#[derive(Debug)]
-pub enum JsonErrorKind {
-    /// The input ended unexpectedly while parsing JSON.
-    UnexpectedEof,
-    /// An unexpected character was encountered in the input.
-    UnexpectedCharacter(char),
-    /// A number is out of range.
-    NumberOutOfRange(f64),
-    /// An unexpected String was encountered in the input.
-    StringAsNumber(String),
-    /// An unexpected field name was encountered in the input.
-    UnknownField(String),
-    /// A string that could not be built into valid UTF-8 Unicode
-    InvalidUtf8(String),
-}
-
-#[cfg(not(feature = "rich-diagnostics"))]
-impl core::fmt::Display for JsonParseErrorWithContext<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "{} at byte {} in path {}",
-            self.message(),
-            self.pos,
-            self.path
-        )
-    }
-}
-
-#[cfg(feature = "rich-diagnostics")]
-impl core::fmt::Display for JsonParseErrorWithContext<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let Ok(input_str) = core::str::from_utf8(self.input) else {
-            return write!(f, "(JSON input was invalid UTF-8)");
-        };
-
-        let source_id = "json";
-
-        let (span_start, span_end) = match &self.kind {
-            JsonErrorKind::StringAsNumber(s) => (self.pos - s.len(), self.pos),
-            JsonErrorKind::UnknownField(f) => (self.pos - f.len() - 1, self.pos - 1),
-            _ => {
-                let span_end = if self.pos < self.input.len() {
-                    self.pos + 1
-                } else {
-                    self.input.len()
-                };
-                (self.pos, span_end)
-            }
-        };
-
-        let mut report = Report::build(ReportKind::Error, (source_id, span_start..span_end))
-            .with_message(format!("Error at {}", self.path.yellow()))
-            .with_config(Config::new().with_index_type(IndexType::Byte));
-
-        let label = Label::new((source_id, span_start..span_end))
-            .with_message(self.message())
-            .with_color(Color::Red);
-
-        report = report.with_label(label);
-
-        let source = Source::from(input_str);
-
-        let mut writer = Vec::new();
-        let cache = (source_id, &source);
-
-        if report.finish().write(cache, &mut writer).is_err() {
-            return write!(f, "Error formatting with ariadne");
-        }
-
-        if let Ok(output) = String::from_utf8(writer) {
-            write!(f, "{}", output)
-        } else {
-            write!(f, "Error converting ariadne output to string")
-        }
-    }
-}
-
-impl core::error::Error for JsonParseErrorWithContext<'_> {}
+mod error;
+pub use error::*;
 
 /// Deserializes a JSON string into a value of type `T` that implements `Facet`.
 ///
@@ -254,21 +134,24 @@ pub fn from_slice_wip<'input, 'a>(
                 if frame_count == 1 {
                     return Ok(wip.build().unwrap());
                 } else {
-                    bail!(JsonErrorKind::UnexpectedEof);
+                    trace!("frame_count isn't 1, it's {}", frame_count);
+                    bail!(JsonErrorKind::UnexpectedEof("frame_count isn't 1"));
                 }
             }
         };
-        trace!("[{frame_count}] Expecting {expect:?}");
+        trace!("[{frame_count}] Expecting {:?}", expect.yellow());
 
         let Some(c) = input.get(pos).copied() else {
-            bail!(JsonErrorKind::UnexpectedEof);
+            bail!(JsonErrorKind::UnexpectedEof("no input at pos"));
         };
+
+        let mut finished_value: Option<WhyValue> = None;
 
         match expect {
             Expect::PopOption => {
                 // that's all, carry on
                 trace!("Popping option");
-                wip = wip.pop().unwrap();
+                finished_value = Some(WhyValue::ObjectValue);
             }
             Expect::Value(why) => {
                 if let Def::Option(_) = wip.shape().def {
@@ -278,19 +161,19 @@ pub fn from_slice_wip<'input, 'a>(
 
                 match c {
                     b'{' => {
+                        trace!("Object starting");
                         pos += 1;
                         let Some(c) = input.get(pos).copied() else {
-                            bail!(JsonErrorKind::UnexpectedEof);
+                            bail!(JsonErrorKind::UnexpectedEof("nothing after {"));
                         };
                         match c {
                             b'}' => {
+                                trace!("Empty object ended");
                                 pos += 1;
-                                if frame_count > 1 {
-                                    // just finished reading a value I guess
-                                    wip = wip.pop().unwrap();
-                                }
+                                finished_value = Some(why);
                             }
                             _ => {
+                                trace!("Object's not empty, let's do `key: value ,` next");
                                 // okay, next we expect a "key: value"
                                 stack.push(Expect::Separator(Separator::Comma(WhyComma::Object)));
                                 stack.push(Expect::Value(WhyValue::ObjectValue));
@@ -302,34 +185,23 @@ pub fn from_slice_wip<'input, 'a>(
                     b'[' => {
                         pos += 1;
                         let Some(c) = input.get(pos).copied() else {
-                            bail!(JsonErrorKind::UnexpectedEof);
+                            bail!(JsonErrorKind::UnexpectedEof("nothing after ["));
                         };
 
-                        trace!("Beginning pushback...");
                         wip = wip.begin_pushback().unwrap();
                         match c {
                             b']' => {
                                 // an array just closed, somewhere
                                 pos += 1;
-                                trace!("Oh it's already closed!");
-                                match why {
-                                    WhyValue::TopLevel => {}
-                                    WhyValue::ArrayElement => {
-                                        wip = wip.pop().unwrap();
-                                    }
-                                    WhyValue::ObjectValue => {
-                                        wip = wip.pop().unwrap();
-                                    }
-                                    WhyValue::ObjectKey => {
-                                        todo!()
-                                    }
-                                }
+                                trace!("Got empty array");
+                                finished_value = Some(why);
                             }
                             _ => {
                                 // okay, next we expect an item and a separator (or the end of the array)
                                 stack.push(Expect::Separator(Separator::Comma(WhyComma::Array)));
                                 stack.push(Expect::Value(WhyValue::ArrayElement));
                                 wip = wip.push().unwrap();
+                                continue; // we didn't finish a value so don't pop yet
                             }
                         }
                     }
@@ -339,7 +211,7 @@ pub fn from_slice_wip<'input, 'a>(
                         let mut bytes = Vec::new();
                         loop {
                             let Some(c) = input.get(pos).copied() else {
-                                bail!(JsonErrorKind::UnexpectedEof);
+                                bail!(JsonErrorKind::UnexpectedEof("nothing after \""));
                             };
                             match c {
                                 b'"' => {
@@ -353,7 +225,7 @@ pub fn from_slice_wip<'input, 'a>(
                                         bytes.push(*next);
                                         pos += 1;
                                     } else {
-                                        bail!(JsonErrorKind::UnexpectedEof);
+                                        bail!(JsonErrorKind::UnexpectedEof("nothing after \\"));
                                     }
                                 }
                                 _ => {
@@ -375,29 +247,22 @@ pub fn from_slice_wip<'input, 'a>(
                         };
 
                         trace!(
-                            "Parsed string value: {:?} for shape {}",
+                            "Parsed string {:?} for {} (why? {:?})",
                             value.yellow(),
-                            wip.shape()
+                            wip.shape().blue(),
+                            why.cyan()
                         );
 
                         match why {
-                            WhyValue::TopLevel => {
+                            WhyValue::TopLevel | WhyValue::ArrayElement | WhyValue::ObjectValue => {
                                 wip = wip.parse(&value).unwrap();
-                            }
-                            WhyValue::ArrayElement => {
-                                wip = wip.parse(&value).unwrap();
-                                wip = wip.pop().unwrap();
-                            }
-                            WhyValue::ObjectValue => {
-                                wip = wip.parse(&value).unwrap();
-                                wip = wip.pop().unwrap();
+                                finished_value = Some(why);
                             }
                             WhyValue::ObjectKey => {
                                 // Look for field with matching name or rename attribute
-                                let field_shape = wip.shape();
+                                let shape = wip.shape();
 
-                                trace!("got object key {}", value.on_yellow());
-                                if let Def::Struct(struct_def) = field_shape.def {
+                                if let Def::Struct(struct_def) = shape.def {
                                     let field = struct_def.fields.iter().find(|f| {
                                         // Check original name
                                         if f.name == value {
@@ -415,14 +280,72 @@ pub fn from_slice_wip<'input, 'a>(
                                     });
 
                                     if let Some(field) = field {
-                                        trace!("found field {:?}", field.on_blue().black());
+                                        trace!("found field {:?}", field.blue());
                                         wip = wip.field_named(field.name).unwrap();
-                                    } else {
-                                        // Field not found - original or renamed
+                                    } else if shape.attributes.iter().any(|attr| {
+                                        matches!(attr, ShapeAttribute::DenyUnknownFields)
+                                    }) {
+                                        // Field not found - original or renamed, and unknown fields denied
                                         bail!(JsonErrorKind::UnknownField(value.to_string()));
+                                    } else {
+                                        // pop Expect::Colon (assert)
+                                        let expect_colon = stack.pop();
+                                        assert!(matches!(
+                                            expect_colon,
+                                            Some(Expect::Separator(Separator::Colon))
+                                        ));
+                                        // skip over whitespace
+                                        while let Some(b' ' | b'\t' | b'\n' | b'\r') =
+                                            input.get(pos).copied()
+                                        {
+                                            pos += 1;
+                                        }
+                                        // skip over colon
+                                        if let Some(b':') = input.get(pos) {
+                                            pos += 1;
+                                        } else {
+                                            bail!(JsonErrorKind::UnexpectedCharacter(
+                                                input
+                                                    .get(pos)
+                                                    .copied()
+                                                    .map(|c| c as char)
+                                                    .unwrap_or('\0')
+                                            ));
+                                        }
+                                        // skip over whitespace
+                                        while let Some(b' ' | b'\t' | b'\n' | b'\r') =
+                                            input.get(pos).copied()
+                                        {
+                                            pos += 1;
+                                        }
+                                        // pop Expect::Value
+                                        let expect_value = stack.pop();
+                                        assert!(matches!(
+                                            expect_value,
+                                            Some(Expect::Value(WhyValue::ObjectValue))
+                                        ));
+                                        // skip over value
+                                        skip_over_value(&mut pos, input).map_err(|e| {
+                                            JsonParseErrorWithContext::new(
+                                                e,
+                                                input,
+                                                pos,
+                                                wip.path(),
+                                            )
+                                        })?;
+                                        trace!(
+                                            "immediately after skip over value, we're at pos {}, char is {}",
+                                            pos,
+                                            input.get(pos).copied().unwrap_or(b'$') as char
+                                        );
                                     }
                                 } else {
-                                    wip = wip.field_named(&value).unwrap();
+                                    trace!(
+                                        "Getting field {}, not in a Struct, but in a... {}",
+                                        value.blue(),
+                                        wip.shape()
+                                    );
+                                    wip = wip.field_named(&value).expect("assuming only structs have a fixed set of fields (which is not true, cf. enums)");
                                 }
                             }
                         }
@@ -440,9 +363,8 @@ pub fn from_slice_wip<'input, 'a>(
                         }
                         let number = &input[start..pos];
                         let number = core::str::from_utf8(number).unwrap();
-                        trace!("Parsed number value: {:?}", number.yellow());
                         let number = number.parse::<f64>().unwrap();
-                        trace!("Parsed number value: {:?}", number.yellow());
+                        trace!("Parsed {:?}", number.yellow());
 
                         let shape = wip.shape();
                         match shape.def {
@@ -604,17 +526,7 @@ pub fn from_slice_wip<'input, 'a>(
                                 todo!("saw number in JSON but expected.. shape {}?", shape)
                             }
                         }
-
-                        match why {
-                            WhyValue::TopLevel => {}
-                            WhyValue::ObjectKey => todo!(),
-                            WhyValue::ObjectValue => {
-                                wip = wip.pop().unwrap();
-                            }
-                            WhyValue::ArrayElement => {
-                                wip = wip.pop().unwrap();
-                            }
-                        }
+                        finished_value = Some(why);
                     }
                     b'n' => {
                         // wow it's a null — probably
@@ -624,18 +536,7 @@ pub fn from_slice_wip<'input, 'a>(
 
                             // ok but we already pushed some! luckily wip has the method for us
                             wip = wip.pop_some_push_none().unwrap();
-
-                            match why {
-                                WhyValue::TopLevel => {}
-                                WhyValue::ObjectKey => todo!(),
-                                WhyValue::ObjectValue => {
-                                    // these are all super messy, they should be expect on the stack
-                                    wip = wip.pop().unwrap();
-                                }
-                                WhyValue::ArrayElement => {
-                                    wip = wip.pop().unwrap();
-                                }
-                            }
+                            finished_value = Some(why);
                         } else {
                             bail!(JsonErrorKind::UnexpectedCharacter('n'));
                         }
@@ -672,21 +573,15 @@ pub fn from_slice_wip<'input, 'a>(
                             }
                         }
                     }
-                    b'}' => {
-                        match why {
-                            WhyComma::Object => {
-                                pos += 1;
-
-                                // we finished the object, neat
-                                if frame_count > 1 {
-                                    wip = wip.pop().unwrap();
-                                }
-                            }
-                            _ => {
-                                bail!(JsonErrorKind::UnexpectedCharacter(c as char));
-                            }
+                    b'}' => match why {
+                        WhyComma::Object => {
+                            pos += 1;
+                            finished_value = Some(WhyValue::ObjectValue);
                         }
-                    }
+                        _ => {
+                            bail!(JsonErrorKind::UnexpectedCharacter(c as char));
+                        }
+                    },
                     b']' => {
                         pos += 1;
                         match why {
@@ -707,5 +602,212 @@ pub fn from_slice_wip<'input, 'a>(
                 },
             },
         }
+
+        if let Some(why) = finished_value {
+            trace!("Just finished value because of {:?}", why.green());
+            match why {
+                WhyValue::TopLevel => {}
+                WhyValue::ObjectKey => {}
+                WhyValue::ObjectValue | WhyValue::ArrayElement => {
+                    if frame_count == 1 {
+                        return Ok(wip.build().unwrap());
+                    } else {
+                        wip = wip.pop().unwrap();
+                    }
+                }
+            }
+        }
     }
+}
+
+fn skip_over_value(pos: &mut usize, input: &[u8]) -> Result<(), JsonErrorKind> {
+    let bytes = input;
+
+    // Helper for skipping whitespace
+    let skip_whitespace = |pos: &mut usize| {
+        while *pos < bytes.len() {
+            match bytes[*pos] {
+                b' ' | b'\t' | b'\n' | b'\r' => *pos += 1,
+                _ => break,
+            }
+        }
+    };
+
+    skip_whitespace(pos);
+
+    if *pos >= bytes.len() {
+        return Err(JsonErrorKind::UnexpectedEof(
+            "while skipping over value: input ended unexpectedly at root",
+        ));
+    }
+
+    match bytes[*pos] {
+        b'{' => {
+            // Skip a full object, recursively
+            *pos += 1;
+            skip_whitespace(pos);
+            if *pos < bytes.len() && bytes[*pos] == b'}' {
+                *pos += 1;
+                return Ok(());
+            }
+            loop {
+                // Skip key
+                skip_over_value(pos, input)?;
+                skip_whitespace(pos);
+                // Expect colon between key and value
+                if *pos >= bytes.len() || bytes[*pos] != b':' {
+                    return Err(JsonErrorKind::UnexpectedEof(
+                        "while skipping over value: object key with no colon or input ended",
+                    ));
+                }
+                *pos += 1;
+                skip_whitespace(pos);
+                // Skip value
+                skip_over_value(pos, input)?;
+                skip_whitespace(pos);
+                if *pos >= bytes.len() {
+                    return Err(JsonErrorKind::UnexpectedEof(
+                        "while skipping over value: object value with EOF after",
+                    ));
+                }
+                if bytes[*pos] == b'}' {
+                    *pos += 1;
+                    break;
+                } else if bytes[*pos] == b',' {
+                    *pos += 1;
+                    skip_whitespace(pos);
+                    continue;
+                } else {
+                    return Err(JsonErrorKind::UnexpectedCharacter(bytes[*pos] as char));
+                }
+            }
+        }
+        b'[' => {
+            // Skip a full array, recursively
+            *pos += 1;
+            skip_whitespace(pos);
+            if *pos < bytes.len() && bytes[*pos] == b']' {
+                *pos += 1;
+                return Ok(());
+            }
+            loop {
+                skip_over_value(pos, input)?;
+                skip_whitespace(pos);
+                if *pos >= bytes.len() {
+                    return Err(JsonErrorKind::UnexpectedEof(
+                        "while skipping over value: EOF inside array",
+                    ));
+                }
+                if bytes[*pos] == b']' {
+                    *pos += 1;
+                    break;
+                } else if bytes[*pos] == b',' {
+                    *pos += 1;
+                    skip_whitespace(pos);
+                    continue;
+                } else {
+                    return Err(JsonErrorKind::UnexpectedCharacter(bytes[*pos] as char));
+                }
+            }
+        }
+        b'"' => {
+            // Skip a string, with escape processing
+            *pos += 1;
+            while *pos < bytes.len() {
+                match bytes[*pos] {
+                    b'\\' => {
+                        // Could have EOF after backslash
+                        if *pos + 1 >= bytes.len() {
+                            return Err(JsonErrorKind::UnexpectedEof(
+                                "while skipping over value: EOF after backslash in string",
+                            ));
+                        }
+                        *pos += 2; // Skip backslash and the next character (escaped)
+                    }
+                    b'"' => {
+                        *pos += 1;
+                        break;
+                    }
+                    _ => {
+                        *pos += 1;
+                    }
+                }
+            }
+            if *pos > bytes.len() {
+                return Err(JsonErrorKind::UnexpectedEof(
+                    "while skipping over value: string ended unexpectedly",
+                ));
+            }
+        }
+        b't' => {
+            // Expect "true"
+            if bytes.len() >= *pos + 4 && &bytes[*pos..*pos + 4] == b"true" {
+                *pos += 4;
+            } else {
+                return Err(JsonErrorKind::UnexpectedCharacter('t'));
+            }
+        }
+        b'f' => {
+            // Expect "false"
+            if bytes.len() >= *pos + 5 && &bytes[*pos..*pos + 5] == b"false" {
+                *pos += 5;
+            } else {
+                return Err(JsonErrorKind::UnexpectedCharacter('f'));
+            }
+        }
+        b'n' => {
+            // Expect "null"
+            if bytes.len() >= *pos + 4 && &bytes[*pos..*pos + 4] == b"null" {
+                *pos += 4;
+            } else {
+                return Err(JsonErrorKind::UnexpectedCharacter('n'));
+            }
+        }
+        b'-' | b'0'..=b'9' => {
+            // Skip a number: -?\d+(\.\d+)?([eE][+-]?\d+)?
+            let start = *pos;
+            if bytes[*pos] == b'-' {
+                *pos += 1;
+            }
+            if *pos < bytes.len() && bytes[*pos] == b'0' {
+                *pos += 1;
+            } else {
+                while *pos < bytes.len() && (bytes[*pos] as char).is_ascii_digit() {
+                    *pos += 1;
+                }
+            }
+            if *pos < bytes.len() && bytes[*pos] == b'.' {
+                *pos += 1;
+                let mut has_digit = false;
+                while *pos < bytes.len() && (bytes[*pos] as char).is_ascii_digit() {
+                    *pos += 1;
+                    has_digit = true;
+                }
+                if !has_digit {
+                    return Err(JsonErrorKind::UnexpectedCharacter('.'));
+                }
+            }
+            if *pos < bytes.len() && (bytes[*pos] == b'e' || bytes[*pos] == b'E') {
+                *pos += 1;
+                if *pos < bytes.len() && (bytes[*pos] == b'+' || bytes[*pos] == b'-') {
+                    *pos += 1;
+                }
+                let mut has_digit = false;
+                while *pos < bytes.len() && (bytes[*pos] as char).is_ascii_digit() {
+                    *pos += 1;
+                    has_digit = true;
+                }
+                if !has_digit {
+                    return Err(JsonErrorKind::UnexpectedCharacter('e'));
+                }
+            }
+            if *pos == start {
+                return Err(JsonErrorKind::UnexpectedCharacter(bytes[start] as char));
+            }
+        }
+        _ => {
+            return Err(JsonErrorKind::UnexpectedCharacter(bytes[*pos] as char));
+        }
+    }
+    Ok(())
 }

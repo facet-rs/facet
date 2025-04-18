@@ -1,7 +1,8 @@
 use crate::ReflectError;
+use crate::trace;
 use core::{alloc::Layout, marker::PhantomData};
-
 use facet_core::{Facet, PtrConst, PtrMut, Shape};
+#[cfg(feature = "log")]
 use owo_colors::OwoColorize as _;
 
 /// A type-erased value stored on the heap
@@ -123,7 +124,7 @@ pub struct Guard {
 impl Drop for Guard {
     fn drop(&mut self) {
         if self.layout.size() != 0 {
-            log::trace!(
+            trace!(
                 "Deallocating memory at ptr: {:p}, size: {}, align: {}",
                 self.ptr.cyan(),
                 self.layout.size().yellow(),
