@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use facet::Facet;
 use facet_reflect::Wip;
 
@@ -445,28 +443,6 @@ fn wip_list_error_cases() -> eyre::Result<()> {
     // Test error: trying to put_empty_list on non-list type
     let result = Wip::alloc::<i32>().put_empty_list();
     assert!(result.is_err());
-
-    Ok(())
-}
-
-#[test]
-fn wip_map() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
-    let wip = Wip::alloc::<HashMap<String, String>>()
-        .begin_map_insert()?
-        .push_map_key()?
-        .put::<String>("key".into())?
-        .push_map_value()?
-        .put::<String>("value".into())?
-        .pop()?
-        .build()?
-        .materialize::<HashMap<String, String>>()?;
-
-    assert_eq!(
-        wip,
-        HashMap::from([("key".to_string(), "value".to_string())])
-    );
 
     Ok(())
 }

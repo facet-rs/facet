@@ -169,18 +169,6 @@ impl Frame {
             }
         }
     }
-
-    /// Marks the frame as uninitialized (all fields unset and variant reset)
-    unsafe fn mark_uninitialized(&mut self) {
-        ISet::clear(&mut self.istate.fields);
-        self.istate.variant = None;
-    }
-
-    unsafe fn mark_moved_out_of(&mut self) {
-        self.dealloc_if_needed();
-        unsafe { self.mark_uninitialized() };
-        self.istate.flags.insert(FrameFlags::MOVED);
-    }
 }
 
 /// Initialization state
@@ -261,8 +249,8 @@ impl IState {
 pub enum FrameMode {
     /// Root frame
     Root,
-    /// Normal frame
-    Normal,
+    /// Struct field
+    Field,
     /// Frame represents a list element
     ListElement,
     /// Frame represents a map key
@@ -318,11 +306,24 @@ impl<'a> Wip<'a> {
     }
 
     fn track(&mut self, frame: Frame) {
-        if frame.istate.flags.contains(FrameFlags::MOVED) {
-            // In fact, it should not be tracked at all.
-            return;
+        // fields might be partially initialized (in-place) and then
+        // we might come back to them, so because they're popped off
+        // the stack, we still need to track them _somewhere_
+        //
+        // the root also relies on being tracked in the drop impl
+        if !frame.istate.flags.contains(FrameFlags::MOVED) {
+            self.istates.insert(frame.id(), frame.istate);
         }
-        self.istates.insert(frame.id(), frame.istate);
+    }
+
+    unsafe fn mark_moved_out_of(&mut self, frame: &mut Frame) {
+        frame.dealloc_if_needed();
+        ISet::clear(&mut frame.istate.fields);
+        frame.istate.variant = None;
+        frame.istate.flags.insert(FrameFlags::MOVED);
+        // make sure this isn't tracked here anymore — we don't want to have
+        // any metadata associated with it that gets restored by mistake
+        self.istates.remove(&frame.id());
     }
 
     /// Returns the shape of the current frame
@@ -627,7 +628,7 @@ impl<'a> Wip<'a> {
             shape: field.shape(),
             field_index_in_parent: Some(index),
             // we didn't have to allocate that field, it's a struct field, so it's not allocated
-            istate: IState::new(self.frames.len(), FrameMode::Normal, FrameFlags::EMPTY),
+            istate: IState::new(self.frames.len(), FrameMode::Field, FrameFlags::EMPTY),
         };
         trace!(
             "[{}] Selecting field {} ({}#{}) of {}",
@@ -639,11 +640,24 @@ impl<'a> Wip<'a> {
         );
         if let Some(iset) = self.istates.remove(&frame.id()) {
             trace!(
-                "[{}] Restoring saved state for {}",
+                "[{}] Restoring saved state for {} (istate.mode = {:?}, istate.fields = {:?}, istate.flags = {:?}, istate.depth = {:?})",
                 self.frames.len(),
-                frame.id().shape.blue()
+                frame.id().shape.blue(),
+                iset.mode,
+                iset.fields,
+                iset.flags,
+                iset.depth
             );
             frame.istate = iset;
+        } else {
+            trace!(
+                "[{}] no saved state for field {} ({}#{}) of {}",
+                self.frames.len(),
+                field.name.blue(),
+                field.shape().green(),
+                index.yellow(),
+                shape.blue(),
+            );
         }
         self.frames.push(frame);
         Ok(self)
@@ -1146,7 +1160,7 @@ impl<'a> Wip<'a> {
         let element_data = element_shape.allocate();
 
         // Create a new frame for the element
-        let mut element_frame = Frame {
+        let element_frame = Frame {
             data: element_data,
             shape: element_shape,
             field_index_in_parent: None, // No need for an index since we're using mode
@@ -1163,15 +1177,6 @@ impl<'a> Wip<'a> {
             element_shape.green(),
             list_shape.blue(),
         );
-
-        if let Some(iset) = self.istates.remove(&element_frame.id()) {
-            trace!(
-                "[{}] Restoring saved state for {}",
-                self.frames.len(),
-                element_frame.id().shape.blue()
-            );
-            element_frame.istate = iset;
-        }
 
         self.frames.push(element_frame);
         Ok(self)
@@ -1198,7 +1203,7 @@ impl<'a> Wip<'a> {
         let inner_data = inner_shape.allocate();
 
         // Create a new frame for the inner value
-        let mut inner_frame = Frame {
+        let inner_frame = Frame {
             data: inner_data,
             shape: inner_shape,
             // this is only set when we pop
@@ -1216,15 +1221,6 @@ impl<'a> Wip<'a> {
             self.frames.len(),
             option_shape.blue(),
         );
-
-        if let Some(iset) = self.istates.remove(&inner_frame.id()) {
-            trace!(
-                "[{}] Restoring saved state for {}",
-                self.frames.len(),
-                inner_frame.id().shape.blue()
-            );
-            inner_frame.istate = iset;
-        }
 
         self.frames.push(inner_frame);
         Ok(self)
@@ -1344,7 +1340,7 @@ impl<'a> Wip<'a> {
         let key_data = key_shape.allocate();
 
         // Create a new frame for the key
-        let mut key_frame = Frame {
+        let key_frame = Frame {
             data: key_data,
             shape: key_shape,
             field_index_in_parent: None,
@@ -1357,15 +1353,6 @@ impl<'a> Wip<'a> {
             key_shape.green(),
             map_shape.blue(),
         );
-
-        if let Some(iset) = self.istates.remove(&key_frame.id()) {
-            trace!(
-                "[{}] Restoring saved state for {}",
-                self.frames.len(),
-                key_frame.id().shape.blue()
-            );
-            key_frame.istate = iset;
-        }
 
         self.frames.push(key_frame);
         Ok(self)
@@ -1430,7 +1417,7 @@ impl<'a> Wip<'a> {
         let value_data = value_shape.allocate();
 
         // Create a new frame for the value
-        let mut value_frame = Frame {
+        let value_frame = Frame {
             data: value_data,
             shape: value_shape,
             field_index_in_parent: None,
@@ -1450,15 +1437,6 @@ impl<'a> Wip<'a> {
             map_shape.blue(),
             key_frame.shape.yellow(),
         );
-
-        if let Some(iset) = self.istates.remove(&value_frame.id()) {
-            trace!(
-                "[{}] Restoring saved state for {}",
-                self.frames.len(),
-                value_frame.id().shape.blue()
-            );
-            value_frame.istate = iset;
-        }
 
         self.frames.push(value_frame);
         Ok(self)
@@ -1528,7 +1506,7 @@ impl<'a> Wip<'a> {
                                         PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
                                         PtrMut::new(frame.data.as_mut_byte_ptr()),
                                     );
-                                    frame.mark_moved_out_of();
+                                    self.mark_moved_out_of(&mut frame);
                                 }
                             } else {
                                 panic!("parent frame is not a list type");
@@ -1577,8 +1555,8 @@ impl<'a> Wip<'a> {
                                     key_frame.data.assume_init(),
                                     PtrMut::new(frame.data.as_mut_byte_ptr()),
                                 );
-                                key_frame.mark_moved_out_of();
-                                frame.mark_moved_out_of();
+                                self.mark_moved_out_of(&mut key_frame);
+                                self.mark_moved_out_of(&mut frame);
                             }
                         } else {
                             panic!("parent frame is not a map type");
@@ -1619,7 +1597,7 @@ impl<'a> Wip<'a> {
                                 trace!("Marking parent frame as fully initialized");
                                 parent_frame.mark_fully_initialized();
 
-                                frame.mark_moved_out_of();
+                                self.mark_moved_out_of(&mut frame);
                             }
                         }
                         _ => {
@@ -1638,8 +1616,8 @@ impl<'a> Wip<'a> {
             // FIXME: that's not true, we need to deallocate them at least??
             FrameMode::MapKey => {}
 
-            // Normal frame
-            FrameMode::Normal => {}
+            // Field frame
+            FrameMode::Field => {}
 
             // Uninitialized special frames
             _ => {}
@@ -1752,7 +1730,7 @@ impl<'a> Wip<'a> {
                 FrameMode::Root => {
                     // Root doesn't add to the path
                 }
-                FrameMode::Normal => {
+                FrameMode::Field => {
                     // For struct fields, we use dot notation with field name
                     if let Some(index) = frame.field_index_in_parent {
                         // Find the parent frame to get the field name

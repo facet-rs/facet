@@ -8,6 +8,9 @@ mod no_uninit;
 mod misc;
 
 #[cfg(feature = "std")]
+mod map;
+
+#[cfg(feature = "std")]
 mod list_leak;
 
 #[cfg(feature = "std")]
