@@ -150,6 +150,15 @@ pub(crate) fn gen_struct_field(
                             let value = attr_str[equal_pos + 1..].trim().trim_matches('"');
                             format!(r#"::facet::FieldAttribute::Rename({:?})"#, value)
                         }
+                        Some(equal_pos)
+                            if attr_str[..equal_pos].trim() == "skip_serializing_if" =>
+                        {
+                            let value = attr_str[equal_pos + 1..].trim();
+                            format!(r#"::facet::FieldAttribute::SkipSerializingIf({:?})"#, value)
+                        }
+                        None if attr_str == "skip_serializing" => {
+                            r#"::facet::FieldAttribute::SkipSerializing"#.to_string()
+                        }
                         _ => {
                             format!(r#"::facet::FieldAttribute::Arbitrary({:?})"#, attr_str)
                         }

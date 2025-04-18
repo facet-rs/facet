@@ -136,3 +136,27 @@ fn test_field_rename_serialization() {
     let json = facet_json::to_string(&test_struct);
     assert_eq!(json, r#"{"bonjour":"monde","au_revoir":"world"}"#);
 }
+
+#[test]
+fn test_skip_serializing() {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, PartialEq, Clone, Facet)]
+    struct Greetings {
+        hello: &'static str,
+        #[facet(skip_serializing)]
+        goodbye: &'static str,
+    }
+    let test_struct1 = Greetings {
+        hello: "monde",
+        goodbye: "world",
+    };
+    let json = facet_json::to_string(&test_struct1);
+    assert_eq!(json, r#"{"hello":"monde"}"#);
+
+    #[derive(Debug, PartialEq, Clone, Facet)]
+    struct Salutations(&'static str, #[facet(skip_serializing)] &'static str);
+    let test_struct2 = Salutations("groetjes", "wereld");
+    let json = facet_json::to_string(&test_struct2);
+    assert_eq!(json, r#"{"0":"wereld", "1":"wereld"}"#);
+}
