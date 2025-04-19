@@ -1,3 +1,5 @@
+use crate::PtrConst;
+
 use super::{DefaultInPlaceFn, Shape};
 use bitflags::bitflags;
 
@@ -57,7 +59,7 @@ pub enum FieldAttribute {
     /// Skip serializing this field.
     SkipSerializing,
     /// Skip serializing this field if the function identified by `.0` evaluates to true.
-    SkipSerializingIf(fn(*const ()) -> bool),
+    SkipSerializingIf(fn(PtrConst) -> bool),
     /// Specifies an alternative name for the field (for serialization/deserialization)
     Rename(&'static str),
     /// Indicates the field has a default value (the value is which fn to call for default, or None for Default::default)

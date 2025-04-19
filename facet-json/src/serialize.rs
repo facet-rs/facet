@@ -165,7 +165,7 @@ fn serialize_struct<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()>
                 FieldAttribute::SkipSerializingIf(fn_ptr) => Some(fn_ptr),
                 _ => None,
             })
-            .is_some_and(|f| f(unsafe { field_peek.data().as_ptr() }))
+            .is_some_and(|f| f(field_peek.data()))
         {
             continue;
         }
