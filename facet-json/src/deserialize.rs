@@ -665,7 +665,36 @@ pub fn from_slice_wip<'input, 'a>(
                                 if struct_has_default {
                                     has_missing_fields = true;
                                 } else {
-                                    bail!(JsonErrorKind::MissingField(missing_field));
+                                    let field = sd.fields[i];
+                                    if let Some(attr) =
+                                        field.attributes.iter().find_map(|attr| match attr {
+                                            FieldAttribute::Default(d) => Some(d),
+                                            _ => None,
+                                        })
+                                    {
+                                        match attr {
+                                            Some(fun) => {
+                                                wip = wip
+                                                    .field(i)
+                                                    .unwrap()
+                                                    .put_from_fn(*fun)
+                                                    .unwrap()
+                                                    .pop()
+                                                    .unwrap();
+                                            }
+                                            None => {
+                                                wip = wip
+                                                    .field(i)
+                                                    .unwrap()
+                                                    .put_default()
+                                                    .unwrap()
+                                                    .pop()
+                                                    .unwrap();
+                                            }
+                                        }
+                                    } else {
+                                        bail!(JsonErrorKind::MissingField(missing_field));
+                                    }
                                 }
                             }
                         }

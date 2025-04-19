@@ -12,9 +12,16 @@ categories = ["development-tools", "rust-patterns"]
 
 [features]
 default = ["std"]
-std = ["alloc"]
-alloc = ["owo-colors/alloc", "facet-core/alloc"]
-log = ["dep:log", "dep:owo-colors"]
+std = ["alloc"] # Enable the standard library features
+alloc = [
+    "owo-colors/alloc",
+    "facet-core/alloc",
+] # Enable the allocation features
+log = [
+    "dep:log",
+    "dep:owo-colors",
+] # Enable logging of reflection operations (mostly for internal development)
+slow-tests = [] # Enable slow tests (compile tests)
 
 [dependencies]
 bitflags = "2.9.0"

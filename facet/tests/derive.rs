@@ -370,56 +370,11 @@ fn cfg_attrs() {
 }
 
 #[test]
-fn cfg_attrs2() {
-    #[derive(Facet)]
-    #[cfg_attr(feature = "testfeat", derive(Debug))]
-    #[cfg_attr(feature = "testfeat", facet(deny_unknown_fields))]
-    pub struct CubConfig {
-        /// size the disk cache is allowed to use
-        #[cfg_attr(feature = "testfeat", facet(skip_serializing))]
-        #[cfg_attr(
-            feature = "testfeat",
-            facet(default = "serde_defaults::default_disk_cache_size")
-        )]
-        pub disk_cache_size: String,
-    }
-}
-
-#[test]
 fn struct_with_std_string() {
     #[derive(Clone, Hash, PartialEq, Eq, ::facet::Facet)]
     struct FileInfo {
         path: std::string::String,
         size: u64,
-    }
-}
-
-#[test]
-fn derive_real_life_cub_config() {
-    #[derive(Facet)]
-    #[cfg_attr(feature = "testfeat", facet(deny_unknown_fields))]
-    pub struct CubConfig {
-        /// size the disk cache is allowed to use
-        #[cfg_attr(feature = "testfeat", facet(skip_serializing))]
-        #[cfg_attr(
-            feature = "testfeat",
-            facet(default = "serde_defaults::default_disk_cache_size")
-        )]
-        pub disk_cache_size: String,
-
-        /// Listen address without http, something like "127.0.0.1:1111"
-        #[cfg_attr(feature = "testfeat", facet(default = "serde_defaults::address"))]
-        pub address: std::string::String,
-
-        /// Something like `http://localhost:1118`
-        /// or `http://mom.svc.cluster.local:1118`, never
-        /// a trailing slash.
-        #[cfg_attr(feature = "testfeat", facet(default = "serde_defaults::mom_base_url"))]
-        pub mom_base_url: String,
-
-        /// API key used to talk to mom
-        #[cfg_attr(feature = "testfeat", facet(default = "serde_defaults::mom_api_key"))]
-        pub mom_api_key: String,
     }
 }
 

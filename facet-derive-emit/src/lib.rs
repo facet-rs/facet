@@ -142,8 +142,14 @@ pub(crate) fn gen_struct_field(
                 }
                 FacetInner::DefaultEquals(inner) => {
                     attribute_list.push(format!(
-                        r#"::facet::FieldAttribute::Default(Some({:?}))"#,
-                        inner.value.value()
+                        r#"::facet::FieldAttribute::Default(Some(|ptr| {{
+                            unsafe {{ ptr.put({}()) }}
+                        }}))"#,
+                        inner
+                            .value
+                            .value()
+                            .trim_start_matches('"')
+                            .trim_end_matches('"') // FIXME: that's pretty bad
                     ));
                 }
                 FacetInner::Invariants(_invariant_inner) => {

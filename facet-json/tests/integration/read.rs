@@ -853,6 +853,56 @@ fn json_read_struct_level_default_unset_field() {
 }
 
 #[test]
+fn json_read_field_level_default_no_function() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct FieldDefault {
+        foo: i32,
+        #[facet(default)]
+        bar: String,
+    }
+
+    // Only set foo, leave bar missing - should use Default for String
+    let json = r#"{"foo": 789}"#;
+
+    let s: FieldDefault = match from_str(json) {
+        Ok(s) => s,
+        Err(e) => panic!("Error deserializing JSON: {}", e),
+    };
+
+    assert_eq!(s.foo, 789);
+    assert_eq!(s.bar, "");
+}
+
+fn default_number() -> i32 {
+    12345
+}
+
+#[test]
+fn json_read_field_level_default_function() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct FieldDefaultFn {
+        #[facet(default = "default_number")]
+        foo: i32,
+        bar: String,
+    }
+
+    // Only set bar, leave foo missing - should use default_number()
+    let json = r#"{"bar": "hello"}"#;
+
+    let s: FieldDefaultFn = match from_str(json) {
+        Ok(s) => s,
+        Err(e) => panic!("Error deserializing JSON: {}", e),
+    };
+
+    assert_eq!(s.foo, 12345);
+    assert_eq!(s.bar, "hello");
+}
+
+#[test]
 fn test_allow_unknown_fields() {
     facet_testhelpers::setup();
 

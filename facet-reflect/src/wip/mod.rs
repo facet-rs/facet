@@ -9,7 +9,9 @@ use alloc::format;
 use alloc::{vec, vec::Vec};
 use bitflags::bitflags;
 use core::{fmt, marker::PhantomData};
-use facet_core::{Def, Facet, FieldError, PtrConst, PtrMut, PtrUninit, Shape, Variant};
+use facet_core::{
+    Def, DefaultInPlaceFn, Facet, FieldError, PtrConst, PtrMut, PtrUninit, Shape, Variant,
+};
 use flat_map::FlatMap;
 
 use alloc::string::String;
@@ -905,23 +907,15 @@ impl<'a> Wip<'a> {
         }
     }
 
-    /// Puts the default value in the current frame.
-    pub fn put_default(mut self) -> Result<Self, ReflectError> {
+    /// Puts a value using a provided DefaultInPlaceFn in the current frame.
+    pub fn put_from_fn(mut self, default_in_place: DefaultInPlaceFn) -> Result<Self, ReflectError> {
         let Some(frame) = self.frames.last_mut() else {
             return Err(ReflectError::OperationFailed {
                 shape: <()>::SHAPE,
-                operation: "tried to put default value but there was no frame",
+                operation: "tried to put value from fn but there was no frame",
             });
         };
 
-        let vtable = frame.shape.vtable;
-
-        let Some(default_in_place) = vtable.default_in_place else {
-            return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
-                operation: "type does not implement Default",
-            });
-        };
         unsafe {
             default_in_place(frame.data);
             frame.mark_fully_initialized();
@@ -934,6 +928,26 @@ impl<'a> Wip<'a> {
         self.mark_field_as_initialized(shape, index)?;
 
         Ok(self)
+    }
+
+    /// Puts the default value in the current frame.
+    pub fn put_default(self) -> Result<Self, ReflectError> {
+        let Some(frame) = self.frames.last() else {
+            return Err(ReflectError::OperationFailed {
+                shape: <()>::SHAPE,
+                operation: "tried to put default value but there was no frame",
+            });
+        };
+
+        let vtable = frame.shape.vtable;
+        let Some(default_in_place) = vtable.default_in_place else {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "type does not implement Default",
+            });
+        };
+
+        self.put_from_fn(default_in_place)
     }
 
     /// Marks a field as initialized in the parent frame.
