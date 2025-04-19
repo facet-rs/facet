@@ -7,7 +7,40 @@ use facet_json::from_str;
 use insta::assert_snapshot;
 
 #[test]
-fn json_read_simple_struct() {
+fn json_read_empty_struct() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet)]
+    struct TestStruct {}
+    let json = r#"{}"#;
+
+    let _: TestStruct = match from_str(json) {
+        Ok(s) => s,
+        Err(e) => panic!("Error deserializing JSON: {}", e),
+    };
+}
+
+#[test]
+fn json_read_struct_twofields() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet)]
+    struct TestStruct {
+        name: String,
+        age: u64,
+    }
+    let json = r#"{"name": "Alice", "age": 30}"#;
+
+    let s: TestStruct = match from_str(json) {
+        Ok(s) => s,
+        Err(e) => panic!("Error deserializing JSON: {}", e),
+    };
+    assert_eq!(s.name, "Alice");
+    assert_eq!(s.age, 30);
+}
+
+#[test]
+fn json_read_struct_threefields() {
     facet_testhelpers::setup();
 
     #[derive(Facet)]
@@ -27,20 +60,6 @@ fn json_read_simple_struct() {
     assert_eq!(s.hobbies.len(), 2);
     assert_eq!(s.hobbies[0], "reading");
     assert_eq!(s.hobbies[1], "coding");
-}
-
-#[test]
-fn json_read_empty_struct() {
-    facet_testhelpers::setup();
-
-    #[derive(Facet)]
-    struct TestStruct {}
-    let json = r#"{}"#;
-
-    let _: TestStruct = match from_str(json) {
-        Ok(s) => s,
-        Err(e) => panic!("Error deserializing JSON: {}", e),
-    };
 }
 
 #[test]

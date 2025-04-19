@@ -1,7 +1,7 @@
 use facet_core::{Characteristic, EnumDef, Field, FieldError, Shape};
 
 /// Errors that can occur when reflecting on types.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 #[non_exhaustive]
 pub enum ReflectError {
     /// Tried to `build` or `build_in_place` a struct/enum without initializing all fields.
