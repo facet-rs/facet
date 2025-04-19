@@ -4,6 +4,7 @@ use std::num::NonZero;
 
 use facet::Facet;
 use facet_json::from_str;
+use insta::assert_snapshot;
 
 #[test]
 fn json_read_simple_struct() {
@@ -633,7 +634,6 @@ fn test_field_rename_optional_values() {
 
 /// Deserialization with extra fields in JSON that aren't in the target struct
 #[test]
-#[ignore]
 fn test_field_rename_ignore_extra_fields() {
     facet_testhelpers::setup();
 
@@ -680,7 +680,6 @@ fn test_field_rename_serialization_priority() {
 
 /// Proper errors are returned when required renamed fields are missing
 #[test]
-#[ignore]
 fn test_field_rename_missing_required_error() {
     facet_testhelpers::setup();
 
@@ -695,7 +694,12 @@ fn test_field_rename_missing_required_error() {
 
     // This should result in an error as the required field is missing
     let result = facet_json::from_str::<Required>(json);
-    assert!(result.is_err());
+    let e = result.unwrap_err();
+    assert!(matches!(
+        e.kind,
+        facet_json::JsonErrorKind::MissingField(f) if f == "original_field"
+    ));
+    assert_snapshot!(e.to_string());
 }
 
 #[test]

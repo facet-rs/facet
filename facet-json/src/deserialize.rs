@@ -646,9 +646,18 @@ pub fn from_slice_wip<'input, 'a>(
         if let Some(why) = finished_value {
             trace!("Just finished value because of {:?}", why.green());
             match why {
-                WhyValue::TopLevel => {}
                 WhyValue::ObjectKey => {}
-                WhyValue::ObjectValue | WhyValue::ArrayElement => {
+                WhyValue::TopLevel | WhyValue::ObjectValue | WhyValue::ArrayElement => {
+                    trace!("Shape before popping: {}", wip.shape());
+                    // Ensure all struct fields are set before popping
+                    if let Def::Struct(sd) = wip.shape().def {
+                        for i in 0..sd.fields.len() {
+                            if !wip.is_field_set(i).unwrap() {
+                                let missing_field: &'static str = sd.fields[i].name;
+                                bail!(JsonErrorKind::MissingField(missing_field));
+                            }
+                        }
+                    }
                     if frame_count == 1 {
                         return Ok(wip.build().unwrap());
                     } else {

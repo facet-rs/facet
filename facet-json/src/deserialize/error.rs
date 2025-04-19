@@ -13,7 +13,8 @@ pub struct JsonParseErrorWithContext<'input> {
     #[cfg_attr(not(feature = "rich-diagnostics"), allow(dead_code))]
     input: &'input [u8],
     pos: usize,
-    kind: JsonErrorKind,
+    /// The specific error that occurred while parsing the JSON.
+    pub kind: JsonErrorKind,
     path: String,
 }
 
@@ -38,6 +39,7 @@ impl<'input> JsonParseErrorWithContext<'input> {
     pub fn message(&self) -> String {
         match &self.kind {
             JsonErrorKind::UnexpectedEof(msg) => format!("Unexpected end of file: {}", msg),
+            JsonErrorKind::MissingField(fld) => format!("Missing required field: {}", fld),
             JsonErrorKind::UnexpectedCharacter(c) => format!("Unexpected character: '{}'", c),
             JsonErrorKind::NumberOutOfRange(n) => format!("Number out of range: {}", n),
             JsonErrorKind::StringAsNumber(s) => format!("Expected a string but got number: {}", s),
@@ -52,6 +54,8 @@ impl<'input> JsonParseErrorWithContext<'input> {
 pub enum JsonErrorKind {
     /// The input ended unexpectedly while parsing JSON.
     UnexpectedEof(&'static str),
+    /// A required struct field was missing at the end of JSON input.
+    MissingField(&'static str),
     /// An unexpected character was encountered in the input.
     UnexpectedCharacter(char),
     /// A number is out of range.

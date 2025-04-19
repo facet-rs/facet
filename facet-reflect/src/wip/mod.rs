@@ -1768,6 +1768,45 @@ impl<'a> Wip<'a> {
 
         path
     }
+
+    /// Returns true if the field at the given index is set (initialized) in the current frame.
+    pub fn is_field_set(&self, index: usize) -> Result<bool, ReflectError> {
+        let frame = self.frames.last().ok_or(ReflectError::OperationFailed {
+            shape: <()>::SHAPE,
+            operation: "tried to check if field is set, but there was no frame",
+        })?;
+
+        match frame.shape.def {
+            Def::Struct(ref sd) => {
+                if index >= sd.fields.len() {
+                    return Err(ReflectError::FieldError {
+                        shape: frame.shape,
+                        field_error: FieldError::NoSuchField,
+                    });
+                }
+                Ok(frame.istate.fields.has(index))
+            }
+            Def::Enum(_) => {
+                let variant = frame.istate.variant.as_ref().ok_or(
+                    ReflectError::OperationFailed {
+                        shape: frame.shape,
+                        operation: "tried to check if field is set, but no variant was selected",
+                    },
+                )?;
+                if index >= variant.data.fields.len() {
+                    return Err(ReflectError::FieldError {
+                        shape: frame.shape,
+                        field_error: FieldError::NoSuchField,
+                    });
+                }
+                Ok(frame.istate.fields.has(index))
+            }
+            _ => Err(ReflectError::WasNotA {
+                expected: "struct or enum",
+                actual: frame.shape,
+            }),
+        }
+    }
 }
 
 impl Drop for Wip<'_> {
