@@ -1,8 +1,3 @@
-use core::num::{
-    NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroIsize, NonZeroU8, NonZeroU16, NonZeroU32,
-    NonZeroU64, NonZeroUsize,
-};
-
 use facet_core::{Characteristic, Def, Facet, FieldAttribute, ScalarAffinity, ShapeAttribute};
 use facet_reflect::{HeapValue, Wip};
 use log::trace;
@@ -366,165 +361,22 @@ pub fn from_slice_wip<'input, 'a>(
                         let number = number.parse::<f64>().unwrap();
                         trace!("Parsed {:?}", number.yellow());
 
-                        let shape = wip.shape();
-                        match shape.def {
-                            Def::Scalar(sd) => match sd.affinity {
-                                ScalarAffinity::Number(_na) => {
-                                    if shape.is_type::<u8>() {
-                                        if number >= 0.0 && number <= u8::MAX as f64 {
-                                            let value = number as u8;
-                                            wip = wip.put::<u8>(value).unwrap();
-                                        } else {
-                                            bail!(JsonErrorKind::NumberOutOfRange(number));
-                                        }
-                                    } else if shape.is_type::<u16>() {
-                                        if number >= 0.0 && number <= u16::MAX as f64 {
-                                            let value = number as u16;
-                                            wip = wip.put::<u16>(value).unwrap();
-                                        } else {
-                                            bail!(JsonErrorKind::NumberOutOfRange(number));
-                                        }
-                                    } else if shape.is_type::<u32>() {
-                                        if number >= 0.0 && number <= u32::MAX as f64 {
-                                            let value = number as u32;
-                                            wip = wip.put::<u32>(value).unwrap();
-                                        } else {
-                                            bail!(JsonErrorKind::NumberOutOfRange(number));
-                                        }
-                                    } else if shape.is_type::<u64>() {
-                                        if number >= 0.0 && number <= u64::MAX as f64 {
-                                            let value = number as u64;
-                                            wip = wip.put::<u64>(value).unwrap();
-                                        } else {
-                                            bail!(JsonErrorKind::NumberOutOfRange(number));
-                                        }
-                                    } else if shape.is_type::<i8>() {
-                                        if number >= i8::MIN as f64 && number <= i8::MAX as f64 {
-                                            let value = number as i8;
-                                            wip = wip.put::<i8>(value).unwrap();
-                                        } else {
-                                            bail!(JsonErrorKind::NumberOutOfRange(number));
-                                        }
-                                    } else if shape.is_type::<i16>() {
-                                        if number >= i16::MIN as f64 && number <= i16::MAX as f64 {
-                                            let value = number as i16;
-                                            wip = wip.put::<i16>(value).unwrap();
-                                        } else {
-                                            bail!(JsonErrorKind::NumberOutOfRange(number));
-                                        }
-                                    } else if shape.is_type::<i32>() {
-                                        if number >= i32::MIN as f64 && number <= i32::MAX as f64 {
-                                            let value = number as i32;
-                                            wip = wip.put::<i32>(value).unwrap();
-                                        } else {
-                                            bail!(JsonErrorKind::NumberOutOfRange(number));
-                                        }
-                                    } else if shape.is_type::<i64>() {
-                                        // Note: f64 might lose precision for large i64 values, but this is a common limitation.
-                                        if number >= i64::MIN as f64 && number <= i64::MAX as f64 {
-                                            let value = number as i64;
-                                            wip = wip.put::<i64>(value).unwrap();
-                                        } else {
-                                            bail!(JsonErrorKind::NumberOutOfRange(number));
-                                        }
-                                    } else if shape.is_type::<f32>() {
-                                        if number >= f32::MIN as f64 && number <= f32::MAX as f64 {
-                                            let value = number as f32;
-                                            wip = wip.put::<f32>(value).unwrap();
-                                        } else {
-                                            bail!(JsonErrorKind::NumberOutOfRange(number));
-                                        }
-                                    } else if shape.is_type::<f64>() {
-                                        wip = wip.put::<f64>(number).unwrap();
-                                    } else if shape.is_type::<NonZeroU8>() {
-                                        if number >= 1.0 && number <= u8::MAX as f64 {
-                                            let value = NonZeroU8::new(number as u8).unwrap();
-                                            wip = wip.put::<NonZeroU8>(value).unwrap();
-                                        } else {
-                                            bail!(JsonErrorKind::NumberOutOfRange(number));
-                                        }
-                                    } else if shape.is_type::<NonZeroU16>() {
-                                        if number >= 1.0 && number <= u16::MAX as f64 {
-                                            let value = NonZeroU16::new(number as u16).unwrap();
-                                            wip = wip.put::<NonZeroU16>(value).unwrap();
-                                        } else {
-                                            bail!(JsonErrorKind::NumberOutOfRange(number));
-                                        }
-                                    } else if shape.is_type::<NonZeroU32>() {
-                                        if number >= 1.0 && number <= u32::MAX as f64 {
-                                            let value = NonZeroU32::new(number as u32).unwrap();
-                                            wip = wip.put::<NonZeroU32>(value).unwrap();
-                                        } else {
-                                            bail!(JsonErrorKind::NumberOutOfRange(number));
-                                        }
-                                    } else if shape.is_type::<NonZeroU64>() {
-                                        if number >= 1.0 && number <= u64::MAX as f64 {
-                                            let value = NonZeroU64::new(number as u64).unwrap();
-                                            wip = wip.put::<NonZeroU64>(value).unwrap();
-                                        } else {
-                                            bail!(JsonErrorKind::NumberOutOfRange(number));
-                                        }
-                                    } else if shape.is_type::<NonZeroUsize>() {
-                                        if number >= 1.0 && number <= usize::MAX as f64 {
-                                            let value = NonZeroUsize::new(number as usize).unwrap();
-                                            wip = wip.put::<NonZeroUsize>(value).unwrap();
-                                        } else {
-                                            bail!(JsonErrorKind::NumberOutOfRange(number));
-                                        }
-                                    } else if shape.is_type::<NonZeroI8>() {
-                                        if number >= 1.0 && number <= i8::MAX as f64 {
-                                            let value = NonZeroI8::new(number as i8).unwrap();
-                                            wip = wip.put::<NonZeroI8>(value).unwrap();
-                                        } else {
-                                            bail!(JsonErrorKind::NumberOutOfRange(number));
-                                        }
-                                    } else if shape.is_type::<NonZeroI16>() {
-                                        if number >= 1.0 && number <= i16::MAX as f64 {
-                                            let value = NonZeroI16::new(number as i16).unwrap();
-                                            wip = wip.put::<NonZeroI16>(value).unwrap();
-                                        } else {
-                                            bail!(JsonErrorKind::NumberOutOfRange(number));
-                                        }
-                                    } else if shape.is_type::<NonZeroI32>() {
-                                        if number >= 1.0 && number <= i32::MAX as f64 {
-                                            let value = NonZeroI32::new(number as i32).unwrap();
-                                            wip = wip.put::<NonZeroI32>(value).unwrap();
-                                        } else {
-                                            bail!(JsonErrorKind::NumberOutOfRange(number));
-                                        }
-                                    } else if shape.is_type::<NonZeroI64>() {
-                                        if number >= 1.0 && number <= i64::MAX as f64 {
-                                            let value = NonZeroI64::new(number as i64).unwrap();
-                                            wip = wip.put::<NonZeroI64>(value).unwrap();
-                                        } else {
-                                            bail!(JsonErrorKind::NumberOutOfRange(number));
-                                        }
-                                    } else if shape.is_type::<NonZeroIsize>() {
-                                        if number >= 1.0 && number <= isize::MAX as f64 {
-                                            let value = NonZeroIsize::new(number as isize).unwrap();
-                                            wip = wip.put::<NonZeroIsize>(value).unwrap();
-                                        } else {
-                                            bail!(JsonErrorKind::NumberOutOfRange(number));
-                                        }
-                                    } else {
-                                        todo!("number type, but unknown")
-                                    }
-                                }
-                                ScalarAffinity::String(_sa) => {
+                        // Prefer try_put_f64 only if actually supported (can_put_f64)
+                        if wip.can_put_f64() {
+                            wip = wip.try_put_f64(number).unwrap();
+                        } else {
+                            // If string affinity (eg, expecting a string, but got number)
+                            let shape = wip.shape();
+                            if let Def::Scalar(sd) = shape.def {
+                                if let ScalarAffinity::String(_) = sd.affinity {
                                     if shape.is_type::<String>() {
                                         let value = number.to_string();
                                         bail!(JsonErrorKind::StringAsNumber(value));
-                                    } else {
-                                        todo!()
                                     }
                                 }
-                                _ => {
-                                    todo!("saw number in JSON but expected.. shape {}?", shape)
-                                }
-                            },
-                            _ => {
-                                todo!("saw number in JSON but expected.. shape {}?", shape)
                             }
+                            // fallback for other shape mismatch (todo! or parse error)
+                            bail!(JsonErrorKind::NumberOutOfRange(number));
                         }
                         finished_value = Some(why);
                     }

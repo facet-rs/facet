@@ -19,6 +19,8 @@ use alloc::string::String;
 mod iset;
 pub use iset::*;
 
+mod put_f64;
+
 mod enum_;
 mod flat_map;
 
