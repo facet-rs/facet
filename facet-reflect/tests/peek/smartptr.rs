@@ -1,5 +1,6 @@
 use facet::Facet;
 use facet_reflect::Peek;
+use std::rc::Rc;
 use std::sync::Arc;
 
 #[test]
@@ -103,4 +104,38 @@ fn test_smart_pointer_flags() {
     if let Some(known_type) = def.known {
         assert_eq!(known_type, facet_core::KnownSmartPointer::Arc);
     }
+}
+
+#[test]
+fn test_peek_rc() {
+    facet_testhelpers::setup();
+
+    let source = Rc::new(42);
+    let peek_value = Peek::new(&source);
+
+    // First test we can convert to a smart pointer
+    let peek_smart_pointer = peek_value.into_smart_pointer().unwrap();
+
+    // Get the definition
+    let def = peek_smart_pointer.def();
+
+    // Verify the inner type is correct
+    assert_eq!(def.pointee, Some(i32::SHAPE));
+}
+
+#[test]
+fn test_peek_rc_with_string() {
+    facet_testhelpers::setup();
+
+    let source = Rc::new("Hello, world!".to_string());
+    let peek_value = Peek::new(&source);
+
+    // Convert to a smart pointer
+    let peek_smart_pointer = peek_value.into_smart_pointer().unwrap();
+
+    // Get the definition
+    let def = peek_smart_pointer.def();
+
+    // Verify the inner type is correct
+    assert_eq!(def.pointee, Some(String::SHAPE));
 }

@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Other
+
+- Impl `Facet` for `Rc<T>` ([#307](https://github.com/facet-rs/facet/pull/307))
+
 ## [0.10.2](https://github.com/facet-rs/facet/compare/facet-reflect-v0.10.1...facet-reflect-v0.10.2) - 2025-04-19
 
 ### Added
