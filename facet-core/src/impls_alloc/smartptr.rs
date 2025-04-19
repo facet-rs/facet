@@ -32,7 +32,7 @@ unsafe impl<T: Facet> Facet for alloc::sync::Arc<T> {
                                     let arc = alloc::sync::Arc::new(t);
                                     unsafe { this.put(arc) }
                                 })
-                                .downgrade_fn(|strong, weak| unsafe {
+                                .downgrade_into_fn(|strong, weak| unsafe {
                                     weak.put(alloc::sync::Arc::downgrade(strong.get::<Self>()))
                                 })
                                 .build()
@@ -143,7 +143,7 @@ unsafe impl<T: Facet> Facet for alloc::rc::Rc<T> {
                                     let rc = alloc::rc::Rc::new(t);
                                     unsafe { this.put(rc) }
                                 })
-                                .downgrade_fn(|strong, weak| unsafe {
+                                .downgrade_into_fn(|strong, weak| unsafe {
                                     weak.put(alloc::rc::Rc::downgrade(strong.get::<Self>()))
                                 })
                                 .build()
