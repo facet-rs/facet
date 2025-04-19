@@ -328,9 +328,8 @@ impl SmartPointerVTableBuilder {
     }
 
     /// Sets the `downgrade` function.
-    // FIXME: naming inconsistent
     #[must_use]
-    pub const fn downgrade_fn(mut self, downgrade_into_fn: DowngradeIntoFn) -> Self {
+    pub const fn downgrade_into_fn(mut self, downgrade_into_fn: DowngradeIntoFn) -> Self {
         self.downgrade_into_fn = Some(downgrade_into_fn);
         self
     }
