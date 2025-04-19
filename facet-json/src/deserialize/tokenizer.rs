@@ -27,6 +27,10 @@ impl Span {
     pub fn len(&self) -> usize {
         self.len
     }
+    /// Returns `true` if this span has zero length
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
     /// End position (start + length)
     pub fn end(&self) -> Pos {
         self.start + self.len
@@ -268,12 +272,12 @@ impl<'input> Tokenizer<'input> {
         if self.input[end] == b'-' {
             end += 1;
         }
-        while end < self.input.len() && (b'0'..=b'9').contains(&self.input[end]) {
+        while end < self.input.len() && self.input[end].is_ascii_digit() {
             end += 1;
         }
         if end < self.input.len() && self.input[end] == b'.' {
             end += 1;
-            while end < self.input.len() && (b'0'..=b'9').contains(&self.input[end]) {
+            while end < self.input.len() && self.input[end].is_ascii_digit() {
                 end += 1;
             }
         }
@@ -282,7 +286,7 @@ impl<'input> Tokenizer<'input> {
             if end < self.input.len() && (self.input[end] == b'+' || self.input[end] == b'-') {
                 end += 1;
             }
-            while end < self.input.len() && (b'0'..=b'9').contains(&self.input[end]) {
+            while end < self.input.len() && self.input[end].is_ascii_digit() {
                 end += 1;
             }
         }

@@ -1,4 +1,4 @@
-use facet_core::{Def, Facet};
+use facet_core::Facet;
 use facet_reflect::{HeapValue, Wip};
 use log::trace;
 use owo_colors::OwoColorize;
