@@ -36,17 +36,22 @@ impl Span {
 /// A value of type `T` annotated with its `Span`
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Spanned<T> {
+    /// The actual data/value being wrapped
     pub node: T,
+    /// The span information indicating the position and length in the source
     pub span: Span,
 }
 
 /// Error encountered during tokenization
 #[derive(Debug, Clone, PartialEq)]
 pub struct TokenError {
+    /// The specific type of error that occurred during tokenization
     pub kind: TokenErrorKind,
+    /// The location in the source where the error occurred
     pub span: Span,
 }
 
+/// Types of errors that can occur during tokenization
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenErrorKind {
     /// Unexpected character encountered
@@ -65,17 +70,29 @@ pub type TokenizeResult = Result<Spanned<Token>, TokenError>;
 /// JSON tokens (without positions)
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
-    LBrace,   // '{'
-    RBrace,   // '}'
-    LBracket, // '['
-    RBracket, // ']'
-    Colon,    // ':'
-    Comma,    // ','
+    /// Left brace character: '{'
+    LBrace,
+    /// Right brace character: '}'
+    RBrace,
+    /// Left bracket character: '['
+    LBracket,
+    /// Right bracket character: ']'
+    RBracket,
+    /// Colon character: ':'
+    Colon,
+    /// Comma character: ','
+    Comma,
+    /// A JSON string value
     String(String),
+    /// A JSON number value
     Number(f64),
+    /// The JSON boolean value 'true'
     True,
+    /// The JSON boolean value 'false'
     False,
+    /// The JSON null value
     Null,
+    /// End of file marker
     EOF,
 }
 

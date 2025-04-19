@@ -69,7 +69,13 @@ pub enum JsonErrorKind {
     /// A required struct field was missing at the end of JSON input.
     MissingField(&'static str),
     /// An unexpected token was encountered in the input.
-    UnexpectedToken { got: Token, wanted: &'static str },
+    UnexpectedToken {
+        /// The hero we got
+        got: Token,
+
+        /// The hero we wanted
+        wanted: &'static str,
+    },
     /// A number is out of range.
     NumberOutOfRange(f64),
     /// An unexpected String was encountered in the input.
