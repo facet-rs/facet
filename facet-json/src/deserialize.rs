@@ -193,23 +193,6 @@ pub fn from_slice_wip<'input, 'a>(
                     }
                 }
             }
-            Instruction::Comma => {
-                let token = next_token!();
-                match token.node {
-                    Token::Comma => {
-                        trace!("Object separator");
-                    }
-                    _ => {
-                        bail!(
-                            token.span,
-                            JsonErrorKind::UnexpectedToken {
-                                got: token.node,
-                                wanted: "comma"
-                            }
-                        );
-                    }
-                }
-            }
             Instruction::Pop => {
                 wip = wip.pop().unwrap();
             }
