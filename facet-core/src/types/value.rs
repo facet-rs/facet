@@ -79,6 +79,8 @@ pub type InvariantsFn = for<'mem> unsafe fn(value: PtrConst<'mem>) -> bool;
 /// # Safety
 ///
 /// The `value` parameter must point to aligned, initialized memory of the correct type.
+/// After calling this function, the memory pointed to by `value` should not be accessed again
+/// until it is properly reinitialized.
 pub type DropInPlaceFn = for<'mem> unsafe fn(value: PtrMut<'mem>) -> PtrUninit<'mem>;
 
 /// Function to clone a value into another already-allocated value

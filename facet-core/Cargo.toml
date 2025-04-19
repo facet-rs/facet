@@ -20,3 +20,6 @@ camino = ["dep:camino", "alloc"]
 impls = "1.0.3"
 bitflags = "2.4.1"
 camino = { version = "1", optional = true }
+
+[dev-dependencies]
+facet-testhelpers = { path = "../facet-testhelpers" }

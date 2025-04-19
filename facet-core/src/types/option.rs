@@ -84,8 +84,8 @@ pub type OptionGetValueFn =
 ///
 /// The `option` parameter must point to uninitialized memory of sufficient size.
 /// The function must properly initialize the memory.
-/// `value` is moved out of (with [`core::ptr::read`]) — it should be deallocated
-/// afterwards but NOT dropped.
+/// `value` is moved out of (with [`core::ptr::read`]) — it should be deallocated afterwards (e.g.
+/// with [`core::mem::forget`]) but NOT dropped.
 pub type OptionInitSomeFn =
     for<'option> unsafe fn(option: PtrUninit<'option>, value: PtrConst<'_>) -> PtrMut<'option>;
 
