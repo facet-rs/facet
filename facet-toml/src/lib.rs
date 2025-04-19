@@ -6,52 +6,61 @@ mod to_scalar;
 
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-use error::AnyErr;
+use error::{TomlError, TomlErrorKind};
 use facet_core::{Def, Facet, Struct, StructKind};
 use facet_reflect::{ScalarType, Wip};
 use log::trace;
-use toml_edit::{DocumentMut, Item, TomlError};
+use toml_edit::{DocumentMut, Item};
 use yansi::Paint as _;
 
 /// Deserializes a TOML string into a value of type `T` that implements `Facet`.
-pub fn from_str<T: Facet>(toml: &str) -> Result<T, AnyErr> {
+pub fn from_str<'input, T: Facet>(toml: &'input str) -> Result<T, TomlError<'input>> {
     trace!("Starting deserialization");
 
     let wip = Wip::alloc::<T>();
 
-    let docs: DocumentMut = toml.parse().map_err(|e| TomlError::to_string(&e))?;
-    let wip = deserialize_item(wip, docs.as_item())?;
+    let docs: DocumentMut = toml
+        .parse()
+        .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericTomlError(e), None))?;
+    let wip = deserialize_item(toml, wip, docs.as_item())?;
 
-    let heap_value = wip.build().map_err(|e| AnyErr(e.to_string()))?;
+    let heap_value = wip
+        .build()
+        .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), None))?;
     let result = heap_value
         .materialize::<T>()
-        .map_err(|e| AnyErr(e.to_string()))?;
+        .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), None))?;
 
     trace!("Finished deserialization");
 
     Ok(result)
 }
 
-fn deserialize_item<'a>(wip: Wip<'a>, item: &Item) -> Result<Wip<'a>, AnyErr> {
+fn deserialize_item<'input, 'a>(
+    toml: &'input str,
+    wip: Wip<'a>,
+    item: &Item,
+) -> Result<Wip<'a>, TomlError<'input>> {
     trace!("Deserializing {}", item.type_name().blue());
 
     match wip.shape().def {
-        Def::Scalar(_) => deserialize_as_scalar(wip, item),
-        Def::List(_) => deserialize_as_list(wip, item),
-        Def::Map(_) => deserialize_as_map(wip, item),
-        Def::Struct(def) => deserialize_as_struct(wip, def, item),
-        Def::Enum(_) => deserialize_as_enum(wip, item),
-        Def::Option(_) => deserialize_as_option(wip, item),
-        Def::SmartPointer(_) => deserialize_as_smartpointer(wip, item),
-        _ => Err(AnyErr(format!("Unsupported type: {:?}", wip.shape()))),
+        Def::Scalar(_) => deserialize_as_scalar(toml, wip, item),
+        Def::List(_) => deserialize_as_list(toml, wip, item),
+        Def::Map(_) => deserialize_as_map(toml, wip, item),
+        Def::Struct(def) => deserialize_as_struct(toml, wip, def, item),
+        Def::Enum(_) => deserialize_as_enum(toml, wip, item),
+        Def::Option(_) => deserialize_as_option(toml, wip, item),
+        Def::SmartPointer(_) => deserialize_as_smartpointer(toml, wip, item),
+        _ => todo!(),
     }
 }
 
-fn deserialize_as_struct<'a>(
+fn deserialize_as_struct<'input, 'a>(
+    toml: &'input str,
     mut wip: Wip<'a>,
     def: Struct,
     item: &Item,
-) -> Result<Wip<'a>, AnyErr> {
+) -> Result<Wip<'a>, TomlError<'input>> {
     trace!("Deserializing {}", "struct".blue());
 
     // Parse as a the inner struct type if item is a single value and the struct is a unit struct
@@ -60,48 +69,62 @@ fn deserialize_as_struct<'a>(
         let shape = wip.shape();
         if let Def::Struct(def) = shape.def {
             if def.fields.len() > 1 {
-                return Err(AnyErr(
-                    "Failed trying to parse a single value as a struct with multiple fields".into(),
+                return Err(TomlError::new(
+                    toml,
+                    TomlErrorKind::ParseSingleValueAsMultipleFieldStruct,
+                    item.span(),
                 ));
             }
         }
 
-        let field_index = 0;
         wip = wip
-            .field(field_index)
-            .map_err(|e| AnyErr(format!("Unit struct is missing value: {}", e)))?;
-        wip = deserialize_item(wip, item)?;
-        wip = wip.pop().map_err(|e| AnyErr(e.to_string()))?;
+            .field(0)
+            .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?;
+
+        wip = deserialize_item(toml, wip, item)?;
+
+        wip = wip
+            .pop()
+            .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?;
+
         return Ok(wip);
     }
 
     // Otherwise we expect a table
     let table = item.as_table_like().ok_or_else(|| {
-        AnyErr(format!(
-            "Expected table like structure, got {}",
-            item.type_name()
-        ))
+        TomlError::new(
+            toml,
+            TomlErrorKind::ExpectedType {
+                expected: "table like structure",
+                got: item.type_name(),
+            },
+            item.span(),
+        )
     })?;
 
     for field in def.fields {
         wip = wip
             .field_named(field.name)
-            .map_err(|e| AnyErr(e.to_string()))?;
+            .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?;
 
         // Find the matching TOML field
         let field_item = table.get(field.name);
         match field_item {
-            Some(field_item) => wip = deserialize_item(wip, field_item)?,
+            Some(field_item) => wip = deserialize_item(toml, wip, field_item)?,
             None => {
                 if let Def::Option(..) = field.shape().def {
                     // Default of `Option<T>` is `None`
-                    wip = wip.put_default().map_err(|e| AnyErr(e.to_string()))?;
+                    wip = wip.put_default().map_err(|e| {
+                        TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span())
+                    })?;
                 } else {
-                    return Err(AnyErr(format!("Expected field '{}'", field.name)));
+                    return Err(TomlError(format!("Expected field '{}'", field.name)));
                 }
             }
         }
-        wip = wip.pop().map_err(|e| AnyErr(e.to_string()))?;
+        wip = wip
+            .pop()
+            .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?;
     }
 
     trace!("Finished deserializing {}", "struct".blue());
@@ -109,7 +132,11 @@ fn deserialize_as_struct<'a>(
     Ok(wip)
 }
 
-fn deserialize_as_enum<'a>(wip: Wip<'a>, item: &Item) -> Result<Wip<'a>, AnyErr> {
+fn deserialize_as_enum<'input, 'a>(
+    toml: &'input str,
+    wip: Wip<'a>,
+    item: &Item,
+) -> Result<Wip<'a>, TomlError<'input>> {
     trace!("Deserializing {}", "enum".blue());
 
     let wip = match item {
@@ -128,12 +155,13 @@ fn deserialize_as_enum<'a>(wip: Wip<'a>, item: &Item) -> Result<Wip<'a>, AnyErr>
                     );
 
                     if inline_table.len() > 1 {
-                        return Err(AnyErr(
+                        return Err(TomlError(
                             "Cannot parse enum from inline table because it got multiple fields"
                                 .to_string(),
                         ));
                     } else {
                         return build_enum_from_variant_name(
+                            toml,
                             wip,
                             key,
                             // TODO: remove clone
@@ -141,7 +169,7 @@ fn deserialize_as_enum<'a>(wip: Wip<'a>, item: &Item) -> Result<Wip<'a>, AnyErr>
                         );
                     }
                 } else {
-                    return Err(AnyErr(
+                    return Err(TomlError(
                         "Inline table doesn't have any fields to parse into enum variant"
                             .to_string(),
                     ));
@@ -152,7 +180,7 @@ fn deserialize_as_enum<'a>(wip: Wip<'a>, item: &Item) -> Result<Wip<'a>, AnyErr>
                 .as_str()
                 .ok_or_else(|| format!("Expected string, got: {}", value.type_name()))?;
 
-            build_enum_from_variant_name(wip, variant_name, item)?
+            build_enum_from_variant_name(toml, wip, variant_name, item)?
         }
 
         Item::Table(table) => {
@@ -160,15 +188,15 @@ fn deserialize_as_enum<'a>(wip: Wip<'a>, item: &Item) -> Result<Wip<'a>, AnyErr>
                 trace!("Entering {} with key {}", "table".cyan(), key.cyan().bold());
 
                 if table.len() > 1 {
-                    return Err(AnyErr(
+                    return Err(TomlError(
                         "Cannot parse enum from inline table because it got multiple fields"
                             .to_string(),
                     ));
                 } else {
-                    build_enum_from_variant_name(wip, key, field)?
+                    build_enum_from_variant_name(toml, wip, key, field)?
                 }
             } else {
-                return Err(AnyErr(
+                return Err(TomlError(
                     "Inline table doesn't have any fields to parse into enum variant".to_string(),
                 ));
             }
@@ -182,15 +210,16 @@ fn deserialize_as_enum<'a>(wip: Wip<'a>, item: &Item) -> Result<Wip<'a>, AnyErr>
     Ok(wip)
 }
 
-fn build_enum_from_variant_name<'a>(
+fn build_enum_from_variant_name<'input, 'a>(
+    toml: &'input str,
     mut wip: Wip<'a>,
     variant_name: &str,
     item: &Item,
-) -> Result<Wip<'a>, AnyErr> {
+) -> Result<Wip<'a>, TomlError<'input>> {
     // Select the variant
     wip = wip
         .variant_named(variant_name)
-        .map_err(|e| AnyErr(e.to_string()))?;
+        .map_err(|e| TomlError(e.to_string()))?;
     // Safe to unwrap because the variant got just selected
     let variant = wip.selected_variant().unwrap();
 
@@ -223,19 +252,19 @@ fn build_enum_from_variant_name<'a>(
             match item.get(field_name) {
                 // Field found, push it
                 Some(field) => {
-                    wip = deserialize_item(wip, field)?;
+                    wip = deserialize_item(toml, wip, field)?;
                 }
                 // Push none if field not found and it's an option
                 None if matches!(field.shape().def, Def::Option(_)) => {
                     // Default of `Option<T>` is `None`
-                    wip = wip.put_default().map_err(|e| AnyErr(e.to_string()))?;
+                    wip = wip.put_default().map_err(|e| TomlError(e.to_string()))?;
                 }
                 None => {
                     return Err(format!("TOML field '{}' not found", field_name).into());
                 }
             }
         } else if item.is_value() {
-            wip = deserialize_item(wip, item)?;
+            wip = deserialize_item(toml, wip, item)?;
         } else {
             return Err(format!("TOML {} is not a recognized type", item.type_name()).into());
         }
@@ -246,12 +275,16 @@ fn build_enum_from_variant_name<'a>(
     Ok(wip)
 }
 
-fn deserialize_as_list<'a>(mut wip: Wip<'a>, item: &Item) -> Result<Wip<'a>, AnyErr> {
+fn deserialize_as_list<'input, 'a>(
+    toml: &'input str,
+    mut wip: Wip<'a>,
+    item: &Item,
+) -> Result<Wip<'a>, TomlError<'input>> {
     trace!("Deserializing {}", "list".blue());
 
     // Get the TOML item as an array
     let Some(item) = item.as_array() else {
-        return Err(AnyErr(format!(
+        return Err(TomlError(format!(
             "Item is not an array but a {}",
             item.type_name()
         )));
@@ -261,7 +294,7 @@ fn deserialize_as_list<'a>(mut wip: Wip<'a>, item: &Item) -> Result<Wip<'a>, Any
         // Only put an empty list
         return wip
             .put_empty_list()
-            .map_err(|e| AnyErr(format!("Can not put empty list: {e}")));
+            .map_err(|e| TomlError(format!("Can not put empty list: {e}")));
     }
 
     // Start the list
@@ -293,12 +326,16 @@ fn deserialize_as_list<'a>(mut wip: Wip<'a>, item: &Item) -> Result<Wip<'a>, Any
     Ok(wip)
 }
 
-fn deserialize_as_map<'a>(mut wip: Wip<'a>, item: &Item) -> Result<Wip<'a>, AnyErr> {
+fn deserialize_as_map<'input, 'a>(
+    toml: &'input str,
+    mut wip: Wip<'a>,
+    item: &Item,
+) -> Result<Wip<'a>, TomlError<'input>> {
     trace!("Deserializing {}", "map".blue());
 
     // We expect a table to fill a map
     let table = item.as_table_like().ok_or_else(|| {
-        AnyErr(format!(
+        TomlError(format!(
             "Expected table like structure, got {}",
             item.type_name()
         ))
@@ -308,7 +345,7 @@ fn deserialize_as_map<'a>(mut wip: Wip<'a>, item: &Item) -> Result<Wip<'a>, AnyE
         // Only put an empty map
         return wip
             .put_empty_map()
-            .map_err(|e| AnyErr(format!("Can not put empty map: {e}")));
+            .map_err(|e| TomlError(format!("Can not put empty map: {e}")));
     }
 
     // Start the map
@@ -331,16 +368,18 @@ fn deserialize_as_map<'a>(mut wip: Wip<'a>, item: &Item) -> Result<Wip<'a>, AnyE
         {
             #[cfg(feature = "std")]
             ScalarType::String => {
-                wip = wip.put(k.to_string()).map_err(|e| AnyErr(e.to_string()))?
+                wip = wip
+                    .put(k.to_string())
+                    .map_err(|e| TomlError(e.to_string()))?
             }
             #[cfg(feature = "std")]
             ScalarType::CowStr => {
                 wip = wip
                     .put(std::borrow::Cow::Owned(k.to_string()))
-                    .map_err(|e| AnyErr(e.to_string()))?
+                    .map_err(|e| TomlError(e.to_string()))?
             }
             _ => {
-                return Err(AnyErr(format!(
+                return Err(TomlError(format!(
                     "Can not convert {} to map key",
                     wip.shape()
                 )));
@@ -355,7 +394,7 @@ fn deserialize_as_map<'a>(mut wip: Wip<'a>, item: &Item) -> Result<Wip<'a>, AnyE
             .map_err(|e| format!("Can not start value: {e}"))?;
 
         // Deserialize the value
-        wip = deserialize_item(wip, v)?;
+        wip = deserialize_item(toml, wip, v)?;
 
         // Finish the key
         wip = wip
@@ -368,12 +407,16 @@ fn deserialize_as_map<'a>(mut wip: Wip<'a>, item: &Item) -> Result<Wip<'a>, AnyE
     Ok(wip)
 }
 
-fn deserialize_as_option<'a>(mut wip: Wip<'a>, item: &Item) -> Result<Wip<'a>, AnyErr> {
+fn deserialize_as_option<'input, 'a>(
+    toml: &'input str,
+    mut wip: Wip<'a>,
+    item: &Item,
+) -> Result<Wip<'a>, TomlError<'input>> {
     trace!("Deserializing {}", "option".blue());
 
     wip = wip.push_some().map_err(|e| e.to_string())?;
 
-    wip = deserialize_item(wip, item)?;
+    wip = deserialize_item(toml, wip, item)?;
 
     wip = wip.pop().map_err(|e| e.to_string())?;
 
@@ -382,7 +425,11 @@ fn deserialize_as_option<'a>(mut wip: Wip<'a>, item: &Item) -> Result<Wip<'a>, A
     Ok(wip)
 }
 
-fn deserialize_as_smartpointer<'a>(mut _wip: Wip<'a>, _item: &Item) -> Result<Wip<'a>, AnyErr> {
+fn deserialize_as_smartpointer<'input, 'a>(
+    _toml: &'input str,
+    mut _wip: Wip<'a>,
+    _item: &Item,
+) -> Result<Wip<'a>, TomlError<'input>> {
     trace!("Deserializing {}", "smart pointer".blue());
 
     trace!("Finished deserializing {}", "smart pointer".blue());
@@ -390,7 +437,11 @@ fn deserialize_as_smartpointer<'a>(mut _wip: Wip<'a>, _item: &Item) -> Result<Wi
     todo!();
 }
 
-fn deserialize_as_scalar<'a>(mut wip: Wip<'a>, item: &Item) -> Result<Wip<'a>, AnyErr> {
+fn deserialize_as_scalar<'input, 'a>(
+    toml: &'input str,
+    mut wip: Wip<'a>,
+    item: &Item,
+) -> Result<Wip<'a>, TomlError<'input>> {
     trace!("Deserializing {}", "scalar".blue());
 
     match ScalarType::try_from_shape(wip.shape())
@@ -398,80 +449,80 @@ fn deserialize_as_scalar<'a>(mut wip: Wip<'a>, item: &Item) -> Result<Wip<'a>, A
     {
         ScalarType::Bool => {
             wip = wip
-                .put(to_scalar::boolean(item)?)
-                .map_err(|e| AnyErr(e.to_string()))?
+                .put(to_scalar::boolean(toml, item)?)
+                .map_err(|e| TomlError(e.to_string()))?
         }
         #[cfg(feature = "std")]
         ScalarType::String => {
             wip = wip
-                .put(to_scalar::string(item)?)
-                .map_err(|e| AnyErr(e.to_string()))?
+                .put(to_scalar::string(toml, item)?)
+                .map_err(|e| TomlError(e.to_string()))?
         }
         #[cfg(feature = "std")]
         ScalarType::CowStr => {
             wip = wip
-                .put(std::borrow::Cow::Owned(to_scalar::string(item)?))
-                .map_err(|e| AnyErr(e.to_string()))?
+                .put(std::borrow::Cow::Owned(to_scalar::string(toml, item)?))
+                .map_err(|e| TomlError(e.to_string()))?
         }
         ScalarType::F32 => {
             wip = wip
                 .put(to_scalar::number::<f32>(item)?)
-                .map_err(|e| AnyErr(e.to_string()))?
+                .map_err(|e| TomlError(e.to_string()))?
         }
         ScalarType::F64 => {
             wip = wip
                 .put(to_scalar::number::<f64>(item)?)
-                .map_err(|e| AnyErr(e.to_string()))?
+                .map_err(|e| TomlError(e.to_string()))?
         }
         ScalarType::U8 => {
             wip = wip
                 .put(to_scalar::number::<u8>(item)?)
-                .map_err(|e| AnyErr(e.to_string()))?
+                .map_err(|e| TomlError(e.to_string()))?
         }
         ScalarType::U16 => {
             wip = wip
                 .put(to_scalar::number::<u16>(item)?)
-                .map_err(|e| AnyErr(e.to_string()))?
+                .map_err(|e| TomlError(e.to_string()))?
         }
         ScalarType::U32 => {
             wip = wip
                 .put(to_scalar::number::<u32>(item)?)
-                .map_err(|e| AnyErr(e.to_string()))?
+                .map_err(|e| TomlError(e.to_string()))?
         }
         ScalarType::U64 => {
             wip = wip
                 .put(to_scalar::number::<u64>(item)?)
-                .map_err(|e| AnyErr(e.to_string()))?
+                .map_err(|e| TomlError(e.to_string()))?
         }
         ScalarType::USize => {
             wip = wip
                 .put(to_scalar::number::<usize>(item)?)
-                .map_err(|e| AnyErr(e.to_string()))?
+                .map_err(|e| TomlError(e.to_string()))?
         }
         ScalarType::I8 => {
             wip = wip
                 .put(to_scalar::number::<i8>(item)?)
-                .map_err(|e| AnyErr(e.to_string()))?
+                .map_err(|e| TomlError(e.to_string()))?
         }
         ScalarType::I16 => {
             wip = wip
                 .put(to_scalar::number::<i16>(item)?)
-                .map_err(|e| AnyErr(e.to_string()))?
+                .map_err(|e| TomlError(e.to_string()))?
         }
         ScalarType::I32 => {
             wip = wip
                 .put(to_scalar::number::<i32>(item)?)
-                .map_err(|e| AnyErr(e.to_string()))?
+                .map_err(|e| TomlError(e.to_string()))?
         }
         ScalarType::I64 => {
             wip = wip
                 .put(to_scalar::number::<i64>(item)?)
-                .map_err(|e| AnyErr(e.to_string()))?
+                .map_err(|e| TomlError(e.to_string()))?
         }
         ScalarType::ISize => {
             wip = wip
                 .put(to_scalar::number::<isize>(item)?)
-                .map_err(|e| AnyErr(e.to_string()))?
+                .map_err(|e| TomlError(e.to_string()))?
         }
         #[cfg(feature = "std")]
         ScalarType::SocketAddr => {
@@ -480,24 +531,29 @@ fn deserialize_as_scalar<'a>(mut wip: Wip<'a>, item: &Item) -> Result<Wip<'a>, A
                     item,
                     "socket address",
                 )?)
-                .map_err(|e| AnyErr(e.to_string()))?
+                .map_err(|e| TomlError(e.to_string()))?
         }
         ScalarType::IpAddr => {
             wip = wip
                 .put(to_scalar::from_str::<IpAddr>(item, "ip address")?)
-                .map_err(|e| AnyErr(e.to_string()))?
+                .map_err(|e| TomlError(e.to_string()))?
         }
         ScalarType::Ipv4Addr => {
             wip = wip
                 .put(to_scalar::from_str::<Ipv4Addr>(item, "ipv4 address")?)
-                .map_err(|e| AnyErr(e.to_string()))?
+                .map_err(|e| TomlError(e.to_string()))?
         }
         ScalarType::Ipv6Addr => {
             wip = wip
                 .put(to_scalar::from_str::<Ipv6Addr>(item, "ipv6 address")?)
-                .map_err(|e| AnyErr(e.to_string()))?
+                .map_err(|e| TomlError(e.to_string()))?
         }
-        _ => return Err(AnyErr(format!("Unsupported scalar type: {}", wip.shape()))),
+        _ => {
+            return Err(TomlError(format!(
+                "Unsupported scalar type: {}",
+                wip.shape()
+            )));
+        }
     }
 
     trace!("Finished deserializing {}", "scalar".blue());
