@@ -39,8 +39,7 @@ enum Instruction {
     Value,
     CommaThenObjectKeyOrObjectClose,
     ObjectKeyOrObjectClose,
-    Comma, // separator between object keys, array items, etc.
-    Pop,   // pop after setting an object value
+    Pop, // pop after setting an object value
 }
 
 /// Deserialize a JSON string into a Wip object.
