@@ -50,7 +50,7 @@ impl<'input> JsonParseErrorWithContext<'input> {
 }
 
 /// An error kind for JSON parsing.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum JsonErrorKind {
     /// The input ended unexpectedly while parsing JSON.
     UnexpectedEof(&'static str),
