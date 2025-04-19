@@ -137,6 +137,15 @@ pub(crate) fn gen_struct_field(
                     flags = "::facet::FieldFlags::SENSITIVE";
                     attribute_list.push("::facet::FieldAttribute::Sensitive".to_string());
                 }
+                FacetInner::Default(_) => {
+                    attribute_list.push("::facet::FieldAttribute::Default(None)".to_string());
+                }
+                FacetInner::DefaultEquals(inner) => {
+                    attribute_list.push(format!(
+                        r#"::facet::FieldAttribute::Default(Some({:?}))"#,
+                        inner.value.value()
+                    ));
+                }
                 FacetInner::Invariants(_invariant_inner) => {
                     panic!("fields cannot have invariants")
                 }
@@ -148,16 +157,24 @@ pub(crate) fn gen_struct_field(
                 }
                 FacetInner::Other(tt) => {
                     let attr_str = tt.tokens_to_string();
-                    let attr_fmt = match attr_str.find('=') {
-                        Some(equal_pos) if attr_str[..equal_pos].trim() == "rename" => {
+                    if let Some(equal_pos) = attr_str.find('=') {
+                        let key = attr_str[..equal_pos].trim();
+                        if key == "rename" {
                             let value = attr_str[equal_pos + 1..].trim().trim_matches('"');
-                            format!(r#"::facet::FieldAttribute::Rename({:?})"#, value)
+                            attribute_list
+                                .push(format!(r#"::facet::FieldAttribute::Rename({:?})"#, value));
+                        } else {
+                            attribute_list.push(format!(
+                                r#"::facet::FieldAttribute::Arbitrary({:?})"#,
+                                attr_str
+                            ));
                         }
-                        _ => {
-                            format!(r#"::facet::FieldAttribute::Arbitrary({:?})"#, attr_str)
-                        }
-                    };
-                    attribute_list.push(attr_fmt);
+                    } else {
+                        attribute_list.push(format!(
+                            r#"::facet::FieldAttribute::Arbitrary({:?})"#,
+                            attr_str
+                        ));
+                    }
                 }
             },
             AttributeInner::Doc(doc_inner) => doc_lines.push(doc_inner.value.value()),
@@ -265,6 +282,9 @@ fn build_container_attributes(attributes: &[Attribute]) -> String {
             AttributeInner::Facet(facet_attr) => match facet_attr.inner.content {
                 FacetInner::DenyUnknownFields(_) => {
                     items.push("::facet::ShapeAttribute::DenyUnknownFields");
+                }
+                FacetInner::DefaultEquals(_) | FacetInner::Default(_) => {
+                    items.push("::facet::ShapeAttribute::Default");
                 }
                 FacetInner::Sensitive(_) => {
                     // TODO

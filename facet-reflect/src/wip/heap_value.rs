@@ -1,3 +1,4 @@
+use crate::Peek;
 use crate::ReflectError;
 use crate::trace;
 use core::{alloc::Layout, marker::PhantomData};
@@ -24,6 +25,11 @@ impl Drop for HeapValue<'_> {
 }
 
 impl<'a> HeapValue<'a> {
+    /// Returns a peek that allows exploring the heap value.
+    pub fn peek(&self) -> Peek<'a> {
+        unsafe { Peek::unchecked_new(PtrConst::new(self.guard.as_ref().unwrap().ptr), self.shape) }
+    }
+
     /// Turn this heapvalue into a concrete type
     pub fn materialize<T: Facet + 'a>(mut self) -> Result<T, ReflectError> {
         if self.shape != T::SHAPE {

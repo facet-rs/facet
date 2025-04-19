@@ -283,6 +283,14 @@ pub struct Wip<'a> {
 }
 
 impl<'a> Wip<'a> {
+    /// Puts the value from a Peek into the current frame.
+    pub fn put_peek<'mem>(self, peek: crate::Peek<'mem>) -> Result<Wip<'mem>, ReflectError>
+    where
+        'a: 'mem,
+    {
+        self.put_shape(peek.data, peek.shape)
+    }
+
     /// Returns the number of frames on the stack
     pub fn frames_count(&self) -> usize {
         self.frames.len()
@@ -735,58 +743,71 @@ impl<'a> Wip<'a> {
     ///
     /// * `Ok(Self)` if the value was successfully put into the frame.
     /// * `Err(ReflectError)` if there was an error putting the value into the frame.
-    pub fn put<'val, T: Facet + 'val>(mut self, t: T) -> Result<Wip<'val>, ReflectError>
+    pub fn put<'val, T: Facet + 'val>(self, t: T) -> Result<Wip<'val>, ReflectError>
+    where
+        'a: 'val,
+    {
+        let shape = T::SHAPE;
+        let ptr_const = PtrConst::new(&t as *const T as *const u8);
+        let res = self.put_shape(ptr_const, shape);
+        core::mem::forget(t); // avoid double drop; ownership moved into Wip
+        res
+    }
+
+    /// Puts a value from a `PtrConst` with the given shape into the current frame.
+    pub fn put_shape<'val>(
+        mut self,
+        src: PtrConst<'val>,
+        src_shape: &'static Shape,
+    ) -> Result<Wip<'val>, ReflectError>
     where
         'a: 'val,
     {
         let Some(frame) = self.frames.last_mut() else {
             return Err(ReflectError::OperationFailed {
-                shape: T::SHAPE,
-                operation: "tried to put a T but there was no frame to put T into",
+                shape: src_shape,
+                operation: "tried to put a value but there was no frame to put into",
             });
         };
 
-        // check that the type matches
-        if !frame.shape.is_type::<T>() {
-            // maybe we're putting into an Option<T> ?
-            if frame.shape.is_type::<Option<T>>() {
-                debug!("Putting into an option!");
-                let Def::Option(od) = frame.shape.def else {
-                    unreachable!()
-                };
+        // Check that the type matches
+        if frame.shape != src_shape {
+            // Maybe we're putting into an Option<T>?
+            // Handle Option<Inner>
+            if let Def::Option(od) = frame.shape.def {
+                // Check if inner type matches
+                if od.t() == src_shape {
+                    debug!("Putting into an Option<T>!");
+                    if frame.istate.fields.is_any_set() {
+                        let data = unsafe { frame.data.assume_init() };
+                        unsafe { (od.vtable.replace_with_fn)(data, Some(src)) };
+                    } else {
+                        let data = frame.data;
+                        unsafe { (od.vtable.init_some_fn)(data, src) };
+                    }
+                    unsafe {
+                        frame.mark_fully_initialized();
+                    }
 
-                // unfortunately this all involves copying data over
-                let src = PtrConst::new(&raw const t);
-                if frame.istate.fields.is_any_set() {
-                    let data = unsafe { frame.data.assume_init() };
-                    unsafe { (od.vtable.replace_with_fn)(data, Some(src)) };
-                } else {
-                    let data = frame.data;
-                    unsafe { (od.vtable.init_some_fn)(data, src) };
+                    let shape = frame.shape;
+                    let index = frame.field_index_in_parent;
+
+                    // mark the field as initialized
+                    self.mark_field_as_initialized(shape, index)?;
+
+                    debug!("[{}] Just put a {} value", self.frames.len(), shape.green());
+
+                    return Ok(self);
                 }
-                unsafe {
-                    frame.mark_fully_initialized();
-                }
-                // t will drop naturally at the end of this function
-
-                let shape = frame.shape;
-                let index = frame.field_index_in_parent;
-
-                // mark the field as initialized
-                self.mark_field_as_initialized(shape, index)?;
-
-                debug!("[{}] Just put a {} value", self.frames.len(), shape.green());
-
-                return Ok(self);
             }
 
             return Err(ReflectError::WrongShape {
                 expected: frame.shape,
-                actual: T::SHAPE,
+                actual: src_shape,
             });
         }
 
-        // de-initialize partially initialized fields
+        // de-initialize partially initialized fields, if any
         if frame.istate.variant.is_some() || frame.istate.fields.is_any_set() {
             debug!(
                 "De-initializing partially initialized fields for {}",
@@ -832,7 +853,8 @@ impl<'a> Wip<'a> {
         }
 
         unsafe {
-            frame.data.put(t);
+            // Copy the contents from src to destination
+            frame.data.copy_from(src, frame.shape);
             frame.mark_fully_initialized();
         }
 

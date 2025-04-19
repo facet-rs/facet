@@ -3,7 +3,7 @@ use core::num::{
     NonZeroU64, NonZeroUsize,
 };
 
-use facet_core::{Def, Facet, FieldAttribute, ScalarAffinity, ShapeAttribute};
+use facet_core::{Characteristic, Def, Facet, FieldAttribute, ScalarAffinity, ShapeAttribute};
 use facet_reflect::{HeapValue, Wip};
 use log::trace;
 
@@ -649,15 +649,59 @@ pub fn from_slice_wip<'input, 'a>(
                 WhyValue::ObjectKey => {}
                 WhyValue::TopLevel | WhyValue::ObjectValue | WhyValue::ArrayElement => {
                     trace!("Shape before popping: {}", wip.shape());
+
+                    let struct_has_default = wip
+                        .shape()
+                        .attributes
+                        .iter()
+                        .any(|attr| matches!(attr, ShapeAttribute::Default));
+                    let mut has_missing_fields = false;
+
                     // Ensure all struct fields are set before popping
                     if let Def::Struct(sd) = wip.shape().def {
                         for i in 0..sd.fields.len() {
                             if !wip.is_field_set(i).unwrap() {
                                 let missing_field: &'static str = sd.fields[i].name;
-                                bail!(JsonErrorKind::MissingField(missing_field));
+                                if struct_has_default {
+                                    has_missing_fields = true;
+                                } else {
+                                    bail!(JsonErrorKind::MissingField(missing_field));
+                                }
                             }
                         }
                     }
+
+                    if has_missing_fields {
+                        trace!("struct has missing fields but we have default");
+                        if !wip.shape().is(Characteristic::Default) {
+                            todo!(
+                                "Default struct has missing fields, the `default` impl but it does not implement Default"
+                            )
+                        }
+                        let default_struct_val = Wip::alloc_shape(wip.shape())
+                            .put_default()
+                            .unwrap()
+                            .build()
+                            .unwrap();
+                        let peek = default_struct_val.peek().into_struct().unwrap();
+
+                        // For every missing field, take it from the peek and copy it into the wip
+                        if let Def::Struct(sd) = wip.shape().def {
+                            for i in 0..sd.fields.len() {
+                                if !wip.is_field_set(i).unwrap() {
+                                    let field_value = peek.field(i).unwrap();
+                                    wip = wip
+                                        .field(i)
+                                        .unwrap()
+                                        .put_peek(field_value)
+                                        .unwrap()
+                                        .pop()
+                                        .unwrap();
+                                }
+                            }
+                        }
+                    }
+
                     if frame_count == 1 {
                         return Ok(wip.build().unwrap());
                     } else {

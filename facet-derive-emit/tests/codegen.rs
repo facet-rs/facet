@@ -661,6 +661,23 @@ fn struct_with_equal_defaults() {
 }
 
 #[test]
+fn struct_with_field_default_facets() {
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        #[facet(default)]
+        struct ForFacetDefaultDemo {
+            #[facet(default)]
+            field1: u32,
+            #[facet(default = "my_field_default_fn")]
+            field2: String,
+            field3: bool,
+        }
+        "#
+    ));
+}
+
+#[test]
 fn generic_bounds_t() {
     insta::assert_snapshot!(expand(
         r#"

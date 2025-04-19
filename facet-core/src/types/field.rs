@@ -56,6 +56,8 @@ pub enum FieldAttribute {
     Sensitive,
     /// Specifies an alternative name for the field (for serialization/deserialization)
     Rename(&'static str),
+    /// Indicates the field has a default value (the value is which fn to call for default, or None for Default::default)
+    Default(Option<&'static str>),
     /// Custom field attribute containing arbitrary text
     Arbitrary(&'static str),
 }

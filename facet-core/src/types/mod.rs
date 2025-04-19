@@ -83,6 +83,8 @@ pub struct Shape {
 pub enum ShapeAttribute {
     /// Specifies an alternative name for the field (for serialization/deserialization)
     DenyUnknownFields,
+    /// Indicates the shape has a default value
+    Default,
     /// Custom field attribute containing arbitrary text
     Arbitrary(&'static str),
 }

@@ -829,6 +829,30 @@ fn test_deny_unknown_fields() {
 }
 
 #[test]
+fn json_read_struct_level_default_unset_field() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Default, Debug)]
+    #[facet(default)]
+    struct DefaultStruct {
+        foo: i32,
+        bar: String,
+    }
+
+    // Only set foo, leave bar missing - should use Default for String
+    let json = r#"{"foo": 123}"#;
+
+    let s: DefaultStruct = match from_str(json) {
+        Ok(s) => s,
+        Err(e) => panic!("Error deserializing JSON: {}", e),
+    };
+
+    // bar should be the default String ("")
+    assert_eq!(s.foo, 123);
+    assert_eq!(s.bar, "");
+}
+
+#[test]
 fn test_allow_unknown_fields() {
     facet_testhelpers::setup();
 
