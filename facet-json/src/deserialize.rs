@@ -528,6 +528,46 @@ pub fn from_slice_wip<'input, 'a>(
                         }
                         finished_value = Some(why);
                     }
+                    b't' | b'f' => {
+                        // Boolean: true or false
+                        if input[pos..].starts_with(b"true") {
+                            pos += 4;
+                            let shape = wip.shape();
+                            match shape.def {
+                                Def::Scalar(sd) => match sd.affinity {
+                                    ScalarAffinity::Boolean(_) => {
+                                        wip = wip.put::<bool>(true).unwrap();
+                                    }
+                                    _ => {
+                                        bail!(JsonErrorKind::UnexpectedCharacter('t'));
+                                    }
+                                },
+                                _ => {
+                                    bail!(JsonErrorKind::UnexpectedCharacter('t'));
+                                }
+                            }
+                            finished_value = Some(why);
+                        } else if input[pos..].starts_with(b"false") {
+                            pos += 5;
+                            let shape = wip.shape();
+                            match shape.def {
+                                Def::Scalar(sd) => match sd.affinity {
+                                    ScalarAffinity::Boolean(_) => {
+                                        wip = wip.put::<bool>(false).unwrap();
+                                    }
+                                    _ => {
+                                        bail!(JsonErrorKind::UnexpectedCharacter('f'));
+                                    }
+                                },
+                                _ => {
+                                    bail!(JsonErrorKind::UnexpectedCharacter('f'));
+                                }
+                            }
+                            finished_value = Some(why);
+                        } else {
+                            bail!(JsonErrorKind::UnexpectedCharacter(c as char));
+                        }
+                    }
                     b'n' => {
                         // wow it's a null — probably
                         let slice_rest = &input[pos..];
