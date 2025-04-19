@@ -50,19 +50,14 @@ pub fn from_slice_wip<'input, 'a>(
 ) -> Result<HeapValue<'a>, JsonParseErrorWithContext<'input>> {
     let mut pos = 0;
 
-    macro_rules! err {
+    macro_rules! bail {
         ($kind:expr) => {
-            Err(JsonParseErrorWithContext::new(
+            return Err(JsonParseErrorWithContext::new(
                 $kind,
                 input,
                 pos,
                 wip.path(),
             ))
-        };
-    }
-    macro_rules! bail {
-        ($kind:expr) => {
-            return err!($kind)
         };
     }
 
