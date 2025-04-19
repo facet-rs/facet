@@ -39,7 +39,7 @@ where
                                 _0
                             ))
                             .flags(::facet::FieldFlags::EMPTY)
-                            .attributes(&[])
+                            .attributes(&const { [] })
                             .build()]
                     };
                     ::facet::Variant::builder()
@@ -60,7 +60,7 @@ where
                                 _0
                             ))
                             .flags(::facet::FieldFlags::EMPTY)
-                            .attributes(&[])
+                            .attributes(&const { [] })
                             .build()]
                     };
                     ::facet::Variant::builder()

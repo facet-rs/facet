@@ -150,6 +150,26 @@ fn serialize_struct<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()>
 
     let mut first = true;
     for (field, field_peek) in struct_peek.fields() {
+        if field
+            .attributes
+            .iter()
+            .any(|attr| matches!(attr, FieldAttribute::SkipSerializing))
+        {
+            continue;
+        }
+
+        if field
+            .attributes
+            .iter()
+            .find_map(|attr| match attr {
+                FieldAttribute::SkipSerializingIf(fn_ptr) => Some(fn_ptr),
+                _ => None,
+            })
+            .is_some_and(|f| f(field_peek.data()))
+        {
+            continue;
+        }
+
         if !first {
             write!(writer, ",")?;
         }

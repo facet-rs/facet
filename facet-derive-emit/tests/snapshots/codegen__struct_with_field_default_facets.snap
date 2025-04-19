@@ -15,23 +15,27 @@ unsafe impl ::facet::Facet for ForFacetDefaultDemo {
                     .shape(|| ::facet::shape_of(&|s: &ForFacetDefaultDemo| &s.field1))
                     .offset(::core::mem::offset_of!(ForFacetDefaultDemo, field1))
                     .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&[::facet::FieldAttribute::Default(None)])
+                    .attributes(&const { [::facet::FieldAttribute::Default(None)] })
                     .build(),
                 ::facet::Field::builder()
                     .name("field2")
                     .shape(|| ::facet::shape_of(&|s: &ForFacetDefaultDemo| &s.field2))
                     .offset(::core::mem::offset_of!(ForFacetDefaultDemo, field2))
                     .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&[::facet::FieldAttribute::Default(Some(|ptr| unsafe {
-                        ptr.put(my_field_default_fn())
-                    }))])
+                    .attributes(
+                        &const {
+                            [::facet::FieldAttribute::Default(Some(|ptr| unsafe {
+                                ptr.put(my_field_default_fn())
+                            }))]
+                        },
+                    )
                     .build(),
                 ::facet::Field::builder()
                     .name("field3")
                     .shape(|| ::facet::shape_of(&|s: &ForFacetDefaultDemo| &s.field3))
                     .offset(::core::mem::offset_of!(ForFacetDefaultDemo, field3))
                     .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&[])
+                    .attributes(&const { [] })
                     .build(),
             ]
         };

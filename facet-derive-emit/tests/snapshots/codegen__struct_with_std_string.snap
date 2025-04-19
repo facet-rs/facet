@@ -14,14 +14,14 @@ unsafe impl ::facet::Facet for FileInfo {
                     .shape(|| ::facet::shape_of(&|s: &FileInfo| &s.path))
                     .offset(::core::mem::offset_of!(FileInfo, path))
                     .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&[])
+                    .attributes(&const { [] })
                     .build(),
                 ::facet::Field::builder()
                     .name("size")
                     .shape(|| ::facet::shape_of(&|s: &FileInfo| &s.size))
                     .offset(::core::mem::offset_of!(FileInfo, size))
                     .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&[])
+                    .attributes(&const { [] })
                     .build(),
             ]
         };

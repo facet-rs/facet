@@ -13,7 +13,7 @@ unsafe impl ::facet::Facet for Foo {
                 .shape(|| ::facet::shape_of(&|s: &Foo| &s.bar))
                 .offset(::core::mem::offset_of!(Foo, bar))
                 .flags(::facet::FieldFlags::EMPTY)
-                .attributes(&[])
+                .attributes(&const { [] })
                 .doc(&[" This is a public field"])
                 .build()]
         };

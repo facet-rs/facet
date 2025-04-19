@@ -14,21 +14,21 @@ unsafe impl ::facet::Facet for Person {
                     .shape(|| ::facet::shape_of(&|s: &Person| &s.first_name))
                     .offset(::core::mem::offset_of!(Person, first_name))
                     .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&[::facet::FieldAttribute::Rename("firstName")])
+                    .attributes(&const { [::facet::FieldAttribute::Rename("firstName")] })
                     .build(),
                 ::facet::Field::builder()
                     .name("last_name")
                     .shape(|| ::facet::shape_of(&|s: &Person| &s.last_name))
                     .offset(::core::mem::offset_of!(Person, last_name))
                     .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&[::facet::FieldAttribute::Rename("lastName")])
+                    .attributes(&const { [::facet::FieldAttribute::Rename("lastName")] })
                     .build(),
                 ::facet::Field::builder()
                     .name("age")
                     .shape(|| ::facet::shape_of(&|s: &Person| &s.age))
                     .offset(::core::mem::offset_of!(Person, age))
                     .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&[])
+                    .attributes(&const { [] })
                     .build(),
             ]
         };

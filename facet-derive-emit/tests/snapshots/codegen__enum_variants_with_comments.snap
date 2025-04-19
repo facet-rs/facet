@@ -34,7 +34,7 @@ unsafe impl ::facet::Facet for CommentedEnum {
                             .shape(|| ::facet::shape_of(&|s: &__ShadowCommentedEnum_B| &s._0))
                             .offset(::core::mem::offset_of!(__ShadowCommentedEnum_B, _0))
                             .flags(::facet::FieldFlags::EMPTY)
-                            .attributes(&[])
+                            .attributes(&const { [] })
                             .build()]
                     };
                     ::facet::Variant::builder()
@@ -52,7 +52,7 @@ unsafe impl ::facet::Facet for CommentedEnum {
                                 .shape(|| ::facet::shape_of(&|s: &__ShadowCommentedEnum_C| &s.x))
                                 .offset(::core::mem::offset_of!(__ShadowCommentedEnum_C, x))
                                 .flags(::facet::FieldFlags::EMPTY)
-                                .attributes(&[])
+                                .attributes(&const { [] })
                                 .doc(&[" This is field x"])
                                 .build(),
                             ::facet::Field::builder()
@@ -60,7 +60,7 @@ unsafe impl ::facet::Facet for CommentedEnum {
                                 .shape(|| ::facet::shape_of(&|s: &__ShadowCommentedEnum_C| &s.y))
                                 .offset(::core::mem::offset_of!(__ShadowCommentedEnum_C, y))
                                 .flags(::facet::FieldFlags::EMPTY)
-                                .attributes(&[])
+                                .attributes(&const { [] })
                                 .doc(&[" This is field y"])
                                 .build(),
                         ]

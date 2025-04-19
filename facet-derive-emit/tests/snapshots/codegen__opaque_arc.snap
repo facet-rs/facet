@@ -13,7 +13,7 @@ unsafe impl ::facet::Facet for Handle {
                 .shape(|| ::facet::shape_of_opaque(&|s: &Handle| &s.0))
                 .offset(::core::mem::offset_of!(Handle, 0))
                 .flags(::facet::FieldFlags::EMPTY)
-                .attributes(&[])
+                .attributes(&const { [] })
                 .build()]
         };
         let vtable = &const {

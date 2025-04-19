@@ -49,14 +49,14 @@ where
                                 .shape(|| ::facet::shape_of(&|s: &__ShadowE_Tuple<'a, T, C>| &s._0))
                                 .offset(::core::mem::offset_of!(__ShadowE_Tuple<'a, T, C>, _0))
                                 .flags(::facet::FieldFlags::EMPTY)
-                                .attributes(&[])
+                                .attributes(&const { [] })
                                 .build(),
                             ::facet::Field::builder()
                                 .name("_1")
                                 .shape(|| ::facet::shape_of(&|s: &__ShadowE_Tuple<'a, T, C>| &s._1))
                                 .offset(::core::mem::offset_of!(__ShadowE_Tuple<'a, T, C>, _1))
                                 .flags(::facet::FieldFlags::EMPTY)
-                                .attributes(&[])
+                                .attributes(&const { [] })
                                 .build(),
                         ]
                     };
@@ -76,7 +76,7 @@ where
                                 })
                                 .offset(::core::mem::offset_of!(__ShadowE_Record<'a, T, C>, field))
                                 .flags(::facet::FieldFlags::EMPTY)
-                                .attributes(&[])
+                                .attributes(&const { [] })
                                 .build(),
                             ::facet::Field::builder()
                                 .name("phantom")
@@ -88,7 +88,7 @@ where
                                     phantom
                                 ))
                                 .flags(::facet::FieldFlags::EMPTY)
-                                .attributes(&[])
+                                .attributes(&const { [] })
                                 .build(),
                             ::facet::Field::builder()
                                 .name("constant_val")
@@ -102,7 +102,7 @@ where
                                     constant_val
                                 ))
                                 .flags(::facet::FieldFlags::EMPTY)
-                                .attributes(&[])
+                                .attributes(&const { [] })
                                 .build(),
                         ]
                     };
