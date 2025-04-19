@@ -14,7 +14,7 @@ unsafe impl ::facet::Facet for CubConfig {
                     .shape(|| ::facet::shape_of(&|s: &CubConfig| &s.disk_cache_size))
                     .offset(::core::mem::offset_of!(CubConfig, disk_cache_size))
                     .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&[])
+                    .attributes(&const { [] })
                     .doc(&[" size the disk cache is allowed to use"])
                     .build(),
                 ::facet::Field::builder()
@@ -22,7 +22,7 @@ unsafe impl ::facet::Facet for CubConfig {
                     .shape(|| ::facet::shape_of(&|s: &CubConfig| &s.address))
                     .offset(::core::mem::offset_of!(CubConfig, address))
                     .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&[])
+                    .attributes(&const { [] })
                     .doc(&[" Listen address without http, something like \"127.0.0.1:1111\""])
                     .build(),
                 ::facet::Field::builder()
@@ -30,7 +30,7 @@ unsafe impl ::facet::Facet for CubConfig {
                     .shape(|| ::facet::shape_of(&|s: &CubConfig| &s.mom_base_url))
                     .offset(::core::mem::offset_of!(CubConfig, mom_base_url))
                     .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&[])
+                    .attributes(&const { [] })
                     .doc(&[
                         " Something like `http://localhost:1118`",
                         " or `http://mom.svc.cluster.local:1118`, never",
@@ -42,7 +42,7 @@ unsafe impl ::facet::Facet for CubConfig {
                     .shape(|| ::facet::shape_of(&|s: &CubConfig| &s.mom_api_key))
                     .offset(::core::mem::offset_of!(CubConfig, mom_api_key))
                     .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&[])
+                    .attributes(&const { [] })
                     .doc(&[" API key used to talk to mom"])
                     .build(),
             ]

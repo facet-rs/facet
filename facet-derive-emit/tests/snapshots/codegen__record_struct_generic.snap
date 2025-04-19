@@ -16,21 +16,21 @@ where
                     .shape(|| ::facet::shape_of(&|s: &Blah<'a, T, C>| &s.field))
                     .offset(::core::mem::offset_of!(Blah<'a, T, C>, field))
                     .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&[])
+                    .attributes(&const { [] })
                     .build(),
                 ::facet::Field::builder()
                     .name("another")
                     .shape(|| ::facet::shape_of(&|s: &Blah<'a, T, C>| &s.another))
                     .offset(::core::mem::offset_of!(Blah<'a, T, C>, another))
                     .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&[])
+                    .attributes(&const { [] })
                     .build(),
                 ::facet::Field::builder()
                     .name("constant_val")
                     .shape(|| ::facet::shape_of(&|s: &Blah<'a, T, C>| &s.constant_val))
                     .offset(::core::mem::offset_of!(Blah<'a, T, C>, constant_val))
                     .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&[])
+                    .attributes(&const { [] })
                     .build(),
             ]
         };

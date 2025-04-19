@@ -39,7 +39,7 @@ where
                                 _0
                             ))
                             .flags(::facet::FieldFlags::EMPTY)
-                            .attributes(&[])
+                            .attributes(&const { [] })
                             .build()]
                     };
                     ::facet::Variant::builder()
@@ -57,7 +57,7 @@ where
                             })
                             .offset(::core::mem::offset_of!(__ShadowDeeplyNested_Simple<T>, _0))
                             .flags(::facet::FieldFlags::EMPTY)
-                            .attributes(&[])
+                            .attributes(&const { [] })
                             .build()]
                     };
                     ::facet::Variant::builder()

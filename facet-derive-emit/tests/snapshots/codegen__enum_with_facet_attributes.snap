@@ -45,7 +45,7 @@ unsafe impl ::facet::Facet for EnumWithAttributes {
                                 _0
                             ))
                             .flags(::facet::FieldFlags::EMPTY)
-                            .attributes(&[])
+                            .attributes(&const { [] })
                             .build()]
                     };
                     ::facet::Variant::builder()
@@ -68,7 +68,7 @@ unsafe impl ::facet::Facet for EnumWithAttributes {
                                 secret
                             ))
                             .flags(::facet::FieldFlags::SENSITIVE)
-                            .attributes(&[::facet::FieldAttribute::Sensitive])
+                            .attributes(&const { [::facet::FieldAttribute::Sensitive] })
                             .build()]
                     };
                     ::facet::Variant::builder()
@@ -91,9 +91,13 @@ unsafe impl ::facet::Facet for EnumWithAttributes {
                                 value
                             ))
                             .flags(::facet::FieldFlags::EMPTY)
-                            .attributes(&[::facet::FieldAttribute::Arbitrary(
-                                "default = \"forty_two\"",
-                            )])
+                            .attributes(
+                                &const {
+                                    [::facet::FieldAttribute::Arbitrary(
+                                        "default = \"forty_two\"",
+                                    )]
+                                },
+                            )
                             .build()]
                     };
                     ::facet::Variant::builder()
