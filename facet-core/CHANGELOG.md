@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `into_*` functions to `Def`
+
 ### Other
 
 - Impl `Facet` for `Rc<T>` ([#307](https://github.com/facet-rs/facet/pull/307))

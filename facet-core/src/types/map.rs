@@ -83,7 +83,7 @@ pub type MapInitInPlaceWithCapacityFn =
 ///
 /// The `map` parameter must point to aligned, initialized memory of the correct type.
 /// `key` and `value` are moved out of (with [`core::ptr::read`]) — they should be deallocated
-/// afterwards but NOT dropped.
+/// afterwards (e.g. with [`core::mem::forget`]) but NOT dropped.
 pub type MapInsertFn =
     for<'map, 'key, 'value> unsafe fn(map: PtrMut<'map>, key: PtrMut<'key>, value: PtrMut<'value>);
 

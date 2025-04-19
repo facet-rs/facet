@@ -16,10 +16,10 @@ pub struct SmartPointerDef {
     /// shape of the inner type of the smart pointer, if not opaque
     pub pointee: Option<&'static Shape>,
 
-    /// shape of the corresponding strong pointer, if this pointer is weak
+    /// shape of the corresponding weak pointer, if this pointer is strong
     pub weak: Option<fn() -> &'static Shape>,
 
-    /// shape of the corresponding non-atomic pointer, if this pointer is atomic
+    /// shape of the corresponding strong pointer, if this pointer is weak
     pub strong: Option<fn() -> &'static Shape>,
 
     /// Flags representing various characteristics of the smart pointer
@@ -46,7 +46,6 @@ impl SmartPointerDef {
 
 /// Builder for creating a `SmartPointerDef`.
 #[derive(Debug)]
-#[allow(clippy::new_without_default)]
 pub struct SmartPointerDefBuilder {
     vtable: Option<&'static SmartPointerVTable>,
     pointee: Option<&'static Shape>,
@@ -59,7 +58,7 @@ pub struct SmartPointerDefBuilder {
 impl SmartPointerDefBuilder {
     /// Creates a new `SmartPointerDefBuilder` with all fields set to `None`.
     #[must_use]
-    #[allow(clippy::new_without_default)]
+    #[expect(clippy::new_without_default)]
     pub const fn new() -> Self {
         Self {
             vtable: None,
@@ -99,14 +98,14 @@ impl SmartPointerDefBuilder {
         self
     }
 
-    /// Sets the shape of the corresponding strong pointer, if this pointer is weak.
+    /// Sets the shape of the corresponding weak pointer, if this pointer is strong.
     #[must_use]
     pub const fn weak(mut self, weak: fn() -> &'static Shape) -> Self {
         self.weak = Some(weak);
         self
     }
 
-    /// Sets the shape of the corresponding non-atomic pointer, if this pointer is atomic.
+    /// Sets the shape of the corresponding strong pointer, if this pointer is weak
     #[must_use]
     pub const fn strong(mut self, strong: fn() -> &'static Shape) -> Self {
         self.strong = Some(strong);
@@ -117,7 +116,7 @@ impl SmartPointerDefBuilder {
     ///
     /// # Panics
     ///
-    /// Panics if any required field (vtable, pointee, flags) is not set.
+    /// Panics if any required field (vtable, flags) is not set.
     #[must_use]
     pub const fn build(self) -> SmartPointerDef {
         SmartPointerDef {
@@ -149,52 +148,65 @@ bitflags! {
 
 /// Tries to upgrade the weak pointer to a strong one.
 ///
+/// If the upgrade succeeds, initializes the smart pointer into the given `strong`, and returns a
+/// copy of `strong`, which has been guaranteed to be initialized. If the upgrade fails, `None` is
+/// returned and `strong` is not initialized.
+///
+/// `weak` is not moved out of.
+///
 /// # Safety
 ///
 /// `weak` must be a valid weak smart pointer (like [`std::sync::Weak`] or [`std::rc::Weak`]).
+///
 /// `strong` must be allocated, and of the right layout for the corresponding smart pointer.
+///
 /// `strong` must not have been initialized yet.
-///
-/// `weak` is not moved out of — `Weak::upgrade(&self)` takes self by reference.
-/// If this fails, `strong` is not initialized.
-///
-/// `strong.assume_init()` is returned as part of the Option if the upgrade succeeds.
-/// `None` is returned if this is not a type of smart pointer that supports upgrades.
 pub type UpgradeIntoFn =
     for<'ptr> unsafe fn(weak: PtrMut<'ptr>, strong: PtrUninit<'ptr>) -> Option<PtrMut<'ptr>>;
 
 /// Downgrades a strong pointer to a weak one.
+///
+/// Initializes the smart pointer into the given `weak`, and returns a copy of `weak`, which has
+/// been guaranteed to be initialized.
 ///
 /// Only strong pointers can be downgraded (like [`std::sync::Arc`] or [`std::rc::Rc`]).
 ///
 /// # Safety
 ///
 /// `strong` must be a valid strong smart pointer (like [`std::sync::Arc`] or [`std::rc::Rc`]).
-/// `weak` must be allocated, and of the right layout for the corresponding weak pointer.
-/// `weak` must not have been initialized yet.
 ///
-/// `weak.assume_init()` is returned if the downgrade succeeds.
+/// `weak` must be allocated, and of the right layout for the corresponding weak pointer.
+///
+/// `weak` must not have been initialized yet.
 pub type DowngradeIntoFn =
     for<'ptr> unsafe fn(strong: PtrMut<'ptr>, weak: PtrUninit<'ptr>) -> PtrMut<'ptr>;
 
 /// Tries to obtain a reference to the inner value of the smart pointer.
 ///
-/// Weak pointers don't even have that function in their vtable.
-pub type BorrowFn = for<'ptr> unsafe fn(opaque: PtrConst<'ptr>) -> PtrConst<'ptr>;
-
-/// Creates a new smart pointer wrapping the given value. Writes the smart pointer
-/// into the given `this`.
-///
-/// Weak pointers don't even have that function in their vtable.
+/// This can only be used with strong pointers (like [`std::sync::Arc`] or [`std::rc::Rc`]).
 ///
 /// # Safety
 ///
-/// `this` must have the correct layout.
+/// `this` must be a valid strong smart pointer (like [`std::sync::Arc`] or [`std::rc::Rc`]).
+pub type BorrowFn = for<'ptr> unsafe fn(this: PtrConst<'ptr>) -> PtrConst<'ptr>;
+
+/// Creates a new smart pointer wrapping the given value.
+///
+/// Initializes the smart pointer into the given `this`, and returns a copy of `this`, which has
+/// been guaranteed to be initialized.
+///
+/// This can only be used with strong pointers (like [`std::sync::Arc`] or [`std::rc::Rc`]).
+///
+/// # Safety
+///
+/// `this` must be allocated, and of the right layout for the corresponding smart pointer.
+///
+/// `this` must not have been initialized yet.
 ///
 /// `ptr` must point to a value of type `T`.
 ///
-/// After calling this, `ptr` has been moved out of, and must be
-/// deallocated (but not dropped).
+/// `ptr` is moved out of (with [`core::ptr::read`]) — it should be deallocated afterwards (e.g.
+/// with [`core::mem::forget`]) but NOT dropped).
 pub type NewIntoFn =
     for<'ptr> unsafe fn(this: PtrUninit<'ptr>, ptr: PtrConst<'ptr>) -> PtrMut<'ptr>;
 
@@ -210,6 +222,7 @@ pub struct LockResult<'ptr> {
 
 impl<'ptr> LockResult<'ptr> {
     /// Returns a reference to the locked data
+    #[must_use]
     pub fn data(&self) -> &PtrMut<'ptr> {
         &self.data
     }
@@ -294,7 +307,7 @@ pub struct SmartPointerVTableBuilder {
 impl SmartPointerVTableBuilder {
     /// Creates a new `SmartPointerVTableBuilder` with all fields set to `None`.
     #[must_use]
-    #[allow(clippy::new_without_default)]
+    #[expect(clippy::new_without_default)]
     pub const fn new() -> Self {
         Self {
             upgrade_into_fn: None,
@@ -307,49 +320,50 @@ impl SmartPointerVTableBuilder {
         }
     }
 
-    /// Sets the try_upgrade function.
+    /// Sets the `try_upgrade` function.
     #[must_use]
     pub const fn upgrade_into_fn(mut self, upgrade_into_fn: UpgradeIntoFn) -> Self {
         self.upgrade_into_fn = Some(upgrade_into_fn);
         self
     }
 
-    /// Sets the downgrade function.
+    /// Sets the `downgrade` function.
+    // FIXME: naming inconsistent
     #[must_use]
     pub const fn downgrade_fn(mut self, downgrade_into_fn: DowngradeIntoFn) -> Self {
         self.downgrade_into_fn = Some(downgrade_into_fn);
         self
     }
 
-    /// Sets the borrow function.
+    /// Sets the `borrow` function.
     #[must_use]
     pub const fn borrow_fn(mut self, borrow_fn: BorrowFn) -> Self {
         self.borrow_fn = Some(borrow_fn);
         self
     }
 
-    /// Sets the new function.
+    /// Sets the `new` function.
     #[must_use]
     pub const fn new_into_fn(mut self, new_fn: NewIntoFn) -> Self {
         self.new_fn = Some(new_fn);
         self
     }
 
-    /// Sets the lock function.
+    /// Sets the `lock` function.
     #[must_use]
     pub const fn lock_fn(mut self, lock_fn: LockFn) -> Self {
         self.lock_fn = Some(lock_fn);
         self
     }
 
-    /// Sets the read function.
+    /// Sets the `read` function.
     #[must_use]
     pub const fn read_fn(mut self, read_fn: ReadFn) -> Self {
         self.read_fn = Some(read_fn);
         self
     }
 
-    /// Sets the write function.
+    /// Sets the `write` function.
     #[must_use]
     pub const fn write_fn(mut self, write_fn: WriteFn) -> Self {
         self.write_fn = Some(write_fn);

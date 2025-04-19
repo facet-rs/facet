@@ -177,6 +177,7 @@ version = "0.10.0"
 dependencies = [
  "bitflags",
  "camino",
+ "facet-testhelpers",
  "impls",
 ]
 
