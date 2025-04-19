@@ -36,6 +36,8 @@ keyword! {
     pub KDenyUnknownFields = "deny_unknown_fields";
     /// The "default" keyword.
     pub KDefault = "default";
+    /// The "transparent" keyword.
+    pub KTransparent = "transparent";
 }
 
 operator! {
@@ -127,6 +129,8 @@ unsynn! {
         DefaultEquals(DefaultEqualsInner),
         /// A default attribute with no explicit value (#[facet(default)])
         Default(KDefault),
+        /// A transparent attribute for containers
+        Transparent(KTransparent),
         /// Any other attribute represented as a sequence of token trees.
         Other(Vec<TokenTree>),
     }

@@ -152,6 +152,9 @@ pub(crate) fn gen_struct_field(
                             .trim_end_matches('"') // FIXME: that's pretty bad
                     ));
                 }
+                FacetInner::Transparent(_) => {
+                    // Not applicable on fields; ignore.
+                }
                 FacetInner::Invariants(_invariant_inner) => {
                     panic!("fields cannot have invariants")
                 }
@@ -291,6 +294,9 @@ fn build_container_attributes(attributes: &[Attribute]) -> String {
                 }
                 FacetInner::DefaultEquals(_) | FacetInner::Default(_) => {
                     items.push("::facet::ShapeAttribute::Default");
+                }
+                FacetInner::Transparent(_) => {
+                    items.push("::facet::ShapeAttribute::Transparent");
                 }
                 FacetInner::Sensitive(_) => {
                     // TODO
