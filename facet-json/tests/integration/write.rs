@@ -158,5 +158,32 @@ fn test_skip_serializing() {
     struct Salutations(&'static str, #[facet(skip_serializing)] &'static str);
     let test_struct2 = Salutations("groetjes", "wereld");
     let json = facet_json::to_string(&test_struct2);
-    assert_eq!(json, r#"{"0":"wereld", "1":"wereld"}"#);
+    assert_eq!(json, r#"{"0":"groetjes"}"#);
+}
+
+#[test]
+fn test_skip_serializing_if() {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, PartialEq, Clone, Facet)]
+    struct Greetings {
+        hello: &'static str,
+        #[facet(skip_serializing_if = Option::is_some)]
+        goodbye: Option<&'static str>,
+    }
+    let test_struct1 = Greetings {
+        hello: "monde",
+        goodbye: Some("world"),
+    };
+    let json = facet_json::to_string(&test_struct1);
+    assert_eq!(json, r#"{"hello":"monde"}"#);
+
+    #[derive(Debug, PartialEq, Clone, Facet)]
+    struct Salutations(
+        &'static str,
+        #[facet(skip_serializing_if = String::is_empty)] String,
+    );
+    let test_struct2 = Salutations("groetjes", "".to_string());
+    let json = facet_json::to_string(&test_struct2);
+    assert_eq!(json, r#"{"0":"groetjes"}"#);
 }

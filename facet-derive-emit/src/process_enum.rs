@@ -344,6 +344,7 @@ fn process_c_style_enum(
                         let field_name = format!("_{idx}");
                         gen_struct_field(
                             &field_name,
+                            &field.value.typ.tokens_to_string(),
                             &shadow_struct_name,
                             generics_use,
                             &field.value.attributes,
@@ -406,8 +407,10 @@ fn process_c_style_enum(
                     .iter()
                     .map(|field| {
                         let field_name = field.value.name.to_string();
+                        let field_type = field.value.typ.tokens_to_string();
                         gen_struct_field(
                             &field_name,
+                            &field_type,
                             &shadow_struct_name,
                             generics_use,
                             &field.value.attributes,
@@ -525,6 +528,7 @@ fn process_primitive_enum(
                         let field_name = format!("_{idx}");
                         gen_struct_field(
                             &field_name,
+                            &field.value.typ.tokens_to_string(),
                             &shadow_struct_name,
                             generics_use,
                             &field.value.attributes,
@@ -587,6 +591,7 @@ fn process_primitive_enum(
                         let field_name = field.value.name.to_string();
                         gen_struct_field(
                             &field_name,
+                            &field.value.typ.tokens_to_string(),
                             &shadow_struct_name,
                             generics_use,
                             &field.value.attributes,

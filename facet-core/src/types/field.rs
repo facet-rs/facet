@@ -57,7 +57,7 @@ pub enum FieldAttribute {
     /// Skip serializing this field.
     SkipSerializing,
     /// Skip serializing this field if the function identified by `.0` evaluates to true.
-    SkipSerializingIf(&'static str),
+    SkipSerializingIf(fn(*const ()) -> bool),
     /// Specifies an alternative name for the field (for serialization/deserialization)
     Rename(&'static str),
     /// Custom field attribute containing arbitrary text

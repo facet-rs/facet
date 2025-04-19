@@ -31,7 +31,7 @@ pub fn peek_to_writer<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<(
 
 /// The core serialization function
 fn serialize<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()> {
-    match dbg!(peek.shape()).def {
+    match peek.shape().def {
         Def::Scalar(_) => serialize_scalar(peek, writer),
         Def::Struct(_) => serialize_struct(peek, writer),
         Def::List(_) => serialize_list(peek, writer),
@@ -154,6 +154,19 @@ fn serialize_struct<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()>
             .attributes
             .iter()
             .any(|attr| matches!(attr, FieldAttribute::SkipSerializing))
+        {
+            continue;
+        }
+
+        if field
+            .attributes
+            .iter()
+            .filter_map(|attr| match attr {
+                FieldAttribute::SkipSerializingIf(fn_ptr) => Some(fn_ptr),
+                _ => None,
+            })
+            .next()
+            .is_some_and(|f| f(unsafe { field_peek.data().as_ptr() }))
         {
             continue;
         }

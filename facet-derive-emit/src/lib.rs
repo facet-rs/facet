@@ -120,6 +120,7 @@ pub(crate) fn build_maybe_doc(attrs: &[Attribute]) -> String {
 /// generating fields for a struct that is part of a #[repr(C)] enum.
 pub(crate) fn gen_struct_field(
     field_name: &str,
+    field_type: &str,
     struct_name: &str,
     generics: &str,
     attrs: &[Attribute],
@@ -154,7 +155,10 @@ pub(crate) fn gen_struct_field(
                             if attr_str[..equal_pos].trim() == "skip_serializing_if" =>
                         {
                             let value = attr_str[equal_pos + 1..].trim();
-                            format!(r#"::facet::FieldAttribute::SkipSerializingIf({:?})"#, value)
+                            format!(
+                                r#"::facet::FieldAttribute::SkipSerializingIf(unsafe {{ ::std::mem::transmute({} as fn(&{field_type}) -> bool) }})"#,
+                                value
+                            )
                         }
                         None if attr_str == "skip_serializing" => {
                             r#"::facet::FieldAttribute::SkipSerializing"#.to_string()
@@ -194,7 +198,7 @@ pub(crate) fn gen_struct_field(
     .shape(|| ::facet::{shape_of}(&|s: &{struct_name}<{generics}>| &s.{field_name}))
     .offset(::core::mem::offset_of!({struct_name}<{generics}>, {field_name}){maybe_base_field_offset})
     .flags({flags})
-    .attributes(&[{attributes}])
+    .attributes(&const {{ [{attributes}] }})
     {maybe_field_doc}
     .build()"
     )
