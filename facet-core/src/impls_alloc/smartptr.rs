@@ -116,3 +116,104 @@ unsafe impl<T> Facet for Opaque<alloc::sync::Arc<T>> {
             .build()
     };
 }
+
+unsafe impl<T: Facet> Facet for alloc::rc::Rc<T> {
+    const SHAPE: &'static crate::Shape = &const {
+        crate::Shape::builder()
+            .id(ConstTypeId::of::<Self>())
+            .layout(Layout::new::<Self>())
+            .type_params(&[crate::TypeParam {
+                name: "T",
+                shape: || T::SHAPE,
+            }])
+            .def(Def::SmartPointer(
+                SmartPointerDef::builder()
+                    .pointee(T::SHAPE)
+                    .flags(SmartPointerFlags::EMPTY)
+                    .known(KnownSmartPointer::Rc)
+                    .weak(|| <alloc::rc::Weak<T> as Facet>::SHAPE)
+                    .vtable(
+                        &const {
+                            SmartPointerVTable::builder()
+                                .borrow_fn(|opaque| {
+                                    let ptr = Self::as_ptr(unsafe { opaque.get() });
+                                    PtrConst::new(ptr)
+                                })
+                                .new_into_fn(|this, ptr| {
+                                    let t = unsafe { ptr.read::<T>() };
+                                    let rc = alloc::rc::Rc::new(t);
+                                    unsafe { this.put(rc) }
+                                })
+                                .downgrade_fn(|strong, weak| unsafe {
+                                    weak.put(alloc::rc::Rc::downgrade(strong.get::<Self>()))
+                                })
+                                .build()
+                        },
+                    )
+                    .build(),
+            ))
+            .vtable(value_vtable!(alloc::rc::Rc<T>, |f, _opts| write!(f, "Rc")))
+            .build()
+    };
+}
+
+unsafe impl<T: Facet> Facet for alloc::rc::Weak<T> {
+    const SHAPE: &'static crate::Shape = &const {
+        crate::Shape::builder()
+            .id(ConstTypeId::of::<Self>())
+            .layout(Layout::new::<Self>())
+            .type_params(&[crate::TypeParam {
+                name: "T",
+                shape: || T::SHAPE,
+            }])
+            .def(Def::SmartPointer(
+                SmartPointerDef::builder()
+                    .pointee(T::SHAPE)
+                    .flags(SmartPointerFlags::WEAK)
+                    .known(KnownSmartPointer::RcWeak)
+                    .strong(|| <alloc::rc::Rc<T> as Facet>::SHAPE)
+                    .vtable(
+                        &const {
+                            SmartPointerVTable::builder()
+                                .upgrade_into_fn(|weak, strong| unsafe {
+                                    Some(strong.put(weak.get::<Self>().upgrade()?))
+                                })
+                                .build()
+                        },
+                    )
+                    .build(),
+            ))
+            .vtable(value_vtable!(alloc::rc::Rc<T>, |f, _opts| write!(f, "Rc")))
+            .build()
+    };
+}
+
+unsafe impl<T> Facet for Opaque<alloc::rc::Rc<T>> {
+    const SHAPE: &'static crate::Shape = &const {
+        crate::Shape::builder()
+            .id(ConstTypeId::of::<Self>())
+            .layout(Layout::new::<Self>())
+            .def(Def::SmartPointer(
+                SmartPointerDef::builder()
+                    .known(KnownSmartPointer::Rc)
+                    .vtable(
+                        &const {
+                            SmartPointerVTable::builder()
+                                .borrow_fn(|opaque| {
+                                    let ptr = alloc::rc::Rc::<T>::as_ptr(unsafe { opaque.get() });
+                                    PtrConst::new(ptr)
+                                })
+                                .new_into_fn(|this, ptr| {
+                                    let t = unsafe { ptr.read::<T>() };
+                                    let rc = alloc::rc::Rc::new(t);
+                                    unsafe { this.put(rc) }
+                                })
+                                .build()
+                        },
+                    )
+                    .build(),
+            ))
+            .vtable(value_vtable!(alloc::rc::Rc<T>, |f, _opts| write!(f, "Rc")))
+            .build()
+    };
+}
