@@ -1,4 +1,6 @@
-use yansi::{Paint as _, Style};
+#![cfg_attr(windows, allow(dead_code))]
+
+use yansi::Style;
 
 /// A menu item
 pub struct MenuItem {
@@ -12,12 +14,20 @@ pub struct MenuItem {
     pub action: String,
 }
 
+#[cfg(windows)]
+pub fn show_menu(question: &str, items: &[MenuItem]) -> Option<String> {
+    _ = (question, items);
+    None
+}
+
+#[cfg(not(windows))]
 pub fn show_menu(question: &str, items: &[MenuItem]) -> Option<String> {
     // Requires the 'termion' crate for raw input handling
     use std::io::{self, Write};
     use termion::event::{Event, Key};
     use termion::input::TermRead;
     use termion::raw::IntoRawMode;
+    use yansi::Paint as _;
 
     use termion::color;
     println!("{}", question);
