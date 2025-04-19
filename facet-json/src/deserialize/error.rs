@@ -5,6 +5,7 @@ use alloc::string::String;
 
 #[cfg(feature = "rich-diagnostics")]
 use ariadne::{Color, Config, IndexType, Label, Report, ReportKind, Source};
+use facet_reflect::ReflectError;
 #[cfg(feature = "rich-diagnostics")]
 use owo_colors::OwoColorize;
 
@@ -45,12 +46,13 @@ impl<'input> JsonParseErrorWithContext<'input> {
             JsonErrorKind::StringAsNumber(s) => format!("Expected a string but got number: {}", s),
             JsonErrorKind::UnknownField(f) => format!("Unknown field: {}", f),
             JsonErrorKind::InvalidUtf8(e) => format!("Invalid UTF-8 encoding: {}", e),
+            JsonErrorKind::ReflectError(e) => format!("Error while reflecting type: {:?}", e),
         }
     }
 }
 
 /// An error kind for JSON parsing.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub enum JsonErrorKind {
     /// The input ended unexpectedly while parsing JSON.
     UnexpectedEof(&'static str),
@@ -66,6 +68,8 @@ pub enum JsonErrorKind {
     UnknownField(String),
     /// A string that could not be built into valid UTF-8 Unicode
     InvalidUtf8(String),
+    /// An error occurred while reflecting a type.
+    ReflectError(ReflectError),
 }
 
 #[cfg(not(feature = "rich-diagnostics"))]

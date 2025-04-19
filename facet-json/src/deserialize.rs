@@ -1,32 +1,27 @@
-use facet_core::{Characteristic, Def, Facet, FieldAttribute, ScalarAffinity, ShapeAttribute};
+use facet_core::{Def, ScalarAffinity};
 use facet_reflect::{HeapValue, Wip};
-use log::trace;
 
 use alloc::string::{String, ToString};
-use alloc::vec::Vec;
 
 mod error;
 pub use error::*;
 
 mod tokenizer;
-use tokenizer::{Token, TokenizeError, Tokenizer};
+use tokenizer::{Spanned, Token, TokenizeError, Tokenizer};
 
 /// Deserializes a JSON string into a value of type `T` that implements `Facet`.
-/// See original docs.
 pub fn from_slice_wip<'input, 'a>(
     mut wip: Wip<'a>,
     input: &'input [u8],
 ) -> Result<HeapValue<'a>, JsonParseErrorWithContext<'input>> {
-    let mut tokens = Tokenizer::new(input);
-    // Start parsing value
+    let mut tokens = Tokenizer::new(input, wip.path());
     wip = parse_value(&mut tokens, wip, WhyContext::TopLevel, input)?;
-    // Expect EOF
     match tokens.next_token() {
-        Ok(Token::EOF(_)) => Ok(wip.build().unwrap()),
-        Ok(tok) => Err(JsonParseErrorWithContext::new(
-            JsonErrorKind::UnexpectedCharacter(tok.start_char()),
+        Ok(sp) if matches!(sp.node, Token::EOF) => Ok(wip.build().unwrap()),
+        Ok(sp) => Err(JsonParseErrorWithContext::new(
+            JsonErrorKind::UnexpectedCharacter(token_char(&sp.node)),
             input,
-            tok.start_pos(),
+            sp.span.start(),
             wip.path(),
         )),
         Err(e) => Err(JsonParseErrorWithContext::new(
@@ -52,30 +47,33 @@ fn parse_value<'input, 'a>(
     context: WhyContext,
     input: &'input [u8],
 ) -> Result<Wip<'a>, JsonParseErrorWithContext<'input>> {
-    // Handle optional
     if let Def::Option(_) = wip.shape().def {
         wip = wip.push_some().unwrap();
     }
-    let tok = tokens
+    let sp = tokens
         .next_token()
-        .map_err(|e| JsonParseErrorWithContext::new(e.kind, input, e.pos, wip.path()))?;
-    match tok {
-        Token::LBrace(_) => parse_object(tokens, wip, input),
-        Token::LBracket(_) => parse_array(tokens, wip, input),
-        Token::String(s, start) => {
+        .map_err(|e| JsonParseErrorWithContext::new(e.kind, input, e.pos, wip.path().to_string()))?;
+    match sp.node {
+        Token::LBrace => parse_object(tokens, wip, input),
+        Token::LBracket => parse_array(tokens, wip, input),
+        Token::String(s) => {
             if matches!(context, WhyContext::ObjectKey) {
-                // field name will be handled by caller
-                wip.parse_field_name(&s)
-                    .map_err(|k| JsonParseErrorWithContext::new(k, input, start, wip.path()))?;
-                // after key, expect colon then value
-                tokens.expect(Token::Colon(start))?;
+                wip.field_named(&s).map_err(|e| {
+                    JsonParseErrorWithContext::new(
+                        JsonErrorKind::ReflectError(e),
+                        input,
+                        sp.span.start(),
+                        wip.path(),
+                    )
+                })?;
+                tokens.expect(Token::Colon, input, &wip.path())?;
                 parse_value(tokens, wip, WhyContext::ObjectValue, input)
             } else {
                 wip = wip.parse(&s).unwrap();
                 Ok(wip)
             }
         }
-        Token::Number(n, start) => {
+        Token::Number(n) => {
             if wip.can_put_f64() {
                 wip = wip.try_put_f64(n).unwrap();
             } else {
@@ -86,7 +84,7 @@ fn parse_value<'input, 'a>(
                             return Err(JsonParseErrorWithContext::new(
                                 JsonErrorKind::StringAsNumber(n.to_string()),
                                 input,
-                                start,
+                                sp.span.start(),
                                 wip.path(),
                             ));
                         }
@@ -95,28 +93,28 @@ fn parse_value<'input, 'a>(
                 return Err(JsonParseErrorWithContext::new(
                     JsonErrorKind::NumberOutOfRange(n),
                     input,
-                    start,
+                    sp.span.start(),
                     wip.path(),
                 ));
             }
             Ok(wip)
         }
-        Token::True(start) => {
+        Token::True => {
             wip = wip.put::<bool>(true).unwrap();
             Ok(wip)
         }
-        Token::False(start) => {
+        Token::False => {
             wip = wip.put::<bool>(false).unwrap();
             Ok(wip)
         }
-        Token::Null(start) => {
+        Token::Null => {
             wip = wip.pop_some_push_none().unwrap();
             Ok(wip)
         }
         _ => Err(JsonParseErrorWithContext::new(
-            JsonErrorKind::UnexpectedCharacter(tok.start_char()),
+            JsonErrorKind::UnexpectedCharacter(token_char(&sp.node)),
             input,
-            tok.start_pos(),
+            sp.span.start(),
             wip.path(),
         )),
     }
@@ -127,37 +125,33 @@ fn parse_object<'input, 'a>(
     mut wip: Wip<'a>,
     input: &'input [u8],
 ) -> Result<Wip<'a>, JsonParseErrorWithContext<'input>> {
-    // assume '{' consumed
     loop {
         let look = tokens
             .peek_token()
-            .map_err(|e| JsonParseErrorWithContext::new(e.kind, input, e.pos, wip.path()))?;
-        if let Token::RBrace(_) = look {
-            tokens.next_token()?; // consume
+            .map_err(|e| JsonParseErrorWithContext::new(JsonErrorKind::from(e), input, e.pos, tokens.path.clone()))?;
+        if matches!(look.node, Token::RBrace) {
+            tokens.next_token()?;
             break;
         }
-        // parse key
         wip = parse_value(tokens, wip, WhyContext::ObjectKey, input)?;
-        // parse value
         wip = parse_value(tokens, wip, WhyContext::ObjectValue, input)?;
-        // after value, expect comma or '}'
         let look = tokens
             .peek_token()
             .map_err(|e| JsonParseErrorWithContext::new(e.kind, input, e.pos, wip.path()))?;
-        match look {
-            Token::Comma(_) => {
+        match look.node {
+            Token::Comma => {
                 tokens.next_token()?;
                 continue;
             }
-            Token::RBrace(_) => {
+            Token::RBrace => {
                 tokens.next_token()?;
                 break;
             }
             _ => {
                 return Err(JsonParseErrorWithContext::new(
-                    JsonErrorKind::UnexpectedCharacter(look.start_char()),
+                    JsonErrorKind::UnexpectedCharacter(token_char(&look.node)),
                     input,
-                    look.start_pos(),
+                    look.span.start(),
                     wip.path(),
                 ));
             }
@@ -171,20 +165,18 @@ fn parse_array<'input, 'a>(
     mut wip: Wip<'a>,
     input: &'input [u8],
 ) -> Result<Wip<'a>, JsonParseErrorWithContext<'input>> {
-    // assume '[' consumed
-    // begin array
     wip = wip.begin_pushback().unwrap();
     let mut first = true;
     loop {
         let look = tokens
             .peek_token()
             .map_err(|e| JsonParseErrorWithContext::new(e.kind, input, e.pos, wip.path()))?;
-        if let Token::RBracket(_) = look {
-            tokens.next_token()?; // consume
+        if matches!(look.node, Token::RBracket) {
+            tokens.next_token()?;
             break;
         }
         if !first {
-            tokens.expect_comma()?;
+            tokens.expect(Token::Comma, input, wip.path())?;
         }
         first = false;
         wip = wip.push().unwrap();
@@ -193,37 +185,62 @@ fn parse_array<'input, 'a>(
     Ok(wip)
 }
 
-// Helper methods on Tokenizer for peeking and expecting specific tokens
+/// Returns representative char for JSON error reporting
+fn token_char(t: &Token) -> char {
+    match t {
+        Token::LBrace => '{',
+        Token::RBrace => '}',
+        Token::LBracket => '[',
+        Token::RBracket => ']',
+        Token::Colon => ':',
+        Token::Comma => ',',
+        Token::String(_) => '"',
+        Token::Number(_) => '0',
+        Token::True => 't',
+        Token::False => 'f',
+        Token::Null => 'n',
+        Token::EOF => '$',
+    }
+}
+
 trait TokenizerExt<'input> {
-    fn peek_token(&mut self) -> Result<Token, TokenizeError>;
-    fn expect(&mut self, expected: Token) -> Result<(), JsonParseErrorWithContext<'input>>;
-    fn expect_comma(&mut self) -> Result<(), JsonParseErrorWithContext<'input>>;
+    fn peek_token(&mut self) -> Result<Spanned<Token>, TokenizeError>;
+    fn expect(
+        &mut self,
+        expected: Token,
+        input: &'input [u8],
+        path: &str,
+    ) -> Result<(), JsonParseErrorWithContext<'input>>;
 }
 
 impl<'input> TokenizerExt<'input> for Tokenizer<'input> {
-    fn peek_token(&mut self) -> Result<Token, TokenizeError> {
+    fn peek_token(&mut self) -> Result<Spanned<Token>, TokenizeError> {
         let save = self.clone();
-        let tok = self.next_token();
+        let sp = self.next_token();
         *self = save;
-        tok
+        sp
     }
-    fn expect(&mut self, expected: Token) -> Result<(), JsonParseErrorWithContext<'input>> {
-        let tok = self
+    fn expect(
+        &mut self,
+        expected: Token,
+        input: &'input [u8],
+        path: &str,
+    ) -> Result<(), JsonParseErrorWithContext<'input>> {
+        let sp = self
             .next_token()
-            .map_err(|e| JsonParseErrorWithContext::new(e.kind, &[], e.pos, ""))?;
-        if tok == expected {
+            .map_err(|e| JsonParseErrorWithContext::new(e.kind, input, e.pos, path.to_string()))?;
+        if sp.node == expected {
             Ok(())
         } else {
             Err(JsonParseErrorWithContext::new(
-                JsonErrorKind::UnexpectedCharacter(tok.start_char()),
-                &[],
-                tok.start_pos(),
-                "",
+                JsonErrorKind::UnexpectedCharacter(token_char(&sp.node)),
+                input,
+                sp.span.start(),
+                path,
             ))
         }
     }
-    fn expect_comma(&mut self) -> Result<(), JsonParseErrorWithContext<'input>> {
-        // same as expect(Token::Comma(_))
-        Ok(())
+}
+       }
     }
 }
