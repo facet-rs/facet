@@ -94,11 +94,8 @@ fn deserialize_as_struct<'a>(
             Some(field_item) => wip = deserialize_item(wip, field_item)?,
             None => {
                 if let Def::Option(..) = field.shape().def {
-                    // TODO: how to push none
-                    wip = wip.push_some().map_err(|e| AnyErr(e.to_string()))?;
-                    wip = wip
-                        .pop_some_push_none()
-                        .map_err(|e| AnyErr(e.to_string()))?;
+                    // Default of `Option<T>` is `None`
+                    wip = wip.put_default().map_err(|e| AnyErr(e.to_string()))?;
                 } else {
                     return Err(AnyErr(format!("Expected field '{}'", field.name)));
                 }
@@ -202,6 +199,10 @@ fn build_enum_from_variant_name<'a>(
         return Ok(wip);
     }
 
+    // Whether it's a tuple so we need to use the index
+    let is_tuple =
+        variant.data.kind == StructKind::TupleStruct || variant.data.kind == StructKind::Tuple;
+
     // Push all fields
     for (index, field) in variant.data.fields.iter().enumerate() {
         wip = wip
@@ -211,8 +212,7 @@ fn build_enum_from_variant_name<'a>(
         // Try to get the TOML value as a table to extract the field
         if let Some(item) = item.as_table_like() {
             // Base the field name on what type of struct we are
-            let field_name = if let StructKind::TupleStruct | StructKind::Tuple = variant.data.kind
-            {
+            let field_name = if is_tuple {
                 &index.to_string()
             } else {
                 // It must be a struct field
@@ -220,18 +220,27 @@ fn build_enum_from_variant_name<'a>(
             };
 
             // Try to get the TOML field matching the Rust name
-            let Some(field) = item.get(field_name) else {
-                return Err(format!("TOML field '{}' not found", field_name).into());
-            };
-
-            wip = deserialize_item(wip, field)?;
-
-            wip = wip.pop().map_err(|e| AnyErr(e.to_string()))?;
+            match item.get(field_name) {
+                // Field found, push it
+                Some(field) => {
+                    wip = deserialize_item(wip, field)?;
+                }
+                // Push none if field not found and it's an option
+                None if matches!(field.shape().def, Def::Option(_)) => {
+                    // Default of `Option<T>` is `None`
+                    wip = wip.put_default().map_err(|e| AnyErr(e.to_string()))?;
+                }
+                None => {
+                    return Err(format!("TOML field '{}' not found", field_name).into());
+                }
+            }
         } else if item.is_value() {
             wip = deserialize_item(wip, item)?;
         } else {
             return Err(format!("TOML {} is not a recognized type", item.type_name()).into());
         }
+
+        wip = wip.pop().map_err(|e| e.to_string())?;
     }
 
     Ok(wip)
@@ -362,9 +371,11 @@ fn deserialize_as_map<'a>(mut wip: Wip<'a>, item: &Item) -> Result<Wip<'a>, AnyE
 fn deserialize_as_option<'a>(mut wip: Wip<'a>, item: &Item) -> Result<Wip<'a>, AnyErr> {
     trace!("Deserializing {}", "option".blue());
 
-    wip = wip.push_some().map_err(|e| AnyErr(e.to_string()))?;
+    wip = wip.push_some().map_err(|e| e.to_string())?;
 
     wip = deserialize_item(wip, item)?;
+
+    wip = wip.pop().map_err(|e| e.to_string())?;
 
     trace!("Finished deserializing {}", "option".blue());
 

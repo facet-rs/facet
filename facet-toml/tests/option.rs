@@ -129,6 +129,52 @@ fn test_option_enum() {
 }
 
 #[test]
+fn test_option_enum_option_scalar() {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, Facet, PartialEq)]
+    #[repr(u8)]
+    enum Root {
+        A(Option<String>),
+        B { b1: Option<i32>, b2: Option<bool> },
+    }
+
+    assert_eq!(
+        facet_toml::from_str::<Root>("A = 'hi'").expect("Failed to parse TOML"),
+        Root::A(Some("hi".to_owned())),
+    );
+    assert_eq!(
+        facet_toml::from_str::<Root>("B.b1 = 1").expect("Failed to parse TOML"),
+        Root::B {
+            b1: Some(1),
+            b2: None
+        },
+    );
+    assert_eq!(
+        facet_toml::from_str::<Root>("B.b2 = true").expect("Failed to parse TOML"),
+        Root::B {
+            b1: None,
+            b2: Some(true)
+        },
+    );
+    assert_eq!(
+        facet_toml::from_str::<Root>("B = { b1 = 1, b2 = true }").expect("Failed to parse TOML"),
+        Root::B {
+            b1: Some(1),
+            b2: Some(true)
+        },
+    );
+    assert_eq!(
+        facet_toml::from_str::<Root>("[A]").expect("Failed to parse TOML"),
+        Root::A(None),
+    );
+    assert_eq!(
+        facet_toml::from_str::<Root>("[B]").expect("Failed to parse TOML"),
+        Root::B { b1: None, b2: None },
+    );
+}
+
+#[test]
 fn test_option_enum_with_option_variant() {
     facet_testhelpers::setup();
 
@@ -160,11 +206,4 @@ fn test_option_enum_with_option_variant() {
             value: Some(Item::B(Some(1)))
         },
     );
-    // TODO: fix
-    // assert_eq!(
-    //     facet_toml::from_str::<Root>("value = 'B'").expect("Failed to parse TOML"),
-    //     Root {
-    //         value: Some(Item::B(None))
-    //     },
-    // );
 }
