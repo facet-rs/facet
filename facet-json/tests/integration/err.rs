@@ -77,6 +77,7 @@ fn unknown_field_with_rename() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Facet, Debug)]
+    #[facet(deny_unknown_fields)]
     struct RenamedFields {
         #[facet(rename = "new_name")]
         original_name: String,

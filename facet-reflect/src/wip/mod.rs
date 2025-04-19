@@ -1,17 +1,25 @@
 use crate::{ReflectError, ValueId};
-use alloc::{format, string::ToString};
+use crate::{debug, trace};
+#[cfg(feature = "log")]
+use alloc::string::ToString;
+#[cfg(feature = "log")]
+use owo_colors::OwoColorize;
+
+use alloc::format;
 use alloc::{vec, vec::Vec};
 use bitflags::bitflags;
 use core::{fmt, marker::PhantomData};
-use facet_core::{Def, Facet, FieldError, PtrConst, PtrMut, PtrUninit, Shape, Variant};
+use facet_core::{
+    Def, DefaultInPlaceFn, Facet, FieldError, PtrConst, PtrMut, PtrUninit, Shape, Variant,
+};
 use flat_map::FlatMap;
-use log::trace;
-use owo_colors::OwoColorize;
 
 use alloc::string::String;
 
 mod iset;
 pub use iset::*;
+
+mod put_f64;
 
 mod enum_;
 mod flat_map;
@@ -71,7 +79,6 @@ impl Frame {
                 self.shape.green(),
             );
             if self.shape.layout.size() != 0 {
-                trace!("Ok I swear we're deallocating it");
                 unsafe {
                     alloc::alloc::dealloc(self.data.as_mut_byte_ptr(), self.shape.layout);
                 }
@@ -280,6 +287,14 @@ pub struct Wip<'a> {
 }
 
 impl<'a> Wip<'a> {
+    /// Puts the value from a Peek into the current frame.
+    pub fn put_peek<'mem>(self, peek: crate::Peek<'mem>) -> Result<Wip<'mem>, ReflectError>
+    where
+        'a: 'mem,
+    {
+        self.put_shape(peek.data, peek.shape)
+    }
+
     /// Returns the number of frames on the stack
     pub fn frames_count(&self) -> usize {
         self.frames.len()
@@ -346,7 +361,7 @@ impl<'a> Wip<'a> {
 
     /// Asserts everything is initialized and that invariants are upheld (if any)
     pub fn build(mut self) -> Result<HeapValue<'a>, ReflectError> {
-        trace!("[{}] ⚒️ It's BUILD time", self.frames.len());
+        debug!("[{}] ⚒️ It's BUILD time", self.frames.len());
 
         // 1. Track all frames currently on the stack into istates
         while let Some(frame) = self.pop_inner() {
@@ -355,7 +370,7 @@ impl<'a> Wip<'a> {
 
         // 2. Find the root frame
         let Some((root_id, _)) = self.istates.iter().find(|(_k, istate)| istate.depth == 0) else {
-            trace!("No root found, possibly already built or empty WIP");
+            debug!("No root found, possibly already built or empty WIP");
             return Err(ReflectError::OperationFailed {
                 shape: <()>::SHAPE,
                 operation: "tried to build a value but there was no root frame tracked",
@@ -426,15 +441,16 @@ impl<'a> Wip<'a> {
                     }
 
                     // If initialized, push children to check stack
-                    for (i, field) in sd.fields.iter().enumerate() {
+                    #[allow(clippy::unused_enumerate_index)]
+                    for (_i, field) in sd.fields.iter().enumerate() {
                         let field_shape = field.shape();
                         let field_ptr = unsafe { frame.data.field_init_at(field.offset) };
                         let field_id = ValueId::new(field_shape, field_ptr.as_byte_ptr());
 
                         if let Some(field_istate) = self.istates.remove(&field_id) {
-                            trace!(
+                            debug!(
                                 "Queueing struct field check: #{} '{}' of {}: shape={}, ptr={:p}",
-                                i.to_string().bright_cyan(),
+                                _i.to_string().bright_cyan(),
                                 field.name.bright_blue(),
                                 frame.shape.blue(),
                                 field_shape.green(),
@@ -465,7 +481,8 @@ impl<'a> Wip<'a> {
                         }
 
                         // If initialized, push children to check stack
-                        for (i, field) in variant.data.fields.iter().enumerate() {
+                        #[allow(clippy::unused_enumerate_index)]
+                        for (_i, field) in variant.data.fields.iter().enumerate() {
                             let field_shape = field.shape();
                             // Enum fields are potentially at different offsets depending on the variant layout.
                             // We assume the `frame.data` points to the start of the enum's data payload
@@ -474,9 +491,9 @@ impl<'a> Wip<'a> {
                             let field_id = ValueId::new(field_shape, field_ptr.as_byte_ptr());
 
                             if let Some(field_istate) = self.istates.remove(&field_id) {
-                                trace!(
+                                debug!(
                                     "Queueing enum field check: #{} '{}' of variant '{}' of {}: shape={}, ptr={:p}",
-                                    i.to_string().bright_cyan(),
+                                    _i.to_string().bright_cyan(),
                                     field.name.bright_blue(),
                                     variant.name.yellow(),
                                     frame.shape.blue(),
@@ -538,12 +555,12 @@ impl<'a> Wip<'a> {
         }
 
         // If we finished the loop, all reachable and non-moved frames are initialized.
-        trace!("All reachable frames checked and initialized.");
+        debug!("All reachable frames checked and initialized.");
 
         // 5. Check invariants on the root
         let data = unsafe { root_data_ptr.assume_init() };
         if let Some(invariant_fn) = root_shape.vtable.invariants {
-            trace!(
+            debug!(
                 "Checking invariants for root shape {} at {:p}",
                 root_shape.green(),
                 data.as_byte_ptr()
@@ -554,7 +571,7 @@ impl<'a> Wip<'a> {
                 });
             }
         } else {
-            trace!(
+            debug!(
                 "No invariants to check for root shape {}",
                 root_shape.blue()
             );
@@ -630,7 +647,7 @@ impl<'a> Wip<'a> {
             // we didn't have to allocate that field, it's a struct field, so it's not allocated
             istate: IState::new(self.frames.len(), FrameMode::Field, FrameFlags::EMPTY),
         };
-        trace!(
+        debug!(
             "[{}] Selecting field {} ({}#{}) of {}",
             self.frames.len(),
             field.name.blue(),
@@ -730,60 +747,80 @@ impl<'a> Wip<'a> {
     ///
     /// * `Ok(Self)` if the value was successfully put into the frame.
     /// * `Err(ReflectError)` if there was an error putting the value into the frame.
-    pub fn put<'val, T: Facet + 'val>(mut self, t: T) -> Result<Wip<'val>, ReflectError>
+    pub fn put<'val, T: Facet + 'val>(self, t: T) -> Result<Wip<'val>, ReflectError>
+    where
+        'a: 'val,
+    {
+        let shape = T::SHAPE;
+        let ptr_const = PtrConst::new(&t as *const T as *const u8);
+        let res = self.put_shape(ptr_const, shape);
+        core::mem::forget(t); // avoid double drop; ownership moved into Wip
+        res
+    }
+
+    /// Checks if the current frame is of type `T`.
+    pub fn current_is_type<T: Facet + 'static>(&self) -> bool {
+        self.frames
+            .last()
+            .is_some_and(|frame| frame.shape == T::SHAPE)
+    }
+
+    /// Puts a value from a `PtrConst` with the given shape into the current frame.
+    pub fn put_shape<'val>(
+        mut self,
+        src: PtrConst<'val>,
+        src_shape: &'static Shape,
+    ) -> Result<Wip<'val>, ReflectError>
     where
         'a: 'val,
     {
         let Some(frame) = self.frames.last_mut() else {
             return Err(ReflectError::OperationFailed {
-                shape: T::SHAPE,
-                operation: "tried to put a T but there was no frame to put T into",
+                shape: src_shape,
+                operation: "tried to put a value but there was no frame to put into",
             });
         };
 
-        // check that the type matches
-        if !frame.shape.is_type::<T>() {
-            // maybe we're putting into an Option<T> ?
-            if frame.shape.is_type::<Option<T>>() {
-                trace!("Putting into an option!");
-                let Def::Option(od) = frame.shape.def else {
-                    unreachable!()
-                };
+        // Check that the type matches
+        if frame.shape != src_shape {
+            // Maybe we're putting into an Option<T>?
+            // Handle Option<Inner>
+            if let Def::Option(od) = frame.shape.def {
+                // Check if inner type matches
+                if od.t() == src_shape {
+                    debug!("Putting into an Option<T>!");
+                    if frame.istate.fields.is_any_set() {
+                        let data = unsafe { frame.data.assume_init() };
+                        unsafe { (od.vtable.replace_with_fn)(data, Some(src)) };
+                    } else {
+                        let data = frame.data;
+                        unsafe { (od.vtable.init_some_fn)(data, src) };
+                    }
+                    unsafe {
+                        frame.mark_fully_initialized();
+                    }
 
-                // unfortunately this all involves copying data over
-                let src = PtrConst::new(&raw const t);
-                if frame.istate.fields.is_any_set() {
-                    let data = unsafe { frame.data.assume_init() };
-                    unsafe { (od.vtable.replace_with_fn)(data, Some(src)) };
-                } else {
-                    let data = frame.data;
-                    unsafe { (od.vtable.init_some_fn)(data, src) };
+                    let shape = frame.shape;
+                    let index = frame.field_index_in_parent;
+
+                    // mark the field as initialized
+                    self.mark_field_as_initialized(shape, index)?;
+
+                    debug!("[{}] Just put a {} value", self.frames.len(), shape.green());
+
+                    return Ok(self);
                 }
-                unsafe {
-                    frame.mark_fully_initialized();
-                }
-                // t will drop naturally at the end of this function
-
-                let shape = frame.shape;
-                let index = frame.field_index_in_parent;
-
-                // mark the field as initialized
-                self.mark_field_as_initialized(shape, index)?;
-
-                trace!("[{}] Just put a {} value", self.frames.len(), shape.green());
-
-                return Ok(self);
             }
 
             return Err(ReflectError::WrongShape {
                 expected: frame.shape,
-                actual: T::SHAPE,
+                actual: src_shape,
             });
         }
 
-        // de-initialize partially initialized fields
+        // de-initialize partially initialized fields, if any
         if frame.istate.variant.is_some() || frame.istate.fields.is_any_set() {
-            trace!(
+            debug!(
                 "De-initializing partially initialized fields for {}",
                 frame.shape
             );
@@ -827,7 +864,8 @@ impl<'a> Wip<'a> {
         }
 
         unsafe {
-            frame.data.put(t);
+            // Copy the contents from src to destination
+            frame.data.copy_from(src, frame.shape);
             frame.mark_fully_initialized();
         }
 
@@ -837,7 +875,7 @@ impl<'a> Wip<'a> {
         // mark the field as initialized
         self.mark_field_as_initialized(shape, index)?;
 
-        trace!("[{}] Just put a {} value", self.frames.len(), shape.green());
+        debug!("[{}] Just put a {} value", self.frames.len(), shape.green());
 
         Ok(self)
     }
@@ -878,23 +916,15 @@ impl<'a> Wip<'a> {
         }
     }
 
-    /// Puts the default value in the current frame.
-    pub fn put_default(mut self) -> Result<Self, ReflectError> {
+    /// Puts a value using a provided DefaultInPlaceFn in the current frame.
+    pub fn put_from_fn(mut self, default_in_place: DefaultInPlaceFn) -> Result<Self, ReflectError> {
         let Some(frame) = self.frames.last_mut() else {
             return Err(ReflectError::OperationFailed {
                 shape: <()>::SHAPE,
-                operation: "tried to put default value but there was no frame",
+                operation: "tried to put value from fn but there was no frame",
             });
         };
 
-        let vtable = frame.shape.vtable;
-
-        let Some(default_in_place) = vtable.default_in_place else {
-            return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
-                operation: "type does not implement Default",
-            });
-        };
         unsafe {
             default_in_place(frame.data);
             frame.mark_fully_initialized();
@@ -909,6 +939,26 @@ impl<'a> Wip<'a> {
         Ok(self)
     }
 
+    /// Puts the default value in the current frame.
+    pub fn put_default(self) -> Result<Self, ReflectError> {
+        let Some(frame) = self.frames.last() else {
+            return Err(ReflectError::OperationFailed {
+                shape: <()>::SHAPE,
+                operation: "tried to put default value but there was no frame",
+            });
+        };
+
+        let vtable = frame.shape.vtable;
+        let Some(default_in_place) = vtable.default_in_place else {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "type does not implement Default",
+            });
+        };
+
+        self.put_from_fn(default_in_place)
+    }
+
     /// Marks a field as initialized in the parent frame.
     fn mark_field_as_initialized(
         &mut self,
@@ -917,6 +967,7 @@ impl<'a> Wip<'a> {
     ) -> Result<(), ReflectError> {
         if let Some(index) = index {
             let parent_index = self.frames.len().saturating_sub(2);
+            #[cfg(feature = "log")]
             let num_frames = self.frames.len();
             let Some(parent) = self.frames.get_mut(parent_index) else {
                 return Err(ReflectError::OperationFailed {
@@ -924,6 +975,7 @@ impl<'a> Wip<'a> {
                     operation: "was supposed to mark a field as initialized, but there was no parent frame",
                 });
             };
+            #[cfg(feature = "log")]
             let parent_shape = parent.shape;
             trace!(
                 "[{}] {}.{} initialized with {}",
@@ -1364,6 +1416,7 @@ impl<'a> Wip<'a> {
     /// When the value frame is popped, the key-value pair will be added to the map.
     pub fn push_map_value(mut self) -> Result<Self, ReflectError> {
         trace!("Wants to push map value. Frames = ");
+        #[cfg(feature = "log")]
         for (i, f) in self.frames.iter().enumerate() {
             trace!("Frame {}: {:?}", i, f);
         }
@@ -1455,6 +1508,7 @@ impl<'a> Wip<'a> {
 
     fn pop_inner(&mut self) -> Option<Frame> {
         let mut frame = self.frames.pop()?;
+        #[cfg(feature = "log")]
         let frame_shape = frame.shape;
 
         let init = frame.is_fully_initialized();
@@ -1483,6 +1537,7 @@ impl<'a> Wip<'a> {
                 if frame.is_fully_initialized() {
                     // This was a list element, so we need to push it to the parent list
                     // Capture frame length and parent shape before mutable borrow
+                    #[cfg(feature = "log")]
                     let frame_len = self.frames.len();
 
                     // Get parent frame
@@ -1534,6 +1589,7 @@ impl<'a> Wip<'a> {
                 }
 
                 // Get parent map frame
+                #[cfg(feature = "log")]
                 let frame_len = self.frames.len();
                 let parent_frame = self.frames.last_mut().unwrap();
                 let parent_shape = parent_frame.shape;
@@ -1573,10 +1629,9 @@ impl<'a> Wip<'a> {
                 if frame.is_fully_initialized() {
                     trace!("Popping OptionSome (fully init'd)");
 
-                    // This was an option Some value, so we need to set it in the parent option
-                    let frame_len = self.frames.len();
-
                     // Get parent frame
+                    #[cfg(feature = "log")]
+                    let frames_len = self.frames.len();
                     let parent_frame = self.frames.last_mut().unwrap();
                     let parent_shape = parent_frame.shape;
 
@@ -1585,7 +1640,7 @@ impl<'a> Wip<'a> {
                         Def::Option(option_def) => {
                             trace!(
                                 "[{}] Setting Some value in option {}",
-                                frame_len,
+                                frames_len,
                                 parent_shape.blue()
                             );
                             unsafe {
@@ -1758,14 +1813,54 @@ impl<'a> Wip<'a> {
 
         path
     }
+
+    /// Returns true if the field at the given index is set (initialized) in the current frame.
+    pub fn is_field_set(&self, index: usize) -> Result<bool, ReflectError> {
+        let frame = self.frames.last().ok_or(ReflectError::OperationFailed {
+            shape: <()>::SHAPE,
+            operation: "tried to check if field is set, but there was no frame",
+        })?;
+
+        match frame.shape.def {
+            Def::Struct(ref sd) => {
+                if index >= sd.fields.len() {
+                    return Err(ReflectError::FieldError {
+                        shape: frame.shape,
+                        field_error: FieldError::NoSuchField,
+                    });
+                }
+                Ok(frame.istate.fields.has(index))
+            }
+            Def::Enum(_) => {
+                let variant = frame.istate.variant.as_ref().ok_or(
+                    ReflectError::OperationFailed {
+                        shape: frame.shape,
+                        operation: "tried to check if field is set, but no variant was selected",
+                    },
+                )?;
+                if index >= variant.data.fields.len() {
+                    return Err(ReflectError::FieldError {
+                        shape: frame.shape,
+                        field_error: FieldError::NoSuchField,
+                    });
+                }
+                Ok(frame.istate.fields.has(index))
+            }
+            _ => Err(ReflectError::WasNotA {
+                expected: "struct or enum",
+                actual: frame.shape,
+            }),
+        }
+    }
 }
 
 impl Drop for Wip<'_> {
     fn drop(&mut self) {
+        trace!("🧹🧹🧹 WIP is dropping");
+
         while let Some(frame) = self.frames.pop() {
             self.track(frame);
         }
-        trace!("🧹 Whole WIP is dropping",);
 
         let Some((root_id, _)) = self.istates.iter().find(|(_k, istate)| istate.depth == 0) else {
             trace!("No root found, we probably built already");

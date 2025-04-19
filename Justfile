@@ -50,10 +50,10 @@ nostd-ci:
     cmd_group "cargo check --no-default-features --features alloc -p facet-reflect --target thumbv8m.main-none-eabihf"
 
 clippy-all:
-    cargo clippy --workspace --all-targets --all-features -- -D warnings
+    cargo clippy --workspace --all-targets --all-features --target-dir target/clippy-all-features -- -D warnings
 
 clippy:
-    cargo clippy --workspace --all-targets -- -D warnings
+    cargo clippy --workspace --all-targets --target-dir target/clippy -- -D warnings
 
 test *args:
     cargo nextest run {{args}} < /dev/null
@@ -115,6 +115,23 @@ absolve:
     fi
 
 ship:
+    #!/usr/bin/env -S bash -euo pipefail
+    # Refuse to run if not on main branch or not up to date with origin/main
+    branch="$(git rev-parse --abbrev-ref HEAD)"
+    if [[ "$branch" != "main" ]]; then
+    echo -e "\033[1;31m❌ Refusing to run: not on 'main' branch (current: $branch)\033[0m"
+    exit 1
+    fi
+    git fetch origin main
+    local_rev="$(git rev-parse HEAD)"
+    remote_rev="$(git rev-parse origin/main)"
+    if [[ "$local_rev" != "$remote_rev" ]]; then
+    echo -e "\033[1;31m❌ Refusing to run: local main branch is not up to date with origin/main\033[0m"
+    echo -e "Local HEAD:  $local_rev"
+    echo -e "Origin HEAD: $remote_rev"
+    echo -e "Please pull/rebase to update."
+    exit 1
+    fi
     release-plz update
     git add .
     git commit -m "Upgrades"
@@ -131,7 +148,7 @@ docsrs *args:
     cargo +nightly doc {{args}}
 
 msrv:
-    cargo hack check --feature-powerset --locked --rust-version --ignore-private --workspace --all-targets --keep-going --exclude-no-default-features
+    cargo hack check --feature-powerset --locked --rust-version --ignore-private --workspace --all-targets --keep-going --exclude-no-default-features --target-dir target/msrv
 
 docs:
     cargo doc --workspace --all-features --no-deps --document-private-items --keep-going

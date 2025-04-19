@@ -1,4 +1,4 @@
-#[cfg(feature = "std")]
+#[cfg(all(feature = "std", feature = "slow-tests"))]
 mod compile_tests;
 
 #[cfg(feature = "std")]

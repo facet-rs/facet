@@ -32,6 +32,12 @@ keyword! {
     pub KInvariants = "invariants";
     /// The "opaque" keyword.
     pub KOpaque = "opaque";
+    /// The "deny_unknown_fields" keyword.
+    pub KDenyUnknownFields = "deny_unknown_fields";
+    /// The "default" keyword.
+    pub KDefault = "default";
+    /// The "transparent" keyword.
+    pub KTransparent = "transparent";
 }
 
 operator! {
@@ -81,7 +87,7 @@ unsynn! {
         Pub(KPub),
     }
 
-    /// Represents an attribute annotation, typically in the form `#[attr]`.
+    /// Represents an attribute annotation on a field, typically in the form `#[attr]`.
     pub struct Attribute {
         /// The pound sign preceding the attribute.
         pub _pound: Pound,
@@ -117,8 +123,26 @@ unsynn! {
         Invariants(InvariantInner),
         /// An opaque attribute that specifies opaque information.
         Opaque(KOpaque),
+        /// A deny_unknown_fields attribute that specifies whether unknown fields are allowed.
+        DenyUnknownFields(KDenyUnknownFields),
+        /// A default attribute with an explicit value (#[facet(default = "myfunc")])
+        DefaultEquals(DefaultEqualsInner),
+        /// A default attribute with no explicit value (#[facet(default)])
+        Default(KDefault),
+        /// A transparent attribute for containers
+        Transparent(KTransparent),
         /// Any other attribute represented as a sequence of token trees.
         Other(Vec<TokenTree>),
+    }
+
+    /// Inner value for #[facet(default = ...)]
+    pub struct DefaultEqualsInner {
+        /// The "default" keyword.
+        pub _kw_default: KDefault,
+        /// The equals sign '='.
+        pub _eq: Eq,
+        /// The value assigned, as a literal string.
+        pub value: LiteralString,
     }
 
     /// Represents invariants for a type.

@@ -1,4 +1,4 @@
-use super::Shape;
+use super::{DefaultInPlaceFn, Shape};
 use bitflags::bitflags;
 
 /// Describes a field in a struct or tuple
@@ -60,6 +60,8 @@ pub enum FieldAttribute {
     SkipSerializingIf(fn(*const ()) -> bool),
     /// Specifies an alternative name for the field (for serialization/deserialization)
     Rename(&'static str),
+    /// Indicates the field has a default value (the value is which fn to call for default, or None for Default::default)
+    Default(Option<DefaultInPlaceFn>),
     /// Custom field attribute containing arbitrary text
     Arbitrary(&'static str),
 }

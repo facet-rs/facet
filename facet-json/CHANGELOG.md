@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/facet-rs/facet/compare/facet-json-v0.10.0...facet-json-v0.11.0) - 2025-04-19
+
+### Added
+
+- *(json)* Support default attribute.
+- feat(json) Support default at the container level
+- feat(json) Better error messages when a field is missing
+- feat(json) Add support for json booleans
+
+## [0.10.0](https://github.com/facet-rs/facet/compare/facet-json-v0.9.3...facet-json-v0.10.0) - 2025-04-19
+
+### Added
+
+- feat(json) Support deny_unknown_fields
+- feat(json) Fix array parsing
+
 ## [0.9.3](https://github.com/facet-rs/facet/compare/facet-json-v0.9.2...facet-json-v0.9.3) - 2025-04-18
 
 ### Other

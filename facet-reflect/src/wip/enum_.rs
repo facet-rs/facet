@@ -1,6 +1,8 @@
 use facet_core::{Def, FieldError, Variant};
+#[cfg(feature = "log")]
 use owo_colors::OwoColorize;
 
+use crate::trace;
 use crate::{ISet, ReflectError, Wip};
 
 impl Wip<'_> {
@@ -61,7 +63,7 @@ impl Wip<'_> {
         // Now that we've set the discriminant, we can store the variant
         frame.istate.variant = Some(variant);
 
-        log::trace!(
+        trace!(
             "[{}] Selecting variant {} of {} with discriminant {}",
             self.frames.len(),
             variant.name.blue(),

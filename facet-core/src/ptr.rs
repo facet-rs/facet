@@ -4,11 +4,31 @@
 
 use core::{marker::PhantomData, ptr::NonNull};
 
+use crate::Shape;
+
 /// A type-erased pointer to an uninitialized value
 #[derive(Debug, Clone, Copy)]
 pub struct PtrUninit<'mem>(*mut u8, PhantomData<&'mem mut ()>);
 
 impl<'mem> PtrUninit<'mem> {
+    /// Copies memory from a source pointer into this location and returns PtrMut
+    ///
+    /// # Safety
+    ///
+    /// - The source pointer must be valid for reads of `len` bytes
+    /// - This pointer must be valid for writes of `len` bytes and properly aligned
+    /// - The regions may not overlap
+    pub unsafe fn copy_from(self, src: PtrConst<'mem>, shape: &Shape) -> PtrMut<'mem> {
+        // SAFETY: The caller is responsible for upholding the invariants:
+        // - `src` must be valid for reads of `shape.size` bytes
+        // - `self` must be valid for writes of `shape.size` bytes and properly aligned
+        // - The regions may not overlap
+        unsafe {
+            core::ptr::copy_nonoverlapping(src.as_byte_ptr(), self.0, shape.layout.size());
+            self.assume_init()
+        }
+    }
+
     /// Create a new opaque pointer from a mutable pointer
     ///
     /// This is safe because it's generic over T

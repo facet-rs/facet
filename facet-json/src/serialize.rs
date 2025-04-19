@@ -161,11 +161,10 @@ fn serialize_struct<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()>
         if field
             .attributes
             .iter()
-            .filter_map(|attr| match attr {
+            .find_map(|attr| match attr {
                 FieldAttribute::SkipSerializingIf(fn_ptr) => Some(fn_ptr),
                 _ => None,
             })
-            .next()
             .is_some_and(|f| f(unsafe { field_peek.data().as_ptr() }))
         {
             continue;

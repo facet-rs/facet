@@ -1,7 +1,9 @@
+use crate::Peek;
 use crate::ReflectError;
+use crate::trace;
 use core::{alloc::Layout, marker::PhantomData};
-
 use facet_core::{Facet, PtrConst, PtrMut, Shape};
+#[cfg(feature = "log")]
 use owo_colors::OwoColorize as _;
 
 /// A type-erased value stored on the heap
@@ -23,6 +25,11 @@ impl Drop for HeapValue<'_> {
 }
 
 impl<'a> HeapValue<'a> {
+    /// Returns a peek that allows exploring the heap value.
+    pub fn peek(&self) -> Peek<'a> {
+        unsafe { Peek::unchecked_new(PtrConst::new(self.guard.as_ref().unwrap().ptr), self.shape) }
+    }
+
     /// Turn this heapvalue into a concrete type
     pub fn materialize<T: Facet + 'a>(mut self) -> Result<T, ReflectError> {
         if self.shape != T::SHAPE {
@@ -123,7 +130,7 @@ pub struct Guard {
 impl Drop for Guard {
     fn drop(&mut self) {
         if self.layout.size() != 0 {
-            log::trace!(
+            trace!(
                 "Deallocating memory at ptr: {:p}, size: {}, align: {}",
                 self.ptr.cyan(),
                 self.layout.size().yellow(),

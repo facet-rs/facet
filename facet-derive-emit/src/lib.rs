@@ -138,36 +138,61 @@ pub(crate) fn gen_struct_field(
                     flags = "::facet::FieldFlags::SENSITIVE";
                     attribute_list.push("::facet::FieldAttribute::Sensitive".to_string());
                 }
+                FacetInner::Default(_) => {
+                    attribute_list.push("::facet::FieldAttribute::Default(None)".to_string());
+                }
+                FacetInner::DefaultEquals(inner) => {
+                    attribute_list.push(format!(
+                        r#"::facet::FieldAttribute::Default(Some(|ptr| {{
+                            unsafe {{ ptr.put({}()) }}
+                        }}))"#,
+                        inner
+                            .value
+                            .value()
+                            .trim_start_matches('"')
+                            .trim_end_matches('"') // FIXME: that's pretty bad
+                    ));
+                }
+                FacetInner::Transparent(_) => {
+                    // Not applicable on fields; ignore.
+                }
                 FacetInner::Invariants(_invariant_inner) => {
                     panic!("fields cannot have invariants")
                 }
                 FacetInner::Opaque(_kopaque) => {
                     shape_of = "shape_of_opaque";
                 }
+                FacetInner::DenyUnknownFields(_) => {
+                    // not applicable on fields
+                }
                 FacetInner::Other(tt) => {
                     let attr_str = tt.tokens_to_string();
-                    let attr_fmt = match attr_str.find('=') {
-                        Some(equal_pos) if attr_str[..equal_pos].trim() == "rename" => {
+                    if let Some(equal_pos) = attr_str.find('=') {
+                        let key = attr_str[..equal_pos].trim();
+                        if key == "rename" {
                             let value = attr_str[equal_pos + 1..].trim().trim_matches('"');
-                            format!(r#"::facet::FieldAttribute::Rename({:?})"#, value)
-                        }
-                        Some(equal_pos)
-                            if attr_str[..equal_pos].trim() == "skip_serializing_if" =>
-                        {
+                            attribute_list
+                                .push(format!(r#"::facet::FieldAttribute::Rename({:?})"#, value));
+                        } else if key == "skip_serializing_if" {
                             let value = attr_str[equal_pos + 1..].trim();
-                            format!(
-                                r#"::facet::FieldAttribute::SkipSerializingIf(unsafe {{ ::std::mem::transmute({} as fn(&{field_type}) -> bool) }})"#,
-                                value
-                            )
+                            attribute_list.push(format!(
+                                r#"::facet::FieldAttribute::SkipSerializingIf(unsafe {{ ::std::mem::transmute({value} as fn(&{field_type}) -> bool) }})"#,
+                            ));
+                        } else {
+                            attribute_list.push(format!(
+                                r#"::facet::FieldAttribute::Arbitrary({:?})"#,
+                                attr_str
+                            ));
                         }
-                        None if attr_str == "skip_serializing" => {
-                            r#"::facet::FieldAttribute::SkipSerializing"#.to_string()
-                        }
-                        _ => {
-                            format!(r#"::facet::FieldAttribute::Arbitrary({:?})"#, attr_str)
-                        }
-                    };
-                    attribute_list.push(attr_fmt);
+                    } else if attr_str == "skip_serializing" {
+                        attribute_list
+                            .push(r#"::facet::FieldAttribute::SkipSerializing"#.to_string());
+                    } else {
+                        attribute_list.push(format!(
+                            r#"::facet::FieldAttribute::Arbitrary({:?})"#,
+                            attr_str
+                        ));
+                    }
                 }
             },
             AttributeInner::Doc(doc_inner) => doc_lines.push(doc_inner.value.value()),
@@ -264,6 +289,47 @@ fn build_type_params(generics: Option<&GenericParams>) -> String {
         "".to_string()
     } else {
         format!(".type_params(&[{}])", type_params_s.join(", "))
+    }
+}
+
+fn build_container_attributes(attributes: &[Attribute]) -> String {
+    let mut items: Vec<&str> = vec![];
+
+    for attr in attributes {
+        match &attr.body.content {
+            AttributeInner::Facet(facet_attr) => match facet_attr.inner.content {
+                FacetInner::DenyUnknownFields(_) => {
+                    items.push("::facet::ShapeAttribute::DenyUnknownFields");
+                }
+                FacetInner::DefaultEquals(_) | FacetInner::Default(_) => {
+                    items.push("::facet::ShapeAttribute::Default");
+                }
+                FacetInner::Transparent(_) => {
+                    items.push("::facet::ShapeAttribute::Transparent");
+                }
+                FacetInner::Sensitive(_) => {
+                    // TODO
+                }
+                FacetInner::Invariants(_) => {
+                    // dealt with elsewhere
+                }
+                FacetInner::Opaque(_) => {
+                    // TODO
+                }
+                FacetInner::Other(_) => {
+                    // TODO: add to arbitrary invariants
+                }
+            },
+            _ => {
+                // do nothing.
+            }
+        }
+    }
+
+    if items.is_empty() {
+        "".to_string()
+    } else {
+        format!(".attributes(&[{}])", items.join(", "))
     }
 }
 

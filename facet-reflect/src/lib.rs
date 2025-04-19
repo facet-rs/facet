@@ -20,3 +20,20 @@ pub use peek::*;
 
 mod scalar;
 pub use scalar::*;
+
+#[cfg(feature = "log")]
+#[allow(unused_imports)]
+pub(crate) use log::{debug, trace};
+
+#[cfg(not(feature = "log"))]
+#[macro_export]
+/// Forwards to log::trace when the log feature is enabled
+macro_rules! trace {
+    ($($tt:tt)*) => {};
+}
+#[cfg(not(feature = "log"))]
+#[macro_export]
+/// Forwards to log::debug when the log feature is enabled
+macro_rules! debug {
+    ($($tt:tt)*) => {};
+}

@@ -4,6 +4,7 @@ use std::num::NonZero;
 
 use facet::Facet;
 use facet_json::from_str;
+use insta::assert_snapshot;
 
 #[test]
 fn json_read_simple_struct() {
@@ -82,6 +83,32 @@ fn json_read_empty_vec() {
         Err(e) => panic!("Error deserializing JSON: {}", e),
     };
     assert_eq!(v, vec![]);
+}
+
+#[test]
+fn json_read_bool() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct BoolStruct {
+        yes: bool,
+        no: bool,
+    }
+
+    let json = r#"{"yes": true, "no": false}"#;
+
+    let s: BoolStruct = match from_str(json) {
+        Ok(s) => s,
+        Err(e) => panic!("Error deserializing JSON: {}", e),
+    };
+
+    assert_eq!(
+        s,
+        BoolStruct {
+            yes: true,
+            no: false
+        }
+    );
 }
 
 // #[test]
@@ -607,7 +634,6 @@ fn test_field_rename_optional_values() {
 
 /// Deserialization with extra fields in JSON that aren't in the target struct
 #[test]
-#[ignore]
 fn test_field_rename_ignore_extra_fields() {
     facet_testhelpers::setup();
 
@@ -654,7 +680,6 @@ fn test_field_rename_serialization_priority() {
 
 /// Proper errors are returned when required renamed fields are missing
 #[test]
-#[ignore]
 fn test_field_rename_missing_required_error() {
     facet_testhelpers::setup();
 
@@ -669,7 +694,12 @@ fn test_field_rename_missing_required_error() {
 
     // This should result in an error as the required field is missing
     let result = facet_json::from_str::<Required>(json);
-    assert!(result.is_err());
+    let e = result.unwrap_err();
+    assert!(matches!(
+        e.kind,
+        facet_json::JsonErrorKind::MissingField(f) if f == "original_field"
+    ));
+    assert_snapshot!(e.to_string());
 }
 
 #[test]
@@ -774,4 +804,135 @@ fn test_nested_arrays() {
     assert_eq!(nested.matrix[0], vec![1, 2, 3]);
     assert_eq!(nested.matrix[1], vec![]);
     assert_eq!(nested.matrix[2], vec![4, 5]);
+}
+
+#[test]
+fn test_deny_unknown_fields() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Debug)]
+    #[facet(deny_unknown_fields)]
+    struct StrictStruct {
+        foo: String,
+        bar: i32,
+    }
+
+    // JSON with only expected fields
+    let json_ok = r#"{"foo":"abc","bar":42}"#;
+    let result_ok: Result<StrictStruct, _> = from_str(json_ok);
+    assert!(result_ok.is_ok());
+
+    // JSON with an unexpected extra field should generate an error
+    let json_extra = r#"{"foo":"abc","bar":42,"baz":true}"#;
+    let result_extra: Result<StrictStruct, _> = from_str(json_extra);
+    assert!(result_extra.is_err());
+}
+
+#[test]
+fn json_read_struct_level_default_unset_field() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Default, Debug)]
+    #[facet(default)]
+    struct DefaultStruct {
+        foo: i32,
+        bar: String,
+    }
+
+    // Only set foo, leave bar missing - should use Default for String
+    let json = r#"{"foo": 123}"#;
+
+    let s: DefaultStruct = match from_str(json) {
+        Ok(s) => s,
+        Err(e) => panic!("Error deserializing JSON: {}", e),
+    };
+
+    // bar should be the default String ("")
+    assert_eq!(s.foo, 123);
+    assert_eq!(s.bar, "");
+}
+
+#[test]
+fn json_read_field_level_default_no_function() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct FieldDefault {
+        foo: i32,
+        #[facet(default)]
+        bar: String,
+    }
+
+    // Only set foo, leave bar missing - should use Default for String
+    let json = r#"{"foo": 789}"#;
+
+    let s: FieldDefault = match from_str(json) {
+        Ok(s) => s,
+        Err(e) => panic!("Error deserializing JSON: {}", e),
+    };
+
+    assert_eq!(s.foo, 789);
+    assert_eq!(s.bar, "");
+}
+
+fn default_number() -> i32 {
+    12345
+}
+
+#[test]
+fn json_read_field_level_default_function() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct FieldDefaultFn {
+        #[facet(default = "default_number")]
+        foo: i32,
+        bar: String,
+    }
+
+    // Only set bar, leave foo missing - should use default_number()
+    let json = r#"{"bar": "hello"}"#;
+
+    let s: FieldDefaultFn = match from_str(json) {
+        Ok(s) => s,
+        Err(e) => panic!("Error deserializing JSON: {}", e),
+    };
+
+    assert_eq!(s.foo, 12345);
+    assert_eq!(s.bar, "hello");
+}
+
+#[test]
+fn test_allow_unknown_fields() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Debug)]
+    struct PermissiveStruct {
+        foo: String,
+        bar: i32,
+    }
+
+    // JSON with only expected fields
+    let json_ok = r#"{"foo":"abc","bar":42}"#;
+    let result_ok: Result<PermissiveStruct, _> = from_str(json_ok);
+    result_ok.unwrap();
+
+    // JSON with an unexpected extra field should NOT generate an error
+    let json_extra = r#"{"foo":"abc","bar":42,"baz":[]}"#;
+    let result_extra: Result<PermissiveStruct, _> = from_str(json_extra);
+    result_extra.unwrap();
+}
+
+#[test]
+fn test_str_escaped() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Debug)]
+    struct S {
+        foo: String,
+    }
+
+    let json_ok = r#"{"foo":"\"\\abc"}"#;
+    let result_ok: Result<S, _> = from_str(json_ok);
+    assert_eq!(&result_ok.unwrap().foo, "\"\\abc");
 }
