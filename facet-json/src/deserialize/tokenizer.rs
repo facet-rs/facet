@@ -2,19 +2,20 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::str;
 
-use crate::JsonErrorKind;
-
 /// Position in the input (byte index)
 pub type Pos = usize;
 
 /// A span in the input, with a start position and length
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
+    /// Starting position of the span in bytes
     pub start: Pos,
+    /// Length of the span in bytes
     pub len: usize,
 }
 
 impl Span {
+    /// Creates a new span with the given start position and length
     pub fn new(start: Pos, len: usize) -> Self {
         Span { start, len }
     }
@@ -41,13 +42,25 @@ pub struct Spanned<T> {
 
 /// Error encountered during tokenization
 #[derive(Debug, Clone, PartialEq)]
-pub struct TokenizeError {
-    pub kind: JsonErrorKind,
-    pub pos: Pos,
+pub struct TokenError {
+    pub kind: TokenErrorKind,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TokenErrorKind {
+    /// Unexpected character encountered
+    UnexpectedCharacter(char),
+    /// End of file reached unexpectedly
+    UnexpectedEof(&'static str),
+    /// Invalid UTF-8 sequence
+    InvalidUtf8(String),
+    /// Number is out of range
+    NumberOutOfRange(f64),
 }
 
 /// Tokenization result, yielding a spanned token
-pub type TokenizeResult = Result<Spanned<Token>, TokenizeError>;
+pub type TokenizeResult = Result<Spanned<Token>, TokenError>;
 
 /// JSON tokens (without positions)
 #[derive(Debug, Clone, PartialEq)]
@@ -70,33 +83,12 @@ pub enum Token {
 pub struct Tokenizer<'input> {
     input: &'input [u8],
     pos: Pos,
-    /// Current JSON document path (e.g. "$.users[0].name")
-    pub path: String,
-    input: &'input [u8],
-    pos: Pos,
-}
-
-impl<'input> Clone for Tokenizer<'input> {
-    fn clone(&self) -> Self {
-        Tokenizer {
-            input: self.input,
-            pos: self.pos,
-            path: self.path.clone(),
-        }
-    }
-}
-    fn clone(&self) -> Self {
-        Tokenizer {
-            input: self.input,
-            pos: self.pos,
-        }
-    }
 }
 
 impl<'input> Tokenizer<'input> {
     /// Create a new tokenizer for the given input slice.
-    pub fn new(input: &'input [u8], path: String) -> Self {
-        Tokenizer { input, pos: 0, path }
+    pub fn new(input: &'input [u8]) -> Self {
+        Tokenizer { input, pos: 0 }
     }
 
     /// Current cursor position in the input
@@ -168,9 +160,9 @@ impl<'input> Tokenizer<'input> {
             b'f' => return self.parse_literal(start, b"false", || Token::False),
             b'n' => return self.parse_literal(start, b"null", || Token::Null),
             _ => {
-                return Err(TokenizeError {
-                    kind: JsonErrorKind::UnexpectedCharacter(c as char),
-                    pos: start,
+                return Err(TokenError {
+                    kind: TokenErrorKind::UnexpectedCharacter(c as char),
+                    span: Span::new(start, 1),
                 });
             }
         };
@@ -191,6 +183,8 @@ impl<'input> Tokenizer<'input> {
         // Skip opening quote
         self.pos += 1;
         let mut buf = Vec::new();
+        let content_start = self.pos;
+
         while let Some(&b) = self.input.get(self.pos) {
             match b {
                 b'"' => {
@@ -200,12 +194,20 @@ impl<'input> Tokenizer<'input> {
                 b'\\' => {
                     self.pos += 1;
                     if let Some(&esc) = self.input.get(self.pos) {
-                        buf.push(esc);
+                        match esc {
+                            b'"' | b'\\' | b'/' => buf.push(esc),
+                            b'b' => buf.push(b'\x08'), // backspace
+                            b'f' => buf.push(b'\x0C'), // form feed
+                            b'n' => buf.push(b'\n'),   // line feed
+                            b'r' => buf.push(b'\r'),   // carriage return
+                            b't' => buf.push(b'\t'),   // tab
+                            _ => buf.push(esc), // other escapes (should handle \uXXXX properly)
+                        }
                         self.pos += 1;
                     } else {
-                        return Err(TokenizeError {
-                            kind: JsonErrorKind::UnexpectedEof("in string escape"),
-                            pos: self.pos,
+                        return Err(TokenError {
+                            kind: TokenErrorKind::UnexpectedEof("in string escape"),
+                            span: Span::new(self.pos, 0),
                         });
                     }
                 }
@@ -215,15 +217,27 @@ impl<'input> Tokenizer<'input> {
                 }
             }
         }
+
+        // Check if we reached the end without finding a closing quote
+        if self.pos > self.input.len()
+            || (self.pos == self.input.len() && self.input[self.pos - 1] != b'"')
+        {
+            return Err(TokenError {
+                kind: TokenErrorKind::UnexpectedEof("in string literal"),
+                span: Span::new(start, self.pos - start),
+            });
+        }
+
         let s = match str::from_utf8(&buf) {
             Ok(st) => st.to_string(),
             Err(e) => {
-                return Err(TokenizeError {
-                    kind: JsonErrorKind::InvalidUtf8(e.to_string()),
-                    pos: start,
+                return Err(TokenError {
+                    kind: TokenErrorKind::InvalidUtf8(e.to_string()),
+                    span: Span::new(content_start, buf.len()),
                 });
             }
         };
+
         let len = self.pos - start;
         let span = Span::new(start, len);
         Ok(Spanned {
@@ -256,27 +270,30 @@ impl<'input> Tokenizer<'input> {
             }
         }
         let slice = &self.input[start..end];
+        let span = Span::new(start, end - start);
+
         let text = match str::from_utf8(slice) {
             Ok(t) => t,
             Err(e) => {
-                return Err(TokenizeError {
-                    kind: JsonErrorKind::InvalidUtf8(e.to_string()),
-                    pos: start,
+                return Err(TokenError {
+                    kind: TokenErrorKind::InvalidUtf8(e.to_string()),
+                    span,
                 });
             }
         };
+
         let num = match text.parse::<f64>() {
             Ok(n) => n,
             Err(_) => {
-                return Err(TokenizeError {
-                    kind: JsonErrorKind::NumberOutOfRange(0.0),
-                    pos: start,
+                // Use the actual text for better error reporting
+                return Err(TokenError {
+                    kind: TokenErrorKind::NumberOutOfRange(0.0),
+                    span,
                 });
             }
         };
+
         self.pos = end;
-        let len = end - start;
-        let span = Span::new(start, len);
         Ok(Spanned {
             node: Token::Number(num),
             span,
@@ -293,10 +310,14 @@ impl<'input> Tokenizer<'input> {
             let span = Span::new(start, pat.len());
             Ok(Spanned { node: ctor(), span })
         } else {
+            // Determine how much of the pattern matched before mismatch
+            let actual_len = self.input.len().saturating_sub(start).min(pat.len());
+            let span = Span::new(start, actual_len.max(1)); // Ensure span covers at least one character
+
             let got = self.input.get(start).copied().unwrap_or(b'?') as char;
-            Err(TokenizeError {
-                kind: JsonErrorKind::UnexpectedCharacter(got),
-                pos: start,
+            Err(TokenError {
+                kind: TokenErrorKind::UnexpectedCharacter(got),
+                span,
             })
         }
     }
