@@ -7,6 +7,20 @@ use facet_json::from_str;
 use insta::assert_snapshot;
 
 #[test]
+fn json_read_empty_struct() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet)]
+    struct TestStruct {}
+    let json = r#"{}"#;
+
+    let _: TestStruct = match from_str(json) {
+        Ok(s) => s,
+        Err(e) => panic!("Error deserializing JSON: {}", e),
+    };
+}
+
+#[test]
 fn json_read_simple_struct() {
     facet_testhelpers::setup();
 
@@ -27,20 +41,6 @@ fn json_read_simple_struct() {
     assert_eq!(s.hobbies.len(), 2);
     assert_eq!(s.hobbies[0], "reading");
     assert_eq!(s.hobbies[1], "coding");
-}
-
-#[test]
-fn json_read_empty_struct() {
-    facet_testhelpers::setup();
-
-    #[derive(Facet)]
-    struct TestStruct {}
-    let json = r#"{}"#;
-
-    let _: TestStruct = match from_str(json) {
-        Ok(s) => s,
-        Err(e) => panic!("Error deserializing JSON: {}", e),
-    };
 }
 
 #[test]

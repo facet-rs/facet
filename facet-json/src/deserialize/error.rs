@@ -9,7 +9,7 @@ use facet_reflect::ReflectError;
 #[cfg(feature = "rich-diagnostics")]
 use owo_colors::OwoColorize;
 
-use super::{TokenErrorKind, tokenizer::Span};
+use super::{Token, TokenErrorKind, tokenizer::Span};
 
 /// A JSON parse error, with context. Never would've guessed huh.
 pub struct JsonError<'input> {
@@ -48,7 +48,9 @@ impl<'input> JsonError<'input> {
         match &self.kind {
             JsonErrorKind::UnexpectedEof(msg) => format!("Unexpected end of file: {}", msg),
             JsonErrorKind::MissingField(fld) => format!("Missing required field: {}", fld),
-            JsonErrorKind::UnexpectedCharacter(c) => format!("Unexpected character: '{}'", c),
+            JsonErrorKind::UnexpectedToken { got, wanted } => {
+                format!("Unexpected token: got '{:?}', wanted '{}'", got, wanted)
+            }
             JsonErrorKind::NumberOutOfRange(n) => format!("Number out of range: {}", n),
             JsonErrorKind::StringAsNumber(s) => format!("Expected a string but got number: {}", s),
             JsonErrorKind::UnknownField(f) => format!("Unknown field: {}", f),
@@ -66,8 +68,8 @@ pub enum JsonErrorKind {
     UnexpectedEof(&'static str),
     /// A required struct field was missing at the end of JSON input.
     MissingField(&'static str),
-    /// An unexpected character was encountered in the input.
-    UnexpectedCharacter(char),
+    /// An unexpected token was encountered in the input.
+    UnexpectedToken { got: Token, wanted: &'static str },
     /// A number is out of range.
     NumberOutOfRange(f64),
     /// An unexpected String was encountered in the input.
