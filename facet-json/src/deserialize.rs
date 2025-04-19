@@ -202,6 +202,7 @@ pub fn from_slice_wip<'input, 'a>(
                     }
                     b'"' => {
                         pos += 1;
+                        let start = pos;
                         // Our value is a string: collect bytes first
                         let mut bytes = Vec::new();
                         loop {
@@ -210,34 +211,47 @@ pub fn from_slice_wip<'input, 'a>(
                             };
                             match c {
                                 b'"' => {
-                                    pos += 1;
                                     break;
                                 }
                                 b'\\' => {
                                     // Handle escape sequences
-                                    pos += 1;
-                                    if let Some(next) = input.get(pos) {
-                                        bytes.push(*next);
-                                        pos += 1;
+                                    if let Some(&next) = input.get(pos + 1) {
+                                        if bytes.is_empty() {
+                                            bytes.extend(&input[start..pos]);
+                                        }
+                                        bytes.push(next);
+                                        pos += 2;
                                     } else {
                                         bail!(JsonErrorKind::UnexpectedEof("nothing after \\"));
                                     }
                                 }
                                 _ => {
-                                    bytes.push(c);
+                                    if !bytes.is_empty() {
+                                        bytes.push(c);
+                                    }
                                     pos += 1;
                                 }
                             }
                         }
+                        let end = pos;
+                        pos += 1;
 
-                        // Convert collected bytes to string at once
-                        let value = match core::str::from_utf8(&bytes) {
-                            Ok(s) => s.to_string(),
-                            Err(e) => {
-                                bail!(JsonErrorKind::InvalidUtf8(format!(
+                        let value = if bytes.is_empty() {
+                            match core::str::from_utf8(&input[start..end]) {
+                                Ok(it) => alloc::borrow::Cow::Borrowed(it),
+                                Err(e) => bail!(JsonErrorKind::InvalidUtf8(format!(
                                     "Invalid UTF-8 sequence: {}",
                                     e
-                                )))
+                                ))),
+                            }
+                        } else {
+                            // Convert collected bytes to string at once
+                            match alloc::string::String::from_utf8(bytes) {
+                                Ok(it) => alloc::borrow::Cow::Owned(it),
+                                Err(e) => bail!(JsonErrorKind::InvalidUtf8(format!(
+                                    "Invalid UTF-8 sequence: {}",
+                                    e
+                                ))),
                             }
                         };
 
@@ -250,7 +264,12 @@ pub fn from_slice_wip<'input, 'a>(
 
                         match why {
                             WhyValue::TopLevel | WhyValue::ArrayElement | WhyValue::ObjectValue => {
-                                wip = wip.parse(&value).unwrap();
+                                // skip the string parse impl
+                                if wip.current_is_type::<String>() {
+                                    wip = wip.put::<String>(value.into_owned()).unwrap();
+                                } else {
+                                    wip = wip.parse(&value).unwrap();
+                                }
                                 finished_value = Some(why);
                             }
                             WhyValue::ObjectKey => {
@@ -266,8 +285,8 @@ pub fn from_slice_wip<'input, 'a>(
 
                                         // Check rename attribute
                                         f.attributes.iter().any(|attr| {
-                                            if let FieldAttribute::Rename(rename) = attr {
-                                                rename == &value
+                                            if let &FieldAttribute::Rename(rename) = attr {
+                                                rename == value
                                             } else {
                                                 false
                                             }
@@ -281,7 +300,7 @@ pub fn from_slice_wip<'input, 'a>(
                                         matches!(attr, ShapeAttribute::DenyUnknownFields)
                                     }) {
                                         // Field not found - original or renamed, and unknown fields denied
-                                        bail!(JsonErrorKind::UnknownField(value.to_string()));
+                                        bail!(JsonErrorKind::UnknownField(value.into_owned()));
                                     } else {
                                         // pop Expect::Colon (assert)
                                         let expect_colon = stack.pop();

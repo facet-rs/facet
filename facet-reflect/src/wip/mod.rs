@@ -758,6 +758,13 @@ impl<'a> Wip<'a> {
         res
     }
 
+    /// Checks if the current frame is of type `T`.
+    pub fn current_is_type<T: Facet + 'static>(&self) -> bool {
+        self.frames
+            .last()
+            .is_some_and(|frame| frame.shape == T::SHAPE)
+    }
+
     /// Puts a value from a `PtrConst` with the given shape into the current frame.
     pub fn put_shape<'val>(
         mut self,

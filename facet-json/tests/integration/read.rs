@@ -922,3 +922,17 @@ fn test_allow_unknown_fields() {
     let result_extra: Result<PermissiveStruct, _> = from_str(json_extra);
     result_extra.unwrap();
 }
+
+#[test]
+fn test_str_escaped() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Debug)]
+    struct S {
+        foo: String,
+    }
+
+    let json_ok = r#"{"foo":"\"\\abc"}"#;
+    let result_ok: Result<S, _> = from_str(json_ok);
+    assert_eq!(&result_ok.unwrap().foo, "\"\\abc");
+}
