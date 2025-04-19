@@ -86,7 +86,7 @@ pub enum Token {
     Colon,
     /// Comma character: ','
     Comma,
-    /// A JSON string value
+    /// A JSON string value — todo: should be a Cow
     String(String),
     /// A JSON number value
     Number(f64),

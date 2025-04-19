@@ -21,7 +21,26 @@ fn json_read_empty_struct() {
 }
 
 #[test]
-fn json_read_simple_struct() {
+fn json_read_struct_twofields() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet)]
+    struct TestStruct {
+        name: String,
+        age: u64,
+    }
+    let json = r#"{"name": "Alice", "age": 30}"#;
+
+    let s: TestStruct = match from_str(json) {
+        Ok(s) => s,
+        Err(e) => panic!("Error deserializing JSON: {}", e),
+    };
+    assert_eq!(s.name, "Alice");
+    assert_eq!(s.age, 30);
+}
+
+#[test]
+fn json_read_struct_threefields() {
     facet_testhelpers::setup();
 
     #[derive(Facet)]
