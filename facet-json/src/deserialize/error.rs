@@ -89,7 +89,9 @@ pub enum JsonErrorKind {
     StringAsNumber(String),
     /// An unexpected field name was encountered in the input.
     UnknownField {
+        /// The name of the field that was not recognized
         field_name: String,
+        /// The shape definition where the unknown field was encountered
         shape: &'static Shape,
     },
     /// A string that could not be built into valid UTF-8 Unicode

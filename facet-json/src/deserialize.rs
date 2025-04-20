@@ -47,10 +47,8 @@ enum Instruction {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PopReason {
-    FinishObjectValue,
-    FinishArrayItem,
-    FinishObject,
-    FinishArray,
+    ObjectVal,
+    ArrayItem,
 }
 
 /// Deserialize a JSON string into a Wip object.
@@ -250,7 +248,7 @@ pub fn from_slice_wip<'input, 'a>(
                             });
                         }
                         stack.push(Instruction::CommaThenObjectKeyOrObjectClose);
-                        stack.push(Instruction::Pop(PopReason::FinishObjectValue));
+                        stack.push(Instruction::Pop(PopReason::ObjectVal));
                         stack.push(Instruction::Value);
                     }
                     Token::RBrace => {
@@ -295,7 +293,7 @@ pub fn from_slice_wip<'input, 'a>(
                         reflect!(push());
 
                         stack.push(Instruction::CommaThenArrayItemOrArrayClose);
-                        stack.push(Instruction::Pop(PopReason::FinishArrayItem));
+                        stack.push(Instruction::Pop(PopReason::ArrayItem));
                         stack.push(Instruction::Value);
                     }
                 }
@@ -310,7 +308,7 @@ pub fn from_slice_wip<'input, 'a>(
                         trace!("Array comma");
                         reflect!(push());
                         stack.push(Instruction::CommaThenArrayItemOrArrayClose);
-                        stack.push(Instruction::Pop(PopReason::FinishArrayItem));
+                        stack.push(Instruction::Pop(PopReason::ArrayItem));
                         stack.push(Instruction::Value);
                     }
                     _ => {
