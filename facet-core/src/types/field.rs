@@ -63,11 +63,14 @@ impl Field {
         None
     }
 
-    /// Checks if the field has a default value
-    pub fn has_default_attr(&'static self) -> bool {
-        self.attributes
-            .iter()
-            .any(|attr| matches!(attr, FieldAttribute::Default(_)))
+    /// Returns the default attribute if present
+    pub fn maybe_default_fn(&'static self) -> Option<Option<DefaultInPlaceFn>> {
+        for attr in self.attributes {
+            if let FieldAttribute::Default(default_fn) = attr {
+                return Some(*default_fn);
+            }
+        }
+        None
     }
 
     /// See [`FieldAttribute::Arbitrary`]

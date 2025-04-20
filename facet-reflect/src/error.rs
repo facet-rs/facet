@@ -109,6 +109,12 @@ pub enum ReflectError {
         /// The inner error
         inner: TryFromError,
     },
+
+    /// A shape has a `default` attribute, but no implementation of the `Default` trait.
+    DefaultAttrButNoDefaultImpl {
+        /// The shape of the value that has a `default` attribute but no default implementation.
+        shape: &'static Shape,
+    },
 }
 
 impl core::fmt::Display for ReflectError {
@@ -194,6 +200,11 @@ impl core::fmt::Display for ReflectError {
                     inner.red()
                 )
             }
+            ReflectError::DefaultAttrButNoDefaultImpl { shape } => write!(
+                f,
+                "Shape '{}' has a `default` attribute but no default implementation",
+                shape
+            ),
         }
     }
 }

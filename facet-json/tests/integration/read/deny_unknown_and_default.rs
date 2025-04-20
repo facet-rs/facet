@@ -68,7 +68,6 @@ fn json_read_struct_level_default_unset_field() -> eyre::Result<()> {
 }
 
 #[test]
-#[ignore]
 fn json_read_field_level_default_no_function() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
@@ -93,7 +92,6 @@ fn json_read_field_level_default_no_function() -> eyre::Result<()> {
 }
 
 #[test]
-#[ignore]
 fn json_read_field_level_default_function() -> eyre::Result<()> {
     facet_testhelpers::setup();
 

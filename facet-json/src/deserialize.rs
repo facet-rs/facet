@@ -1,8 +1,10 @@
 use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec;
+use facet_core::Characteristic;
 use facet_core::Def;
 use facet_core::Facet;
+use facet_reflect::ReflectError;
 use facet_reflect::{HeapValue, Wip};
 use log::trace;
 use owo_colors::OwoColorize;
@@ -157,12 +159,44 @@ pub fn from_slice_wip<'input, 'a>(
                             )
                         })?;
                         if !is_set {
-                            trace!(
-                                "Field #{} {:?} is not initialized",
-                                index.yellow(),
-                                field.blue()
-                            );
-                            has_unset = true;
+                            if let Some(default_in_place_fn) = field.maybe_default_fn() {
+                                reflect!(field(index));
+                                if let Some(default_in_place_fn) = default_in_place_fn {
+                                    reflect!(put_from_fn(default_in_place_fn));
+                                    trace!(
+                                        "Field #{} {:?} was set to default value (via custom fn)",
+                                        index.yellow(),
+                                        field.blue()
+                                    );
+                                } else {
+                                    if !field.shape().is(Characteristic::Default) {
+                                        return Err(JsonError::new(
+                                            JsonErrorKind::ReflectError(
+                                                ReflectError::DefaultAttrButNoDefaultImpl {
+                                                    shape: field.shape(),
+                                                },
+                                            ),
+                                            input,
+                                            last_span,
+                                            wip.path(),
+                                        ));
+                                    }
+                                    reflect!(put_default());
+                                    trace!(
+                                        "Field #{} {:?} was set to default value (via default impl)",
+                                        index.yellow(),
+                                        field.blue()
+                                    );
+                                }
+                                reflect!(pop());
+                            } else {
+                                trace!(
+                                    "Field #{} {:?} is not initialized",
+                                    index.yellow(),
+                                    field.blue()
+                                );
+                                has_unset = true;
+                            }
                         }
                     }
 
