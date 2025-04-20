@@ -5,20 +5,28 @@ use alloc::string::String;
 
 #[cfg(feature = "rich-diagnostics")]
 use ariadne::{Color, Config, IndexType, Label, Report, ReportKind, Source};
-#[cfg(feature = "rich-diagnostics")]
+use facet_reflect::ReflectError;
 use owo_colors::OwoColorize;
 
+use super::{Token, TokenErrorKind, tokenizer::Span};
+use facet_core::Shape;
+
 /// A JSON parse error, with context. Never would've guessed huh.
-pub struct JsonParseErrorWithContext<'input> {
-    #[cfg_attr(not(feature = "rich-diagnostics"), allow(dead_code))]
-    input: &'input [u8],
-    pos: usize,
+pub struct JsonError<'input> {
+    /// The input associated with the error.
+    pub input: alloc::borrow::Cow<'input, [u8]>,
+
+    /// Where the error occured
+    pub span: Span,
+
+    /// Where we were in the struct when the error occured
+    pub path: String,
+
     /// The specific error that occurred while parsing the JSON.
     pub kind: JsonErrorKind,
-    path: String,
 }
 
-impl<'input> JsonParseErrorWithContext<'input> {
+impl<'input> JsonError<'input> {
     /// Creates a new `JsonParseErrorWithContext`.
     ///
     /// # Arguments
@@ -26,10 +34,10 @@ impl<'input> JsonParseErrorWithContext<'input> {
     /// * `kind` - The kind of JSON error encountered.
     /// * `input` - The original input being parsed.
     /// * `pos` - The position in the input where the error occurred.
-    pub fn new(kind: JsonErrorKind, input: &'input [u8], pos: usize, path: String) -> Self {
+    pub fn new(kind: JsonErrorKind, input: &'input [u8], span: Span, path: String) -> Self {
         Self {
-            input,
-            pos,
+            input: alloc::borrow::Cow::Borrowed(input),
+            span,
             kind,
             path,
         }
@@ -38,70 +46,118 @@ impl<'input> JsonParseErrorWithContext<'input> {
     /// Returns a human-readable error message for this JSON error.
     pub fn message(&self) -> String {
         match &self.kind {
-            JsonErrorKind::UnexpectedEof(msg) => format!("Unexpected end of file: {}", msg),
-            JsonErrorKind::MissingField(fld) => format!("Missing required field: {}", fld),
-            JsonErrorKind::UnexpectedCharacter(c) => format!("Unexpected character: '{}'", c),
-            JsonErrorKind::NumberOutOfRange(n) => format!("Number out of range: {}", n),
-            JsonErrorKind::StringAsNumber(s) => format!("Expected a string but got number: {}", s),
-            JsonErrorKind::UnknownField(f) => format!("Unknown field: {}", f),
-            JsonErrorKind::InvalidUtf8(e) => format!("Invalid UTF-8 encoding: {}", e),
+            JsonErrorKind::UnexpectedEof(msg) => format!("Unexpected end of file: {}", msg.red()),
+            JsonErrorKind::MissingField(fld) => format!("Missing required field: {}", fld.red()),
+            JsonErrorKind::UnexpectedToken { got, wanted } => {
+                format!(
+                    "Unexpected token: got {}, wanted {}",
+                    got.red(),
+                    wanted.green()
+                )
+            }
+            JsonErrorKind::NumberOutOfRange(n) => {
+                format!("Number out of range: {}", n.red())
+            }
+            JsonErrorKind::StringAsNumber(s) => {
+                format!("Expected a string but got number: {}", s.red())
+            }
+            JsonErrorKind::UnknownField { field_name, shape } => {
+                format!(
+                    "Unknown field: {} for shape {}",
+                    field_name.red(),
+                    shape.yellow()
+                )
+            }
+            JsonErrorKind::InvalidUtf8(e) => format!("Invalid UTF-8 encoding: {}", e.red()),
+            JsonErrorKind::ReflectError(e) => format!("{e}"),
+            JsonErrorKind::SyntaxError(e) => format!("{e}"),
+            JsonErrorKind::Unimplemented(s) => {
+                format!("Feature not yet implemented: {}", s.yellow())
+            }
+            JsonErrorKind::UnsupportedType { got, wanted } => {
+                format!(
+                    "Unsupported type: got {}, wanted {}",
+                    got.red(),
+                    wanted.green()
+                )
+            }
         }
     }
 }
 
 /// An error kind for JSON parsing.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum JsonErrorKind {
     /// The input ended unexpectedly while parsing JSON.
     UnexpectedEof(&'static str),
     /// A required struct field was missing at the end of JSON input.
     MissingField(&'static str),
-    /// An unexpected character was encountered in the input.
-    UnexpectedCharacter(char),
+    /// An unexpected token was encountered in the input.
+    UnexpectedToken {
+        /// The hero we got
+        got: Token,
+
+        /// The hero we wanted
+        wanted: &'static str,
+    },
     /// A number is out of range.
     NumberOutOfRange(f64),
     /// An unexpected String was encountered in the input.
     StringAsNumber(String),
     /// An unexpected field name was encountered in the input.
-    UnknownField(String),
+    UnknownField {
+        /// The name of the field that was not recognized
+        field_name: String,
+        /// The shape definition where the unknown field was encountered
+        shape: &'static Shape,
+    },
     /// A string that could not be built into valid UTF-8 Unicode
     InvalidUtf8(String),
+    /// An error occurred while reflecting a type.
+    ReflectError(ReflectError),
+    /// An error occurred while parsing a token.
+    SyntaxError(TokenErrorKind),
+    /// Some feature is not yet implemented (under development).
+    Unimplemented(&'static str),
+    /// An unsupported type was encountered.
+    UnsupportedType {
+        /// The shape we got
+        got: &'static Shape,
+
+        /// The shape we wanted
+        wanted: &'static str,
+    },
+}
+
+impl From<ReflectError> for JsonErrorKind {
+    fn from(err: ReflectError) -> Self {
+        JsonErrorKind::ReflectError(err)
+    }
 }
 
 #[cfg(not(feature = "rich-diagnostics"))]
-impl core::fmt::Display for JsonParseErrorWithContext<'_> {
+impl core::fmt::Display for JsonError<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
             "{} at byte {} in path {}",
             self.message(),
-            self.pos,
+            self.span.start,
             self.path
         )
     }
 }
 
 #[cfg(feature = "rich-diagnostics")]
-impl core::fmt::Display for JsonParseErrorWithContext<'_> {
+impl core::fmt::Display for JsonError<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let Ok(input_str) = core::str::from_utf8(self.input) else {
+        let Ok(input_str) = core::str::from_utf8(&self.input[..]) else {
             return write!(f, "(JSON input was invalid UTF-8)");
         };
 
         let source_id = "json";
-
-        let (span_start, span_end) = match &self.kind {
-            JsonErrorKind::StringAsNumber(s) => (self.pos - s.len(), self.pos),
-            JsonErrorKind::UnknownField(f) => (self.pos - f.len() - 1, self.pos - 1),
-            _ => {
-                let span_end = if self.pos < self.input.len() {
-                    self.pos + 1
-                } else {
-                    self.input.len()
-                };
-                (self.pos, span_end)
-            }
-        };
+        let span_start = self.span.start();
+        let span_end = self.span.end();
 
         let mut report = Report::build(ReportKind::Error, (source_id, span_start..span_end))
             .with_message(format!("Error at {}", self.path.yellow()))
@@ -130,10 +186,10 @@ impl core::fmt::Display for JsonParseErrorWithContext<'_> {
     }
 }
 
-impl core::fmt::Debug for JsonParseErrorWithContext<'_> {
+impl core::fmt::Debug for JsonError<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         core::fmt::Display::fmt(self, f)
     }
 }
 
-impl core::error::Error for JsonParseErrorWithContext<'_> {}
+impl core::error::Error for JsonError<'_> {}

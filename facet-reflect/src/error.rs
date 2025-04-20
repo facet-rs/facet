@@ -1,7 +1,8 @@
-use facet_core::{Characteristic, EnumDef, Field, FieldError, Shape};
+use facet_core::{Characteristic, EnumDef, Field, FieldError, Shape, TryFromError};
+use owo_colors::OwoColorize;
 
 /// Errors that can occur when reflecting on types.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 #[non_exhaustive]
 pub enum ReflectError {
     /// Tried to `build` or `build_in_place` a struct/enum without initializing all fields.
@@ -96,6 +97,18 @@ pub enum ReflectError {
 
     /// An unknown error occurred.
     Unknown,
+
+    /// An error occured while putting
+    TryFromError {
+        /// The shape of the value being converted from.
+        src_shape: &'static Shape,
+
+        /// The shape of the value being converted to.
+        dst_shape: &'static Shape,
+
+        /// The inner error
+        inner: TryFromError,
+    },
 }
 
 impl core::fmt::Display for ReflectError {
@@ -116,10 +129,20 @@ impl core::fmt::Display for ReflectError {
                 write!(f, ", that's it.")
             }
             ReflectError::WrongShape { expected, actual } => {
-                write!(f, "Wrong shape: expected {}, but got {}", expected, actual)
+                write!(
+                    f,
+                    "Wrong shape: expected {}, but got {}",
+                    expected.green(),
+                    actual.red()
+                )
             }
             ReflectError::WasNotA { expected, actual } => {
-                write!(f, "Wrong shape: expected {}, but got {}", expected, actual)
+                write!(
+                    f,
+                    "Wrong shape: expected {}, but got {}",
+                    expected.green(),
+                    actual.red()
+                )
             }
             ReflectError::UninitializedField { shape, field_name } => {
                 write!(f, "Field '{}::{}' was not initialized", shape, field_name)
@@ -158,6 +181,19 @@ impl core::fmt::Display for ReflectError {
                 write!(f, "Field error for shape {}: {}", shape, field_error)
             }
             ReflectError::Unknown => write!(f, "Unknown error"),
+            ReflectError::TryFromError {
+                src_shape,
+                dst_shape,
+                inner,
+            } => {
+                write!(
+                    f,
+                    "While trying to put {} into a {}: {}",
+                    src_shape.green(),
+                    dst_shape.blue(),
+                    inner.red()
+                )
+            }
         }
     }
 }

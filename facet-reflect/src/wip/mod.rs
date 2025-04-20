@@ -343,7 +343,7 @@ impl<'a> Wip<'a> {
 
     /// Returns the shape of the current frame
     pub fn shape(&self) -> &'static Shape {
-        self.frames.last().unwrap().shape
+        self.frames.last().expect("must have frames left").shape
     }
 
     /// Return true if the last frame is in option mode
@@ -783,6 +783,40 @@ impl<'a> Wip<'a> {
 
         // Check that the type matches
         if frame.shape != src_shape {
+            trace!(
+                "Trying to put a {} into a {}",
+                src_shape.yellow(),
+                frame.shape.magenta()
+            );
+
+            // Maybe there's a `TryFrom` impl?
+            if let Some(try_from) = frame.shape.vtable.try_from {
+                match unsafe { try_from(src, src_shape, frame.data) } {
+                    Ok(_) => {
+                        unsafe {
+                            frame.mark_fully_initialized();
+                        }
+
+                        let shape = frame.shape;
+                        let index = frame.field_index_in_parent;
+
+                        // mark the field as initialized
+                        self.mark_field_as_initialized(shape, index)?;
+
+                        debug!("[{}] Just put a {} value", self.frames.len(), shape.green());
+
+                        return Ok(self);
+                    }
+                    Err(e) => {
+                        return Err(ReflectError::TryFromError {
+                            inner: e,
+                            src_shape,
+                            dst_shape: frame.shape,
+                        });
+                    }
+                }
+            }
+
             // Maybe we're putting into an Option<T>?
             // Handle Option<Inner>
             if let Def::Option(od) = frame.shape.def {
@@ -1499,7 +1533,7 @@ impl<'a> Wip<'a> {
     pub fn pop(mut self) -> Result<Self, ReflectError> {
         let Some(frame) = self.pop_inner() else {
             return Err(ReflectError::InvariantViolation {
-                invariant: "No frame to pop",
+                invariant: "No frame to pop — it was time to call build()",
             });
         };
         self.track(frame);

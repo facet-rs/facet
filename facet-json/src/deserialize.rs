@@ -1,11 +1,14 @@
-use facet_core::{Characteristic, Def, Facet, FieldAttribute, ScalarAffinity, ShapeAttribute};
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec;
+use facet_core::Def;
+use facet_core::Facet;
 use facet_reflect::{HeapValue, Wip};
 use log::trace;
-
-use alloc::format;
-use alloc::string::{String, ToString};
-use alloc::vec::Vec;
 use owo_colors::OwoColorize;
+
+mod tokenizer;
+pub use tokenizer::*;
 
 mod error;
 pub use error::*;
@@ -15,7 +18,7 @@ pub use error::*;
 /// This function takes a JSON string representation and converts it into a Rust
 /// value of the specified type `T`. The type must implement the `Facet` trait
 /// to provide the necessary type information for deserialization.
-pub fn from_str<T: Facet>(json: &str) -> Result<T, JsonParseErrorWithContext<'_>> {
+pub fn from_str<T: Facet>(json: &str) -> Result<T, JsonError<'_>> {
     from_slice(json.as_bytes())
 }
 
@@ -28,10 +31,29 @@ pub fn from_str<T: Facet>(json: &str) -> Result<T, JsonParseErrorWithContext<'_>
 /// # Returns
 ///
 /// A result containing the deserialized value of type `T` or a `JsonParseErrorWithContext`.
-pub fn from_slice<T: Facet>(json: &[u8]) -> Result<T, JsonParseErrorWithContext<'_>> {
+pub fn from_slice<T: Facet>(json: &[u8]) -> Result<T, JsonError<'_>> {
     let wip = Wip::alloc::<T>();
     let heap_value = from_slice_wip(wip, json)?;
     Ok(heap_value.materialize::<T>().unwrap())
+}
+
+/// Represents the next expected token or structure while parsing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Instruction {
+    Value,
+    SkipValue,
+    Pop(PopReason),
+    ObjectKeyOrObjectClose,
+    CommaThenObjectKeyOrObjectClose,
+    ArrayItemOrArrayClose,
+    CommaThenArrayItemOrArrayClose,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PopReason {
+    ObjectVal,
+    ArrayItem,
+    Some,
 }
 
 /// Deserialize a JSON string into a Wip object.
@@ -47,760 +69,358 @@ pub fn from_slice<T: Facet>(json: &[u8]) -> Result<T, JsonParseErrorWithContext<
 pub fn from_slice_wip<'input, 'a>(
     mut wip: Wip<'a>,
     input: &'input [u8],
-) -> Result<HeapValue<'a>, JsonParseErrorWithContext<'input>> {
-    let mut pos = 0;
+) -> Result<HeapValue<'a>, JsonError<'input>> {
+    let mut stack = vec![Instruction::Value];
+    let mut tokenizer = Tokenizer::new(input);
+    let mut last_span = Span { start: 0, len: 0 };
+    let mut unread_token: Option<Spanned<Token>> = None;
 
-    macro_rules! err {
-        ($kind:expr) => {
-            Err(JsonParseErrorWithContext::new(
-                $kind,
-                input,
-                pos,
-                wip.path(),
-            ))
-        };
-    }
     macro_rules! bail {
         ($kind:expr) => {
-            return err!($kind)
+            return Err(JsonError::new($kind, input, last_span, wip.path()))
         };
     }
 
-    /// Indicates why we are expecting a value in the parsing stack.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    enum WhyValue {
-        /// At the top level of the JSON input.
-        TopLevel,
-        /// Expecting an object key.
-        ObjectKey,
-        /// Expecting an object value.
-        ObjectValue,
-        /// Expecting an array element.
-        ArrayElement,
+    macro_rules! read_token {
+        () => {
+            if let Some(token) = unread_token.take() {
+                last_span = token.span;
+                token
+            } else {
+                match tokenizer.next_token() {
+                    Ok(token) => {
+                        last_span = token.span;
+                        token
+                    }
+                    Err(e) => {
+                        last_span = e.span;
+                        bail!(JsonErrorKind::SyntaxError(e.kind));
+                    }
+                }
+            }
+        };
     }
 
-    /// Indicates the context for a comma separator in JSON (object or array).
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    enum WhyComma {
-        /// A comma in an object context.
-        Object,
-        /// A comma in an array context.
-        Array,
+    macro_rules! put_back_token {
+        ($token:expr) => {
+            assert!(
+                unread_token.is_none(),
+                "Cannot put back more than one token at a time"
+            );
+            unread_token = Some($token);
+        };
     }
 
-    /// Indicates the type of separator expected (colon or comma).
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    enum Separator {
-        /// Expecting a colon separator in object key-value pairs.
-        Colon,
-        /// Expecting a comma separator (in objects or arrays).
-        Comma(WhyComma),
+    macro_rules! reflect {
+        ($($tt:tt)*) => {
+            let path = wip.path();
+            wip = match wip.$($tt)* {
+                Ok(wip) => wip,
+                Err(e) => {
+                    return Err(JsonError::new(
+                        JsonErrorKind::ReflectError(e),
+                        input,
+                        last_span,
+                        path,
+                    ));
+                }
+            }
+        };
     }
-
-    /// Represents the next expected token or structure while parsing.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    enum Expect {
-        /// Expecting a value, with its reason/context.
-        Value(WhyValue),
-        /// Expecting a separator (colon or comma).
-        Separator(Separator),
-        /// We did `push_some` and now we need to pop it
-        PopOption,
-    }
-
-    let mut stack: Vec<Expect> = Vec::new();
-    stack.push(Expect::Value(WhyValue::TopLevel));
 
     loop {
-        // skip over whitespace
-        while let Some(c) = input.get(pos).copied() {
-            match c {
-                b' ' | b'\t' | b'\n' | b'\r' => {
-                    pos += 1;
-                }
-                _ => break,
-            }
-        }
-
         let frame_count = wip.frames_count();
-        let expect = match stack.pop() {
-            Some(expect) => expect,
+        let insn = match stack.pop() {
+            Some(insn) => insn,
             None => {
-                if frame_count == 1 {
-                    return Ok(wip.build().unwrap());
-                } else {
-                    trace!("frame_count isn't 1, it's {}", frame_count);
-                    bail!(JsonErrorKind::UnexpectedEof("frame_count isn't 1"));
-                }
+                trace!("No instruction, building.");
+                let path = wip.path();
+                return Ok(match wip.build() {
+                    Ok(hv) => hv,
+                    Err(e) => {
+                        return Err(JsonError::new(
+                            JsonErrorKind::ReflectError(e),
+                            input,
+                            last_span,
+                            path,
+                        ));
+                    }
+                });
             }
         };
-        trace!("[{frame_count}] Expecting {:?}", expect.yellow());
+        trace!("[{frame_count}] Instruction {:?}", insn.yellow());
 
-        let Some(c) = input.get(pos).copied() else {
-            bail!(JsonErrorKind::UnexpectedEof("no input at pos"));
-        };
-
-        let mut finished_value: Option<WhyValue> = None;
-
-        match expect {
-            Expect::PopOption => {
-                // that's all, carry on
-                trace!("Popping option");
-                finished_value = Some(WhyValue::ObjectValue);
+        match insn {
+            Instruction::Pop(reason) => {
+                trace!("Popping because {:?}", reason.yellow());
+                reflect!(pop());
             }
-            Expect::Value(why) => {
-                if let Def::Option(_) = wip.shape().def {
-                    wip = wip.push_some().unwrap();
-                    stack.push(Expect::PopOption);
-                }
-
-                match c {
-                    b'{' => {
-                        trace!("Object starting");
-                        pos += 1;
-                        let Some(c) = input.get(pos).copied() else {
-                            bail!(JsonErrorKind::UnexpectedEof("nothing after {"));
-                        };
-                        match c {
-                            b'}' => {
-                                trace!("Empty object ended");
-                                pos += 1;
-                                finished_value = Some(why);
-                            }
-                            _ => {
-                                trace!("Object's not empty, let's do `key: value ,` next");
-                                // okay, next we expect a "key: value"
-                                stack.push(Expect::Separator(Separator::Comma(WhyComma::Object)));
-                                stack.push(Expect::Value(WhyValue::ObjectValue));
-                                stack.push(Expect::Separator(Separator::Colon));
-                                stack.push(Expect::Value(WhyValue::ObjectKey));
-                            }
-                        }
-                    }
-                    b'[' => {
-                        pos += 1;
-                        let Some(c) = input.get(pos).copied() else {
-                            bail!(JsonErrorKind::UnexpectedEof("nothing after ["));
-                        };
-
-                        wip = wip.begin_pushback().unwrap();
-                        match c {
-                            b']' => {
-                                // an array just closed, somewhere
-                                pos += 1;
-                                trace!("Got empty array");
-                                finished_value = Some(why);
-                            }
-                            _ => {
-                                // okay, next we expect an item and a separator (or the end of the array)
-                                stack.push(Expect::Separator(Separator::Comma(WhyComma::Array)));
-                                stack.push(Expect::Value(WhyValue::ArrayElement));
-                                wip = wip.push().unwrap();
-                                continue; // we didn't finish a value so don't pop yet
-                            }
-                        }
-                    }
-                    b'"' => {
-                        pos += 1;
-                        let start = pos;
-                        // Our value is a string: collect bytes first
-                        let mut bytes = Vec::new();
-                        loop {
-                            let Some(c) = input.get(pos).copied() else {
-                                bail!(JsonErrorKind::UnexpectedEof("nothing after \""));
-                            };
-                            match c {
-                                b'"' => {
-                                    break;
+            Instruction::SkipValue => {
+                let token = read_token!();
+                match token.node {
+                    Token::LBrace | Token::LBracket => {
+                        // Skip a compound value by tracking nesting depth
+                        let mut depth = 1;
+                        while depth > 0 {
+                            let token = read_token!();
+                            match token.node {
+                                Token::LBrace | Token::LBracket => {
+                                    depth += 1;
                                 }
-                                b'\\' => {
-                                    // Handle escape sequences
-                                    if let Some(&next) = input.get(pos + 1) {
-                                        if bytes.is_empty() {
-                                            bytes.extend(&input[start..pos]);
-                                        }
-                                        bytes.push(next);
-                                        pos += 2;
-                                    } else {
-                                        bail!(JsonErrorKind::UnexpectedEof("nothing after \\"));
-                                    }
+                                Token::RBrace | Token::RBracket => {
+                                    depth -= 1;
                                 }
                                 _ => {
-                                    if !bytes.is_empty() {
-                                        bytes.push(c);
-                                    }
-                                    pos += 1;
+                                    // primitives, commas, colons, strings, numbers, etc.
                                 }
                             }
                         }
-                        let end = pos;
-                        pos += 1;
+                    }
+                    Token::String(_)
+                    | Token::F64(_)
+                    | Token::I64(_)
+                    | Token::U64(_)
+                    | Token::True
+                    | Token::False
+                    | Token::Null => {
+                        // Primitive value; nothing more to skip
+                    }
+                    other => {
+                        // Unexpected token when skipping a value
+                        bail!(JsonErrorKind::UnexpectedToken {
+                            got: other,
+                            wanted: "value"
+                        });
+                    }
+                }
+            }
+            Instruction::Value => {
+                let token = read_token!();
+                match token.node {
+                    Token::Null => {
+                        reflect!(put_default());
+                    }
+                    _ => {
+                        if matches!(wip.shape().def, Def::Option(_)) {
+                            trace!("Starting Some(_) option for {}", wip.shape().blue());
+                            reflect!(push_some());
+                            stack.push(Instruction::Pop(PopReason::Some))
+                        }
 
-                        let value = if bytes.is_empty() {
-                            match core::str::from_utf8(&input[start..end]) {
-                                Ok(it) => alloc::borrow::Cow::Borrowed(it),
-                                Err(e) => bail!(JsonErrorKind::InvalidUtf8(format!(
-                                    "Invalid UTF-8 sequence: {}",
-                                    e
-                                ))),
-                            }
-                        } else {
-                            // Convert collected bytes to string at once
-                            match alloc::string::String::from_utf8(bytes) {
-                                Ok(it) => alloc::borrow::Cow::Owned(it),
-                                Err(e) => bail!(JsonErrorKind::InvalidUtf8(format!(
-                                    "Invalid UTF-8 sequence: {}",
-                                    e
-                                ))),
-                            }
-                        };
-
-                        trace!(
-                            "Parsed string {:?} for {} (why? {:?})",
-                            value.yellow(),
-                            wip.shape().blue(),
-                            why.cyan()
-                        );
-
-                        match why {
-                            WhyValue::TopLevel | WhyValue::ArrayElement | WhyValue::ObjectValue => {
-                                // skip the string parse impl
-                                if wip.current_is_type::<String>() {
-                                    wip = wip.put::<String>(value.into_owned()).unwrap();
-                                } else {
-                                    wip = wip.parse(&value).unwrap();
-                                }
-                                finished_value = Some(why);
-                            }
-                            WhyValue::ObjectKey => {
-                                // Look for field with matching name or rename attribute
-                                let shape = wip.shape();
-
-                                if let Def::Struct(struct_def) = shape.def {
-                                    let field = struct_def.fields.iter().find(|f| {
-                                        // Check original name
-                                        if f.name == value {
-                                            return true;
-                                        }
-
-                                        // Check rename attribute
-                                        f.attributes.iter().any(|attr| {
-                                            if let &FieldAttribute::Rename(rename) = attr {
-                                                rename == value
-                                            } else {
-                                                false
-                                            }
-                                        })
-                                    });
-
-                                    if let Some(field) = field {
-                                        trace!("found field {:?}", field.blue());
-                                        wip = wip.field_named(field.name).unwrap();
-                                    } else if shape.attributes.iter().any(|attr| {
-                                        matches!(attr, ShapeAttribute::DenyUnknownFields)
-                                    }) {
-                                        // Field not found - original or renamed, and unknown fields denied
-                                        bail!(JsonErrorKind::UnknownField(value.into_owned()));
-                                    } else {
-                                        // pop Expect::Colon (assert)
-                                        let expect_colon = stack.pop();
-                                        assert!(matches!(
-                                            expect_colon,
-                                            Some(Expect::Separator(Separator::Colon))
-                                        ));
-                                        // skip over whitespace
-                                        while let Some(b' ' | b'\t' | b'\n' | b'\r') =
-                                            input.get(pos).copied()
-                                        {
-                                            pos += 1;
-                                        }
-                                        // skip over colon
-                                        if let Some(b':') = input.get(pos) {
-                                            pos += 1;
-                                        } else {
-                                            bail!(JsonErrorKind::UnexpectedCharacter(
-                                                input
-                                                    .get(pos)
-                                                    .copied()
-                                                    .map(|c| c as char)
-                                                    .unwrap_or('\0')
-                                            ));
-                                        }
-                                        // skip over whitespace
-                                        while let Some(b' ' | b'\t' | b'\n' | b'\r') =
-                                            input.get(pos).copied()
-                                        {
-                                            pos += 1;
-                                        }
-                                        // pop Expect::Value
-                                        let expect_value = stack.pop();
-                                        assert!(matches!(
-                                            expect_value,
-                                            Some(Expect::Value(WhyValue::ObjectValue))
-                                        ));
-                                        // skip over value
-                                        skip_over_value(&mut pos, input).map_err(|e| {
-                                            JsonParseErrorWithContext::new(
-                                                e,
-                                                input,
-                                                pos,
-                                                wip.path(),
-                                            )
-                                        })?;
+                        match token.node {
+                            Token::Null => unreachable!(),
+                            Token::LBrace => {
+                                match wip.shape().def {
+                                    Def::Map(_md) => {
                                         trace!(
-                                            "immediately after skip over value, we're at pos {}, char is {}",
-                                            pos,
-                                            input.get(pos).copied().unwrap_or(b'$') as char
+                                            "Object starting for map value ({})!",
+                                            wip.shape().blue()
+                                        );
+                                        reflect!(put_default());
+                                    }
+                                    Def::Enum(_ed) => {
+                                        trace!(
+                                            "Object starting for enum value ({})!",
+                                            wip.shape().blue()
+                                        );
+                                        bail!(JsonErrorKind::Unimplemented("map object"));
+                                    }
+                                    Def::Struct(_) => {
+                                        trace!(
+                                            "Object starting for struct value ({})!",
+                                            wip.shape().blue()
+                                        );
+                                        // nothing to do here
+                                    }
+                                    _ => {
+                                        bail!(JsonErrorKind::UnsupportedType {
+                                            got: wip.shape(),
+                                            wanted: "map, enum, or struct"
+                                        });
+                                    }
+                                }
+
+                                stack.push(Instruction::ObjectKeyOrObjectClose)
+                            }
+                            Token::LBracket => {
+                                match wip.shape().def {
+                                    Def::Array(_) => {
+                                        trace!(
+                                            "Array starting for array ({})!",
+                                            wip.shape().blue()
                                         );
                                     }
-                                } else {
-                                    trace!(
-                                        "Getting field {}, not in a Struct, but in a... {}",
-                                        value.blue(),
-                                        wip.shape()
-                                    );
-                                    wip = wip.field_named(&value).expect("assuming only structs have a fixed set of fields (which is not true, cf. enums)");
-                                }
-                            }
-                        }
-                    }
-                    b'0'..=b'9' | b'-' => {
-                        pos += 1;
-                        let start = pos - 1;
-                        while let Some(c) = input.get(pos) {
-                            match c {
-                                b'0'..=b'9' | b'.' => {
-                                    pos += 1;
-                                }
-                                _ => break,
-                            }
-                        }
-                        let number = &input[start..pos];
-                        let number = core::str::from_utf8(number).unwrap();
-                        let number = number.parse::<f64>().unwrap();
-                        trace!("Parsed {:?}", number.yellow());
-
-                        // Prefer try_put_f64 only if actually supported (can_put_f64)
-                        if wip.can_put_f64() {
-                            wip = wip.try_put_f64(number).unwrap();
-                        } else {
-                            // If string affinity (eg, expecting a string, but got number)
-                            let shape = wip.shape();
-                            if let Def::Scalar(sd) = shape.def {
-                                if let ScalarAffinity::String(_) = sd.affinity {
-                                    if shape.is_type::<String>() {
-                                        let value = number.to_string();
-                                        bail!(JsonErrorKind::StringAsNumber(value));
+                                    Def::Slice(_) => {
+                                        trace!(
+                                            "Array starting for slice ({})!",
+                                            wip.shape().blue()
+                                        );
                                     }
-                                }
-                            }
-                            // fallback for other shape mismatch (todo! or parse error)
-                            bail!(JsonErrorKind::NumberOutOfRange(number));
-                        }
-                        finished_value = Some(why);
-                    }
-                    b't' | b'f' => {
-                        // Boolean: true or false
-                        if input[pos..].starts_with(b"true") {
-                            pos += 4;
-                            let shape = wip.shape();
-                            match shape.def {
-                                Def::Scalar(sd) => match sd.affinity {
-                                    ScalarAffinity::Boolean(_) => {
-                                        wip = wip.put::<bool>(true).unwrap();
+                                    Def::List(_) => {
+                                        trace!("Array starting for list ({})!", wip.shape().blue());
+                                        reflect!(put_default());
                                     }
                                     _ => {
-                                        bail!(JsonErrorKind::UnexpectedCharacter('t'));
+                                        bail!(JsonErrorKind::UnsupportedType {
+                                            got: wip.shape(),
+                                            wanted: "array, list, or slice"
+                                        });
                                     }
-                                },
-                                _ => {
-                                    bail!(JsonErrorKind::UnexpectedCharacter('t'));
                                 }
-                            }
-                            finished_value = Some(why);
-                        } else if input[pos..].starts_with(b"false") {
-                            pos += 5;
-                            let shape = wip.shape();
-                            match shape.def {
-                                Def::Scalar(sd) => match sd.affinity {
-                                    ScalarAffinity::Boolean(_) => {
-                                        wip = wip.put::<bool>(false).unwrap();
-                                    }
-                                    _ => {
-                                        bail!(JsonErrorKind::UnexpectedCharacter('f'));
-                                    }
-                                },
-                                _ => {
-                                    bail!(JsonErrorKind::UnexpectedCharacter('f'));
-                                }
-                            }
-                            finished_value = Some(why);
-                        } else {
-                            bail!(JsonErrorKind::UnexpectedCharacter(c as char));
-                        }
-                    }
-                    b'n' => {
-                        // wow it's a null — probably
-                        let slice_rest = &input[pos..];
-                        if slice_rest.starts_with(b"null") {
-                            pos += 4;
 
-                            // ok but we already pushed some! luckily wip has the method for us
-                            wip = wip.pop_some_push_none().unwrap();
-                            finished_value = Some(why);
-                        } else {
-                            bail!(JsonErrorKind::UnexpectedCharacter('n'));
+                                trace!("Beginning pushback");
+                                reflect!(begin_pushback());
+                                stack.push(Instruction::ArrayItemOrArrayClose)
+                            }
+                            Token::RBrace | Token::RBracket | Token::Colon | Token::Comma => {
+                                bail!(JsonErrorKind::UnexpectedToken {
+                                    got: token.node,
+                                    wanted: "value"
+                                });
+                            }
+                            Token::String(s) => {
+                                reflect!(put::<String>(s));
+                            }
+                            Token::F64(n) => {
+                                reflect!(put(n));
+                            }
+                            Token::U64(n) => {
+                                reflect!(put(n));
+                            }
+                            Token::I64(n) => {
+                                reflect!(put(n));
+                            }
+                            Token::True => {
+                                reflect!(put::<bool>(true));
+                            }
+                            Token::False => {
+                                reflect!(put::<bool>(false));
+                            }
+                            Token::EOF => todo!(),
                         }
-                    }
-                    c => {
-                        bail!(JsonErrorKind::UnexpectedCharacter(c as char));
                     }
                 }
             }
-            Expect::Separator(separator) => match separator {
-                Separator::Colon => match c {
-                    b':' => {
-                        pos += 1;
-                    }
-                    _ => {
-                        bail!(JsonErrorKind::UnexpectedCharacter(c as char));
-                    }
-                },
-                Separator::Comma(why) => match c {
-                    b',' => {
-                        pos += 1;
-                        match why {
-                            WhyComma::Array => {
-                                stack.push(Expect::Separator(Separator::Comma(WhyComma::Array)));
-                                stack.push(Expect::Value(WhyValue::ArrayElement));
-                                wip = wip.push().unwrap();
-                            }
-                            WhyComma::Object => {
-                                // looks like we're in for another round of object parsing
-                                stack.push(Expect::Separator(Separator::Comma(WhyComma::Object)));
-                                stack.push(Expect::Value(WhyValue::ObjectValue));
-                                stack.push(Expect::Separator(Separator::Colon));
-                                stack.push(Expect::Value(WhyValue::ObjectKey));
-                            }
-                        }
-                    }
-                    b'}' => match why {
-                        WhyComma::Object => {
-                            pos += 1;
-                            finished_value = Some(WhyValue::ObjectValue);
-                        }
-                        _ => {
-                            bail!(JsonErrorKind::UnexpectedCharacter(c as char));
-                        }
-                    },
-                    b']' => {
-                        pos += 1;
-                        match why {
-                            WhyComma::Array => {
-                                // we finished the array, neat
-                                if frame_count > 1 {
-                                    wip = wip.pop().unwrap();
+            Instruction::ObjectKeyOrObjectClose => {
+                let token = read_token!();
+                match token.node {
+                    Token::String(key) => {
+                        trace!("Object key: {}", key);
+                        let mut ignore = false;
+
+                        match wip.shape().def {
+                            Def::Struct(_) => match wip.field_index(&key) {
+                                Some(index) => {
+                                    reflect!(field(index));
                                 }
+                                None => {
+                                    if wip.shape().has_deny_unknown_fields_attr() {
+                                        // well, it all depends.
+                                        bail!(JsonErrorKind::UnknownField {
+                                            field_name: key.to_string(),
+                                            shape: wip.shape(),
+                                        })
+                                    } else {
+                                        trace!("Will ignore key ");
+                                        ignore = true;
+                                    }
+                                }
+                            },
+                            Def::Map(_) => {
+                                reflect!(push_map_key());
+                                reflect!(put(key));
+                                reflect!(push_map_value());
                             }
                             _ => {
-                                bail!(JsonErrorKind::UnexpectedCharacter(c as char));
+                                bail!(JsonErrorKind::Unimplemented(
+                                    "object key for non-struct/map"
+                                ));
                             }
                         }
+
+                        let colon = read_token!();
+                        if colon.node != Token::Colon {
+                            bail!(JsonErrorKind::UnexpectedToken {
+                                got: colon.node,
+                                wanted: "colon"
+                            });
+                        }
+                        stack.push(Instruction::CommaThenObjectKeyOrObjectClose);
+                        if ignore {
+                            stack.push(Instruction::SkipValue);
+                        } else {
+                            stack.push(Instruction::Pop(PopReason::ObjectVal));
+                            stack.push(Instruction::Value);
+                        }
+                    }
+                    Token::RBrace => {
+                        trace!("Object closing");
                     }
                     _ => {
-                        bail!(JsonErrorKind::UnexpectedCharacter(c as char));
-                    }
-                },
-            },
-        }
-
-        if let Some(why) = finished_value {
-            trace!("Just finished value because of {:?}", why.green());
-            match why {
-                WhyValue::ObjectKey => {}
-                WhyValue::TopLevel | WhyValue::ObjectValue | WhyValue::ArrayElement => {
-                    trace!("Shape before popping: {}", wip.shape());
-
-                    let struct_has_default = wip
-                        .shape()
-                        .attributes
-                        .iter()
-                        .any(|attr| matches!(attr, ShapeAttribute::Default));
-                    let mut has_missing_fields = false;
-
-                    // Ensure all struct fields are set before popping
-                    if let Def::Struct(sd) = wip.shape().def {
-                        for i in 0..sd.fields.len() {
-                            if !wip.is_field_set(i).unwrap() {
-                                let missing_field: &'static str = sd.fields[i].name;
-                                if struct_has_default {
-                                    has_missing_fields = true;
-                                } else {
-                                    let field = sd.fields[i];
-                                    if let Some(attr) =
-                                        field.attributes.iter().find_map(|attr| match attr {
-                                            FieldAttribute::Default(d) => Some(d),
-                                            _ => None,
-                                        })
-                                    {
-                                        match attr {
-                                            Some(fun) => {
-                                                wip = wip
-                                                    .field(i)
-                                                    .unwrap()
-                                                    .put_from_fn(*fun)
-                                                    .unwrap()
-                                                    .pop()
-                                                    .unwrap();
-                                            }
-                                            None => {
-                                                wip = wip
-                                                    .field(i)
-                                                    .unwrap()
-                                                    .put_default()
-                                                    .unwrap()
-                                                    .pop()
-                                                    .unwrap();
-                                            }
-                                        }
-                                    } else {
-                                        bail!(JsonErrorKind::MissingField(missing_field));
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if has_missing_fields {
-                        trace!("struct has missing fields but we have default");
-                        if !wip.shape().is(Characteristic::Default) {
-                            todo!(
-                                "Default struct has missing fields, the `default` impl but it does not implement Default"
-                            )
-                        }
-                        let default_struct_val = Wip::alloc_shape(wip.shape())
-                            .put_default()
-                            .unwrap()
-                            .build()
-                            .unwrap();
-                        let peek = default_struct_val.peek().into_struct().unwrap();
-
-                        // For every missing field, take it from the peek and copy it into the wip
-                        if let Def::Struct(sd) = wip.shape().def {
-                            for i in 0..sd.fields.len() {
-                                if !wip.is_field_set(i).unwrap() {
-                                    let field_value = peek.field(i).unwrap();
-                                    wip = wip
-                                        .field(i)
-                                        .unwrap()
-                                        .put_peek(field_value)
-                                        .unwrap()
-                                        .pop()
-                                        .unwrap();
-                                }
-                            }
-                        }
-                    }
-
-                    if frame_count == 1 {
-                        return Ok(wip.build().unwrap());
-                    } else {
-                        wip = wip.pop().unwrap();
+                        bail!(JsonErrorKind::UnexpectedToken {
+                            got: token.node,
+                            wanted: "object key or closing brace"
+                        });
                     }
                 }
             }
-        }
-    }
-}
-
-fn skip_over_value(pos: &mut usize, input: &[u8]) -> Result<(), JsonErrorKind> {
-    let bytes = input;
-
-    // Helper for skipping whitespace
-    let skip_whitespace = |pos: &mut usize| {
-        while *pos < bytes.len() {
-            match bytes[*pos] {
-                b' ' | b'\t' | b'\n' | b'\r' => *pos += 1,
-                _ => break,
-            }
-        }
-    };
-
-    skip_whitespace(pos);
-
-    if *pos >= bytes.len() {
-        return Err(JsonErrorKind::UnexpectedEof(
-            "while skipping over value: input ended unexpectedly at root",
-        ));
-    }
-
-    match bytes[*pos] {
-        b'{' => {
-            // Skip a full object, recursively
-            *pos += 1;
-            skip_whitespace(pos);
-            if *pos < bytes.len() && bytes[*pos] == b'}' {
-                *pos += 1;
-                return Ok(());
-            }
-            loop {
-                // Skip key
-                skip_over_value(pos, input)?;
-                skip_whitespace(pos);
-                // Expect colon between key and value
-                if *pos >= bytes.len() || bytes[*pos] != b':' {
-                    return Err(JsonErrorKind::UnexpectedEof(
-                        "while skipping over value: object key with no colon or input ended",
-                    ));
-                }
-                *pos += 1;
-                skip_whitespace(pos);
-                // Skip value
-                skip_over_value(pos, input)?;
-                skip_whitespace(pos);
-                if *pos >= bytes.len() {
-                    return Err(JsonErrorKind::UnexpectedEof(
-                        "while skipping over value: object value with EOF after",
-                    ));
-                }
-                if bytes[*pos] == b'}' {
-                    *pos += 1;
-                    break;
-                } else if bytes[*pos] == b',' {
-                    *pos += 1;
-                    skip_whitespace(pos);
-                    continue;
-                } else {
-                    return Err(JsonErrorKind::UnexpectedCharacter(bytes[*pos] as char));
-                }
-            }
-        }
-        b'[' => {
-            // Skip a full array, recursively
-            *pos += 1;
-            skip_whitespace(pos);
-            if *pos < bytes.len() && bytes[*pos] == b']' {
-                *pos += 1;
-                return Ok(());
-            }
-            loop {
-                skip_over_value(pos, input)?;
-                skip_whitespace(pos);
-                if *pos >= bytes.len() {
-                    return Err(JsonErrorKind::UnexpectedEof(
-                        "while skipping over value: EOF inside array",
-                    ));
-                }
-                if bytes[*pos] == b']' {
-                    *pos += 1;
-                    break;
-                } else if bytes[*pos] == b',' {
-                    *pos += 1;
-                    skip_whitespace(pos);
-                    continue;
-                } else {
-                    return Err(JsonErrorKind::UnexpectedCharacter(bytes[*pos] as char));
-                }
-            }
-        }
-        b'"' => {
-            // Skip a string, with escape processing
-            *pos += 1;
-            while *pos < bytes.len() {
-                match bytes[*pos] {
-                    b'\\' => {
-                        // Could have EOF after backslash
-                        if *pos + 1 >= bytes.len() {
-                            return Err(JsonErrorKind::UnexpectedEof(
-                                "while skipping over value: EOF after backslash in string",
-                            ));
-                        }
-                        *pos += 2; // Skip backslash and the next character (escaped)
+            Instruction::CommaThenObjectKeyOrObjectClose => {
+                let token = read_token!();
+                match token.node {
+                    Token::Comma => {
+                        trace!("Object comma");
+                        stack.push(Instruction::ObjectKeyOrObjectClose);
                     }
-                    b'"' => {
-                        *pos += 1;
-                        break;
+                    Token::RBrace => {
+                        trace!("Object close");
                     }
                     _ => {
-                        *pos += 1;
+                        bail!(JsonErrorKind::UnexpectedToken {
+                            got: token.node,
+                            wanted: "comma"
+                        });
                     }
                 }
             }
-            if *pos > bytes.len() {
-                return Err(JsonErrorKind::UnexpectedEof(
-                    "while skipping over value: string ended unexpectedly",
-                ));
-            }
-        }
-        b't' => {
-            // Expect "true"
-            if bytes.len() >= *pos + 4 && &bytes[*pos..*pos + 4] == b"true" {
-                *pos += 4;
-            } else {
-                return Err(JsonErrorKind::UnexpectedCharacter('t'));
-            }
-        }
-        b'f' => {
-            // Expect "false"
-            if bytes.len() >= *pos + 5 && &bytes[*pos..*pos + 5] == b"false" {
-                *pos += 5;
-            } else {
-                return Err(JsonErrorKind::UnexpectedCharacter('f'));
-            }
-        }
-        b'n' => {
-            // Expect "null"
-            if bytes.len() >= *pos + 4 && &bytes[*pos..*pos + 4] == b"null" {
-                *pos += 4;
-            } else {
-                return Err(JsonErrorKind::UnexpectedCharacter('n'));
-            }
-        }
-        b'-' | b'0'..=b'9' => {
-            // Skip a number: -?\d+(\.\d+)?([eE][+-]?\d+)?
-            let start = *pos;
-            if bytes[*pos] == b'-' {
-                *pos += 1;
-            }
-            if *pos < bytes.len() && bytes[*pos] == b'0' {
-                *pos += 1;
-            } else {
-                while *pos < bytes.len() && (bytes[*pos] as char).is_ascii_digit() {
-                    *pos += 1;
+            Instruction::ArrayItemOrArrayClose => {
+                let token = read_token!();
+                match token.node {
+                    Token::RBracket => {
+                        trace!("Array close");
+                    }
+                    _ => {
+                        trace!("Array item");
+                        put_back_token!(token);
+                        reflect!(begin_pushback());
+                        reflect!(push());
+
+                        stack.push(Instruction::CommaThenArrayItemOrArrayClose);
+                        stack.push(Instruction::Pop(PopReason::ArrayItem));
+                        stack.push(Instruction::Value);
+                    }
                 }
             }
-            if *pos < bytes.len() && bytes[*pos] == b'.' {
-                *pos += 1;
-                let mut has_digit = false;
-                while *pos < bytes.len() && (bytes[*pos] as char).is_ascii_digit() {
-                    *pos += 1;
-                    has_digit = true;
-                }
-                if !has_digit {
-                    return Err(JsonErrorKind::UnexpectedCharacter('.'));
-                }
-            }
-            if *pos < bytes.len() && (bytes[*pos] == b'e' || bytes[*pos] == b'E') {
-                *pos += 1;
-                if *pos < bytes.len() && (bytes[*pos] == b'+' || bytes[*pos] == b'-') {
-                    *pos += 1;
-                }
-                let mut has_digit = false;
-                while *pos < bytes.len() && (bytes[*pos] as char).is_ascii_digit() {
-                    *pos += 1;
-                    has_digit = true;
-                }
-                if !has_digit {
-                    return Err(JsonErrorKind::UnexpectedCharacter('e'));
+            Instruction::CommaThenArrayItemOrArrayClose => {
+                let token = read_token!();
+                match token.node {
+                    Token::RBracket => {
+                        trace!("Array close");
+                    }
+                    Token::Comma => {
+                        trace!("Array comma");
+                        reflect!(push());
+                        stack.push(Instruction::CommaThenArrayItemOrArrayClose);
+                        stack.push(Instruction::Pop(PopReason::ArrayItem));
+                        stack.push(Instruction::Value);
+                    }
+                    _ => {
+                        bail!(JsonErrorKind::UnexpectedToken {
+                            got: token.node,
+                            wanted: "comma or closing bracket"
+                        });
+                    }
                 }
             }
-            if *pos == start {
-                return Err(JsonErrorKind::UnexpectedCharacter(bytes[start] as char));
-            }
-        }
-        _ => {
-            return Err(JsonErrorKind::UnexpectedCharacter(bytes[*pos] as char));
         }
     }
-    Ok(())
 }

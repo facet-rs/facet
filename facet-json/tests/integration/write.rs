@@ -158,7 +158,7 @@ fn test_skip_serializing() {
     struct Salutations(&'static str, #[facet(skip_serializing)] &'static str);
     let test_struct2 = Salutations("groetjes", "wereld");
     let json = facet_json::to_string(&test_struct2);
-    assert_eq!(json, r#"{"0":"groetjes"}"#);
+    assert_eq!(json, r#"["groetjes"]"#);
 
     #[derive(Debug, PartialEq, Clone, Facet)]
     #[repr(C)]
@@ -201,5 +201,18 @@ fn test_skip_serializing_if() {
     );
     let test_struct2 = Salutations("groetjes", "".to_string());
     let json = facet_json::to_string(&test_struct2);
-    assert_eq!(json, r#"{"0":"groetjes"}"#);
+    assert_eq!(json, r#"["groetjes"]"#);
+}
+
+#[test]
+fn test_serialize_tuple() {
+    let test_tuple1 = ("groetjes", 3);
+    let json = facet_json::to_string(&test_tuple1);
+    assert_eq!(json, r#"["groetjes",3]"#);
+
+    #[derive(facet::Facet)]
+    struct TestTuple(i32, String, bool);
+    let test_tuple2 = TestTuple(3, "aaa".to_string(), true);
+    let json = facet_json::to_string(&test_tuple2);
+    assert_eq!(json, r#"[3,"aaa",true]"#);
 }

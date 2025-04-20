@@ -1,0 +1,11 @@
+---
+source: facet-json/tests/integration/read/nonzero.rs
+expression: result.unwrap_err().to_string()
+---
+[31mError:[0m Error at [33m$.foo[39m
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m json:1:9 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m1 │[0m [38;5;249m{[0m[38;5;249m"[0m[38;5;249mf[0m[38;5;249mo[0m[38;5;249mo[0m[38;5;249m"[0m[38;5;249m:[0m[38;5;249m [0m[31m0[0m[38;5;249m}[0m
+ [38;5;240m  │[0m         [31m┬[0m  
+ [38;5;240m  │[0m         [31m╰[0m[31m─[0m[31m─[0m While trying to put [32mu64[39m into a [34mNonZero<u64>[39m: [31mvalue must be non-zero[39m
+[38;5;246m───╯[0m

@@ -16,6 +16,7 @@ pub struct PeekSmartPointer<'mem> {
 
 impl PeekSmartPointer<'_> {
     /// Returns a reference to the smart pointer definition.
+    #[must_use]
     pub fn def(&self) -> &SmartPointerDef {
         &self.def
     }
