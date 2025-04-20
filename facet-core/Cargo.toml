@@ -14,7 +14,7 @@ categories = ["development-tools"]
 default = ["std"]
 std = ["alloc"]
 alloc = []
-camino = ["dep:camino"]
+camino = ["dep:camino", "alloc"]
 
 [dependencies]
 impls = "1.0.3"
