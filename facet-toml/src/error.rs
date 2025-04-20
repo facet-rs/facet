@@ -4,7 +4,7 @@ use core::ops::Range;
 
 #[cfg(feature = "rich-diagnostics")]
 use ariadne::{Color, Label, Report, ReportKind, Source};
-use facet_core::{Shape, TypeNameOpts};
+use facet_core::Shape;
 use facet_reflect::ReflectError;
 
 /// Any error from deserializing TOML.
@@ -35,12 +35,10 @@ impl<'input> TomlError<'input> {
                 rust_type,
                 reason,
             } => {
-                let rust_type_name = TypeNameWriter(rust_type);
-
                 if let Some(reason) = reason {
-                    format!("Can't parse type '{rust_type_name}' from '{toml_type_name}': {reason}")
+                    format!("Can't parse type '{rust_type}' from '{toml_type_name}': {reason}")
                 } else {
-                    format!("Can't parse type '{rust_type_name}' from '{toml_type_name}'")
+                    format!("Can't parse type '{rust_type}' from '{toml_type_name}'")
                 }
             }
             TomlErrorKind::ExpectedType { expected, got } => {
@@ -48,13 +46,10 @@ impl<'input> TomlError<'input> {
             }
             TomlErrorKind::UnrecognizedType(r#type) => format!("Unrecognized type '{type}'"),
             TomlErrorKind::UnrecognizedScalar(scalar_type) => {
-                format!(
-                    "Unrecognized Rust scalar type '{}'",
-                    TypeNameWriter(scalar_type)
-                )
+                format!("Unrecognized Rust scalar type '{scalar_type}'",)
             }
             TomlErrorKind::InvalidKey(field) => {
-                format!("Invalid Rust key '{}'", TypeNameWriter(field))
+                format!("Invalid Rust key '{field}'")
             }
             TomlErrorKind::ExpectedFieldWithName(name) => {
                 format!("Expected field with name '{name}'")
@@ -163,13 +158,4 @@ pub enum TomlErrorKind {
     ExpectedExactlyOneField,
     /// Tried parsing a single value as a struct with multiple fields.
     ParseSingleValueAsMultipleFieldStruct,
-}
-
-/// Wrap the `Shape` in a type so we can write it's type name directly with display.
-struct TypeNameWriter(&'static Shape);
-
-impl core::fmt::Display for TypeNameWriter {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.write_type_name(f, TypeNameOpts::default())
-    }
 }
