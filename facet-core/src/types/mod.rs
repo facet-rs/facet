@@ -79,11 +79,13 @@ pub struct Shape {
 }
 
 /// An attribute that can be applied to a shape
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum ShapeAttribute {
     /// Specifies an alternative name for the field (for serialization/deserialization)
     DenyUnknownFields,
-    /// Indicates the shape has a default value
+    /// Indicates that, when deserializing, fields from this shape that are
+    /// missing in the input should be filled with corresponding field values from
+    /// a `T::default()` (where T is this shape)
     Default,
     /// Custom field attribute containing arbitrary text
     Arbitrary(&'static str),
@@ -109,6 +111,16 @@ impl Shape {
             "Type mismatch: expected {}, found {self}",
             Other::SHAPE,
         );
+    }
+
+    /// See [`ShapeAttribute::DenyUnknownFields`]
+    pub fn has_deny_unknown_fields_attr(&'static self) -> bool {
+        self.attributes.contains(&ShapeAttribute::DenyUnknownFields)
+    }
+
+    /// See [`ShapeAttribute::Default`]
+    pub fn has_default_attr(&'static self) -> bool {
+        self.attributes.contains(&ShapeAttribute::Default)
     }
 }
 

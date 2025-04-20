@@ -35,6 +35,53 @@ impl Field {
     pub const fn builder() -> FieldBuilder {
         FieldBuilder::new()
     }
+
+    /// See [`FieldAttribute::Sensitive`]
+    pub fn has_sensitive_attr(&'static self) -> bool {
+        self.attributes.contains(&FieldAttribute::Sensitive)
+    }
+
+    /// See [`FieldAttribute::Rename`]
+    pub fn get_rename_attr(&'static self) -> Option<&'static str> {
+        for attr in self.attributes {
+            if let FieldAttribute::Rename(name) = attr {
+                return Some(name);
+            }
+        }
+        None
+    }
+
+    /// See [`FieldAttribute::Default`]
+    pub fn get_default_attr(&'static self) -> Option<Option<DefaultInPlaceFn>> {
+        for attr in self.attributes {
+            if let FieldAttribute::Default(default_fn) = attr {
+                return Some(*default_fn);
+            }
+        }
+        None
+    }
+
+    /// Checks if the field has a default value
+    pub fn has_default_attr(&'static self) -> bool {
+        self.attributes
+            .iter()
+            .any(|attr| matches!(attr, FieldAttribute::Default(_)))
+    }
+
+    /// See [`FieldAttribute::Arbitrary`]
+    pub fn get_arbitrary_attr(&'static self) -> Option<&'static str> {
+        for attr in self.attributes {
+            if let FieldAttribute::Arbitrary(value) = attr {
+                return Some(value);
+            }
+        }
+        None
+    }
+
+    /// Checks if field is marked as sensitive through attributes or flags
+    pub fn is_sensitive(&'static self) -> bool {
+        self.has_sensitive_attr() || self.flags.contains(FieldFlags::SENSITIVE)
+    }
 }
 
 /// Builder for Field

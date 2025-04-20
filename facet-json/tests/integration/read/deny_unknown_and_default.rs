@@ -1,3 +1,6 @@
+use facet::Facet;
+use facet_json::from_str;
+
 #[test]
 fn test_deny_unknown_fields() {
     facet_testhelpers::setup();
