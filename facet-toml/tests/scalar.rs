@@ -3,6 +3,7 @@
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use facet::Facet;
+use facet_toml::error::TomlErrorKind;
 
 #[cfg(feature = "std")]
 #[test]
@@ -19,6 +20,13 @@ fn test_string() {
         Root {
             value: "string".to_string()
         },
+    );
+    assert_eq!(
+        facet_toml::from_str::<Root>("value = 1").unwrap_err().kind,
+        TomlErrorKind::ExpectedType {
+            expected: "string",
+            got: "integer"
+        }
     );
 }
 
@@ -37,6 +45,13 @@ fn test_cow_string() {
         Root {
             value: std::borrow::Cow::Borrowed("string")
         },
+    );
+    assert_eq!(
+        facet_toml::from_str::<Root>("value = 1").unwrap_err().kind,
+        TomlErrorKind::ExpectedType {
+            expected: "string",
+            got: "integer"
+        }
     );
 }
 
@@ -57,6 +72,13 @@ fn test_bool() {
         facet_toml::from_str::<Root>("value = false").expect("Failed to parse TOML"),
         Root { value: false },
     );
+    assert_eq!(
+        facet_toml::from_str::<Root>("value = 1").unwrap_err().kind,
+        TomlErrorKind::ExpectedType {
+            expected: "boolean",
+            got: "integer"
+        }
+    );
 }
 
 #[cfg(feature = "std")]
@@ -75,7 +97,6 @@ fn test_socket_addr() {
             value: "127.0.0.1:8000".parse().unwrap()
         },
     );
-    assert!(facet_toml::from_str::<Root>("value = 127.0.0.1").is_err());
 }
 
 #[test]
@@ -99,7 +120,25 @@ fn test_ip_addr() {
             value: "::1".parse().unwrap()
         },
     );
-    assert!(facet_toml::from_str::<Root>("value = 127.0.0.1:8000").is_err());
+    assert_eq!(
+        facet_toml::from_str::<Root>("value = '127.0.0.1:8000'")
+            .unwrap_err()
+            .kind,
+        TomlErrorKind::TypeConversion {
+            toml_type: "ip address",
+            rust_type: "core::net::ip_addr::IpAddr",
+            reason: Some("invalid IP address syntax".to_string())
+        }
+    );
+    assert_eq!(
+        facet_toml::from_str::<Root>("value = true")
+            .unwrap_err()
+            .kind,
+        TomlErrorKind::ExpectedType {
+            expected: "string",
+            got: "boolean"
+        }
+    );
 }
 
 #[test]
@@ -117,8 +156,6 @@ fn test_ipv4_addr() {
             value: "127.0.0.1".parse().unwrap()
         },
     );
-    assert!(facet_toml::from_str::<Root>("value = '::1'").is_err());
-    assert!(facet_toml::from_str::<Root>("value = 127.0.0.1:8000").is_err());
 }
 
 #[test]
@@ -136,8 +173,6 @@ fn test_ipv6_addr() {
             value: "::1".parse().unwrap()
         },
     );
-    assert!(facet_toml::from_str::<Root>("value = '127.0.0.1'").is_err());
-    assert!(facet_toml::from_str::<Root>("value = ::1:8000").is_err());
 }
 
 #[test]
@@ -153,6 +188,15 @@ fn test_f64() {
         facet_toml::from_str::<Root>("value = 1").expect("Failed to parse TOML"),
         Root { value: 1.0 },
     );
+    assert_eq!(
+        facet_toml::from_str::<Root>("value = true")
+            .unwrap_err()
+            .kind,
+        TomlErrorKind::ExpectedType {
+            expected: "number",
+            got: "boolean"
+        }
+    );
 }
 
 #[test]
@@ -167,6 +211,15 @@ fn test_f32() {
     assert_eq!(
         facet_toml::from_str::<Root>("value = 1").expect("Failed to parse TOML"),
         Root { value: 1.0 },
+    );
+    assert_eq!(
+        facet_toml::from_str::<Root>("value = true")
+            .unwrap_err()
+            .kind,
+        TomlErrorKind::ExpectedType {
+            expected: "number",
+            got: "boolean"
+        }
     );
 }
 
@@ -184,6 +237,15 @@ fn test_usize() {
         Root { value: 1 },
     );
     assert!(facet_toml::from_str::<Root>("value = -1").is_err());
+    assert_eq!(
+        facet_toml::from_str::<Root>("value = true")
+            .unwrap_err()
+            .kind,
+        TomlErrorKind::ExpectedType {
+            expected: "number",
+            got: "boolean"
+        }
+    );
 }
 
 #[test]
@@ -200,6 +262,15 @@ fn test_u64() {
         Root { value: 1 },
     );
     assert!(facet_toml::from_str::<Root>("value = -1").is_err());
+    assert_eq!(
+        facet_toml::from_str::<Root>("value = true")
+            .unwrap_err()
+            .kind,
+        TomlErrorKind::ExpectedType {
+            expected: "number",
+            got: "boolean"
+        }
+    );
 }
 
 #[test]
@@ -216,6 +287,15 @@ fn test_u32() {
         Root { value: 1 },
     );
     assert!(facet_toml::from_str::<Root>("value = -1").is_err());
+    assert_eq!(
+        facet_toml::from_str::<Root>("value = true")
+            .unwrap_err()
+            .kind,
+        TomlErrorKind::ExpectedType {
+            expected: "number",
+            got: "boolean"
+        }
+    );
 }
 
 #[test]
@@ -232,6 +312,15 @@ fn test_u16() {
         Root { value: 1 },
     );
     assert!(facet_toml::from_str::<Root>("value = -1").is_err());
+    assert_eq!(
+        facet_toml::from_str::<Root>("value = true")
+            .unwrap_err()
+            .kind,
+        TomlErrorKind::ExpectedType {
+            expected: "number",
+            got: "boolean"
+        }
+    );
 }
 
 #[test]
@@ -248,6 +337,15 @@ fn test_u8() {
         Root { value: 1 },
     );
     assert!(facet_toml::from_str::<Root>("value = -1").is_err());
+    assert_eq!(
+        facet_toml::from_str::<Root>("value = true")
+            .unwrap_err()
+            .kind,
+        TomlErrorKind::ExpectedType {
+            expected: "number",
+            got: "boolean"
+        }
+    );
 }
 
 #[test]
@@ -262,6 +360,15 @@ fn test_isize() {
     assert_eq!(
         facet_toml::from_str::<Root>("value = 1").expect("Failed to parse TOML"),
         Root { value: 1 },
+    );
+    assert_eq!(
+        facet_toml::from_str::<Root>("value = true")
+            .unwrap_err()
+            .kind,
+        TomlErrorKind::ExpectedType {
+            expected: "number",
+            got: "boolean"
+        }
     );
 }
 
@@ -278,6 +385,15 @@ fn test_i64() {
         facet_toml::from_str::<Root>("value = 1").expect("Failed to parse TOML"),
         Root { value: 1 },
     );
+    assert_eq!(
+        facet_toml::from_str::<Root>("value = true")
+            .unwrap_err()
+            .kind,
+        TomlErrorKind::ExpectedType {
+            expected: "number",
+            got: "boolean"
+        }
+    );
 }
 
 #[test]
@@ -292,6 +408,15 @@ fn test_i32() {
     assert_eq!(
         facet_toml::from_str::<Root>("value = 1").expect("Failed to parse TOML"),
         Root { value: 1 },
+    );
+    assert_eq!(
+        facet_toml::from_str::<Root>("value = true")
+            .unwrap_err()
+            .kind,
+        TomlErrorKind::ExpectedType {
+            expected: "number",
+            got: "boolean"
+        }
     );
 }
 
@@ -308,6 +433,15 @@ fn test_i16() {
         facet_toml::from_str::<Root>("value = 1").expect("Failed to parse TOML"),
         Root { value: 1 },
     );
+    assert_eq!(
+        facet_toml::from_str::<Root>("value = true")
+            .unwrap_err()
+            .kind,
+        TomlErrorKind::ExpectedType {
+            expected: "number",
+            got: "boolean"
+        }
+    );
 }
 
 #[test]
@@ -322,5 +456,14 @@ fn test_i8() {
     assert_eq!(
         facet_toml::from_str::<Root>("value = 1").expect("Failed to parse TOML"),
         Root { value: 1 },
+    );
+    assert_eq!(
+        facet_toml::from_str::<Root>("value = true")
+            .unwrap_err()
+            .kind,
+        TomlErrorKind::ExpectedType {
+            expected: "number",
+            got: "boolean"
+        }
     );
 }

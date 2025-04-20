@@ -34,7 +34,7 @@ pub(crate) fn number<'input, T: NumCast>(
                     rust_type: std::any::type_name::<T>(),
                     reason: None,
                 },
-                item.span(),
+                r.span(),
             )
         })?),
         Value::Integer(i) => Ok(T::from(*i.value()).ok_or_else(|| {
@@ -45,16 +45,16 @@ pub(crate) fn number<'input, T: NumCast>(
                     rust_type: std::any::type_name::<T>(),
                     reason: None,
                 },
-                item.span(),
+                i.span(),
             )
         })?),
-        _ => Err(TomlError::new(
+        other => Err(TomlError::new(
             toml,
             TomlErrorKind::ExpectedType {
                 expected: "number",
-                got: v.type_name(),
+                got: other.type_name(),
             },
-            item.span(),
+            other.span(),
         )),
     }
 }
@@ -80,7 +80,7 @@ pub(crate) fn boolean<'input>(toml: &'input str, item: &Item) -> Result<bool, To
                 expected: "boolean",
                 got: v.type_name(),
             },
-            item.span(),
+            v.span(),
         )),
     }
 }

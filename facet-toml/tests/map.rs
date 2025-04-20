@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use facet::Facet;
+use facet_toml::error::TomlErrorKind;
 
 #[test]
 fn test_scalar_map() {
@@ -32,6 +33,32 @@ fn test_scalar_map() {
         Root {
             values: [("a".to_string(), 0), ("b".to_string(), -1)].into()
         },
+    );
+
+    assert_eq!(
+        facet_toml::from_str::<Root>("values = true")
+            .unwrap_err()
+            .kind,
+        TomlErrorKind::ExpectedType {
+            expected: "table like structure",
+            got: "boolean"
+        }
+    );
+    assert_eq!(
+        facet_toml::from_str::<Root>("values.a = true")
+            .unwrap_err()
+            .kind,
+        TomlErrorKind::ExpectedType {
+            expected: "number",
+            got: "boolean"
+        }
+    );
+    assert_eq!(
+        facet_toml::from_str::<Root>("[values.a]").unwrap_err().kind,
+        TomlErrorKind::ExpectedType {
+            expected: "value",
+            got: "table"
+        }
     );
 }
 
@@ -74,6 +101,32 @@ fn test_scalar_map_with_other_fields() {
             other: 2,
         },
     );
+
+    assert_eq!(
+        facet_toml::from_str::<Root>("values = true")
+            .unwrap_err()
+            .kind,
+        TomlErrorKind::ExpectedType {
+            expected: "table like structure",
+            got: "boolean"
+        }
+    );
+    assert_eq!(
+        facet_toml::from_str::<Root>("values.a = true")
+            .unwrap_err()
+            .kind,
+        TomlErrorKind::ExpectedType {
+            expected: "number",
+            got: "boolean"
+        }
+    );
+    assert_eq!(
+        facet_toml::from_str::<Root>("[values.a]").unwrap_err().kind,
+        TomlErrorKind::ExpectedType {
+            expected: "value",
+            got: "table"
+        }
+    );
 }
 
 #[test]
@@ -110,6 +163,25 @@ fn test_unit_struct_map() {
             ]
             .into()
         },
+    );
+
+    assert_eq!(
+        facet_toml::from_str::<Root>("values = true")
+            .unwrap_err()
+            .kind,
+        TomlErrorKind::ExpectedType {
+            expected: "table like structure",
+            got: "boolean"
+        }
+    );
+    assert_eq!(
+        facet_toml::from_str::<Root>("values.a = 10")
+            .unwrap_err()
+            .kind,
+        TomlErrorKind::ExpectedType {
+            expected: "boolean",
+            got: "integer"
+        }
     );
 }
 

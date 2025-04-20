@@ -1,6 +1,7 @@
 //! Tests for TOML values to structs.
 
 use facet::Facet;
+use facet_toml::error::TomlErrorKind;
 
 #[test]
 fn test_unit_only_enum() {
@@ -29,6 +30,13 @@ fn test_unit_only_enum() {
         Root {
             value: UnitOnlyEnum::VariantB,
         },
+    );
+
+    assert_eq!(
+        facet_toml::from_str::<Root>("values = true")
+            .unwrap_err()
+            .kind,
+        TomlErrorKind::ExpectedFieldWithName("value")
     );
 }
 

@@ -1,6 +1,7 @@
 //! Tests for TOML values to different forms of options.
 
 use facet::Facet;
+use facet_toml::error::TomlErrorKind;
 
 #[test]
 fn test_option_scalar() {
@@ -18,6 +19,16 @@ fn test_option_scalar() {
     assert_eq!(
         facet_toml::from_str::<Root>("value = 1").expect("Failed to parse TOML"),
         Root { value: Some(1) },
+    );
+
+    assert_eq!(
+        facet_toml::from_str::<Root>("value = false")
+            .unwrap_err()
+            .kind,
+        TomlErrorKind::ExpectedType {
+            expected: "number",
+            got: "boolean"
+        }
     );
 }
 
@@ -39,6 +50,16 @@ fn test_nested_option() {
         Root {
             value: Some(Some(1))
         },
+    );
+
+    assert_eq!(
+        facet_toml::from_str::<Root>("value = false")
+            .unwrap_err()
+            .kind,
+        TomlErrorKind::ExpectedType {
+            expected: "number",
+            got: "boolean"
+        }
     );
 }
 
@@ -66,6 +87,13 @@ fn test_option_struct() {
             value: Some(Item { value: 1 })
         },
     );
+
+    assert_eq!(
+        facet_toml::from_str::<Root>("value.wrong-key = 2")
+            .unwrap_err()
+            .kind,
+        TomlErrorKind::ExpectedFieldWithName("value")
+    );
 }
 
 #[test]
@@ -91,6 +119,16 @@ fn test_option_struct_with_option() {
         Root {
             value: Some(Item { sub: Some(1) })
         },
+    );
+
+    assert_eq!(
+        facet_toml::from_str::<Root>("value.sub = false")
+            .unwrap_err()
+            .kind,
+        TomlErrorKind::ExpectedType {
+            expected: "number",
+            got: "boolean"
+        }
     );
 }
 
@@ -126,6 +164,13 @@ fn test_option_enum() {
             value: Some(Item::B(1))
         },
     );
+
+    assert!(matches!(
+        facet_toml::from_str::<Root>("value.non-existing = false")
+            .unwrap_err()
+            .kind,
+        TomlErrorKind::GenericReflect(_)
+    ));
 }
 
 #[test]
@@ -171,6 +216,23 @@ fn test_option_enum_option_scalar() {
     assert_eq!(
         facet_toml::from_str::<Root>("[B]").expect("Failed to parse TOML"),
         Root::B { b1: None, b2: None },
+    );
+
+    assert_eq!(
+        facet_toml::from_str::<Root>("A = false").unwrap_err().kind,
+        TomlErrorKind::ExpectedType {
+            expected: "string",
+            got: "boolean"
+        }
+    );
+    assert_eq!(
+        facet_toml::from_str::<Root>("B.b1 = false")
+            .unwrap_err()
+            .kind,
+        TomlErrorKind::ExpectedType {
+            expected: "number",
+            got: "boolean"
+        }
     );
 }
 
