@@ -40,7 +40,8 @@ enum Instruction {
     Value,
     CommaThenObjectKeyOrObjectClose,
     ObjectKeyOrObjectClose,
-    Pop, // pop after setting an object value
+    Pop,
+    CommaThenArrayItemOrArrayClose,
 }
 
 /// Deserialize a JSON string into a Wip object.
@@ -131,6 +132,10 @@ pub fn from_slice_wip<'input, 'a>(
                                 trace!("Object starting for map value ({})!", wip.shape().blue());
                                 reflect!(put_default());
                             }
+                            Def::Enum(_ed) => {
+                                trace!("Object starting for enum value ({})!", wip.shape().blue());
+                                bail!(JsonErrorKind::Unimplemented("map object"));
+                            }
                             Def::Struct(_) => {
                                 trace!(
                                     "Object starting for struct value ({})!",
@@ -138,22 +143,42 @@ pub fn from_slice_wip<'input, 'a>(
                                 );
                                 // nothing to do here
                             }
-                            Def::Enum(_ed) => {
-                                trace!("Object starting for enum value ({})!", wip.shape().blue());
-                                bail!(JsonErrorKind::Unimplemented("map object".to_owned()));
-                            }
                             _ => {
-                                bail!(JsonErrorKind::Unimplemented("Object".to_owned()));
+                                bail!(JsonErrorKind::UnsupportedType {
+                                    got: wip.shape(),
+                                    wanted: "map, enum, or struct"
+                                });
                             }
                         }
 
                         stack.push(Instruction::ObjectKeyOrObjectClose)
                     }
-                    Token::RBrace
-                    | Token::LBracket
-                    | Token::RBracket
-                    | Token::Colon
-                    | Token::Comma => {
+                    Token::LBracket => {
+                        match wip.shape().def {
+                            Def::Array(_) => {
+                                trace!("Array starting for array ({})!", wip.shape().blue());
+                            }
+                            Def::Slice(_) => {
+                                trace!("Array starting for slice ({})!", wip.shape().blue());
+                            }
+                            Def::List(_) => {
+                                trace!("Array starting for list ({})!", wip.shape().blue());
+                                reflect!(put_default());
+                            }
+                            _ => {
+                                bail!(JsonErrorKind::UnsupportedType {
+                                    got: wip.shape(),
+                                    wanted: "array, list, or slice"
+                                });
+                            }
+                        }
+
+                        reflect!(begin_pushback());
+                        reflect!(push());
+                        stack.push(Instruction::CommaThenArrayItemOrArrayClose);
+                        stack.push(Instruction::Value);
+                    }
+                    Token::RBrace | Token::RBracket | Token::Colon | Token::Comma => {
                         bail!(JsonErrorKind::UnexpectedToken {
                             got: token.node,
                             wanted: "value"
@@ -235,6 +260,28 @@ pub fn from_slice_wip<'input, 'a>(
                         bail!(JsonErrorKind::UnexpectedToken {
                             got: token.node,
                             wanted: "object key or closing brace"
+                        });
+                    }
+                }
+            }
+            Instruction::CommaThenArrayItemOrArrayClose => {
+                let token = next_token!();
+                match token.node {
+                    Token::Comma => {
+                        trace!("Array comma");
+                        reflect!(pop());
+                        reflect!(push());
+                        stack.push(Instruction::CommaThenArrayItemOrArrayClose);
+                        stack.push(Instruction::Value);
+                    }
+                    Token::RBracket => {
+                        trace!("Array close");
+                        stack.push(Instruction::Pop);
+                    }
+                    _ => {
+                        bail!(JsonErrorKind::UnexpectedToken {
+                            got: token.node,
+                            wanted: "comma or closing bracket"
                         });
                     }
                 }

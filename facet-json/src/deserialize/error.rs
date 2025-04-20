@@ -10,6 +10,7 @@ use facet_reflect::ReflectError;
 use owo_colors::OwoColorize;
 
 use super::{Token, TokenErrorKind, tokenizer::Span};
+use facet_core::Shape;
 
 /// A JSON parse error, with context. Never would've guessed huh.
 pub struct JsonError<'input> {
@@ -58,6 +59,9 @@ impl<'input> JsonError<'input> {
             JsonErrorKind::ReflectError(e) => format!("Error while reflecting type: {}", e),
             JsonErrorKind::SyntaxError(e) => format!("Syntax error: {}", e),
             JsonErrorKind::Unimplemented(s) => format!("Feature not yet implemented: {}", s),
+            JsonErrorKind::UnsupportedType { got, wanted } => {
+                format!("Unsupported type: got '{}', wanted '{}'", got, wanted)
+            }
         }
     }
 }
@@ -90,7 +94,15 @@ pub enum JsonErrorKind {
     /// An error occurred while parsing a token.
     SyntaxError(TokenErrorKind),
     /// Some feature is not yet implemented (under development).
-    Unimplemented(String),
+    Unimplemented(&'static str),
+    /// An unsupported type was encountered.
+    UnsupportedType {
+        /// The shape we got
+        got: &'static Shape,
+
+        /// The shape we wanted
+        wanted: &'static str,
+    },
 }
 
 impl From<ReflectError> for JsonErrorKind {

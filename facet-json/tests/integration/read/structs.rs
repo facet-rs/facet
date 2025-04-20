@@ -1,3 +1,8 @@
+use std::num::NonZero;
+
+use facet::Facet;
+use facet_json::from_str;
+
 #[test]
 fn json_read_struct_twofields() {
     facet_testhelpers::setup();

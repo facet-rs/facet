@@ -1,15 +1,5 @@
-#[test]
-fn json_read_vec() {
-    facet_testhelpers::setup();
-
-    let json = r#"[1, 2, 3, 4, 5]"#;
-
-    let v: Vec<i32> = match from_str(json) {
-        Ok(v) => v,
-        Err(e) => panic!("Error deserializing JSON: {}", e),
-    };
-    assert_eq!(v, vec![1, 2, 3, 4, 5]);
-}
+use facet::Facet;
+use facet_json::from_str;
 
 #[test]
 fn json_read_empty_vec() {
@@ -25,7 +15,20 @@ fn json_read_empty_vec() {
 }
 
 #[test]
-fn test_two_empty_arrays() {
+fn json_read_vec() {
+    facet_testhelpers::setup();
+
+    let json = r#"[1, 2, 3, 4, 5]"#;
+
+    let v: Vec<i32> = match from_str(json) {
+        Ok(v) => v,
+        Err(e) => panic!("Error deserializing JSON: {}", e),
+    };
+    assert_eq!(v, vec![1, 2, 3, 4, 5]);
+}
+
+#[test]
+fn test_two_empty_vecs() {
     facet_testhelpers::setup();
 
     #[derive(Facet, Clone, Default)]
@@ -50,7 +53,7 @@ fn test_two_empty_arrays() {
 }
 
 #[test]
-fn test_one_empty_one_nonempty_array() {
+fn test_one_empty_one_nonempty_vec() {
     facet_testhelpers::setup();
 
     #[derive(Facet, Clone, Default)]
@@ -75,7 +78,7 @@ fn test_one_empty_one_nonempty_array() {
 }
 
 #[test]
-fn test_one_nonempty_one_empty_array() {
+fn test_one_nonempty_one_empty_vec() {
     facet_testhelpers::setup();
 
     #[derive(Facet, Clone, Default)]
