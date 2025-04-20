@@ -6,7 +6,6 @@ use alloc::string::String;
 #[cfg(feature = "rich-diagnostics")]
 use ariadne::{Color, Config, IndexType, Label, Report, ReportKind, Source};
 use facet_reflect::ReflectError;
-#[cfg(feature = "rich-diagnostics")]
 use owo_colors::OwoColorize;
 
 use super::{Token, TokenErrorKind, tokenizer::Span};
@@ -57,7 +56,7 @@ impl<'input> JsonError<'input> {
                 )
             }
             JsonErrorKind::NumberOutOfRange(n) => {
-                format!("Number out of range: {}", n.to_string().red())
+                format!("Number out of range: {}", n.red())
             }
             JsonErrorKind::StringAsNumber(s) => {
                 format!("Expected a string but got number: {}", s.red())
@@ -66,7 +65,7 @@ impl<'input> JsonError<'input> {
                 format!(
                     "Unknown field: {} for shape {}",
                     field_name.red(),
-                    shape.to_string().yellow()
+                    shape.yellow()
                 )
             }
             JsonErrorKind::InvalidUtf8(e) => format!("Invalid UTF-8 encoding: {}", e.red()),
@@ -78,7 +77,7 @@ impl<'input> JsonError<'input> {
             JsonErrorKind::UnsupportedType { got, wanted } => {
                 format!(
                     "Unsupported type: got {}, wanted {}",
-                    got.to_string().red(),
+                    got.red(),
                     wanted.green()
                 )
             }
@@ -143,7 +142,7 @@ impl core::fmt::Display for JsonError<'_> {
             f,
             "{} at byte {} in path {}",
             self.message(),
-            self.pos,
+            self.span.start,
             self.path
         )
     }

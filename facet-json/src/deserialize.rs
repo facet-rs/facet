@@ -1,3 +1,6 @@
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec;
 use facet_core::Def;
 use facet_core::Facet;
 use facet_reflect::{HeapValue, Wip};
