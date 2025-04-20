@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0](https://github.com/facet-rs/facet/compare/facet-json-v0.11.1...facet-json-v0.12.0) - 2025-04-20
+
+### Other
+
+- msrv/nostd fixes
+- Uncomment rest of JSON tests but ignore them
+- Add getters to Shape & Field
+- Map key/value
+- More colors, update snapshots
+- Improve number handling for JSON deserialization
+- option and number
+- very nice error reporting as it turns out
+- Use TryFrom to deserialize NonZero<T>
+- nested arrays
+- add docs, fix snapshots
+- ooh spicy
+- Save value/vec, etc.
+- Next up: empty vecs
+- Booleans
+- Works for structs
+- Ignore test for now
+- err tests
+- Introduce JSON tokenizer
+
 ## [0.11.1](https://github.com/facet-rs/facet/compare/facet-json-v0.11.0...facet-json-v0.11.1) - 2025-04-20
 
 ### Other

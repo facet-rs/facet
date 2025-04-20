@@ -1,6 +1,6 @@
 [package]
 name = "facet"
-version = "0.9.6"
+version = "0.9.7"
 authors.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -21,9 +21,9 @@ camino = [
 ] # Implements Facet for camino types (Utf8PathBuf, Utf8Path)
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "0.10.1", default-features = false }
-facet-derive = { path = "../facet-derive", version = "0.9.6" }
-facet-reflect = { path = "../facet-reflect", version = "0.10.3", optional = true }
+facet-core = { path = "../facet-core", version = "0.11.0", default-features = false }
+facet-derive = { path = "../facet-derive", version = "0.9.7" }
+facet-reflect = { path = "../facet-reflect", version = "0.10.4", optional = true }
 
 [dev-dependencies]
 cargo-husky = { version = "1.5.0", default-features = false, features = [

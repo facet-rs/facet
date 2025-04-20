@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1](https://github.com/facet-rs/facet/compare/facet-derive-emit-v0.13.0...facet-derive-emit-v0.13.1) - 2025-04-20
+
+### Other
+
+- update Cargo.toml dependencies
+
 ## [0.13.0](https://github.com/facet-rs/facet/compare/facet-derive-emit-v0.12.0...facet-derive-emit-v0.13.0) - 2025-04-20
 
 ### Added

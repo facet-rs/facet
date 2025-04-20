@@ -150,7 +150,7 @@ dependencies = [
 
 [[package]]
 name = "facet"
-version = "0.9.6"
+version = "0.9.7"
 dependencies = [
  "cargo-husky",
  "eyre",
@@ -161,7 +161,7 @@ dependencies = [
 
 [[package]]
 name = "facet-args"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "facet",
  "facet-core",
@@ -173,7 +173,7 @@ dependencies = [
 
 [[package]]
 name = "facet-core"
-version = "0.10.1"
+version = "0.11.0"
 dependencies = [
  "bitflags",
  "camino",
@@ -183,7 +183,7 @@ dependencies = [
 
 [[package]]
 name = "facet-derive"
-version = "0.9.6"
+version = "0.9.7"
 dependencies = [
  "facet-core",
  "facet-derive-emit",
@@ -191,7 +191,7 @@ dependencies = [
 
 [[package]]
 name = "facet-derive-emit"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "facet-derive-parse",
  "insta",
@@ -200,7 +200,7 @@ dependencies = [
 
 [[package]]
 name = "facet-derive-parse"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "unsynn",
 ]
@@ -221,7 +221,7 @@ dependencies = [
 
 [[package]]
 name = "facet-json"
-version = "0.11.1"
+version = "0.12.0"
 dependencies = [
  "ariadne",
  "eyre",
@@ -236,7 +236,7 @@ dependencies = [
 
 [[package]]
 name = "facet-msgpack"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "facet",
  "facet-core",
@@ -247,7 +247,7 @@ dependencies = [
 
 [[package]]
 name = "facet-pretty"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "facet",
  "facet-core",
@@ -257,7 +257,7 @@ dependencies = [
 
 [[package]]
 name = "facet-reflect"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "bitflags",
  "eyre",
@@ -280,7 +280,7 @@ dependencies = [
 
 [[package]]
 name = "facet-toml"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "facet",
  "facet-core",
@@ -294,7 +294,7 @@ dependencies = [
 
 [[package]]
 name = "facet-urlencoded"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "facet",
  "facet-core",
@@ -306,7 +306,7 @@ dependencies = [
 
 [[package]]
 name = "facet-yaml"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "facet",
  "facet-core",
