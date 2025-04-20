@@ -149,27 +149,7 @@ fn serialize_struct<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()>
     write!(writer, "{{")?;
 
     let mut first = true;
-    for (field, field_peek) in struct_peek.fields() {
-        if field
-            .attributes
-            .iter()
-            .any(|attr| matches!(attr, FieldAttribute::SkipSerializing))
-        {
-            continue;
-        }
-
-        if field
-            .attributes
-            .iter()
-            .find_map(|attr| match attr {
-                FieldAttribute::SkipSerializingIf(fn_ptr) => Some(fn_ptr),
-                _ => None,
-            })
-            .is_some_and(|f| f(field_peek.data()))
-        {
-            continue;
-        }
-
+    for (field, field_peek) in struct_peek.fields_for_serialize() {
         if !first {
             write!(writer, ",")?;
         }
@@ -308,23 +288,15 @@ fn serialize_enum<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()> {
                 write!(writer, "{{")?;
 
                 let mut first = true;
-                for i in 0..variant.data.fields.len() {
-                    let field = enum_peek.field(i).ok_or_else(|| {
-                        io::Error::new(
-                            io::ErrorKind::Other,
-                            format!("Failed to access enum field {}", i),
-                        )
-                    })?;
-                    let field_name = variant.data.fields[i].name;
-
+                for (field, field_peek) in enum_peek.fields_for_serialize() {
                     if !first {
                         write!(writer, ",")?;
                     }
                     first = false;
 
-                    write_json_string(writer, field_name)?;
+                    write_json_string(writer, field.name)?;
                     write!(writer, ":")?;
-                    serialize(&field, writer)?;
+                    serialize(&field_peek, writer)?;
                 }
 
                 write!(writer, "}}")?
@@ -333,19 +305,12 @@ fn serialize_enum<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()> {
                 write!(writer, "[")?;
 
                 let mut first = true;
-                for i in 0..variant.data.fields.len() {
+                for (_field, field_peek) in enum_peek.fields_for_serialize() {
                     if !first {
                         write!(writer, ",")?;
                     }
                     first = false;
-
-                    let field = enum_peek.field(i).ok_or_else(|| {
-                        io::Error::new(
-                            io::ErrorKind::Other,
-                            format!("Failed to access enum field {}", i),
-                        )
-                    })?;
-                    serialize(&field, writer)?;
+                    serialize(&field_peek, writer)?;
                 }
 
                 write!(writer, "]")?;

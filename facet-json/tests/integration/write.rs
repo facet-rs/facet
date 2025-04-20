@@ -159,6 +159,22 @@ fn test_skip_serializing() {
     let test_struct2 = Salutations("groetjes", "wereld");
     let json = facet_json::to_string(&test_struct2);
     assert_eq!(json, r#"{"0":"groetjes"}"#);
+
+    #[derive(Debug, PartialEq, Clone, Facet)]
+    #[repr(C)]
+    enum Gruesse {
+        Tschuess {
+            auf_wiedersehen: i32,
+            #[facet(skip_serializing)]
+            bis_spaeter: i32,
+        },
+    }
+    let test_struct3 = Gruesse::Tschuess {
+        auf_wiedersehen: 1,
+        bis_spaeter: 2,
+    };
+    let json = facet_json::to_string(&test_struct3);
+    assert_eq!(json, r#"{"Tschuess":{"auf_wiedersehen":1}}"#);
 }
 
 #[test]
