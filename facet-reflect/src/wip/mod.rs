@@ -1499,7 +1499,7 @@ impl<'a> Wip<'a> {
     pub fn pop(mut self) -> Result<Self, ReflectError> {
         let Some(frame) = self.pop_inner() else {
             return Err(ReflectError::InvariantViolation {
-                invariant: "No frame to pop",
+                invariant: "No frame to pop — it was time to call build()",
             });
         };
         self.track(frame);

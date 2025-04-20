@@ -1,3 +1,4 @@
+use facet_core::Def;
 use facet_core::Facet;
 use facet_reflect::{HeapValue, Wip};
 use log::trace;
@@ -61,8 +62,8 @@ pub fn from_slice_wip<'input, 'a>(
     let mut last_span = Span { start: 0, len: 0 };
 
     macro_rules! bail {
-        ($span:expr, $kind:expr) => {
-            return Err(JsonError::new($kind, input, $span, wip.path()))
+        ($kind:expr) => {
+            return Err(JsonError::new($kind, input, last_span, wip.path()))
         };
     }
 
@@ -74,7 +75,8 @@ pub fn from_slice_wip<'input, 'a>(
                     token
                 }
                 Err(e) => {
-                    bail!(e.span, JsonErrorKind::SyntaxError(e.kind));
+                    last_span = e.span;
+                    bail!(JsonErrorKind::SyntaxError(e.kind));
                 }
             }
         };
@@ -102,6 +104,7 @@ pub fn from_slice_wip<'input, 'a>(
         let insn = match stack.pop() {
             Some(insn) => insn,
             None => {
+                trace!("No instruction, building.");
                 let path = wip.path();
                 return Ok(match wip.build() {
                     Ok(hv) => hv,
@@ -123,7 +126,27 @@ pub fn from_slice_wip<'input, 'a>(
                 let token = next_token!();
                 match token.node {
                     Token::LBrace => {
-                        trace!("Object starting");
+                        match wip.shape().def {
+                            Def::Map(_md) => {
+                                trace!("Object starting for map value ({})!", wip.shape().blue());
+                                reflect!(put_default());
+                            }
+                            Def::Struct(_) => {
+                                trace!(
+                                    "Object starting for struct value ({})!",
+                                    wip.shape().blue()
+                                );
+                                // nothing to do here
+                            }
+                            Def::Enum(ed) => {
+                                trace!("Object starting for enum value ({})!", wip.shape().blue());
+                                bail!(JsonErrorKind::Unimplemented("map object".to_owned()));
+                            }
+                            _ => {
+                                bail!(JsonErrorKind::Unimplemented("Object".to_owned()));
+                            }
+                        }
+
                         stack.push(Instruction::ObjectKeyOrObjectClose)
                     }
                     Token::RBrace
@@ -131,13 +154,10 @@ pub fn from_slice_wip<'input, 'a>(
                     | Token::RBracket
                     | Token::Colon
                     | Token::Comma => {
-                        bail!(
-                            token.span,
-                            JsonErrorKind::UnexpectedToken {
-                                got: token.node,
-                                wanted: "value"
-                            }
-                        );
+                        bail!(JsonErrorKind::UnexpectedToken {
+                            got: token.node,
+                            wanted: "value"
+                        });
                     }
                     Token::String(s) => {
                         reflect!(put::<String>(s));
@@ -171,15 +191,13 @@ pub fn from_slice_wip<'input, 'a>(
                     }
                     Token::RBrace => {
                         trace!("Object close");
+                        stack.push(Instruction::Pop);
                     }
                     _ => {
-                        bail!(
-                            token.span,
-                            JsonErrorKind::UnexpectedToken {
-                                got: token.node,
-                                wanted: "comma"
-                            }
-                        );
+                        bail!(JsonErrorKind::UnexpectedToken {
+                            got: token.node,
+                            wanted: "comma"
+                        });
                     }
                 }
             }
@@ -189,20 +207,17 @@ pub fn from_slice_wip<'input, 'a>(
                     Token::String(key) => {
                         let index = match wip.field_index(&key) {
                             Some(index) => index,
-                            None => bail!(token.span, JsonErrorKind::UnknownField(key)),
+                            None => bail!(JsonErrorKind::UnknownField(key)),
                         };
                         reflect!(field(index));
 
                         trace!("Object key: {}", key);
                         let colon = next_token!();
                         if colon.node != Token::Colon {
-                            bail!(
-                                colon.span,
-                                JsonErrorKind::UnexpectedToken {
-                                    got: colon.node,
-                                    wanted: "colon"
-                                }
-                            );
+                            bail!(JsonErrorKind::UnexpectedToken {
+                                got: colon.node,
+                                wanted: "colon"
+                            });
                         }
                         stack.push(Instruction::CommaThenObjectKeyOrObjectClose);
                         stack.push(Instruction::Pop);
@@ -210,15 +225,13 @@ pub fn from_slice_wip<'input, 'a>(
                     }
                     Token::RBrace => {
                         trace!("Object closing");
+                        stack.push(Instruction::Pop);
                     }
                     _ => {
-                        bail!(
-                            token.span,
-                            JsonErrorKind::UnexpectedToken {
-                                got: token.node,
-                                wanted: "object key or closing brace"
-                            }
-                        );
+                        bail!(JsonErrorKind::UnexpectedToken {
+                            got: token.node,
+                            wanted: "object key or closing brace"
+                        });
                     }
                 }
             }

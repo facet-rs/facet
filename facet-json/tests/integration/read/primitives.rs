@@ -15,7 +15,6 @@ fn json_read_empty_object_for_struct() -> eyre::Result<()> {
     Ok(())
 }
 
-#[ignore]
 #[test]
 fn json_read_empty_object_for_hashmap() -> eyre::Result<()> {
     facet_testhelpers::setup();

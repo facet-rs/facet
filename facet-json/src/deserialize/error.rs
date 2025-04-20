@@ -57,6 +57,7 @@ impl<'input> JsonError<'input> {
             JsonErrorKind::InvalidUtf8(e) => format!("Invalid UTF-8 encoding: {}", e),
             JsonErrorKind::ReflectError(e) => format!("Error while reflecting type: {}", e),
             JsonErrorKind::SyntaxError(e) => format!("Syntax error: {}", e),
+            JsonErrorKind::Unimplemented(s) => format!("Feature not yet implemented: {}", s),
         }
     }
 }
@@ -88,6 +89,8 @@ pub enum JsonErrorKind {
     ReflectError(ReflectError),
     /// An error occurred while parsing a token.
     SyntaxError(TokenErrorKind),
+    /// Some feature is not yet implemented (under development).
+    Unimplemented(String),
 }
 
 impl From<ReflectError> for JsonErrorKind {
