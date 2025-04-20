@@ -20,7 +20,7 @@ fn json_read_vec() {
 
     let json = r#"[1, 2, 3, 4, 5]"#;
 
-    let v: Vec<i32> = match from_str(json) {
+    let v: Vec<u64> = match from_str(json) {
         Ok(v) => v,
         Err(e) => panic!("Error deserializing JSON: {}", e),
     };
@@ -108,7 +108,7 @@ fn test_nested_arrays() {
 
     #[derive(Facet, Clone, Default)]
     pub struct NestedArrays {
-        pub matrix: Vec<Vec<i32>>,
+        pub matrix: Vec<Vec<u64>>,
     }
 
     let markup = r#"
