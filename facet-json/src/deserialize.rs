@@ -143,26 +143,69 @@ pub fn from_slice_wip<'input, 'a>(
 
                 let container_shape = wip.shape();
                 if let Def::Struct(sd) = container_shape.def {
+                    let mut has_unset = false;
+
                     trace!("Let's check all fields are initialized");
                     for (index, field) in sd.fields.iter().enumerate() {
-                        let is_set = match wip.is_field_set(index) {
-                            Ok(is_set) => is_set,
-                            Err(err) => {
-                                trace!("Error checking field set status: {:?}", err);
-                                return Err(JsonError::new(
-                                    JsonErrorKind::ReflectError(err),
-                                    input,
-                                    last_span,
-                                    wip.path(),
-                                ));
-                            }
-                        };
+                        let is_set = wip.is_field_set(index).map_err(|err| {
+                            trace!("Error checking field set status: {:?}", err);
+                            JsonError::new(
+                                JsonErrorKind::ReflectError(err),
+                                input,
+                                last_span,
+                                wip.path(),
+                            )
+                        })?;
                         if !is_set {
                             trace!(
                                 "Field #{} {:?} is not initialized",
                                 index.yellow(),
                                 field.blue()
                             );
+                            has_unset = true;
+                        }
+                    }
+
+                    if has_unset {
+                        // let's allocate and build a default value
+                        let default_val = Wip::alloc_shape(container_shape)
+                            .put_default()
+                            .map_err(|e| {
+                                JsonError::new(
+                                    JsonErrorKind::ReflectError(e),
+                                    input,
+                                    last_span,
+                                    wip.path(),
+                                )
+                            })?
+                            .build()
+                            .map_err(|e| {
+                                JsonError::new(
+                                    JsonErrorKind::ReflectError(e),
+                                    input,
+                                    last_span,
+                                    wip.path(),
+                                )
+                            })?;
+                        let peek = default_val.peek().into_struct().unwrap();
+
+                        for (index, field) in sd.fields.iter().enumerate() {
+                            let is_set = wip.is_field_set(index).map_err(|err| {
+                                trace!("Error checking field set status: {:?}", err);
+                                JsonError::new(
+                                    JsonErrorKind::ReflectError(err),
+                                    input,
+                                    last_span,
+                                    wip.path(),
+                                )
+                            })?;
+                            if !is_set {
+                                let address_of_field_from_default =
+                                    peek.field(index).unwrap().data();
+                                reflect!(field(index));
+                                reflect!(put_shape(address_of_field_from_default, field.shape()));
+                                reflect!(pop());
+                            }
                         }
                     }
                 } else {
