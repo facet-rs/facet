@@ -4,8 +4,6 @@
 pub mod error;
 mod to_scalar;
 
-use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-
 use error::{TomlError, TomlErrorKind};
 use facet_core::{Def, Facet, Struct, StructKind};
 use facet_reflect::{ScalarType, Wip};
@@ -49,8 +47,6 @@ fn deserialize_item<'input, 'a>(
     wip: Wip<'a>,
     item: &Item,
 ) -> Result<Wip<'a>, TomlError<'input>> {
-    trace!("Deserializing {}", item.type_name().cyan());
-
     match wip.shape().def {
         Def::Scalar(_) => deserialize_as_scalar(toml, wip, item),
         Def::List(_) => deserialize_as_list(toml, wip, item),
@@ -69,7 +65,11 @@ fn deserialize_as_struct<'input, 'a>(
     def: Struct,
     item: &Item,
 ) -> Result<Wip<'a>, TomlError<'input>> {
-    trace!("Deserializing {}", "struct".blue());
+    trace!(
+        "Deserializing {} as {}",
+        item.type_name().cyan(),
+        "struct".blue()
+    );
 
     // Parse as a the inner struct type if item is a single value and the struct is a unit struct
     if item.is_value() && !item.is_inline_table() {
@@ -149,7 +149,11 @@ fn deserialize_as_enum<'input, 'a>(
     wip: Wip<'a>,
     item: &Item,
 ) -> Result<Wip<'a>, TomlError<'input>> {
-    trace!("Deserializing {}", "enum".blue());
+    trace!(
+        "Deserializing {} as {}",
+        item.type_name().cyan(),
+        "enum".blue()
+    );
 
     let wip = match item {
         Item::None => todo!(),
@@ -317,7 +321,11 @@ fn deserialize_as_list<'input, 'a>(
     mut wip: Wip<'a>,
     item: &Item,
 ) -> Result<Wip<'a>, TomlError<'input>> {
-    trace!("Deserializing {}", "list".blue());
+    trace!(
+        "Deserializing {} as {}",
+        item.type_name().cyan(),
+        "list".blue()
+    );
 
     // Get the TOML item as an array
     let Some(item) = item.as_array() else {
@@ -373,7 +381,11 @@ fn deserialize_as_map<'input, 'a>(
     mut wip: Wip<'a>,
     item: &Item,
 ) -> Result<Wip<'a>, TomlError<'input>> {
-    trace!("Deserializing {}", "map".blue());
+    trace!(
+        "Deserializing {} as {}",
+        item.type_name().cyan(),
+        "map".blue()
+    );
 
     // We expect a table to fill a map
     let table = item.as_table_like().ok_or_else(|| {
@@ -412,7 +424,7 @@ fn deserialize_as_map<'input, 'a>(
         match ScalarType::try_from_shape(wip.shape()).ok_or_else(|| {
             TomlError::new(
                 toml,
-                TomlErrorKind::UnrecognizedScalar(wip.shape().to_string()),
+                TomlErrorKind::UnrecognizedScalar(wip.shape()),
                 item.span(),
             )
         })? {
@@ -433,7 +445,7 @@ fn deserialize_as_map<'input, 'a>(
             _ => {
                 return Err(TomlError::new(
                     toml,
-                    TomlErrorKind::InvalidKey(wip.shape().to_string()),
+                    TomlErrorKind::InvalidKey(wip.shape()),
                     item.span(),
                 ));
             }
@@ -465,7 +477,11 @@ fn deserialize_as_option<'input, 'a>(
     mut wip: Wip<'a>,
     item: &Item,
 ) -> Result<Wip<'a>, TomlError<'input>> {
-    trace!("Deserializing {}", "option".blue());
+    trace!(
+        "Deserializing {} as {}",
+        item.type_name().cyan(),
+        "option".blue()
+    );
 
     wip = wip
         .push_some()
@@ -485,9 +501,13 @@ fn deserialize_as_option<'input, 'a>(
 fn deserialize_as_smartpointer<'input, 'a>(
     _toml: &'input str,
     mut _wip: Wip<'a>,
-    _item: &Item,
+    item: &Item,
 ) -> Result<Wip<'a>, TomlError<'input>> {
-    trace!("Deserializing {}", "smart pointer".blue());
+    trace!(
+        "Deserializing {} as {}",
+        item.type_name().cyan(),
+        "smart pointer".blue()
+    );
 
     trace!("Finished deserializing {}", "smart pointer".blue());
 
@@ -499,125 +519,52 @@ fn deserialize_as_scalar<'input, 'a>(
     mut wip: Wip<'a>,
     item: &Item,
 ) -> Result<Wip<'a>, TomlError<'input>> {
-    trace!("Deserializing {}", "scalar".blue());
+    trace!(
+        "Deserializing {} as {}",
+        item.type_name().cyan(),
+        "scalar".blue()
+    );
 
-    match ScalarType::try_from_shape(wip.shape()).ok_or_else(|| {
+    wip = match ScalarType::try_from_shape(wip.shape()).ok_or_else(|| {
         TomlError::new(
             toml,
-            TomlErrorKind::UnrecognizedScalar(wip.shape().to_string()),
+            TomlErrorKind::UnrecognizedScalar(wip.shape()),
             item.span(),
         )
     })? {
-        ScalarType::Bool => {
-            wip = wip
-                .put(to_scalar::boolean(toml, item)?)
-                .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?
-        }
+        ScalarType::Bool => to_scalar::put_boolean(toml, wip, item)?,
+
+        // Regular String and &str are handled by from_str
         #[cfg(feature = "std")]
-        ScalarType::String => {
-            wip = wip
-                .put(to_scalar::string(toml, item)?)
-                .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?
+        ScalarType::CowStr => to_scalar::put_string::<std::borrow::Cow<'_, str>>(toml, wip, item)?,
+
+        ScalarType::F32 => to_scalar::put_number::<f32>(toml, wip, item)?,
+        ScalarType::F64 => to_scalar::put_number::<f64>(toml, wip, item)?,
+        ScalarType::U8 => to_scalar::put_number::<u8>(toml, wip, item)?,
+        ScalarType::U16 => to_scalar::put_number::<u16>(toml, wip, item)?,
+        ScalarType::U32 => to_scalar::put_number::<u32>(toml, wip, item)?,
+        ScalarType::U64 => to_scalar::put_number::<u64>(toml, wip, item)?,
+        ScalarType::USize => to_scalar::put_number::<usize>(toml, wip, item)?,
+        ScalarType::I8 => to_scalar::put_number::<i8>(toml, wip, item)?,
+        ScalarType::I16 => to_scalar::put_number::<i16>(toml, wip, item)?,
+        ScalarType::I32 => to_scalar::put_number::<i32>(toml, wip, item)?,
+        ScalarType::I64 => to_scalar::put_number::<i64>(toml, wip, item)?,
+        ScalarType::ISize => to_scalar::put_number::<isize>(toml, wip, item)?,
+
+        // Use the from_str method if available
+        _ if wip.shape().is_from_str() => {
+            // Try to parse it as a string
+            to_scalar::put_from_str(toml, wip, item)?
         }
-        #[cfg(feature = "std")]
-        ScalarType::CowStr => {
-            wip = wip
-                .put(std::borrow::Cow::Owned(to_scalar::string(toml, item)?))
-                .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?
-        }
-        ScalarType::F32 => {
-            wip = wip
-                .put(to_scalar::number::<f32>(toml, item)?)
-                .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?
-        }
-        ScalarType::F64 => {
-            wip = wip
-                .put(to_scalar::number::<f64>(toml, item)?)
-                .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?
-        }
-        ScalarType::U8 => {
-            wip = wip
-                .put(to_scalar::number::<u8>(toml, item)?)
-                .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?
-        }
-        ScalarType::U16 => {
-            wip = wip
-                .put(to_scalar::number::<u16>(toml, item)?)
-                .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?
-        }
-        ScalarType::U32 => {
-            wip = wip
-                .put(to_scalar::number::<u32>(toml, item)?)
-                .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?
-        }
-        ScalarType::U64 => {
-            wip = wip
-                .put(to_scalar::number::<u64>(toml, item)?)
-                .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?
-        }
-        ScalarType::USize => {
-            wip = wip
-                .put(to_scalar::number::<usize>(toml, item)?)
-                .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?
-        }
-        ScalarType::I8 => {
-            wip = wip
-                .put(to_scalar::number::<i8>(toml, item)?)
-                .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?
-        }
-        ScalarType::I16 => {
-            wip = wip
-                .put(to_scalar::number::<i16>(toml, item)?)
-                .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?
-        }
-        ScalarType::I32 => {
-            wip = wip
-                .put(to_scalar::number::<i32>(toml, item)?)
-                .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?
-        }
-        ScalarType::I64 => {
-            wip = wip
-                .put(to_scalar::number::<i64>(toml, item)?)
-                .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?
-        }
-        ScalarType::ISize => {
-            wip = wip
-                .put(to_scalar::number::<isize>(toml, item)?)
-                .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?
-        }
-        #[cfg(feature = "std")]
-        ScalarType::SocketAddr => {
-            wip = wip
-                .put(to_scalar::from_str::<std::net::SocketAddr>(
-                    toml,
-                    item,
-                    "socket address",
-                )?)
-                .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?
-        }
-        ScalarType::IpAddr => {
-            wip = wip
-                .put(to_scalar::from_str::<IpAddr>(toml, item, "ip address")?)
-                .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?
-        }
-        ScalarType::Ipv4Addr => {
-            wip = wip
-                .put(to_scalar::from_str::<Ipv4Addr>(toml, item, "ipv4 address")?)
-                .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?
-        }
-        ScalarType::Ipv6Addr => {
-            wip = wip
-                .put(to_scalar::from_str::<Ipv6Addr>(toml, item, "ipv6 address")?)
-                .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?
-        }
+
         _ => {
             return Err(TomlError::new(
                 toml,
-                TomlErrorKind::UnrecognizedScalar(wip.shape().to_string()),
+                TomlErrorKind::UnrecognizedScalar(wip.shape()),
                 item.span(),
             ));
         }
-    }
+    };
 
     trace!("Finished deserializing {}", "scalar".blue());
 

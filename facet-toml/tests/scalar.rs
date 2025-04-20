@@ -121,13 +121,11 @@ fn test_ip_addr() {
         },
     );
     assert_eq!(
-        facet_toml::from_str::<Root>("value = '127.0.0.1:8000'")
-            .unwrap_err()
-            .kind,
-        TomlErrorKind::TypeConversion {
-            toml_type: "ip address",
-            rust_type: "core::net::ip_addr::IpAddr",
-            reason: Some("invalid IP address syntax".to_string())
+        dbg!(facet_toml::from_str::<Root>("value = '127.0.0.1:8000'").unwrap_err()).kind,
+        TomlErrorKind::FailedTypeConversion {
+            toml_type_name: "string",
+            rust_type: core::net::IpAddr::SHAPE,
+            reason: None
         }
     );
     assert_eq!(

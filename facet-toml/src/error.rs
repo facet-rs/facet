@@ -4,6 +4,7 @@ use core::ops::Range;
 
 #[cfg(feature = "rich-diagnostics")]
 use ariadne::{Color, Label, Report, ReportKind, Source};
+use facet_core::{Shape, TypeNameOpts};
 use facet_reflect::ReflectError;
 
 /// Any error from deserializing TOML.
@@ -29,15 +30,17 @@ impl<'input> TomlError<'input> {
                 format!("Error while reflecting type: {reflect_error}")
             }
             TomlErrorKind::GenericTomlError(message) => format!("TOML error: {message}"),
-            TomlErrorKind::TypeConversion {
-                toml_type,
+            TomlErrorKind::FailedTypeConversion {
+                toml_type_name,
                 rust_type,
                 reason,
             } => {
+                let rust_type_name = TypeNameWriter(rust_type);
+
                 if let Some(reason) = reason {
-                    format!("Could not convert type '{toml_type}' to '{rust_type}': {reason}")
+                    format!("Can't parse type '{rust_type_name}' from '{toml_type_name}': {reason}")
                 } else {
-                    format!("Could not convert type '{toml_type}' to '{rust_type}'")
+                    format!("Can't parse type '{rust_type_name}' from '{toml_type_name}'")
                 }
             }
             TomlErrorKind::ExpectedType { expected, got } => {
@@ -45,9 +48,14 @@ impl<'input> TomlError<'input> {
             }
             TomlErrorKind::UnrecognizedType(r#type) => format!("Unrecognized type '{type}'"),
             TomlErrorKind::UnrecognizedScalar(scalar_type) => {
-                format!("Unrecognized Rust scalar type '{scalar_type}'")
+                format!(
+                    "Unrecognized Rust scalar type '{}'",
+                    TypeNameWriter(scalar_type)
+                )
             }
-            TomlErrorKind::InvalidKey(field) => format!("Invalid Rust key '{field}'"),
+            TomlErrorKind::InvalidKey(field) => {
+                format!("Invalid Rust key '{}'", TypeNameWriter(field))
+            }
             TomlErrorKind::ExpectedFieldWithName(name) => {
                 format!("Expected field with name '{name}'")
             }
@@ -126,11 +134,11 @@ pub enum TomlErrorKind {
     /// Parsing TOML document error.
     GenericTomlError(String),
     /// Parsing a TOML type as a Rust type failed.
-    TypeConversion {
+    FailedTypeConversion {
         /// TOML type that failed to convert.
-        toml_type: &'static str,
+        toml_type_name: &'static str,
         /// Rust that type didn't match the TOML type.
-        rust_type: &'static str,
+        rust_type: &'static Shape,
         /// Explanation why it failed.
         reason: Option<String>,
     },
@@ -144,9 +152,9 @@ pub enum TomlErrorKind {
     /// Found a TOML type that we don't know how to handle.
     UnrecognizedType(&'static str),
     /// Found a Rust scalar type that we don't know how to handle.
-    UnrecognizedScalar(String),
+    UnrecognizedScalar(&'static Shape),
     /// Rust value is not a valid key.
-    InvalidKey(String),
+    InvalidKey(&'static Shape),
     /// Expected a TOML field with the specified name, but couldn't find it.
     ExpectedFieldWithName(&'static str),
     /// Expected at least one field, got zero.
@@ -155,4 +163,13 @@ pub enum TomlErrorKind {
     ExpectedExactlyOneField,
     /// Tried parsing a single value as a struct with multiple fields.
     ParseSingleValueAsMultipleFieldStruct,
+}
+
+/// Wrap the `Shape` in a type so we can write it's type name directly with display.
+struct TypeNameWriter(&'static Shape);
+
+impl core::fmt::Display for TypeNameWriter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.write_type_name(f, TypeNameOpts::default())
+    }
 }
