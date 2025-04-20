@@ -783,6 +783,34 @@ impl<'a> Wip<'a> {
 
         // Check that the type matches
         if frame.shape != src_shape {
+            trace!(
+                "Trying to put a {} into a {}",
+                src_shape.yellow(),
+                frame.shape.magenta()
+            );
+
+            // Maybe there's a `TryFrom` impl?
+            if let Some(try_from) = frame.shape.vtable.try_from {
+                match unsafe { try_from(src, src_shape, frame.data) } {
+                    Ok(_) => {
+                        unsafe {
+                            frame.mark_fully_initialized();
+                        }
+
+                        let shape = frame.shape;
+                        let index = frame.field_index_in_parent;
+
+                        // mark the field as initialized
+                        self.mark_field_as_initialized(shape, index)?;
+
+                        debug!("[{}] Just put a {} value", self.frames.len(), shape.green());
+
+                        return Ok(self);
+                    }
+                    Err(e) => return Err(ReflectError::TryFromError { inner: e }),
+                }
+            }
+
             // Maybe we're putting into an Option<T>?
             // Handle Option<Inner>
             if let Def::Option(od) = frame.shape.def {

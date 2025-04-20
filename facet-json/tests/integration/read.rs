@@ -5,5 +5,6 @@ mod bool;
 // mod option;
 mod primitives;
 // mod rename;
-// mod structs;
+mod nonzero;
+mod structs;
 mod vec;

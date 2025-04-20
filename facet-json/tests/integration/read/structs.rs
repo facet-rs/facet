@@ -1,5 +1,3 @@
-use std::num::NonZero;
-
 use facet::Facet;
 use facet_json::from_str;
 
@@ -46,28 +44,12 @@ fn json_read_struct_threefields() {
 }
 
 #[test]
-fn json_read_nonzero() {
-    facet_testhelpers::setup();
-
-    #[derive(Facet)]
-    struct Foo {
-        foo: NonZero<u8>,
-    }
-    let json = r#"{"foo": 1}"#;
-    let s: Foo = match from_str(json) {
-        Ok(s) => s,
-        Err(e) => panic!("Error deserializing JSON: {}", e),
-    };
-    assert_eq!(s.foo, { const { NonZero::new(1).unwrap() } });
-}
-
-#[test]
 fn test_from_json_with_nested_structs() {
     facet_testhelpers::setup();
 
     #[derive(Facet)]
     struct InnerStruct {
-        value: i32,
+        value: u64,
     }
 
     #[derive(Facet)]

@@ -140,12 +140,13 @@ impl core::error::Error for ParseError {}
 /// same pointer wrapped in an [`PtrMut`]. If conversion fails, it returns `Err` with an error.
 pub type TryFromFn = for<'src, 'mem> unsafe fn(
     source: PtrConst<'src>,
+    source_shape: &'static Shape,
     target: PtrUninit<'mem>,
 ) -> Result<PtrMut<'mem>, TryFromError>;
 
 /// Error type for TryFrom conversion failures
 #[non_exhaustive]
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum TryFromError {
     /// Generic conversion error
     Generic(&'static str),

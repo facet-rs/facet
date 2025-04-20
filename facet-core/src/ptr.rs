@@ -18,7 +18,11 @@ impl<'mem> PtrUninit<'mem> {
     /// - The source pointer must be valid for reads of `len` bytes
     /// - This pointer must be valid for writes of `len` bytes and properly aligned
     /// - The regions may not overlap
-    pub unsafe fn copy_from(self, src: PtrConst<'mem>, shape: &Shape) -> PtrMut<'mem> {
+    pub unsafe fn copy_from<'src>(
+        self,
+        src: PtrConst<'src>,
+        shape: &'static Shape,
+    ) -> PtrMut<'mem> {
         // SAFETY: The caller is responsible for upholding the invariants:
         // - `src` must be valid for reads of `shape.size` bytes
         // - `self` must be valid for writes of `shape.size` bytes and properly aligned

@@ -160,11 +160,33 @@ macro_rules! impl_facet_for_integer {
                     .def(Def::Scalar(
                         ScalarDef::builder().affinity($nz_affinity).build(),
                     ))
-                    .vtable(value_vtable!($type, |f, _opts| write!(
-                        f,
-                        "core::num::NonZero<{}>",
-                        stringify!($type)
-                    )))
+                    .vtable(
+                        &const {
+                            let mut vtable = value_vtable_inner!($type, |f, _opts| write!(
+                                f,
+                                "core::num::NonZero<{}>",
+                                stringify!($type)
+                            ));
+
+                            vtable.try_from = Some(|source, source_shape, dest| {
+                                if source_shape == Self::SHAPE {
+                                    return Ok(unsafe { dest.copy_from(source, source_shape) });
+                                }
+                                if source_shape == <$type>::SHAPE {
+                                    let value: $type = *unsafe { source.get::<$type>() };
+                                    let nz = NonZero::new(value)
+                                        .ok_or_else(|| TryFromError::Generic("Invalid value"))?;
+                                    return Ok(unsafe { dest.put::<NonZero<$type>>(nz) });
+                                }
+                                Err(TryFromError::Incompatible {
+                                    source: source_shape,
+                                    target: Self::SHAPE,
+                                })
+                            });
+
+                            vtable
+                        },
+                    )
                     .build()
             };
         }
