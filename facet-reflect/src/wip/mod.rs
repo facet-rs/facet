@@ -807,7 +807,13 @@ impl<'a> Wip<'a> {
 
                         return Ok(self);
                     }
-                    Err(e) => return Err(ReflectError::TryFromError { inner: e }),
+                    Err(e) => {
+                        return Err(ReflectError::TryFromError {
+                            inner: e,
+                            src_shape,
+                            dst_shape: frame.shape,
+                        });
+                    }
                 }
             }
 

@@ -151,30 +151,20 @@ pub enum TryFromError {
     /// Generic conversion error
     Generic(&'static str),
     /// The target shape doesn't implement conversion from any source shape (no try_from in vtable)
-    Unimplemented(&'static Shape),
+    Unimplemented,
     /// The target shape has a conversion implementation, but it doesn't support converting from this specific source shape
-    Incompatible {
-        /// The source shape that we tried to convert from
-        source: &'static Shape,
-        /// The target shape that we tried to convert to
-        target: &'static Shape,
-    },
+    Incompatible,
 }
 
 impl core::fmt::Display for TryFromError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            TryFromError::Generic(msg) => write!(f, "Conversion failed: {}", msg),
-            TryFromError::Unimplemented(shape) => write!(
+            TryFromError::Generic(msg) => write!(f, "{}", msg),
+            TryFromError::Unimplemented => write!(
                 f,
-                "Conversion failed: Shape {} doesn't implement any conversions (no try_from function)",
-                shape
+                "Shape doesn't implement any conversions (no try_from function)",
             ),
-            TryFromError::Incompatible { source, target } => write!(
-                f,
-                "Conversion failed: Cannot convert from shape {} to shape {}",
-                source, target
-            ),
+            TryFromError::Incompatible => write!(f, "Incompatible types"),
         }
     }
 }

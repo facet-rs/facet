@@ -58,7 +58,7 @@ impl<'input> JsonError<'input> {
                 format!("Unknown field: {} for shape {}", field_name, shape)
             }
             JsonErrorKind::InvalidUtf8(e) => format!("Invalid UTF-8 encoding: {}", e),
-            JsonErrorKind::ReflectError(e) => format!("Error while reflecting type: {}", e),
+            JsonErrorKind::ReflectError(e) => format!("{}", e),
             JsonErrorKind::SyntaxError(e) => format!("Syntax error: {}", e),
             JsonErrorKind::Unimplemented(s) => format!("Feature not yet implemented: {}", s),
             JsonErrorKind::UnsupportedType { got, wanted } => {

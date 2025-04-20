@@ -164,7 +164,7 @@ macro_rules! impl_facet_for_integer {
                         &const {
                             let mut vtable = value_vtable_inner!($type, |f, _opts| write!(
                                 f,
-                                "core::num::NonZero<{}>",
+                                "NonZero<{}>",
                                 stringify!($type)
                             ));
 
@@ -174,14 +174,12 @@ macro_rules! impl_facet_for_integer {
                                 }
                                 if source_shape == <$type>::SHAPE {
                                     let value: $type = *unsafe { source.get::<$type>() };
-                                    let nz = NonZero::new(value)
-                                        .ok_or_else(|| TryFromError::Generic("Invalid value"))?;
+                                    let nz = NonZero::new(value).ok_or_else(|| {
+                                        TryFromError::Generic("value must be non-zero")
+                                    })?;
                                     return Ok(unsafe { dest.put::<NonZero<$type>>(nz) });
                                 }
-                                Err(TryFromError::Incompatible {
-                                    source: source_shape,
-                                    target: Self::SHAPE,
-                                })
+                                Err(TryFromError::Incompatible)
                             });
 
                             vtable

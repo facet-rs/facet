@@ -100,7 +100,13 @@ pub enum ReflectError {
 
     /// An error occured while putting
     TryFromError {
-        /// the inner try from error
+        /// The shape of the value being converted from.
+        src_shape: &'static Shape,
+
+        /// The shape of the value being converted to.
+        dst_shape: &'static Shape,
+
+        /// The inner error
         inner: TryFromError,
     },
 }
@@ -175,8 +181,18 @@ impl core::fmt::Display for ReflectError {
                 write!(f, "Field error for shape {}: {}", shape, field_error)
             }
             ReflectError::Unknown => write!(f, "Unknown error"),
-            ReflectError::TryFromError { inner } => {
-                write!(f, "Error converting value: {}", inner)
+            ReflectError::TryFromError {
+                src_shape,
+                dst_shape,
+                inner,
+            } => {
+                write!(
+                    f,
+                    "While trying to put {} into a {}: {}",
+                    src_shape.green(),
+                    dst_shape.blue(),
+                    inner.red()
+                )
             }
         }
     }
