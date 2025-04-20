@@ -54,7 +54,9 @@ impl<'input> JsonError<'input> {
             }
             JsonErrorKind::NumberOutOfRange(n) => format!("Number out of range: {}", n),
             JsonErrorKind::StringAsNumber(s) => format!("Expected a string but got number: {}", s),
-            JsonErrorKind::UnknownField(f) => format!("Unknown field: {}", f),
+            JsonErrorKind::UnknownField { field_name, shape } => {
+                format!("Unknown field: {} for shape {}", field_name, shape)
+            }
             JsonErrorKind::InvalidUtf8(e) => format!("Invalid UTF-8 encoding: {}", e),
             JsonErrorKind::ReflectError(e) => format!("Error while reflecting type: {}", e),
             JsonErrorKind::SyntaxError(e) => format!("Syntax error: {}", e),
@@ -86,7 +88,10 @@ pub enum JsonErrorKind {
     /// An unexpected String was encountered in the input.
     StringAsNumber(String),
     /// An unexpected field name was encountered in the input.
-    UnknownField(String),
+    UnknownField {
+        field_name: String,
+        shape: &'static Shape,
+    },
     /// A string that could not be built into valid UTF-8 Unicode
     InvalidUtf8(String),
     /// An error occurred while reflecting a type.

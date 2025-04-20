@@ -38,11 +38,19 @@ pub fn from_slice<T: Facet>(json: &[u8]) -> Result<T, JsonError<'_>> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Instruction {
     Value,
-    Pop,
+    Pop(PopReason),
     ObjectKeyOrObjectClose,
     CommaThenObjectKeyOrObjectClose,
     ArrayItemOrArrayClose,
     CommaThenArrayItemOrArrayClose,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PopReason {
+    FinishObjectValue,
+    FinishArrayItem,
+    FinishObject,
+    FinishArray,
 }
 
 /// Deserialize a JSON string into a Wip object.
@@ -140,12 +148,11 @@ pub fn from_slice_wip<'input, 'a>(
         trace!("[{frame_count}] Instruction {:?}", insn.yellow());
 
         match insn {
-            Instruction::Pop => {
+            Instruction::Pop(reason) => {
+                trace!("Popping because {:?}", reason.yellow());
                 reflect!(pop());
             }
             Instruction::Value => {
-                // TODO: if we're building a list, do `.push()` then, and `pop()` afterwards?
-
                 let token = read_token!();
                 match token.node {
                     Token::LBrace => {
@@ -195,6 +202,7 @@ pub fn from_slice_wip<'input, 'a>(
                             }
                         }
 
+                        trace!("Beginning pushback");
                         reflect!(begin_pushback());
                         stack.push(Instruction::ArrayItemOrArrayClose)
                     }
@@ -208,18 +216,7 @@ pub fn from_slice_wip<'input, 'a>(
                         reflect!(put::<String>(s));
                     }
                     Token::Number(n) => {
-                        let path = wip.path();
-                        wip = match wip.put::<u64>(n as u64) {
-                            Ok(wip) => wip,
-                            Err(e) => {
-                                return Err(JsonError::new(
-                                    JsonErrorKind::ReflectError(e),
-                                    input,
-                                    token.span,
-                                    path,
-                                ));
-                            }
-                        }
+                        reflect!(put::<u64>(n as u64));
                     }
                     Token::True => {
                         reflect!(put::<bool>(true));
@@ -237,7 +234,10 @@ pub fn from_slice_wip<'input, 'a>(
                     Token::String(key) => {
                         let index = match wip.field_index(&key) {
                             Some(index) => index,
-                            None => bail!(JsonErrorKind::UnknownField(key)),
+                            None => bail!(JsonErrorKind::UnknownField {
+                                field_name: key.to_string(),
+                                shape: wip.shape(),
+                            }),
                         };
                         reflect!(field(index));
 
@@ -250,12 +250,11 @@ pub fn from_slice_wip<'input, 'a>(
                             });
                         }
                         stack.push(Instruction::CommaThenObjectKeyOrObjectClose);
-                        stack.push(Instruction::Pop);
+                        stack.push(Instruction::Pop(PopReason::FinishObjectValue));
                         stack.push(Instruction::Value);
                     }
                     Token::RBrace => {
                         trace!("Object closing");
-                        stack.push(Instruction::Pop);
                     }
                     _ => {
                         bail!(JsonErrorKind::UnexpectedToken {
@@ -274,7 +273,6 @@ pub fn from_slice_wip<'input, 'a>(
                     }
                     Token::RBrace => {
                         trace!("Object close");
-                        stack.push(Instruction::Pop);
                     }
                     _ => {
                         bail!(JsonErrorKind::UnexpectedToken {
@@ -289,11 +287,15 @@ pub fn from_slice_wip<'input, 'a>(
                 match token.node {
                     Token::RBracket => {
                         trace!("Array close");
-                        stack.push(Instruction::Pop);
                     }
                     _ => {
+                        trace!("Array item");
                         put_back_token!(token);
+                        reflect!(begin_pushback());
+                        reflect!(push());
+
                         stack.push(Instruction::CommaThenArrayItemOrArrayClose);
+                        stack.push(Instruction::Pop(PopReason::FinishArrayItem));
                         stack.push(Instruction::Value);
                     }
                 }
@@ -301,16 +303,15 @@ pub fn from_slice_wip<'input, 'a>(
             Instruction::CommaThenArrayItemOrArrayClose => {
                 let token = read_token!();
                 match token.node {
-                    Token::Comma => {
-                        trace!("Array comma");
-                        reflect!(pop());
-                        reflect!(push());
-                        stack.push(Instruction::CommaThenArrayItemOrArrayClose);
-                        stack.push(Instruction::Value);
-                    }
                     Token::RBracket => {
                         trace!("Array close");
-                        stack.push(Instruction::Pop);
+                    }
+                    Token::Comma => {
+                        trace!("Array comma");
+                        reflect!(push());
+                        stack.push(Instruction::CommaThenArrayItemOrArrayClose);
+                        stack.push(Instruction::Pop(PopReason::FinishArrayItem));
+                        stack.push(Instruction::Value);
                     }
                     _ => {
                         bail!(JsonErrorKind::UnexpectedToken {
