@@ -166,7 +166,7 @@ pub fn from_slice_wip<'input, 'a>(
                         }
                     }
 
-                    if has_unset {
+                    if has_unset && container_shape.has_default_attr() {
                         // let's allocate and build a default value
                         let default_val = Wip::alloc_shape(container_shape)
                             .put_default()
