@@ -51,6 +51,7 @@ enum Instruction {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PopReason {
+    TopLevel,
     ObjectVal,
     ArrayItem,
     Some,
@@ -70,7 +71,7 @@ pub fn from_slice_wip<'input, 'a>(
     mut wip: Wip<'a>,
     input: &'input [u8],
 ) -> Result<HeapValue<'a>, JsonError<'input>> {
-    let mut stack = vec![Instruction::Value];
+    let mut stack = vec![Instruction::Pop(PopReason::TopLevel), Instruction::Value];
     let mut tokenizer = Tokenizer::new(input);
     let mut last_span = Span { start: 0, len: 0 };
     let mut unread_token: Option<Spanned<Token>> = None;
@@ -132,28 +133,101 @@ pub fn from_slice_wip<'input, 'a>(
         let frame_count = wip.frames_count();
         let insn = match stack.pop() {
             Some(insn) => insn,
-            None => {
-                trace!("No instruction, building.");
-                let path = wip.path();
-                return Ok(match wip.build() {
-                    Ok(hv) => hv,
-                    Err(e) => {
-                        return Err(JsonError::new(
-                            JsonErrorKind::ReflectError(e),
-                            input,
-                            last_span,
-                            path,
-                        ));
-                    }
-                });
-            }
+            None => unreachable!("Instruction stack is empty"),
         };
         trace!("[{frame_count}] Instruction {:?}", insn.yellow());
 
         match insn {
             Instruction::Pop(reason) => {
                 trace!("Popping because {:?}", reason.yellow());
-                reflect!(pop());
+
+                let container_shape = wip.shape();
+                if let Def::Struct(sd) = container_shape.def {
+                    let mut has_unset = false;
+
+                    trace!("Let's check all fields are initialized");
+                    for (index, field) in sd.fields.iter().enumerate() {
+                        let is_set = wip.is_field_set(index).map_err(|err| {
+                            trace!("Error checking field set status: {:?}", err);
+                            JsonError::new(
+                                JsonErrorKind::ReflectError(err),
+                                input,
+                                last_span,
+                                wip.path(),
+                            )
+                        })?;
+                        if !is_set {
+                            trace!(
+                                "Field #{} {:?} is not initialized",
+                                index.yellow(),
+                                field.blue()
+                            );
+                            has_unset = true;
+                        }
+                    }
+
+                    if has_unset && container_shape.has_default_attr() {
+                        // let's allocate and build a default value
+                        let default_val = Wip::alloc_shape(container_shape)
+                            .put_default()
+                            .map_err(|e| {
+                                JsonError::new(
+                                    JsonErrorKind::ReflectError(e),
+                                    input,
+                                    last_span,
+                                    wip.path(),
+                                )
+                            })?
+                            .build()
+                            .map_err(|e| {
+                                JsonError::new(
+                                    JsonErrorKind::ReflectError(e),
+                                    input,
+                                    last_span,
+                                    wip.path(),
+                                )
+                            })?;
+                        let peek = default_val.peek().into_struct().unwrap();
+
+                        for (index, field) in sd.fields.iter().enumerate() {
+                            let is_set = wip.is_field_set(index).map_err(|err| {
+                                trace!("Error checking field set status: {:?}", err);
+                                JsonError::new(
+                                    JsonErrorKind::ReflectError(err),
+                                    input,
+                                    last_span,
+                                    wip.path(),
+                                )
+                            })?;
+                            if !is_set {
+                                let address_of_field_from_default =
+                                    peek.field(index).unwrap().data();
+                                reflect!(field(index));
+                                reflect!(put_shape(address_of_field_from_default, field.shape()));
+                                reflect!(pop());
+                            }
+                        }
+                    }
+                } else {
+                    trace!("Thing being popped is not a container I guess");
+                }
+
+                if reason == PopReason::TopLevel {
+                    let path = wip.path();
+                    return Ok(match wip.build() {
+                        Ok(hv) => hv,
+                        Err(e) => {
+                            return Err(JsonError::new(
+                                JsonErrorKind::ReflectError(e),
+                                input,
+                                last_span,
+                                path,
+                            ));
+                        }
+                    });
+                } else {
+                    reflect!(pop());
+                }
             }
             Instruction::SkipValue => {
                 let token = read_token!();
@@ -296,7 +370,9 @@ pub fn from_slice_wip<'input, 'a>(
                             Token::False => {
                                 reflect!(put::<bool>(false));
                             }
-                            Token::EOF => todo!(),
+                            Token::EOF => {
+                                bail!(JsonErrorKind::UnexpectedEof("in value"));
+                            }
                         }
                     }
                 }

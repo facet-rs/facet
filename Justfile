@@ -62,10 +62,10 @@ test-ci *args:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
     echo -e "\033[1;33m🏃 Running all but doc-tests with nextest...\033[0m"
-    cmd_group "cargo nextest run {{args}} < /dev/null"
+    cmd_group "cargo nextest run --features slow-tests {{args}} < /dev/null"
 
     echo -e "\033[1;36m📚 Running documentation tests...\033[0m"
-    cmd_group "cargo test --doc {{args}}"
+    cmd_group "cargo test --features slow-tests --doc {{args}}"
 
 doc-tests *args:
     cargo test --doc {{args}}
