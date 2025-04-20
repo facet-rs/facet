@@ -161,6 +161,16 @@ macro_rules! impl_facet_for_integer {
                                     let converted: $type = value as $type;
                                     return Ok(unsafe { dest.put::<$type>(converted) });
                                 }
+                                if source_shape == i64::SHAPE {
+                                    let value: i64 = *unsafe { source.get::<i64>() };
+                                    let converted: $type = value as $type;
+                                    return Ok(unsafe { dest.put::<$type>(converted) });
+                                }
+                                if source_shape == f64::SHAPE {
+                                    let value: f64 = *unsafe { source.get::<f64>() };
+                                    let converted: $type = value as $type;
+                                    return Ok(unsafe { dest.put::<$type>(converted) });
+                                }
                                 Err(TryFromError::Incompatible)
                             });
 
@@ -480,7 +490,35 @@ unsafe impl Facet for f32 {
                     )
                     .build(),
             ))
-            .vtable(value_vtable!(f32, |f, _opts| write!(f, "f32")))
+            .vtable(
+                &const {
+                    let mut vtable = value_vtable_inner!(f32, |f, _opts| write!(f, "f32"));
+
+                    vtable.try_from = Some(|source, source_shape, dest| {
+                        if source_shape == Self::SHAPE {
+                            return Ok(unsafe { dest.copy_from(source, source_shape) });
+                        }
+                        if source_shape == u64::SHAPE {
+                            let value: u64 = *unsafe { source.get::<u64>() };
+                            let converted: f32 = value as f32;
+                            return Ok(unsafe { dest.put::<f32>(converted) });
+                        }
+                        if source_shape == i64::SHAPE {
+                            let value: i64 = *unsafe { source.get::<i64>() };
+                            let converted: f32 = value as f32;
+                            return Ok(unsafe { dest.put::<f32>(converted) });
+                        }
+                        if source_shape == f64::SHAPE {
+                            let value: f64 = *unsafe { source.get::<f64>() };
+                            let converted: f32 = value as f32;
+                            return Ok(unsafe { dest.put::<f32>(converted) });
+                        }
+                        Err(TryFromError::Incompatible)
+                    });
+
+                    vtable
+                },
+            )
             .build()
     };
 }
@@ -507,7 +545,35 @@ unsafe impl Facet for f64 {
                     )
                     .build(),
             ))
-            .vtable(value_vtable!(f64, |f, _opts| write!(f, "f64")))
+            .vtable(
+                &const {
+                    let mut vtable = value_vtable_inner!(f64, |f, _opts| write!(f, "f64"));
+
+                    vtable.try_from = Some(|source, source_shape, dest| {
+                        if source_shape == Self::SHAPE {
+                            return Ok(unsafe { dest.copy_from(source, source_shape) });
+                        }
+                        if source_shape == u64::SHAPE {
+                            let value: u64 = *unsafe { source.get::<u64>() };
+                            let converted: f64 = value as f64;
+                            return Ok(unsafe { dest.put::<f64>(converted) });
+                        }
+                        if source_shape == i64::SHAPE {
+                            let value: i64 = *unsafe { source.get::<i64>() };
+                            let converted: f64 = value as f64;
+                            return Ok(unsafe { dest.put::<f64>(converted) });
+                        }
+                        if source_shape == f32::SHAPE {
+                            let value: f32 = *unsafe { source.get::<f32>() };
+                            let converted: f64 = value as f64;
+                            return Ok(unsafe { dest.put::<f64>(converted) });
+                        }
+                        Err(TryFromError::Incompatible)
+                    });
+
+                    vtable
+                },
+            )
             .build()
     };
 }

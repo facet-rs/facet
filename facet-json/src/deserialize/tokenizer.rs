@@ -99,8 +99,12 @@ pub enum Token {
     Comma,
     /// A JSON string value — todo: should be a Cow
     String(String),
-    /// A JSON number value
-    Number(f64),
+    /// A 64-bit floating point number value — used if the value contains a decimal point
+    F64(f64),
+    /// A signed 64-bit integer number value — used if the value does not contain a decimal point but contains a sign
+    I64(i64),
+    /// An unsigned 64-bit integer number value — used if the value does not contain a decimal point and does not contain a sign
+    U64(u64),
     /// The JSON boolean value 'true'
     True,
     /// The JSON boolean value 'false'
@@ -123,7 +127,9 @@ impl Display for Token {
             Token::Colon => write!(f, ":"),
             Token::Comma => write!(f, ","),
             Token::String(s) => write!(f, "\"{}\"", s),
-            Token::Number(n) => write!(f, "{}", n),
+            Token::F64(n) => write!(f, "{}", n),
+            Token::I64(n) => write!(f, "{}", n),
+            Token::U64(n) => write!(f, "{}", n),
             Token::True => write!(f, "true"),
             Token::False => write!(f, "false"),
             Token::Null => write!(f, "null"),
@@ -335,22 +341,47 @@ impl<'input> Tokenizer<'input> {
             }
         };
 
-        let num = match text.parse::<f64>() {
-            Ok(n) => n,
-            Err(_) => {
-                // Use the actual text for better error reporting
-                return Err(TokenError {
-                    kind: TokenErrorKind::NumberOutOfRange(0.0),
-                    span,
-                });
+        let token = if text.contains('.') || text.contains('e') || text.contains('E') {
+            // If the number contains a decimal point or exponent, parse as f64
+            match text.parse::<f64>() {
+                Ok(n) => Token::F64(n),
+                Err(_) => {
+                    return Err(TokenError {
+                        kind: TokenErrorKind::NumberOutOfRange(0.0),
+                        span,
+                    });
+                }
+            }
+        } else if text.starts_with('-') {
+            // If the number starts with a negative sign, parse as i64
+            match text.parse::<i64>() {
+                Ok(n) => Token::I64(n),
+                Err(_) => {
+                    // If i64 parsing fails, try to parse as f64 for error reporting
+                    let num = text.parse::<f64>().unwrap_or(0.0);
+                    return Err(TokenError {
+                        kind: TokenErrorKind::NumberOutOfRange(num),
+                        span,
+                    });
+                }
+            }
+        } else {
+            // Otherwise, parse as u64
+            match text.parse::<u64>() {
+                Ok(n) => Token::U64(n),
+                Err(_) => {
+                    // If u64 parsing fails, try to parse as f64 for error reporting
+                    let num = text.parse::<f64>().unwrap_or(0.0);
+                    return Err(TokenError {
+                        kind: TokenErrorKind::NumberOutOfRange(num),
+                        span,
+                    });
+                }
             }
         };
 
         self.pos = end;
-        Ok(Spanned {
-            node: Token::Number(num),
-            span,
-        })
+        Ok(Spanned { node: token, span })
     }
 
     fn parse_literal<F>(&mut self, start: Pos, pat: &[u8], ctor: F) -> TokenizeResult

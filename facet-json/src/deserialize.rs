@@ -238,8 +238,14 @@ pub fn from_slice_wip<'input, 'a>(
                             Token::String(s) => {
                                 reflect!(put::<String>(s));
                             }
-                            Token::Number(n) => {
-                                reflect!(put::<u64>(n as u64));
+                            Token::F64(n) => {
+                                reflect!(put(n));
+                            }
+                            Token::U64(n) => {
+                                reflect!(put(n));
+                            }
+                            Token::I64(n) => {
+                                reflect!(put(n));
                             }
                             Token::True => {
                                 reflect!(put::<bool>(true));
