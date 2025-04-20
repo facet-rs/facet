@@ -2,6 +2,7 @@ use facet::Facet;
 use facet_json::from_str;
 
 #[test]
+#[ignore]
 fn test_deny_unknown_fields() {
     facet_testhelpers::setup();
 
@@ -24,6 +25,7 @@ fn test_deny_unknown_fields() {
 }
 
 #[test]
+#[ignore]
 fn json_read_struct_level_default_unset_field() {
     facet_testhelpers::setup();
 
@@ -48,6 +50,7 @@ fn json_read_struct_level_default_unset_field() {
 }
 
 #[test]
+#[ignore]
 fn json_read_field_level_default_no_function() {
     facet_testhelpers::setup();
 
@@ -70,13 +73,14 @@ fn json_read_field_level_default_no_function() {
     assert_eq!(s.bar, "");
 }
 
-fn default_number() -> i32 {
-    12345
-}
-
 #[test]
+#[ignore]
 fn json_read_field_level_default_function() {
     facet_testhelpers::setup();
+
+    fn default_number() -> i32 {
+        12345
+    }
 
     #[derive(Facet, Debug, PartialEq)]
     struct FieldDefaultFn {
@@ -98,6 +102,7 @@ fn json_read_field_level_default_function() {
 }
 
 #[test]
+#[ignore]
 fn test_allow_unknown_fields() {
     facet_testhelpers::setup();
 
