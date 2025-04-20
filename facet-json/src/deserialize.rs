@@ -262,16 +262,31 @@ pub fn from_slice_wip<'input, 'a>(
                 let token = read_token!();
                 match token.node {
                     Token::String(key) => {
-                        let index = match wip.field_index(&key) {
-                            Some(index) => index,
-                            None => bail!(JsonErrorKind::UnknownField {
-                                field_name: key.to_string(),
-                                shape: wip.shape(),
-                            }),
-                        };
-                        reflect!(field(index));
-
                         trace!("Object key: {}", key);
+
+                        match wip.shape().def {
+                            Def::Struct(_) => {
+                                let index = match wip.field_index(&key) {
+                                    Some(index) => index,
+                                    None => bail!(JsonErrorKind::UnknownField {
+                                        field_name: key.to_string(),
+                                        shape: wip.shape(),
+                                    }),
+                                };
+                                reflect!(field(index));
+                            }
+                            Def::Map(_) => {
+                                reflect!(push_map_key());
+                                reflect!(put(key));
+                                reflect!(push_map_value());
+                            }
+                            _ => {
+                                bail!(JsonErrorKind::Unimplemented(
+                                    "object key for non-struct/map"
+                                ));
+                            }
+                        }
+
                         let colon = read_token!();
                         if colon.node != Token::Colon {
                             bail!(JsonErrorKind::UnexpectedToken {
