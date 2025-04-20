@@ -38,9 +38,10 @@ pub fn from_slice<T: Facet>(json: &[u8]) -> Result<T, JsonError<'_>> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Instruction {
     Value,
-    CommaThenObjectKeyOrObjectClose,
-    ObjectKeyOrObjectClose,
     Pop,
+    ObjectKeyOrObjectClose,
+    CommaThenObjectKeyOrObjectClose,
+    ArrayItemOrArrayClose,
     CommaThenArrayItemOrArrayClose,
 }
 
@@ -61,6 +62,7 @@ pub fn from_slice_wip<'input, 'a>(
     let mut stack = vec![Instruction::Value];
     let mut tokenizer = Tokenizer::new(input);
     let mut last_span = Span { start: 0, len: 0 };
+    let mut unread_token: Option<Spanned<Token>> = None;
 
     macro_rules! bail {
         ($kind:expr) => {
@@ -68,18 +70,33 @@ pub fn from_slice_wip<'input, 'a>(
         };
     }
 
-    macro_rules! next_token {
+    macro_rules! read_token {
         () => {
-            match tokenizer.next_token() {
-                Ok(token) => {
-                    last_span = token.span;
-                    token
-                }
-                Err(e) => {
-                    last_span = e.span;
-                    bail!(JsonErrorKind::SyntaxError(e.kind));
+            if let Some(token) = unread_token.take() {
+                last_span = token.span;
+                token
+            } else {
+                match tokenizer.next_token() {
+                    Ok(token) => {
+                        last_span = token.span;
+                        token
+                    }
+                    Err(e) => {
+                        last_span = e.span;
+                        bail!(JsonErrorKind::SyntaxError(e.kind));
+                    }
                 }
             }
+        };
+    }
+
+    macro_rules! put_back_token {
+        ($token:expr) => {
+            assert!(
+                unread_token.is_none(),
+                "Cannot put back more than one token at a time"
+            );
+            unread_token = Some($token);
         };
     }
 
@@ -123,8 +140,13 @@ pub fn from_slice_wip<'input, 'a>(
         trace!("[{frame_count}] Instruction {:?}", insn.yellow());
 
         match insn {
+            Instruction::Pop => {
+                reflect!(pop());
+            }
             Instruction::Value => {
-                let token = next_token!();
+                // TODO: if we're building a list, do `.push()` then, and `pop()` afterwards?
+
+                let token = read_token!();
                 match token.node {
                     Token::LBrace => {
                         match wip.shape().def {
@@ -174,9 +196,7 @@ pub fn from_slice_wip<'input, 'a>(
                         }
 
                         reflect!(begin_pushback());
-                        reflect!(push());
-                        stack.push(Instruction::CommaThenArrayItemOrArrayClose);
-                        stack.push(Instruction::Value);
+                        stack.push(Instruction::ArrayItemOrArrayClose)
                     }
                     Token::RBrace | Token::RBracket | Token::Colon | Token::Comma => {
                         bail!(JsonErrorKind::UnexpectedToken {
@@ -211,27 +231,8 @@ pub fn from_slice_wip<'input, 'a>(
                     Token::EOF => todo!(),
                 }
             }
-            Instruction::CommaThenObjectKeyOrObjectClose => {
-                let token = next_token!();
-                match token.node {
-                    Token::Comma => {
-                        trace!("Object comma");
-                        stack.push(Instruction::ObjectKeyOrObjectClose);
-                    }
-                    Token::RBrace => {
-                        trace!("Object close");
-                        stack.push(Instruction::Pop);
-                    }
-                    _ => {
-                        bail!(JsonErrorKind::UnexpectedToken {
-                            got: token.node,
-                            wanted: "comma"
-                        });
-                    }
-                }
-            }
             Instruction::ObjectKeyOrObjectClose => {
-                let token = next_token!();
+                let token = read_token!();
                 match token.node {
                     Token::String(key) => {
                         let index = match wip.field_index(&key) {
@@ -241,7 +242,7 @@ pub fn from_slice_wip<'input, 'a>(
                         reflect!(field(index));
 
                         trace!("Object key: {}", key);
-                        let colon = next_token!();
+                        let colon = read_token!();
                         if colon.node != Token::Colon {
                             bail!(JsonErrorKind::UnexpectedToken {
                                 got: colon.node,
@@ -264,8 +265,41 @@ pub fn from_slice_wip<'input, 'a>(
                     }
                 }
             }
+            Instruction::CommaThenObjectKeyOrObjectClose => {
+                let token = read_token!();
+                match token.node {
+                    Token::Comma => {
+                        trace!("Object comma");
+                        stack.push(Instruction::ObjectKeyOrObjectClose);
+                    }
+                    Token::RBrace => {
+                        trace!("Object close");
+                        stack.push(Instruction::Pop);
+                    }
+                    _ => {
+                        bail!(JsonErrorKind::UnexpectedToken {
+                            got: token.node,
+                            wanted: "comma"
+                        });
+                    }
+                }
+            }
+            Instruction::ArrayItemOrArrayClose => {
+                let token = read_token!();
+                match token.node {
+                    Token::RBracket => {
+                        trace!("Array close");
+                        stack.push(Instruction::Pop);
+                    }
+                    _ => {
+                        put_back_token!(token);
+                        stack.push(Instruction::CommaThenArrayItemOrArrayClose);
+                        stack.push(Instruction::Value);
+                    }
+                }
+            }
             Instruction::CommaThenArrayItemOrArrayClose => {
-                let token = next_token!();
+                let token = read_token!();
                 match token.node {
                     Token::Comma => {
                         trace!("Array comma");
@@ -285,9 +319,6 @@ pub fn from_slice_wip<'input, 'a>(
                         });
                     }
                 }
-            }
-            Instruction::Pop => {
-                reflect!(pop());
             }
         }
     }
