@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1](https://github.com/facet-rs/facet/compare/facet-json-v0.11.0...facet-json-v0.11.1) - 2025-04-20
+
+### Other
+
+- Don't allocate strings in facet-json deserialization unless necessary
+- Refactor JSON number deserialization to use Wip::try_put_f64
+
 ## [0.11.0](https://github.com/facet-rs/facet/compare/facet-json-v0.10.0...facet-json-v0.11.0) - 2025-04-19
 
 ### Added

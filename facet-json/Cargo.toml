@@ -1,6 +1,6 @@
 [package]
 name = "facet-json"
-version = "0.11.0"
+version = "0.11.1"
 authors.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -18,8 +18,8 @@ default = ["std", "rich-diagnostics"]
 
 [dependencies]
 ariadne = { version = "=0.5.1", optional = true }
-facet-core = { version = "0.10.0", path = "../facet-core", default-features = false }
-facet-reflect = { version = "0.10.2", path = "../facet-reflect", default-features = false }
+facet-core = { version = "0.10.1", path = "../facet-core", default-features = false }
+facet-reflect = { version = "0.10.3", path = "../facet-reflect", default-features = false }
 log = "0.4.27"
 owo-colors = "4.2.0"
 

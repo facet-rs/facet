@@ -21,8 +21,8 @@ num-traits = { version = "0.2.19", default-features = false }
 toml_edit = { version = "0.22.24", default-features = false, features = [
     "parse",
 ] }
-facet-core = { version = "0.10.0", path = "../facet-core", default-features = false }
-facet-reflect = { version = "0.10.2", path = "../facet-reflect", default-features = false }
+facet-core = { version = "0.10.1", path = "../facet-core", default-features = false }
+facet-reflect = { version = "0.10.3", path = "../facet-reflect", default-features = false }
 yansi = "1.0.1"
 
 [dev-dependencies]
