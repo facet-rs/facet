@@ -1,3 +1,5 @@
+use facet_json::from_str;
+
 #[test]
 fn json_read_hashmap() {
     facet_testhelpers::setup();

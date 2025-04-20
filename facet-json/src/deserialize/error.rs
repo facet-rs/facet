@@ -47,22 +47,40 @@ impl<'input> JsonError<'input> {
     /// Returns a human-readable error message for this JSON error.
     pub fn message(&self) -> String {
         match &self.kind {
-            JsonErrorKind::UnexpectedEof(msg) => format!("Unexpected end of file: {}", msg),
-            JsonErrorKind::MissingField(fld) => format!("Missing required field: {}", fld),
+            JsonErrorKind::UnexpectedEof(msg) => format!("Unexpected end of file: {}", msg.red()),
+            JsonErrorKind::MissingField(fld) => format!("Missing required field: {}", fld.red()),
             JsonErrorKind::UnexpectedToken { got, wanted } => {
-                format!("Unexpected token: got '{}', wanted '{}'", got, wanted)
+                format!(
+                    "Unexpected token: got {}, wanted {}",
+                    got.red(),
+                    wanted.green()
+                )
             }
-            JsonErrorKind::NumberOutOfRange(n) => format!("Number out of range: {}", n),
-            JsonErrorKind::StringAsNumber(s) => format!("Expected a string but got number: {}", s),
+            JsonErrorKind::NumberOutOfRange(n) => {
+                format!("Number out of range: {}", n.to_string().red())
+            }
+            JsonErrorKind::StringAsNumber(s) => {
+                format!("Expected a string but got number: {}", s.red())
+            }
             JsonErrorKind::UnknownField { field_name, shape } => {
-                format!("Unknown field: {} for shape {}", field_name, shape)
+                format!(
+                    "Unknown field: {} for shape {}",
+                    field_name.red(),
+                    shape.to_string().yellow()
+                )
             }
-            JsonErrorKind::InvalidUtf8(e) => format!("Invalid UTF-8 encoding: {}", e),
-            JsonErrorKind::ReflectError(e) => format!("{}", e),
-            JsonErrorKind::SyntaxError(e) => format!("Syntax error: {}", e),
-            JsonErrorKind::Unimplemented(s) => format!("Feature not yet implemented: {}", s),
+            JsonErrorKind::InvalidUtf8(e) => format!("Invalid UTF-8 encoding: {}", e.red()),
+            JsonErrorKind::ReflectError(e) => format!("{e}"),
+            JsonErrorKind::SyntaxError(e) => format!("{e}"),
+            JsonErrorKind::Unimplemented(s) => {
+                format!("Feature not yet implemented: {}", s.yellow())
+            }
             JsonErrorKind::UnsupportedType { got, wanted } => {
-                format!("Unsupported type: got '{}', wanted '{}'", got, wanted)
+                format!(
+                    "Unsupported type: got {}, wanted {}",
+                    got.to_string().red(),
+                    wanted.green()
+                )
             }
         }
     }
