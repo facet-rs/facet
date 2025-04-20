@@ -7,4 +7,5 @@ mod option;
 mod primitives;
 mod rename;
 mod structs;
+mod tuple;
 mod vec;
