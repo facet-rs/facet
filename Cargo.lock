@@ -234,6 +234,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-jsonschema"
+version = "0.3.0"
+dependencies = [
+ "facet",
+ "facet-core",
+ "facet-reflect",
+ "num-traits",
+]
+
+[[package]]
 name = "facet-msgpack"
 version = "0.12.0"
 dependencies = [
