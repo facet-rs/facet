@@ -68,6 +68,17 @@ pub enum TokenErrorKind {
     NumberOutOfRange(f64),
 }
 
+impl Display for TokenErrorKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            TokenErrorKind::UnexpectedCharacter(c) => write!(f, "unexpected character: '{}'", c),
+            TokenErrorKind::UnexpectedEof(context) => write!(f, "unexpected EOF {}", context),
+            TokenErrorKind::InvalidUtf8(detail) => write!(f, "invalid UTF-8: {}", detail),
+            TokenErrorKind::NumberOutOfRange(n) => write!(f, "number out of range: {}", n),
+        }
+    }
+}
+
 /// Tokenization result, yielding a spanned token
 pub type TokenizeResult = Result<Spanned<Token>, TokenError>;
 
@@ -98,6 +109,27 @@ pub enum Token {
     Null,
     /// End of file marker
     EOF,
+}
+
+use core::fmt::{self, Display, Formatter};
+
+impl Display for Token {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Token::LBrace => write!(f, "{{"),
+            Token::RBrace => write!(f, "}}"),
+            Token::LBracket => write!(f, "["),
+            Token::RBracket => write!(f, "]"),
+            Token::Colon => write!(f, ":"),
+            Token::Comma => write!(f, ","),
+            Token::String(s) => write!(f, "\"{}\"", s),
+            Token::Number(n) => write!(f, "{}", n),
+            Token::True => write!(f, "true"),
+            Token::False => write!(f, "false"),
+            Token::Null => write!(f, "null"),
+            Token::EOF => write!(f, "EOF"),
+        }
+    }
 }
 
 /// Simple JSON tokenizer producing spanned tokens from byte input.

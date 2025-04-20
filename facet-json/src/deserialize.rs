@@ -58,6 +58,7 @@ pub fn from_slice_wip<'input, 'a>(
 ) -> Result<HeapValue<'a>, JsonError<'input>> {
     let mut stack = vec![Instruction::Value];
     let mut tokenizer = Tokenizer::new(input);
+    let mut last_span = Span { start: 0, len: 0 };
 
     macro_rules! bail {
         ($span:expr, $kind:expr) => {
@@ -68,9 +69,29 @@ pub fn from_slice_wip<'input, 'a>(
     macro_rules! next_token {
         () => {
             match tokenizer.next_token() {
-                Ok(token) => token,
+                Ok(token) => {
+                    last_span = token.span;
+                    token
+                }
                 Err(e) => {
                     bail!(e.span, JsonErrorKind::SyntaxError(e.kind));
+                }
+            }
+        };
+    }
+
+    macro_rules! reflect {
+        ($($tt:tt)*) => {
+            let path = wip.path();
+            wip = match wip.$($tt)* {
+                Ok(wip) => wip,
+                Err(e) => {
+                    return Err(JsonError::new(
+                        JsonErrorKind::ReflectError(e),
+                        input,
+                        last_span,
+                        path,
+                    ));
                 }
             }
         };
@@ -81,7 +102,18 @@ pub fn from_slice_wip<'input, 'a>(
         let insn = match stack.pop() {
             Some(insn) => insn,
             None => {
-                return Ok(wip.build().unwrap());
+                let path = wip.path();
+                return Ok(match wip.build() {
+                    Ok(hv) => hv,
+                    Err(e) => {
+                        return Err(JsonError::new(
+                            JsonErrorKind::ReflectError(e),
+                            input,
+                            last_span,
+                            path,
+                        ));
+                    }
+                });
             }
         };
         trace!("[{frame_count}] Instruction {:?}", insn.yellow());
@@ -94,24 +126,21 @@ pub fn from_slice_wip<'input, 'a>(
                         trace!("Object starting");
                         stack.push(Instruction::ObjectKeyOrObjectClose)
                     }
-                    Token::RBrace => todo!(),
-                    Token::LBracket => todo!(),
-                    Token::RBracket => todo!(),
-                    Token::Colon => todo!(),
-                    Token::Comma => todo!(),
-                    Token::String(s) => {
-                        let path = wip.path();
-                        wip = match wip.put::<String>(s) {
-                            Ok(wip) => wip,
-                            Err(e) => {
-                                return Err(JsonError::new(
-                                    JsonErrorKind::ReflectError(e),
-                                    input,
-                                    token.span,
-                                    path,
-                                ));
+                    Token::RBrace
+                    | Token::LBracket
+                    | Token::RBracket
+                    | Token::Colon
+                    | Token::Comma => {
+                        bail!(
+                            token.span,
+                            JsonErrorKind::UnexpectedToken {
+                                got: token.node,
+                                wanted: "value"
                             }
-                        }
+                        );
+                    }
+                    Token::String(s) => {
+                        reflect!(put::<String>(s));
                     }
                     Token::Number(n) => {
                         let path = wip.path();
@@ -162,7 +191,7 @@ pub fn from_slice_wip<'input, 'a>(
                             Some(index) => index,
                             None => bail!(token.span, JsonErrorKind::UnknownField(key)),
                         };
-                        wip = wip.field(index).unwrap();
+                        reflect!(field(index));
 
                         trace!("Object key: {}", key);
                         let colon = next_token!();
@@ -194,7 +223,7 @@ pub fn from_slice_wip<'input, 'a>(
                 }
             }
             Instruction::Pop => {
-                wip = wip.pop().unwrap();
+                reflect!(pop());
             }
         }
     }

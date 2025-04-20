@@ -1,0 +1,129 @@
+#[test]
+fn json_read_vec() {
+    facet_testhelpers::setup();
+
+    let json = r#"[1, 2, 3, 4, 5]"#;
+
+    let v: Vec<i32> = match from_str(json) {
+        Ok(v) => v,
+        Err(e) => panic!("Error deserializing JSON: {}", e),
+    };
+    assert_eq!(v, vec![1, 2, 3, 4, 5]);
+}
+
+#[test]
+fn json_read_empty_vec() {
+    facet_testhelpers::setup();
+
+    let json = r#"[]"#;
+
+    let v: Vec<i32> = match from_str(json) {
+        Ok(v) => v,
+        Err(e) => panic!("Error deserializing JSON: {}", e),
+    };
+    assert_eq!(v, vec![]);
+}
+
+#[test]
+fn test_two_empty_arrays() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Clone, Default)]
+    pub struct RevisionConfig {
+        pub one: Vec<String>,
+        pub two: Vec<String>,
+    }
+
+    let markup = r#"
+    {
+      "one": [],
+      "two": []
+    }
+    "#;
+
+    let config: RevisionConfig = match from_str(markup) {
+        Ok(cfg) => cfg,
+        Err(e) => panic!("Failed to parse RevisionConfig: {}", e),
+    };
+    assert!(config.one.is_empty());
+    assert!(config.two.is_empty());
+}
+
+#[test]
+fn test_one_empty_one_nonempty_array() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Clone, Default)]
+    pub struct RevisionConfig {
+        pub one: Vec<String>,
+        pub two: Vec<String>,
+    }
+
+    let markup = r#"
+    {
+      "one": [],
+      "two": ["a", "b", "c"]
+    }
+    "#;
+
+    let config: RevisionConfig = match from_str(markup) {
+        Ok(cfg) => cfg,
+        Err(e) => panic!("Failed to parse RevisionConfig: {}", e),
+    };
+    assert!(config.one.is_empty());
+    assert_eq!(config.two, vec!["a", "b", "c"]);
+}
+
+#[test]
+fn test_one_nonempty_one_empty_array() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Clone, Default)]
+    pub struct RevisionConfig {
+        pub one: Vec<String>,
+        pub two: Vec<String>,
+    }
+
+    let markup = r#"
+    {
+      "one": ["x", "y"],
+      "two": []
+    }
+    "#;
+
+    let config: RevisionConfig = match from_str(markup) {
+        Ok(cfg) => cfg,
+        Err(e) => panic!("Failed to parse RevisionConfig: {}", e),
+    };
+    assert_eq!(config.one, vec!["x", "y"]);
+    assert!(config.two.is_empty());
+}
+
+#[test]
+fn test_nested_arrays() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Clone, Default)]
+    pub struct NestedArrays {
+        pub matrix: Vec<Vec<i32>>,
+    }
+
+    let markup = r#"
+    {
+      "matrix": [
+        [1, 2, 3],
+        [],
+        [4, 5]
+      ]
+    }
+    "#;
+
+    let nested: NestedArrays = match from_str(markup) {
+        Ok(cfg) => cfg,
+        Err(e) => panic!("Failed to parse NestedArrays: {}", e),
+    };
+    assert_eq!(nested.matrix.len(), 3);
+    assert_eq!(nested.matrix[0], vec![1, 2, 3]);
+    assert_eq!(nested.matrix[1], vec![]);
+    assert_eq!(nested.matrix[2], vec![4, 5]);
+}

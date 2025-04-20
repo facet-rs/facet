@@ -49,14 +49,14 @@ impl<'input> JsonError<'input> {
             JsonErrorKind::UnexpectedEof(msg) => format!("Unexpected end of file: {}", msg),
             JsonErrorKind::MissingField(fld) => format!("Missing required field: {}", fld),
             JsonErrorKind::UnexpectedToken { got, wanted } => {
-                format!("Unexpected token: got '{:?}', wanted '{}'", got, wanted)
+                format!("Unexpected token: got '{}', wanted '{}'", got, wanted)
             }
             JsonErrorKind::NumberOutOfRange(n) => format!("Number out of range: {}", n),
             JsonErrorKind::StringAsNumber(s) => format!("Expected a string but got number: {}", s),
             JsonErrorKind::UnknownField(f) => format!("Unknown field: {}", f),
             JsonErrorKind::InvalidUtf8(e) => format!("Invalid UTF-8 encoding: {}", e),
-            JsonErrorKind::ReflectError(e) => format!("Error while reflecting type: {:?}", e),
-            JsonErrorKind::SyntaxError(e) => format!("Syntax error: {:?}", e),
+            JsonErrorKind::ReflectError(e) => format!("Error while reflecting type: {}", e),
+            JsonErrorKind::SyntaxError(e) => format!("Syntax error: {}", e),
         }
     }
 }
