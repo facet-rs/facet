@@ -343,7 +343,7 @@ impl<'a> Wip<'a> {
 
     /// Returns the shape of the current frame
     pub fn shape(&self) -> &'static Shape {
-        self.frames.last().expect("must have shapes left").shape
+        self.frames.last().expect("must have frames left").shape
     }
 
     /// Return true if the last frame is in option mode

@@ -41,6 +41,7 @@ pub fn from_slice<T: Facet>(json: &[u8]) -> Result<T, JsonError<'_>> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Instruction {
     Value,
+    SkipValue,
     Pop(PopReason),
     ObjectKeyOrObjectClose,
     CommaThenObjectKeyOrObjectClose,
@@ -154,6 +155,45 @@ pub fn from_slice_wip<'input, 'a>(
                 trace!("Popping because {:?}", reason.yellow());
                 reflect!(pop());
             }
+            Instruction::SkipValue => {
+                let token = read_token!();
+                match token.node {
+                    Token::LBrace | Token::LBracket => {
+                        // Skip a compound value by tracking nesting depth
+                        let mut depth = 1;
+                        while depth > 0 {
+                            let token = read_token!();
+                            match token.node {
+                                Token::LBrace | Token::LBracket => {
+                                    depth += 1;
+                                }
+                                Token::RBrace | Token::RBracket => {
+                                    depth -= 1;
+                                }
+                                _ => {
+                                    // primitives, commas, colons, strings, numbers, etc.
+                                }
+                            }
+                        }
+                    }
+                    Token::String(_)
+                    | Token::F64(_)
+                    | Token::I64(_)
+                    | Token::U64(_)
+                    | Token::True
+                    | Token::False
+                    | Token::Null => {
+                        // Primitive value; nothing more to skip
+                    }
+                    other => {
+                        // Unexpected token when skipping a value
+                        bail!(JsonErrorKind::UnexpectedToken {
+                            got: other,
+                            wanted: "value"
+                        });
+                    }
+                }
+            }
             Instruction::Value => {
                 let token = read_token!();
                 match token.node {
@@ -266,18 +306,26 @@ pub fn from_slice_wip<'input, 'a>(
                 match token.node {
                     Token::String(key) => {
                         trace!("Object key: {}", key);
+                        let mut ignore = false;
 
                         match wip.shape().def {
-                            Def::Struct(_) => {
-                                let index = match wip.field_index(&key) {
-                                    Some(index) => index,
-                                    None => bail!(JsonErrorKind::UnknownField {
-                                        field_name: key.to_string(),
-                                        shape: wip.shape(),
-                                    }),
-                                };
-                                reflect!(field(index));
-                            }
+                            Def::Struct(_) => match wip.field_index(&key) {
+                                Some(index) => {
+                                    reflect!(field(index));
+                                }
+                                None => {
+                                    if wip.shape().has_deny_unknown_fields_attr() {
+                                        // well, it all depends.
+                                        bail!(JsonErrorKind::UnknownField {
+                                            field_name: key.to_string(),
+                                            shape: wip.shape(),
+                                        })
+                                    } else {
+                                        trace!("Will ignore key ");
+                                        ignore = true;
+                                    }
+                                }
+                            },
                             Def::Map(_) => {
                                 reflect!(push_map_key());
                                 reflect!(put(key));
@@ -298,8 +346,12 @@ pub fn from_slice_wip<'input, 'a>(
                             });
                         }
                         stack.push(Instruction::CommaThenObjectKeyOrObjectClose);
-                        stack.push(Instruction::Pop(PopReason::ObjectVal));
-                        stack.push(Instruction::Value);
+                        if ignore {
+                            stack.push(Instruction::SkipValue);
+                        } else {
+                            stack.push(Instruction::Pop(PopReason::ObjectVal));
+                            stack.push(Instruction::Value);
+                        }
                     }
                     Token::RBrace => {
                         trace!("Object closing");

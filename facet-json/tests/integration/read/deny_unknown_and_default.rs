@@ -2,7 +2,6 @@ use facet::Facet;
 use facet_json::from_str;
 
 #[test]
-#[ignore]
 fn test_deny_unknown_fields() {
     facet_testhelpers::setup();
 
@@ -102,8 +101,7 @@ fn json_read_field_level_default_function() {
 }
 
 #[test]
-#[ignore]
-fn test_allow_unknown_fields() {
+fn test_allow_unknown_fields_1() {
     facet_testhelpers::setup();
 
     #[derive(Facet, Debug)]
@@ -121,4 +119,40 @@ fn test_allow_unknown_fields() {
     let json_extra = r#"{"foo":"abc","bar":42,"baz":[]}"#;
     let result_extra: Result<PermissiveStruct, _> = from_str(json_extra);
     result_extra.unwrap();
+}
+
+#[test]
+fn test_allow_unknown_fields_complex() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Debug)]
+    struct PermissiveStruct {
+        foo: String,
+        bar: i32,
+    }
+
+    // JSON with nested unknown objects and arrays
+    let json_complex = r#"
+    {
+        "foo": "xyz",
+        "bar": 99,
+        "nested": {
+            "a": 1,
+            "b": [2, {"c":3}],
+            "deep": {
+                "x": {
+                    "y": [true, false, {"z": null}]
+                }
+            }
+        },
+        "list": [
+            {"inner": [1,2,3]},
+            4,
+            [{"more": "data"}]
+        ]
+    }
+    "#;
+    let result: PermissiveStruct = from_str(json_complex).unwrap();
+    assert_eq!(result.foo, "xyz");
+    assert_eq!(result.bar, 99);
 }
