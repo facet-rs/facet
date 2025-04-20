@@ -31,6 +31,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                     let field_name = field.value.name.to_string();
                     gen_struct_field(
                         &field_name,
+                        &field.value.typ.tokens_to_string(),
                         &struct_name,
                         &generics_use,
                         &field.value.attributes,
@@ -55,6 +56,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                     let field_name = format!("{index}");
                     gen_struct_field(
                         &field_name,
+                        &field.value.typ.tokens_to_string(),
                         &struct_name,
                         &generics_use,
                         &field.value.attributes,

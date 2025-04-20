@@ -27,7 +27,7 @@ unsafe impl ::facet::Facet for Packet {
                             .shape(|| ::facet::shape_of(&|s: &__ShadowPacket_Header| &s._0))
                             .offset(::core::mem::offset_of!(__ShadowPacket_Header, _0))
                             .flags(::facet::FieldFlags::EMPTY)
-                            .attributes(&[])
+                            .attributes(&const { [] })
                             .build()]
                     };
                     ::facet::Variant::builder()
@@ -44,7 +44,7 @@ unsafe impl ::facet::Facet for Packet {
                             .shape(|| ::facet::shape_of(&|s: &__ShadowPacket_Payload| &s._0))
                             .offset(::core::mem::offset_of!(__ShadowPacket_Payload, _0))
                             .flags(::facet::FieldFlags::EMPTY)
-                            .attributes(&[])
+                            .attributes(&const { [] })
                             .build()]
                     };
                     ::facet::Variant::builder()

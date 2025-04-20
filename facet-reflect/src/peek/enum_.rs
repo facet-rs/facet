@@ -1,4 +1,6 @@
-use facet_core::{EnumDef, EnumRepr, Shape, Variant};
+use facet_core::{EnumDef, EnumRepr, Field, FieldAttribute, Shape, Variant};
+
+use crate::Peek;
 
 /// Lets you read from an enum (implements read-only enum operations)
 #[derive(Clone, Copy)]
@@ -7,7 +9,7 @@ pub struct PeekEnum<'mem> {
     ///
     /// Note that this stores both the discriminant and the variant data
     /// (if any), and the layout depends on the enum representation.
-    pub(crate) value: crate::Peek<'mem>,
+    pub(crate) value: Peek<'mem>,
 
     /// The definition of the enum.
     pub(crate) def: EnumDef,
@@ -32,7 +34,7 @@ pub fn peek_enum_variants(shape: &'static Shape) -> Option<&'static [Variant]> {
 }
 
 impl<'mem> core::ops::Deref for PeekEnum<'mem> {
-    type Target = crate::Peek<'mem>;
+    type Target = Peek<'mem>;
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
@@ -125,7 +127,7 @@ impl<'mem> PeekEnum<'mem> {
     // variant_data has been removed to reduce unsafe code exposure
 
     /// Returns a PeekValue handle to a field of a tuple or struct variant by index
-    pub fn field(self, index: usize) -> Option<crate::Peek<'mem>> {
+    pub fn field(self, index: usize) -> Option<Peek<'mem>> {
         let variant = self.active_variant();
         let fields = &variant.data.fields;
 
@@ -135,7 +137,7 @@ impl<'mem> PeekEnum<'mem> {
 
         let field = &fields[index];
         let field_data = unsafe { self.value.data().field(field.offset) };
-        Some(crate::Peek {
+        Some(Peek {
             data: field_data,
             shape: field.shape(),
         })
@@ -152,25 +154,46 @@ impl<'mem> PeekEnum<'mem> {
     }
 
     /// Returns a PeekValue handle to a field of a tuple or struct variant by name
-    pub fn field_by_name(self, field_name: &str) -> Option<crate::Peek<'mem>> {
+    pub fn field_by_name(self, field_name: &str) -> Option<Peek<'mem>> {
         let index = self.field_index(field_name)?;
         self.field(index)
     }
 
     /// Iterates over all fields in this enum variant, providing both field metadata and value
     #[inline]
-    pub fn fields(self) -> impl Iterator<Item = (&'static facet_core::Field, crate::Peek<'mem>)> {
+    pub fn fields(self) -> impl Iterator<Item = (&'static Field, Peek<'mem>)> {
         let variant = self.active_variant();
         let fields = &variant.data.fields;
 
         // Create an iterator that maps each field to a (Field, PeekValue) pair
         fields.iter().map(move |field| {
             let field_data = unsafe { self.value.data().field(field.offset) };
-            let peek = crate::Peek {
+            let peek = Peek {
                 data: field_data,
                 shape: field.shape(),
             };
             (field, peek)
+        })
+    }
+
+    /// Iterates over thos fields in this struct that should be included when it is serialized.
+    #[inline]
+    pub fn fields_for_serialize(&self) -> impl Iterator<Item = (&'static Field, Peek<'mem>)> + '_ {
+        self.fields().filter(|(field, peek)| {
+            for attr in field.attributes {
+                match attr {
+                    FieldAttribute::SkipSerializingIf(fn_ptr) => {
+                        if unsafe { fn_ptr(peek.data()) } {
+                            return false;
+                        }
+                    }
+                    FieldAttribute::SkipSerializing => {
+                        return false;
+                    }
+                    _ => {}
+                }
+            }
+            true
         })
     }
 }

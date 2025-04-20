@@ -120,6 +120,7 @@ pub(crate) fn build_maybe_doc(attrs: &[Attribute]) -> String {
 /// generating fields for a struct that is part of a #[repr(C)] enum.
 pub(crate) fn gen_struct_field(
     field_name: &str,
+    field_type: &str,
     struct_name: &str,
     generics: &str,
     attrs: &[Attribute],
@@ -172,12 +173,20 @@ pub(crate) fn gen_struct_field(
                             let value = attr_str[equal_pos + 1..].trim().trim_matches('"');
                             attribute_list
                                 .push(format!(r#"::facet::FieldAttribute::Rename({:?})"#, value));
+                        } else if key == "skip_serializing_if" {
+                            let value = attr_str[equal_pos + 1..].trim();
+                            attribute_list.push(format!(
+                                r#"::facet::FieldAttribute::SkipSerializingIf(unsafe {{ ::std::mem::transmute({value} as fn(&{field_type}) -> bool) }})"#,
+                            ));
                         } else {
                             attribute_list.push(format!(
                                 r#"::facet::FieldAttribute::Arbitrary({:?})"#,
                                 attr_str
                             ));
                         }
+                    } else if attr_str == "skip_serializing" {
+                        attribute_list
+                            .push(r#"::facet::FieldAttribute::SkipSerializing"#.to_string());
                     } else {
                         attribute_list.push(format!(
                             r#"::facet::FieldAttribute::Arbitrary({:?})"#,
@@ -214,7 +223,7 @@ pub(crate) fn gen_struct_field(
     .shape(|| ::facet::{shape_of}(&|s: &{struct_name}<{generics}>| &s.{field_name}))
     .offset(::core::mem::offset_of!({struct_name}<{generics}>, {field_name}){maybe_base_field_offset})
     .flags({flags})
-    .attributes(&[{attributes}])
+    .attributes(&const {{ [{attributes}] }})
     {maybe_field_doc}
     .build()"
     )

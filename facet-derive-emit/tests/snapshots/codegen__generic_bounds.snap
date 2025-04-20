@@ -17,7 +17,7 @@ where
                 .shape(|| ::facet::shape_of(&|s: &Foo<T>| &s.inner))
                 .offset(::core::mem::offset_of!(Foo<T>, inner))
                 .flags(::facet::FieldFlags::EMPTY)
-                .attributes(&[])
+                .attributes(&const { [] })
                 .build()]
         };
         let vtable = &const {

@@ -28,7 +28,9 @@ unsafe impl ::facet::Facet for ApiResponse {
                             .shape(|| ::facet::shape_of(&|s: &__ShadowApiResponse_Ok| &s.data))
                             .offset(::core::mem::offset_of!(__ShadowApiResponse_Ok, data))
                             .flags(::facet::FieldFlags::EMPTY)
-                            .attributes(&[::facet::FieldAttribute::Rename("responseData")])
+                            .attributes(
+                                &const { [::facet::FieldAttribute::Rename("responseData")] },
+                            )
                             .build()]
                     };
                     ::facet::Variant::builder()
@@ -45,7 +47,9 @@ unsafe impl ::facet::Facet for ApiResponse {
                                 .shape(|| ::facet::shape_of(&|s: &__ShadowApiResponse_Err| &s.code))
                                 .offset(::core::mem::offset_of!(__ShadowApiResponse_Err, code))
                                 .flags(::facet::FieldFlags::EMPTY)
-                                .attributes(&[::facet::FieldAttribute::Rename("errorCode")])
+                                .attributes(
+                                    &const { [::facet::FieldAttribute::Rename("errorCode")] },
+                                )
                                 .build(),
                             ::facet::Field::builder()
                                 .name("message")
@@ -54,7 +58,9 @@ unsafe impl ::facet::Facet for ApiResponse {
                                 })
                                 .offset(::core::mem::offset_of!(__ShadowApiResponse_Err, message))
                                 .flags(::facet::FieldFlags::EMPTY)
-                                .attributes(&[::facet::FieldAttribute::Rename("errorMessage")])
+                                .attributes(
+                                    &const { [::facet::FieldAttribute::Rename("errorMessage")] },
+                                )
                                 .build(),
                         ]
                     };

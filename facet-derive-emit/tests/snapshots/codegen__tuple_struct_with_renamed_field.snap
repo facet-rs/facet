@@ -14,21 +14,21 @@ unsafe impl ::facet::Facet for Point {
                     .shape(|| ::facet::shape_of(&|s: &Point| &s.0))
                     .offset(::core::mem::offset_of!(Point, 0))
                     .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&[::facet::FieldAttribute::Rename("x_coordinate")])
+                    .attributes(&const { [::facet::FieldAttribute::Rename("x_coordinate")] })
                     .build(),
                 ::facet::Field::builder()
                     .name("1")
                     .shape(|| ::facet::shape_of(&|s: &Point| &s.1))
                     .offset(::core::mem::offset_of!(Point, 1))
                     .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&[::facet::FieldAttribute::Rename("y_coordinate")])
+                    .attributes(&const { [::facet::FieldAttribute::Rename("y_coordinate")] })
                     .build(),
                 ::facet::Field::builder()
                     .name("2")
                     .shape(|| ::facet::shape_of(&|s: &Point| &s.2))
                     .offset(::core::mem::offset_of!(Point, 2))
                     .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&[::facet::FieldAttribute::Rename("z_coordinate")])
+                    .attributes(&const { [::facet::FieldAttribute::Rename("z_coordinate")] })
                     .build(),
             ]
         };

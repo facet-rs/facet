@@ -14,14 +14,14 @@ unsafe impl ::facet::Facet for Blah {
                     .shape(|| ::facet::shape_of(&|s: &Blah| &s.foo))
                     .offset(::core::mem::offset_of!(Blah, foo))
                     .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&[])
+                    .attributes(&const { [] })
                     .build(),
                 ::facet::Field::builder()
                     .name("bar")
                     .shape(|| ::facet::shape_of(&|s: &Blah| &s.bar))
                     .offset(::core::mem::offset_of!(Blah, bar))
                     .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&[])
+                    .attributes(&const { [] })
                     .build(),
             ]
         };

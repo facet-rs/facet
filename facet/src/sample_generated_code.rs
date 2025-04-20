@@ -38,7 +38,7 @@ unsafe impl crate::Facet for KitchenSinkStruct {
                         builtin # offset_of(KitchenSinkStruct<>, basic_field)
                     })
                     .flags(crate::FieldFlags::EMPTY)
-                    .attributes(&[])
+                    .attributes(&const { [] })
                     .doc(&[" A basic string field."])
                     .build(),
                 crate::Field::builder()
@@ -48,7 +48,7 @@ unsafe impl crate::Facet for KitchenSinkStruct {
                         builtin # offset_of(KitchenSinkStruct<>, sensitive_field)
                     })
                     .flags(crate::FieldFlags::SENSITIVE)
-                    .attributes(&[crate::FieldAttribute::Sensitive])
+                    .attributes(&const { [crate::FieldAttribute::Sensitive] })
                     .doc(&[" A field marked as sensitive."])
                     .build(),
                 crate::Field::builder()
@@ -58,7 +58,7 @@ unsafe impl crate::Facet for KitchenSinkStruct {
                         builtin # offset_of(KitchenSinkStruct<>, tuple_field)
                     })
                     .flags(crate::FieldFlags::EMPTY)
-                    .attributes(&[])
+                    .attributes(&const { [] })
                     .doc(&[" A tuple field."])
                     .build(),
                 crate::Field::builder()
@@ -68,7 +68,7 @@ unsafe impl crate::Facet for KitchenSinkStruct {
                         builtin # offset_of(KitchenSinkStruct<>, array_field)
                     })
                     .flags(crate::FieldFlags::EMPTY)
-                    .attributes(&[])
+                    .attributes(&const { [] })
                     .doc(&[" An array field."])
                     .build(),
                 crate::Field::builder()
@@ -78,7 +78,7 @@ unsafe impl crate::Facet for KitchenSinkStruct {
                         builtin # offset_of(KitchenSinkStruct<>, slice_field)
                     })
                     .flags(crate::FieldFlags::EMPTY)
-                    .attributes(&[])
+                    .attributes(&const { [] })
                     .doc(&[" A static slice field."])
                     .build(),
                 crate::Field::builder()
@@ -88,7 +88,7 @@ unsafe impl crate::Facet for KitchenSinkStruct {
                         builtin # offset_of(KitchenSinkStruct<>, vec_field)
                     })
                     .flags(crate::FieldFlags::EMPTY)
-                    .attributes(&[])
+                    .attributes(&const { [] })
                     .doc(&[" A vector field."])
                     .build(),
                 crate::Field::builder()
@@ -99,7 +99,7 @@ unsafe impl crate::Facet for KitchenSinkStruct {
                                                                         nested_struct_field)
                     })
                     .flags(crate::FieldFlags::EMPTY)
-                    .attributes(&[])
+                    .attributes(&const { [] })
                     .doc(&[" A field containing another struct that derives Facet."])
                     .build(),
             ]
@@ -438,7 +438,7 @@ unsafe impl crate::Facet for Point {
                         builtin # offset_of(Point<>, x)
                     })
                     .flags(crate::FieldFlags::EMPTY)
-                    .attributes(&[])
+                    .attributes(&const { [] })
                     .build(),
                 crate::Field::builder()
                     .name("y")
@@ -447,7 +447,7 @@ unsafe impl crate::Facet for Point {
                         builtin # offset_of(Point<>, y)
                     })
                     .flags(crate::FieldFlags::EMPTY)
-                    .attributes(&[])
+                    .attributes(&const { [] })
                     .build(),
                 crate::Field::builder()
                     .name("metadata")
@@ -456,7 +456,7 @@ unsafe impl crate::Facet for Point {
                         builtin # offset_of(Point<>, metadata)
                     })
                     .flags(crate::FieldFlags::SENSITIVE)
-                    .attributes(&[crate::FieldAttribute::Sensitive])
+                    .attributes(&const { [crate::FieldAttribute::Sensitive] })
                     .doc(&[" Nested sensitive data within the struct."])
                     .build(),
             ]
@@ -886,7 +886,7 @@ unsafe impl crate::Facet for KitchenSinkEnum {
                                                                                                 _0)
                             })
                             .flags(crate::FieldFlags::EMPTY)
-                            .attributes(&[])
+                            .attributes(&const { [] })
                             .build()]
                     };
                     crate::Variant::builder()
@@ -915,7 +915,7 @@ unsafe impl crate::Facet for KitchenSinkEnum {
                                                                                                 _0)
                                 })
                                 .flags(crate::FieldFlags::EMPTY)
-                                .attributes(&[])
+                                .attributes(&const { [] })
                                 .build(),
                             crate::Field::builder()
                                 .name("_1")
@@ -929,7 +929,7 @@ unsafe impl crate::Facet for KitchenSinkEnum {
                                                                                                 _1)
                                 })
                                 .flags(crate::FieldFlags::EMPTY)
-                                .attributes(&[])
+                                .attributes(&const { [] })
                                 .build(),
                             crate::Field::builder()
                                 .name("_2")
@@ -943,7 +943,7 @@ unsafe impl crate::Facet for KitchenSinkEnum {
                                                                                                 _2)
                                 })
                                 .flags(crate::FieldFlags::EMPTY)
-                                .attributes(&[])
+                                .attributes(&const { [] })
                                 .build(),
                         ]
                     };
@@ -969,14 +969,18 @@ unsafe impl crate::Facet for KitchenSinkEnum {
                                                                                                                 &s.width))).offset({
                                                                                                 builtin # offset_of(__ShadowKitchenSinkEnum_StructVariant<>,
                                                                                                     width)
-                                                                                            }).flags(crate::FieldFlags::EMPTY).attributes(&[]).doc(&[" The width dimension, crucial for rendering."]).build(),
+                                                                                            }).flags(crate::FieldFlags::EMPTY).attributes(&const {
+                                                                                                []
+                                                                                            }).doc(&[" The width dimension, crucial for rendering."]).build(),
                                                                         crate::Field::builder().name("height").shape(||
                                                                                                     crate::shape_of(&(|s:
                                                                                                                     &__ShadowKitchenSinkEnum_StructVariant<>|
                                                                                                                 &s.height))).offset({
                                                                                                 builtin # offset_of(__ShadowKitchenSinkEnum_StructVariant<>,
                                                                                                     height)
-                                                                                            }).flags(crate::FieldFlags::EMPTY).attributes(&[]).doc(&[" The height dimension, also crucial for rendering."]).build()]
+                                                                                            }).flags(crate::FieldFlags::EMPTY).attributes(&const {
+                                                                                                []
+                                                                                            }).doc(&[" The height dimension, also crucial for rendering."]).build()]
                     };
                     crate::Variant::builder()
                         .name("StructVariant")
@@ -999,7 +1003,7 @@ unsafe impl crate::Facet for KitchenSinkEnum {
                                                                                                 _0)
                             })
                             .flags(crate::FieldFlags::EMPTY)
-                            .attributes(&[])
+                            .attributes(&const { [] })
                             .build()]
                     };
                     crate::Variant::builder()
@@ -1017,14 +1021,18 @@ unsafe impl crate::Facet for KitchenSinkEnum {
                                                                                                                 &s.payload))).offset({
                                                                                                 builtin # offset_of(__ShadowKitchenSinkEnum_StructVariantWithSensitiveField<>,
                                                                                                     payload)
-                                                                                            }).flags(crate::FieldFlags::EMPTY).attributes(&[]).doc(&[" The main data payload, publicly accessible."]).build(),
+                                                                                            }).flags(crate::FieldFlags::EMPTY).attributes(&const {
+                                                                                                []
+                                                                                            }).doc(&[" The main data payload, publicly accessible."]).build(),
                                                                         crate::Field::builder().name("checksum").shape(||
                                                                                                     crate::shape_of(&(|s:
                                                                                                                     &__ShadowKitchenSinkEnum_StructVariantWithSensitiveField<>|
                                                                                                                 &s.checksum))).offset({
                                                                                                 builtin # offset_of(__ShadowKitchenSinkEnum_StructVariantWithSensitiveField<>,
                                                                                                     checksum)
-                                                                                            }).flags(crate::FieldFlags::SENSITIVE).attributes(&[crate::FieldAttribute::Sensitive]).doc(&[" The sensitive checksum for integrity verification."]).build()]
+                                                                                            }).flags(crate::FieldFlags::SENSITIVE).attributes(&const {
+                                                                                                [crate::FieldAttribute::Sensitive]
+                                                                                            }).doc(&[" The sensitive checksum for integrity verification."]).build()]
                     };
                     crate::Variant::builder()
                         .name("StructVariantWithSensitiveField")
@@ -1047,7 +1055,7 @@ unsafe impl crate::Facet for KitchenSinkEnum {
                                                                                                 _0)
                             })
                             .flags(crate::FieldFlags::EMPTY)
-                            .attributes(&[])
+                            .attributes(&const { [] })
                             .build()]
                     };
                     crate::Variant::builder().name("ArbitraryVariant").discriminant(6).fields(crate::Struct::builder().tuple().fields(fields).build()).doc(&[" A variant marked as arbitrary, potentially skipped during processing."]).build()
@@ -1066,7 +1074,7 @@ unsafe impl crate::Facet for KitchenSinkEnum {
                                                                                                 _0)
                             })
                             .flags(crate::FieldFlags::EMPTY)
-                            .attributes(&[])
+                            .attributes(&const { [] })
                             .build()]
                     };
                     crate::Variant::builder()
@@ -1445,7 +1453,7 @@ unsafe impl crate::Facet for SubEnum {
                                 builtin # offset_of(__ShadowSubEnum_OptionB<>, _0)
                             })
                             .flags(crate::FieldFlags::EMPTY)
-                            .attributes(&[])
+                            .attributes(&const { [] })
                             .build()]
                     };
                     crate::Variant::builder()
@@ -1466,7 +1474,7 @@ unsafe impl crate::Facet for SubEnum {
                                 builtin # offset_of(__ShadowSubEnum_SensitiveOption<>, _0)
                             })
                             .flags(crate::FieldFlags::EMPTY)
-                            .attributes(&[])
+                            .attributes(&const { [] })
                             .build()]
                     };
                     crate::Variant::builder()
@@ -1487,7 +1495,7 @@ unsafe impl crate::Facet for SubEnum {
                                 builtin # offset_of(__ShadowSubEnum_ArbitraryOption<>, _0)
                             })
                             .flags(crate::FieldFlags::EMPTY)
-                            .attributes(&[])
+                            .attributes(&const { [] })
                             .build()]
                     };
                     crate::Variant::builder()

@@ -1,3 +1,5 @@
+use crate::PtrConst;
+
 use super::{DefaultInPlaceFn, Shape};
 use bitflags::bitflags;
 
@@ -101,6 +103,10 @@ pub struct FieldBuilder {
 pub enum FieldAttribute {
     /// Marks field as containing sensitive information
     Sensitive,
+    /// Skip serializing this field.
+    SkipSerializing,
+    /// Skip serializing this field if the function identified by `.0` evaluates to true.
+    SkipSerializingIf(SkipSerializingIfFn),
     /// Specifies an alternative name for the field (for serialization/deserialization)
     Rename(&'static str),
     /// Indicates the field has a default value (the value is which fn to call for default, or None for Default::default)
@@ -108,6 +114,10 @@ pub enum FieldAttribute {
     /// Custom field attribute containing arbitrary text
     Arbitrary(&'static str),
 }
+
+/// A function that, if present, determines whether field should be included in the serialization
+/// step.
+pub type SkipSerializingIfFn = for<'mem> unsafe fn(value: PtrConst<'mem>) -> bool;
 
 impl FieldBuilder {
     /// Creates a new FieldBuilder

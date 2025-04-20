@@ -14,7 +14,7 @@ unsafe impl ::facet::Facet for MyTupleStruct {
                     .shape(|| ::facet::shape_of(&|s: &MyTupleStruct| &s.0))
                     .offset(::core::mem::offset_of!(MyTupleStruct, 0))
                     .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&[])
+                    .attributes(&const { [] })
                     .doc(&[" This is a documented field"])
                     .build(),
                 ::facet::Field::builder()
@@ -22,7 +22,7 @@ unsafe impl ::facet::Facet for MyTupleStruct {
                     .shape(|| ::facet::shape_of(&|s: &MyTupleStruct| &s.1))
                     .offset(::core::mem::offset_of!(MyTupleStruct, 1))
                     .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&[])
+                    .attributes(&const { [] })
                     .doc(&[" This is another documented field"])
                     .build(),
             ]

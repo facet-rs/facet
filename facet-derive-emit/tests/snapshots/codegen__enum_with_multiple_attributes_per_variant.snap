@@ -33,7 +33,7 @@ unsafe impl ::facet::Facet for ConfigValue {
                             .shape(|| ::facet::shape_of(&|s: &__ShadowConfigValue_Text| &s._0))
                             .offset(::core::mem::offset_of!(__ShadowConfigValue_Text, _0))
                             .flags(::facet::FieldFlags::EMPTY)
-                            .attributes(&[])
+                            .attributes(&const { [] })
                             .build()]
                     };
                     ::facet::Variant::builder()
@@ -52,7 +52,9 @@ unsafe impl ::facet::Facet for ConfigValue {
                                 })
                                 .offset(::core::mem::offset_of!(__ShadowConfigValue_Number, value))
                                 .flags(::facet::FieldFlags::EMPTY)
-                                .attributes(&[::facet::FieldAttribute::Rename("numValue")])
+                                .attributes(
+                                    &const { [::facet::FieldAttribute::Rename("numValue")] },
+                                )
                                 .build(),
                             ::facet::Field::builder()
                                 .name("unit")
@@ -61,9 +63,11 @@ unsafe impl ::facet::Facet for ConfigValue {
                                 })
                                 .offset(::core::mem::offset_of!(__ShadowConfigValue_Number, unit))
                                 .flags(::facet::FieldFlags::EMPTY)
-                                .attributes(&[::facet::FieldAttribute::Rename(
-                                    "unitName\" , sensitive",
-                                )])
+                                .attributes(
+                                    &const {
+                                        [::facet::FieldAttribute::Rename("unitName\" , sensitive")]
+                                    },
+                                )
                                 .build(),
                         ]
                     };
@@ -80,7 +84,7 @@ unsafe impl ::facet::Facet for ConfigValue {
                             .shape(|| ::facet::shape_of(&|s: &__ShadowConfigValue_Boolean| &s._0))
                             .offset(::core::mem::offset_of!(__ShadowConfigValue_Boolean, _0))
                             .flags(::facet::FieldFlags::EMPTY)
-                            .attributes(&[])
+                            .attributes(&const { [] })
                             .build()]
                     };
                     ::facet::Variant::builder()

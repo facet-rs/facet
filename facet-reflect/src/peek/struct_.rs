@@ -1,4 +1,4 @@
-use facet_core::{Field, FieldError, Struct};
+use facet_core::{Field, FieldAttribute, FieldError, Struct};
 
 use crate::Peek;
 
@@ -59,6 +59,27 @@ impl<'mem> PeekStruct<'mem> {
             let field = self.def.fields.get(i)?;
             let value = self.field(i).ok()?;
             Some((field, value))
+        })
+    }
+
+    /// Iterates over thos fields in this struct that should be included when it is serialized.
+    #[inline]
+    pub fn fields_for_serialize(&self) -> impl Iterator<Item = (&'static Field, Peek<'mem>)> + '_ {
+        self.fields().filter(|(field, peek)| {
+            for attr in field.attributes {
+                match attr {
+                    FieldAttribute::SkipSerializingIf(fn_ptr) => {
+                        if unsafe { fn_ptr(peek.data()) } {
+                            return false;
+                        }
+                    }
+                    FieldAttribute::SkipSerializing => {
+                        return false;
+                    }
+                    _ => {}
+                }
+            }
+            true
         })
     }
 }

@@ -13,7 +13,7 @@ unsafe impl ::facet::Facet for Blah {
                 .shape(|| ::facet::shape_of(&|s: &Blah| &s.0))
                 .offset(::core::mem::offset_of!(Blah, 0))
                 .flags(::facet::FieldFlags::EMPTY)
-                .attributes(&[])
+                .attributes(&const { [] })
                 .build()]
         };
         let vtable = &const {
