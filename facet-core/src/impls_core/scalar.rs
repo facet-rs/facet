@@ -144,10 +144,29 @@ macro_rules! impl_facet_for_integer {
                     .def(Def::Scalar(
                         ScalarDef::builder().affinity($affinity).build(),
                     ))
-                    .vtable(value_vtable!($type, |f, _opts| write!(
-                        f,
-                        stringify!($type)
-                    )))
+                    .vtable(
+                        &const {
+                            let mut vtable = value_vtable_inner!($type, |f, _opts| write!(
+                                f,
+                                "{}",
+                                stringify!($type)
+                            ));
+
+                            vtable.try_from = Some(|source, source_shape, dest| {
+                                if source_shape == Self::SHAPE {
+                                    return Ok(unsafe { dest.copy_from(source, source_shape) });
+                                }
+                                if source_shape == u64::SHAPE {
+                                    let value: u64 = *unsafe { source.get::<u64>() };
+                                    let converted: $type = value as $type;
+                                    return Ok(unsafe { dest.put::<$type>(converted) });
+                                }
+                                Err(TryFromError::Incompatible)
+                            });
+
+                            vtable
+                        },
+                    )
                     .build()
             };
         }

@@ -1,3 +1,6 @@
+use facet::Facet;
+use facet_json::from_str;
+
 #[test]
 fn test_from_json_with_option() {
     facet_testhelpers::setup();

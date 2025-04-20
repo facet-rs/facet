@@ -49,6 +49,7 @@ enum Instruction {
 enum PopReason {
     ObjectVal,
     ArrayItem,
+    Some,
 }
 
 /// Deserialize a JSON string into a Wip object.
@@ -153,77 +154,102 @@ pub fn from_slice_wip<'input, 'a>(
             Instruction::Value => {
                 let token = read_token!();
                 match token.node {
-                    Token::LBrace => {
-                        match wip.shape().def {
-                            Def::Map(_md) => {
-                                trace!("Object starting for map value ({})!", wip.shape().blue());
-                                reflect!(put_default());
-                            }
-                            Def::Enum(_ed) => {
-                                trace!("Object starting for enum value ({})!", wip.shape().blue());
-                                bail!(JsonErrorKind::Unimplemented("map object"));
-                            }
-                            Def::Struct(_) => {
-                                trace!(
-                                    "Object starting for struct value ({})!",
-                                    wip.shape().blue()
-                                );
-                                // nothing to do here
-                            }
-                            _ => {
-                                bail!(JsonErrorKind::UnsupportedType {
-                                    got: wip.shape(),
-                                    wanted: "map, enum, or struct"
-                                });
-                            }
+                    Token::Null => {
+                        reflect!(put_default());
+                    }
+                    _ => {
+                        if matches!(wip.shape().def, Def::Option(_)) {
+                            trace!("Starting Some(_) option for {}", wip.shape().blue());
+                            reflect!(push_some());
+                            stack.push(Instruction::Pop(PopReason::Some))
                         }
 
-                        stack.push(Instruction::ObjectKeyOrObjectClose)
-                    }
-                    Token::LBracket => {
-                        match wip.shape().def {
-                            Def::Array(_) => {
-                                trace!("Array starting for array ({})!", wip.shape().blue());
+                        match token.node {
+                            Token::Null => unreachable!(),
+                            Token::LBrace => {
+                                match wip.shape().def {
+                                    Def::Map(_md) => {
+                                        trace!(
+                                            "Object starting for map value ({})!",
+                                            wip.shape().blue()
+                                        );
+                                        reflect!(put_default());
+                                    }
+                                    Def::Enum(_ed) => {
+                                        trace!(
+                                            "Object starting for enum value ({})!",
+                                            wip.shape().blue()
+                                        );
+                                        bail!(JsonErrorKind::Unimplemented("map object"));
+                                    }
+                                    Def::Struct(_) => {
+                                        trace!(
+                                            "Object starting for struct value ({})!",
+                                            wip.shape().blue()
+                                        );
+                                        // nothing to do here
+                                    }
+                                    _ => {
+                                        bail!(JsonErrorKind::UnsupportedType {
+                                            got: wip.shape(),
+                                            wanted: "map, enum, or struct"
+                                        });
+                                    }
+                                }
+
+                                stack.push(Instruction::ObjectKeyOrObjectClose)
                             }
-                            Def::Slice(_) => {
-                                trace!("Array starting for slice ({})!", wip.shape().blue());
+                            Token::LBracket => {
+                                match wip.shape().def {
+                                    Def::Array(_) => {
+                                        trace!(
+                                            "Array starting for array ({})!",
+                                            wip.shape().blue()
+                                        );
+                                    }
+                                    Def::Slice(_) => {
+                                        trace!(
+                                            "Array starting for slice ({})!",
+                                            wip.shape().blue()
+                                        );
+                                    }
+                                    Def::List(_) => {
+                                        trace!("Array starting for list ({})!", wip.shape().blue());
+                                        reflect!(put_default());
+                                    }
+                                    _ => {
+                                        bail!(JsonErrorKind::UnsupportedType {
+                                            got: wip.shape(),
+                                            wanted: "array, list, or slice"
+                                        });
+                                    }
+                                }
+
+                                trace!("Beginning pushback");
+                                reflect!(begin_pushback());
+                                stack.push(Instruction::ArrayItemOrArrayClose)
                             }
-                            Def::List(_) => {
-                                trace!("Array starting for list ({})!", wip.shape().blue());
-                                reflect!(put_default());
-                            }
-                            _ => {
-                                bail!(JsonErrorKind::UnsupportedType {
-                                    got: wip.shape(),
-                                    wanted: "array, list, or slice"
+                            Token::RBrace | Token::RBracket | Token::Colon | Token::Comma => {
+                                bail!(JsonErrorKind::UnexpectedToken {
+                                    got: token.node,
+                                    wanted: "value"
                                 });
                             }
+                            Token::String(s) => {
+                                reflect!(put::<String>(s));
+                            }
+                            Token::Number(n) => {
+                                reflect!(put::<u64>(n as u64));
+                            }
+                            Token::True => {
+                                reflect!(put::<bool>(true));
+                            }
+                            Token::False => {
+                                reflect!(put::<bool>(false));
+                            }
+                            Token::EOF => todo!(),
                         }
-
-                        trace!("Beginning pushback");
-                        reflect!(begin_pushback());
-                        stack.push(Instruction::ArrayItemOrArrayClose)
                     }
-                    Token::RBrace | Token::RBracket | Token::Colon | Token::Comma => {
-                        bail!(JsonErrorKind::UnexpectedToken {
-                            got: token.node,
-                            wanted: "value"
-                        });
-                    }
-                    Token::String(s) => {
-                        reflect!(put::<String>(s));
-                    }
-                    Token::Number(n) => {
-                        reflect!(put::<u64>(n as u64));
-                    }
-                    Token::True => {
-                        reflect!(put::<bool>(true));
-                    }
-                    Token::False => {
-                        reflect!(put::<bool>(false));
-                    }
-                    Token::Null => todo!(),
-                    Token::EOF => todo!(),
                 }
             }
             Instruction::ObjectKeyOrObjectClose => {
