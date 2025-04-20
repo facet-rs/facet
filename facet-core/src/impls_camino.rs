@@ -1,3 +1,4 @@
+use alloc::borrow::ToOwned;
 use core::alloc::Layout;
 
 use camino::{Utf8Path, Utf8PathBuf};
