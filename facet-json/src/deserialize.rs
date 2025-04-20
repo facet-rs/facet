@@ -138,7 +138,7 @@ pub fn from_slice_wip<'input, 'a>(
                                 );
                                 // nothing to do here
                             }
-                            Def::Enum(ed) => {
+                            Def::Enum(_ed) => {
                                 trace!("Object starting for enum value ({})!", wip.shape().blue());
                                 bail!(JsonErrorKind::Unimplemented("map object".to_owned()));
                             }
@@ -176,8 +176,12 @@ pub fn from_slice_wip<'input, 'a>(
                             }
                         }
                     }
-                    Token::True => todo!(),
-                    Token::False => todo!(),
+                    Token::True => {
+                        reflect!(put::<bool>(true));
+                    }
+                    Token::False => {
+                        reflect!(put::<bool>(false));
+                    }
                     Token::Null => todo!(),
                     Token::EOF => todo!(),
                 }
