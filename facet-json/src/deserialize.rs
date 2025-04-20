@@ -296,7 +296,9 @@ pub fn from_slice_wip<'input, 'a>(
                             Token::False => {
                                 reflect!(put::<bool>(false));
                             }
-                            Token::EOF => todo!(),
+                            Token::EOF => {
+                                bail!(JsonErrorKind::UnexpectedEof("in value"));
+                            }
                         }
                     }
                 }
