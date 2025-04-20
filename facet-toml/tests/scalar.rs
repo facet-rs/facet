@@ -79,6 +79,22 @@ fn test_bool() {
             got: "integer"
         }
     );
+    assert_eq!(
+        facet_toml::from_str::<Root>("value = {a = 1}")
+            .unwrap_err()
+            .kind,
+        TomlErrorKind::ExpectedType {
+            expected: "boolean",
+            got: "inline table"
+        }
+    );
+    assert_eq!(
+        facet_toml::from_str::<Root>("[value]").unwrap_err().kind,
+        TomlErrorKind::ExpectedType {
+            expected: "value",
+            got: "table"
+        }
+    );
 }
 
 #[cfg(feature = "std")]
@@ -456,6 +472,16 @@ fn test_i8() {
         Root { value: 1 },
     );
     assert_eq!(
+        facet_toml::from_str::<Root>("value = 300.0")
+            .unwrap_err()
+            .kind,
+        TomlErrorKind::FailedTypeConversion {
+            toml_type_name: "float",
+            rust_type: i8::SHAPE,
+            reason: None
+        }
+    );
+    assert_eq!(
         facet_toml::from_str::<Root>("value = true")
             .unwrap_err()
             .kind,
@@ -463,5 +489,15 @@ fn test_i8() {
             expected: "number",
             got: "boolean"
         }
+    );
+}
+
+#[test]
+fn test_unparsable_scalar() {
+    facet_testhelpers::setup();
+
+    assert_eq!(
+        facet_toml::from_str::<()>("value = 1").unwrap_err().kind,
+        TomlErrorKind::UnrecognizedScalar(<()>::SHAPE)
     );
 }
