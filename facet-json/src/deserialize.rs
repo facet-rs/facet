@@ -51,6 +51,7 @@ enum Instruction {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PopReason {
+    TopLevel,
     ObjectVal,
     ArrayItem,
     Some,
@@ -70,7 +71,7 @@ pub fn from_slice_wip<'input, 'a>(
     mut wip: Wip<'a>,
     input: &'input [u8],
 ) -> Result<HeapValue<'a>, JsonError<'input>> {
-    let mut stack = vec![Instruction::Value];
+    let mut stack = vec![Instruction::Pop(PopReason::TopLevel), Instruction::Value];
     let mut tokenizer = Tokenizer::new(input);
     let mut last_span = Span { start: 0, len: 0 };
     let mut unread_token: Option<Spanned<Token>> = None;
@@ -132,28 +133,58 @@ pub fn from_slice_wip<'input, 'a>(
         let frame_count = wip.frames_count();
         let insn = match stack.pop() {
             Some(insn) => insn,
-            None => {
-                trace!("No instruction, building.");
-                let path = wip.path();
-                return Ok(match wip.build() {
-                    Ok(hv) => hv,
-                    Err(e) => {
-                        return Err(JsonError::new(
-                            JsonErrorKind::ReflectError(e),
-                            input,
-                            last_span,
-                            path,
-                        ));
-                    }
-                });
-            }
+            None => unreachable!("Instruction stack is empty"),
         };
         trace!("[{frame_count}] Instruction {:?}", insn.yellow());
 
         match insn {
             Instruction::Pop(reason) => {
                 trace!("Popping because {:?}", reason.yellow());
-                reflect!(pop());
+
+                let container_shape = wip.shape();
+                if let Def::Struct(sd) = container_shape.def {
+                    trace!("Let's check all fields are initialized");
+                    for (index, field) in sd.fields.iter().enumerate() {
+                        let is_set = match wip.is_field_set(index) {
+                            Ok(is_set) => is_set,
+                            Err(err) => {
+                                trace!("Error checking field set status: {:?}", err);
+                                return Err(JsonError::new(
+                                    JsonErrorKind::ReflectError(err),
+                                    input,
+                                    last_span,
+                                    wip.path(),
+                                ));
+                            }
+                        };
+                        if !is_set {
+                            trace!(
+                                "Field #{} {:?} is not initialized",
+                                index.yellow(),
+                                field.blue()
+                            );
+                        }
+                    }
+                } else {
+                    trace!("Thing being popped is not a container I guess");
+                }
+
+                if reason == PopReason::TopLevel {
+                    let path = wip.path();
+                    return Ok(match wip.build() {
+                        Ok(hv) => hv,
+                        Err(e) => {
+                            return Err(JsonError::new(
+                                JsonErrorKind::ReflectError(e),
+                                input,
+                                last_span,
+                                path,
+                            ));
+                        }
+                    });
+                } else {
+                    reflect!(pop());
+                }
             }
             Instruction::SkipValue => {
                 let token = read_token!();

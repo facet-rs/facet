@@ -44,7 +44,6 @@ fn test_deny_unknown_fields() -> eyre::Result<()> {
 }
 
 #[test]
-#[ignore]
 fn json_read_struct_level_default_unset_field() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
