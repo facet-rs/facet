@@ -1987,7 +1987,7 @@ impl Drop for Wip<'_> {
                 Def::Enum(_ed) => {
                     trace!(
                         "{}",
-                        format!(
+                        format_args!(
                             "TODO: handle enum deallocation for {} at {:p}",
                             frame.shape.yellow(),
                             frame.data.as_byte_ptr()

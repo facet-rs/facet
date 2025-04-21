@@ -40,14 +40,17 @@ fn strip_ansi_escapes(s: &str) -> String {
 
 /// Run a single compilation test that is expected to fail
 fn run_compilation_test(test: &CompilationTest) {
-    println!("{}", format!("Running test: {}", test.name).blue().bold());
+    println!(
+        "{}",
+        format_args!("Running test: {}", test.name).blue().bold()
+    );
 
     // Create a random temp directory for the Cargo project
     let temp_dir = tempfile::tempdir().expect("Failed to create temp directory");
     let project_dir = temp_dir.path();
     println!(
         "{}",
-        format!("  Project directory: {}", project_dir.display()).dimmed()
+        format_args!("  Project directory: {}", project_dir.display()).dimmed()
     );
 
     // Get absolute paths to the facet crates
@@ -122,7 +125,7 @@ facet-reflect = {{ path = "{}" }}
         } else {
             println!(
                 "{}",
-                format!("  ✓ Found expected error: '{}'", expected_error).green()
+                format_args!("  ✓ Found expected error: '{}'", expected_error).green()
             );
         }
     }
@@ -131,7 +134,7 @@ facet-reflect = {{ path = "{}" }}
     if !missing_errors.is_empty() {
         println!("{}", "\n❌ MISSING EXPECTED ERRORS:".bright_red().bold());
         for error in &missing_errors {
-            println!("{}", format!("  - '{}'", error).red());
+            println!("{}", format_args!("  - '{}'", error).red());
         }
 
         // Print the error output for debugging

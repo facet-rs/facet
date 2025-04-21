@@ -9,8 +9,8 @@ fn main() {
         let (data, shape) = facet_samplelibc::get_foo_and_shape();
         let peek = unsafe { Peek::unchecked_new(data.as_const(), shape) };
         eprintln!("{peek}");
-        eprintln!("🔍 Display: {}", format!("{}", peek).bright_green());
-        eprintln!("🐛 Debug: {}", format!("{:?}", peek).bright_blue());
+        eprintln!("🔍 Display: {}", format_args!("{}", peek).bright_green());
+        eprintln!("🐛 Debug: {}", format_args!("{:?}", peek).bright_blue());
 
         inspect(peek);
     }

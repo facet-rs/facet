@@ -11,7 +11,7 @@ where
     let mut facts: HashSet<Fact> = HashSet::new();
     let name = format!("{}", T::SHAPE);
 
-    eprint!("{}", format!("== {name}: ").yellow());
+    eprint!("{}", format_args!("== {name}: ").yellow());
     let value_vtable = T::SHAPE.vtable;
     let traits = [
         ("Debug", value_vtable.debug.is_some()),
@@ -42,15 +42,19 @@ where
     // Format display representation
     if l.shape().vtable.display.is_some() {
         facts.insert(Fact::Display);
-        let display_str = format!("{} vs {}", l.style(remarkable), r.style(remarkable));
-        eprintln!("Display:   {}", display_str);
+        eprintln!(
+            "Display:   {}",
+            format_args!("{} vs {}", l.style(remarkable), r.style(remarkable))
+        );
     }
 
     // Format debug representation
     if l.shape().vtable.debug.is_some() {
         facts.insert(Fact::Debug);
-        let debug_str = format!("{:?} vs {:?}", l.style(remarkable), r.style(remarkable));
-        eprintln!("Debug:     {}", debug_str);
+        eprintln!(
+            "Debug:     {}",
+            format_args!("{:?} vs {:?}", l.style(remarkable), r.style(remarkable))
+        );
     }
 
     // Test equality
@@ -88,7 +92,7 @@ where
     if let Ok(wip) = Wip::alloc::<T>().put_default() {
         let val = wip.build().unwrap();
         facts.insert(Fact::Default);
-        eprintln!("Default:   {}", format!("{:?}", val).style(remarkable));
+        eprintln!("Default:   {}", format_args!("{:?}", val).style(remarkable));
     }
 
     // Test clone

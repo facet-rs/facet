@@ -98,9 +98,9 @@ impl Job {
         for (i, change) in changes.iter().enumerate() {
             if show_line[i] {
                 match change.tag() {
-                    ChangeTag::Insert => print!("{}", format!("    +{}", change).green()),
-                    ChangeTag::Delete => print!("{}", format!("    -{}", change).red()),
-                    ChangeTag::Equal => print!("{}", format!("    {}", change).dim()),
+                    ChangeTag::Insert => print!("{}", format_args!("    +{}", change).green()),
+                    ChangeTag::Delete => print!("{}", format_args!("    -{}", change).red()),
+                    ChangeTag::Equal => print!("{}", format_args!("    {}", change).dim()),
                 }
                 last_was_ellipsis = false;
             } else if !last_was_ellipsis {
@@ -252,7 +252,7 @@ pub fn enqueue_readme_jobs(sender: std::sync::mpsc::Sender<Job>) {
     } else {
         error!(
             "🚫 {}",
-            format!(
+            format_args!(
                 "Template file {} not found for workspace. We looked at {}",
                 template_name,
                 workspace_template_path.display()
@@ -412,7 +412,7 @@ pub fn enqueue_rustfmt_jobs(sender: std::sync::mpsc::Sender<Job>, staged_files: 
                     "{} {}: {}",
                     "❌".red(),
                     path.display().to_string().blue(),
-                    format!("Failed to read: {e}").dim()
+                    format_args!("Failed to read: {e}").dim()
                 );
                 continue;
             }
@@ -523,13 +523,13 @@ pub fn show_jobs_and_apply_if_consent_is_given(jobs: &mut [Job]) {
 
     println!(
         "\n{}\n{}\n",
-        format!("{} GENERATION CHANGES {}", ACTION_REQUIRED, ACTION_REQUIRED)
+        format_args!("{} GENERATION CHANGES {}", ACTION_REQUIRED, ACTION_REQUIRED)
             .on_black()
             .bold()
             .yellow()
             .italic()
             .underline(),
-        format!(
+        format_args!(
             "The following {} file{} would be updated/generated:",
             jobs.len(),
             if jobs.len() == 1 { "" } else { "s" }
@@ -595,7 +595,7 @@ pub fn show_jobs_and_apply_if_consent_is_given(jobs: &mut [Job]) {
                             println!("{}", "ok".green());
                         }
                         Err(e) => {
-                            println!("{} {}", CANCEL, format!("failed: {e}").red());
+                            println!("{} {}", CANCEL, format_args!("failed: {e}").red());
                         }
                     }
                 }
