@@ -17,7 +17,7 @@ fs-err = "3.1.0"
 log = "0.4.27"
 num_cpus = "1.16.0"
 rayon = "1.10.0"
-similar = { version = "2.4.0", features = ["inline"] }
+similar = { version = "2.7.0", features = ["inline"] }
 yansi = "1.0.1"
 
 [target.'cfg(not(windows))'.dependencies]

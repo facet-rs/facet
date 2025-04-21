@@ -11,7 +11,7 @@ keywords = ["yaml", "serialization", "deserialization", "reflection", "facet"]
 categories = ["encoding", "parsing", "data-structures"]
 
 [dependencies]
-yaml-rust2 = "0.10.0"
+yaml-rust2 = "0.10.1"
 facet-core = { version = "0.11.0", path = "../facet-core" }
 facet-reflect = { version = "0.10.4", path = "../facet-reflect" }
 
