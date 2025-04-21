@@ -195,7 +195,9 @@ version = "0.13.0"
 dependencies = [
  "facet-derive-parse",
  "insta",
+ "owo-colors",
  "rust-format",
+ "tempfile",
 ]
 
 [[package]]

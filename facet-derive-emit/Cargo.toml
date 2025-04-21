@@ -16,9 +16,14 @@ keywords = [
 ]
 categories = ["development-tools", "encoding"]
 
+[features]
+slow-tests = [] # Enable slow tests (compile tests)
+
 [dependencies]
 facet-derive-parse = { version = "0.13.0", path = "../facet-derive-parse" }
 
 [dev-dependencies]
 insta = { git = "https://github.com/mitsuhiko/insta" }
 rust-format = { version = "0.3.4", features = ["proc-macro2", "token_stream"] }
+owo-colors = { version = "4.2.0" }
+tempfile = { version = "3.19.1" }
