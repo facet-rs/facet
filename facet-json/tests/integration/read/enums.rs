@@ -27,3 +27,30 @@ fn json_read_unit_enum_variant() {
     };
     assert_eq!(s_oblique, FontStyle::Oblique);
 }
+
+#[test]
+fn json_read_tuple_variant() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    enum Point {
+        X(u32),
+        Y(String),
+    }
+
+    let json_x = r#"{ "X": 123 }"#;
+    let json_y = r#"{ "Y": "hello" }"#;
+
+    let p_x: Point = match from_str(json_x) {
+        Ok(s) => s,
+        Err(e) => panic!("Error deserializing JSON: {}", e),
+    };
+    assert_eq!(p_x, Point::X(123));
+
+    let p_y: Point = match from_str(json_y) {
+        Ok(s) => s,
+        Err(e) => panic!("Error deserializing JSON: {}", e),
+    };
+    assert_eq!(p_y, Point::Y("hello".to_string()));
+}

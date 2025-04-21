@@ -144,85 +144,11 @@ pub fn from_slice_wip<'input, 'a>(
                 trace!("Popping because {:?}", reason.yellow());
 
                 let container_shape = wip.shape();
-                if let Def::Struct(sd) = container_shape.def {
-                    let mut has_unset = false;
+                match container_shape.def {
+                    Def::Struct(sd) => {
+                        let mut has_unset = false;
 
-                    trace!("Let's check all fields are initialized");
-                    for (index, field) in sd.fields.iter().enumerate() {
-                        let is_set = wip.is_field_set(index).map_err(|err| {
-                            trace!("Error checking field set status: {:?}", err);
-                            JsonError::new(
-                                JsonErrorKind::ReflectError(err),
-                                input,
-                                last_span,
-                                wip.path(),
-                            )
-                        })?;
-                        if !is_set {
-                            if let Some(default_in_place_fn) = field.maybe_default_fn() {
-                                reflect!(field(index));
-                                if let Some(default_in_place_fn) = default_in_place_fn {
-                                    reflect!(put_from_fn(default_in_place_fn));
-                                    trace!(
-                                        "Field #{} {:?} was set to default value (via custom fn)",
-                                        index.yellow(),
-                                        field.blue()
-                                    );
-                                } else {
-                                    if !field.shape().is(Characteristic::Default) {
-                                        return Err(JsonError::new(
-                                            JsonErrorKind::ReflectError(
-                                                ReflectError::DefaultAttrButNoDefaultImpl {
-                                                    shape: field.shape(),
-                                                },
-                                            ),
-                                            input,
-                                            last_span,
-                                            wip.path(),
-                                        ));
-                                    }
-                                    reflect!(put_default());
-                                    trace!(
-                                        "Field #{} {:?} was set to default value (via default impl)",
-                                        index.yellow(),
-                                        field.blue()
-                                    );
-                                }
-                                reflect!(pop());
-                            } else {
-                                trace!(
-                                    "Field #{} {:?} is not initialized",
-                                    index.yellow(),
-                                    field.blue()
-                                );
-                                has_unset = true;
-                            }
-                        }
-                    }
-
-                    if has_unset && container_shape.has_default_attr() {
-                        // let's allocate and build a default value
-                        let default_val = Wip::alloc_shape(container_shape)
-                            .put_default()
-                            .map_err(|e| {
-                                JsonError::new(
-                                    JsonErrorKind::ReflectError(e),
-                                    input,
-                                    last_span,
-                                    wip.path(),
-                                )
-                            })?
-                            .build()
-                            .map_err(|e| {
-                                JsonError::new(
-                                    JsonErrorKind::ReflectError(e),
-                                    input,
-                                    last_span,
-                                    wip.path(),
-                                )
-                            })?;
-                        let peek = default_val.peek().into_struct().unwrap();
-
+                        trace!("Let's check all fields are initialized");
                         for (index, field) in sd.fields.iter().enumerate() {
                             let is_set = wip.is_field_set(index).map_err(|err| {
                                 trace!("Error checking field set status: {:?}", err);
@@ -234,16 +160,101 @@ pub fn from_slice_wip<'input, 'a>(
                                 )
                             })?;
                             if !is_set {
-                                let address_of_field_from_default =
-                                    peek.field(index).unwrap().data();
-                                reflect!(field(index));
-                                reflect!(put_shape(address_of_field_from_default, field.shape()));
-                                reflect!(pop());
+                                if let Some(default_in_place_fn) = field.maybe_default_fn() {
+                                    reflect!(field(index));
+                                    if let Some(default_in_place_fn) = default_in_place_fn {
+                                        reflect!(put_from_fn(default_in_place_fn));
+                                        trace!(
+                                            "Field #{} {:?} was set to default value (via custom fn)",
+                                            index.yellow(),
+                                            field.blue()
+                                        );
+                                    } else {
+                                        if !field.shape().is(Characteristic::Default) {
+                                            return Err(JsonError::new(
+                                                JsonErrorKind::ReflectError(
+                                                    ReflectError::DefaultAttrButNoDefaultImpl {
+                                                        shape: field.shape(),
+                                                    },
+                                                ),
+                                                input,
+                                                last_span,
+                                                wip.path(),
+                                            ));
+                                        }
+                                        reflect!(put_default());
+                                        trace!(
+                                            "Field #{} {:?} was set to default value (via default impl)",
+                                            index.yellow(),
+                                            field.blue()
+                                        );
+                                    }
+                                    reflect!(pop());
+                                } else {
+                                    trace!(
+                                        "Field #{} {:?} is not initialized",
+                                        index.yellow(),
+                                        field.blue()
+                                    );
+                                    has_unset = true;
+                                }
+                            }
+                        }
+
+                        if has_unset && container_shape.has_default_attr() {
+                            // let's allocate and build a default value
+                            let default_val = Wip::alloc_shape(container_shape)
+                                .put_default()
+                                .map_err(|e| {
+                                    JsonError::new(
+                                        JsonErrorKind::ReflectError(e),
+                                        input,
+                                        last_span,
+                                        wip.path(),
+                                    )
+                                })?
+                                .build()
+                                .map_err(|e| {
+                                    JsonError::new(
+                                        JsonErrorKind::ReflectError(e),
+                                        input,
+                                        last_span,
+                                        wip.path(),
+                                    )
+                                })?;
+                            let peek = default_val.peek().into_struct().unwrap();
+
+                            for (index, field) in sd.fields.iter().enumerate() {
+                                let is_set = wip.is_field_set(index).map_err(|err| {
+                                    trace!("Error checking field set status: {:?}", err);
+                                    JsonError::new(
+                                        JsonErrorKind::ReflectError(err),
+                                        input,
+                                        last_span,
+                                        wip.path(),
+                                    )
+                                })?;
+                                if !is_set {
+                                    let address_of_field_from_default =
+                                        peek.field(index).unwrap().data();
+                                    reflect!(field(index));
+                                    reflect!(put_shape(
+                                        address_of_field_from_default,
+                                        field.shape()
+                                    ));
+                                    reflect!(pop());
+                                }
                             }
                         }
                     }
-                } else {
-                    trace!("Thing being popped is not a container I guess");
+                    Def::Enum(_) => {
+                        trace!(
+                            "TODO: make sure enums are initialized (support container-level and field-level default, etc.)"
+                        );
+                    }
+                    _ => {
+                        trace!("Thing being popped is not a container I guess");
+                    }
                 }
 
                 if reason == PopReason::TopLevel {
@@ -331,7 +342,7 @@ pub fn from_slice_wip<'input, 'a>(
                                             "Object starting for enum value ({})!",
                                             wip.shape().blue()
                                         );
-                                        bail!(JsonErrorKind::Unimplemented("map object"));
+                                        // nothing to do here
                                     }
                                     Def::Struct(_) => {
                                         trace!(
@@ -391,6 +402,7 @@ pub fn from_slice_wip<'input, 'a>(
                                     reflect!(put::<String>(s));
                                 }
                                 Def::Enum(enum_def) => {
+                                    // FIXME: use `wip.find_variant(&s)`
                                     let variant_index =
                                         enum_def.variants.iter().position(|v| v.name == s);
                                     let Some(variant_index) = variant_index else {
@@ -410,7 +422,25 @@ pub fn from_slice_wip<'input, 'a>(
                                 reflect!(put(n));
                             }
                             Token::U64(n) => {
-                                reflect!(put(n));
+                                match wip.shape().def {
+                                    Def::Scalar(_) => {
+                                        reflect!(put(n));
+                                    }
+                                    Def::Enum(_) => {
+                                        // if the variant is already selected, and it's a tuple variant,
+                                        // just set field zero.
+                                        // FIXME: it's not always field 0 because, well, it's a tuple — we should set 0, 1 etc.
+                                        reflect!(field(0));
+                                        reflect!(put(n));
+                                        reflect!(pop());
+                                    }
+                                    _ => {
+                                        bail!(JsonErrorKind::UnsupportedType {
+                                            got: wip.shape(),
+                                            wanted: "u64-like (scalar, enum, tuple)",
+                                        });
+                                    }
+                                }
                             }
                             Token::I64(n) => {
                                 reflect!(put(n));
@@ -433,7 +463,9 @@ pub fn from_slice_wip<'input, 'a>(
                 match token.node {
                     Token::String(key) => {
                         trace!("Object key: {}", key);
+
                         let mut ignore = false;
+                        let mut transparent = false;
 
                         match wip.shape().def {
                             Def::Struct(_) => match wip.field_index(&key) {
@@ -451,6 +483,19 @@ pub fn from_slice_wip<'input, 'a>(
                                         trace!("Will ignore key ");
                                         ignore = true;
                                     }
+                                }
+                            },
+                            Def::Enum(_sd) => match wip.find_variant(&key) {
+                                Some((index, variant)) => {
+                                    trace!("Variant {} selected", variant.name.blue());
+                                    reflect!(variant(index));
+                                    transparent = true;
+                                }
+                                None => {
+                                    bail!(JsonErrorKind::NoSuchVariant {
+                                        name: key.to_string(),
+                                        enum_shape: wip.shape()
+                                    });
                                 }
                             },
                             Def::Map(_) => {
@@ -476,7 +521,13 @@ pub fn from_slice_wip<'input, 'a>(
                         if ignore {
                             stack.push(Instruction::SkipValue);
                         } else {
-                            stack.push(Instruction::Pop(PopReason::ObjectVal));
+                            if transparent {
+                                trace!(
+                                    "Transparent wrapper (like an outer-tagged enum), not pushing Pop insn to stack"
+                                )
+                            } else {
+                                stack.push(Instruction::Pop(PopReason::ObjectVal));
+                            }
                             stack.push(Instruction::Value);
                         }
                     }
