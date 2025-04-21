@@ -401,17 +401,23 @@ pub fn from_slice_wip<'input, 'a>(
                                 Def::Scalar(_sd) => {
                                     reflect!(put::<String>(s));
                                 }
-                                Def::Enum(enum_def) => {
-                                    // FIXME: use `wip.find_variant(&s)`
-                                    let variant_index =
-                                        enum_def.variants.iter().position(|v| v.name == s);
-                                    let Some(variant_index) = variant_index else {
-                                        bail!(JsonErrorKind::NoSuchVariant {
-                                            name: s.to_string(),
-                                            enum_shape: wip.shape()
-                                        });
-                                    };
-                                    reflect!(variant(variant_index));
+                                Def::Enum(_ed) => {
+                                    if wip.selected_variant().is_some() {
+                                        // just put, then — if it's a tuple field it'll work
+                                        reflect!(put::<String>(s));
+                                    } else {
+                                        match wip.find_variant(&s) {
+                                            Some((variant_index, _)) => {
+                                                reflect!(variant(variant_index));
+                                            }
+                                            None => {
+                                                bail!(JsonErrorKind::NoSuchVariant {
+                                                    name: s.to_string(),
+                                                    enum_shape: wip.shape()
+                                                });
+                                            }
+                                        }
+                                    }
                                 }
                                 _ => bail!(JsonErrorKind::UnsupportedType {
                                     got: wip.shape(),
@@ -422,25 +428,7 @@ pub fn from_slice_wip<'input, 'a>(
                                 reflect!(put(n));
                             }
                             Token::U64(n) => {
-                                match wip.shape().def {
-                                    Def::Scalar(_) => {
-                                        reflect!(put(n));
-                                    }
-                                    Def::Enum(_) => {
-                                        // if the variant is already selected, and it's a tuple variant,
-                                        // just set field zero.
-                                        // FIXME: it's not always field 0 because, well, it's a tuple — we should set 0, 1 etc.
-                                        reflect!(field(0));
-                                        reflect!(put(n));
-                                        reflect!(pop());
-                                    }
-                                    _ => {
-                                        bail!(JsonErrorKind::UnsupportedType {
-                                            got: wip.shape(),
-                                            wanted: "u64-like (scalar, enum, tuple)",
-                                        });
-                                    }
-                                }
+                                reflect!(put(n));
                             }
                             Token::I64(n) => {
                                 reflect!(put(n));

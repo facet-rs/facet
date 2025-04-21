@@ -911,6 +911,8 @@ impl<'a> Wip<'a> {
 
                             let shape = frame.shape;
                             let index = frame.field_index_in_parent;
+
+                            #[allow(unused)]
                             let variant_name = variant.name;
 
                             // If all fields are now initialized, mark the enum itself as initialized

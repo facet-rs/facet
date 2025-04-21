@@ -35,7 +35,7 @@ fn json_read_tuple_variant() {
     #[derive(Facet, Debug, PartialEq)]
     #[repr(u8)]
     enum Point {
-        X(u32),
+        X(u64),
         Y(String),
     }
 
