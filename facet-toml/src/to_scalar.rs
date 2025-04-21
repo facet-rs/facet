@@ -26,6 +26,7 @@ where
                 got: item.type_name(),
             },
             item.span(),
+            wip.path(),
         )
     })?;
 
@@ -39,6 +40,7 @@ where
                     reason: None,
                 },
                 r.span(),
+                wip.path(),
             )
         })?),
         Value::Integer(i) => Ok(T::from(*i.value()).ok_or_else(|| {
@@ -50,6 +52,7 @@ where
                     reason: None,
                 },
                 i.span(),
+                wip.path(),
             )
         })?),
         other => Err(TomlError::new(
@@ -59,11 +62,14 @@ where
                 got: other.type_name(),
             },
             other.span(),
+            wip.path(),
         )),
     }?;
 
+    // TODO: only generate if actually error
+    let path = wip.path();
     wip.put(value)
-        .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))
+        .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span(), path))
 }
 
 /// Try to convert a TOML boolean to a Rust boolean.
@@ -80,6 +86,7 @@ pub(crate) fn put_boolean<'input, 'a>(
                 got: item.type_name(),
             },
             item.span(),
+            wip.path(),
         )
     })?;
 
@@ -92,11 +99,14 @@ pub(crate) fn put_boolean<'input, 'a>(
                 got: v.type_name(),
             },
             v.span(),
+            wip.path(),
         )),
     }?;
 
+    // TODO: only generate if actually error
+    let path = wip.path();
     wip.put(value)
-        .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))
+        .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span(), path))
 }
 
 /// Try to convert a TOML string to a Rust string.
@@ -118,14 +128,17 @@ where
                     got: item.type_name(),
                 },
                 item.span(),
+                wip.path(),
             )
         })?
         // TODO: use reference
         .to_string()
         .into();
 
+    // TODO: only generate if actually error
+    let path = wip.path();
     wip.put(value)
-        .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))
+        .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span(), path))
 }
 
 /// Try to convert a TOML string to a Rust type that implements `FromStr`.
@@ -142,9 +155,12 @@ pub(crate) fn put_from_str<'input, 'a>(
                 got: item.type_name(),
             },
             item.span(),
+            wip.path(),
         )
     })?;
 
+    // TODO: only generate if actually error
+    let path = wip.path();
     wip.parse(string).map_err(|e| match e {
         // Handle the specific parsing error with a custom error type
         ReflectError::OperationFailed {
@@ -159,7 +175,8 @@ pub(crate) fn put_from_str<'input, 'a>(
                 reason: None,
             },
             item.span(),
+            path,
         ),
-        e => TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()),
+        e => TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span(), path),
     })
 }

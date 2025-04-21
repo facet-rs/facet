@@ -6,6 +6,7 @@ use core::ops::Range;
 use ariadne::{Color, Label, Report, ReportKind, Source};
 use facet_core::Shape;
 use facet_reflect::ReflectError;
+use yansi::Paint as _;
 
 /// Any error from deserializing TOML.
 pub struct TomlError<'input> {
@@ -15,12 +16,24 @@ pub struct TomlError<'input> {
     toml: &'input str,
     /// Which part of the TOML this error applies to.
     span: Option<Range<usize>>,
+    /// Full Wip path.
+    path: String,
 }
 
 impl<'input> TomlError<'input> {
     /// Create a new error.
-    pub fn new(toml: &'input str, kind: TomlErrorKind, span: Option<Range<usize>>) -> Self {
-        Self { kind, toml, span }
+    pub fn new(
+        toml: &'input str,
+        kind: TomlErrorKind,
+        span: Option<Range<usize>>,
+        path: String,
+    ) -> Self {
+        Self {
+            kind,
+            toml,
+            span,
+            path,
+        }
     }
 
     /// Message for this specific error.
@@ -70,7 +83,7 @@ impl<'input> TomlError<'input> {
 #[cfg(not(feature = "rich-diagnostics"))]
 impl core::fmt::Display for TomlError<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}", self.message())
+        write!(f, "{} in path {}", self.message(), self.path)
     }
 }
 
@@ -79,14 +92,14 @@ impl core::fmt::Display for TomlError<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // Don't print the TOML source if no span is set
         let Some(span) = &self.span else {
-            return writeln!(f, "{}", self.message());
+            return writeln!(f, "{} in path {}", self.message(), self.path);
         };
 
         let source_id = "toml";
 
         // Create a nicely formatted report
         let mut report = Report::build(ReportKind::Error, (source_id, span.clone()))
-            .with_message("Parsing TOML");
+            .with_message(format!("Error at {}", self.path.yellow()));
 
         // The inline error message in the TOML document
         let label = Label::new((source_id, span.clone()))

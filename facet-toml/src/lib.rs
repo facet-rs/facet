@@ -11,9 +11,29 @@ use log::trace;
 use toml_edit::{ImDocument, Item, TomlError as TomlEditError};
 use yansi::Paint as _;
 
+macro_rules! reflect {
+    ($wip:expr, $toml:expr, $span:expr, $($tt:tt)*) => {
+        let path = $wip.path();
+        $wip = match $wip.$($tt)* {
+            Ok(wip) => wip,
+            Err(e) => {
+                return Err(TomlError::new(
+                    $toml,
+                    TomlErrorKind::GenericReflect(e),
+                    $span,
+                    path
+                ));
+            }
+        }
+    };
+}
+
 /// Deserializes a TOML string into a value of type `T` that implements `Facet`.
 pub fn from_str<T: Facet>(toml: &str) -> Result<T, TomlError<'_>> {
     trace!("Parsing TOML");
+
+    // Allocate the type
+    let wip = Wip::alloc::<T>();
 
     // Parse the TOML document
     let docs: ImDocument<String> = toml.parse().map_err(|e: TomlEditError| {
@@ -21,21 +41,25 @@ pub fn from_str<T: Facet>(toml: &str) -> Result<T, TomlError<'_>> {
             toml,
             TomlErrorKind::GenericTomlError(e.message().to_string()),
             e.span(),
+            wip.path(),
         )
     })?;
 
     trace!("Starting deserialization");
 
     // Deserialize it with facet reflection
-    let wip = deserialize_item(toml, Wip::alloc::<T>(), docs.as_item())?;
+    let wip = deserialize_item(toml, wip, docs.as_item())?;
+
+    // TODO: only generate if actually error
+    let path = wip.path();
 
     // Build the result
     let heap_value = wip
         .build()
-        .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), None))?;
+        .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), None, path.clone()))?;
     let result = heap_value
         .materialize::<T>()
-        .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), None))?;
+        .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), None, path))?;
 
     trace!("Finished deserialization");
 
@@ -81,19 +105,16 @@ fn deserialize_as_struct<'input, 'a>(
                     toml,
                     TomlErrorKind::ParseSingleValueAsMultipleFieldStruct,
                     item.span(),
+                    wip.path(),
                 ));
             }
         }
 
-        wip = wip
-            .field(0)
-            .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?;
+        reflect!(wip, toml, item.span(), field(0));
 
         wip = deserialize_item(toml, wip, item)?;
 
-        wip = wip
-            .pop()
-            .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?;
+        reflect!(wip, toml, item.span(), pop());
 
         return Ok(wip);
     }
@@ -107,13 +128,12 @@ fn deserialize_as_struct<'input, 'a>(
                 got: item.type_name(),
             },
             item.span(),
+            wip.path(),
         )
     })?;
 
     for field in def.fields {
-        wip = wip
-            .field_named(field.name)
-            .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?;
+        reflect!(wip, toml, item.span(), field_named(field.name));
 
         // Find the matching TOML field
         let field_item = table.get(field.name);
@@ -122,21 +142,19 @@ fn deserialize_as_struct<'input, 'a>(
             None => {
                 if let Def::Option(..) = field.shape().def {
                     // Default of `Option<T>` is `None`
-                    wip = wip.put_default().map_err(|e| {
-                        TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span())
-                    })?;
+                    reflect!(wip, toml, item.span(), put_default());
                 } else {
                     return Err(TomlError::new(
                         toml,
                         TomlErrorKind::ExpectedFieldWithName(field.name),
                         item.span(),
+                        wip.path(),
                     ));
                 }
             }
         }
-        wip = wip
-            .pop()
-            .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?;
+
+        reflect!(wip, toml, item.span(), pop());
     }
 
     trace!("Finished deserializing {}", "struct".blue());
@@ -175,6 +193,7 @@ fn deserialize_as_enum<'input, 'a>(
                             toml,
                             TomlErrorKind::ExpectedExactlyOneField,
                             inline_table.span(),
+                            wip.path(),
                         ));
                     } else {
                         return build_enum_from_variant_name(
@@ -190,6 +209,7 @@ fn deserialize_as_enum<'input, 'a>(
                         toml,
                         TomlErrorKind::ExpectedAtLeastOneField,
                         inline_table.span(),
+                        wip.path(),
                     ));
                 }
             }
@@ -202,6 +222,7 @@ fn deserialize_as_enum<'input, 'a>(
                         got: value.type_name(),
                     },
                     value.span(),
+                    wip.path(),
                 )
             })?;
 
@@ -217,6 +238,7 @@ fn deserialize_as_enum<'input, 'a>(
                         toml,
                         TomlErrorKind::ExpectedExactlyOneField,
                         table.span(),
+                        wip.path(),
                     ));
                 } else {
                     build_enum_from_variant_name(toml, wip, key, field)?
@@ -226,6 +248,7 @@ fn deserialize_as_enum<'input, 'a>(
                     toml,
                     TomlErrorKind::ExpectedAtLeastOneField,
                     table.span(),
+                    wip.path(),
                 ));
             }
         }
@@ -245,9 +268,7 @@ fn build_enum_from_variant_name<'input, 'a>(
     item: &Item,
 ) -> Result<Wip<'a>, TomlError<'input>> {
     // Select the variant
-    wip = wip
-        .variant_named(variant_name)
-        .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?;
+    reflect!(wip, toml, item.span(), variant_named(variant_name));
 
     // Safe to unwrap because the variant got just selected
     let variant = wip.selected_variant().unwrap();
@@ -263,9 +284,7 @@ fn build_enum_from_variant_name<'input, 'a>(
 
     // Push all fields
     for (index, field) in variant.data.fields.iter().enumerate() {
-        wip = wip
-            .field_named(field.name)
-            .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?;
+        reflect!(wip, toml, item.span(), field_named(field.name));
 
         // Try to get the TOML value as a table to extract the field
         if let Some(table) = item.as_table_like() {
@@ -286,15 +305,14 @@ fn build_enum_from_variant_name<'input, 'a>(
                 // Push none if field not found and it's an option
                 None if matches!(field.shape().def, Def::Option(_)) => {
                     // Default of `Option<T>` is `None`
-                    wip = wip.put_default().map_err(|e| {
-                        TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span())
-                    })?;
+                    reflect!(wip, toml, item.span(), put_default());
                 }
                 None => {
                     return Err(TomlError::new(
                         toml,
                         TomlErrorKind::ExpectedFieldWithName(field.name),
                         item.span(),
+                        wip.path(),
                     ));
                 }
             }
@@ -305,12 +323,11 @@ fn build_enum_from_variant_name<'input, 'a>(
                 toml,
                 TomlErrorKind::UnrecognizedType(item.type_name()),
                 item.span(),
+                wip.path(),
             ));
         }
 
-        wip = wip
-            .pop()
-            .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?;
+        reflect!(wip, toml, item.span(), pop());
     }
 
     Ok(wip)
@@ -336,27 +353,24 @@ fn deserialize_as_list<'input, 'a>(
                 got: item.type_name(),
             },
             item.span(),
+            wip.path(),
         ));
     };
 
     if item.is_empty() {
         // Only put an empty list
-        return wip
-            .put_empty_list()
-            .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()));
+        reflect!(wip, toml, item.span(), put_empty_list());
+
+        return Ok(wip);
     }
 
     // Start the list
-    wip = wip
-        .begin_pushback()
-        .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?;
+    reflect!(wip, toml, item.span(), begin_pushback());
 
     // Loop over all items in the TOML list
     for value in item.iter() {
         // Start the field
-        wip = wip
-            .push()
-            .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), value.span()))?;
+        reflect!(wip, toml, value.span(), push());
 
         wip = deserialize_item(
             toml,
@@ -366,9 +380,7 @@ fn deserialize_as_list<'input, 'a>(
         )?;
 
         // Finish the field
-        wip = wip
-            .pop()
-            .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), value.span()))?;
+        reflect!(wip, toml, value.span(), pop());
     }
 
     trace!("Finished deserializing {}", "list".blue());
@@ -396,27 +408,24 @@ fn deserialize_as_map<'input, 'a>(
                 got: item.type_name(),
             },
             item.span(),
+            wip.path(),
         )
     })?;
 
     if table.is_empty() {
         // Only put an empty map
-        return wip
-            .put_empty_map()
-            .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()));
+        reflect!(wip, toml, item.span(), put_empty_map());
+
+        return Ok(wip);
     }
 
     // Start the map
-    wip = wip
-        .begin_map_insert()
-        .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?;
+    reflect!(wip, toml, item.span(), begin_map_insert());
 
     // Loop over all items in the TOML list
     for (k, v) in table.iter() {
         // Start the key
-        wip = wip
-            .push_map_key()
-            .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?;
+        reflect!(wip, toml, item.span(), push_map_key());
 
         trace!("Push {} {}", "key".cyan(), k.cyan().bold());
 
@@ -426,27 +435,28 @@ fn deserialize_as_map<'input, 'a>(
                 toml,
                 TomlErrorKind::UnrecognizedScalar(wip.shape()),
                 item.span(),
+                wip.path(),
             )
         })? {
             #[cfg(feature = "std")]
             ScalarType::String => {
-                wip = wip.put(k.to_string()).map_err(|e| {
-                    TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span())
-                })?;
+                reflect!(wip, toml, item.span(), put(k.to_string()));
             }
             #[cfg(feature = "std")]
             ScalarType::CowStr => {
-                wip = wip
-                    .put(std::borrow::Cow::Owned(k.to_string()))
-                    .map_err(|e| {
-                        TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span())
-                    })?
+                reflect!(
+                    wip,
+                    toml,
+                    item.span(),
+                    put(std::borrow::Cow::Owned(k.to_string()))
+                );
             }
             _ => {
                 return Err(TomlError::new(
                     toml,
                     TomlErrorKind::InvalidKey(wip.shape()),
                     item.span(),
+                    wip.path(),
                 ));
             }
         };
@@ -454,17 +464,13 @@ fn deserialize_as_map<'input, 'a>(
         trace!("Push {}", "value".cyan());
 
         // Start the value
-        wip = wip
-            .push_map_value()
-            .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), v.span()))?;
+        reflect!(wip, toml, v.span(), push_map_value());
 
         // Deserialize the value
         wip = deserialize_item(toml, wip, v)?;
 
         // Finish the value
-        wip = wip
-            .pop()
-            .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), v.span()))?;
+        reflect!(wip, toml, v.span(), pop());
     }
 
     trace!("Finished deserializing {}", "map".blue());
@@ -483,15 +489,11 @@ fn deserialize_as_option<'input, 'a>(
         "option".blue()
     );
 
-    wip = wip
-        .push_some()
-        .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?;
+    reflect!(wip, toml, item.span(), push_some());
 
     wip = deserialize_item(toml, wip, item)?;
 
-    wip = wip
-        .pop()
-        .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span()))?;
+    reflect!(wip, toml, item.span(), pop());
 
     trace!("Finished deserializing {}", "option".blue());
 
@@ -530,6 +532,7 @@ fn deserialize_as_scalar<'input, 'a>(
             toml,
             TomlErrorKind::UnrecognizedScalar(wip.shape()),
             item.span(),
+            wip.path(),
         )
     })? {
         ScalarType::Bool => to_scalar::put_boolean(toml, wip, item)?,
@@ -562,6 +565,7 @@ fn deserialize_as_scalar<'input, 'a>(
                 toml,
                 TomlErrorKind::UnrecognizedScalar(wip.shape()),
                 item.span(),
+                wip.path(),
             ));
         }
     };
