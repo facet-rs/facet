@@ -846,6 +846,93 @@ impl<'a> Wip<'a> {
                 }
             }
 
+            // Maybe we're putting into a tuple, and it just so happens that the first non-initialized
+            // field has the right type?
+            // Check if we're putting into a struct with tuple-like fields
+            if let Def::Struct(sd) = frame.shape.def {
+                // Look for the first uninitialized field
+                for (i, field) in sd.fields.iter().enumerate() {
+                    if !frame.istate.fields.has(i) && field.shape() == src_shape {
+                        debug!(
+                            "Found uninitialized field {} with matching type {}",
+                            i.to_string().blue(),
+                            src_shape.green()
+                        );
+
+                        // Copy the value to the field
+                        unsafe {
+                            let field_data = frame.data.field_uninit_at(field.offset);
+                            field_data.copy_from(src, field.shape());
+                            frame.istate.fields.set(i);
+                        }
+
+                        let shape = frame.shape;
+                        let index = frame.field_index_in_parent;
+
+                        // If all fields are now initialized, mark the struct itself as initialized
+                        if frame.is_fully_initialized() {
+                            self.mark_field_as_initialized(shape, index)?;
+                        }
+
+                        debug!(
+                            "[{}] Put a {} value into field {} of {}",
+                            self.frames.len(),
+                            src_shape.green(),
+                            i.to_string().blue(),
+                            shape.green()
+                        );
+
+                        return Ok(self);
+                    }
+                }
+            }
+
+            // Maybe we're putting into an enum, which has a variant selected, which has tuple-like fields,
+            // and the first field that is uninitialized just so happens to be the right type?
+            if let Def::Enum(_) = frame.shape.def {
+                // Check if we're putting into an enum with a selected variant
+                if let Some(variant) = &frame.istate.variant {
+                    // Look for the first uninitialized field in the variant
+                    for (i, field) in variant.data.fields.iter().enumerate() {
+                        if !frame.istate.fields.has(i) && field.shape() == src_shape {
+                            debug!(
+                                "Found uninitialized field {} in enum variant '{}' with matching type {}",
+                                i.to_string().blue(),
+                                variant.name.bright_yellow(),
+                                src_shape.green()
+                            );
+
+                            // Copy the value to the field
+                            unsafe {
+                                let field_data = frame.data.field_uninit_at(field.offset);
+                                field_data.copy_from(src, field.shape());
+                                frame.istate.fields.set(i);
+                            }
+
+                            let shape = frame.shape;
+                            let index = frame.field_index_in_parent;
+                            let variant_name = variant.name;
+
+                            // If all fields are now initialized, mark the enum itself as initialized
+                            if frame.is_fully_initialized() {
+                                self.mark_field_as_initialized(shape, index)?;
+                            }
+
+                            debug!(
+                                "[{}] Put a {} value into field {} of variant '{}' in enum {}",
+                                self.frames.len(),
+                                src_shape.green(),
+                                i.to_string().blue(),
+                                variant_name.bright_yellow(),
+                                shape.green()
+                            );
+
+                            return Ok(self);
+                        }
+                    }
+                }
+            }
+
             return Err(ReflectError::WrongShape {
                 expected: frame.shape,
                 actual: src_shape,
