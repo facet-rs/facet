@@ -386,9 +386,26 @@ pub fn from_slice_wip<'input, 'a>(
                                     wanted: "value"
                                 });
                             }
-                            Token::String(s) => {
-                                reflect!(put::<String>(s));
-                            }
+                            Token::String(s) => match wip.shape().def {
+                                Def::Scalar(_sd) => {
+                                    reflect!(put::<String>(s));
+                                }
+                                Def::Enum(enum_def) => {
+                                    let variant_index =
+                                        enum_def.variants.iter().position(|v| v.name == s);
+                                    let Some(variant_index) = variant_index else {
+                                        bail!(JsonErrorKind::NoSuchVariant {
+                                            name: s.to_string(),
+                                            enum_shape: wip.shape()
+                                        });
+                                    };
+                                    reflect!(variant(variant_index));
+                                }
+                                _ => bail!(JsonErrorKind::UnsupportedType {
+                                    got: wip.shape(),
+                                    wanted: "enum or string"
+                                }),
+                            },
                             Token::F64(n) => {
                                 reflect!(put(n));
                             }

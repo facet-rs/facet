@@ -81,6 +81,13 @@ impl<'input> JsonError<'input> {
                     wanted.green()
                 )
             }
+            JsonErrorKind::NoSuchVariant { name, enum_shape } => {
+                format!(
+                    "Enum variant not found: {} in enum {}",
+                    name.red(),
+                    enum_shape.yellow()
+                )
+            }
         }
     }
 }
@@ -126,6 +133,14 @@ pub enum JsonErrorKind {
 
         /// The shape we wanted
         wanted: &'static str,
+    },
+    /// An enum variant name that doesn't exist in the enum definition.
+    NoSuchVariant {
+        /// The name of the variant that was not found
+        name: String,
+
+        /// The enum shape definition where the variant was looked up
+        enum_shape: &'static Shape,
     },
 }
 
