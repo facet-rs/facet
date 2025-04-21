@@ -516,6 +516,7 @@ impl<'a> Wip<'a> {
                 | Def::Map(_)
                 | Def::Option(_)
                 | Def::Scalar(_)
+                | Def::FunctionPointer(_)
                 | Def::SmartPointer(_)
                 | Def::Array(_)
                 | Def::Slice(_) => {
@@ -2009,6 +2010,7 @@ impl Drop for Wip<'_> {
                 | Def::Map(_)
                 | Def::SmartPointer(_)
                 | Def::Scalar(_)
+                | Def::FunctionPointer(_)
                 | Def::Option(_) => {
                     trace!(
                         "Can drop all at once for shape {} (def variant: {:?}, frame mode {:?}) at {:p}",

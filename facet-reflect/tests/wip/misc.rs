@@ -555,3 +555,35 @@ fn wip_option_explicit_some_through_push_some() -> eyre::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn wip_fn_ptr() -> eyre::Result<()> {
+    #[derive(Facet, Debug, PartialEq, Eq)]
+    struct Foo {
+        foo: fn() -> i32,
+    }
+
+    facet_testhelpers::setup();
+
+    fn f() -> i32 {
+        1113
+    }
+
+    let result = Wip::alloc::<Foo>()
+        .field_named("foo")?
+        .put::<fn() -> i32>(f)?
+        .pop()?
+        .build()?
+        .materialize::<Foo>()?;
+
+    assert_eq!((result.foo)(), 1113);
+
+    assert!(
+        Wip::alloc::<Foo>()
+            .field_named("foo")?
+            .put::<fn() -> f32>(|| 0.0)
+            .is_err()
+    );
+
+    Ok(())
+}

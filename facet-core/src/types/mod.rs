@@ -38,6 +38,9 @@ pub use smartptr::*;
 mod scalar;
 pub use scalar::*;
 
+mod function;
+pub use function::*;
+
 use crate::{ConstTypeId, Facet};
 
 /// Schema for reflection of a type
@@ -319,6 +322,9 @@ pub enum Def {
 
     /// Smart pointers, like `Arc<T>`, `Rc<T>`, etc.
     SmartPointer(SmartPointerDef),
+
+    /// Function pointers, like `fn(u32) -> String`, `extern "C" fn() -> *const T`, etc.
+    FunctionPointer(FunctionPointerDef),
 }
 
 #[expect(clippy::result_large_err, reason = "See comment of expect above Def")]

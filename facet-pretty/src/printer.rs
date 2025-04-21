@@ -366,6 +366,9 @@ impl PrettyPrinter {
                                 }
                             }
                         }
+                        Def::FunctionPointer(_) => {
+                            self.write_type_name(f, &item.value)?;
+                        }
                         _ => {
                             write!(f, "unsupported peek variant: {:?}", item.value)?;
                         }

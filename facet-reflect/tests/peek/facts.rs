@@ -4,14 +4,13 @@ use facet::Facet;
 use facet_reflect::{Peek, Wip};
 use owo_colors::{OwoColorize, Style};
 
-fn check_facts<T>(val1: T, val2: T, expected_facts: HashSet<Fact>)
+const REMARKABLE: Style = Style::new().blue();
+
+fn collect_facts<T>(val1: &T, val2: &T) -> HashSet<Fact>
 where
     T: Facet + 'static,
 {
     let mut facts: HashSet<Fact> = HashSet::new();
-    let name = format!("{}", T::SHAPE);
-
-    eprint!("{}", format_args!("== {name}: ").yellow());
     let value_vtable = T::SHAPE.vtable;
     let traits = [
         ("Debug", value_vtable.debug.is_some()),
@@ -34,17 +33,15 @@ where
         .join(" + ");
     eprintln!("{} {}", trait_str, "======".yellow());
 
-    let l = Peek::new(&val1);
-    let r = Peek::new(&val2);
-
-    let remarkable = Style::new().blue();
+    let l = Peek::new(val1);
+    let r = Peek::new(val2);
 
     // Format display representation
     if l.shape().vtable.display.is_some() {
         facts.insert(Fact::Display);
         eprintln!(
             "Display:   {}",
-            format_args!("{} vs {}", l.style(remarkable), r.style(remarkable))
+            format_args!("{} vs {}", l.style(REMARKABLE), r.style(REMARKABLE))
         );
     }
 
@@ -53,7 +50,7 @@ where
         facts.insert(Fact::Debug);
         eprintln!(
             "Debug:     {}",
-            format_args!("{:?} vs {:?}", l.style(remarkable), r.style(remarkable))
+            format_args!("{:?} vs {:?}", l.style(REMARKABLE), r.style(REMARKABLE))
         );
     }
 
@@ -62,9 +59,9 @@ where
         facts.insert(Fact::EqualAnd { l_eq_r: eq_result });
         let eq_str = format!(
             "{:?} {} {:?}",
-            l.style(remarkable),
+            l.style(REMARKABLE),
             if eq_result { "==" } else { "!=" }.yellow(),
-            r.style(remarkable),
+            r.style(REMARKABLE),
         );
         eprintln!("Equality:  {}", eq_str);
     }
@@ -81,9 +78,9 @@ where
         };
         let cmp_str = format!(
             "{:?} {} {:?}",
-            l.style(remarkable),
+            l.style(REMARKABLE),
             cmp_symbol.yellow(),
-            r.style(remarkable),
+            r.style(REMARKABLE),
         );
         eprintln!("Ordering:  {}", cmp_str);
     }
@@ -92,7 +89,7 @@ where
     if let Ok(wip) = Wip::alloc::<T>().put_default() {
         let val = wip.build().unwrap();
         facts.insert(Fact::Default);
-        eprintln!("Default:   {}", format_args!("{:?}", val).style(remarkable));
+        eprintln!("Default:   {}", format_args!("{:?}", val).style(REMARKABLE));
     }
 
     // Test clone
@@ -101,14 +98,26 @@ where
         eprintln!("Clone:     Implemented");
     }
 
+    facts
+}
+
+fn report_maybe_mismatch<T>(val1: T, val2: T, expected_facts: HashSet<Fact>, facts: HashSet<Fact>)
+where
+    T: Facet + 'static,
+{
+    let name = format!("{}", T::SHAPE);
+
     let expected_minus_actual: HashSet<_> = expected_facts.difference(&facts).collect();
     let actual_minus_expected: HashSet<_> = facts.difference(&expected_facts).collect();
+
+    let l = Peek::new(&val1);
+    let r = Peek::new(&val2);
 
     assert!(
         expected_facts == facts,
         "{} for {}: ({:?} vs {:?})\n{}\n{}",
         "Facts mismatch".red().bold(),
-        name.style(remarkable),
+        name.style(REMARKABLE),
         l.red(),
         r.blue(),
         expected_minus_actual
@@ -124,6 +133,18 @@ where
             .join("\n")
             .yellow(),
     );
+}
+
+fn check_facts<T>(val1: T, val2: T, expected_facts: HashSet<Fact>)
+where
+    T: Facet + 'static,
+{
+    let name = format!("{}", T::SHAPE);
+    eprint!("{}", format_args!("== {name}: ").yellow());
+
+    let facts = collect_facts(&val1, &val2);
+
+    report_maybe_mismatch(val1, val2, expected_facts, facts);
 }
 
 #[derive(Default)]
@@ -835,4 +856,42 @@ fn test_enums() {
             .clone()
             .build(),
     );
+}
+
+#[test]
+fn test_fn_ptr() {
+    facet_testhelpers::setup();
+
+    // slightly different version to overwrite the equality parts as miri juggles the addresses
+    fn check_facts<T>(val1: T, val2: T, mut expected_facts: HashSet<Fact>)
+    where
+        T: Facet + 'static,
+    {
+        let name = format!("{}", T::SHAPE);
+        eprint!("{}", format_args!("== {name}: ").yellow());
+
+        let facts = collect_facts(&val1, &val2);
+        for &fact in facts.iter() {
+            if let Fact::EqualAnd { .. } | Fact::OrdAnd { .. } = fact {
+                expected_facts.insert(fact);
+            }
+        }
+
+        report_maybe_mismatch(val1, val2, expected_facts, facts);
+    }
+
+    let c = |_: u32| -> u32 { 0 };
+    check_facts::<fn(u32) -> u32>(c, c, FactBuilder::new().debug().clone().build());
+
+    extern "C" fn foo(_: usize) -> u32 {
+        0
+    }
+
+    check_facts::<extern "C" fn(usize) -> u32>(
+        foo,
+        foo,
+        FactBuilder::new().debug().clone().build(),
+    );
+
+    check_facts::<fn(u32) -> u32>(|_| 0, |_| 1, FactBuilder::new().debug().clone().build());
 }
