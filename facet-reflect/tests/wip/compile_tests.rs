@@ -174,3 +174,31 @@ fn test_poke_lifetime_error() {
     // Run the test
     run_compilation_test(&test);
 }
+
+#[test]
+#[cfg(not(miri))]
+fn test_covariant_growing() {
+    // Define the test case
+    let test = CompilationTest {
+        name: "covariant_growing",
+        source: include_str!("compile_tests/covariant_growing.rs"),
+        expected_errors: &["error[E0521]: borrowed data escapes outside of function"],
+    };
+
+    // Run the test
+    run_compilation_test(&test);
+}
+
+#[test]
+#[cfg(not(miri))]
+fn test_invariant_growing() {
+    // Define the test case
+    let test = CompilationTest {
+        name: "invariant_growing",
+        source: include_str!("compile_tests/invariant_growing.rs"),
+        expected_errors: &["error[E0521]: borrowed data escapes outside of function"],
+    };
+
+    // Run the test
+    run_compilation_test(&test);
+}

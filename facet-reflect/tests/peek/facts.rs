@@ -867,9 +867,9 @@ fn test_fn_ptr() {
     facet_testhelpers::setup();
 
     // slightly different version to overwrite the equality parts as miri juggles the addresses
-    fn check_facts<T>(val1: T, val2: T, mut expected_facts: HashSet<Fact>)
+    fn check_facts<'a, T>(val1: T, val2: T, mut expected_facts: HashSet<Fact>)
     where
-        T: for<'a> Facet<'a> + 'static,
+        T: Facet<'a>,
     {
         let name = format!("{}", T::SHAPE);
         eprint!("{}", format_args!("== {name}: ").yellow());
