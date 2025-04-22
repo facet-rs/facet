@@ -8,11 +8,10 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-num-traits = { version = "0.2.19", default-features = false }
-facet-core = { version = "0.5.3", path = "../facet-core" }
-facet-reflect = { version = "0.6.2", path = "../facet-reflect" }
+facet-core = { version = "0.11.0", path = "../facet-core" }
+facet-reflect = { version = "0.10.4", path = "../facet-reflect" }
 facet = { path = "../facet" }
 
 [dev-dependencies]
-#serde_json = "1.0"
-#schemars = { version = "0.8" }
+serde_json = "1.0"
+schemars = { version = "0.8" }
