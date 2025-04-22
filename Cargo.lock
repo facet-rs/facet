@@ -237,6 +237,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-kdl"
+version = "0.14.0"
+dependencies = [
+ "ariadne",
+ "facet",
+ "facet-core",
+ "facet-reflect",
+ "facet-testhelpers",
+ "log",
+ "num-traits",
+ "owo-colors",
+]
+
+[[package]]
 name = "facet-msgpack"
 version = "0.14.0"
 dependencies = [
