@@ -10,6 +10,9 @@ description = "Re-exports the Facet trait and derive macros, along with Shape an
 keywords = ["facet", "introspection", "reflection"]
 categories = ["development-tools"]
 
+[package.metadata.docs.rs]
+features = ["std", "reflect", "camino"]
+
 [features]
 default = ["std"]
 reflect = ["dep:facet-reflect"] # Enables reflection via Peek and Poke types
