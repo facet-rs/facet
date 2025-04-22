@@ -1,28 +1,29 @@
 ---
 source: facet-derive-emit/tests/codegen.rs
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n        enum OneLevelNested<T> {\n            VariantA(Result<T, String>),\n            VariantB(Option<T>),\n            // Also include a unit variant to check un-nested\n            Plain,\n        }\n        \"#)"
-snapshot_kind: text
 ---
 #[automatically_derived]
-unsafe impl<T> ::facet::Facet for OneLevelNested<T>
+unsafe impl<'facet, T> ::facet::Facet<'facet> for OneLevelNested<T>
 where
-    T: ::facet::Facet,
+    T: ::facet::Facet<'facet>,
 {
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
-        struct __ShadowOneLevelNested_VariantA<T>
+        struct __ShadowOneLevelNested_VariantA<'facet, T>
         where
-            T: ::facet::Facet,
+            T: ::facet::Facet<'facet>,
         {
             _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
             _0: Result<T, String>,
         }
         #[repr(C)]
-        struct __ShadowOneLevelNested_VariantB<T>
+        struct __ShadowOneLevelNested_VariantB<'facet, T>
         where
-            T: ::facet::Facet,
+            T: ::facet::Facet<'facet>,
         {
             _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
             _0: Option<T>,
         }
         let __facet_variants: &'static [::facet::Variant] = &const {

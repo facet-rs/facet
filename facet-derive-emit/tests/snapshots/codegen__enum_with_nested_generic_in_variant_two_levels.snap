@@ -1,28 +1,29 @@
 ---
 source: facet-derive-emit/tests/codegen.rs
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n        enum DeeplyNested<T> {\n            LevelOne(\n                Option<\n                    Result<\n                        Vec<T>,\n                        String\n                    >\n                >\n            ),\n            // Another variant to prove non-nested still works.\n            Simple(T),\n        }\n        \"#)"
-snapshot_kind: text
 ---
 #[automatically_derived]
-unsafe impl<T> ::facet::Facet for DeeplyNested<T>
+unsafe impl<'facet, T> ::facet::Facet<'facet> for DeeplyNested<T>
 where
-    T: ::facet::Facet,
+    T: ::facet::Facet<'facet>,
 {
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
-        struct __ShadowDeeplyNested_LevelOne<T>
+        struct __ShadowDeeplyNested_LevelOne<'facet, T>
         where
-            T: ::facet::Facet,
+            T: ::facet::Facet<'facet>,
         {
             _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
             _0: Option<Result<Vec<T>, String>>,
         }
         #[repr(C)]
-        struct __ShadowDeeplyNested_Simple<T>
+        struct __ShadowDeeplyNested_Simple<'facet, T>
         where
-            T: ::facet::Facet,
+            T: ::facet::Facet<'facet>,
         {
             _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
             _0: T,
         }
         let __facet_variants: &'static [::facet::Variant] = &const {

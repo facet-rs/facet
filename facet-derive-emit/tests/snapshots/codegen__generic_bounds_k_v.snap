@@ -3,11 +3,11 @@ source: facet-derive-emit/tests/codegen.rs
 expression: "expand(r#\"\n        struct Foo<K, V> where K: Eq + Hash {\n            inner: HashMap<K, V>,\n        }\n        \"#)"
 ---
 #[automatically_derived]
-unsafe impl<K, V> ::facet::Facet for Foo<K, V>
+unsafe impl<'facet, K, V> ::facet::Facet<'facet> for Foo<K, V>
 where
     K: Eq + Hash,
-    K: ::facet::Facet,
-    V: ::facet::Facet,
+    K: ::facet::Facet<'facet>,
+    V: ::facet::Facet<'facet>,
 {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {

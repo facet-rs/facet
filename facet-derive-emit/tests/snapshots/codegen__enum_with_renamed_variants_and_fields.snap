@@ -1,21 +1,22 @@
 ---
 source: facet-derive-emit/tests/codegen.rs
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n        enum ApiResponse {\n            #[facet(rename = \"Success\")]\n            Ok {\n                #[facet(rename = \"responseData\")]\n                data: String,\n            },\n            #[facet(rename = \"Error\")]\n            Err {\n                #[facet(rename = \"errorCode\")]\n                code: u32,\n                #[facet(rename = \"errorMessage\")]\n                message: String,\n            },\n        }\n        \"#)"
-snapshot_kind: text
 ---
 #[used]
 static API_RESPONSE_SHAPE: &'static ::facet::Shape = <ApiResponse as ::facet::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl ::facet::Facet for ApiResponse {
+unsafe impl<'facet> ::facet::Facet<'facet> for ApiResponse {
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
-        struct __ShadowApiResponse_Ok {
+        struct __ShadowApiResponse_Ok<'facet> {
             _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
             data: String,
         }
         #[repr(C)]
-        struct __ShadowApiResponse_Err {
+        struct __ShadowApiResponse_Err<'facet> {
             _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
             code: u32,
             message: String,
         }

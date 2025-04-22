@@ -5,7 +5,7 @@ expression: "expand(r#\"\n        #[derive(Debug, Facet, PartialEq)]\n        st
 #[used]
 static MACROED_SHAPE: &'static ::facet::Shape = <Macroed as ::facet::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl ::facet::Facet for Macroed {
+unsafe impl<'facet> ::facet::Facet<'facet> for Macroed {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [::facet::Field::builder()
