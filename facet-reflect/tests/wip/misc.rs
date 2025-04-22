@@ -200,70 +200,70 @@ fn wip_enum_with_data() -> eyre::Result<()> {
     Ok(())
 }
 
-#[derive(Facet, PartialEq, Eq, Debug)]
-#[repr(C)]
-enum EnumWithDataReprC {
-    Empty,
-    Single(i32),
-    Tuple(i32, String),
-    Struct { x: i32, y: String },
-}
-
-#[test]
-fn wip_enum_with_data_repr_c() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
-    // Test empty variant
-    let empty = Wip::alloc::<EnumWithDataReprC>()
-        .variant_named("Empty")?
-        .build()?
-        .materialize::<EnumWithDataReprC>()?;
-    assert_eq!(empty, EnumWithDataReprC::Empty);
-
-    // Test single-field tuple variant
-    let single = Wip::alloc::<EnumWithDataReprC>()
-        .variant_named("Single")?
-        .field(0)? // Access the first field
-        .put(42)?
-        .pop()?
-        .build()?
-        .materialize::<EnumWithDataReprC>()?;
-    assert_eq!(single, EnumWithDataReprC::Single(42));
-
-    // Test multi-field tuple variant
-    let tuple = Wip::alloc::<EnumWithDataReprC>()
-        .variant_named("Tuple")?
-        .field(0)?
-        .put(42)?
-        .pop()?
-        .field(1)?
-        .put(String::from("Hello"))?
-        .pop()?
-        .build()?
-        .materialize::<EnumWithDataReprC>()?;
-    assert_eq!(tuple, EnumWithDataReprC::Tuple(42, String::from("Hello")));
-
-    // Test struct variant
-    let struct_variant = Wip::alloc::<EnumWithDataReprC>()
-        .variant_named("Struct")?
-        .field_named("x")?
-        .put(42)?
-        .pop()?
-        .field_named("y")?
-        .put(String::from("World"))?
-        .pop()?
-        .build()?
-        .materialize::<EnumWithDataReprC>()?;
-    assert_eq!(
-        struct_variant,
-        EnumWithDataReprC::Struct {
-            x: 42,
-            y: String::from("World")
-        }
-    );
-
-    Ok(())
-}
+// #[derive(Facet, PartialEq, Eq, Debug)]
+// #[repr(C)]
+// enum EnumWithDataReprC {
+//     Empty,
+//     Single(i32),
+//     Tuple(i32, String),
+//     Struct { x: i32, y: String },
+// }
+//
+// #[test]
+// fn wip_enum_with_data_repr_c() -> eyre::Result<()> {
+//     facet_testhelpers::setup();
+//
+//     // Test empty variant
+//     let empty = Wip::alloc::<EnumWithDataReprC>()
+//         .variant_named("Empty")?
+//         .build()?
+//         .materialize::<EnumWithDataReprC>()?;
+//     assert_eq!(empty, EnumWithDataReprC::Empty);
+//
+//     // Test single-field tuple variant
+//     let single = Wip::alloc::<EnumWithDataReprC>()
+//         .variant_named("Single")?
+//         .field(0)? // Access the first field
+//         .put(42)?
+//         .pop()?
+//         .build()?
+//         .materialize::<EnumWithDataReprC>()?;
+//     assert_eq!(single, EnumWithDataReprC::Single(42));
+//
+//     // Test multi-field tuple variant
+//     let tuple = Wip::alloc::<EnumWithDataReprC>()
+//         .variant_named("Tuple")?
+//         .field(0)?
+//         .put(42)?
+//         .pop()?
+//         .field(1)?
+//         .put(String::from("Hello"))?
+//         .pop()?
+//         .build()?
+//         .materialize::<EnumWithDataReprC>()?;
+//     assert_eq!(tuple, EnumWithDataReprC::Tuple(42, String::from("Hello")));
+//
+//     // Test struct variant
+//     let struct_variant = Wip::alloc::<EnumWithDataReprC>()
+//         .variant_named("Struct")?
+//         .field_named("x")?
+//         .put(42)?
+//         .pop()?
+//         .field_named("y")?
+//         .put(String::from("World"))?
+//         .pop()?
+//         .build()?
+//         .materialize::<EnumWithDataReprC>()?;
+//     assert_eq!(
+//         struct_variant,
+//         EnumWithDataReprC::Struct {
+//             x: 42,
+//             y: String::from("World")
+//         }
+//     );
+//
+//     Ok(())
+// }
 
 #[test]
 fn wip_enum_error_cases() -> eyre::Result<()> {

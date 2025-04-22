@@ -5,7 +5,7 @@ expression: "expand(r#\"\n        #[repr(u8)]\n        #[derive(Facet)]\n       
 #[used]
 static TEST_SHAPE: &'static ::facet::Shape = <Test as ::facet::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl ::facet::Facet for Test {
+unsafe impl<'facet> ::facet::Facet<'facet> for Test {
     const SHAPE: &'static ::facet::Shape = &const {
         let __facet_variants: &'static [::facet::Variant] = &const {
             [

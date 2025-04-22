@@ -6,9 +6,9 @@ use owo_colors::{OwoColorize, Style};
 
 const REMARKABLE: Style = Style::new().blue();
 
-fn collect_facts<T>(val1: &T, val2: &T) -> HashSet<Fact>
+fn collect_facts<'a, 'b, T>(val1: &'b T, val2: &'b T) -> HashSet<Fact>
 where
-    T: for<'a> Facet<'a> + 'static,
+    T: Facet<'a>,
 {
     let mut facts: HashSet<Fact> = HashSet::new();
     let value_vtable = T::SHAPE.vtable;
@@ -101,9 +101,13 @@ where
     facts
 }
 
-fn report_maybe_mismatch<T>(val1: T, val2: T, expected_facts: HashSet<Fact>, facts: HashSet<Fact>)
-where
-    T: for<'a> Facet<'a> + 'static,
+fn report_maybe_mismatch<'a, T>(
+    val1: T,
+    val2: T,
+    expected_facts: HashSet<Fact>,
+    facts: HashSet<Fact>,
+) where
+    T: Facet<'a>,
 {
     let name = format!("{}", T::SHAPE);
 
@@ -135,9 +139,9 @@ where
     );
 }
 
-fn check_facts<T>(val1: T, val2: T, expected_facts: HashSet<Fact>)
+fn check_facts<'a, T>(val1: T, val2: T, expected_facts: HashSet<Fact>)
 where
-    T: for<'a> Facet<'a> + 'static,
+    T: Facet<'a>,
 {
     let name = format!("{}", T::SHAPE);
     eprint!("{}", format_args!("== {name}: ").yellow());

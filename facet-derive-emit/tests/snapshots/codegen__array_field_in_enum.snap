@@ -1,21 +1,22 @@
 ---
 source: facet-derive-emit/tests/codegen.rs
 expression: "expand(r#\"\n        /// Network packet types\n        #[derive(Facet)]\n        #[repr(u8)]\n        pub enum Packet {\n            /// Array of bytes representing the header\n            Header([u8; 4]),\n            Payload(Vec<u8>), // Add another variant for completeness\n        }\n        \"#)"
-snapshot_kind: text
 ---
 #[used]
 static PACKET_SHAPE: &'static ::facet::Shape = <Packet as ::facet::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl ::facet::Facet for Packet {
+unsafe impl<'facet> ::facet::Facet<'facet> for Packet {
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
-        struct __ShadowPacket_Header {
+        struct __ShadowPacket_Header<'facet> {
             _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
             _0: [u8; 4],
         }
         #[repr(C)]
-        struct __ShadowPacket_Payload {
+        struct __ShadowPacket_Payload<'facet> {
             _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
             _0: Vec<u8>,
         }
         let __facet_variants: &'static [::facet::Variant] = &const {

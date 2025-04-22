@@ -5,7 +5,7 @@ expression: "expand(r#\"\n        #[repr(u8)]\n        #[derive(Facet)]\n       
 #[used]
 static BIT_FLAGS_SHAPE: &'static ::facet::Shape = <BitFlags as ::facet::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl ::facet::Facet for BitFlags {
+unsafe impl<'facet> ::facet::Facet<'facet> for BitFlags {
     const SHAPE: &'static ::facet::Shape = &const {
         let __facet_variants: &'static [::facet::Variant] = &const {
             [

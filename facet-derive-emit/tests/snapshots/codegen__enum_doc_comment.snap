@@ -1,12 +1,11 @@
 ---
 source: facet-derive-emit/tests/codegen.rs
 expression: "expand(r#\"\n        /// This is an enum\n        #[derive(Facet)]\n        #[repr(u8)]\n        enum MyEnum {\n            #[allow(dead_code)]\n            A,\n            #[allow(dead_code)]\n            B,\n        }\n        \"#)"
-snapshot_kind: text
 ---
 #[used]
 static MY_ENUM_SHAPE: &'static ::facet::Shape = <MyEnum as ::facet::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl ::facet::Facet for MyEnum {
+unsafe impl<'facet> ::facet::Facet<'facet> for MyEnum {
     const SHAPE: &'static ::facet::Shape = &const {
         let __facet_variants: &'static [::facet::Variant] = &const {
             [

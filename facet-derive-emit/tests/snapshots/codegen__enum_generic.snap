@@ -1,35 +1,40 @@
 ---
 source: facet-derive-emit/tests/codegen.rs
 expression: "expand(r#\"\n        #[allow(dead_code)]\n        #[derive(Facet)]\n        #[repr(u8)]\n        enum E<'a, T: Facet + core::hash::Hash, const C: usize = 3>\n        where\n            T: Debug, // Added Debug bound\n             [u8; C]: Debug, // Added Debug bound\n        {\n            Unit,\n            Tuple(T, core::marker::PhantomData<&'a [u8; C]>),\n            Record {\n                field: T,\n                phantom: core::marker::PhantomData<&'a ()>,\n                constant_val: [u8; C],\n            },\n        }\n        \"#)"
-snapshot_kind: text
 ---
 #[automatically_derived]
-unsafe impl<'a, T: Facet + core::hash::Hash, const C: usize> ::facet::Facet for E<'a, T, C>
+unsafe impl<'facet, 'a, T: Facet + core::hash::Hash, const C: usize> ::facet::Facet<'facet>
+    for E<'a, T, C>
 where
     T: Debug,
     [u8; C]: Debug,
-    T: ::facet::Facet,
+    'a: 'facet,
+    T: ::facet::Facet<'facet>,
 {
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
-        struct __ShadowE_Tuple<'a, T: Facet + core::hash::Hash, const C: usize>
+        struct __ShadowE_Tuple<'facet, 'a, T: Facet + core::hash::Hash, const C: usize>
         where
             T: Debug,
             [u8; C]: Debug,
-            T: ::facet::Facet,
+            'a: 'facet,
+            T: ::facet::Facet<'facet>,
         {
             _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
             _0: T,
             _1: core::marker::PhantomData<&'a [u8; C]>,
         }
         #[repr(C)]
-        struct __ShadowE_Record<'a, T: Facet + core::hash::Hash, const C: usize>
+        struct __ShadowE_Record<'facet, 'a, T: Facet + core::hash::Hash, const C: usize>
         where
             T: Debug,
             [u8; C]: Debug,
-            T: ::facet::Facet,
+            'a: 'facet,
+            T: ::facet::Facet<'facet>,
         {
             _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
             field: T,
             phantom: core::marker::PhantomData<&'a ()>,
             constant_val: [u8; C],

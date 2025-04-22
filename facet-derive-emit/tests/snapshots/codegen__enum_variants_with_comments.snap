@@ -1,21 +1,22 @@
 ---
 source: facet-derive-emit/tests/codegen.rs
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n        enum CommentedEnum {\n            /// This is variant A\n            #[allow(dead_code)]\n            A,\n            /// This is variant B\n            /// with multiple lines\n            #[allow(dead_code)]\n            B(u32),\n            /// This is variant C\n            /// which has named fields\n            #[allow(dead_code)]\n            C {\n                /// This is field x\n                x: u32,\n                /// This is field y\n                y: String,\n            },\n        }\n        \"#)"
-snapshot_kind: text
 ---
 #[used]
 static COMMENTED_ENUM_SHAPE: &'static ::facet::Shape = <CommentedEnum as ::facet::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl ::facet::Facet for CommentedEnum {
+unsafe impl<'facet> ::facet::Facet<'facet> for CommentedEnum {
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
-        struct __ShadowCommentedEnum_B {
+        struct __ShadowCommentedEnum_B<'facet> {
             _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
             _0: u32,
         }
         #[repr(C)]
-        struct __ShadowCommentedEnum_C {
+        struct __ShadowCommentedEnum_C<'facet> {
             _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
             x: u32,
             y: String,
         }

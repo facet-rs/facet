@@ -194,7 +194,7 @@ where
     };
 }
 
-unsafe impl<'a> Facet<'a> for RandomState {
+unsafe impl Facet<'_> for RandomState {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
             .id(ConstTypeId::of::<RandomState>())

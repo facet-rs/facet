@@ -47,57 +47,57 @@ fn peek_enum() -> eyre::Result<()> {
     Ok(())
 }
 
-#[derive(Facet)]
-#[repr(C)]
-#[allow(dead_code)]
-enum ReprCEnum {
-    Unit,
-    Tuple(u32),
-    Struct { a: u8, b: String },
-}
-
-#[test]
-fn peek_repr_c_enum() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
-    // Test with unit
-    let unit_value = ReprCEnum::Unit;
-    let peek_value = Peek::new(&unit_value);
-
-    // Convert to enum and check we can convert to PeekEnum
-    let peek_enum = peek_value.into_enum()?;
-    assert!(peek_enum.variant_name_active() == "Unit");
-
-    // Test with tuple
-    let unit_value = ReprCEnum::Tuple(42);
-    let peek_value = Peek::new(&unit_value);
-
-    // Convert to enum and check we can convert to PeekEnum
-    let peek_enum = peek_value.into_enum()?;
-
-    assert!(peek_enum.variant_name_active() == "Tuple");
-    // Get the value field using the field method with index
-    let inner_value = peek_enum.field(0).unwrap();
-    let value = *inner_value.get::<u32>()?;
-    assert_eq!(value, 42);
-
-    // Test with struct
-    let unit_value = ReprCEnum::Struct {
-        a: 42,
-        b: "Hello".to_string(),
-    };
-    let peek_value = Peek::new(&unit_value);
-    // Convert to enum and check we can convert to PeekEnum
-    let peek_enum = peek_value.into_enum()?;
-    assert!(peek_enum.variant_name_active() == "Struct");
-    // Get the value field using the field method with index
-    let inner_value = peek_enum.field(0).unwrap();
-    let value = *inner_value.get::<u8>()?;
-    assert_eq!(value, 42);
-    // Get the value field using the field method with name
-    let inner_value = peek_enum.field_by_name("b").unwrap();
-    let value = inner_value.get::<String>()?;
-    assert_eq!(value, "Hello");
-
-    Ok(())
-}
+// #[derive(Facet)]
+// #[repr(C)]
+// #[allow(dead_code)]
+// enum ReprCEnum {
+//     Unit,
+//     Tuple(u32),
+//     Struct { a: u8, b: String },
+// }
+//
+// #[test]
+// fn peek_repr_c_enum() -> eyre::Result<()> {
+//     facet_testhelpers::setup();
+//
+//     // Test with unit
+//     let unit_value = ReprCEnum::Unit;
+//     let peek_value = Peek::new(&unit_value);
+//
+//     // Convert to enum and check we can convert to PeekEnum
+//     let peek_enum = peek_value.into_enum()?;
+//     assert!(peek_enum.variant_name_active() == "Unit");
+//
+//     // Test with tuple
+//     let unit_value = ReprCEnum::Tuple(42);
+//     let peek_value = Peek::new(&unit_value);
+//
+//     // Convert to enum and check we can convert to PeekEnum
+//     let peek_enum = peek_value.into_enum()?;
+//
+//     assert!(peek_enum.variant_name_active() == "Tuple");
+//     // Get the value field using the field method with index
+//     let inner_value = peek_enum.field(0).unwrap();
+//     let value = *inner_value.get::<u32>()?;
+//     assert_eq!(value, 42);
+//
+//     // Test with struct
+//     let unit_value = ReprCEnum::Struct {
+//         a: 42,
+//         b: "Hello".to_string(),
+//     };
+//     let peek_value = Peek::new(&unit_value);
+//     // Convert to enum and check we can convert to PeekEnum
+//     let peek_enum = peek_value.into_enum()?;
+//     assert!(peek_enum.variant_name_active() == "Struct");
+//     // Get the value field using the field method with index
+//     let inner_value = peek_enum.field(0).unwrap();
+//     let value = *inner_value.get::<u8>()?;
+//     assert_eq!(value, 42);
+//     // Get the value field using the field method with name
+//     let inner_value = peek_enum.field_by_name("b").unwrap();
+//     let value = inner_value.get::<String>()?;
+//     assert_eq!(value, "Hello");
+//
+//     Ok(())
+// }

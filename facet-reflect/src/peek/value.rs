@@ -42,7 +42,7 @@ pub struct Peek<'mem> {
 
 impl<'mem> Peek<'mem> {
     /// Creates a new `PeekValue` instance for a value of type `T`.
-    pub fn new<T: Facet<'mem>>(t: &'mem T) -> Self {
+    pub fn new<'a, T: Facet<'mem>>(t: &'a T) -> Self {
         Self {
             data: PtrConst::new(t as *const T),
             shape: T::SHAPE,
