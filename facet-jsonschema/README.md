@@ -1,8 +1,10 @@
 <h1>
 <picture>
-<source srcset="https://github.com/facet-rs/facet/raw/main/static/logo-v2/logo-only.webp">
-<img src="https://github.com/facet-rs/facet/raw/main/static/logo-v2/logo-only.png" height="35" alt="Facet logo - a reflection library for Rust">
-</picture> &nbsp; facet-jsonschema
+    <source type="image/webp" media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/logo-v2/facet-b-dark.webp">
+    <source type="image/png" media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/logo-v2/facet-b-dark.png">
+    <source type="image/webp" srcset="https://github.com/facet-rs/facet/raw/main/static/logo-v2/facet-b-light.webp">
+    <img src="https://github.com/facet-rs/facet/raw/main/static/logo-v2/facet-b-light.png" height="35" alt="Facet logo - a reflection library for Rust">
+</picture>
 </h1>
 
 [![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
@@ -35,8 +37,11 @@ Thanks to all individual and corporate sponsors, without whom this work could no
 <source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v2/zed-dark.svg">
 <img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v2/zed-light.svg" height="40" alt="Zed">
 </picture>
-</a> <a href="https://depot.dev?utm_source=facet">
-    <img src="https://depot.dev/badges/built-with-depot.svg" alt="built with depot">
+</a> <a href="https://www.blacksmith.sh?utm_source=facet">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v2/blacksmith-dark.svg">
+<img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v2/blacksmith-light.svg" height="40" alt="built with blacksmith">
+</picture>
 </a> </p>
 
 
