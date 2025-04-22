@@ -1,11 +1,11 @@
 [package]
 name = "facet-toml"
 version.workspace = true
-authors.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+authors = ["Thomas Versteeg <thomas@likehearts.vn>", "Amos Wenger <amos@bearcove.eu>"]
 description = "TOML serialization and deserialization for Facet types"
 keywords = ["toml", "serialization", "deserialization", "reflection", "facet"]
 categories = ["encoding", "parsing", "data-structures"]
