@@ -5,7 +5,7 @@ expression: "expand(r#\"\n        #[derive(Facet)]\n        struct UnitStruct;\n
 #[used]
 static UNIT_STRUCT_SHAPE: &'static ::facet::Shape = <UnitStruct as ::facet::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl ::facet::Facet for UnitStruct {
+unsafe impl<'facet> ::facet::Facet<'facet> for UnitStruct {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const { [] };
         let vtable = &const {

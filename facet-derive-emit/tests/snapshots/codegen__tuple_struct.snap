@@ -5,7 +5,7 @@ expression: "expand(r#\"\n        #[derive(Facet)]\n        struct TupleStruct(i
 #[used]
 static TUPLE_STRUCT_SHAPE: &'static ::facet::Shape = <TupleStruct as ::facet::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl ::facet::Facet for TupleStruct {
+unsafe impl<'facet> ::facet::Facet<'facet> for TupleStruct {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [

@@ -6,7 +6,7 @@ expression: "expand(r#\"\n        #[derive(Facet)]\n        struct StructWithDef
 static STRUCT_WITH_DEFAULTS_SHAPE: &'static ::facet::Shape =
     <StructWithDefaults as ::facet::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl ::facet::Facet for StructWithDefaults {
+unsafe impl<'facet> ::facet::Facet<'facet> for StructWithDefaults {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [

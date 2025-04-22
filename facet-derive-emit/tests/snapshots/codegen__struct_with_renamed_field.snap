@@ -5,7 +5,7 @@ expression: "expand(r#\"\n        #[derive(Facet)]\n        struct Person {\n   
 #[used]
 static PERSON_SHAPE: &'static ::facet::Shape = <Person as ::facet::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl ::facet::Facet for Person {
+unsafe impl<'facet> ::facet::Facet<'facet> for Person {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [

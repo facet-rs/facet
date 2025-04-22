@@ -1,13 +1,12 @@
 ---
 source: facet-derive-emit/tests/codegen.rs
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(C)]\n        enum EnumWithVariants {\n            /// Comment A\n            Variant1,\n            /// Comment B\n            Variant2(i32),\n            Variant3 { field1: i32, field2: String },\n        }\n        \"#)"
-snapshot_kind: text
 ---
 #[used]
 static ENUM_WITH_VARIANTS_SHAPE: &'static ::facet::Shape =
     <EnumWithVariants as ::facet::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl ::facet::Facet for EnumWithVariants {
+unsafe impl<'facet> ::facet::Facet<'facet> for EnumWithVariants {
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
         enum __ShadowDiscriminantEnumWithVariants {
@@ -24,16 +23,17 @@ unsafe impl ::facet::Facet for EnumWithVariants {
         #[repr(C)]
         struct __ShadowReprEnumWithVariants {
             _discriminant: __ShadowDiscriminantEnumWithVariants,
+            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
             _fields: __ShadowFieldsEnumWithVariants,
         }
         #[repr(C)]
         struct __ShadowFieldEnumWithVariants_Variant1;
         #[repr(C)]
-        struct __ShadowFieldEnumWithVariants_Variant2 {
+        struct __ShadowFieldEnumWithVariants_Variant2<'facet> {
             _0: i32,
         }
         #[repr(C)]
-        struct __ShadowFieldEnumWithVariants_Variant3 {
+        struct __ShadowFieldEnumWithVariants_Variant3<'facet> {
             field1: i32,
             field2: String,
         }

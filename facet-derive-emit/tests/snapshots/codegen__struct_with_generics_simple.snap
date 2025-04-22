@@ -3,10 +3,10 @@ source: facet-derive-emit/tests/codegen.rs
 expression: "expand(r#\"\n        #[derive(Facet)]\n        struct StructWithGenericsSimple<T, U> {\n            field1: T,\n            field2: U,\n        }\n        \"#)"
 ---
 #[automatically_derived]
-unsafe impl<T, U> ::facet::Facet for StructWithGenericsSimple<T, U>
+unsafe impl<'facet, T, U> ::facet::Facet<'facet> for StructWithGenericsSimple<T, U>
 where
-    T: ::facet::Facet,
-    U: ::facet::Facet,
+    T: ::facet::Facet<'facet>,
+    U: ::facet::Facet<'facet>,
 {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {

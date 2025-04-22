@@ -3,10 +3,12 @@ source: facet-derive-emit/tests/codegen.rs
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(transparent)]\n        struct Blah<'a, T: Facet + core::hash::Hash, const C: usize = 3>(T, core::marker::PhantomData<&'a [u8; C]>)\n        where\n            T: Debug; // Added a Debug bound for demonstration\n        \"#)"
 ---
 #[automatically_derived]
-unsafe impl<'a, T: Facet + core::hash::Hash, const C: usize> ::facet::Facet for Blah<'a, T, C>
+unsafe impl<'facet, 'a, T: Facet + core::hash::Hash, const C: usize> ::facet::Facet<'facet>
+    for Blah<'a, T, C>
 where
     T: Debug,
-    T: ::facet::Facet,
+    'a: 'facet,
+    T: ::facet::Facet<'facet>,
 {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
