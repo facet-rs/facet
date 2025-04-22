@@ -9,18 +9,14 @@ on:
 
 jobs:
   code-quality:
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: depot-ubuntu-24.04-32
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
-      env:
-        BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
-        BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
-        GITHUB_REPO_NAME: ${{ env.GITHUB_REPO_NAME }}
     steps:
       - uses: actions/checkout@v4
 
-      - uses: useblacksmith/rust-cache@v3
+      - uses: Swatinem/rust-cache@v2
 
       - name: ✨ Run code quality checks
         shell: bash
@@ -28,18 +24,14 @@ jobs:
           just code-quality-ci
 
   test:
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: depot-ubuntu-24.04-32
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
-      env:
-        BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
-        BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
-        GITHUB_REPO_NAME: ${{ env.GITHUB_REPO_NAME }}
     steps:
       - uses: actions/checkout@v4
 
-      - uses: useblacksmith/rust-cache@v3
+      - uses: Swatinem/rust-cache@v2
 
       - name: ✨ Run tests
         shell: bash
@@ -47,18 +39,14 @@ jobs:
           just test-ci
 
   nostd:
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: depot-ubuntu-24.04-32
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
-      env:
-        BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
-        BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
-        GITHUB_REPO_NAME: ${{ env.GITHUB_REPO_NAME }}
     steps:
       - uses: actions/checkout@v4
 
-      - uses: useblacksmith/rust-cache@v3
+      - uses: Swatinem/rust-cache@v2
 
       - name: ✨ Run nostd tests
         shell: bash
@@ -66,18 +54,14 @@ jobs:
           just nostd-ci
 
   doc-tests:
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: depot-ubuntu-24.04-32
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
-      env:
-        BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
-        BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
-        GITHUB_REPO_NAME: ${{ env.GITHUB_REPO_NAME }}
     steps:
       - uses: actions/checkout@v4
 
-      - uses: useblacksmith/rust-cache@v3
+      - uses: Swatinem/rust-cache@v2
 
       - name: ✨ Run doc tests
         shell: bash
@@ -85,18 +69,14 @@ jobs:
           just doc-tests-ci
 
   miri:
-    runs-on: blacksmith-32vcpu-ubuntu-2204
+    runs-on: depot-ubuntu-24.04-64
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-miri-amd64
-      env:
-        BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
-        BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
-        GITHUB_REPO_NAME: ${{ env.GITHUB_REPO_NAME }}
     steps:
       - uses: actions/checkout@v4
 
-      - uses: useblacksmith/rust-cache@v3
+      - uses: Swatinem/rust-cache@v2
 
       - name: ✨ Run miri
         shell: bash
@@ -105,18 +85,14 @@ jobs:
           just miri
 
   msrv:
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: depot-ubuntu-24.04-32
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
-      env:
-        BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
-        BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
-        GITHUB_REPO_NAME: ${{ env.GITHUB_REPO_NAME }}
     steps:
       - uses: actions/checkout@v4
 
-      - uses: useblacksmith/rust-cache@v3
+      - uses: Swatinem/rust-cache@v2
 
       - uses: taiki-e/install-action@cargo-hack
 
@@ -126,18 +102,14 @@ jobs:
           just msrv
 
   minimal-versions:
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: depot-ubuntu-24.04-32
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
-      env:
-        BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
-        BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
-        GITHUB_REPO_NAME: ${{ env.GITHUB_REPO_NAME }}
     steps:
       - uses: actions/checkout@v4
 
-      - uses: useblacksmith/rust-cache@v3
+      - uses: Swatinem/rust-cache@v2
 
       - name: ✨ Check minimal versions
         shell: bash
@@ -150,18 +122,14 @@ jobs:
           cargo check --workspace --all-features --locked --keep-going
 
   docs:
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: depot-ubuntu-24.04-32
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
-      env:
-        BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
-        BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
-        GITHUB_REPO_NAME: ${{ env.GITHUB_REPO_NAME }}
     steps:
       - uses: actions/checkout@v4
 
-      - uses: useblacksmith/rust-cache@v3
+      - uses: Swatinem/rust-cache@v2
 
       - name: ✨ Check documentation
         shell: bash
@@ -171,18 +139,14 @@ jobs:
           just docs
 
   lockfile:
-    runs-on: blacksmith-2vcpu-ubuntu-2204
+    runs-on: depot-ubuntu-24.04-4
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
-      env:
-        BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
-        BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
-        GITHUB_REPO_NAME: ${{ env.GITHUB_REPO_NAME }}
     steps:
       - uses: actions/checkout@v4
 
-      - uses: useblacksmith/rust-cache@v3
+      - uses: Swatinem/rust-cache@v2
 
       - name: ✨ Check lockfile is updated
         shell: bash
@@ -190,20 +154,16 @@ jobs:
           cargo update --workspace --locked
 
   clippy:
-    runs-on: blacksmith-16vcpu-ubuntu-2204
+    runs-on: depot-ubuntu-24.04-16
 
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
-      env:
-        BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
-        BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
-        GITHUB_REPO_NAME: ${{ env.GITHUB_REPO_NAME }}
     permissions:
       security-events: write # to upload sarif results
     steps:
       - uses: actions/checkout@v4
 
-      - uses: useblacksmith/rust-cache@v3
+      - uses: Swatinem/rust-cache@v2
 
       - name: Install SARIF tools
         shell: bash
@@ -228,19 +188,39 @@ jobs:
         run: |
           cargo clippy --workspace --all-features --all-targets --keep-going -- -D warnings --allow deprecated
 
-  coverage:
-    runs-on: blacksmith-32vcpu-ubuntu-2204
-
-    container:
-      image: ghcr.io/facet-rs/facet-ci:latest-miri-amd64
-      env:
-        BLACKSMITH_CACHE_TOKEN: ${{ env.BLACKSMITH_CACHE_TOKEN }}
-        BLACKSMITH_CACHE_URL: ${{ env.BLACKSMITH_CACHE_URL }}
-        GITHUB_REPO_NAME: ${{ env.GITHUB_REPO_NAME }}
+  clippy-macos:
+    runs-on: depot-macos-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: useblacksmith/rust-cache@v3
+      - uses: Swatinem/rust-cache@v2
+
+      - name: ✨ Run clippy (macOS)
+        shell: bash
+        run: |
+          cargo clippy --workspace --all-features --all-targets -- -D warnings
+
+  clippy-windows:
+    runs-on: depot-windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: ✨ Run clippy (Windows)
+        shell: bash
+        run: |
+          cargo clippy --workspace --all-features --all-targets -- -D warnings
+
+  coverage:
+    runs-on: depot-ubuntu-24.04-32
+
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest-miri-amd64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
 
       - name: ✨ Gather coverage
         shell: bash
