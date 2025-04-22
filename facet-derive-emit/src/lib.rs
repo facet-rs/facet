@@ -249,19 +249,19 @@ fn build_type_params(generics: Option<&GenericParams>) -> String {
 }
 
 fn build_container_attributes(attributes: &[Attribute]) -> String {
-    let mut items: Vec<&str> = vec![];
+    let mut items: Vec<Cow<str>> = vec![];
 
     for attr in attributes {
         match &attr.body.content {
             AttributeInner::Facet(facet_attr) => match facet_attr.inner.content {
                 FacetInner::DenyUnknownFields(_) => {
-                    items.push("::facet::ShapeAttribute::DenyUnknownFields");
+                    items.push("::facet::ShapeAttribute::DenyUnknownFields".into());
                 }
                 FacetInner::DefaultEquals(_) | FacetInner::Default(_) => {
-                    items.push("::facet::ShapeAttribute::Default");
+                    items.push("::facet::ShapeAttribute::Default".into());
                 }
                 FacetInner::Transparent(_) => {
-                    items.push("::facet::ShapeAttribute::Transparent");
+                    items.push("::facet::ShapeAttribute::Transparent".into());
                 }
                 FacetInner::Sensitive(_) => {
                     // TODO
@@ -272,8 +272,14 @@ fn build_container_attributes(attributes: &[Attribute]) -> String {
                 FacetInner::Opaque(_) => {
                     // TODO
                 }
-                FacetInner::Other(_) => {
-                    // TODO: add to arbitrary invariants
+                FacetInner::Other(ref other) => {
+                    items.push(
+                        format!(
+                            r#"::facet::ShapeAttribute::Arbitrary({:?})"#,
+                            other.tokens_to_string()
+                        )
+                        .into(),
+                    );
                 }
             },
             _ => {
