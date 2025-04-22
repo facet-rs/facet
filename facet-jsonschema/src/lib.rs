@@ -17,7 +17,34 @@ pub fn to_string<T: Facet>() -> String {
         "\"$schema\": \"https://json-schema.org/draft/2020-12/schema\","
     )
     .unwrap();
-    //TODO: if `Shape` also allowed arbitrary attributes, we could optionally output an `id` field here.
+
+    // Find the first attribute that starts with "id=", if it exists more than once is an error
+    let mut id = T::SHAPE.attributes.iter().filter_map(|attr| match attr {
+        facet::ShapeAttribute::Arbitrary(attr_str) => {
+            if attr_str.starts_with("id") {
+                let id = attr_str
+                    .split('=')
+                    .nth(1)
+                    .unwrap_or_default()
+                    .trim()
+                    .trim_matches('"');
+                Some(id)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    });
+    match (id.next(), id.next()) {
+        (Some(_), Some(_)) => panic!("More than one id attribute found"),
+        (Some(id), None) => {
+            write!(buffer, "\"$id\": \"{id}\",").unwrap();
+        }
+        _ => {
+            // No id attribute found, do nothing
+        }
+    }
+
     serialize(T::SHAPE, &[], &mut buffer).unwrap();
     write!(buffer, "}}").unwrap();
     String::from_utf8(buffer).unwrap()
@@ -159,10 +186,8 @@ mod tests {
     #[test]
     fn test_basic() {
         /// Test documentation
-        #[derive(
-            Facet,
-            //schemars::JsonSchema
-        )]
+        #[derive(Facet)]
+        #[facet(id = "http://example.com/schema")]
         struct TestStruct {
             /// Test doc1
             string_field: String,
@@ -174,66 +199,26 @@ mod tests {
         }
 
         let schema = to_string::<TestStruct>();
-        println!("JSON Schema: {schema}");
 
-        //let x: RootSchema = serde_json::from_str(&schema).unwrap();
-        //dbg!(x);
-        //let x = schemars::schema_for!(TestStruct);
-        //println!("{}", serde_json::to_string_pretty(&x).unwrap());
+        let round_trip: schemars::schema::RootSchema = serde_json::from_str(&schema).unwrap();
+        assert_eq!(
+            round_trip.meta_schema,
+            Some("https://json-schema.org/draft/2020-12/schema".to_string())
+        );
+        assert_eq!(
+            round_trip.schema.metadata.as_deref(),
+            Some(&schemars::schema::Metadata {
+                //title: Some("TestStruct".to_string()),
+                id: Some("http://example.com/schema".to_string()),
+                description: Some("Test documentation".to_string()),
+                ..Default::default()
+            })
+        );
+        assert_eq!(
+            round_trip.schema.instance_type,
+            Some(schemars::schema::SingleOrVec::from(
+                schemars::schema::InstanceType::Object,
+            ))
+        );
     }
-
-    #[test]
-    fn test_option() {
-        #[derive(
-            Facet,
-            //schemars::JsonSchema
-        )]
-        struct Foo {
-            bar: u32,
-        }
-
-        #[derive(
-            Facet,
-            //schemars::JsonSchema
-        )]
-        struct TestOption {
-            string_field: Option<String>,
-            struct_field: Option<Foo>,
-        }
-
-        //let schema = to_string::<TestOption>();
-        //println!("JSON Schema: {schema}");
-
-        //let x: RootSchema = serde_json::from_str(&schema).unwrap();
-        //dbg!(x);
-        //let x = schemars::schema_for!(TestOption);
-        //println!("{}", serde_json::to_string_pretty(&x).unwrap());
-    }
-
-    /*
-    #[test]
-    fn test_enum() {
-        #[derive(
-            Facet,
-            //schemars::JsonSchema
-        )]
-        #[repr(u8)]
-        enum TestEnum {
-            /// Test doc1
-            StringField(String),
-            /// Test doc2
-            IntField(u32),
-            VecField(Vec<bool>),
-            SliceField(&'static [f64]),
-            ArrayField([f64; 3]),
-        }
-
-        //let schema = to_string::<TestEnum>();
-        //println!("JSON Schema: {schema}");
-        //let x: RootSchema = serde_json::from_str(&schema).unwrap();
-        //dbg!(x);
-        //let x = schemars::schema_for!(TestEnum);
-        //println!("{}", serde_json::to_string_pretty(&x).unwrap());
-    }
-    */
 }
