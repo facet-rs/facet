@@ -13,10 +13,10 @@ pub enum ScalarType {
     /// Primitive type `str`.
     Str,
     /// `std::string::String`.
-    #[cfg(feature = "std")]
+    #[cfg(feature = "alloc")]
     String,
     /// `std::borrow::Cow<'_, str>`.
-    #[cfg(feature = "std")]
+    #[cfg(feature = "alloc")]
     CowStr,
     /// Primitive type `f32`.
     F32,

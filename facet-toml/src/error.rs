@@ -2,10 +2,15 @@
 
 use core::ops::Range;
 
+use alloc::{
+    format,
+    string::{String, ToString},
+};
 #[cfg(feature = "rich-diagnostics")]
 use ariadne::{Color, Label, Report, ReportKind, Source};
 use facet_core::Shape;
 use facet_reflect::ReflectError;
+#[cfg(feature = "rich-diagnostics")]
 use yansi::Paint as _;
 
 /// Any error from deserializing TOML.
@@ -13,8 +18,10 @@ pub struct TomlError<'input> {
     /// Type of error.
     pub kind: TomlErrorKind,
     /// Reference to the TOML source.
+    #[cfg_attr(not(feature = "rich-diagnostics"), allow(dead_code))]
     toml: &'input str,
     /// Which part of the TOML this error applies to.
+    #[cfg_attr(not(feature = "rich-diagnostics"), allow(dead_code))]
     span: Option<Range<usize>>,
     /// Full Wip path.
     path: String,

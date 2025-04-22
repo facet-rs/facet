@@ -1,9 +1,23 @@
+#![cfg_attr(not(feature = "std"), no_std)]
 #![warn(missing_docs)]
+#![warn(clippy::std_instead_of_core)]
+#![warn(clippy::std_instead_of_alloc)]
+#![deny(unsafe_code)]
 #![doc = include_str!("../README.md")]
+
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
+#[cfg(not(feature = "alloc"))]
+compile_error!("feature `alloc` is required");
 
 pub mod error;
 mod to_scalar;
 
+use alloc::{
+    borrow::Cow,
+    string::{String, ToString},
+};
 use error::{TomlError, TomlErrorKind};
 use facet_core::{Def, Facet, Struct, StructKind};
 use facet_reflect::{ScalarType, Wip};
@@ -438,18 +452,11 @@ fn deserialize_as_map<'input, 'a>(
                 wip.path(),
             )
         })? {
-            #[cfg(feature = "std")]
             ScalarType::String => {
                 reflect!(wip, toml, item.span(), put(k.to_string()));
             }
-            #[cfg(feature = "std")]
             ScalarType::CowStr => {
-                reflect!(
-                    wip,
-                    toml,
-                    item.span(),
-                    put(std::borrow::Cow::Owned(k.to_string()))
-                );
+                reflect!(wip, toml, item.span(), put(Cow::Owned(k.to_string())));
             }
             _ => {
                 return Err(TomlError::new(
@@ -538,8 +545,8 @@ fn deserialize_as_scalar<'input, 'a>(
         ScalarType::Bool => to_scalar::put_boolean(toml, wip, item)?,
 
         // Regular String and &str are handled by from_str
-        #[cfg(feature = "std")]
-        ScalarType::CowStr => to_scalar::put_string::<std::borrow::Cow<'_, str>>(toml, wip, item)?,
+        #[cfg(feature = "alloc")]
+        ScalarType::CowStr => to_scalar::put_string::<Cow<'_, str>>(toml, wip, item)?,
 
         ScalarType::F32 => to_scalar::put_number::<f32>(toml, wip, item)?,
         ScalarType::F64 => to_scalar::put_number::<f64>(toml, wip, item)?,

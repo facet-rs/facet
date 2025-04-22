@@ -1,5 +1,6 @@
 //! Convert TOML values to it's scalar counterpart.
 
+use alloc::string::{String, ToString};
 use facet_core::Facet;
 use facet_reflect::{ReflectError, Wip};
 use num_traits::cast::NumCast;
