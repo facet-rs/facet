@@ -10,7 +10,7 @@ use owo_colors::OwoColorize as _;
 pub struct HeapValue<'a> {
     pub(crate) guard: Option<Guard>,
     pub(crate) shape: &'static Shape,
-    pub(crate) phantom: PhantomData<&'a ()>,
+    pub(crate) phantom: PhantomData<*mut &'a ()>,
 }
 
 impl Drop for HeapValue<'_> {

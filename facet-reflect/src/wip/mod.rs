@@ -283,15 +283,12 @@ pub struct Wip<'a> {
     istates: FlatMap<ValueId, IState>,
 
     /// lifetime of the shortest reference we hold
-    phantom: PhantomData<&'a ()>,
+    phantom: PhantomData<*mut &'a ()>,
 }
 
 impl<'a> Wip<'a> {
     /// Puts the value from a Peek into the current frame.
-    pub fn put_peek<'mem>(self, peek: crate::Peek<'mem>) -> Result<Wip<'mem>, ReflectError>
-    where
-        'a: 'mem,
-    {
+    pub fn put_peek(self, peek: crate::Peek<'a>) -> Result<Wip<'a>, ReflectError> {
         self.put_shape(peek.data, peek.shape)
     }
 
@@ -748,10 +745,7 @@ impl<'a> Wip<'a> {
     ///
     /// * `Ok(Self)` if the value was successfully put into the frame.
     /// * `Err(ReflectError)` if there was an error putting the value into the frame.
-    pub fn put<'val, T: Facet + 'val>(self, t: T) -> Result<Wip<'val>, ReflectError>
-    where
-        'a: 'val,
-    {
+    pub fn put<T: Facet + 'a>(self, t: T) -> Result<Wip<'a>, ReflectError> {
         let shape = T::SHAPE;
         let ptr_const = PtrConst::new(&t as *const T as *const u8);
         let res = self.put_shape(ptr_const, shape);
@@ -767,14 +761,11 @@ impl<'a> Wip<'a> {
     }
 
     /// Puts a value from a `PtrConst` with the given shape into the current frame.
-    pub fn put_shape<'val>(
+    pub fn put_shape(
         mut self,
-        src: PtrConst<'val>,
+        src: PtrConst<'a>,
         src_shape: &'static Shape,
-    ) -> Result<Wip<'val>, ReflectError>
-    where
-        'a: 'val,
-    {
+    ) -> Result<Wip<'a>, ReflectError> {
         let Some(frame) = self.frames.last_mut() else {
             return Err(ReflectError::OperationFailed {
                 shape: src_shape,
