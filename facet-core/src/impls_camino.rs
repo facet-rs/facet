@@ -7,7 +7,7 @@ use crate::{
     ConstTypeId, Def, Facet, ScalarAffinity, ScalarDef, Shape, value_vtable, value_vtable_inner,
 };
 
-unsafe impl Facet for Utf8PathBuf {
+unsafe impl Facet<'_> for Utf8PathBuf {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
             .id(ConstTypeId::of::<Self>())
@@ -29,7 +29,7 @@ unsafe impl Facet for Utf8PathBuf {
     };
 }
 
-unsafe impl Facet for &Utf8Path {
+unsafe impl<'a> Facet<'a> for &'a Utf8Path {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
             .id(ConstTypeId::of::<Self>())
