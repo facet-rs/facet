@@ -245,6 +245,7 @@ fn build_where_clauses(
             match &p.value {
                 GenericParam::Lifetime { name, .. } => {
                     where_clauses_s.push(format!("{name}: 'facet"));
+                    where_clauses_s.push(format!("'facet: {name}"));
                 }
                 GenericParam::Const { .. } => {
                     // ignore for now

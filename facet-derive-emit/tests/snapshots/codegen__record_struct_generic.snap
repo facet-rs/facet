@@ -8,6 +8,7 @@ unsafe impl<'facet, 'a, T: Facet + core::hash::Hash, const C: usize> ::facet::Fa
 where
     T: Debug,
     'a: 'facet,
+    'facet: 'a,
     T: ::facet::Facet<'facet>,
 {
     const SHAPE: &'static ::facet::Shape = &const {

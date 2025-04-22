@@ -9,6 +9,7 @@ where
     T: Debug,
     [u8; C]: Debug,
     'a: 'facet,
+    'facet: 'a,
     T: ::facet::Facet<'facet>,
 {
     const SHAPE: &'static ::facet::Shape = &const {
@@ -18,6 +19,7 @@ where
             T: Debug,
             [u8; C]: Debug,
             'a: 'facet,
+            'facet: 'a,
             T: ::facet::Facet<'facet>,
         {
             _discriminant: u8,
@@ -31,6 +33,7 @@ where
             T: Debug,
             [u8; C]: Debug,
             'a: 'facet,
+            'facet: 'a,
             T: ::facet::Facet<'facet>,
         {
             _discriminant: u8,

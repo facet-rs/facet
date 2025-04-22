@@ -202,3 +202,31 @@ fn test_invariant_growing() {
     // Run the test
     run_compilation_test(&test);
 }
+
+#[test]
+#[cfg(not(miri))]
+fn test_contravariant_shrinking() {
+    // Define the test case
+    let test = CompilationTest {
+        name: "contravariant_shrinking",
+        source: include_str!("compile_tests/contravariant_shrinking.rs"),
+        expected_errors: &["error[E0521]: borrowed data escapes outside of function"],
+    };
+
+    // Run the test
+    run_compilation_test(&test);
+}
+
+#[test]
+#[cfg(not(miri))]
+fn test_invariant_shrinking() {
+    // Define the test case
+    let test = CompilationTest {
+        name: "invariant_shrinking",
+        source: include_str!("compile_tests/invariant_shrinking.rs"),
+        expected_errors: &["error[E0521]: borrowed data escapes outside of function"],
+    };
+
+    // Run the test
+    run_compilation_test(&test);
+}
