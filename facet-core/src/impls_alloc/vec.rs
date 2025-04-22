@@ -3,9 +3,9 @@ use core::{alloc::Layout, hash::Hash as _};
 
 use alloc::vec::Vec;
 
-unsafe impl<T> Facet for Vec<T>
+unsafe impl<'a, T> Facet<'a> for Vec<T>
 where
-    T: Facet,
+    T: Facet<'a>,
 {
     const SHAPE: &'static Shape = &const {
         Shape::builder()

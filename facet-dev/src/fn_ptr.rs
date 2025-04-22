@@ -75,8 +75,8 @@ pub fn generate() -> String {
                 .collect::<Vec<_>>()
                 .join(", ");
             let where_predicates = (0..n)
-                .map(|i| format!("T{}: Facet", i))
-                .chain(iter::once("R: Facet".to_owned()))
+                .map(|i| format!("T{}: Facet<'facet>", i))
+                .chain(iter::once("R: Facet<'facet>".to_owned()))
                 .collect::<Vec<_>>()
                 .join(",\n    ");
             let param_shape_list = (0..n)
@@ -101,7 +101,7 @@ pub fn generate() -> String {
 
             // Start impl block
             w!(
-                "unsafe impl<{return_param}, {type_params}> Facet for {extern_abi}fn({type_params}) -> {return_param}\n",
+                "unsafe impl<'facet, {return_param}, {type_params}> Facet<'facet> for {extern_abi}fn({type_params}) -> {return_param}\n",
             );
             w!("where\n");
             w!("    {}\n", where_predicates);
@@ -110,7 +110,7 @@ pub fn generate() -> String {
 
             // type_name function
             w!(
-                "        fn type_name<{return_param}, {type_params}>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result\n",
+                "        fn type_name<'facet, {return_param}, {type_params}>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result\n",
             );
             w!("        where\n");
             w!("            {}\n", where_predicates);

@@ -4,7 +4,7 @@ use facet_reflect::Peek;
 use std::io::{self, Write};
 
 /// Serializes a value to JSON
-pub fn to_string<T: Facet>(value: &T) -> String {
+pub fn to_string<'a, T: Facet<'a>>(value: &'a T) -> String {
     let peek = Peek::new(value);
     let mut output = Vec::new();
     serialize(&peek, &mut output).unwrap();
@@ -19,7 +19,7 @@ pub fn peek_to_string(peek: &Peek<'_>) -> String {
 }
 
 /// Serializes a value to a writer in JSON format
-pub fn to_writer<T: Facet, W: Write>(value: &T, writer: &mut W) -> io::Result<()> {
+pub fn to_writer<'a, T: Facet<'a>, W: Write>(value: &'a T, writer: &mut W) -> io::Result<()> {
     let peek = Peek::new(value);
     serialize(&peek, writer)
 }

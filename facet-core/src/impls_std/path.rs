@@ -2,7 +2,7 @@ use crate::*;
 use core::alloc::Layout;
 use typeid::ConstTypeId;
 
-unsafe impl Facet for std::path::PathBuf {
+unsafe impl<'a> Facet<'a> for std::path::PathBuf {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
             .id(ConstTypeId::of::<Self>())
@@ -17,7 +17,7 @@ unsafe impl Facet for std::path::PathBuf {
     };
 }
 
-unsafe impl Facet for &std::path::Path {
+unsafe impl<'a> Facet<'a> for &'a std::path::Path {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
             .id(ConstTypeId::of::<Self>())

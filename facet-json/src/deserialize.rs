@@ -20,7 +20,7 @@ pub use error::*;
 /// This function takes a JSON string representation and converts it into a Rust
 /// value of the specified type `T`. The type must implement the `Facet` trait
 /// to provide the necessary type information for deserialization.
-pub fn from_str<T: Facet>(json: &str) -> Result<T, JsonError<'_>> {
+pub fn from_str<'a, T: Facet<'a>>(json: &str) -> Result<T, JsonError<'_>> {
     from_slice(json.as_bytes())
 }
 
@@ -33,7 +33,7 @@ pub fn from_str<T: Facet>(json: &str) -> Result<T, JsonError<'_>> {
 /// # Returns
 ///
 /// A result containing the deserialized value of type `T` or a `JsonParseErrorWithContext`.
-pub fn from_slice<T: Facet>(json: &[u8]) -> Result<T, JsonError<'_>> {
+pub fn from_slice<'a, T: Facet<'a>>(json: &[u8]) -> Result<T, JsonError<'_>> {
     let wip = Wip::alloc::<T>();
     let heap_value = from_slice_wip(wip, json)?;
     Ok(heap_value.materialize::<T>().unwrap())

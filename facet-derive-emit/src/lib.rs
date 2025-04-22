@@ -243,14 +243,14 @@ fn build_where_clauses(
     if let Some(generics) = generics {
         for p in &generics.params.0 {
             match &p.value {
-                GenericParam::Lifetime { .. } => {
-                    // ignore for now
+                GenericParam::Lifetime { name, .. } => {
+                    where_clauses_s.push(format!("{name}: 'facet"));
                 }
                 GenericParam::Const { .. } => {
                     // ignore for now
                 }
                 GenericParam::Type { name, .. } => {
-                    where_clauses_s.push(format!("{name}: ::facet::Facet"));
+                    where_clauses_s.push(format!("{name}: ::facet::Facet<'facet>"));
                 }
             }
         }

@@ -5,7 +5,7 @@ use crate::{
     SmartPointerFlags, SmartPointerVTable, value_vtable,
 };
 
-unsafe impl<T: Facet> Facet for alloc::sync::Arc<T> {
+unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
     const SHAPE: &'static crate::Shape = &const {
         crate::Shape::builder()
             .id(ConstTypeId::of::<Self>())
@@ -48,7 +48,7 @@ unsafe impl<T: Facet> Facet for alloc::sync::Arc<T> {
     };
 }
 
-unsafe impl<T: Facet> Facet for alloc::sync::Weak<T> {
+unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Weak<T> {
     const SHAPE: &'static crate::Shape = &const {
         crate::Shape::builder()
             .id(ConstTypeId::of::<Self>())
@@ -82,7 +82,7 @@ unsafe impl<T: Facet> Facet for alloc::sync::Weak<T> {
     };
 }
 
-unsafe impl<T> Facet for Opaque<alloc::sync::Arc<T>> {
+unsafe impl<'a, T: 'a> Facet<'a> for Opaque<alloc::sync::Arc<T>> {
     const SHAPE: &'static crate::Shape = &const {
         crate::Shape::builder()
             .id(ConstTypeId::of::<Self>())
@@ -116,7 +116,7 @@ unsafe impl<T> Facet for Opaque<alloc::sync::Arc<T>> {
     };
 }
 
-unsafe impl<T: Facet> Facet for alloc::rc::Rc<T> {
+unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::rc::Rc<T> {
     const SHAPE: &'static crate::Shape = &const {
         crate::Shape::builder()
             .id(ConstTypeId::of::<Self>())
@@ -156,7 +156,7 @@ unsafe impl<T: Facet> Facet for alloc::rc::Rc<T> {
     };
 }
 
-unsafe impl<T: Facet> Facet for alloc::rc::Weak<T> {
+unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::rc::Weak<T> {
     const SHAPE: &'static crate::Shape = &const {
         crate::Shape::builder()
             .id(ConstTypeId::of::<Self>())
@@ -187,7 +187,7 @@ unsafe impl<T: Facet> Facet for alloc::rc::Weak<T> {
     };
 }
 
-unsafe impl<T> Facet for Opaque<alloc::rc::Rc<T>> {
+unsafe impl<'a, T: 'a> Facet<'a> for Opaque<alloc::rc::Rc<T>> {
     const SHAPE: &'static crate::Shape = &const {
         crate::Shape::builder()
             .id(ConstTypeId::of::<Self>())

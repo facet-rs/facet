@@ -68,7 +68,7 @@ mod tests;
 ///     },
 /// });
 /// ```
-pub fn from_str<T: Facet>(urlencoded: &str) -> Result<T, UrlEncodedError> {
+pub fn from_str<'a, T: Facet<'a>>(urlencoded: &str) -> Result<T, UrlEncodedError> {
     let val = from_str_value(Wip::alloc::<T>(), urlencoded)?;
     Ok(val.materialize::<T>()?)
 }

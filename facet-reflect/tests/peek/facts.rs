@@ -8,7 +8,7 @@ const REMARKABLE: Style = Style::new().blue();
 
 fn collect_facts<T>(val1: &T, val2: &T) -> HashSet<Fact>
 where
-    T: Facet + 'static,
+    T: for<'a> Facet<'a> + 'static,
 {
     let mut facts: HashSet<Fact> = HashSet::new();
     let value_vtable = T::SHAPE.vtable;
@@ -103,7 +103,7 @@ where
 
 fn report_maybe_mismatch<T>(val1: T, val2: T, expected_facts: HashSet<Fact>, facts: HashSet<Fact>)
 where
-    T: Facet + 'static,
+    T: for<'a> Facet<'a> + 'static,
 {
     let name = format!("{}", T::SHAPE);
 
@@ -137,7 +137,7 @@ where
 
 fn check_facts<T>(val1: T, val2: T, expected_facts: HashSet<Fact>)
 where
-    T: Facet + 'static,
+    T: for<'a> Facet<'a> + 'static,
 {
     let name = format!("{}", T::SHAPE);
     eprint!("{}", format_args!("== {name}: ").yellow());
@@ -865,7 +865,7 @@ fn test_fn_ptr() {
     // slightly different version to overwrite the equality parts as miri juggles the addresses
     fn check_facts<T>(val1: T, val2: T, mut expected_facts: HashSet<Fact>)
     where
-        T: Facet + 'static,
+        T: for<'a> Facet<'a> + 'static,
     {
         let name = format!("{}", T::SHAPE);
         eprint!("{}", format_args!("== {name}: ").yellow());

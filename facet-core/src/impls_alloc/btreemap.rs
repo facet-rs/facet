@@ -15,10 +15,10 @@ struct BTreeMapIterator<'mem, K> {
     keys: VecDeque<&'mem K>,
 }
 
-unsafe impl<K, V> Facet for BTreeMap<K, V>
+unsafe impl<'a, K, V> Facet<'a> for BTreeMap<K, V>
 where
-    K: Facet + core::cmp::Eq + core::cmp::Ord + 'static,
-    V: Facet + 'static,
+    K: Facet<'a> + core::cmp::Eq + core::cmp::Ord,
+    V: Facet<'a>,
 {
     const SHAPE: &'static crate::Shape = &const {
         Shape::builder()

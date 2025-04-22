@@ -49,12 +49,12 @@ pub use types::*;
 /// all the serializers, deserializers, the entire ecosystem is unsafe.
 ///
 /// You're responsible for describing the type layout properly, and annotating all the invariants.
-pub unsafe trait Facet: Sized {
+pub unsafe trait Facet<'a>: Sized + 'a {
     /// The shape of this type
     const SHAPE: &'static Shape;
 
     /// Returns true if the type of `self` is equal to the type of `other`
-    fn type_eq<Other: Facet>() -> bool {
+    fn type_eq<Other: Facet<'a>>() -> bool {
         Self::SHAPE == Other::SHAPE
     }
 }

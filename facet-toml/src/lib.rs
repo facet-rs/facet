@@ -43,7 +43,7 @@ macro_rules! reflect {
 }
 
 /// Deserializes a TOML string into a value of type `T` that implements `Facet`.
-pub fn from_str<T: Facet>(toml: &str) -> Result<T, TomlError<'_>> {
+pub fn from_str<'a, T: Facet<'a>>(toml: &str) -> Result<T, TomlError<'_>> {
     trace!("Parsing TOML");
 
     // Allocate the type

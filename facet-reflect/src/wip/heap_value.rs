@@ -31,7 +31,7 @@ impl<'a> HeapValue<'a> {
     }
 
     /// Turn this heapvalue into a concrete type
-    pub fn materialize<T: Facet + 'a>(mut self) -> Result<T, ReflectError> {
+    pub fn materialize<T: Facet<'a>>(mut self) -> Result<T, ReflectError> {
         if self.shape != T::SHAPE {
             return Err(ReflectError::WrongShape {
                 expected: self.shape,

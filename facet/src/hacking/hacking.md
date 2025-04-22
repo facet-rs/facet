@@ -84,7 +84,7 @@ For arrays like `[T; 1]`, we need to check if the inner type `T` implements `Par
 ```rust
 # use facet::{PtrConst, Shape, Facet};
 # use core::cmp::Ordering;
-fn create_array_shape<T: Facet>() {
+fn create_array_shape<'a, T: Facet<'a>>() {
     let vtable = {
         // Implementation of partial_ord for arrays
         let partial_ord = if T::SHAPE.vtable.partial_ord.is_some() {

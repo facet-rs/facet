@@ -5,7 +5,7 @@ use crate::{
     SmartPointerVTable, value_vtable,
 };
 
-unsafe impl<T: Facet> Facet for core::ptr::NonNull<T> {
+unsafe impl<'a, T: Facet<'a>> Facet<'a> for core::ptr::NonNull<T> {
     const SHAPE: &'static crate::Shape = &const {
         crate::Shape::builder()
             .id(ConstTypeId::of::<Self>())

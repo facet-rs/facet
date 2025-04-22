@@ -1,9 +1,9 @@
 use crate::*;
 use core::alloc::Layout;
 
-unsafe impl<T> Facet for &[T]
+unsafe impl<'a, T> Facet<'a> for &'a [T]
 where
-    T: Facet,
+    T: Facet<'a>,
 {
     const SHAPE: &'static Shape = &const {
         Shape::builder()

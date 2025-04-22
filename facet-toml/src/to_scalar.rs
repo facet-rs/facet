@@ -17,7 +17,7 @@ pub(crate) fn put_number<'input, 'a, T>(
     item: &Item,
 ) -> Result<Wip<'a>, TomlError<'input>>
 where
-    T: Facet + NumCast + 'a,
+    T: Facet<'a> + NumCast + 'a,
 {
     let v = item.as_value().ok_or_else(|| {
         TomlError::new(
@@ -117,7 +117,7 @@ pub(crate) fn put_string<'input, 'a, T>(
     item: &Item,
 ) -> Result<Wip<'a>, TomlError<'input>>
 where
-    T: From<String> + Facet + 'a,
+    T: From<String> + Facet<'a> + 'a,
 {
     let value: T = item
         .as_str()

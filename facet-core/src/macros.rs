@@ -1,14 +1,18 @@
 use crate::{Facet, Shape};
 
 #[doc(hidden)]
-pub const fn shape_of<TStruct, TField: Facet>(_f: &dyn Fn(&TStruct) -> &TField) -> &'static Shape {
+pub const fn shape_of<'a, TStruct, TField: Facet<'a>>(
+    _f: &dyn Fn(&TStruct) -> &TField,
+) -> &'static Shape {
     TField::SHAPE
 }
 
 #[doc(hidden)]
-pub const fn shape_of_opaque<TStruct, TField>(_f: &dyn Fn(&TStruct) -> &TField) -> &'static Shape
+pub const fn shape_of_opaque<'a, TStruct, TField>(
+    _f: &dyn Fn(&TStruct) -> &TField,
+) -> &'static Shape
 where
-    Opaque<TField>: Facet,
+    Opaque<TField>: Facet<'a>,
 {
     Opaque::<TField>::SHAPE
 }

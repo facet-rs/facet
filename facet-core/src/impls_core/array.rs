@@ -2,9 +2,9 @@ use crate::*;
 use core::alloc::Layout;
 use core::{cmp::Ordering, iter::zip};
 
-unsafe impl<T, const L: usize> Facet for [T; L]
+unsafe impl<'a, T, const L: usize> Facet<'a> for [T; L]
 where
-    T: Facet,
+    T: Facet<'a>,
 {
     const SHAPE: &'static Shape = &const {
         Shape::builder()

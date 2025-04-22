@@ -40,14 +40,14 @@ pub fn write_type_name_list(
     Ok(())
 }
 
-unsafe impl<R> Facet for fn() -> R
+unsafe impl<'facet, R> Facet<'facet> for fn() -> R
 where
-    R: Facet,
+    R: Facet<'facet>,
 {
     const SHAPE: &'static Shape = &const {
-        fn type_name<R>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result
+        fn type_name<'facet, R>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result
         where
-            R: Facet,
+            R: Facet<'facet>,
         {
             write_type_name_list(f, opts, FunctionAbi::Rust, &[], R::SHAPE)
         }
@@ -67,16 +67,16 @@ where
             .build()
     };
 }
-unsafe impl<R, T0> Facet for fn(T0) -> R
+unsafe impl<'facet, R, T0> Facet<'facet> for fn(T0) -> R
 where
-    T0: Facet,
-    R: Facet,
+    T0: Facet<'facet>,
+    R: Facet<'facet>,
 {
     const SHAPE: &'static Shape = &const {
-        fn type_name<R, T0>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result
+        fn type_name<'facet, R, T0>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result
         where
-            T0: Facet,
-            R: Facet,
+            T0: Facet<'facet>,
+            R: Facet<'facet>,
         {
             write_type_name_list(f, opts, FunctionAbi::Rust, &[T0::SHAPE], R::SHAPE)
         }
@@ -99,18 +99,18 @@ where
             .build()
     };
 }
-unsafe impl<R, T0, T1> Facet for fn(T0, T1) -> R
+unsafe impl<'facet, R, T0, T1> Facet<'facet> for fn(T0, T1) -> R
 where
-    T0: Facet,
-    T1: Facet,
-    R: Facet,
+    T0: Facet<'facet>,
+    T1: Facet<'facet>,
+    R: Facet<'facet>,
 {
     const SHAPE: &'static Shape = &const {
-        fn type_name<R, T0, T1>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result
+        fn type_name<'facet, R, T0, T1>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result
         where
-            T0: Facet,
-            T1: Facet,
-            R: Facet,
+            T0: Facet<'facet>,
+            T1: Facet<'facet>,
+            R: Facet<'facet>,
         {
             write_type_name_list(
                 f,
@@ -145,20 +145,23 @@ where
             .build()
     };
 }
-unsafe impl<R, T0, T1, T2> Facet for fn(T0, T1, T2) -> R
+unsafe impl<'facet, R, T0, T1, T2> Facet<'facet> for fn(T0, T1, T2) -> R
 where
-    T0: Facet,
-    T1: Facet,
-    T2: Facet,
-    R: Facet,
+    T0: Facet<'facet>,
+    T1: Facet<'facet>,
+    T2: Facet<'facet>,
+    R: Facet<'facet>,
 {
     const SHAPE: &'static Shape = &const {
-        fn type_name<R, T0, T1, T2>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result
+        fn type_name<'facet, R, T0, T1, T2>(
+            f: &mut fmt::Formatter,
+            opts: TypeNameOpts,
+        ) -> fmt::Result
         where
-            T0: Facet,
-            T1: Facet,
-            T2: Facet,
-            R: Facet,
+            T0: Facet<'facet>,
+            T1: Facet<'facet>,
+            T2: Facet<'facet>,
+            R: Facet<'facet>,
         {
             write_type_name_list(
                 f,
@@ -197,22 +200,25 @@ where
             .build()
     };
 }
-unsafe impl<R, T0, T1, T2, T3> Facet for fn(T0, T1, T2, T3) -> R
+unsafe impl<'facet, R, T0, T1, T2, T3> Facet<'facet> for fn(T0, T1, T2, T3) -> R
 where
-    T0: Facet,
-    T1: Facet,
-    T2: Facet,
-    T3: Facet,
-    R: Facet,
+    T0: Facet<'facet>,
+    T1: Facet<'facet>,
+    T2: Facet<'facet>,
+    T3: Facet<'facet>,
+    R: Facet<'facet>,
 {
     const SHAPE: &'static Shape = &const {
-        fn type_name<R, T0, T1, T2, T3>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result
+        fn type_name<'facet, R, T0, T1, T2, T3>(
+            f: &mut fmt::Formatter,
+            opts: TypeNameOpts,
+        ) -> fmt::Result
         where
-            T0: Facet,
-            T1: Facet,
-            T2: Facet,
-            T3: Facet,
-            R: Facet,
+            T0: Facet<'facet>,
+            T1: Facet<'facet>,
+            T2: Facet<'facet>,
+            T3: Facet<'facet>,
+            R: Facet<'facet>,
         {
             write_type_name_list(
                 f,
@@ -257,27 +263,27 @@ where
             .build()
     };
 }
-unsafe impl<R, T0, T1, T2, T3, T4> Facet for fn(T0, T1, T2, T3, T4) -> R
+unsafe impl<'facet, R, T0, T1, T2, T3, T4> Facet<'facet> for fn(T0, T1, T2, T3, T4) -> R
 where
-    T0: Facet,
-    T1: Facet,
-    T2: Facet,
-    T3: Facet,
-    T4: Facet,
-    R: Facet,
+    T0: Facet<'facet>,
+    T1: Facet<'facet>,
+    T2: Facet<'facet>,
+    T3: Facet<'facet>,
+    T4: Facet<'facet>,
+    R: Facet<'facet>,
 {
     const SHAPE: &'static Shape = &const {
-        fn type_name<R, T0, T1, T2, T3, T4>(
+        fn type_name<'facet, R, T0, T1, T2, T3, T4>(
             f: &mut fmt::Formatter,
             opts: TypeNameOpts,
         ) -> fmt::Result
         where
-            T0: Facet,
-            T1: Facet,
-            T2: Facet,
-            T3: Facet,
-            T4: Facet,
-            R: Facet,
+            T0: Facet<'facet>,
+            T1: Facet<'facet>,
+            T2: Facet<'facet>,
+            T3: Facet<'facet>,
+            T4: Facet<'facet>,
+            R: Facet<'facet>,
         {
             write_type_name_list(
                 f,
@@ -334,29 +340,29 @@ where
             .build()
     };
 }
-unsafe impl<R, T0, T1, T2, T3, T4, T5> Facet for fn(T0, T1, T2, T3, T4, T5) -> R
+unsafe impl<'facet, R, T0, T1, T2, T3, T4, T5> Facet<'facet> for fn(T0, T1, T2, T3, T4, T5) -> R
 where
-    T0: Facet,
-    T1: Facet,
-    T2: Facet,
-    T3: Facet,
-    T4: Facet,
-    T5: Facet,
-    R: Facet,
+    T0: Facet<'facet>,
+    T1: Facet<'facet>,
+    T2: Facet<'facet>,
+    T3: Facet<'facet>,
+    T4: Facet<'facet>,
+    T5: Facet<'facet>,
+    R: Facet<'facet>,
 {
     const SHAPE: &'static Shape = &const {
-        fn type_name<R, T0, T1, T2, T3, T4, T5>(
+        fn type_name<'facet, R, T0, T1, T2, T3, T4, T5>(
             f: &mut fmt::Formatter,
             opts: TypeNameOpts,
         ) -> fmt::Result
         where
-            T0: Facet,
-            T1: Facet,
-            T2: Facet,
-            T3: Facet,
-            T4: Facet,
-            T5: Facet,
-            R: Facet,
+            T0: Facet<'facet>,
+            T1: Facet<'facet>,
+            T2: Facet<'facet>,
+            T3: Facet<'facet>,
+            T4: Facet<'facet>,
+            T5: Facet<'facet>,
+            R: Facet<'facet>,
         {
             write_type_name_list(
                 f,
@@ -425,14 +431,14 @@ where
             .build()
     };
 }
-unsafe impl<R> Facet for extern "C" fn() -> R
+unsafe impl<'facet, R> Facet<'facet> for extern "C" fn() -> R
 where
-    R: Facet,
+    R: Facet<'facet>,
 {
     const SHAPE: &'static Shape = &const {
-        fn type_name<R>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result
+        fn type_name<'facet, R>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result
         where
-            R: Facet,
+            R: Facet<'facet>,
         {
             write_type_name_list(f, opts, FunctionAbi::C, &[], R::SHAPE)
         }
@@ -452,16 +458,16 @@ where
             .build()
     };
 }
-unsafe impl<R, T0> Facet for extern "C" fn(T0) -> R
+unsafe impl<'facet, R, T0> Facet<'facet> for extern "C" fn(T0) -> R
 where
-    T0: Facet,
-    R: Facet,
+    T0: Facet<'facet>,
+    R: Facet<'facet>,
 {
     const SHAPE: &'static Shape = &const {
-        fn type_name<R, T0>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result
+        fn type_name<'facet, R, T0>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result
         where
-            T0: Facet,
-            R: Facet,
+            T0: Facet<'facet>,
+            R: Facet<'facet>,
         {
             write_type_name_list(f, opts, FunctionAbi::C, &[T0::SHAPE], R::SHAPE)
         }
@@ -484,18 +490,18 @@ where
             .build()
     };
 }
-unsafe impl<R, T0, T1> Facet for extern "C" fn(T0, T1) -> R
+unsafe impl<'facet, R, T0, T1> Facet<'facet> for extern "C" fn(T0, T1) -> R
 where
-    T0: Facet,
-    T1: Facet,
-    R: Facet,
+    T0: Facet<'facet>,
+    T1: Facet<'facet>,
+    R: Facet<'facet>,
 {
     const SHAPE: &'static Shape = &const {
-        fn type_name<R, T0, T1>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result
+        fn type_name<'facet, R, T0, T1>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result
         where
-            T0: Facet,
-            T1: Facet,
-            R: Facet,
+            T0: Facet<'facet>,
+            T1: Facet<'facet>,
+            R: Facet<'facet>,
         {
             write_type_name_list(f, opts, FunctionAbi::C, &[T0::SHAPE, T1::SHAPE], R::SHAPE)
         }
@@ -524,20 +530,23 @@ where
             .build()
     };
 }
-unsafe impl<R, T0, T1, T2> Facet for extern "C" fn(T0, T1, T2) -> R
+unsafe impl<'facet, R, T0, T1, T2> Facet<'facet> for extern "C" fn(T0, T1, T2) -> R
 where
-    T0: Facet,
-    T1: Facet,
-    T2: Facet,
-    R: Facet,
+    T0: Facet<'facet>,
+    T1: Facet<'facet>,
+    T2: Facet<'facet>,
+    R: Facet<'facet>,
 {
     const SHAPE: &'static Shape = &const {
-        fn type_name<R, T0, T1, T2>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result
+        fn type_name<'facet, R, T0, T1, T2>(
+            f: &mut fmt::Formatter,
+            opts: TypeNameOpts,
+        ) -> fmt::Result
         where
-            T0: Facet,
-            T1: Facet,
-            T2: Facet,
-            R: Facet,
+            T0: Facet<'facet>,
+            T1: Facet<'facet>,
+            T2: Facet<'facet>,
+            R: Facet<'facet>,
         {
             write_type_name_list(
                 f,
@@ -576,22 +585,25 @@ where
             .build()
     };
 }
-unsafe impl<R, T0, T1, T2, T3> Facet for extern "C" fn(T0, T1, T2, T3) -> R
+unsafe impl<'facet, R, T0, T1, T2, T3> Facet<'facet> for extern "C" fn(T0, T1, T2, T3) -> R
 where
-    T0: Facet,
-    T1: Facet,
-    T2: Facet,
-    T3: Facet,
-    R: Facet,
+    T0: Facet<'facet>,
+    T1: Facet<'facet>,
+    T2: Facet<'facet>,
+    T3: Facet<'facet>,
+    R: Facet<'facet>,
 {
     const SHAPE: &'static Shape = &const {
-        fn type_name<R, T0, T1, T2, T3>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result
+        fn type_name<'facet, R, T0, T1, T2, T3>(
+            f: &mut fmt::Formatter,
+            opts: TypeNameOpts,
+        ) -> fmt::Result
         where
-            T0: Facet,
-            T1: Facet,
-            T2: Facet,
-            T3: Facet,
-            R: Facet,
+            T0: Facet<'facet>,
+            T1: Facet<'facet>,
+            T2: Facet<'facet>,
+            T3: Facet<'facet>,
+            R: Facet<'facet>,
         {
             write_type_name_list(
                 f,
@@ -636,27 +648,27 @@ where
             .build()
     };
 }
-unsafe impl<R, T0, T1, T2, T3, T4> Facet for extern "C" fn(T0, T1, T2, T3, T4) -> R
+unsafe impl<'facet, R, T0, T1, T2, T3, T4> Facet<'facet> for extern "C" fn(T0, T1, T2, T3, T4) -> R
 where
-    T0: Facet,
-    T1: Facet,
-    T2: Facet,
-    T3: Facet,
-    T4: Facet,
-    R: Facet,
+    T0: Facet<'facet>,
+    T1: Facet<'facet>,
+    T2: Facet<'facet>,
+    T3: Facet<'facet>,
+    T4: Facet<'facet>,
+    R: Facet<'facet>,
 {
     const SHAPE: &'static Shape = &const {
-        fn type_name<R, T0, T1, T2, T3, T4>(
+        fn type_name<'facet, R, T0, T1, T2, T3, T4>(
             f: &mut fmt::Formatter,
             opts: TypeNameOpts,
         ) -> fmt::Result
         where
-            T0: Facet,
-            T1: Facet,
-            T2: Facet,
-            T3: Facet,
-            T4: Facet,
-            R: Facet,
+            T0: Facet<'facet>,
+            T1: Facet<'facet>,
+            T2: Facet<'facet>,
+            T3: Facet<'facet>,
+            T4: Facet<'facet>,
+            R: Facet<'facet>,
         {
             write_type_name_list(
                 f,
@@ -713,29 +725,30 @@ where
             .build()
     };
 }
-unsafe impl<R, T0, T1, T2, T3, T4, T5> Facet for extern "C" fn(T0, T1, T2, T3, T4, T5) -> R
+unsafe impl<'facet, R, T0, T1, T2, T3, T4, T5> Facet<'facet>
+    for extern "C" fn(T0, T1, T2, T3, T4, T5) -> R
 where
-    T0: Facet,
-    T1: Facet,
-    T2: Facet,
-    T3: Facet,
-    T4: Facet,
-    T5: Facet,
-    R: Facet,
+    T0: Facet<'facet>,
+    T1: Facet<'facet>,
+    T2: Facet<'facet>,
+    T3: Facet<'facet>,
+    T4: Facet<'facet>,
+    T5: Facet<'facet>,
+    R: Facet<'facet>,
 {
     const SHAPE: &'static Shape = &const {
-        fn type_name<R, T0, T1, T2, T3, T4, T5>(
+        fn type_name<'facet, R, T0, T1, T2, T3, T4, T5>(
             f: &mut fmt::Formatter,
             opts: TypeNameOpts,
         ) -> fmt::Result
         where
-            T0: Facet,
-            T1: Facet,
-            T2: Facet,
-            T3: Facet,
-            T4: Facet,
-            T5: Facet,
-            R: Facet,
+            T0: Facet<'facet>,
+            T1: Facet<'facet>,
+            T2: Facet<'facet>,
+            T3: Facet<'facet>,
+            T4: Facet<'facet>,
+            T5: Facet<'facet>,
+            R: Facet<'facet>,
         {
             write_type_name_list(
                 f,

@@ -31,7 +31,7 @@ fn parse_field<'mem>(wip: Wip<'mem>, value: &str) -> Result<Wip<'mem>, ReflectEr
 }
 
 /// Parses command-line arguments
-pub fn from_slice<T: Facet>(s: &[&str]) -> T {
+pub fn from_slice<'a, T: Facet<'a>>(s: &[&str]) -> T {
     log::trace!("Entering from_slice function");
     let mut s = s;
     let mut wip = Wip::alloc::<T>();

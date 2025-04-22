@@ -313,7 +313,7 @@ impl<'a> Wip<'a> {
     }
 
     /// Allocates a new value of type `S`
-    pub fn alloc<S: Facet>() -> Self {
+    pub fn alloc<S: Facet<'a>>() -> Self {
         Self::alloc_shape(S::SHAPE)
     }
 
@@ -745,7 +745,7 @@ impl<'a> Wip<'a> {
     ///
     /// * `Ok(Self)` if the value was successfully put into the frame.
     /// * `Err(ReflectError)` if there was an error putting the value into the frame.
-    pub fn put<T: Facet + 'a>(self, t: T) -> Result<Wip<'a>, ReflectError> {
+    pub fn put<T: Facet<'a>>(self, t: T) -> Result<Wip<'a>, ReflectError> {
         let shape = T::SHAPE;
         let ptr_const = PtrConst::new(&t as *const T as *const u8);
         let res = self.put_shape(ptr_const, shape);
@@ -754,7 +754,7 @@ impl<'a> Wip<'a> {
     }
 
     /// Checks if the current frame is of type `T`.
-    pub fn current_is_type<T: Facet + 'static>(&self) -> bool {
+    pub fn current_is_type<T: Facet<'static>>(&self) -> bool {
         self.frames
             .last()
             .is_some_and(|frame| frame.shape == T::SHAPE)

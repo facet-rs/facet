@@ -4,7 +4,7 @@ use core::alloc::Layout;
 use core::num::NonZero;
 use typeid::ConstTypeId;
 
-unsafe impl Facet for ConstTypeId {
+unsafe impl<'a> Facet<'a> for ConstTypeId {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
             .id(ConstTypeId::of::<Self>())
@@ -19,7 +19,7 @@ unsafe impl Facet for ConstTypeId {
     };
 }
 
-unsafe impl Facet for () {
+unsafe impl<'a> Facet<'a> for () {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
             .id(ConstTypeId::of::<Self>())
@@ -34,7 +34,7 @@ unsafe impl Facet for () {
     };
 }
 
-unsafe impl<T: ?Sized> Facet for core::marker::PhantomData<T> {
+unsafe impl<'a, T: ?Sized + 'a> Facet<'a> for core::marker::PhantomData<T> {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
             .id(ConstTypeId::of::<Self>())
@@ -51,7 +51,7 @@ unsafe impl<T: ?Sized> Facet for core::marker::PhantomData<T> {
 }
 
 #[cfg(feature = "alloc")]
-unsafe impl Facet for alloc::string::String {
+unsafe impl<'a> Facet<'a> for alloc::string::String {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
             .id(ConstTypeId::of::<Self>())
@@ -70,7 +70,7 @@ unsafe impl Facet for alloc::string::String {
     };
 }
 
-unsafe impl Facet for char {
+unsafe impl<'a> Facet<'a> for char {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
             .id(ConstTypeId::of::<Self>())
@@ -85,7 +85,7 @@ unsafe impl Facet for char {
     };
 }
 
-unsafe impl Facet for &str {
+unsafe impl<'a> Facet<'a> for &'a str {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
             .id(ConstTypeId::of::<Self>())
@@ -101,7 +101,7 @@ unsafe impl Facet for &str {
 }
 
 #[cfg(feature = "alloc")]
-unsafe impl Facet for alloc::borrow::Cow<'_, str> {
+unsafe impl<'a> Facet<'a> for alloc::borrow::Cow<'a, str> {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
             .id(ConstTypeId::of::<Self>())
@@ -119,7 +119,7 @@ unsafe impl Facet for alloc::borrow::Cow<'_, str> {
     };
 }
 
-unsafe impl Facet for bool {
+unsafe impl<'a> Facet<'a> for bool {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
             .id(ConstTypeId::of::<Self>())
@@ -136,7 +136,7 @@ unsafe impl Facet for bool {
 
 macro_rules! impl_facet_for_integer {
     ($type:ty, $affinity:expr, $nz_affinity:expr) => {
-        unsafe impl Facet for $type {
+        unsafe impl<'a> Facet<'a> for $type {
             const SHAPE: &'static Shape = &const {
                 Shape::builder()
                     .id(ConstTypeId::of::<Self>())
@@ -181,7 +181,7 @@ macro_rules! impl_facet_for_integer {
             };
         }
 
-        unsafe impl Facet for NonZero<$type> {
+        unsafe impl<'a> Facet<'a> for NonZero<$type> {
             const SHAPE: &'static Shape = &const {
                 Shape::builder()
                     .id(ConstTypeId::of::<Self>())
@@ -468,7 +468,7 @@ static POSITIVE_ZERO_F64: f64 = 0.0f64;
 static NEGATIVE_ZERO_F64: f64 = -0.0f64;
 static EPSILON_F64: f64 = f64::EPSILON;
 
-unsafe impl Facet for f32 {
+unsafe impl<'a> Facet<'a> for f32 {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
             .id(ConstTypeId::of::<f32>())
@@ -523,7 +523,7 @@ unsafe impl Facet for f32 {
     };
 }
 
-unsafe impl Facet for f64 {
+unsafe impl<'a> Facet<'a> for f64 {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
             .id(ConstTypeId::of::<f64>())
@@ -578,7 +578,7 @@ unsafe impl Facet for f64 {
     };
 }
 
-unsafe impl Facet for core::net::SocketAddr {
+unsafe impl<'a> Facet<'a> for core::net::SocketAddr {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
             .id(ConstTypeId::of::<Self>())
@@ -596,7 +596,7 @@ unsafe impl Facet for core::net::SocketAddr {
     };
 }
 
-unsafe impl Facet for core::net::IpAddr {
+unsafe impl<'a> Facet<'a> for core::net::IpAddr {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
             .id(ConstTypeId::of::<Self>())
@@ -614,7 +614,7 @@ unsafe impl Facet for core::net::IpAddr {
     };
 }
 
-unsafe impl Facet for core::net::Ipv4Addr {
+unsafe impl<'a> Facet<'a> for core::net::Ipv4Addr {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
             .id(ConstTypeId::of::<Self>())
@@ -632,7 +632,7 @@ unsafe impl Facet for core::net::Ipv4Addr {
     };
 }
 
-unsafe impl Facet for core::net::Ipv6Addr {
+unsafe impl<'a> Facet<'a> for core::net::Ipv6Addr {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
             .id(ConstTypeId::of::<Self>())

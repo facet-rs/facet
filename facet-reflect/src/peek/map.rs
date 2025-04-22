@@ -70,7 +70,7 @@ impl<'mem> PeekMap<'mem> {
     }
 
     /// Check if the map contains a key
-    pub fn contains_key(&self, key: &impl facet_core::Facet) -> bool {
+    pub fn contains_key<T: facet_core::Facet<'mem>>(&self, key: &T) -> bool {
         unsafe {
             let key_ptr = PtrConst::new(key);
             (self.def.vtable.contains_key_fn)(self.value.data(), key_ptr)
@@ -78,7 +78,7 @@ impl<'mem> PeekMap<'mem> {
     }
 
     /// Get a value from the map for the given key
-    pub fn get<'k>(&self, key: &'k impl facet_core::Facet) -> Option<Peek<'mem>> {
+    pub fn get<T: facet_core::Facet<'mem>>(&self, key: &T) -> Option<Peek<'mem>> {
         unsafe {
             let key_ptr = PtrConst::new(key);
             let value_ptr = (self.def.vtable.get_value_ptr_fn)(self.value.data(), key_ptr)?;

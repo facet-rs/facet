@@ -171,7 +171,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
 {static_decl}
 
 #[automatically_derived]
-unsafe impl<{generics_def}> ::facet::Facet for {enum_name}<{generics_use}> {where_clauses} {{
+unsafe impl<'facet, {generics_def}> ::facet::Facet<'facet> for {enum_name}<{generics_use}> {where_clauses} {{
     const SHAPE: &'static ::facet::Shape = &const {{
         // Define all shadow structs at the beginning of the const block
         // to ensure they're in scope for offset_of! macros
@@ -272,6 +272,7 @@ fn process_c_style_enum(
     shadow_struct_defs.push(format!(
         "#[repr(C)] struct {shadow_repr_name} {{
             _discriminant: {shadow_discriminant_name},
+            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
             _fields: {shadow_union_name},
         }}",
     ));
@@ -327,7 +328,7 @@ fn process_c_style_enum(
 
                 // Add shadow struct definition
                 shadow_struct_defs.push(format!(
-                    "#[repr(C)] struct {shadow_struct_name}<{generics_def}> {where_clauses} {{  {fields_with_types} }}",
+                    "#[repr(C)] struct {shadow_struct_name}<'facet, {generics_def}> {where_clauses} {{  {fields_with_types} }}",
                 ));
 
                 let variant_offset =
@@ -393,7 +394,7 @@ fn process_c_style_enum(
 
                 // Add shadow struct definition
                 shadow_struct_defs.push(format!(
-                    "#[repr(C)] struct {shadow_struct_name}<{generics_def}> {where_clauses} {{  {fields_with_types} }}"
+                    "#[repr(C)] struct {shadow_struct_name}<'facet, {generics_def}> {where_clauses} {{  {fields_with_types} }}"
                 ));
 
                 let variant_offset =
@@ -513,7 +514,7 @@ fn process_primitive_enum(
 
                 // Add shadow struct definition
                 shadow_struct_defs.push(format!(
-                    "#[repr(C)] struct {shadow_struct_name}<{generics_def}> {where_clauses}  {{ _discriminant: {}, {fields_with_types} }}",
+                    "#[repr(C)] struct {shadow_struct_name}<'facet, {generics_def}> {where_clauses}  {{ _discriminant: {}, _phantom: ::core::marker::PhantomData<*mut &'facet ()>, {fields_with_types} }}",
                     discriminant_type.as_rust_type(),
                 ));
 
@@ -577,7 +578,7 @@ fn process_primitive_enum(
 
                 // Add shadow struct definition
                 shadow_struct_defs.push(format!(
-                    "#[repr(C)] struct {shadow_struct_name}<{generics_def}> {where_clauses} {{ _discriminant: {}, {fields_with_types} }}",
+                    "#[repr(C)] struct {shadow_struct_name}<'facet, {generics_def}> {where_clauses} {{ _discriminant: {}, _phantom: ::core::marker::PhantomData<*mut &'facet ()>, {fields_with_types} }}",
                     discriminant_type.as_rust_type(),
                 ));
 

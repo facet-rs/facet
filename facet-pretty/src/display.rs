@@ -6,35 +6,35 @@ use crate::printer::PrettyPrinter;
 use facet_core::Facet;
 
 /// Display wrapper for any type that implements Facet
-pub struct PrettyDisplay<'a, T: Facet> {
+pub struct PrettyDisplay<'a, T: Facet<'a>> {
     pub(crate) value: &'a T,
     pub(crate) printer: PrettyPrinter,
 }
 
-impl<T: Facet> Display for PrettyDisplay<'_, T> {
+impl<'a, T: Facet<'a>> Display for PrettyDisplay<'a, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         self.printer.format_to(self.value, f)
     }
 }
 
 /// Extension trait for Facet types to easily pretty-print them
-pub trait FacetPretty: Facet {
+pub trait FacetPretty<'a>: Facet<'a> {
     /// Get a displayable wrapper that pretty-prints this value
-    fn pretty(&self) -> PrettyDisplay<'_, Self>;
+    fn pretty(&'a self) -> PrettyDisplay<'a, Self>;
 
     /// Get a displayable wrapper with custom printer settings
-    fn pretty_with(&self, printer: PrettyPrinter) -> PrettyDisplay<'_, Self>;
+    fn pretty_with(&'a self, printer: PrettyPrinter) -> PrettyDisplay<'a, Self>;
 }
 
-impl<T: Facet> FacetPretty for T {
-    fn pretty(&self) -> PrettyDisplay<'_, Self> {
+impl<'a, T: Facet<'a>> FacetPretty<'a> for T {
+    fn pretty(&'a self) -> PrettyDisplay<'a, Self> {
         PrettyDisplay {
             value: self,
             printer: PrettyPrinter::default(),
         }
     }
 
-    fn pretty_with(&self, printer: PrettyPrinter) -> PrettyDisplay<'_, Self> {
+    fn pretty_with(&'a self, printer: PrettyPrinter) -> PrettyDisplay<'a, Self> {
         PrettyDisplay {
             value: self,
             printer,

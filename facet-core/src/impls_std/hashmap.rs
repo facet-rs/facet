@@ -15,11 +15,11 @@ struct HashMapIterator<'mem, K> {
     keys: VecDeque<&'mem K>,
 }
 
-unsafe impl<K, V, S> Facet for HashMap<K, V, S>
+unsafe impl<'a, K, V, S> Facet<'a> for HashMap<K, V, S>
 where
-    K: Facet + core::cmp::Eq + core::hash::Hash + 'static,
-    V: Facet + 'static,
-    S: Facet + Default,
+    K: Facet<'a> + core::cmp::Eq + core::hash::Hash,
+    V: Facet<'a>,
+    S: Facet<'a> + Default,
 {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
@@ -194,7 +194,7 @@ where
     };
 }
 
-unsafe impl Facet for RandomState {
+unsafe impl<'a> Facet<'a> for RandomState {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
             .id(ConstTypeId::of::<RandomState>())

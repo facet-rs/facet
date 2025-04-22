@@ -67,7 +67,7 @@ pub fn generate() -> String {
             .collect::<Vec<_>>()
             .join(", ");
         let where_predicates = (0..n)
-            .map(|i| format!("T{}: Facet", i))
+            .map(|i| format!("T{}: Facet<'facet>", i))
             .collect::<Vec<_>>()
             .join(",\n    ");
         let shape_list = (0..n)
@@ -77,7 +77,7 @@ pub fn generate() -> String {
 
         // Start impl block
         w!(
-            "unsafe impl<{}> Facet for {}
+            "unsafe impl<'facet, {}> Facet<'facet> for {}
 ",
             type_params,
             // Handle formatting of tuple types correctly
@@ -94,7 +94,7 @@ pub fn generate() -> String {
 
         // type_name function
         w!(
-            "        fn type_name<{}>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result\n",
+            "        fn type_name<'facet, {}>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result\n",
             type_params
         );
         w!("        where\n");

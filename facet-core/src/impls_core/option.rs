@@ -5,7 +5,7 @@ use crate::{
     value_vtable_inner,
 };
 
-unsafe impl<T: Facet> Facet for Option<T> {
+unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
     const SHAPE: &'static Shape = &const {
         Shape::builder()
             .id(ConstTypeId::of::<Self>())

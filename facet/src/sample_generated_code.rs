@@ -27,7 +27,7 @@ pub struct KitchenSinkStruct {
 static KITCHEN_SINK_STRUCT_SHAPE: &'static crate::Shape =
     <KitchenSinkStruct as crate::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl crate::Facet for KitchenSinkStruct {
+unsafe impl<'facet> crate::Facet<'facet> for KitchenSinkStruct {
     const SHAPE: &'static crate::Shape = &const {
         let fields: &'static [crate::Field] = &const {
             [
@@ -427,7 +427,7 @@ pub struct Point {
 #[used]
 static POINT_SHAPE: &'static crate::Shape = <Point as crate::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl crate::Facet for Point {
+unsafe impl<'facet> crate::Facet<'facet> for Point {
     const SHAPE: &'static crate::Shape = &const {
         let fields: &'static [crate::Field] = &const {
             [
@@ -823,45 +823,52 @@ pub enum KitchenSinkEnum {
 #[used]
 static KITCHEN_SINK_ENUM_SHAPE: &'static crate::Shape = <KitchenSinkEnum as crate::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl crate::Facet for KitchenSinkEnum {
+unsafe impl<'facet> crate::Facet<'facet> for KitchenSinkEnum {
     const SHAPE: &'static crate::Shape = &const {
         #[repr(C)]
-        struct __ShadowKitchenSinkEnum_TupleVariantSimple {
+        struct __ShadowKitchenSinkEnum_TupleVariantSimple<'facet> {
             _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
             _0: String,
         }
         #[repr(C)]
-        struct __ShadowKitchenSinkEnum_TupleVariantMulti {
+        struct __ShadowKitchenSinkEnum_TupleVariantMulti<'facet> {
             _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
             _0: i32,
             _1: i32,
             _2: i32,
         }
         #[repr(C)]
-        struct __ShadowKitchenSinkEnum_StructVariant {
+        struct __ShadowKitchenSinkEnum_StructVariant<'facet> {
             _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
             width: f64,
             height: f64,
         }
         #[repr(C)]
-        struct __ShadowKitchenSinkEnum_SensitiveTupleVariant {
+        struct __ShadowKitchenSinkEnum_SensitiveTupleVariant<'facet> {
             _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
             _0: Vec<u8>,
         }
         #[repr(C)]
-        struct __ShadowKitchenSinkEnum_StructVariantWithSensitiveField {
+        struct __ShadowKitchenSinkEnum_StructVariantWithSensitiveField<'facet> {
             _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
             payload: Vec<u8>,
             checksum: u32,
         }
         #[repr(C)]
-        struct __ShadowKitchenSinkEnum_ArbitraryVariant {
+        struct __ShadowKitchenSinkEnum_ArbitraryVariant<'facet> {
             _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
             _0: (f64, f64),
         }
         #[repr(C)]
-        struct __ShadowKitchenSinkEnum_NestedEnumVariant {
+        struct __ShadowKitchenSinkEnum_NestedEnumVariant<'facet> {
             _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
             _0: SubEnum,
         }
         let __facet_variants: &'static [crate::Variant] = &const {
@@ -1419,21 +1426,24 @@ pub enum SubEnum {
 #[used]
 static SUB_ENUM_SHAPE: &'static crate::Shape = <SubEnum as crate::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl crate::Facet for SubEnum {
+unsafe impl<'facet> crate::Facet<'facet> for SubEnum {
     const SHAPE: &'static crate::Shape = &const {
         #[repr(C)]
-        struct __ShadowSubEnum_OptionB {
+        struct __ShadowSubEnum_OptionB<'facet> {
             _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
             _0: u8,
         }
         #[repr(C)]
-        struct __ShadowSubEnum_SensitiveOption {
+        struct __ShadowSubEnum_SensitiveOption<'facet> {
             _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
             _0: u64,
         }
         #[repr(C)]
-        struct __ShadowSubEnum_ArbitraryOption {
+        struct __ShadowSubEnum_ArbitraryOption<'facet> {
             _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
             _0: u8,
         }
         let __facet_variants: &'static [crate::Variant] = &const {
