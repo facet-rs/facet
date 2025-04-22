@@ -72,6 +72,9 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithAttributes {
                     .fields(fields)
                     .build(),
             ))
+            .attributes(&[::facet::ShapeAttribute::Arbitrary(
+                "name = \"MyCoolStruct\" , deny_unknown_fields , version = 2",
+            )])
             .build()
     };
 }
