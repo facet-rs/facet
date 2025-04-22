@@ -1,8 +1,5 @@
 // we want these for clarity
 #![allow(clippy::needless_lifetimes)]
-// Note: The `#[should_panic]` tests should fail to compile. Transform them into `compile_tests`
-// when they do.
-// The non `#[should_panic]` tests should compile and run successfully over the supplied lifetime.
 use facet::Facet;
 use facet_reflect::{ReflectError, Wip};
 
