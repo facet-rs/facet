@@ -265,6 +265,74 @@ fn wip_enum_with_data_repr_c() -> eyre::Result<()> {
     Ok(())
 }
 
+#[derive(Facet, PartialEq, Eq, Debug)]
+#[repr(C, i16)]
+enum EnumWithDataReprCI16 {
+    Empty,
+    Single(i32),
+    Tuple(i32, String),
+    Struct { x: i32, y: String },
+}
+
+#[test]
+fn wip_enum_with_data_repr_c_i16() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    // Test empty variant
+    let empty = Wip::alloc::<EnumWithDataReprCI16>()
+        .variant_named("Empty")?
+        .build()?
+        .materialize::<EnumWithDataReprCI16>()?;
+    assert_eq!(empty, EnumWithDataReprCI16::Empty);
+
+    // Test single-field tuple variant
+    let single = Wip::alloc::<EnumWithDataReprCI16>()
+        .variant_named("Single")?
+        .field(0)? // Access the first field
+        .put(42)?
+        .pop()?
+        .build()?
+        .materialize::<EnumWithDataReprCI16>()?;
+    assert_eq!(single, EnumWithDataReprCI16::Single(42));
+
+    // Test multi-field tuple variant
+    let tuple = Wip::alloc::<EnumWithDataReprCI16>()
+        .variant_named("Tuple")?
+        .field(0)?
+        .put(42)?
+        .pop()?
+        .field(1)?
+        .put(String::from("Hello"))?
+        .pop()?
+        .build()?
+        .materialize::<EnumWithDataReprCI16>()?;
+    assert_eq!(
+        tuple,
+        EnumWithDataReprCI16::Tuple(42, String::from("Hello"))
+    );
+
+    // Test struct variant
+    let struct_variant = Wip::alloc::<EnumWithDataReprCI16>()
+        .variant_named("Struct")?
+        .field_named("x")?
+        .put(42)?
+        .pop()?
+        .field_named("y")?
+        .put(String::from("World"))?
+        .pop()?
+        .build()?
+        .materialize::<EnumWithDataReprCI16>()?;
+    assert_eq!(
+        struct_variant,
+        EnumWithDataReprCI16::Struct {
+            x: 42,
+            y: String::from("World")
+        }
+    );
+
+    Ok(())
+}
+
 #[test]
 fn wip_enum_error_cases() -> eyre::Result<()> {
     facet_testhelpers::setup();
