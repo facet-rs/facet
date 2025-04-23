@@ -1,4 +1,4 @@
-use facet::Facet;
+use facet::{Def, EnumDef, Facet, Field, Struct, Variant};
 use facet_reflect::Wip;
 
 #[derive(Facet, PartialEq, Eq, Debug)]
@@ -329,6 +329,84 @@ fn wip_enum_with_data_repr_c_i16() -> eyre::Result<()> {
             y: String::from("World")
         }
     );
+
+    Ok(())
+}
+
+#[test]
+fn test_enum_reprs() -> eyre::Result<()> {
+    const fn field_offsets<T: Facet<'static>>() -> [usize; 2] {
+        match T::SHAPE.def {
+            Def::Enum(EnumDef {
+                variants:
+                    &[
+                        Variant {
+                            data:
+                                Struct {
+                                    fields:
+                                        &[
+                                            Field {
+                                                offset: offset1, ..
+                                            },
+                                            Field {
+                                                offset: offset2, ..
+                                            },
+                                        ],
+                                    ..
+                                },
+                            ..
+                        },
+                    ],
+                ..
+            }) => [offset1, offset2],
+            _ => unreachable!(),
+        }
+    }
+
+    // Layout, 4 bytes: [d] [0] [1] [1]
+    // d: discriminant
+    // 0: u8 field
+    // 1: u16 field
+    #[derive(Debug, PartialEq, Facet)]
+    #[repr(u8)]
+    enum ReprU8 {
+        A(u8, u16),
+    }
+    assert_eq!(size_of::<ReprU8>(), 4);
+    assert_eq!(field_offsets::<ReprU8>(), [1, 2]);
+
+    // Layout, 6 bytes: [d] [p] [0] [p] [1] [1]
+    // d: discriminant
+    // p: padding bytes
+    // 0: u8 field
+    // 1: u16 field
+    #[derive(Debug, PartialEq, Facet)]
+    #[repr(C, u8)]
+    enum ReprCU8 {
+        A(u8, u16),
+    }
+    assert_eq!(size_of::<ReprCU8>(), 6);
+    assert_eq!(field_offsets::<ReprCU8>(), [2, 4]);
+
+    fn build<T: Facet<'static>>() -> eyre::Result<T> {
+        let v = Wip::alloc::<T>()
+            .variant(0)?
+            .field(0)?
+            .put(1u8)?
+            .pop()?
+            .field(1)?
+            .put(2u16)?
+            .pop()?
+            .build()?
+            .materialize()?;
+        Ok(v)
+    }
+
+    let v1: ReprU8 = build()?;
+    assert_eq!(v1, ReprU8::A(1, 2));
+
+    let v2: ReprCU8 = build()?;
+    assert_eq!(v2, ReprCU8::A(1, 2));
 
     Ok(())
 }
