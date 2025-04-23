@@ -2,7 +2,7 @@ use facet::{Def, Facet};
 
 #[test]
 fn enum_doc_comment() {
-    #[derive(Clone, Hash, PartialEq, Eq, ::facet::Facet)]
+    #[derive(Clone, Hash, PartialEq, Eq, Facet)]
     #[repr(u8)]
     /// This is an enum
     enum MyEnum {

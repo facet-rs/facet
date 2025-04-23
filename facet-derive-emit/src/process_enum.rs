@@ -69,7 +69,7 @@ type EnumVariant = Delimited<EnumVariantLike, Comma>;
 /// ```
 pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     let enum_name = parsed.name.to_string();
-    let (generics_def, generics_use) = generics_split_for_impl(parsed.generics.as_ref());
+    let bgp = BoundedGenericParams::parse(parsed.generics.as_ref());
     let where_clauses = build_where_clauses(parsed.clauses.as_ref(), parsed.generics.as_ref());
     let type_params = build_type_params(parsed.generics.as_ref());
 
@@ -129,8 +129,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                 &enum_name,
                 &parsed.body.content.0,
                 discriminant_type,
-                &generics_def,
-                &generics_use,
+                &bgp,
                 &where_clauses,
             )
         }
@@ -138,8 +137,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
             &enum_name,
             &parsed.body.content.0,
             discriminant_type,
-            &generics_def,
-            &generics_use,
+            &bgp,
             &where_clauses,
         ),
         _ => {
@@ -171,7 +169,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
 {static_decl}
 
 #[automatically_derived]
-unsafe impl<'facet, {generics_def}> ::facet::Facet<'facet> for {enum_name}<{generics_use}> {where_clauses} {{
+unsafe impl<'__facet, {bgp_with_bounds}> ::facet::Facet<'__facet> for {enum_name}<{bgp_without_bounds}> {where_clauses} {{
     const SHAPE: &'static ::facet::Shape = &const {{
         // Define all shadow structs at the beginning of the const block
         // to ensure they're in scope for offset_of! macros
@@ -200,6 +198,8 @@ unsafe impl<'facet, {generics_def}> ::facet::Facet<'facet> for {enum_name}<{gene
     }};
 }}
         "#,
+        bgp_with_bounds = bgp.display_with_bounds(),
+        bgp_without_bounds = bgp.display_without_bounds(),
     );
 
     // Output generated code
@@ -220,10 +220,18 @@ fn process_c_style_enum(
     enum_name: &str,
     variants: &[EnumVariant],
     discriminant_type: Option<Discriminant>,
-    generics_def: &str,
-    generics_use: &str,
+    bgp: &BoundedGenericParams,
     where_clauses: &str,
 ) -> ProcessedEnumBody {
+    let facet_bgp = bgp.with(BoundedGenericParam {
+        bounds: None,
+        param: GenericParamName::Lifetime("__facet".into()),
+    });
+    let phantom_bgp = bgp.with(BoundedGenericParam {
+        bounds: None,
+        param: GenericParamName::Type("*mut &'__facet ()".into()),
+    });
+
     // Collect shadow struct definitions separately from variant expressions
     let mut shadow_struct_defs = Vec::new();
     let mut variant_expressions = Vec::new();
@@ -247,6 +255,7 @@ fn process_c_style_enum(
 
     // we'll also generate a shadow union for the fields
     let shadow_union_name = format!("__ShadowFields{enum_name}");
+
     let all_union_fields = variants
         .iter()
         .map(|var_like| match &var_like.value.variant {
@@ -256,25 +265,30 @@ fn process_c_style_enum(
         })
         .map(|variant_name| {
             format!(
-                "{variant_name}: std::mem::ManuallyDrop<__ShadowField{enum_name}_{variant_name}<'facet, {generics_def}>>"
+                "{variant_name}: std::mem::ManuallyDrop<__ShadowField{enum_name}_{variant_name}{bgp}>",
+                bgp = facet_bgp.display_without_bounds()
             )
         })
         .collect::<Vec<_>>()
         .join(", ");
 
     shadow_struct_defs.push(format!(
-        "#[repr(C)] union {shadow_union_name}<'facet, {generics_def}> {where_clauses} {{ {all_union_fields} }}",
+        "#[repr(C)] union {shadow_union_name}{bgp} {where_clauses} {{ {all_union_fields} }}",
+        bgp = facet_bgp.display_with_bounds()
     ));
 
     // Create a shadow struct to represent the enum layout
     let shadow_repr_name = format!("__ShadowRepr{enum_name}");
 
     shadow_struct_defs.push(format!(
-        "#[repr(C)] struct {shadow_repr_name}<'facet, {generics_def}> {where_clauses} {{
+        "#[repr(C)] struct {shadow_repr_name}{struct_bgp} {where_clauses} {{
             _discriminant: {shadow_discriminant_name},
-            ___phantom: ::core::marker::PhantomData<({generics_def}, *mut &'facet ())>,
-            _fields: {shadow_union_name}<'facet, {generics_def}>,
+            ___phantom: ::core::marker::PhantomData{phantom_bgp},
+            _fields: {shadow_union_name}{fields_bgp},
         }}",
+        struct_bgp = facet_bgp.display_with_bounds(),
+        fields_bgp = facet_bgp.display_without_bounds(),
+        phantom_bgp = phantom_bgp.display_without_bounds(),
     ));
 
     // Discriminant values are either manually defined, or incremented from the last one
@@ -294,7 +308,9 @@ fn process_c_style_enum(
 
                 // Add shadow struct definition
                 shadow_struct_defs.push(format!(
-                    "#[repr(C)] struct {shadow_struct_name}<'facet, {generics_def}> {where_clauses} {{ ___phantom: ::core::marker::PhantomData<({generics_def}, *mut &'facet ())> }};",
+                    "#[repr(C)] struct {shadow_struct_name}{bgp} {where_clauses} {{ ___phantom: ::core::marker::PhantomData{phantom_bgp} }}",
+                    bgp = facet_bgp.display_with_bounds(),
+                    phantom_bgp = phantom_bgp.display_without_bounds(),
                 ));
 
                 // variant offset is offset of the `_fields` union
@@ -330,11 +346,14 @@ fn process_c_style_enum(
 
                 // Add shadow struct definition
                 shadow_struct_defs.push(format!(
-                    "#[repr(C)] struct {shadow_struct_name}<'facet, {generics_def}> {where_clauses} {{  {fields_with_types}, ___phantom: ::core::marker::PhantomData<({generics_def}, *mut &'facet ())> }}",
+                    "#[repr(C)] struct {shadow_struct_name}{bgp} {where_clauses} {{ {fields_with_types}, ___phantom: ::core::marker::PhantomData{phantom_bgp} }}",
+                    bgp = facet_bgp.display_with_bounds(),
+                    phantom_bgp = phantom_bgp.display_without_bounds(),
                 ));
 
                 let variant_offset = format!(
-                    "::core::mem::offset_of!({shadow_repr_name}<'facet, {generics_def}>, _fields)"
+                    "::core::mem::offset_of!({shadow_repr_name}{facet_bgp_use}, _fields)",
+                    facet_bgp_use = facet_bgp.display_without_bounds()
                 );
 
                 // Build the list of field types with calculated offsets
@@ -350,7 +369,7 @@ fn process_c_style_enum(
                             &field_name,
                             &field.value.typ.tokens_to_string(),
                             &shadow_struct_name,
-                            generics_use,
+                            &facet_bgp,
                             &field.value.attributes,
                             Some(&variant_offset),
                         )
@@ -379,7 +398,7 @@ fn process_c_style_enum(
                 let maybe_doc = build_maybe_doc(&struct_var.attributes);
 
                 // Generate shadow struct for this struct variant to calculate offsets
-                let shadow_struct_name = format!("__ShadowField{}_{}", enum_name, variant_name);
+                let shadow_struct_name = format!("__ShadowField{enum_name}_{variant_name}");
 
                 // Build the list of fields and types
                 let fields_with_types = struct_var
@@ -397,11 +416,14 @@ fn process_c_style_enum(
 
                 // Add shadow struct definition
                 shadow_struct_defs.push(format!(
-                    "#[repr(C)] struct {shadow_struct_name}<'facet, {generics_def}> {where_clauses} {{  {fields_with_types}, ___phantom: ::core::marker::PhantomData<({generics_def}, *mut &'facet ())> }}"
+                    "#[repr(C)] struct {shadow_struct_name}{bgp} {where_clauses} {{ {fields_with_types}, ___phantom: ::core::marker::PhantomData{phantom_bgp} }}",
+                    bgp = facet_bgp.display_with_bounds(),
+                    phantom_bgp = phantom_bgp.display_without_bounds(),
                 ));
 
                 let variant_offset = format!(
-                    "::core::mem::offset_of!({shadow_repr_name}<'facet, {generics_use}>, _fields)"
+                    "::core::mem::offset_of!({shadow_repr_name}{facet_bgp_use}, _fields)",
+                    facet_bgp_use = facet_bgp.display_without_bounds()
                 );
 
                 // Build the list of field types with calculated offsets
@@ -417,7 +439,7 @@ fn process_c_style_enum(
                             &field_name,
                             &field_type,
                             &shadow_struct_name,
-                            generics_use,
+                            &facet_bgp,
                             &field.value.attributes,
                             Some(&variant_offset),
                         )
@@ -466,10 +488,18 @@ fn process_primitive_enum(
     enum_name: &str,
     variants: &[EnumVariant],
     discriminant_type: Discriminant,
-    generics_def: &str,
-    generics_use: &str,
+    bgp: &BoundedGenericParams,
     where_clauses: &str,
 ) -> ProcessedEnumBody {
+    let facet_bgp = bgp.with(BoundedGenericParam {
+        bounds: None,
+        param: GenericParamName::Lifetime("__facet".into()),
+    });
+    let phantom_bgp = bgp.with(BoundedGenericParam {
+        bounds: None,
+        param: GenericParamName::Type("*mut &'__facet ()".into()),
+    });
+
     // Collect shadow struct definitions separately from variant expressions
     let mut shadow_struct_defs = Vec::new();
     let mut variant_expressions = Vec::new();
@@ -518,8 +548,10 @@ fn process_primitive_enum(
 
                 // Add shadow struct definition
                 shadow_struct_defs.push(format!(
-                    "#[repr(C)] struct {shadow_struct_name}<'facet, {generics_def}> {where_clauses}  {{ _discriminant: {}, {fields_with_types}, ___phantom: ::core::marker::PhantomData<({generics_use}, *mut &'facet ())> }}",
-                    discriminant_type.as_rust_type(),
+                    "#[repr(C)] struct {shadow_struct_name}{bgp} {where_clauses}  {{ _discriminant: {discriminant}, {fields_with_types}, ___phantom: ::core::marker::PhantomData{phantom_bgp} }}",
+                    bgp = facet_bgp.display_with_bounds(),
+                    phantom_bgp = phantom_bgp.display_without_bounds(),
+                    discriminant = discriminant_type.as_rust_type(),
                 ));
 
                 // Build the list of field types with calculated offsets
@@ -535,7 +567,7 @@ fn process_primitive_enum(
                             &field_name,
                             &field.value.typ.tokens_to_string(),
                             &shadow_struct_name,
-                            generics_use,
+                            &facet_bgp,
                             &field.value.attributes,
                             None,
                         )
@@ -582,8 +614,10 @@ fn process_primitive_enum(
 
                 // Add shadow struct definition
                 shadow_struct_defs.push(format!(
-                    "#[repr(C)] struct {shadow_struct_name}<'facet, {generics_def}> {where_clauses} {{ _discriminant: {}, ___phantom: ::core::marker::PhantomData<({generics_use}, *mut &'facet ())>, {fields_with_types} }}",
-                    discriminant_type.as_rust_type(),
+                    "#[repr(C)] struct {shadow_struct_name}{bgp} {where_clauses} {{ _discriminant: {discriminant}, ___phantom: ::core::marker::PhantomData{phantom_bgp}, {fields_with_types} }}",
+                    bgp = facet_bgp.display_with_bounds(),
+                    phantom_bgp = phantom_bgp.display_without_bounds(),
+                    discriminant = discriminant_type.as_rust_type(),
                 ));
 
                 // Build the list of field types with calculated offsets
@@ -598,7 +632,7 @@ fn process_primitive_enum(
                             &field_name,
                             &field.value.typ.tokens_to_string(),
                             &shadow_struct_name,
-                            generics_use,
+                            &facet_bgp,
                             &field.value.attributes,
                             None,
                         )

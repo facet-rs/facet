@@ -13,7 +13,8 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     let struct_name = parsed.name.to_string();
 
     // Generate field definitions
-    let (generics_def, generics_use) = generics_split_for_impl(parsed.generics.as_ref());
+    let bgp = BoundedGenericParams::parse(parsed.generics.as_ref());
+
     let kind;
     let where_clauses;
     let type_params = build_type_params(parsed.generics.as_ref());
@@ -33,7 +34,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                         &field_name,
                         &field.value.typ.tokens_to_string(),
                         &struct_name,
-                        &generics_use,
+                        &bgp,
                         &field.value.attributes,
                         None,
                     )
@@ -58,7 +59,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                         &field_name,
                         &field.value.typ.tokens_to_string(),
                         &struct_name,
-                        &generics_use,
+                        &bgp,
                         &field.value.attributes,
                         None,
                     )
@@ -113,11 +114,12 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         let invariant_fn = format!(
             r#"
             unsafe fn invariants<'mem>(value: ::facet::PtrConst<'mem>) -> bool {{
-                let value = value.get::<{struct_name}<{generics_use}>>();
+                let value = value.get::<{struct_name}{bgp}>();
                 {tests}
                 true
             }}
-            "#
+            "#,
+            bgp = bgp.display_without_bounds(),
         );
 
         invariant_maybe = format!(
@@ -135,7 +137,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
 {static_decl}
 
 #[automatically_derived]
-unsafe impl<'facet, {generics_def}> ::facet::Facet<'facet> for {struct_name}<{generics_use}> {where_clauses} {{
+unsafe impl<'facet, {bgp_with_bounds}> ::facet::Facet<'facet> for {struct_name}<{bgp_without_bounds}> {where_clauses} {{
     const SHAPE: &'static ::facet::Shape = &const {{
         let fields: &'static [::facet::Field] = &const {{[{fields}]}};
 
@@ -162,7 +164,9 @@ unsafe impl<'facet, {generics_def}> ::facet::Facet<'facet> for {struct_name}<{ge
             .build()
     }};
 }}
-        "#
+        "#,
+        bgp_without_bounds = bgp.display_without_bounds(),
+        bgp_with_bounds = bgp.display_with_bounds(),
     );
 
     output.into_token_stream()

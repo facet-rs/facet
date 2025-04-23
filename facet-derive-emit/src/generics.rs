@@ -4,7 +4,7 @@ use facet_derive_parse::{GenericParam, GenericParams, ToTokens};
 #[derive(Clone)]
 pub enum GenericParamName {
     /// "a" but formatted as "'a"
-    Lifetime(String),
+    Lifetime(String), // this could be Cow or a small string, honestly
 
     /// "T", formatted as "T"
     Type(String),
@@ -137,7 +137,7 @@ impl BoundedGenericParams {
         WithoutBounds(self)
     }
 
-    pub fn add(&self, param: BoundedGenericParam) -> Self {
+    pub fn with(&self, param: BoundedGenericParam) -> Self {
         let mut params = self.params.clone();
 
         match &param.param {
@@ -250,6 +250,13 @@ mod tests {
     use super::{BoundedGenericParam, BoundedGenericParams, GenericParamName};
 
     #[test]
+    fn test_empty_generic_params() {
+        let p = BoundedGenericParams { params: vec![] };
+        assert_eq!(p.display_with_bounds().to_string(), "");
+        assert_eq!(p.display_without_bounds().to_string(), "");
+    }
+
+    #[test]
     fn print_type_no_bounds() {
         let p = BoundedGenericParams {
             params: vec![BoundedGenericParam {
@@ -359,13 +366,13 @@ mod tests {
         let mut params = BoundedGenericParams { params: vec![] };
 
         // Add a lifetime parameter 'a
-        params = params.add(BoundedGenericParam {
+        params = params.with(BoundedGenericParam {
             bounds: None,
             param: GenericParamName::Lifetime("a".to_string()),
         });
 
         // Add another lifetime parameter 'b
-        params = params.add(BoundedGenericParam {
+        params = params.with(BoundedGenericParam {
             bounds: None,
             param: GenericParamName::Lifetime("b".to_string()),
         });
@@ -387,7 +394,7 @@ mod tests {
         };
 
         // Add a lifetime parameter - should be placed before types
-        params = params.add(BoundedGenericParam {
+        params = params.with(BoundedGenericParam {
             bounds: None,
             param: GenericParamName::Lifetime("a".to_string()),
         });
@@ -404,13 +411,13 @@ mod tests {
         let mut params = BoundedGenericParams { params: vec![] };
 
         // Add a type parameter T
-        params = params.add(BoundedGenericParam {
+        params = params.with(BoundedGenericParam {
             bounds: None,
             param: GenericParamName::Type("T".to_string()),
         });
 
         // Add another type parameter U
-        params = params.add(BoundedGenericParam {
+        params = params.with(BoundedGenericParam {
             bounds: None,
             param: GenericParamName::Type("U".to_string()),
         });
@@ -426,7 +433,7 @@ mod tests {
         };
 
         // Add a type parameter - should be placed after lifetimes
-        params = params.add(BoundedGenericParam {
+        params = params.with(BoundedGenericParam {
             bounds: None,
             param: GenericParamName::Type("T".to_string()),
         });
@@ -448,7 +455,7 @@ mod tests {
         };
 
         // Add a type parameter - should be placed between lifetimes and consts
-        params = params.add(BoundedGenericParam {
+        params = params.with(BoundedGenericParam {
             bounds: None,
             param: GenericParamName::Type("T".to_string()),
         });
@@ -465,13 +472,13 @@ mod tests {
         let mut params = BoundedGenericParams { params: vec![] };
 
         // Add a const parameter N
-        params = params.add(BoundedGenericParam {
+        params = params.with(BoundedGenericParam {
             bounds: None,
             param: GenericParamName::Const("N".to_string()),
         });
 
         // Add another const parameter M
-        params = params.add(BoundedGenericParam {
+        params = params.with(BoundedGenericParam {
             bounds: None,
             param: GenericParamName::Const("M".to_string()),
         });
@@ -496,7 +503,7 @@ mod tests {
         };
 
         // Add a const parameter - should be placed at the end
-        params = params.add(BoundedGenericParam {
+        params = params.with(BoundedGenericParam {
             bounds: None,
             param: GenericParamName::Const("N".to_string()),
         });
@@ -513,32 +520,32 @@ mod tests {
         let mut params = BoundedGenericParams { params: vec![] };
 
         // Add parameters in different order to test sorting
-        params = params.add(BoundedGenericParam {
+        params = params.with(BoundedGenericParam {
             bounds: None,
             param: GenericParamName::Type("T".to_string()),
         });
 
-        params = params.add(BoundedGenericParam {
+        params = params.with(BoundedGenericParam {
             bounds: None,
             param: GenericParamName::Const("N".to_string()),
         });
 
-        params = params.add(BoundedGenericParam {
+        params = params.with(BoundedGenericParam {
             bounds: None,
             param: GenericParamName::Lifetime("a".to_string()),
         });
 
-        params = params.add(BoundedGenericParam {
+        params = params.with(BoundedGenericParam {
             bounds: None,
             param: GenericParamName::Type("U".to_string()),
         });
 
-        params = params.add(BoundedGenericParam {
+        params = params.with(BoundedGenericParam {
             bounds: None,
             param: GenericParamName::Lifetime("b".to_string()),
         });
 
-        params = params.add(BoundedGenericParam {
+        params = params.with(BoundedGenericParam {
             bounds: None,
             param: GenericParamName::Const("M".to_string()),
         });

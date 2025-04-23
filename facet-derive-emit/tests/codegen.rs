@@ -6,7 +6,9 @@ fn expand(input: &str) -> String {
     // especially when dealing with multi-line raw strings.
     let trimmed_input = input.trim();
     match trimmed_input.parse() {
-        Ok(ts) => RustFmt::default().format_tokens(facet_derive(ts)).unwrap(),
+        Ok(ts) => RustFmt::default()
+            .format_tokens(facet_derive(ts))
+            .unwrap_or_else(|e| panic!("Expand error: {e}")),
         Err(e) => panic!("Failed to parse input:\n{}\nError: {}", trimmed_input, e),
     }
 }

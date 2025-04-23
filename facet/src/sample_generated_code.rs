@@ -35,7 +35,7 @@ unsafe impl<'facet> crate::Facet<'facet> for KitchenSinkStruct {
                     .name("basic_field")
                     .shape(|| crate::shape_of(&(|s: &KitchenSinkStruct| &s.basic_field)))
                     .offset({
-                        builtin # offset_of(KitchenSinkStruct<>, basic_field)
+                        builtin # offset_of(KitchenSinkStruct, basic_field)
                     })
                     .flags(crate::FieldFlags::EMPTY)
                     .attributes(&const { [] })
@@ -45,7 +45,7 @@ unsafe impl<'facet> crate::Facet<'facet> for KitchenSinkStruct {
                     .name("sensitive_field")
                     .shape(|| crate::shape_of(&(|s: &KitchenSinkStruct| &s.sensitive_field)))
                     .offset({
-                        builtin # offset_of(KitchenSinkStruct<>, sensitive_field)
+                        builtin # offset_of(KitchenSinkStruct, sensitive_field)
                     })
                     .flags(crate::FieldFlags::SENSITIVE)
                     .attributes(&const { [crate::FieldAttribute::Sensitive] })
@@ -55,7 +55,7 @@ unsafe impl<'facet> crate::Facet<'facet> for KitchenSinkStruct {
                     .name("tuple_field")
                     .shape(|| crate::shape_of(&(|s: &KitchenSinkStruct| &s.tuple_field)))
                     .offset({
-                        builtin # offset_of(KitchenSinkStruct<>, tuple_field)
+                        builtin # offset_of(KitchenSinkStruct, tuple_field)
                     })
                     .flags(crate::FieldFlags::EMPTY)
                     .attributes(&const { [] })
@@ -65,7 +65,7 @@ unsafe impl<'facet> crate::Facet<'facet> for KitchenSinkStruct {
                     .name("array_field")
                     .shape(|| crate::shape_of(&(|s: &KitchenSinkStruct| &s.array_field)))
                     .offset({
-                        builtin # offset_of(KitchenSinkStruct<>, array_field)
+                        builtin # offset_of(KitchenSinkStruct, array_field)
                     })
                     .flags(crate::FieldFlags::EMPTY)
                     .attributes(&const { [] })
@@ -75,7 +75,7 @@ unsafe impl<'facet> crate::Facet<'facet> for KitchenSinkStruct {
                     .name("slice_field")
                     .shape(|| crate::shape_of(&(|s: &KitchenSinkStruct| &s.slice_field)))
                     .offset({
-                        builtin # offset_of(KitchenSinkStruct<>, slice_field)
+                        builtin # offset_of(KitchenSinkStruct, slice_field)
                     })
                     .flags(crate::FieldFlags::EMPTY)
                     .attributes(&const { [] })
@@ -85,7 +85,7 @@ unsafe impl<'facet> crate::Facet<'facet> for KitchenSinkStruct {
                     .name("vec_field")
                     .shape(|| crate::shape_of(&(|s: &KitchenSinkStruct| &s.vec_field)))
                     .offset({
-                        builtin # offset_of(KitchenSinkStruct<>, vec_field)
+                        builtin # offset_of(KitchenSinkStruct, vec_field)
                     })
                     .flags(crate::FieldFlags::EMPTY)
                     .attributes(&const { [] })
@@ -95,8 +95,7 @@ unsafe impl<'facet> crate::Facet<'facet> for KitchenSinkStruct {
                     .name("nested_struct_field")
                     .shape(|| crate::shape_of(&(|s: &KitchenSinkStruct| &s.nested_struct_field)))
                     .offset({
-                        builtin # offset_of(KitchenSinkStruct<>,
-                                                                        nested_struct_field)
+                        builtin # offset_of(KitchenSinkStruct, nested_struct_field)
                     })
                     .flags(crate::FieldFlags::EMPTY)
                     .attributes(&const { [] })
@@ -435,7 +434,7 @@ unsafe impl<'facet> crate::Facet<'facet> for Point {
                     .name("x")
                     .shape(|| crate::shape_of(&(|s: &Point| &s.x)))
                     .offset({
-                        builtin # offset_of(Point<>, x)
+                        builtin # offset_of(Point, x)
                     })
                     .flags(crate::FieldFlags::EMPTY)
                     .attributes(&const { [] })
@@ -444,7 +443,7 @@ unsafe impl<'facet> crate::Facet<'facet> for Point {
                     .name("y")
                     .shape(|| crate::shape_of(&(|s: &Point| &s.y)))
                     .offset({
-                        builtin # offset_of(Point<>, y)
+                        builtin # offset_of(Point, y)
                     })
                     .flags(crate::FieldFlags::EMPTY)
                     .attributes(&const { [] })
@@ -453,7 +452,7 @@ unsafe impl<'facet> crate::Facet<'facet> for Point {
                     .name("metadata")
                     .shape(|| crate::shape_of(&(|s: &Point| &s.metadata)))
                     .offset({
-                        builtin # offset_of(Point<>, metadata)
+                        builtin # offset_of(Point, metadata)
                     })
                     .flags(crate::FieldFlags::SENSITIVE)
                     .attributes(&const { [crate::FieldAttribute::Sensitive] })
@@ -823,53 +822,53 @@ pub enum KitchenSinkEnum {
 #[used]
 static KITCHEN_SINK_ENUM_SHAPE: &'static crate::Shape = <KitchenSinkEnum as crate::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl<'facet> crate::Facet<'facet> for KitchenSinkEnum {
+unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
     const SHAPE: &'static crate::Shape = &const {
         #[repr(C)]
-        struct __ShadowKitchenSinkEnum_TupleVariantSimple<'facet> {
+        struct __ShadowKitchenSinkEnum_TupleVariantSimple<'__facet> {
             _discriminant: u8,
-            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
             _0: String,
+            ___phantom: ::core::marker::PhantomData<*mut &'__facet ()>,
         }
         #[repr(C)]
-        struct __ShadowKitchenSinkEnum_TupleVariantMulti<'facet> {
+        struct __ShadowKitchenSinkEnum_TupleVariantMulti<'__facet> {
             _discriminant: u8,
-            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
             _0: i32,
             _1: i32,
             _2: i32,
+            ___phantom: ::core::marker::PhantomData<*mut &'__facet ()>,
         }
         #[repr(C)]
-        struct __ShadowKitchenSinkEnum_StructVariant<'facet> {
+        struct __ShadowKitchenSinkEnum_StructVariant<'__facet> {
             _discriminant: u8,
-            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
+            ___phantom: ::core::marker::PhantomData<*mut &'__facet ()>,
             width: f64,
             height: f64,
         }
         #[repr(C)]
-        struct __ShadowKitchenSinkEnum_SensitiveTupleVariant<'facet> {
+        struct __ShadowKitchenSinkEnum_SensitiveTupleVariant<'__facet> {
             _discriminant: u8,
-            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
             _0: Vec<u8>,
+            ___phantom: ::core::marker::PhantomData<*mut &'__facet ()>,
         }
         #[repr(C)]
-        struct __ShadowKitchenSinkEnum_StructVariantWithSensitiveField<'facet> {
+        struct __ShadowKitchenSinkEnum_StructVariantWithSensitiveField<'__facet> {
             _discriminant: u8,
-            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
+            ___phantom: ::core::marker::PhantomData<*mut &'__facet ()>,
             payload: Vec<u8>,
             checksum: u32,
         }
         #[repr(C)]
-        struct __ShadowKitchenSinkEnum_ArbitraryVariant<'facet> {
+        struct __ShadowKitchenSinkEnum_ArbitraryVariant<'__facet> {
             _discriminant: u8,
-            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
             _0: (f64, f64),
+            ___phantom: ::core::marker::PhantomData<*mut &'__facet ()>,
         }
         #[repr(C)]
-        struct __ShadowKitchenSinkEnum_NestedEnumVariant<'facet> {
+        struct __ShadowKitchenSinkEnum_NestedEnumVariant<'__facet> {
             _discriminant: u8,
-            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
             _0: SubEnum,
+            ___phantom: ::core::marker::PhantomData<*mut &'__facet ()>,
         }
         let __facet_variants: &'static [crate::Variant] = &const {
             [
@@ -881,20 +880,15 @@ unsafe impl<'facet> crate::Facet<'facet> for KitchenSinkEnum {
                     .build(),
                 {
                     let fields: &'static [crate::Field] = &const {
-                        [crate::Field::builder()
-                            .name("_0")
-                            .shape(|| {
-                                crate::shape_of(
-                                    &(|s: &__ShadowKitchenSinkEnum_TupleVariantSimple| &s._0),
-                                )
-                            })
-                            .offset({
-                                builtin # offset_of(__ShadowKitchenSinkEnum_TupleVariantSimple<>,
+                        [crate::Field::builder().name("_0").shape(||
+                                                                                                crate::shape_of(&(|s:
+                                                                                                                &__ShadowKitchenSinkEnum_TupleVariantSimple<'__facet>|
+                                                                                                            &s._0))).offset({
+                                                                                            builtin # offset_of(__ShadowKitchenSinkEnum_TupleVariantSimple<'__facet>,
                                                                                                 _0)
-                            })
-                            .flags(crate::FieldFlags::EMPTY)
-                            .attributes(&const { [] })
-                            .build()]
+                                                                                        }).flags(crate::FieldFlags::EMPTY).attributes(&const {
+                                                                                            []
+                                                                                        }).build()]
                     };
                     crate::Variant::builder()
                         .name("TupleVariantSimple")
@@ -909,50 +903,33 @@ unsafe impl<'facet> crate::Facet<'facet> for KitchenSinkEnum {
                 },
                 {
                     let fields: &'static [crate::Field] = &const {
-                        [
-                            crate::Field::builder()
-                                .name("_0")
-                                .shape(|| {
-                                    crate::shape_of(
-                                        &(|s: &__ShadowKitchenSinkEnum_TupleVariantMulti| &s._0),
-                                    )
-                                })
-                                .offset({
-                                    builtin # offset_of(__ShadowKitchenSinkEnum_TupleVariantMulti<>,
+                        [crate::Field::builder().name("_0").shape(||
+                                                                                                crate::shape_of(&(|s:
+                                                                                                                &__ShadowKitchenSinkEnum_TupleVariantMulti<'__facet>|
+                                                                                                            &s._0))).offset({
+                                                                                            builtin # offset_of(__ShadowKitchenSinkEnum_TupleVariantMulti<'__facet>,
                                                                                                 _0)
-                                })
-                                .flags(crate::FieldFlags::EMPTY)
-                                .attributes(&const { [] })
-                                .build(),
-                            crate::Field::builder()
-                                .name("_1")
-                                .shape(|| {
-                                    crate::shape_of(
-                                        &(|s: &__ShadowKitchenSinkEnum_TupleVariantMulti| &s._1),
-                                    )
-                                })
-                                .offset({
-                                    builtin # offset_of(__ShadowKitchenSinkEnum_TupleVariantMulti<>,
+                                                                                        }).flags(crate::FieldFlags::EMPTY).attributes(&const {
+                                                                                            []
+                                                                                        }).build(),
+                                                                        crate::Field::builder().name("_1").shape(||
+                                                                                                crate::shape_of(&(|s:
+                                                                                                                &__ShadowKitchenSinkEnum_TupleVariantMulti<'__facet>|
+                                                                                                            &s._1))).offset({
+                                                                                            builtin # offset_of(__ShadowKitchenSinkEnum_TupleVariantMulti<'__facet>,
                                                                                                 _1)
-                                })
-                                .flags(crate::FieldFlags::EMPTY)
-                                .attributes(&const { [] })
-                                .build(),
-                            crate::Field::builder()
-                                .name("_2")
-                                .shape(|| {
-                                    crate::shape_of(
-                                        &(|s: &__ShadowKitchenSinkEnum_TupleVariantMulti| &s._2),
-                                    )
-                                })
-                                .offset({
-                                    builtin # offset_of(__ShadowKitchenSinkEnum_TupleVariantMulti<>,
+                                                                                        }).flags(crate::FieldFlags::EMPTY).attributes(&const {
+                                                                                            []
+                                                                                        }).build(),
+                                                                        crate::Field::builder().name("_2").shape(||
+                                                                                                crate::shape_of(&(|s:
+                                                                                                                &__ShadowKitchenSinkEnum_TupleVariantMulti<'__facet>|
+                                                                                                            &s._2))).offset({
+                                                                                            builtin # offset_of(__ShadowKitchenSinkEnum_TupleVariantMulti<'__facet>,
                                                                                                 _2)
-                                })
-                                .flags(crate::FieldFlags::EMPTY)
-                                .attributes(&const { [] })
-                                .build(),
-                        ]
+                                                                                        }).flags(crate::FieldFlags::EMPTY).attributes(&const {
+                                                                                            []
+                                                                                        }).build()]
                     };
                     crate::Variant::builder()
                         .name("TupleVariantMulti")
@@ -972,18 +949,18 @@ unsafe impl<'facet> crate::Facet<'facet> for KitchenSinkEnum {
                     let fields: &'static [crate::Field] = &const {
                         [crate::Field::builder().name("width").shape(||
                                                                                                     crate::shape_of(&(|s:
-                                                                                                                    &__ShadowKitchenSinkEnum_StructVariant<>|
+                                                                                                                    &__ShadowKitchenSinkEnum_StructVariant<'__facet>|
                                                                                                                 &s.width))).offset({
-                                                                                                builtin # offset_of(__ShadowKitchenSinkEnum_StructVariant<>,
+                                                                                                builtin # offset_of(__ShadowKitchenSinkEnum_StructVariant<'__facet>,
                                                                                                     width)
                                                                                             }).flags(crate::FieldFlags::EMPTY).attributes(&const {
                                                                                                 []
                                                                                             }).doc(&[" The width dimension, crucial for rendering."]).build(),
                                                                         crate::Field::builder().name("height").shape(||
                                                                                                     crate::shape_of(&(|s:
-                                                                                                                    &__ShadowKitchenSinkEnum_StructVariant<>|
+                                                                                                                    &__ShadowKitchenSinkEnum_StructVariant<'__facet>|
                                                                                                                 &s.height))).offset({
-                                                                                                builtin # offset_of(__ShadowKitchenSinkEnum_StructVariant<>,
+                                                                                                builtin # offset_of(__ShadowKitchenSinkEnum_StructVariant<'__facet>,
                                                                                                     height)
                                                                                             }).flags(crate::FieldFlags::EMPTY).attributes(&const {
                                                                                                 []
@@ -998,20 +975,15 @@ unsafe impl<'facet> crate::Facet<'facet> for KitchenSinkEnum {
                 },
                 {
                     let fields: &'static [crate::Field] = &const {
-                        [crate::Field::builder()
-                            .name("_0")
-                            .shape(|| {
-                                crate::shape_of(
-                                    &(|s: &__ShadowKitchenSinkEnum_SensitiveTupleVariant| &s._0),
-                                )
-                            })
-                            .offset({
-                                builtin # offset_of(__ShadowKitchenSinkEnum_SensitiveTupleVariant<>,
+                        [crate::Field::builder().name("_0").shape(||
+                                                                                                crate::shape_of(&(|s:
+                                                                                                                &__ShadowKitchenSinkEnum_SensitiveTupleVariant<'__facet>|
+                                                                                                            &s._0))).offset({
+                                                                                            builtin # offset_of(__ShadowKitchenSinkEnum_SensitiveTupleVariant<'__facet>,
                                                                                                 _0)
-                            })
-                            .flags(crate::FieldFlags::EMPTY)
-                            .attributes(&const { [] })
-                            .build()]
+                                                                                        }).flags(crate::FieldFlags::EMPTY).attributes(&const {
+                                                                                            []
+                                                                                        }).build()]
                     };
                     crate::Variant::builder()
                         .name("SensitiveTupleVariant")
@@ -1024,18 +996,18 @@ unsafe impl<'facet> crate::Facet<'facet> for KitchenSinkEnum {
                     let fields: &'static [crate::Field] = &const {
                         [crate::Field::builder().name("payload").shape(||
                                                                                                     crate::shape_of(&(|s:
-                                                                                                                    &__ShadowKitchenSinkEnum_StructVariantWithSensitiveField<>|
+                                                                                                                    &__ShadowKitchenSinkEnum_StructVariantWithSensitiveField<'__facet>|
                                                                                                                 &s.payload))).offset({
-                                                                                                builtin # offset_of(__ShadowKitchenSinkEnum_StructVariantWithSensitiveField<>,
+                                                                                                builtin # offset_of(__ShadowKitchenSinkEnum_StructVariantWithSensitiveField<'__facet>,
                                                                                                     payload)
                                                                                             }).flags(crate::FieldFlags::EMPTY).attributes(&const {
                                                                                                 []
                                                                                             }).doc(&[" The main data payload, publicly accessible."]).build(),
                                                                         crate::Field::builder().name("checksum").shape(||
                                                                                                     crate::shape_of(&(|s:
-                                                                                                                    &__ShadowKitchenSinkEnum_StructVariantWithSensitiveField<>|
+                                                                                                                    &__ShadowKitchenSinkEnum_StructVariantWithSensitiveField<'__facet>|
                                                                                                                 &s.checksum))).offset({
-                                                                                                builtin # offset_of(__ShadowKitchenSinkEnum_StructVariantWithSensitiveField<>,
+                                                                                                builtin # offset_of(__ShadowKitchenSinkEnum_StructVariantWithSensitiveField<'__facet>,
                                                                                                     checksum)
                                                                                             }).flags(crate::FieldFlags::SENSITIVE).attributes(&const {
                                                                                                 [crate::FieldAttribute::Sensitive]
@@ -1050,39 +1022,29 @@ unsafe impl<'facet> crate::Facet<'facet> for KitchenSinkEnum {
                 },
                 {
                     let fields: &'static [crate::Field] = &const {
-                        [crate::Field::builder()
-                            .name("_0")
-                            .shape(|| {
-                                crate::shape_of(
-                                    &(|s: &__ShadowKitchenSinkEnum_ArbitraryVariant| &s._0),
-                                )
-                            })
-                            .offset({
-                                builtin # offset_of(__ShadowKitchenSinkEnum_ArbitraryVariant<>,
+                        [crate::Field::builder().name("_0").shape(||
+                                                                                                crate::shape_of(&(|s:
+                                                                                                                &__ShadowKitchenSinkEnum_ArbitraryVariant<'__facet>|
+                                                                                                            &s._0))).offset({
+                                                                                            builtin # offset_of(__ShadowKitchenSinkEnum_ArbitraryVariant<'__facet>,
                                                                                                 _0)
-                            })
-                            .flags(crate::FieldFlags::EMPTY)
-                            .attributes(&const { [] })
-                            .build()]
+                                                                                        }).flags(crate::FieldFlags::EMPTY).attributes(&const {
+                                                                                            []
+                                                                                        }).build()]
                     };
                     crate::Variant::builder().name("ArbitraryVariant").discriminant(6).fields(crate::Struct::builder().tuple().fields(fields).build()).doc(&[" A variant marked as arbitrary, potentially skipped during processing."]).build()
                 },
                 {
                     let fields: &'static [crate::Field] = &const {
-                        [crate::Field::builder()
-                            .name("_0")
-                            .shape(|| {
-                                crate::shape_of(
-                                    &(|s: &__ShadowKitchenSinkEnum_NestedEnumVariant| &s._0),
-                                )
-                            })
-                            .offset({
-                                builtin # offset_of(__ShadowKitchenSinkEnum_NestedEnumVariant<>,
+                        [crate::Field::builder().name("_0").shape(||
+                                                                                                crate::shape_of(&(|s:
+                                                                                                                &__ShadowKitchenSinkEnum_NestedEnumVariant<'__facet>|
+                                                                                                            &s._0))).offset({
+                                                                                            builtin # offset_of(__ShadowKitchenSinkEnum_NestedEnumVariant<'__facet>,
                                                                                                 _0)
-                            })
-                            .flags(crate::FieldFlags::EMPTY)
-                            .attributes(&const { [] })
-                            .build()]
+                                                                                        }).flags(crate::FieldFlags::EMPTY).attributes(&const {
+                                                                                            []
+                                                                                        }).build()]
                     };
                     crate::Variant::builder()
                         .name("NestedEnumVariant")
@@ -1426,25 +1388,25 @@ pub enum SubEnum {
 #[used]
 static SUB_ENUM_SHAPE: &'static crate::Shape = <SubEnum as crate::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl<'facet> crate::Facet<'facet> for SubEnum {
+unsafe impl<'__facet> crate::Facet<'__facet> for SubEnum {
     const SHAPE: &'static crate::Shape = &const {
         #[repr(C)]
-        struct __ShadowSubEnum_OptionB<'facet> {
+        struct __ShadowSubEnum_OptionB<'__facet> {
             _discriminant: u8,
-            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
             _0: u8,
+            ___phantom: ::core::marker::PhantomData<*mut &'__facet ()>,
         }
         #[repr(C)]
-        struct __ShadowSubEnum_SensitiveOption<'facet> {
+        struct __ShadowSubEnum_SensitiveOption<'__facet> {
             _discriminant: u8,
-            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
             _0: u64,
+            ___phantom: ::core::marker::PhantomData<*mut &'__facet ()>,
         }
         #[repr(C)]
-        struct __ShadowSubEnum_ArbitraryOption<'facet> {
+        struct __ShadowSubEnum_ArbitraryOption<'__facet> {
             _discriminant: u8,
-            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
             _0: u8,
+            ___phantom: ::core::marker::PhantomData<*mut &'__facet ()>,
         }
         let __facet_variants: &'static [crate::Variant] = &const {
             [
@@ -1458,9 +1420,11 @@ unsafe impl<'facet> crate::Facet<'facet> for SubEnum {
                     let fields: &'static [crate::Field] = &const {
                         [crate::Field::builder()
                             .name("_0")
-                            .shape(|| crate::shape_of(&(|s: &__ShadowSubEnum_OptionB| &s._0)))
+                            .shape(|| {
+                                crate::shape_of(&(|s: &__ShadowSubEnum_OptionB<'__facet>| &s._0))
+                            })
                             .offset({
-                                builtin # offset_of(__ShadowSubEnum_OptionB<>, _0)
+                                builtin # offset_of(__ShadowSubEnum_OptionB<'__facet>, _0)
                             })
                             .flags(crate::FieldFlags::EMPTY)
                             .attributes(&const { [] })
@@ -1478,10 +1442,13 @@ unsafe impl<'facet> crate::Facet<'facet> for SubEnum {
                         [crate::Field::builder()
                             .name("_0")
                             .shape(|| {
-                                crate::shape_of(&(|s: &__ShadowSubEnum_SensitiveOption| &s._0))
+                                crate::shape_of(
+                                    &(|s: &__ShadowSubEnum_SensitiveOption<'__facet>| &s._0),
+                                )
                             })
                             .offset({
-                                builtin # offset_of(__ShadowSubEnum_SensitiveOption<>, _0)
+                                builtin # offset_of(__ShadowSubEnum_SensitiveOption<'__facet>,
+                                                                                                _0)
                             })
                             .flags(crate::FieldFlags::EMPTY)
                             .attributes(&const { [] })
@@ -1499,10 +1466,13 @@ unsafe impl<'facet> crate::Facet<'facet> for SubEnum {
                         [crate::Field::builder()
                             .name("_0")
                             .shape(|| {
-                                crate::shape_of(&(|s: &__ShadowSubEnum_ArbitraryOption| &s._0))
+                                crate::shape_of(
+                                    &(|s: &__ShadowSubEnum_ArbitraryOption<'__facet>| &s._0),
+                                )
                             })
                             .offset({
-                                builtin # offset_of(__ShadowSubEnum_ArbitraryOption<>, _0)
+                                builtin # offset_of(__ShadowSubEnum_ArbitraryOption<'__facet>,
+                                                                                                _0)
                             })
                             .flags(crate::FieldFlags::EMPTY)
                             .attributes(&const { [] })

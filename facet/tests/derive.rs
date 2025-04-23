@@ -174,7 +174,7 @@ fn tuple_struct_field_doc_comment_test() {
 
 #[test]
 fn enum_variants_with_comments() {
-    #[derive(Clone, Hash, PartialEq, Eq, ::facet::Facet)]
+    #[derive(Clone, Hash, PartialEq, Eq, Facet)]
     #[repr(u8)]
     enum CommentedEnum {
         /// This is variant A

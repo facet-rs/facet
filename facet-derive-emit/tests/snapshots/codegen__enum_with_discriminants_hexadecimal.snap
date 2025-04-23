@@ -5,7 +5,7 @@ expression: "expand(r#\"\n        #[repr(u16)]\n        #[derive(Facet)]\n      
 #[used]
 static COLOR_SHAPE: &'static ::facet::Shape = <Color as ::facet::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl<'facet> ::facet::Facet<'facet> for Color {
+unsafe impl<'__facet> ::facet::Facet<'__facet> for Color {
     const SHAPE: &'static ::facet::Shape = &const {
         let __facet_variants: &'static [::facet::Variant] = &const {
             [
