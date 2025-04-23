@@ -272,7 +272,7 @@ fn process_c_style_enum(
     shadow_struct_defs.push(format!(
         "#[repr(C)] struct {shadow_repr_name}<'facet, {generics_def}> {where_clauses} {{
             _discriminant: {shadow_discriminant_name},
-            _phantom: ::core::marker::PhantomData<(*mut &'facet (), {generics_def})>,
+            ___phantom: ::core::marker::PhantomData<({generics_def}, *mut &'facet ())>,
             _fields: {shadow_union_name}<'facet, {generics_def}>,
         }}",
     ));
@@ -294,7 +294,7 @@ fn process_c_style_enum(
 
                 // Add shadow struct definition
                 shadow_struct_defs.push(format!(
-                    "#[repr(C)] struct {shadow_struct_name}<'facet, {generics_def}> {where_clauses} {{ ___phantom: ::core::marker::PhantomData<(*mut &'facet (), {generics_def})> }};",
+                    "#[repr(C)] struct {shadow_struct_name}<'facet, {generics_def}> {where_clauses} {{ ___phantom: ::core::marker::PhantomData<({generics_def}, *mut &'facet ())> }};",
                 ));
 
                 // variant offset is offset of the `_fields` union
@@ -330,8 +330,8 @@ fn process_c_style_enum(
 
                 // Add shadow struct definition
                 shadow_struct_defs.push(format!(
-                        "#[repr(C)] struct {shadow_struct_name}<'facet, {generics_def}> {where_clauses} {{  {fields_with_types}, ___phantom: ::core::marker::PhantomData<(*mut &'facet (), {generics_def})> }}",
-                    ));
+                    "#[repr(C)] struct {shadow_struct_name}<'facet, {generics_def}> {where_clauses} {{  {fields_with_types}, ___phantom: ::core::marker::PhantomData<({generics_def}, *mut &'facet ())> }}",
+                ));
 
                 let variant_offset = format!(
                     "::core::mem::offset_of!({shadow_repr_name}<'facet, {generics_def}>, _fields)"
@@ -397,7 +397,7 @@ fn process_c_style_enum(
 
                 // Add shadow struct definition
                 shadow_struct_defs.push(format!(
-                    "#[repr(C)] struct {shadow_struct_name}<'facet, {generics_def}> {where_clauses} {{  {fields_with_types}, ___phantom: ::core::marker::PhantomData<(*mut &'facet (), {generics_def})> }}"
+                    "#[repr(C)] struct {shadow_struct_name}<'facet, {generics_def}> {where_clauses} {{  {fields_with_types}, ___phantom: ::core::marker::PhantomData<({generics_def}, *mut &'facet ())> }}"
                 ));
 
                 let variant_offset = format!(
@@ -518,7 +518,7 @@ fn process_primitive_enum(
 
                 // Add shadow struct definition
                 shadow_struct_defs.push(format!(
-                    "#[repr(C)] struct {shadow_struct_name}<'facet, {generics_def}> {where_clauses}  {{ _discriminant: {}, ___phantom: ::core::marker::PhantomData<(*mut &'facet (), {generics_use})>, {fields_with_types} }}",
+                    "#[repr(C)] struct {shadow_struct_name}<'facet, {generics_def}> {where_clauses}  {{ _discriminant: {}, {fields_with_types}, ___phantom: ::core::marker::PhantomData<({generics_use}, *mut &'facet ())> }}",
                     discriminant_type.as_rust_type(),
                 ));
 
@@ -582,7 +582,7 @@ fn process_primitive_enum(
 
                 // Add shadow struct definition
                 shadow_struct_defs.push(format!(
-                    "#[repr(C)] struct {shadow_struct_name}<'facet, {generics_def}> {where_clauses} {{ _discriminant: {}, ___phantom: ::core::marker::PhantomData<(*mut &'facet (), {generics_use})>, {fields_with_types} }}",
+                    "#[repr(C)] struct {shadow_struct_name}<'facet, {generics_def}> {where_clauses} {{ _discriminant: {}, ___phantom: ::core::marker::PhantomData<({generics_use}, *mut &'facet ())>, {fields_with_types} }}",
                     discriminant_type.as_rust_type(),
                 ));
 

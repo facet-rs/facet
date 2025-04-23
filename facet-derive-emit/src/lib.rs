@@ -1,6 +1,9 @@
 use facet_derive_parse::*;
 use std::borrow::Cow;
 
+mod generics;
+pub use generics::*;
+
 mod process_enum;
 mod process_struct;
 
@@ -20,55 +23,6 @@ pub fn facet_derive(input: TokenStream) -> TokenStream {
             );
         }
     }
-}
-
-fn generics_split_for_impl(generics: Option<&GenericParams>) -> (String, String) {
-    let Some(generics) = generics else {
-        return ("".to_string(), "".to_string());
-    };
-    let mut generics_impl = Vec::new();
-    let mut generics_target = Vec::new();
-
-    for param in generics.params.0.iter() {
-        match &param.value {
-            GenericParam::Type {
-                name,
-                bounds,
-                default: _,
-            } => {
-                let name = name.to_string();
-                let mut impl_ = name.clone();
-                if let Some(bounds) = bounds {
-                    impl_.push_str(&format!(": {}", VerbatimDisplay(&bounds.second)));
-                }
-                generics_impl.push(impl_);
-                generics_target.push(name);
-            }
-            GenericParam::Lifetime { name, bounds } => {
-                let name = name.to_string();
-                let mut impl_ = name.clone();
-                if let Some(bounds) = bounds {
-                    impl_.push_str(&format!(": {}", VerbatimDisplay(&bounds.second)));
-                }
-                generics_impl.push(impl_);
-                generics_target.push(name);
-            }
-            GenericParam::Const {
-                _const,
-                name,
-                _colon,
-                typ,
-                default: _,
-            } => {
-                let name = name.to_string();
-                generics_impl.push(format!("const {}: {}", name, VerbatimDisplay(typ)));
-                generics_target.push(name);
-            }
-        }
-    }
-    let generics_impl = generics_impl.join(", ");
-    let generics_target = generics_target.join(", ");
-    (generics_impl, generics_target)
 }
 
 /// Converts PascalCase to UPPER_SNAKE_CASE

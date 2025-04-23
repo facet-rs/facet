@@ -404,7 +404,7 @@ fn enum_generic() {
         #[allow(dead_code)]
         #[derive(Facet)]
         #[repr(u8)]
-        enum E<'a, T: Facet + core::hash::Hash, const C: usize = 3>
+        enum E<'a, T: Facet<'a> + core::hash::Hash, const C: usize = 3>
         where
             T: Debug, // Added Debug bound
              [u8; C]: Debug, // Added Debug bound

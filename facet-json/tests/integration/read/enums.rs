@@ -54,3 +54,43 @@ fn json_read_tuple_variant() {
     };
     assert_eq!(p_y, Point::Y("hello".to_string()));
 }
+
+#[test]
+fn enum_generic_u8() {
+    #[allow(dead_code)]
+    #[derive(Facet)]
+    #[repr(u8)]
+    enum E<'a, T: Facet<'a> + core::hash::Hash, const C: usize = 3>
+    where
+        T: std::fmt::Debug,
+        [u8; C]: std::fmt::Debug,
+    {
+        Unit,
+        Tuple(T, core::marker::PhantomData<&'a [u8; C]>),
+        Record {
+            field: T,
+            phantom: core::marker::PhantomData<&'a ()>,
+            constant_val: [u8; C],
+        },
+    }
+}
+
+#[test]
+fn enum_generic_c() {
+    #[allow(dead_code)]
+    #[derive(Facet)]
+    #[repr(C)]
+    enum E<'a, T: Facet<'a> + core::hash::Hash, const C: usize = 3>
+    where
+        T: std::fmt::Debug,
+        [u8; C]: std::fmt::Debug,
+    {
+        Unit,
+        Tuple(T, core::marker::PhantomData<&'a [u8; C]>),
+        Record {
+            field: T,
+            phantom: core::marker::PhantomData<&'a ()>,
+            constant_val: [u8; C],
+        },
+    }
+}
