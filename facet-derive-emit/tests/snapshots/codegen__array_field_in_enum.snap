@@ -10,13 +10,13 @@ unsafe impl<'facet> ::facet::Facet<'facet> for Packet {
         #[repr(C)]
         struct __ShadowPacket_Header<'facet> {
             _discriminant: u8,
-            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
+            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
             _0: [u8; 4],
         }
         #[repr(C)]
         struct __ShadowPacket_Payload<'facet> {
             _discriminant: u8,
-            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
+            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
             _0: Vec<u8>,
         }
         let __facet_variants: &'static [::facet::Variant] = &const {

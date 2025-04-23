@@ -14,7 +14,7 @@ where
             T: ::facet::Facet<'facet>,
         {
             _discriminant: u8,
-            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
+            ___phantom: ::core::marker::PhantomData<(*mut &'facet (), T)>,
             _0: Result<T, String>,
         }
         #[repr(C)]
@@ -23,7 +23,7 @@ where
             T: ::facet::Facet<'facet>,
         {
             _discriminant: u8,
-            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
+            ___phantom: ::core::marker::PhantomData<(*mut &'facet (), T)>,
             _0: Option<T>,
         }
         let __facet_variants: &'static [::facet::Variant] = &const {

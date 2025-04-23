@@ -10,13 +10,13 @@ unsafe impl<'facet> ::facet::Facet<'facet> for CommentedEnum {
         #[repr(C)]
         struct __ShadowCommentedEnum_B<'facet> {
             _discriminant: u8,
-            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
+            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
             _0: u32,
         }
         #[repr(C)]
         struct __ShadowCommentedEnum_C<'facet> {
             _discriminant: u8,
-            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
+            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
             x: u32,
             y: String,
         }

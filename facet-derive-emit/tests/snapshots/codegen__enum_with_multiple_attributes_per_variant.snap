@@ -10,20 +10,20 @@ unsafe impl<'facet> ::facet::Facet<'facet> for ConfigValue {
         #[repr(C)]
         struct __ShadowConfigValue_Text<'facet> {
             _discriminant: u8,
-            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
+            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
             _0: String,
         }
         #[repr(C)]
         struct __ShadowConfigValue_Number<'facet> {
             _discriminant: u8,
-            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
+            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
             value: f64,
             unit: String,
         }
         #[repr(C)]
         struct __ShadowConfigValue_Boolean<'facet> {
             _discriminant: u8,
-            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
+            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
             _0: bool,
         }
         let __facet_variants: &'static [::facet::Variant] = &const {

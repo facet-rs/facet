@@ -11,19 +11,19 @@ unsafe impl<'facet> ::facet::Facet<'facet> for EnumWithAttributes {
         #[repr(C)]
         struct __ShadowEnumWithAttributes_InternalVariant<'facet> {
             _discriminant: u16,
-            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
+            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
             _0: i32,
         }
         #[repr(C)]
         struct __ShadowEnumWithAttributes_VariantC<'facet> {
             _discriminant: u16,
-            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
+            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
             secret: String,
         }
         #[repr(C)]
         struct __ShadowEnumWithAttributes_VariantD<'facet> {
             _discriminant: u16,
-            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
+            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
             value: i32,
         }
         let __facet_variants: &'static [::facet::Variant] = &const {

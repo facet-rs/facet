@@ -11,13 +11,13 @@ unsafe impl<'facet> ::facet::Facet<'facet> for EnumWithVariants {
         #[repr(C)]
         struct __ShadowEnumWithVariants_Variant2<'facet> {
             _discriminant: u8,
-            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
+            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
             _0: i32,
         }
         #[repr(C)]
         struct __ShadowEnumWithVariants_Variant3<'facet> {
             _discriminant: u8,
-            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
+            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
             field1: i32,
             field2: String,
         }

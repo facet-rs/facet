@@ -10,13 +10,13 @@ unsafe impl<'facet> ::facet::Facet<'facet> for ApiResponse {
         #[repr(C)]
         struct __ShadowApiResponse_Ok<'facet> {
             _discriminant: u8,
-            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
+            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
             data: String,
         }
         #[repr(C)]
         struct __ShadowApiResponse_Err<'facet> {
             _discriminant: u8,
-            _phantom: ::core::marker::PhantomData<*mut &'facet ()>,
+            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
             code: u32,
             message: String,
         }
