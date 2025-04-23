@@ -239,13 +239,6 @@ impl BoundedGenericParams {
     ///
     /// For a type like `struct Example<T: Clone, 'a, const N: usize>`, this would populate:
     /// params with entries for each parameter and their bounds.
-    ///
-    /// These can then be used to generate code like:
-    /// ```
-    /// impl<T: Clone, 'a, const N: usize> SomeTrait for Example<T, 'a, N> {
-    ///     // implementation
-    /// }
-    /// ```
     pub fn parse(generics: Option<&GenericParams>) -> Self {
         let Some(generics) = generics else {
             return Self { params: Vec::new() };
