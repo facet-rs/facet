@@ -169,7 +169,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
 {static_decl}
 
 #[automatically_derived]
-unsafe impl<'__facet, {bgp_with_bounds}> ::facet::Facet<'__facet> for {enum_name}<{bgp_without_bounds}> {where_clauses} {{
+unsafe impl{bgp_def} ::facet::Facet<'__facet> for {enum_name}{bgp_without_bounds} {where_clauses} {{
     const SHAPE: &'static ::facet::Shape = &const {{
         // Define all shadow structs at the beginning of the const block
         // to ensure they're in scope for offset_of! macros
@@ -198,7 +198,7 @@ unsafe impl<'__facet, {bgp_with_bounds}> ::facet::Facet<'__facet> for {enum_name
     }};
 }}
         "#,
-        bgp_with_bounds = bgp.display_with_bounds(),
+        bgp_def = bgp.with_lifetime("__facet").display_with_bounds(),
         bgp_without_bounds = bgp.display_without_bounds(),
     );
 

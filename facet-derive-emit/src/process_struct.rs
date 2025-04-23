@@ -137,7 +137,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
 {static_decl}
 
 #[automatically_derived]
-unsafe impl<'facet, {bgp_with_bounds}> ::facet::Facet<'facet> for {struct_name}<{bgp_without_bounds}> {where_clauses} {{
+unsafe impl{bgp_def} ::facet::Facet<'facet> for {struct_name}{bgp_without_bounds} {where_clauses} {{
     const SHAPE: &'static ::facet::Shape = &const {{
         let fields: &'static [::facet::Field] = &const {{[{fields}]}};
 
@@ -165,8 +165,8 @@ unsafe impl<'facet, {bgp_with_bounds}> ::facet::Facet<'facet> for {struct_name}<
     }};
 }}
         "#,
+        bgp_def = bgp.with_lifetime("__facet").display_with_bounds(),
         bgp_without_bounds = bgp.display_without_bounds(),
-        bgp_with_bounds = bgp.display_with_bounds(),
     );
 
     output.into_token_stream()
