@@ -199,14 +199,14 @@ fn build_where_clauses(
         for p in &generics.params.0 {
             match &p.value {
                 GenericParam::Lifetime { name, .. } => {
-                    where_clauses_s.push(format!("{name}: 'facet"));
-                    where_clauses_s.push(format!("'facet: {name}"));
+                    where_clauses_s.push(format!("{name}: '__facet"));
+                    where_clauses_s.push(format!("'__facet: {name}"));
                 }
                 GenericParam::Const { .. } => {
                     // ignore for now
                 }
                 GenericParam::Type { name, .. } => {
-                    where_clauses_s.push(format!("{name}: ::facet::Facet<'facet>"));
+                    where_clauses_s.push(format!("{name}: ::facet::Facet<'__facet>"));
                 }
             }
         }

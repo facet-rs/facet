@@ -63,6 +63,54 @@ pub struct WithBounds<'a>(&'a BoundedGenericParams);
 /// For a parameter like `T: Clone`, this will display just `<T>`.
 pub struct WithoutBounds<'a>(&'a BoundedGenericParams);
 
+/// Display wrapper that outputs generic parameters as a PhantomData
+///
+/// This is used to format generic parameters as a PhantomData type
+/// for use in trait implementations.
+///
+/// # Example
+///
+/// For parameters `<'a, T, const N: usize>`, this will display
+/// `::core::marker::PhantomData<(*mut &'__facet (), T, [u32; N])>`.
+pub struct AsPhantomData<'a>(&'a BoundedGenericParams);
+
+impl std::fmt::Display for AsPhantomData<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "::core::marker::PhantomData<(")?;
+
+        // Track if we've written anything to handle commas correctly
+        let mut first_param = true;
+
+        // Generate all parameters in the tuple
+        for param in &self.0.params {
+            if !first_param {
+                write!(f, ", ")?;
+            }
+
+            match &param.param {
+                GenericParamName::Lifetime(name) => write!(f, "*mut &'{} ()", name)?,
+                GenericParamName::Type(name) => write!(f, "{}", name)?,
+                GenericParamName::Const(name) => write!(f, "[u32; {}]", name)?,
+            }
+
+            first_param = false;
+        }
+
+        // If no parameters at all, add a unit type to make the PhantomData valid
+        if first_param {
+            write!(f, "()")?;
+        }
+
+        write!(f, ")>")
+    }
+}
+
+impl BoundedGenericParams {
+    pub fn as_phantom_data(&self) -> AsPhantomData<'_> {
+        AsPhantomData(self)
+    }
+}
+
 impl std::fmt::Display for WithBounds<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.0.params.is_empty() {
@@ -107,6 +155,20 @@ impl BoundedGenericParams {
 
     pub fn display_without_bounds(&self) -> WithoutBounds<'_> {
         WithoutBounds(self)
+    }
+
+    /// Returns a display wrapper that formats generic parameters as a PhantomData
+    ///
+    /// This is a convenience method for generating PhantomData expressions
+    /// for use in trait implementations.
+    ///
+    /// # Example
+    ///
+    /// For generic parameters `<'a, T, const N: usize>`, this returns a wrapper that
+    /// when displayed produces:
+    /// `::core::marker::PhantomData<(*mut &'a (), T, [u32; N])>`
+    pub fn display_as_phantom_data(&self) -> AsPhantomData<'_> {
+        AsPhantomData(self)
     }
 
     pub fn with(&self, param: BoundedGenericParam) -> Self {
@@ -548,6 +610,74 @@ mod tests {
         assert_eq!(
             params.display_without_bounds().to_string(),
             "<'a, 'b, T, U, const N, const M>"
+        );
+    }
+
+    #[test]
+    fn test_phantom_data_formatting() {
+        // Empty params should have PhantomData with a unit type
+        let empty = BoundedGenericParams { params: vec![] };
+        assert_eq!(
+            empty.display_as_phantom_data().to_string(),
+            "::core::marker::PhantomData<(())>"
+        );
+
+        // Single lifetime
+        let lifetime = BoundedGenericParams {
+            params: vec![BoundedGenericParam {
+                param: GenericParamName::Lifetime("a".into()),
+                bounds: None,
+            }],
+        };
+        assert_eq!(
+            lifetime.display_as_phantom_data().to_string(),
+            "::core::marker::PhantomData<(*mut &'a ())>"
+        );
+
+        // Single type
+        let type_param = BoundedGenericParams {
+            params: vec![BoundedGenericParam {
+                param: GenericParamName::Type("T".into()),
+                bounds: None,
+            }],
+        };
+        assert_eq!(
+            type_param.display_as_phantom_data().to_string(),
+            "::core::marker::PhantomData<(T)>"
+        );
+
+        // Single const
+        let const_param = BoundedGenericParams {
+            params: vec![BoundedGenericParam {
+                param: GenericParamName::Const("N".into()),
+                bounds: None,
+            }],
+        };
+        assert_eq!(
+            const_param.display_as_phantom_data().to_string(),
+            "::core::marker::PhantomData<([u32; N])>"
+        );
+
+        // Complex mix of params
+        let mixed = BoundedGenericParams {
+            params: vec![
+                BoundedGenericParam {
+                    param: GenericParamName::Lifetime("a".into()),
+                    bounds: None,
+                },
+                BoundedGenericParam {
+                    param: GenericParamName::Type("T".into()),
+                    bounds: Some("Clone".into()),
+                },
+                BoundedGenericParam {
+                    param: GenericParamName::Const("N".into()),
+                    bounds: Some("usize".into()),
+                },
+            ],
+        };
+        assert_eq!(
+            mixed.display_as_phantom_data().to_string(),
+            "::core::marker::PhantomData<(*mut &'a (), T, [u32; N])>"
         );
     }
 }

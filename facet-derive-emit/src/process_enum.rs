@@ -227,10 +227,6 @@ fn process_c_style_enum(
         bounds: None,
         param: GenericParamName::Lifetime("__facet".into()),
     });
-    let phantom_bgp = bgp.with(BoundedGenericParam {
-        bounds: None,
-        param: GenericParamName::Type("*mut &'__facet ()".into()),
-    });
 
     // Collect shadow struct definitions separately from variant expressions
     let mut shadow_struct_defs = Vec::new();
@@ -283,12 +279,12 @@ fn process_c_style_enum(
     shadow_struct_defs.push(format!(
         "#[repr(C)] struct {shadow_repr_name}{struct_bgp} {where_clauses} {{
             _discriminant: {shadow_discriminant_name},
-            ___phantom: ::core::marker::PhantomData{phantom_bgp},
+            _phantom: {phantom},
             _fields: {shadow_union_name}{fields_bgp},
         }}",
         struct_bgp = facet_bgp.display_with_bounds(),
         fields_bgp = facet_bgp.display_without_bounds(),
-        phantom_bgp = phantom_bgp.display_without_bounds(),
+        phantom = facet_bgp.display_as_phantom_data(),
     ));
 
     // Discriminant values are either manually defined, or incremented from the last one
@@ -308,9 +304,9 @@ fn process_c_style_enum(
 
                 // Add shadow struct definition
                 shadow_struct_defs.push(format!(
-                    "#[repr(C)] struct {shadow_struct_name}{bgp} {where_clauses} {{ ___phantom: ::core::marker::PhantomData{phantom_bgp} }}",
+                    "#[repr(C)] struct {shadow_struct_name}{bgp} {where_clauses} {{ _phantom: {phantom} }}",
                     bgp = facet_bgp.display_with_bounds(),
-                    phantom_bgp = phantom_bgp.display_without_bounds(),
+                    phantom = facet_bgp.display_as_phantom_data(),
                 ));
 
                 // variant offset is offset of the `_fields` union
@@ -346,9 +342,9 @@ fn process_c_style_enum(
 
                 // Add shadow struct definition
                 shadow_struct_defs.push(format!(
-                    "#[repr(C)] struct {shadow_struct_name}{bgp} {where_clauses} {{ {fields_with_types}, ___phantom: ::core::marker::PhantomData{phantom_bgp} }}",
+                    "#[repr(C)] struct {shadow_struct_name}{bgp} {where_clauses} {{ {fields_with_types}, _phantom: {phantom} }}",
                     bgp = facet_bgp.display_with_bounds(),
-                    phantom_bgp = phantom_bgp.display_without_bounds(),
+                    phantom = facet_bgp.display_as_phantom_data(),
                 ));
 
                 let variant_offset = format!(
@@ -416,9 +412,9 @@ fn process_c_style_enum(
 
                 // Add shadow struct definition
                 shadow_struct_defs.push(format!(
-                    "#[repr(C)] struct {shadow_struct_name}{bgp} {where_clauses} {{ {fields_with_types}, ___phantom: ::core::marker::PhantomData{phantom_bgp} }}",
+                    "#[repr(C)] struct {shadow_struct_name}{bgp} {where_clauses} {{ {fields_with_types}, _phantom: {phantom} }}",
                     bgp = facet_bgp.display_with_bounds(),
-                    phantom_bgp = phantom_bgp.display_without_bounds(),
+                    phantom = facet_bgp.display_as_phantom_data(),
                 ));
 
                 let variant_offset = format!(
@@ -548,9 +544,13 @@ fn process_primitive_enum(
 
                 // Add shadow struct definition
                 shadow_struct_defs.push(format!(
-                    "#[repr(C)] struct {shadow_struct_name}{bgp} {where_clauses}  {{ _discriminant: {discriminant}, {fields_with_types}, ___phantom: ::core::marker::PhantomData{phantom_bgp} }}",
+                    "#[repr(C)] struct {shadow_struct_name}{bgp} {where_clauses}  {{
+                        _discriminant: {discriminant},
+                        _phantom: {phantom},
+                        {fields_with_types}
+                    }}",
                     bgp = facet_bgp.display_with_bounds(),
-                    phantom_bgp = phantom_bgp.display_without_bounds(),
+                    phantom = facet_bgp.display_as_phantom_data(),
                     discriminant = discriminant_type.as_rust_type(),
                 ));
 
@@ -614,9 +614,13 @@ fn process_primitive_enum(
 
                 // Add shadow struct definition
                 shadow_struct_defs.push(format!(
-                    "#[repr(C)] struct {shadow_struct_name}{bgp} {where_clauses} {{ _discriminant: {discriminant}, ___phantom: ::core::marker::PhantomData{phantom_bgp}, {fields_with_types} }}",
+                    "#[repr(C)] struct {shadow_struct_name}{bgp} {where_clauses} {{
+                        _discriminant: {discriminant},
+                        _phantom: {phantom},
+                        {fields_with_types}
+                    }}",
                     bgp = facet_bgp.display_with_bounds(),
-                    phantom_bgp = phantom_bgp.display_without_bounds(),
+                    phantom = facet_bgp.display_as_phantom_data(),
                     discriminant = discriminant_type.as_rust_type(),
                 ));
 
