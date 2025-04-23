@@ -210,7 +210,7 @@ unsafe impl{bgp_def} ::facet::Facet<'__facet> for {enum_name}{bgp_without_bounds
 }
 
 /// C-style enums (i.e. #[repr(C)], #[repr(C, u*)] and #[repr(C, i*)]) are laid out
-/// as a #[repr(C)] struct with two fiels: the discriminant and the union of all the variants.
+/// as a #[repr(C)] struct with two fields: the discriminant and the union of all the variants.
 ///
 /// See: <https://doc.rust-lang.org/reference/type-layout.html#r-layout.repr.primitive.adt>
 ///
