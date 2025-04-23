@@ -60,7 +60,7 @@ fn enum_generic_u8() {
     #[allow(dead_code)]
     #[derive(Facet)]
     #[repr(u8)]
-    enum E<'a, T: Facet<'a> + core::hash::Hash, const C: usize = 3>
+    enum E<'a, T: core::hash::Hash, const C: usize = 3>
     where
         T: std::fmt::Debug,
         [u8; C]: std::fmt::Debug,
@@ -80,7 +80,7 @@ fn enum_generic_c() {
     #[allow(dead_code)]
     #[derive(Facet)]
     #[repr(C)]
-    enum E<'a, T: Facet<'a> + core::hash::Hash, const C: usize = 3>
+    enum E<'a, T: core::hash::Hash, const C: usize = 3>
     where
         T: std::fmt::Debug,
         [u8; C]: std::fmt::Debug,

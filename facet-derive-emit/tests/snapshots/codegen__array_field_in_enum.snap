@@ -5,18 +5,18 @@ expression: "expand(r#\"\n        /// Network packet types\n        #[derive(Fac
 #[used]
 static PACKET_SHAPE: &'static ::facet::Shape = <Packet as ::facet::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl<'facet> ::facet::Facet<'facet> for Packet {
+unsafe impl<'__facet> ::facet::Facet<'__facet> for Packet {
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
-        struct __ShadowPacket_Header<'facet> {
+        struct __ShadowPacket_Header<'__facet> {
             _discriminant: u8,
-            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
+            _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
             _0: [u8; 4],
         }
         #[repr(C)]
-        struct __ShadowPacket_Payload<'facet> {
+        struct __ShadowPacket_Payload<'__facet> {
             _discriminant: u8,
-            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
+            _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
             _0: Vec<u8>,
         }
         let __facet_variants: &'static [::facet::Variant] = &const {
@@ -25,8 +25,10 @@ unsafe impl<'facet> ::facet::Facet<'facet> for Packet {
                     let fields: &'static [::facet::Field] = &const {
                         [::facet::Field::builder()
                             .name("_0")
-                            .shape(|| ::facet::shape_of(&|s: &__ShadowPacket_Header| &s._0))
-                            .offset(::core::mem::offset_of!(__ShadowPacket_Header, _0))
+                            .shape(|| {
+                                ::facet::shape_of(&|s: &__ShadowPacket_Header<'__facet>| &s._0)
+                            })
+                            .offset(::core::mem::offset_of!(__ShadowPacket_Header<'__facet>, _0))
                             .flags(::facet::FieldFlags::EMPTY)
                             .attributes(&const { [] })
                             .build()]
@@ -42,8 +44,13 @@ unsafe impl<'facet> ::facet::Facet<'facet> for Packet {
                     let fields: &'static [::facet::Field] = &const {
                         [::facet::Field::builder()
                             .name("_0")
-                            .shape(|| ::facet::shape_of(&|s: &__ShadowPacket_Payload| &s._0))
-                            .offset(::core::mem::offset_of!(__ShadowPacket_Payload, _0))
+                            .shape(|| {
+                                ::facet::shape_of(&|s: &__ShadowPacket_Payload<'__facet>| &s._0)
+                            })
+                            .offset(::core::mem::offset_of!(
+                                __ShadowPacket_Payload<'__facet>,
+                                _0
+                            ))
                             .flags(::facet::FieldFlags::EMPTY)
                             .attributes(&const { [] })
                             .build()]
