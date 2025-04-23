@@ -600,44 +600,44 @@ fn test_vecs() {
             .build(),
     );
 
-    // // Vec<String> implements Debug, PartialEq, but not Ord
-    // check_facts(
-    //     vec!["hello".to_string(), "world".to_string()],
-    //     vec!["foo".to_string(), "bar".to_string()],
-    //     FactBuilder::new()
-    //         .debug()
-    //         .equal_and(false)
-    //         .default()
-    //         .clone()
-    //         .build(),
-    // );
+    // Vec<String> implements Debug, PartialEq, but not Ord
+    check_facts(
+        vec!["hello".to_string(), "world".to_string()],
+        vec!["foo".to_string(), "bar".to_string()],
+        FactBuilder::new()
+            .debug()
+            .equal_and(false)
+            .default()
+            .clone()
+            .build(),
+    );
 
-    // // Two pairs of equal Vecs
-    // let vec1 = vec![1, 2, 3];
-    // let vec2 = vec![1, 2, 3];
-    // check_facts(
-    //     vec1.clone(),
-    //     vec2.clone(),
-    //     FactBuilder::new()
-    //         .debug()
-    //         .equal_and(true)
-    //         .default()
-    //         .clone()
-    //         .build(),
-    // );
+    // Two pairs of equal Vecs
+    let vec1 = vec![1, 2, 3];
+    let vec2 = vec![1, 2, 3];
+    check_facts(
+        vec1.clone(),
+        vec2.clone(),
+        FactBuilder::new()
+            .debug()
+            .equal_and(true)
+            .default()
+            .clone()
+            .build(),
+    );
 
-    // let vec3 = vec!["hello".to_string(), "world".to_string()];
-    // let vec4 = vec!["hello".to_string(), "world".to_string()];
-    // check_facts(
-    //     vec3.clone(),
-    //     vec4.clone(),
-    //     FactBuilder::new()
-    //         .debug()
-    //         .equal_and(true)
-    //         .default()
-    //         .clone()
-    //         .build(),
-    // );
+    let vec3 = vec!["hello".to_string(), "world".to_string()];
+    let vec4 = vec!["hello".to_string(), "world".to_string()];
+    check_facts(
+        vec3.clone(),
+        vec4.clone(),
+        FactBuilder::new()
+            .debug()
+            .equal_and(true)
+            .default()
+            .clone()
+            .build(),
+    );
 }
 
 #[test]
