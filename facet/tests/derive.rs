@@ -298,41 +298,41 @@ fn unit_struct_generic() {
         (): core::hash::Hash;
 }
 
-// #[test]
-// fn enum_generic() {
-//     #[allow(dead_code)]
-//     #[derive(Clone, Hash, PartialEq, Eq, ::facet::Facet)]
-//     #[repr(u8)]
-//     enum E<'a, T, const C: usize = 3>
-//     where
-//         T: core::hash::Hash,
-//     {
-//         Unit,
-//         Tuple(T, core::marker::PhantomData<&'a ()>),
-//         Record {
-//             field: T,
-//             phantom: core::marker::PhantomData<&'a ()>,
-//         },
-//     }
-// }
+#[test]
+fn enum_generic() {
+    #[allow(dead_code)]
+    #[derive(Clone, Hash, PartialEq, Eq, ::facet::Facet)]
+    #[repr(u8)]
+    enum E<'a, T, const C: usize = 3>
+    where
+        T: core::hash::Hash,
+    {
+        Unit,
+        Tuple(T, core::marker::PhantomData<&'a ()>),
+        Record {
+            field: T,
+            phantom: core::marker::PhantomData<&'a ()>,
+        },
+    }
+}
 
-// #[test]
-// fn enum_generic_partial() {
-//     #[allow(dead_code)]
-//     #[derive(Clone, Hash, PartialEq, Eq, ::facet::Facet)]
-//     #[repr(u8)]
-//     enum E<'a, T: Facet, const C: usize = 3>
-//     where
-//         T: core::hash::Hash,
-//     {
-//         Unit,
-//         Tuple(i32),
-//         Record {
-//             field: T,
-//             phantom: core::marker::PhantomData<&'a ()>,
-//         },
-//     }
-// }
+#[test]
+fn enum_generic_partial() {
+    #[allow(dead_code)]
+    #[derive(Clone, Hash, PartialEq, Eq, ::facet::Facet)]
+    #[repr(u8)]
+    enum E<'a, T, const C: usize = 3>
+    where
+        T: core::hash::Hash,
+    {
+        Unit,
+        Tuple(i32),
+        Record {
+            field: T,
+            phantom: core::marker::PhantomData<&'a ()>,
+        },
+    }
+}
 
 #[test]
 fn tuple_struct_with_pub_field() {
