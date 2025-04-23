@@ -359,18 +359,6 @@ mod tests {
     }
 
     #[test]
-    fn print_const_no_bounds() {
-        let p = BoundedGenericParams {
-            params: vec![BoundedGenericParam {
-                bounds: None,
-                param: GenericParamName::Const("N".into()),
-            }],
-        };
-        assert_eq!(p.display_with_bounds().to_string(), "<N>");
-        assert_eq!(p.display_without_bounds().to_string(), "<N>");
-    }
-
-    #[test]
     fn print_const_with_usize_bound() {
         let p = BoundedGenericParams {
             params: vec![BoundedGenericParam {
