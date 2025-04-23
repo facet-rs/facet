@@ -5,18 +5,18 @@ expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n       
 #[used]
 static COMMENTED_ENUM_SHAPE: &'static ::facet::Shape = <CommentedEnum as ::facet::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl<'facet> ::facet::Facet<'facet> for CommentedEnum {
+unsafe impl<'__facet> ::facet::Facet<'__facet> for CommentedEnum {
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
-        struct __ShadowCommentedEnum_B<'facet> {
+        struct __ShadowCommentedEnum_B<'__facet> {
             _discriminant: u8,
-            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
+            _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
             _0: u32,
         }
         #[repr(C)]
-        struct __ShadowCommentedEnum_C<'facet> {
+        struct __ShadowCommentedEnum_C<'__facet> {
             _discriminant: u8,
-            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
+            _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
             x: u32,
             y: String,
         }
@@ -32,8 +32,13 @@ unsafe impl<'facet> ::facet::Facet<'facet> for CommentedEnum {
                     let fields: &'static [::facet::Field] = &const {
                         [::facet::Field::builder()
                             .name("_0")
-                            .shape(|| ::facet::shape_of(&|s: &__ShadowCommentedEnum_B| &s._0))
-                            .offset(::core::mem::offset_of!(__ShadowCommentedEnum_B, _0))
+                            .shape(|| {
+                                ::facet::shape_of(&|s: &__ShadowCommentedEnum_B<'__facet>| &s._0)
+                            })
+                            .offset(::core::mem::offset_of!(
+                                __ShadowCommentedEnum_B<'__facet>,
+                                _0
+                            ))
                             .flags(::facet::FieldFlags::EMPTY)
                             .attributes(&const { [] })
                             .build()]
@@ -50,16 +55,26 @@ unsafe impl<'facet> ::facet::Facet<'facet> for CommentedEnum {
                         [
                             ::facet::Field::builder()
                                 .name("x")
-                                .shape(|| ::facet::shape_of(&|s: &__ShadowCommentedEnum_C| &s.x))
-                                .offset(::core::mem::offset_of!(__ShadowCommentedEnum_C, x))
+                                .shape(|| {
+                                    ::facet::shape_of(&|s: &__ShadowCommentedEnum_C<'__facet>| &s.x)
+                                })
+                                .offset(::core::mem::offset_of!(
+                                    __ShadowCommentedEnum_C<'__facet>,
+                                    x
+                                ))
                                 .flags(::facet::FieldFlags::EMPTY)
                                 .attributes(&const { [] })
                                 .doc(&[" This is field x"])
                                 .build(),
                             ::facet::Field::builder()
                                 .name("y")
-                                .shape(|| ::facet::shape_of(&|s: &__ShadowCommentedEnum_C| &s.y))
-                                .offset(::core::mem::offset_of!(__ShadowCommentedEnum_C, y))
+                                .shape(|| {
+                                    ::facet::shape_of(&|s: &__ShadowCommentedEnum_C<'__facet>| &s.y)
+                                })
+                                .offset(::core::mem::offset_of!(
+                                    __ShadowCommentedEnum_C<'__facet>,
+                                    y
+                                ))
                                 .flags(::facet::FieldFlags::EMPTY)
                                 .attributes(&const { [] })
                                 .doc(&[" This is field y"])

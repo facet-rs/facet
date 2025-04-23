@@ -6,18 +6,18 @@ expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n       
 static ENUM_WITH_VARIANTS_SHAPE: &'static ::facet::Shape =
     <EnumWithVariants as ::facet::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl<'facet> ::facet::Facet<'facet> for EnumWithVariants {
+unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithVariants {
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
-        struct __ShadowEnumWithVariants_Variant2<'facet> {
+        struct __ShadowEnumWithVariants_Variant2<'__facet> {
             _discriminant: u8,
-            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
+            _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
             _0: i32,
         }
         #[repr(C)]
-        struct __ShadowEnumWithVariants_Variant3<'facet> {
+        struct __ShadowEnumWithVariants_Variant3<'__facet> {
             _discriminant: u8,
-            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
+            _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
             field1: i32,
             field2: String,
         }
@@ -33,10 +33,12 @@ unsafe impl<'facet> ::facet::Facet<'facet> for EnumWithVariants {
                         [::facet::Field::builder()
                             .name("_0")
                             .shape(|| {
-                                ::facet::shape_of(&|s: &__ShadowEnumWithVariants_Variant2| &s._0)
+                                ::facet::shape_of(&|s: &__ShadowEnumWithVariants_Variant2<
+                                    '__facet,
+                                >| &s._0)
                             })
                             .offset(::core::mem::offset_of!(
-                                __ShadowEnumWithVariants_Variant2,
+                                __ShadowEnumWithVariants_Variant2<'__facet>,
                                 _0
                             ))
                             .flags(::facet::FieldFlags::EMPTY)
@@ -55,12 +57,14 @@ unsafe impl<'facet> ::facet::Facet<'facet> for EnumWithVariants {
                             ::facet::Field::builder()
                                 .name("field1")
                                 .shape(|| {
-                                    ::facet::shape_of(&|s: &__ShadowEnumWithVariants_Variant3| {
+                                    ::facet::shape_of(&|s: &__ShadowEnumWithVariants_Variant3<
+                                        '__facet,
+                                    >| {
                                         &s.field1
                                     })
                                 })
                                 .offset(::core::mem::offset_of!(
-                                    __ShadowEnumWithVariants_Variant3,
+                                    __ShadowEnumWithVariants_Variant3<'__facet>,
                                     field1
                                 ))
                                 .flags(::facet::FieldFlags::EMPTY)
@@ -69,12 +73,14 @@ unsafe impl<'facet> ::facet::Facet<'facet> for EnumWithVariants {
                             ::facet::Field::builder()
                                 .name("field2")
                                 .shape(|| {
-                                    ::facet::shape_of(&|s: &__ShadowEnumWithVariants_Variant3| {
+                                    ::facet::shape_of(&|s: &__ShadowEnumWithVariants_Variant3<
+                                        '__facet,
+                                    >| {
                                         &s.field2
                                     })
                                 })
                                 .offset(::core::mem::offset_of!(
-                                    __ShadowEnumWithVariants_Variant3,
+                                    __ShadowEnumWithVariants_Variant3<'__facet>,
                                     field2
                                 ))
                                 .flags(::facet::FieldFlags::EMPTY)

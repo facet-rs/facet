@@ -6,7 +6,7 @@ expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(default)]\n 
 static FOR_FACET_DEFAULT_DEMO_SHAPE: &'static ::facet::Shape =
     <ForFacetDefaultDemo as ::facet::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl<'facet> ::facet::Facet<'facet> for ForFacetDefaultDemo {
+unsafe impl<'__facet> ::facet::Facet<'__facet> for ForFacetDefaultDemo {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [

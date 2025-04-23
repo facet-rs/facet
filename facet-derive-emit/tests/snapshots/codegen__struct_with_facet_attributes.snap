@@ -6,7 +6,7 @@ expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(name = \"MyC
 static STRUCT_WITH_ATTRIBUTES_SHAPE: &'static ::facet::Shape =
     <StructWithAttributes as ::facet::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl<'facet> ::facet::Facet<'facet> for StructWithAttributes {
+unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithAttributes {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [

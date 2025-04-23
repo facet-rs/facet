@@ -9,18 +9,8 @@ pub enum GenericParamName {
     /// "T", formatted as "T"
     Type(std::borrow::Cow<'static, str>),
 
-    /// "N", formatted as "const N"
+    /// "N", formatted as "N"
     Const(std::borrow::Cow<'static, str>),
-}
-
-impl std::fmt::Display for GenericParamName {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            GenericParamName::Lifetime(name) => write!(f, "'{}", name),
-            GenericParamName::Type(name) => write!(f, "{}", name),
-            GenericParamName::Const(name) => write!(f, "const {}", name),
-        }
-    }
 }
 
 /// The name of a generic parameter with bounds
@@ -122,7 +112,11 @@ impl std::fmt::Display for WithBounds<'_> {
             if i > 0 {
                 write!(f, ", ")?;
             }
-            write!(f, "{}", param.param)?;
+            match &param.param {
+                GenericParamName::Lifetime(name) => write!(f, "'{}", name)?,
+                GenericParamName::Type(name) => write!(f, "{}", name)?,
+                GenericParamName::Const(name) => write!(f, "const {}", name)?,
+            }
             if let Some(bounds) = &param.bounds {
                 write!(f, ": {}", bounds)?;
             }
@@ -142,7 +136,11 @@ impl std::fmt::Display for WithoutBounds<'_> {
             if i > 0 {
                 write!(f, ", ")?;
             }
-            write!(f, "{}", param.param)?;
+            match &param.param {
+                GenericParamName::Lifetime(name) => write!(f, "'{}", name)?,
+                GenericParamName::Type(name) => write!(f, "{}", name)?,
+                GenericParamName::Const(name) => write!(f, "{}", name)?,
+            }
         }
         write!(f, ">")
     }
@@ -272,7 +270,7 @@ impl BoundedGenericParams {
                     });
                 }
                 GenericParam::Lifetime { name, bounds } => {
-                    let name_str = name.to_string();
+                    let name_str = name.name.to_string();
                     let bounds_str = bounds
                         .as_ref()
                         .map(|bounds| bounds.second.tokens_to_string());
@@ -368,8 +366,8 @@ mod tests {
                 param: GenericParamName::Const("N".into()),
             }],
         };
-        assert_eq!(p.display_with_bounds().to_string(), "<const N>");
-        assert_eq!(p.display_without_bounds().to_string(), "<const N>");
+        assert_eq!(p.display_with_bounds().to_string(), "<N>");
+        assert_eq!(p.display_without_bounds().to_string(), "<N>");
     }
 
     #[test]
@@ -381,7 +379,7 @@ mod tests {
             }],
         };
         assert_eq!(p.display_with_bounds().to_string(), "<const N: usize>");
-        assert_eq!(p.display_without_bounds().to_string(), "<const N>");
+        assert_eq!(p.display_without_bounds().to_string(), "<N>");
     }
 
     #[test]
@@ -410,10 +408,7 @@ mod tests {
             p.display_with_bounds().to_string(),
             "<'a: 'static, T: Clone + Debug, U, const N: usize>"
         );
-        assert_eq!(
-            p.display_without_bounds().to_string(),
-            "<'a, T, U, const N>"
-        );
+        assert_eq!(p.display_without_bounds().to_string(), "<'a, T, U, N>");
     }
 
     #[test]
@@ -455,10 +450,7 @@ mod tests {
             param: GenericParamName::Lifetime("a".into()),
         });
 
-        assert_eq!(
-            params.display_without_bounds().to_string(),
-            "<'a, T, const N>"
-        );
+        assert_eq!(params.display_without_bounds().to_string(), "<'a, T, N>");
     }
 
     #[test]
@@ -516,10 +508,7 @@ mod tests {
             param: GenericParamName::Type("T".into()),
         });
 
-        assert_eq!(
-            params.display_without_bounds().to_string(),
-            "<'a, T, const N>"
-        );
+        assert_eq!(params.display_without_bounds().to_string(), "<'a, T, N>");
     }
 
     #[test]
@@ -539,10 +528,7 @@ mod tests {
             param: GenericParamName::Const("M".into()),
         });
 
-        assert_eq!(
-            params.display_without_bounds().to_string(),
-            "<const N, const M>"
-        );
+        assert_eq!(params.display_without_bounds().to_string(), "<N, M>");
 
         // Starting from params with existing lifetimes and types
         let mut params = BoundedGenericParams {
@@ -564,10 +550,7 @@ mod tests {
             param: GenericParamName::Const("N".into()),
         });
 
-        assert_eq!(
-            params.display_without_bounds().to_string(),
-            "<'a, T, const N>"
-        );
+        assert_eq!(params.display_without_bounds().to_string(), "<'a, T, N>");
     }
 
     #[test]
@@ -609,7 +592,7 @@ mod tests {
         // Expected order: lifetimes first, then types, then consts
         assert_eq!(
             params.display_without_bounds().to_string(),
-            "<'a, 'b, T, U, const N, const M>"
+            "<'a, 'b, T, U, N, M>"
         );
     }
 

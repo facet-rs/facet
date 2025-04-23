@@ -3,7 +3,7 @@ source: facet-derive-emit/tests/codegen.rs
 expression: "expand(r#\"\n        #[derive(Facet)]\n        struct Blah<const C: usize = 3>\n        where\n             [u8; C]: Debug; // Example bound using the const generic\n        \"#)"
 ---
 #[automatically_derived]
-unsafe impl<'facet, const C: usize> ::facet::Facet<'facet> for Blah<C>
+unsafe impl<'__facet, C: usize> ::facet::Facet<'__facet> for Blah<C>
 where
     [u8; C]: Debug,
 {

@@ -3,27 +3,27 @@ source: facet-derive-emit/tests/codegen.rs
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n        enum DeeplyNested<T> {\n            LevelOne(\n                Option<\n                    Result<\n                        Vec<T>,\n                        String\n                    >\n                >\n            ),\n            // Another variant to prove non-nested still works.\n            Simple(T),\n        }\n        \"#)"
 ---
 #[automatically_derived]
-unsafe impl<'facet, T> ::facet::Facet<'facet> for DeeplyNested<T>
+unsafe impl<'__facet, T> ::facet::Facet<'__facet> for DeeplyNested<T>
 where
-    T: ::facet::Facet<'facet>,
+    T: ::facet::Facet<'__facet>,
 {
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
-        struct __ShadowDeeplyNested_LevelOne<'facet, T>
+        struct __ShadowDeeplyNested_LevelOne<'__facet, T>
         where
-            T: ::facet::Facet<'facet>,
+            T: ::facet::Facet<'__facet>,
         {
             _discriminant: u8,
-            ___phantom: ::core::marker::PhantomData<(*mut &'facet (), T)>,
+            _phantom: ::core::marker::PhantomData<(*mut &'__facet (), T)>,
             _0: Option<Result<Vec<T>, String>>,
         }
         #[repr(C)]
-        struct __ShadowDeeplyNested_Simple<'facet, T>
+        struct __ShadowDeeplyNested_Simple<'__facet, T>
         where
-            T: ::facet::Facet<'facet>,
+            T: ::facet::Facet<'__facet>,
         {
             _discriminant: u8,
-            ___phantom: ::core::marker::PhantomData<(*mut &'facet (), T)>,
+            _phantom: ::core::marker::PhantomData<(*mut &'__facet (), T)>,
             _0: T,
         }
         let __facet_variants: &'static [::facet::Variant] = &const {
@@ -33,10 +33,13 @@ where
                         [::facet::Field::builder()
                             .name("_0")
                             .shape(|| {
-                                ::facet::shape_of(&|s: &__ShadowDeeplyNested_LevelOne<T>| &s._0)
+                                ::facet::shape_of(&|s: &__ShadowDeeplyNested_LevelOne<
+                                    '__facet,
+                                    T,
+                                >| &s._0)
                             })
                             .offset(::core::mem::offset_of!(
-                                __ShadowDeeplyNested_LevelOne<T>,
+                                __ShadowDeeplyNested_LevelOne<'__facet, T>,
                                 _0
                             ))
                             .flags(::facet::FieldFlags::EMPTY)
@@ -54,9 +57,15 @@ where
                         [::facet::Field::builder()
                             .name("_0")
                             .shape(|| {
-                                ::facet::shape_of(&|s: &__ShadowDeeplyNested_Simple<T>| &s._0)
+                                ::facet::shape_of(&|s: &__ShadowDeeplyNested_Simple<
+                                    '__facet,
+                                    T,
+                                >| &s._0)
                             })
-                            .offset(::core::mem::offset_of!(__ShadowDeeplyNested_Simple<T>, _0))
+                            .offset(::core::mem::offset_of!(
+                                __ShadowDeeplyNested_Simple<'__facet, T>,
+                                _0
+                            ))
                             .flags(::facet::FieldFlags::EMPTY)
                             .attributes(&const { [] })
                             .build()]

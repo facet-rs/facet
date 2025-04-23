@@ -202,8 +202,8 @@ unsafe impl{bgp_def} ::facet::Facet<'__facet> for {enum_name}{bgp_without_bounds
         bgp_without_bounds = bgp.display_without_bounds(),
     );
 
-    // Output generated code
-    // Don't use panic for debugging as it makes code unreachable
+    // Uncomment to see generated code before lexin
+    // panic!("output =\n{output}");
 
     // Return the generated code
     output.into_token_stream()
@@ -490,10 +490,6 @@ fn process_primitive_enum(
     let facet_bgp = bgp.with(BoundedGenericParam {
         bounds: None,
         param: GenericParamName::Lifetime("__facet".into()),
-    });
-    let phantom_bgp = bgp.with(BoundedGenericParam {
-        bounds: None,
-        param: GenericParamName::Type("*mut &'__facet ()".into()),
     });
 
     // Collect shadow struct definitions separately from variant expressions

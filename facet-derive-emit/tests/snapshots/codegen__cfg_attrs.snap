@@ -5,7 +5,7 @@ expression: "expand(r#\"\n        #[derive(Facet)]\n        #[cfg_attr(feature =
 #[used]
 static CUB_CONFIG_SHAPE: &'static ::facet::Shape = <CubConfig as ::facet::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl<'facet> ::facet::Facet<'facet> for CubConfig {
+unsafe impl<'__facet> ::facet::Facet<'__facet> for CubConfig {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const { [] };
         let vtable = &const {

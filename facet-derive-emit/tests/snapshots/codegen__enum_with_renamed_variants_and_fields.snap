@@ -5,18 +5,18 @@ expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n       
 #[used]
 static API_RESPONSE_SHAPE: &'static ::facet::Shape = <ApiResponse as ::facet::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl<'facet> ::facet::Facet<'facet> for ApiResponse {
+unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
-        struct __ShadowApiResponse_Ok<'facet> {
+        struct __ShadowApiResponse_Ok<'__facet> {
             _discriminant: u8,
-            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
+            _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
             data: String,
         }
         #[repr(C)]
-        struct __ShadowApiResponse_Err<'facet> {
+        struct __ShadowApiResponse_Err<'__facet> {
             _discriminant: u8,
-            ___phantom: ::core::marker::PhantomData<(*mut &'facet (),)>,
+            _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
             code: u32,
             message: String,
         }
@@ -26,8 +26,13 @@ unsafe impl<'facet> ::facet::Facet<'facet> for ApiResponse {
                     let fields: &'static [::facet::Field] = &const {
                         [::facet::Field::builder()
                             .name("data")
-                            .shape(|| ::facet::shape_of(&|s: &__ShadowApiResponse_Ok| &s.data))
-                            .offset(::core::mem::offset_of!(__ShadowApiResponse_Ok, data))
+                            .shape(|| {
+                                ::facet::shape_of(&|s: &__ShadowApiResponse_Ok<'__facet>| &s.data)
+                            })
+                            .offset(::core::mem::offset_of!(
+                                __ShadowApiResponse_Ok<'__facet>,
+                                data
+                            ))
                             .flags(::facet::FieldFlags::EMPTY)
                             .attributes(
                                 &const { [::facet::FieldAttribute::Rename("responseData")] },
@@ -45,8 +50,15 @@ unsafe impl<'facet> ::facet::Facet<'facet> for ApiResponse {
                         [
                             ::facet::Field::builder()
                                 .name("code")
-                                .shape(|| ::facet::shape_of(&|s: &__ShadowApiResponse_Err| &s.code))
-                                .offset(::core::mem::offset_of!(__ShadowApiResponse_Err, code))
+                                .shape(|| {
+                                    ::facet::shape_of(&|s: &__ShadowApiResponse_Err<'__facet>| {
+                                        &s.code
+                                    })
+                                })
+                                .offset(::core::mem::offset_of!(
+                                    __ShadowApiResponse_Err<'__facet>,
+                                    code
+                                ))
                                 .flags(::facet::FieldFlags::EMPTY)
                                 .attributes(
                                     &const { [::facet::FieldAttribute::Rename("errorCode")] },
@@ -55,9 +67,14 @@ unsafe impl<'facet> ::facet::Facet<'facet> for ApiResponse {
                             ::facet::Field::builder()
                                 .name("message")
                                 .shape(|| {
-                                    ::facet::shape_of(&|s: &__ShadowApiResponse_Err| &s.message)
+                                    ::facet::shape_of(&|s: &__ShadowApiResponse_Err<'__facet>| {
+                                        &s.message
+                                    })
                                 })
-                                .offset(::core::mem::offset_of!(__ShadowApiResponse_Err, message))
+                                .offset(::core::mem::offset_of!(
+                                    __ShadowApiResponse_Err<'__facet>,
+                                    message
+                                ))
                                 .flags(::facet::FieldFlags::EMPTY)
                                 .attributes(
                                     &const { [::facet::FieldAttribute::Rename("errorMessage")] },

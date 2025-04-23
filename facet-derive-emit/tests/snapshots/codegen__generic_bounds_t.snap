@@ -3,10 +3,10 @@ source: facet-derive-emit/tests/codegen.rs
 expression: "expand(r#\"\n        struct Foo<T> where T: Copy {\n            inner: Vec<T>,\n        }\n        \"#)"
 ---
 #[automatically_derived]
-unsafe impl<'facet, T> ::facet::Facet<'facet> for Foo<T>
+unsafe impl<'__facet, T> ::facet::Facet<'__facet> for Foo<T>
 where
     T: Copy,
-    T: ::facet::Facet<'facet>,
+    T: ::facet::Facet<'__facet>,
 {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {

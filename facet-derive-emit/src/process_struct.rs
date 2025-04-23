@@ -169,5 +169,8 @@ unsafe impl{bgp_def} ::facet::Facet<'__facet> for {struct_name}{bgp_without_boun
         bgp_without_bounds = bgp.display_without_bounds(),
     );
 
+    // Uncomment to see generated code before lexin
+    // panic!("output =\n{output}");
+
     output.into_token_stream()
 }

@@ -5,7 +5,7 @@ expression: "expand(r#\"\n        /// yes 😄\n        /// no\n        #[derive
 #[used]
 static FOO_SHAPE: &'static ::facet::Shape = <Foo as ::facet::Facet>::SHAPE;
 #[automatically_derived]
-unsafe impl<'facet> ::facet::Facet<'facet> for Foo {
+unsafe impl<'__facet> ::facet::Facet<'__facet> for Foo {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const { [] };
         let vtable = &const {

@@ -3,9 +3,9 @@ source: facet-derive-emit/tests/codegen.rs
 expression: "expand(r#\"\n        #[derive(Facet)]\n        pub struct Test<T> {\n            pub(crate) a: T,\n        }\n        \"#)"
 ---
 #[automatically_derived]
-unsafe impl<'facet, T> ::facet::Facet<'facet> for Test<T>
+unsafe impl<'__facet, T> ::facet::Facet<'__facet> for Test<T>
 where
-    T: ::facet::Facet<'facet>,
+    T: ::facet::Facet<'__facet>,
 {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
