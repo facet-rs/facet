@@ -1,8 +1,8 @@
-use core::{alloc::Layout, fmt};
+use core::{alloc::Layout, fmt, hash::Hash, ptr::fn_addr_eq};
 
 use crate::{
-    ConstTypeId, Def, Facet, FunctionAbi, FunctionPointerDef, Shape, TypeNameOpts, TypeParam,
-    value_vtable,
+    ConstTypeId, Def, Facet, FunctionAbi, FunctionPointerDef, HasherProxy, MarkerTraits, Shape,
+    TypeNameOpts, TypeParam, ValueVTable,
 };
 
 #[inline(always)]
@@ -84,10 +84,41 @@ macro_rules! impl_facet_for_fn_ptr {
                 Shape::builder()
                     .id(ConstTypeId::of::<Self>())
                     .layout(Layout::new::<Self>())
-                    // FIXME: Dont use the macro here we can generate this
-                    // FIXME: type name
-                    // TODO: ^ is this still applicable?
-                    .vtable(value_vtable!(Self, type_name::<$($args,)* R>))
+                    .vtable(const {
+                        &ValueVTable::builder()
+                            .type_name(type_name::<$($args,)* R>)
+                            .debug(|data, f| fmt::Debug::fmt(unsafe { data.get::<Self>() }, f))
+                            .clone_into(|src, dst| unsafe { dst.put(src.get::<Self>().clone()) })
+                            .marker_traits(
+                                MarkerTraits::EQ
+                                    .union(MarkerTraits::SEND)
+                                    .union(MarkerTraits::SYNC)
+                                    .union(MarkerTraits::COPY)
+                                    .union(MarkerTraits::UNPIN)
+                            )
+                            .eq(|left, right| {
+                                fn_addr_eq(
+                                    *unsafe { left.get::<Self>() },
+                                    *unsafe { right.get::<Self>() },
+                                )
+                            })
+                            .partial_ord(|left, right| {
+                                #[allow(unpredictable_function_pointer_comparisons)]
+                                unsafe { left.get::<Self>() }
+                                    .partial_cmp(unsafe { right.get::<Self>() })
+                            })
+                            .ord(|left, right| {
+                                #[allow(unpredictable_function_pointer_comparisons)]
+                                unsafe { left.get::<Self>() }.cmp(unsafe { right.get::<Self>() })
+                            })
+                            .hash(|value, hasher_this, hasher_write_fn| {
+                                unsafe { value.get::<Self>() }
+                                    .hash(&mut unsafe {
+                                        HasherProxy::new(hasher_this, hasher_write_fn)
+                                    })
+                            })
+                            .build()
+                    })
                     .type_params(&[
                         $(TypeParam { name: stringify!($args), shape: || $args::SHAPE },)*
                     ])
