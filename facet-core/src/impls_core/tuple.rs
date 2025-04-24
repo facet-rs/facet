@@ -89,7 +89,7 @@ macro_rules! impl_facet_for_tuple {
                             );
 
                         let elem_shapes = const { &[$($elems::SHAPE),+] };
-                        if Characteristic::Eq.all(elem_shapes) {
+                        if Characteristic::Debug.all(elem_shapes) {
                             builder = builder.debug(|value, f| {
                                 let value = unsafe { value.get::<Self>() };
 
@@ -107,7 +107,9 @@ macro_rules! impl_facet_for_tuple {
                                     }
                                 }
                             });
+                        }
 
+                        if Characteristic::PartialEq.all(elem_shapes) {
                             builder = builder.eq(|a, b| {
                                 let a = unsafe { a.get::<Self>() };
                                 let b = unsafe { b.get::<Self>() };
