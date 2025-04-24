@@ -358,6 +358,9 @@ pub enum Def {
     /// e.g. `[T]`
     Slice(SliceDef),
 
+    /// Precisely `str`
+    Str,
+
     /// Option
     ///
     /// e.g. `Option<T>`

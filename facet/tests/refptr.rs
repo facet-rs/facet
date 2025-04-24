@@ -57,3 +57,23 @@ fn test_mut_ptr() {
     let s = &raw mut s;
     assert_eq!(vtable_debug::<*mut String>(&s), Some(format!("{s:?}")));
 }
+
+#[test]
+fn test_u8_debug() {
+    let s = 1u8;
+    assert_eq!(vtable_debug::<u8>(&s), Some(format!("{s:?}")));
+}
+
+/*
+#[test]
+fn test_slice_debug() {
+    let s = &[1, 2, 3][..];
+    assert_eq!(vtable_debug::<[u8]>(s), Some(format!("{s:?}")));
+}
+*/
+
+#[test]
+fn test_slice_ref_debug() {
+    let s = &[1, 2, 3][..];
+    assert_eq!(vtable_debug::<&[u8]>(&s), Some(format!("{s:?}")));
+}

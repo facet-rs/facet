@@ -139,9 +139,9 @@ fn report_maybe_mismatch<'a, T>(
     );
 }
 
-fn check_facts<'a, T>(val1: &'a T, val2: &'a T, expected_facts: HashSet<Fact>)
+fn check_facts<'a, T>(val1: T, val2: T, expected_facts: HashSet<Fact>)
 where
-    T: Facet<'a> + ?Sized,
+    T: Facet<'a>,
 {
     let name = format!("{}", T::SHAPE);
     eprint!("{}", format_args!("== {name}: ").yellow());
