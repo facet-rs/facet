@@ -198,6 +198,13 @@ impl ShapeBuilder {
         self
     }
 
+    /// Sets the type as unsized
+    #[inline]
+    pub const fn set_unsized(mut self) -> Self {
+        self.layout = Some(ShapeLayout::Unsized);
+        self
+    }
+
     /// Sets the `vtable` field of the `ShapeBuilder`.
     #[inline]
     pub const fn vtable(mut self, vtable: &'static ValueVTable) -> Self {
