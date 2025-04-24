@@ -93,19 +93,14 @@ macro_rules! impl_facet_for_tuple {
             $($elems: Facet<'a>,)+
         {
             const SHAPE: &'static Shape = &const {
-                fn type_name<'a $(, $elems)+>(f: &mut fmt::Formatter, opts: TypeNameOpts) -> fmt::Result
-                where
-                    $($elems: Facet<'a>,)+
-                {
-                    write_type_name_list(f, opts, "(", ", ", ")", &[$($elems::SHAPE),+])
-                }
-
                 Shape::builder()
                     .id(ConstTypeId::of::<Self>())
                     .layout(Layout::new::<Self>())
                     .vtable(&const {
                         let mut builder = ValueVTable::builder()
-                            .type_name(type_name::<$($elems),+>)
+                            .type_name(|f, opts| {
+                                write_type_name_list(f, opts, "(", ", ", ")", &[$($elems::SHAPE),+])
+                            })
                             .drop_in_place(|data| unsafe { data.drop_in_place::<Self>() })
                             .marker_traits(
                                 MarkerTraits::all()
