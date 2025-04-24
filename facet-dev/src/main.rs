@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use yansi::{Paint as _, Style};
 
-mod fn_ptr;
 mod menu;
 mod readme;
 mod sample;
@@ -324,90 +323,6 @@ pub fn enqueue_tuple_job(sender: std::sync::mpsc::Sender<Job>) {
     let mbps = if secs > 0.0 { size_mb / secs } else { 0.0 };
     debug!(
         "Generated and formatted tuple impls for {}: {:.2} MiB in {:.2} s ({:.2} MiB/s)",
-        base_path.display().blue(),
-        size_mb,
-        secs,
-        mbps.bright_magenta()
-    );
-
-    // Attempt to read existing file
-    let old_content = fs::read(base_path).ok();
-
-    let job = Job {
-        path: base_path.to_path_buf(),
-        old_content,
-        new_content: content,
-    };
-
-    if let Err(e) = sender.send(job) {
-        error!("Failed to send tuple job: {e}");
-    }
-}
-
-pub fn enqueue_fn_ptr_job(sender: std::sync::mpsc::Sender<Job>) {
-    use std::process::{Command, Stdio};
-    use std::time::Instant;
-
-    // Path where function pointer impls should be written
-    let base_path = Path::new("facet-core/src/impls_core/fn_ptr.rs");
-
-    debug!(
-        "Generating function pointer impls for {}",
-        base_path.display().blue()
-    );
-
-    // Generate the function pointer impls code
-    let start = Instant::now();
-    let output = fn_ptr::generate();
-    let duration = start.elapsed();
-
-    // Format content via rustfmt edition 2024
-    let mut rustfmt_cmd = Command::new("rustfmt")
-        .arg("--edition")
-        .arg("2024")
-        .arg("--emit")
-        .arg("stdout")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("failed to start rustfmt");
-
-    {
-        use std::io::Write;
-        let stdin = rustfmt_cmd
-            .stdin
-            .as_mut()
-            .expect("failed to open rustfmt stdin");
-        stdin
-            .write_all(output.as_bytes())
-            .expect("failed to write to rustfmt stdin");
-    }
-
-    let rustfmt_output = rustfmt_cmd
-        .wait_with_output()
-        .expect("failed to read rustfmt stdout");
-
-    if !rustfmt_output.status.success() {
-        let stderr = String::from_utf8_lossy(&rustfmt_output.stderr);
-        error!(
-            "rustfmt failed formatting {}: {}",
-            base_path.display(),
-            stderr
-        );
-    }
-
-    let content = if rustfmt_output.status.success() {
-        rustfmt_output.stdout
-    } else {
-        output.into_bytes()
-    };
-
-    let size_mb = (content.len() as f64) / (1024.0 * 1024.0);
-    let secs = duration.as_secs_f64();
-    let mbps = if secs > 0.0 { size_mb / secs } else { 0.0 };
-    debug!(
-        "Generated and formatted function pointer impls for {}: {:.2} MiB in {:.2} s ({:.2} MiB/s)",
         base_path.display().blue(),
         size_mb,
         secs,
@@ -805,17 +720,13 @@ fn main() {
         enqueue_tuple_job(send2);
     });
     let send3 = sender.clone();
-    let handle_fn_ptr = std::thread::spawn(move || {
-        enqueue_fn_ptr_job(send3);
-    });
-    let send4 = sender.clone();
     let handle_sample = std::thread::spawn(move || {
-        enqueue_sample_job(send4);
+        enqueue_sample_job(send3);
     });
     // Rustfmt job: enqueue formatting for staged .rs files
-    let send5 = sender.clone();
+    let send4 = sender.clone();
     let handle_rustfmt = std::thread::spawn(move || {
-        enqueue_rustfmt_jobs(send5, &staged_files);
+        enqueue_rustfmt_jobs(send4, &staged_files);
     });
 
     // Drop original sender so the channel closes when all workers finish
@@ -830,7 +741,6 @@ fn main() {
     // Wait for all job enqueuers to finish
     handle_readme.join().unwrap();
     handle_tuple.join().unwrap();
-    handle_fn_ptr.join().unwrap();
     handle_sample.join().unwrap();
     handle_rustfmt.join().unwrap();
 
