@@ -13,7 +13,7 @@ fn main() {
     }
 
     fn scope<'a>(token: ContravariantLifetime<'static>) -> Result<Wrapper<'a>, ReflectError> {
-        Wip::<'a>::alloc::<Wrapper<'a>>()
+        Wip::<'a>::alloc::<Wrapper<'a>>()?
             .field_named("token")?
             .put(token)?
             .pop()?

@@ -7,7 +7,7 @@ struct Foo<'a> {
 }
 
 fn main() -> eyre::Result<()> {
-    let mut wip = Wip::alloc::<Foo>();
+    let mut wip = Wip::alloc::<Foo>()?;
     let wip = {
         let s = "abc".to_string();
         let foo = Foo { s: &s };

@@ -13,7 +13,7 @@ fn main() {
     }
 
     fn scope<'a>(token: CovariantLifetime<'a>) -> Result<Wrapper<'static>, ReflectError> {
-        Wip::<'static>::alloc::<Wrapper<'static>>()
+        Wip::<'static>::alloc::<Wrapper<'static>>()?
             .field_named("token")?
             .put(token)?
             .pop()?
