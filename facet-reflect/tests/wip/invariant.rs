@@ -15,7 +15,7 @@ fn build_with_invariants() -> eyre::Result<()> {
         }
     }
 
-    let wip: MyNonZeroU8 = Wip::alloc::<MyNonZeroU8>()
+    let wip: MyNonZeroU8 = Wip::alloc::<MyNonZeroU8>()?
         .field(0)?
         .put(42u8)?
         .pop()?
@@ -23,7 +23,7 @@ fn build_with_invariants() -> eyre::Result<()> {
         .materialize()?;
     assert_eq!(wip, MyNonZeroU8(42));
 
-    let result = Wip::alloc::<MyNonZeroU8>()
+    let result = Wip::alloc::<MyNonZeroU8>()?
         .field(0)?
         .put(0_u8)?
         .pop()?

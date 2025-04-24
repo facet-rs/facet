@@ -42,7 +42,14 @@ where
     T: Facet<'facet>,
     'input: 'facet,
 {
-    let wip = Wip::alloc::<T>();
+    let wip = Wip::alloc::<T>().map_err(|e| {
+        JsonError::new(
+            JsonErrorKind::ReflectError(e),
+            json,
+            Span::new(0, json.len()),
+            "$".to_string(),
+        )
+    })?;
     let heap_value = from_slice_wip(wip, json)?;
     Ok(heap_value.materialize::<T>().unwrap())
 }
@@ -212,6 +219,14 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                         if has_unset && container_shape.has_default_attr() {
                             // let's allocate and build a default value
                             let default_val = Wip::<'facet>::alloc_shape(container_shape)
+                                .map_err(|e| {
+                                    JsonError::new(
+                                        JsonErrorKind::ReflectError(e),
+                                        input,
+                                        last_span,
+                                        wip.path(),
+                                    )
+                                })?
                                 .put_default()
                                 .map_err(|e| {
                                     JsonError::new(

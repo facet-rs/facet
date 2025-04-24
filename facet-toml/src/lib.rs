@@ -49,7 +49,14 @@ pub fn from_str<'input: 'facet, 'facet, T: Facet<'facet>>(
     trace!("Parsing TOML");
 
     // Allocate the type
-    let wip = Wip::alloc::<T>();
+    let wip = Wip::alloc::<T>().map_err(|e| {
+        TomlError::new(
+            toml,
+            TomlErrorKind::GenericReflect(e),
+            None,
+            "$".to_string(),
+        )
+    })?;
 
     // Parse the TOML document
     let docs: ImDocument<String> = toml.parse().map_err(|e: TomlEditError| {

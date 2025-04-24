@@ -4,7 +4,7 @@ use facet_reflect::Wip;
 fn wip_option_testleak1() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    let _ = Wip::alloc::<Option<String>>()
+    let _ = Wip::alloc::<Option<String>>()?
         .push_some()?
         .put(String::from("Hello, world!"))?
         .pop()?
@@ -18,7 +18,7 @@ fn wip_option_testleak1() -> eyre::Result<()> {
 fn wip_option_testleak2() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    let wip = Wip::alloc::<Option<String>>();
+    let wip = Wip::alloc::<Option<String>>()?;
     let wip = wip.push_some()?;
     let wip = wip.put(String::from("Hello, world!"))?;
     let wip = wip.pop()?;
@@ -31,7 +31,7 @@ fn wip_option_testleak2() -> eyre::Result<()> {
 fn wip_option_testleak3() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    Wip::alloc::<Option<String>>()
+    Wip::alloc::<Option<String>>()?
         .push_some()?
         .put(String::from("Hello, world!"))?
         .pop()?;
@@ -43,7 +43,7 @@ fn wip_option_testleak3() -> eyre::Result<()> {
 fn wip_option_testleak4() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    let _ = Wip::alloc::<Option<String>>()
+    let _ = Wip::alloc::<Option<String>>()?
         .push_some()?
         .put(String::from("Hello, world!"));
 
@@ -54,7 +54,7 @@ fn wip_option_testleak4() -> eyre::Result<()> {
 fn wip_option_testleak5() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    Wip::alloc::<Option<String>>().push_some()?;
+    Wip::alloc::<Option<String>>()?.push_some()?;
 
     Ok(())
 }
@@ -63,7 +63,7 @@ fn wip_option_testleak5() -> eyre::Result<()> {
 fn wip_option_testleak6() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    Wip::alloc::<Option<String>>();
+    Wip::alloc::<Option<String>>()?;
 
     Ok(())
 }

@@ -40,7 +40,7 @@ where
 {
     log::trace!("Entering from_slice function");
     let mut s = s;
-    let mut wip = Wip::alloc::<T>();
+    let mut wip = Wip::alloc::<T>().expect("failed to allocate");
     log::trace!("Allocated Poke for type T");
 
     while let Some(token) = s.first() {

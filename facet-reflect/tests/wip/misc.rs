@@ -17,7 +17,7 @@ struct Inner {
 fn wip_nested() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    let v = Wip::alloc::<Outer>()
+    let v = Wip::alloc::<Outer>()?
         .field_named("name")?
         .put(String::from("Hello, world!"))?
         .pop()?
@@ -47,7 +47,7 @@ fn wip_nested() -> eyre::Result<()> {
 fn wip_nested_out_of_order() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    let v = Wip::alloc::<Outer>()
+    let v = Wip::alloc::<Outer>()?
         .field_named("inner")?
         .field_named("x")?
         .put(42)?
@@ -87,7 +87,7 @@ fn readme_sample() -> eyre::Result<()> {
         bar: String,
     }
 
-    let foo_bar = Wip::alloc::<FooBar>()
+    let foo_bar = Wip::alloc::<FooBar>()?
         .field_named("foo")?
         .put(42u64)?
         .pop()?
@@ -119,14 +119,14 @@ fn wip_unit_enum() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
     // Test unit variant A
-    let a = Wip::alloc::<SimpleEnum>()
+    let a = Wip::alloc::<SimpleEnum>()?
         .variant_named("A")?
         .build()?
         .materialize::<SimpleEnum>()?;
     assert_eq!(a, SimpleEnum::A);
 
     // Test unit variant B
-    let b = Wip::alloc::<SimpleEnum>()
+    let b = Wip::alloc::<SimpleEnum>()?
         .variant(1)? // B is at index 1
         .build()?
         .materialize::<SimpleEnum>()?;
@@ -149,14 +149,14 @@ fn wip_enum_with_data() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
     // Test empty variant
-    let empty = Wip::alloc::<EnumWithData>()
+    let empty = Wip::alloc::<EnumWithData>()?
         .variant_named("Empty")?
         .build()?
         .materialize::<EnumWithData>()?;
     assert_eq!(empty, EnumWithData::Empty);
 
     // Test single-field tuple variant
-    let single = Wip::alloc::<EnumWithData>()
+    let single = Wip::alloc::<EnumWithData>()?
         .variant_named("Single")?
         .field(0)? // Access the first field
         .put(42)?
@@ -166,7 +166,7 @@ fn wip_enum_with_data() -> eyre::Result<()> {
     assert_eq!(single, EnumWithData::Single(42));
 
     // Test multi-field tuple variant
-    let tuple = Wip::alloc::<EnumWithData>()
+    let tuple = Wip::alloc::<EnumWithData>()?
         .variant_named("Tuple")?
         .field(0)?
         .put(42)?
@@ -179,7 +179,7 @@ fn wip_enum_with_data() -> eyre::Result<()> {
     assert_eq!(tuple, EnumWithData::Tuple(42, String::from("Hello")));
 
     // Test struct variant
-    let struct_variant = Wip::alloc::<EnumWithData>()
+    let struct_variant = Wip::alloc::<EnumWithData>()?
         .variant_named("Struct")?
         .field_named("x")?
         .put(42)?
@@ -214,14 +214,14 @@ fn wip_enum_with_data_repr_c() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
     // Test empty variant
-    let empty = Wip::alloc::<EnumWithDataReprC>()
+    let empty = Wip::alloc::<EnumWithDataReprC>()?
         .variant_named("Empty")?
         .build()?
         .materialize::<EnumWithDataReprC>()?;
     assert_eq!(empty, EnumWithDataReprC::Empty);
 
     // Test single-field tuple variant
-    let single = Wip::alloc::<EnumWithDataReprC>()
+    let single = Wip::alloc::<EnumWithDataReprC>()?
         .variant_named("Single")?
         .field(0)? // Access the first field
         .put(42)?
@@ -231,7 +231,7 @@ fn wip_enum_with_data_repr_c() -> eyre::Result<()> {
     assert_eq!(single, EnumWithDataReprC::Single(42));
 
     // Test multi-field tuple variant
-    let tuple = Wip::alloc::<EnumWithDataReprC>()
+    let tuple = Wip::alloc::<EnumWithDataReprC>()?
         .variant_named("Tuple")?
         .field(0)?
         .put(42)?
@@ -244,7 +244,7 @@ fn wip_enum_with_data_repr_c() -> eyre::Result<()> {
     assert_eq!(tuple, EnumWithDataReprC::Tuple(42, String::from("Hello")));
 
     // Test struct variant
-    let struct_variant = Wip::alloc::<EnumWithDataReprC>()
+    let struct_variant = Wip::alloc::<EnumWithDataReprC>()?
         .variant_named("Struct")?
         .field_named("x")?
         .put(42)?
@@ -279,14 +279,14 @@ fn wip_enum_with_data_repr_c_i16() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
     // Test empty variant
-    let empty = Wip::alloc::<EnumWithDataReprCI16>()
+    let empty = Wip::alloc::<EnumWithDataReprCI16>()?
         .variant_named("Empty")?
         .build()?
         .materialize::<EnumWithDataReprCI16>()?;
     assert_eq!(empty, EnumWithDataReprCI16::Empty);
 
     // Test single-field tuple variant
-    let single = Wip::alloc::<EnumWithDataReprCI16>()
+    let single = Wip::alloc::<EnumWithDataReprCI16>()?
         .variant_named("Single")?
         .field(0)? // Access the first field
         .put(42)?
@@ -296,7 +296,7 @@ fn wip_enum_with_data_repr_c_i16() -> eyre::Result<()> {
     assert_eq!(single, EnumWithDataReprCI16::Single(42));
 
     // Test multi-field tuple variant
-    let tuple = Wip::alloc::<EnumWithDataReprCI16>()
+    let tuple = Wip::alloc::<EnumWithDataReprCI16>()?
         .variant_named("Tuple")?
         .field(0)?
         .put(42)?
@@ -312,7 +312,7 @@ fn wip_enum_with_data_repr_c_i16() -> eyre::Result<()> {
     );
 
     // Test struct variant
-    let struct_variant = Wip::alloc::<EnumWithDataReprCI16>()
+    let struct_variant = Wip::alloc::<EnumWithDataReprCI16>()?
         .variant_named("Struct")?
         .field_named("x")?
         .put(42)?
@@ -389,7 +389,7 @@ fn test_enum_reprs() -> eyre::Result<()> {
     assert_eq!(field_offsets::<ReprCU8>(), [2, 4]);
 
     fn build<T: Facet<'static>>() -> eyre::Result<T> {
-        let v = Wip::alloc::<T>()
+        let v = Wip::alloc::<T>()?
             .variant(0)?
             .field(0)?
             .put(1u8)?
@@ -416,21 +416,21 @@ fn wip_enum_error_cases() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
     // Test error: trying to access a field without selecting a variant
-    let result = Wip::alloc::<EnumWithData>().field_named("x");
+    let result = Wip::alloc::<EnumWithData>()?.field_named("x");
     assert!(result.is_err());
 
     // Test error: trying to select a non-existent variant
-    let result = Wip::alloc::<EnumWithData>().variant_named("NonExistent");
+    let result = Wip::alloc::<EnumWithData>()?.variant_named("NonExistent");
     assert!(result.is_err());
 
     // Test error: trying to access a non-existent field in a variant
-    let result = Wip::alloc::<EnumWithData>()
+    let result = Wip::alloc::<EnumWithData>()?
         .variant_named("Struct")?
         .field_named("non_existent");
     assert!(result.is_err());
 
     // Test error: trying to build without initializing all fields
-    let result = Wip::alloc::<EnumWithData>()
+    let result = Wip::alloc::<EnumWithData>()?
         .variant_named("Struct")?
         .field_named("x")?
         .put(42)?
@@ -449,7 +449,7 @@ fn wip_switch_enum_variant() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
     // Test switching variants
-    let result = Wip::alloc::<EnumWithData>()
+    let result = Wip::alloc::<EnumWithData>()?
         .variant_named("Single")?
         .field(0)?
         .put(42)?
@@ -476,7 +476,7 @@ fn wip_empty_list() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
     // Create an empty list with put_empty_list
-    let empty_list = Wip::alloc::<Vec<i32>>()
+    let empty_list = Wip::alloc::<Vec<i32>>()?
         .put_empty_list()?
         .build()?
         .materialize::<Vec<i32>>()?;
@@ -492,7 +492,7 @@ fn wip_list_push() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
     // Build a vector by pushing elements one by one
-    let list = Wip::alloc::<Vec<i32>>()
+    let list = Wip::alloc::<Vec<i32>>()?
         .begin_pushback()?
         .push()?
         .put(10)?
@@ -517,7 +517,7 @@ fn wip_list_string() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
     // Build a vector of strings
-    let list = Wip::alloc::<Vec<String>>()
+    let list = Wip::alloc::<Vec<String>>()?
         .begin_pushback()?
         .push()?
         .put("hello".to_string())?
@@ -544,7 +544,7 @@ fn wip_struct_with_list() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
     // Create a struct that contains a list
-    let with_list = Wip::alloc::<WithList>()
+    let with_list = Wip::alloc::<WithList>()?
         .field_named("name")?
         .put("test list".to_string())?
         .pop()?
@@ -579,15 +579,15 @@ fn wip_list_error_cases() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
     // Test error: trying to push to a non-list type
-    let result = Wip::alloc::<i32>().push();
+    let result = Wip::alloc::<i32>()?.push();
     assert!(result.is_err());
 
     // Test error: trying to get element shape from non-list
-    let result = Wip::alloc::<String>().element_shape();
+    let result = Wip::alloc::<String>()?.element_shape();
     assert!(result.is_err());
 
     // Test error: trying to put_empty_list on non-list type
-    let result = Wip::alloc::<i32>().put_empty_list();
+    let result = Wip::alloc::<i32>()?.put_empty_list();
     assert!(result.is_err());
 
     Ok(())
@@ -608,7 +608,7 @@ fn wip_opaque_arc() -> eyre::Result<()> {
         inner: Handle,
     }
 
-    let result = Wip::alloc::<Container>()
+    let result = Wip::alloc::<Container>()?
         .field_named("inner")?
         .put(Handle(std::sync::Arc::new(NotDerivingFacet(35))))?
         .pop()?
@@ -625,7 +625,7 @@ fn wip_put_option_explicit_some() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
     // Test switching variants
-    let result = Wip::alloc::<Option<u64>>()
+    let result = Wip::alloc::<Option<u64>>()?
         .put::<Option<u64>>(Some(42))?
         .build()?
         .materialize::<Option<u64>>()?;
@@ -639,7 +639,7 @@ fn wip_put_option_explicit_some() -> eyre::Result<()> {
 fn wip_put_option_explicit_none() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    let result = Wip::alloc::<Option<u64>>()
+    let result = Wip::alloc::<Option<u64>>()?
         .put::<Option<u64>>(None)?
         .build()?
         .materialize::<Option<u64>>()?;
@@ -654,7 +654,7 @@ fn wip_put_option_implicit_some() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
     // Test switching variants
-    let result = Wip::alloc::<Option<u64>>()
+    let result = Wip::alloc::<Option<u64>>()?
         .put::<u64>(42)?
         .build()?
         .materialize::<Option<u64>>()?;
@@ -669,7 +669,7 @@ fn wip_parse_option() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
     // Test switching variants
-    let result = Wip::alloc::<Option<f64>>()
+    let result = Wip::alloc::<Option<f64>>()?
         .parse("8.13")?
         .build()?
         .materialize::<Option<f64>>()?;
@@ -689,7 +689,7 @@ fn wip_option_explicit_some_through_push_some() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
     // Test switching variants
-    let result = Wip::alloc::<Option<Foo>>()
+    let result = Wip::alloc::<Option<Foo>>()?
         .push_some()?
         .field_named("foo")?
         .put::<u32>(42)?
@@ -715,7 +715,7 @@ fn wip_fn_ptr() -> eyre::Result<()> {
         1113
     }
 
-    let result = Wip::alloc::<Foo>()
+    let result = Wip::alloc::<Foo>()?
         .field_named("foo")?
         .put::<fn() -> i32>(f)?
         .pop()?
@@ -725,7 +725,7 @@ fn wip_fn_ptr() -> eyre::Result<()> {
     assert_eq!((result.foo)(), 1113);
 
     assert!(
-        Wip::alloc::<Foo>()
+        Wip::alloc::<Foo>()?
             .field_named("foo")?
             .put::<fn() -> f32>(|| 0.0)
             .is_err()

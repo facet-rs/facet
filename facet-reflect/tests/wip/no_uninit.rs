@@ -18,7 +18,7 @@ fn struct_uninit() {
     }
 
     facet_testhelpers::setup();
-    let wip = Wip::alloc::<FooBar>();
+    let wip = Wip::alloc::<FooBar>().unwrap();
     assert!(matches!(
         wip.build(),
         Err(ReflectError::UninitializedField { .. })
@@ -36,16 +36,22 @@ fn enum_uninit() {
     }
 
     facet_testhelpers::setup();
-    let wip = Wip::alloc::<FooBar>();
+    let wip = Wip::alloc::<FooBar>().unwrap();
     assert!(matches!(
         wip.build(),
         Err(ReflectError::NoVariantSelected { .. })
     ),);
 
-    let wip = Wip::alloc::<FooBar>().variant_named("Foo").unwrap();
+    let wip = Wip::alloc::<FooBar>()
+        .unwrap()
+        .variant_named("Foo")
+        .unwrap();
     assert!(wip.build().is_ok());
 
-    let wip = Wip::alloc::<FooBar>().variant_named("Bar").unwrap();
+    let wip = Wip::alloc::<FooBar>()
+        .unwrap()
+        .variant_named("Bar")
+        .unwrap();
     assert!(matches!(
         wip.build(),
         Err(ReflectError::UninitializedEnumField { .. })
@@ -84,7 +90,7 @@ fn smart_pointer_uninit() {
 
 fn test_uninit<T: Facet<'static>>() {
     facet_testhelpers::setup();
-    let wip = Wip::alloc::<T>();
+    let wip = Wip::alloc::<T>().unwrap();
     assert!(
         matches!(wip.build(), Err(ReflectError::UninitializedValue { .. })),
         "Expected UninitializedValue error"

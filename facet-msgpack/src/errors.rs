@@ -20,6 +20,14 @@ pub enum Error {
     UnsupportedShape(String),
     /// Type is not supported for deserialization
     UnsupportedType(String),
+    /// Reflection error
+    ReflectError(facet_reflect::ReflectError),
+}
+
+impl From<facet_reflect::ReflectError> for Error {
+    fn from(err: facet_reflect::ReflectError) -> Self {
+        Self::ReflectError(err)
+    }
 }
 
 impl fmt::Display for Error {
@@ -36,6 +44,9 @@ impl fmt::Display for Error {
             }
             Error::UnsupportedType(typ) => {
                 write!(f, "Unsupported type for deserialization: {}", typ)
+            }
+            Error::ReflectError(err) => {
+                write!(f, "Reflection error: {}", err)
             }
         }
     }

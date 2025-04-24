@@ -31,7 +31,7 @@ use log::trace;
 pub fn from_slice<'input: 'facet, 'facet, T: Facet<'facet>>(
     msgpack: &'input [u8],
 ) -> Result<T, DecodeError> {
-    from_slice_value(Wip::alloc::<T>(), msgpack)?
+    from_slice_value(Wip::alloc::<T>()?, msgpack)?
         .materialize::<T>()
         .map_err(|e| DecodeError::UnsupportedType(e.to_string()))
 }

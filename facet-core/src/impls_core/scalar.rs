@@ -154,7 +154,7 @@ macro_rules! impl_facet_for_integer {
 
                             vtable.try_from = Some(|source, source_shape, dest| {
                                 if source_shape == Self::SHAPE {
-                                    return Ok(unsafe { dest.copy_from(source, source_shape) });
+                                    return Ok(unsafe { dest.copy_from(source, source_shape)? });
                                 }
                                 if source_shape == u64::SHAPE {
                                     let value: u64 = *unsafe { source.get::<u64>() };
@@ -199,7 +199,7 @@ macro_rules! impl_facet_for_integer {
 
                             vtable.try_from = Some(|source, source_shape, dest| {
                                 if source_shape == Self::SHAPE {
-                                    return Ok(unsafe { dest.copy_from(source, source_shape) });
+                                    return Ok(unsafe { dest.copy_from(source, source_shape)? });
                                 }
                                 if source_shape == <$type>::SHAPE {
                                     let value: $type = *unsafe { source.get::<$type>() };
@@ -496,7 +496,7 @@ unsafe impl Facet<'_> for f32 {
 
                     vtable.try_from = Some(|source, source_shape, dest| {
                         if source_shape == Self::SHAPE {
-                            return Ok(unsafe { dest.copy_from(source, source_shape) });
+                            return Ok(unsafe { dest.copy_from(source, source_shape)? });
                         }
                         if source_shape == u64::SHAPE {
                             let value: u64 = *unsafe { source.get::<u64>() };
@@ -551,7 +551,7 @@ unsafe impl Facet<'_> for f64 {
 
                     vtable.try_from = Some(|source, source_shape, dest| {
                         if source_shape == Self::SHAPE {
-                            return Ok(unsafe { dest.copy_from(source, source_shape) });
+                            return Ok(unsafe { dest.copy_from(source, source_shape)? });
                         }
                         if source_shape == u64::SHAPE {
                             let value: u64 = *unsafe { source.get::<u64>() };

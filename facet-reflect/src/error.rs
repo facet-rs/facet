@@ -115,6 +115,12 @@ pub enum ReflectError {
         /// The shape of the value that has a `default` attribute but no default implementation.
         shape: &'static Shape,
     },
+
+    /// The type is unsized
+    Unsized {
+        /// The shape for the type that is unsized
+        shape: &'static Shape,
+    },
 }
 
 impl core::fmt::Display for ReflectError {
@@ -205,6 +211,7 @@ impl core::fmt::Display for ReflectError {
                 "Shape '{}' has a `default` attribute but no default implementation",
                 shape
             ),
+            ReflectError::Unsized { shape } => write!(f, "Shape '{}' is unsized", shape),
         }
     }
 }

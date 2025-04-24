@@ -4,7 +4,7 @@
 
 use core::{marker::PhantomData, ptr::NonNull};
 
-use crate::Shape;
+use crate::{Shape, UnsizedError};
 
 /// A type-erased pointer to an uninitialized value
 #[derive(Debug, Clone, Copy)]
@@ -22,14 +22,15 @@ impl<'mem> PtrUninit<'mem> {
         self,
         src: PtrConst<'src>,
         shape: &'static Shape,
-    ) -> PtrMut<'mem> {
+    ) -> Result<PtrMut<'mem>, UnsizedError> {
+        let layout = shape.layout.sized_layout()?;
         // SAFETY: The caller is responsible for upholding the invariants:
         // - `src` must be valid for reads of `shape.size` bytes
         // - `self` must be valid for writes of `shape.size` bytes and properly aligned
         // - The regions may not overlap
         unsafe {
-            core::ptr::copy_nonoverlapping(src.as_byte_ptr(), self.0, shape.layout.size());
-            self.assume_init()
+            core::ptr::copy_nonoverlapping(src.as_byte_ptr(), self.0, layout.size());
+            Ok(self.assume_init())
         }
     }
 

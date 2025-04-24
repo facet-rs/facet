@@ -78,10 +78,15 @@ impl Frame {
                 self.data.as_mut_byte_ptr().magenta(),
                 self.shape.green(),
             );
-            if self.shape.layout.size() != 0 {
-                unsafe {
-                    alloc::alloc::dealloc(self.data.as_mut_byte_ptr(), self.shape.layout);
+            match self.shape.layout {
+                facet_core::ShapeLayout::Sized(layout) => {
+                    if layout.size() != 0 {
+                        unsafe {
+                            alloc::alloc::dealloc(self.data.as_mut_byte_ptr(), layout);
+                        }
+                    }
                 }
+                facet_core::ShapeLayout::Unsized => unimplemented!(),
             }
             self.istate.flags.remove(FrameFlags::ALLOCATED);
         } else {
@@ -300,9 +305,11 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
     }
 
     /// Allocates a new value of the given shape
-    pub fn alloc_shape(shape: &'static Shape) -> Self {
-        let data = shape.allocate();
-        Self {
+    pub fn alloc_shape(shape: &'static Shape) -> Result<Self, ReflectError> {
+        let data = shape
+            .allocate()
+            .map_err(|_| ReflectError::Unsized { shape })?;
+        Ok(Self {
             frames: alloc::vec![Frame {
                 data,
                 shape,
@@ -311,11 +318,11 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
             }],
             istates: Default::default(),
             invariant: PhantomData,
-        }
+        })
     }
 
     /// Allocates a new value of type `S`
-    pub fn alloc<S: Facet<'facet_lifetime>>() -> Self {
+    pub fn alloc<S: Facet<'facet_lifetime>>() -> Result<Self, ReflectError> {
         Self::alloc_shape(S::SHAPE)
     }
 
@@ -387,6 +394,10 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
         let root_frame = Frame::recompose(root_id, root_istate);
         let root_shape = root_frame.shape;
         let root_data_ptr = root_frame.data; // Keep the root pointer for the final HeapValue
+        let root_layout = root_shape
+            .layout
+            .sized_layout()
+            .map_err(|_| ReflectError::Unsized { shape: root_shape })?;
 
         // 6. Transfer ownership of the root data to the HeapValue
         // The root frame should have had the ALLOCATED flag if it was heap allocated.
@@ -394,7 +405,7 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
         // Find the original root istate again to check the flag.
         let guard = Guard {
             ptr: root_data_ptr.as_mut_byte_ptr(),
-            layout: root_shape.layout,
+            layout: root_layout,
         };
 
         // 3. Initialize `to_check`
@@ -873,7 +884,11 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
                         // Copy the value to the field
                         unsafe {
                             let field_data = frame.data.field_uninit_at(field.offset);
-                            field_data.copy_from(src, field.shape());
+                            field_data.copy_from(src, field.shape()).map_err(|_| {
+                                ReflectError::Unsized {
+                                    shape: field.shape(),
+                                }
+                            })?;
                             frame.istate.fields.set(i);
                         }
 
@@ -916,7 +931,11 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
                             // Copy the value to the field
                             unsafe {
                                 let field_data = frame.data.field_uninit_at(field.offset);
-                                field_data.copy_from(src, field.shape());
+                                field_data.copy_from(src, field.shape()).map_err(|_| {
+                                    ReflectError::Unsized {
+                                        shape: field.shape(),
+                                    }
+                                })?;
                                 frame.istate.fields.set(i);
                             }
 
@@ -999,7 +1018,10 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
 
         unsafe {
             // Copy the contents from src to destination
-            frame.data.copy_from(src, frame.shape);
+            frame
+                .data
+                .copy_from(src, frame.shape)
+                .map_err(|_| ReflectError::Unsized { shape: frame.shape })?;
             frame.mark_fully_initialized();
         }
 
@@ -1343,7 +1365,11 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
         let element_shape = self.element_shape()?;
 
         // Allocate memory for the element
-        let element_data = element_shape.allocate();
+        let element_data = element_shape
+            .allocate()
+            .map_err(|_| ReflectError::Unsized {
+                shape: element_shape,
+            })?;
 
         // Create a new frame for the element
         let element_frame = Frame {
@@ -1386,7 +1412,9 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
         let inner_shape = option_def.t();
 
         // Allocate memory for the inner value
-        let inner_data = inner_shape.allocate();
+        let inner_data = inner_shape
+            .allocate()
+            .map_err(|_| ReflectError::Unsized { shape: inner_shape })?;
 
         // Create a new frame for the inner value
         let inner_frame = Frame {
@@ -1523,7 +1551,9 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
         let key_shape = self.key_shape()?;
 
         // Allocate memory for the key
-        let key_data = key_shape.allocate();
+        let key_data = key_shape
+            .allocate()
+            .map_err(|_| ReflectError::Unsized { shape: key_shape })?;
 
         // Create a new frame for the key
         let key_frame = Frame {
@@ -1601,7 +1631,9 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
         let value_shape = map_def.v;
 
         // Allocate memory for the value
-        let value_data = value_shape.allocate();
+        let value_data = value_shape
+            .allocate()
+            .map_err(|_| ReflectError::Unsized { shape: value_shape })?;
 
         // Create a new frame for the value
         let value_frame = Frame {
@@ -2077,10 +2109,12 @@ impl Drop for Wip<'_> {
 
                         // we'll also need to clean up if we're root
                         if frame.istate.mode == FrameMode::Root {
-                            _root_guard = Some(Guard {
-                                ptr: frame.data.as_mut_byte_ptr(),
-                                layout: frame.shape.layout,
-                            });
+                            if let Ok(layout) = frame.shape.layout.sized_layout() {
+                                _root_guard = Some(Guard {
+                                    ptr: frame.data.as_mut_byte_ptr(),
+                                    layout,
+                                });
+                            }
                         }
                     }
                 }
@@ -2097,10 +2131,12 @@ impl Drop for Wip<'_> {
 
                     // we'll also need to clean up if we're root
                     if frame.istate.mode == FrameMode::Root {
-                        _root_guard = Some(Guard {
-                            ptr: frame.data.as_mut_byte_ptr(),
-                            layout: frame.shape.layout,
-                        });
+                        if let Ok(layout) = frame.shape.layout.sized_layout() {
+                            _root_guard = Some(Guard {
+                                ptr: frame.data.as_mut_byte_ptr(),
+                                layout,
+                            });
+                        }
                     }
                 }
                 Def::Array(_)

@@ -11,8 +11,9 @@ fn unit_struct() {
     // Check the name using Display
     assert_eq!(format!("{}", shape), "UnitStruct");
 
-    assert_eq!(shape.layout.size(), 0);
-    assert_eq!(shape.layout.align(), 1);
+    let layout = shape.layout.sized_layout().unwrap();
+    assert_eq!(layout.size(), 0);
+    assert_eq!(layout.align(), 1);
 
     if let Def::Struct(Struct { kind, fields, .. }) = shape.def {
         assert_eq!(kind, StructKind::Unit);
@@ -36,8 +37,10 @@ fn simple_struct() {
         // Check the name using Display
         assert_eq!(format!("{}", shape), "Blah");
 
-        assert_eq!(shape.layout.size(), 32);
-        assert_eq!(shape.layout.align(), 8);
+        let layout = shape.layout.sized_layout().unwrap();
+
+        assert_eq!(layout.size(), 32);
+        assert_eq!(layout.align(), 8);
 
         if let Def::Struct(Struct { kind, fields, .. }) = shape.def {
             assert_eq!(kind, StructKind::Struct);
@@ -45,14 +48,18 @@ fn simple_struct() {
 
             let foo_field = &fields[0];
             assert_eq!(foo_field.name, "foo");
-            assert_eq!(foo_field.shape().layout.size(), 4);
-            assert_eq!(foo_field.shape().layout.align(), 4);
+
+            let foo_layout = foo_field.shape().layout.sized_layout().unwrap();
+            assert_eq!(foo_layout.size(), 4);
+            assert_eq!(foo_layout.align(), 4);
             assert_eq!(foo_field.offset, offset_of!(Blah, foo));
 
             let bar_field = &fields[1];
             assert_eq!(bar_field.name, "bar");
-            assert_eq!(bar_field.shape().layout.size(), 24);
-            assert_eq!(bar_field.shape().layout.align(), 8);
+
+            let bar_layout = bar_field.shape().layout.sized_layout().unwrap();
+            assert_eq!(bar_layout.size(), 24);
+            assert_eq!(bar_layout.align(), 8);
             assert_eq!(bar_field.offset, offset_of!(Blah, bar));
         } else {
             panic!("Expected Struct innards");

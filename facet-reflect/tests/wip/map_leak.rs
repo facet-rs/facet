@@ -7,7 +7,7 @@ use facet_reflect::Wip;
 fn wip_map_leaktest1() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    let wip = Wip::alloc::<HashMap<String, String>>()
+    let wip = Wip::alloc::<HashMap<String, String>>()?
         .begin_map_insert()?
         .push_map_key()?
         .put::<String>("key".into())?
@@ -25,7 +25,7 @@ fn wip_map_leaktest1() -> eyre::Result<()> {
 fn wip_map_leaktest2() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    let wip = Wip::alloc::<HashMap<String, String>>()
+    let wip = Wip::alloc::<HashMap<String, String>>()?
         .begin_map_insert()?
         .push_map_key()?
         .put::<String>("key".into())?
@@ -42,7 +42,7 @@ fn wip_map_leaktest2() -> eyre::Result<()> {
 fn wip_map_leaktest3() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    let wip = Wip::alloc::<HashMap<String, String>>()
+    let wip = Wip::alloc::<HashMap<String, String>>()?
         .begin_map_insert()?
         .push_map_key()?
         .put::<String>("key".into())?
@@ -58,7 +58,7 @@ fn wip_map_leaktest3() -> eyre::Result<()> {
 fn wip_map_leaktest4() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    let wip = Wip::alloc::<HashMap<String, String>>()
+    let wip = Wip::alloc::<HashMap<String, String>>()?
         .begin_map_insert()?
         .push_map_key()?
         .put::<String>("key".into())?
@@ -73,7 +73,7 @@ fn wip_map_leaktest4() -> eyre::Result<()> {
 fn wip_map_leaktest5() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    let wip = Wip::alloc::<HashMap<String, String>>()
+    let wip = Wip::alloc::<HashMap<String, String>>()?
         .begin_map_insert()?
         .push_map_key()?
         .put::<String>("key".into())?;
@@ -87,7 +87,7 @@ fn wip_map_leaktest5() -> eyre::Result<()> {
 fn wip_map_leaktest6() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    let wip = Wip::alloc::<HashMap<String, String>>()
+    let wip = Wip::alloc::<HashMap<String, String>>()?
         .begin_map_insert()?
         .push_map_key()?;
     drop(wip);
@@ -100,7 +100,7 @@ fn wip_map_leaktest6() -> eyre::Result<()> {
 fn wip_map_leaktest7() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    let wip = Wip::alloc::<HashMap<String, String>>().begin_map_insert()?;
+    let wip = Wip::alloc::<HashMap<String, String>>()?.begin_map_insert()?;
     drop(wip);
 
     Ok(())
@@ -111,7 +111,7 @@ fn wip_map_leaktest7() -> eyre::Result<()> {
 fn wip_map_leaktest8() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    let wip = Wip::alloc::<HashMap<String, String>>();
+    let wip = Wip::alloc::<HashMap<String, String>>()?;
     drop(wip);
 
     Ok(())

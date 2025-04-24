@@ -53,7 +53,7 @@ pub struct Shape {
 
     /// Size, alignment — enough to allocate a value of this type
     /// (but not initialize it.)
-    pub layout: Layout,
+    pub layout: ShapeLayout,
 
     /// Function pointers to perform various operations: print the full type
     /// name (with generic type parameters), use the Display implementation,
@@ -80,6 +80,37 @@ pub struct Shape {
     /// Attributes that can be applied to a shape
     pub attributes: &'static [ShapeAttribute],
 }
+
+/// Layout of the shape
+#[derive(Clone, Copy, Debug, Hash)]
+pub enum ShapeLayout {
+    /// `Sized` type
+    Sized(Layout),
+    /// `!Sized` type
+    Unsized,
+}
+
+impl ShapeLayout {
+    /// `Layout` if this type is `Sized`
+    pub fn sized_layout(self) -> Result<Layout, UnsizedError> {
+        match self {
+            ShapeLayout::Sized(layout) => Ok(layout),
+            ShapeLayout::Unsized => Err(UnsizedError),
+        }
+    }
+}
+
+/// Tried to get the `Layout` of an unsized type
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
+pub struct UnsizedError;
+
+impl core::fmt::Display for UnsizedError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "Not a Sized type")
+    }
+}
+
+impl core::error::Error for UnsizedError {}
 
 /// An attribute that can be applied to a shape
 #[derive(Debug, PartialEq)]
@@ -130,7 +161,7 @@ impl Shape {
 /// Builder for [`Shape`]
 pub struct ShapeBuilder {
     id: Option<ConstTypeId>,
-    layout: Option<Layout>,
+    layout: Option<ShapeLayout>,
     vtable: Option<&'static ValueVTable>,
     def: Option<Def>,
     type_params: &'static [TypeParam],
@@ -163,7 +194,7 @@ impl ShapeBuilder {
     /// Sets the `layout` field of the `ShapeBuilder`.
     #[inline]
     pub const fn layout(mut self, layout: Layout) -> Self {
-        self.layout = Some(layout);
+        self.layout = Some(ShapeLayout::Sized(layout));
         self
     }
 
@@ -262,13 +293,15 @@ impl Shape {
     /// Heap-allocate a value of this shape
     #[cfg(feature = "alloc")]
     #[inline]
-    pub fn allocate(&self) -> crate::ptr::PtrUninit<'static> {
-        crate::ptr::PtrUninit::new(if self.layout.size() == 0 {
-            core::ptr::without_provenance_mut(self.layout.align())
+    pub fn allocate(&self) -> Result<crate::ptr::PtrUninit<'static>, UnsizedError> {
+        let layout = self.layout.sized_layout()?;
+
+        Ok(crate::ptr::PtrUninit::new(if layout.size() == 0 {
+            core::ptr::without_provenance_mut(layout.align())
         } else {
             // SAFETY: We have checked that layout's size is non-zero
-            unsafe { alloc::alloc::alloc(self.layout) }
-        })
+            unsafe { alloc::alloc::alloc(layout) }
+        }))
     }
 }
 /// The definition of a shape: is it more like a struct, a map, a list?

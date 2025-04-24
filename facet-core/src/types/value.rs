@@ -4,6 +4,8 @@ use core::cmp::Ordering;
 
 use crate::Shape;
 
+use super::UnsizedError;
+
 //======== Type Information ========
 
 /// A function that formats the name of a type.
@@ -156,6 +158,8 @@ pub enum TryFromError {
     Unimplemented,
     /// The target shape has a conversion implementation, but it doesn't support converting from this specific source shape
     Incompatible,
+    /// `!Sized` type
+    Unsized,
 }
 
 impl core::fmt::Display for TryFromError {
@@ -167,11 +171,18 @@ impl core::fmt::Display for TryFromError {
                 "Shape doesn't implement any conversions (no try_from function)",
             ),
             TryFromError::Incompatible => write!(f, "Incompatible types"),
+            TryFromError::Unsized => write!(f, "Unsized type"),
         }
     }
 }
 
 impl core::error::Error for TryFromError {}
+
+impl From<UnsizedError> for TryFromError {
+    fn from(_value: UnsizedError) -> Self {
+        Self::Unsized
+    }
+}
 
 //======== Comparison ========
 

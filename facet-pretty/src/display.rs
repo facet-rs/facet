@@ -6,7 +6,7 @@ use crate::printer::PrettyPrinter;
 use facet_core::Facet;
 
 /// Display wrapper for any type that implements Facet
-pub struct PrettyDisplay<'a, T: Facet<'a>> {
+pub struct PrettyDisplay<'a, T: Facet<'a> + ?Sized> {
     pub(crate) value: &'a T,
     pub(crate) printer: PrettyPrinter,
 }

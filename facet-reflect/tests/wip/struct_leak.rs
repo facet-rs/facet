@@ -17,7 +17,7 @@ struct Inner {
 fn wip_struct_testleak1() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    let v = Wip::alloc::<Outer>()
+    let v = Wip::alloc::<Outer>()?
         .field_named("name")?
         .put(String::from("Hello, world!"))?
         .pop()?
@@ -47,7 +47,7 @@ fn wip_struct_testleak1() -> eyre::Result<()> {
 fn wip_struct_testleak2() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    let _ = Wip::alloc::<Outer>()
+    let _ = Wip::alloc::<Outer>()?
         .field_named("name")?
         .put(String::from("Hello, world!"))?
         .pop()?
@@ -68,7 +68,7 @@ fn wip_struct_testleak2() -> eyre::Result<()> {
 fn wip_struct_testleak3() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    let _ = Wip::alloc::<Outer>()
+    let _ = Wip::alloc::<Outer>()?
         .field_named("name")?
         .put(String::from("Hello, world!"))?
         .pop()?
@@ -88,7 +88,7 @@ fn wip_struct_testleak3() -> eyre::Result<()> {
 fn wip_struct_testleak4() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    let _ = Wip::alloc::<Outer>()
+    let _ = Wip::alloc::<Outer>()?
         .field_named("name")?
         .put(String::from("Hello, world!"))?
         .pop()?
@@ -107,7 +107,7 @@ fn wip_struct_testleak4() -> eyre::Result<()> {
 fn wip_struct_testleak5() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    let _ = Wip::alloc::<Outer>()
+    let _ = Wip::alloc::<Outer>()?
         .field_named("name")?
         .put(String::from("Hello, world!"))?
         .pop()?
@@ -125,7 +125,7 @@ fn wip_struct_testleak5() -> eyre::Result<()> {
 fn wip_struct_testleak6() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    let _ = Wip::alloc::<Outer>()
+    let _ = Wip::alloc::<Outer>()?
         .field_named("name")?
         .put(String::from("Hello, world!"))?
         .pop()?
@@ -142,7 +142,7 @@ fn wip_struct_testleak6() -> eyre::Result<()> {
 fn wip_struct_testleak7() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    let _ = Wip::alloc::<Outer>()
+    let _ = Wip::alloc::<Outer>()?
         .field_named("name")?
         .put(String::from("Hello, world!"))?
         .pop()?
@@ -158,7 +158,7 @@ fn wip_struct_testleak7() -> eyre::Result<()> {
 fn wip_struct_testleak8() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    let _ = Wip::alloc::<Outer>()
+    let _ = Wip::alloc::<Outer>()?
         .field_named("name")?
         .put(String::from("Hello, world!"))?
         .pop()?
@@ -173,7 +173,7 @@ fn wip_struct_testleak8() -> eyre::Result<()> {
 fn wip_struct_testleak9() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    let _ = Wip::alloc::<Outer>()
+    let _ = Wip::alloc::<Outer>()?
         .field_named("name")?
         .put(String::from("Hello, world!"))?
         .pop()?
@@ -187,7 +187,7 @@ fn wip_struct_testleak9() -> eyre::Result<()> {
 fn wip_struct_testleak10() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    let _ = Wip::alloc::<Outer>()
+    let _ = Wip::alloc::<Outer>()?
         .field_named("name")?
         .put(String::from("Hello, world!"))?
         .pop()?
@@ -200,7 +200,7 @@ fn wip_struct_testleak10() -> eyre::Result<()> {
 fn wip_struct_testleak11() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    let _ = Wip::alloc::<Outer>()
+    let _ = Wip::alloc::<Outer>()?
         .field_named("name")?
         .put(String::from("Hello, world!"))?
         .pop()?; // Removed .field_named("inner")?
@@ -212,7 +212,7 @@ fn wip_struct_testleak11() -> eyre::Result<()> {
 fn wip_struct_testleak12() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    let _ = Wip::alloc::<Outer>()
+    let _ = Wip::alloc::<Outer>()?
         .field_named("name")?
         .put(String::from("Hello, world!"))?; // Removed .pop()?
 
@@ -223,7 +223,7 @@ fn wip_struct_testleak12() -> eyre::Result<()> {
 fn wip_struct_testleak13() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    let _ = Wip::alloc::<Outer>().field_named("name")?; // Removed .put(String::from("Hello, world!"))?
+    let _ = Wip::alloc::<Outer>()?.field_named("name")?; // Removed .put(String::from("Hello, world!"))?
 
     Ok(())
 }
@@ -232,7 +232,7 @@ fn wip_struct_testleak13() -> eyre::Result<()> {
 fn wip_struct_testleak14() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
-    let _ = Wip::alloc::<Outer>(); // Removed .field_named("name")?
+    let _ = Wip::alloc::<Outer>()?; // Removed .field_named("name")?
 
     Ok(())
 }

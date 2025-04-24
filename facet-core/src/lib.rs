@@ -49,7 +49,7 @@ pub use types::*;
 /// all the serializers, deserializers, the entire ecosystem is unsafe.
 ///
 /// You're responsible for describing the type layout properly, and annotating all the invariants.
-pub unsafe trait Facet<'a>: Sized + 'a {
+pub unsafe trait Facet<'a>: 'a {
     /// The shape of this type
     const SHAPE: &'static Shape;
 

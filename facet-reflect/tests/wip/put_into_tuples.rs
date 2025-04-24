@@ -7,7 +7,7 @@ fn test_put_into_tuples() -> eyre::Result<()> {
 
     type T = (u32, String, bool);
 
-    let mut wip = Wip::alloc::<T>();
+    let mut wip = Wip::alloc::<T>()?;
     wip = wip.put::<u32>(42)?;
     wip = wip.put::<String>("hello".to_string())?;
     wip = wip.put::<bool>(true)?;
@@ -24,7 +24,7 @@ fn test_put_into_struct_like_tuple() -> eyre::Result<()> {
     #[derive(Facet)]
     struct Point(u32, u32, String);
 
-    let mut wip = Wip::alloc::<Point>();
+    let mut wip = Wip::alloc::<Point>()?;
     wip = wip.put::<u32>(10)?;
     wip = wip.put::<u32>(20)?;
     wip = wip.put::<String>("point".to_string())?;
@@ -51,7 +51,7 @@ fn test_put_into_enum_variant_with_tuple_fields() -> eyre::Result<()> {
     }
 
     // Test with the ChangeColor variant that has tuple-like fields
-    let mut wip = Wip::alloc::<Message>();
+    let mut wip = Wip::alloc::<Message>()?;
     wip = wip.variant_named("ChangeColor")?;
     wip = wip.put::<i32>(255)?;
     wip = wip.put::<i32>(0)?;
@@ -68,7 +68,7 @@ fn test_put_into_enum_variant_with_tuple_fields() -> eyre::Result<()> {
     }
 
     // Test with the Write variant that has a single tuple field
-    let mut wip = Wip::alloc::<Message>();
+    let mut wip = Wip::alloc::<Message>()?;
     wip = wip.variant_named("Write")?;
     wip = wip.put::<String>("hello".to_string())?;
     let message = wip.build()?.materialize::<Message>()?;

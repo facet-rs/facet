@@ -87,7 +87,7 @@ where
                     } else if L <= 32 && T::SHAPE.vtable.default_in_place.is_some() {
                         builder = builder.default_in_place(|target| unsafe {
                             let t_dip = T::SHAPE.vtable.default_in_place.unwrap_unchecked();
-                            let stride = T::SHAPE.layout.pad_to_align().size();
+                            let stride = T::SHAPE.layout.sized_layout().unwrap().pad_to_align().size();
                             for idx in 0..L {
                                 t_dip(target.field_uninit_at(idx * stride));
                             }
@@ -101,7 +101,7 @@ where
                         builder = builder.clone_into(|src, dst| unsafe {
                             let t_cip = T::SHAPE.vtable.clone_into.unwrap_unchecked();
                             let src = src.get::<[T; L]>();
-                            let stride = T::SHAPE.layout.pad_to_align().size();
+                            let stride = T::SHAPE.layout.sized_layout().unwrap().pad_to_align().size();
                             for (idx, src) in src.iter().enumerate() {
                                 (t_cip)(PtrConst::new(src), dst.field_uninit_at(idx * stride));
                             }
