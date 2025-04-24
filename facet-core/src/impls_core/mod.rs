@@ -1,6 +1,7 @@
 mod array;
 mod fn_ptr;
 mod option;
+mod refptr;
 mod scalar;
 mod slice;
 mod smartptr;

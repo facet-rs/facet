@@ -32,6 +32,9 @@ pub use value::*;
 mod option;
 pub use option::*;
 
+mod refptr;
+pub use refptr::*;
+
 mod smartptr;
 pub use smartptr::*;
 
@@ -359,6 +362,11 @@ pub enum Def {
     ///
     /// e.g. `Option<T>`
     Option(OptionDef),
+
+    /// Reference or pointer
+    ///
+    /// e.g. `&T`, `&mut T`, `*const T`, `*mut T`
+    RefPtr(RefPtrDef),
 
     /// Smart pointers, like `Arc<T>`, `Rc<T>`, etc.
     SmartPointer(SmartPointerDef),
