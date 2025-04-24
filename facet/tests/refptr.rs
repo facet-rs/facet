@@ -23,9 +23,8 @@ fn test_fields() {
     struct S<'a> {
         static_ref: &'static String,
         a_ref: &'a String,
-        // Can't be parsed by the derive macro:
-        //static_mut: &mut 'static String,
-        //b_ref: &mut 'static String,
+        static_mut: &'static mut String,
+        a_mut: &'a mut String,
         ptr: *const String,
         mut_ptr: *mut String,
     }
