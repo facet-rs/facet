@@ -1,4 +1,4 @@
-use core::{alloc::Layout, fmt, mem};
+use core::{alloc::Layout, cmp::Ordering, fmt, mem};
 
 use crate::{
     Characteristic, ConstTypeId, Def, Facet, Field, FieldFlags, MarkerTraits, PtrConst, Shape,
@@ -60,6 +60,29 @@ macro_rules! impl_facet_for_tuple {
         )+
         write!($f, ")")
     };
+    // Common structure of eq, partial_ord & ord
+    { ord on ($($elems:ident.$idx:tt,)+), $cmp:ident($a:ident, $b:ident), eq = $eq:expr } => {{
+        let a = unsafe { $a.get::<Self>() };
+        let b = unsafe { $b.get::<Self>() };
+
+        $(
+            unsafe {
+                let a_ptr = &a.$idx as *const $elems;
+                let b_ptr = &b.$idx as *const $elems;
+
+                let ordering = ($elems::SHAPE.vtable.$cmp.unwrap_unchecked())(
+                    PtrConst::new(a_ptr),
+                    PtrConst::new(b_ptr),
+                );
+
+                if ordering != $eq {
+                    return ordering;
+                }
+            }
+        )+
+
+        $eq
+    }};
     // Actually generate the trait implementation, and keep the remaining possible elements around
     {
         impl ($($elems:ident.$idx:tt,)+),
@@ -83,6 +106,7 @@ macro_rules! impl_facet_for_tuple {
                     .vtable(&const {
                         let mut builder = ValueVTable::builder()
                             .type_name(type_name::<$($elems),+>)
+                            .drop_in_place(|data| unsafe { data.drop_in_place::<Self>() })
                             .marker_traits(
                                 MarkerTraits::all()
                                     $(.intersection($elems::SHAPE.vtable.marker_traits))+
@@ -109,27 +133,76 @@ macro_rules! impl_facet_for_tuple {
                             });
                         }
 
-                        if Characteristic::PartialEq.all(elem_shapes) {
-                            builder = builder.eq(|a, b| {
-                                let a = unsafe { a.get::<Self>() };
-                                let b = unsafe { b.get::<Self>() };
-
+                        if Characteristic::Default.all(elem_shapes) {
+                            builder = builder.default_in_place(|dst| {
                                 $(
                                     unsafe {
-                                        let a_ptr = &a.$idx as *const $elems;
-                                        let b_ptr = &b.$idx as *const $elems;
-
-                                        if !($elems::SHAPE.vtable.eq.unwrap_unchecked())(
-                                            PtrConst::new(a_ptr),
-                                            PtrConst::new(b_ptr),
-                                        ) {
-                                            return false;
-                                        }
+                                        ($elems::SHAPE.vtable.default_in_place.unwrap_unchecked())(
+                                            dst.field_uninit_at(mem::offset_of!(Self, $idx))
+                                        );
                                     }
                                 )+
 
-                                true
+                                unsafe { dst.assume_init() }
                             });
+                        }
+
+                        if Characteristic::Clone.all(elem_shapes) {
+                             builder = builder.clone_into(|src, dst| {
+                                $({
+                                    let offset = mem::offset_of!(Self, $idx);
+                                    unsafe {
+                                        ($elems::SHAPE.vtable.clone_into.unwrap_unchecked())(
+                                            src.field(offset),
+                                            dst.field_uninit_at(offset),
+                                        );
+                                    }
+                                })+
+
+                                unsafe { dst.assume_init() }
+                            });
+                       }
+
+                        if Characteristic::PartialEq.all(elem_shapes) {
+                            builder = builder.eq(|a, b| impl_facet_for_tuple! {
+                                ord on ($($elems.$idx,)+),
+                                eq(a, b),
+                                eq = true
+                            });
+                        }
+
+                        if Characteristic::PartialOrd.all(elem_shapes) {
+                            builder = builder.partial_ord(|a, b| impl_facet_for_tuple! {
+                                ord on ($($elems.$idx,)+),
+                                partial_ord(a, b),
+                                eq = Some(Ordering::Equal)
+                            });
+                        }
+
+                        if Characteristic::Ord.all(elem_shapes) {
+                            builder = builder.ord(|a, b| impl_facet_for_tuple! {
+                                ord on ($($elems.$idx,)+),
+                                ord(a, b),
+                                eq = Ordering::Equal
+                            });
+                        }
+
+                        if Characteristic::Hash.all(elem_shapes) {
+                            builder = builder.hash(|value, hasher_this, hasher_write_fn| {
+                                let value = unsafe { value.get::<Self>() };
+
+                                $(
+                                    unsafe {
+                                        let ptr = &value.$idx as *const $elems;
+
+                                        ($elems::SHAPE.vtable.hash.unwrap_unchecked())(
+                                            PtrConst::new(ptr),
+                                            hasher_this,
+                                            hasher_write_fn,
+                                        );
+                                    }
+                                )+
+                           });
                         }
 
                         builder.build()
