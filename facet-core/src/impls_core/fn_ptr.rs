@@ -38,30 +38,26 @@ pub fn write_type_name_list(
 }
 
 macro_rules! impl_facet_for_fn_ptr {
-    // Used to implement the next smaller `fn` type, `remaining` starts out with all original
-    // arguments, which one by one get pulled into the left side, until only the last argument
-    // remains, which then gets discarded.
+    // Used to implement the next bigger `fn` type, by taking the next typename out of `remaining`,
+    // if it exists.
     {
-        continue to $(extern $extern:literal)? fn() -> R with $abi:expr,
+        continue from $(extern $extern:literal)? fn($($args:ident),*) -> R with $abi:expr,
         remaining ()
     } => {};
     {
-        continue to $(extern $extern:literal)? fn($($args:ident),*) -> R with $abi:expr,
-        remaining ($remaining:ident)
-    } => {
-        impl_facet_for_fn_ptr! { $(extern $extern)? fn($($args),*) -> R with $abi }
-    };
-    {
-        continue to $(extern $extern:literal)? fn($($args:ident),*) -> R with $abi:expr,
-        remaining ($next:ident $(, $remaining:ident)+)
+        continue from $(extern $extern:literal)? fn($($args:ident),*) -> R with $abi:expr,
+        remaining ($next:ident $(, $remaining:ident)*)
     } => {
         impl_facet_for_fn_ptr! {
-            continue to $(extern $extern)? fn($($args,)* $next) -> R with $abi,
+            impl $(extern $extern)? fn($($args,)* $next) -> R with $abi,
             remaining ($($remaining),*)
         }
     };
-    // The entry point into this macro, all smaller `fn` types get implemented as well.
-    {$(extern $extern:literal)? fn($($args:ident),*) -> R with $abi:expr} => {
+    // Actually generate the trait implementation, and keep the remaining possible arguments around
+    {
+        impl $(extern $extern:literal)? fn($($args:ident),*) -> R with $abi:expr,
+        remaining ($($remaining:ident),*)
+    } => {
         unsafe impl<'a, $($args,)* R> Facet<'a> for $(extern $extern)? fn($($args),*) -> R
         where
             $($args: Facet<'a>,)*
@@ -105,9 +101,15 @@ macro_rules! impl_facet_for_fn_ptr {
                     .build()
             };
         }
-
         impl_facet_for_fn_ptr! {
-            continue to $(extern $extern)? fn() -> R with $abi,
+            continue from $(extern $extern)? fn($($args),*) -> R with $abi,
+            remaining ($($remaining),*)
+        }
+    };
+    // The entry point into this macro, all smaller `fn` types get implemented as well.
+    {$(extern $extern:literal)? fn($($args:ident),*) -> R with $abi:expr} => {
+        impl_facet_for_fn_ptr! {
+            impl $(extern $extern)? fn() -> R with $abi,
             remaining ($($args),*)
         }
     };
