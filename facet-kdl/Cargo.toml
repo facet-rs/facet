@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+authors = ["Brooks Rady <b.j.rady@gmail.com", "Amos Wenger <amos@bearcove.eu>"]
 description = "KDL serialization and deserialization for Facet types"
 keywords = ["kdl", "serialization", "deserialization", "reflection", "facet"]
 categories = ["encoding", "parsing", "data-structures"]
