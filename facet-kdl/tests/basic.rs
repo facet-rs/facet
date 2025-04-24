@@ -9,6 +9,7 @@ fn basic_node() {
 
     #[derive(Facet)]
     struct Basic {
+        // FIXME: This is wrong, should be `child, unwrap(argument)`?
         #[facet(argument)]
         title: String,
     }

@@ -16,6 +16,8 @@ use kdl::{KdlDocument, KdlError, KdlNode};
 #[derive(Debug)]
 enum State<T> {
     ExpectingNode,
+    // FIXME: I don't need any data in this enum... Just make the `ast` mut and remove nodes that I've processed! I can
+    // still have a state for processing `KdlEntry`s, then that will just pop off those entries incrementally
     ProcessingNode(KdlNode),
     Success(T),
 }
