@@ -23,7 +23,9 @@ num-traits = { version = "0.2.19", default-features = false }
 facet-core = { version = "0.18.0", path = "../facet-core", default-features = false }
 facet-reflect = { version = "0.18.0", path = "../facet-reflect", default-features = false }
 owo-colors = "4.2.0"
+kdl = "6.3.4"
 
 [dev-dependencies]
 facet = { path = "../facet" }
 facet-testhelpers = { path = "../facet-testhelpers" }
+indoc = "2.0.6"
