@@ -101,14 +101,14 @@ impl Shape {
     }
 
     /// Check if this shape is of the given type
-    pub fn is_type<'a, Other: Facet<'a>>(&'static self) -> bool {
+    pub fn is_type<Other: Facet<'static>>(&'static self) -> bool {
         let l = self;
         let r = Other::SHAPE;
         l == r
     }
 
     /// Assert that this shape is of the given type, panicking if it's not
-    pub fn assert_type<'a, Other: Facet<'a>>(&'static self) {
+    pub fn assert_type<Other: Facet<'static>>(&'static self) {
         assert!(
             self.is_type::<Other>(),
             "Type mismatch: expected {}, found {self}",

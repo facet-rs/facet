@@ -3,12 +3,12 @@
 use facet::Facet;
 
 #[test]
-fn test_static_strings() {
+fn test_strings() {
     facet_testhelpers::setup();
 
     #[derive(Debug, PartialEq, Clone, Facet)]
-    struct StaticFoo {
-        foo: &'static str,
+    struct StaticFoo<'a> {
+        foo: &'a str,
     }
 
     let test_struct = StaticFoo { foo: "foo" };
@@ -17,8 +17,8 @@ fn test_static_strings() {
     assert_eq!(json, r#"{"foo":"foo"}"#);
 
     #[derive(Debug, PartialEq, Clone, Facet)]
-    struct OptStaticFoo {
-        foo: Option<&'static str>,
+    struct OptStaticFoo<'a> {
+        foo: Option<&'a str>,
     }
 
     let test_struct = OptStaticFoo { foo: None };
@@ -32,8 +32,8 @@ fn test_static_strings() {
     assert_eq!(json, r#"{"foo":"foo"}"#);
 
     #[derive(Debug, PartialEq, Clone, Facet)]
-    struct CowFoo {
-        foo: std::borrow::Cow<'static, str>,
+    struct CowFoo<'a> {
+        foo: std::borrow::Cow<'a, str>,
     }
 
     let test_struct = CowFoo {

@@ -758,11 +758,25 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
         res
     }
 
-    /// Checks if the current frame is of type `T`.
-    pub fn current_is_type<T: Facet<'facet_lifetime>>(&self) -> bool {
-        self.frames
-            .last()
-            .is_some_and(|frame| frame.shape == T::SHAPE)
+    /// Puts a value of type `T` into the current frame.
+    ///
+    /// # Arguments
+    ///
+    /// * `t` - The value to put into the frame.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Self)` if the value was successfully put into the frame.
+    /// * `Err(ReflectError)` if there was an error putting the value into the frame.
+    pub fn try_put<T: Facet<'facet_lifetime>>(
+        self,
+        t: T,
+    ) -> Result<Wip<'facet_lifetime>, ReflectError> {
+        let shape = T::SHAPE;
+        let ptr_const = PtrConst::new(&t as *const T as *const u8);
+        let res = self.put_shape(ptr_const, shape);
+        core::mem::forget(t); // avoid double drop; ownership moved into Wip
+        res
     }
 
     /// Puts a value from a `PtrConst` with the given shape into the current frame.

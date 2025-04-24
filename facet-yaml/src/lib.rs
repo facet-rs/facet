@@ -6,7 +6,7 @@ use facet_reflect::Wip;
 use yaml_rust2::{Yaml, YamlLoader};
 
 /// Deserializes a YAML string into a value of type `T` that implements `Facet`.
-pub fn from_str<'a, T: Facet<'a>>(yaml: &str) -> Result<T, AnyErr> {
+pub fn from_str<'input: 'facet, 'facet, T: Facet<'facet>>(yaml: &'input str) -> Result<T, AnyErr> {
     let wip = Wip::alloc::<T>();
     let wip = from_str_value(wip, yaml)?;
     let heap_value = wip.build().map_err(|e| AnyErr(e.to_string()))?;

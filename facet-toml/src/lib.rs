@@ -43,7 +43,9 @@ macro_rules! reflect {
 }
 
 /// Deserializes a TOML string into a value of type `T` that implements `Facet`.
-pub fn from_str<'a, T: Facet<'a>>(toml: &str) -> Result<T, TomlError<'_>> {
+pub fn from_str<'input: 'facet, 'facet, T: Facet<'facet>>(
+    toml: &'input str,
+) -> Result<T, TomlError<'input>> {
     trace!("Parsing TOML");
 
     // Allocate the type
@@ -80,11 +82,11 @@ pub fn from_str<'a, T: Facet<'a>>(toml: &str) -> Result<T, TomlError<'_>> {
     Ok(result)
 }
 
-fn deserialize_item<'input, 'a>(
+fn deserialize_item<'input, 'facet>(
     toml: &'input str,
-    wip: Wip<'a>,
+    wip: Wip<'facet>,
     item: &Item,
-) -> Result<Wip<'a>, TomlError<'input>> {
+) -> Result<Wip<'facet>, TomlError<'input>> {
     match wip.shape().def {
         Def::Scalar(_) => deserialize_as_scalar(toml, wip, item),
         Def::List(_) => deserialize_as_list(toml, wip, item),

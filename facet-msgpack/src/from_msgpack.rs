@@ -28,7 +28,9 @@ use log::trace;
 /// let user: User = from_str(&msgpack_data).unwrap();
 /// assert_eq!(user, User { id: 42, username: "user123".to_string() });
 /// ```
-pub fn from_slice<'a, T: Facet<'a>>(msgpack: &'a [u8]) -> Result<T, DecodeError> {
+pub fn from_slice<'input: 'facet, 'facet, T: Facet<'facet>>(
+    msgpack: &'input [u8],
+) -> Result<T, DecodeError> {
     from_slice_value(Wip::alloc::<T>(), msgpack)?
         .materialize::<T>()
         .map_err(|e| DecodeError::UnsupportedType(e.to_string()))
@@ -36,7 +38,9 @@ pub fn from_slice<'a, T: Facet<'a>>(msgpack: &'a [u8]) -> Result<T, DecodeError>
 
 /// Alias for from_slice for backward compatibility
 #[deprecated(since = "0.1.0", note = "Use from_slice instead")]
-pub fn from_str<'a, T: Facet<'a>>(msgpack: &'a [u8]) -> Result<T, DecodeError> {
+pub fn from_str<'input: 'facet, 'facet, T: Facet<'facet>>(
+    msgpack: &'input [u8],
+) -> Result<T, DecodeError> {
     from_slice(msgpack)
 }
 

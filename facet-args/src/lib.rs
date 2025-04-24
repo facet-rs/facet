@@ -7,12 +7,14 @@
 use facet_core::{Def, Facet, FieldAttribute};
 use facet_reflect::{ReflectError, Wip};
 
-fn parse_field<'mem>(wip: Wip<'mem>, value: &str) -> Result<Wip<'mem>, ReflectError> {
+fn parse_field<'facet>(wip: Wip<'facet>, value: &'facet str) -> Result<Wip<'facet>, ReflectError> {
     let shape = wip.shape();
     match shape.def {
         Def::Scalar(_) => {
             if shape.is_type::<String>() {
                 wip.put(value.to_string())
+            } else if shape.is_type::<&str>() {
+                wip.put(value)
             } else if shape.is_type::<bool>() {
                 log::trace!("Boolean field detected, setting to true");
                 wip.put(value.to_lowercase() == "true")
@@ -31,7 +33,11 @@ fn parse_field<'mem>(wip: Wip<'mem>, value: &str) -> Result<Wip<'mem>, ReflectEr
 }
 
 /// Parses command-line arguments
-pub fn from_slice<'a, T: Facet<'a>>(s: &[&str]) -> T {
+pub fn from_slice<'input, 'facet, T>(s: &[&'input str]) -> T
+where
+    T: Facet<'facet>,
+    'input: 'facet,
+{
     log::trace!("Entering from_slice function");
     let mut s = s;
     let mut wip = Wip::alloc::<T>();
