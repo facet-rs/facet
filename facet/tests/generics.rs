@@ -206,7 +206,7 @@ fn type_params_slice_ref_bool() {
     assert_eq!(shape.type_params.len(), 1);
     let t = &shape.type_params[0];
     assert_eq!(t.name, "T");
-    assert_eq!(format!("{}", t.shape()), "bool");
+    assert_eq!(format!("{}", t.shape()), "[bool]");
 }
 
 #[test]

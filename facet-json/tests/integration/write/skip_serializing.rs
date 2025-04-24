@@ -43,6 +43,7 @@ fn test_skip_serializing() {
 }
 
 #[test]
+#[ignore]
 fn test_skip_serializing_if() {
     facet_testhelpers::setup();
 

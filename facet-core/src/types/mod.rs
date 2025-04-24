@@ -353,9 +353,9 @@ pub enum Def {
     /// e.g. `[T; 32]`
     Array(ArrayDef),
 
-    /// Slice — a reference to a contiguous sequence of elements
+    /// Slice — a dynamically sized contiguous sequence of elements
     ///
-    /// e.g. `&[T]`
+    /// e.g. `[T]`
     Slice(SliceDef),
 
     /// Option

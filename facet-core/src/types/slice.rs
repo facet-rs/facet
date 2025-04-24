@@ -11,7 +11,7 @@ pub struct SliceDef {
     pub vtable: &'static SliceVTable,
 
     /// shape of the items in the slice
-    pub t: fn() -> &'static Shape,
+    pub t: &'static Shape,
 }
 
 impl SliceDef {
@@ -19,17 +19,12 @@ impl SliceDef {
     pub const fn builder() -> SliceDefBuilder {
         SliceDefBuilder::new()
     }
-
-    /// Returns the shape of the items in the slice
-    pub fn t(&self) -> &'static Shape {
-        (self.t)()
-    }
 }
 
 /// Builder for SliceDef
 pub struct SliceDefBuilder {
     vtable: Option<&'static SliceVTable>,
-    t: Option<fn() -> &'static Shape>,
+    t: Option<&'static Shape>,
 }
 
 impl SliceDefBuilder {
@@ -49,7 +44,7 @@ impl SliceDefBuilder {
     }
 
     /// Sets the item shape for the SliceDef
-    pub const fn t(mut self, t: fn() -> &'static Shape) -> Self {
+    pub const fn t(mut self, t: &'static Shape) -> Self {
         self.t = Some(t);
         self
     }
@@ -63,18 +58,12 @@ impl SliceDefBuilder {
     }
 }
 
-/// Get the number of items in the slice
-///
-/// # Safety
-///
-/// The `slice` parameter must point to aligned, initialized memory of the correct type.
-pub type SliceLenFn = unsafe fn(slice: PtrConst) -> usize;
-
 /// Get pointer to the item at the given index. Panics if out of bounds.
 ///
 /// # Safety
 ///
-/// The `slice` parameter must point to aligned, initialized memory of the correct type.
+/// - The `slice` parameter must point to aligned, initialized memory of the correct type.
+/// - The index must be in bounds.
 pub type SliceGetItemPtrFn = unsafe fn(slice: PtrConst, index: usize) -> PtrConst;
 
 /// Virtual table for a slice-like type (like `Vec<T>`,
@@ -83,9 +72,7 @@ pub type SliceGetItemPtrFn = unsafe fn(slice: PtrConst, index: usize) -> PtrCons
 #[repr(C)]
 #[non_exhaustive]
 pub struct SliceVTable {
-    /// Number of items in the slice
-    pub len: SliceLenFn,
-    /// Get pointer to the item at the given index. Panics if out of bounds.
+    /// Get pointer to the item at the given index. Undefined behavior if out of bounds.
     pub get_item_ptr: SliceGetItemPtrFn,
 }
 
@@ -99,23 +86,13 @@ impl SliceVTable {
 /// Builds a [`SliceVTable`]
 pub struct SliceVTableBuilder {
     get_item_ptr: Option<SliceGetItemPtrFn>,
-    len: Option<SliceLenFn>,
 }
 
 impl SliceVTableBuilder {
     /// Creates a new [`SliceVTableBuilder`] with all fields set to `None`.
     #[allow(clippy::new_without_default)]
     pub const fn new() -> Self {
-        Self {
-            len: None,
-            get_item_ptr: None,
-        }
-    }
-
-    /// Sets the `len` field
-    pub const fn len(mut self, f: SliceLenFn) -> Self {
-        self.len = Some(f);
-        self
+        Self { get_item_ptr: None }
     }
 
     /// Sets the get_item_ptr field
@@ -131,7 +108,6 @@ impl SliceVTableBuilder {
     /// This method will panic if any of the required fields are `None`.
     pub const fn build(self) -> SliceVTable {
         SliceVTable {
-            len: self.len.unwrap(),
             get_item_ptr: self.get_item_ptr.unwrap(),
         }
     }
