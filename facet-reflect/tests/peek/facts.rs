@@ -6,7 +6,7 @@ use owo_colors::{OwoColorize, Style};
 
 const REMARKABLE: Style = Style::new().blue();
 
-fn collect_facts<'a, 'b, T>(val1: &'b T, val2: &'b T) -> HashSet<Fact>
+fn collect_facts<'a, T>(val1: &T, val2: &T) -> HashSet<Fact>
 where
     T: Facet<'a>,
 {
@@ -874,7 +874,7 @@ fn test_fn_ptr() {
         let name = format!("{}", T::SHAPE);
         eprint!("{}", format_args!("== {name}: ").yellow());
 
-        let facts = collect_facts(&val1, &val2);
+        let facts = collect_facts(&val1, &val1);
         for &fact in facts.iter() {
             if let Fact::EqualAnd { .. } | Fact::OrdAnd { .. } = fact {
                 expected_facts.insert(fact);

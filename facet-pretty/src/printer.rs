@@ -47,8 +47,8 @@ enum StackState {
 }
 
 /// Stack item for iterative traversal
-struct StackItem<'a> {
-    value: Peek<'a>,
+struct StackItem<'a, 'facet_lifetime> {
+    value: Peek<'a, 'facet_lifetime>,
     format_depth: usize,
     type_depth: usize,
     state: StackState,
@@ -106,7 +106,7 @@ impl PrettyPrinter {
     }
 
     /// Format a value to a string
-    pub fn format_peek(&self, value: Peek<'_>) -> String {
+    pub fn format_peek(&self, value: Peek<'_, '_>) -> String {
         let mut output = String::new();
         self.format_peek_internal(value, &mut output, &mut HashMap::new())
             .expect("Formatting failed");
@@ -116,7 +116,7 @@ impl PrettyPrinter {
     /// Internal method to format a Peek value
     pub(crate) fn format_peek_internal(
         &self,
-        initial_value: Peek<'_>,
+        initial_value: Peek<'_, '_>,
         f: &mut impl Write,
         visited: &mut HashMap<ValueId, usize>,
     ) -> fmt::Result {
@@ -697,9 +697,9 @@ impl PrettyPrinter {
         let color = self.color_generator.generate_color(hash);
 
         // Display the value
-        struct DisplayWrapper<'a>(&'a Peek<'a>);
+        struct DisplayWrapper<'a, 'facet_lifetime>(&'a Peek<'a, 'facet_lifetime>);
 
-        impl fmt::Display for DisplayWrapper<'_> {
+        impl fmt::Display for DisplayWrapper<'_, '_> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 if self.0.shape().is_display() {
                     write!(f, "{}", self.0)?;
@@ -734,7 +734,7 @@ impl PrettyPrinter {
 
     /// Write styled type name to formatter
     fn write_type_name<W: fmt::Write>(&self, f: &mut W, peek: &Peek) -> fmt::Result {
-        struct TypeNameWriter<'a, 'b: 'a>(&'b Peek<'a>);
+        struct TypeNameWriter<'a, 'facet_lifetime>(&'a Peek<'a, 'facet_lifetime>);
 
         impl core::fmt::Display for TypeNameWriter<'_, '_> {
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

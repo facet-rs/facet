@@ -20,7 +20,11 @@ pub use error::*;
 /// This function takes a JSON string representation and converts it into a Rust
 /// value of the specified type `T`. The type must implement the `Facet` trait
 /// to provide the necessary type information for deserialization.
-pub fn from_str<'a, T: Facet<'a>>(json: &str) -> Result<T, JsonError<'_>> {
+pub fn from_str<'input, 'facet, T>(json: &'input str) -> Result<T, JsonError<'input>>
+where
+    T: Facet<'facet>,
+    'input: 'facet,
+{
     from_slice(json.as_bytes())
 }
 
@@ -33,7 +37,11 @@ pub fn from_str<'a, T: Facet<'a>>(json: &str) -> Result<T, JsonError<'_>> {
 /// # Returns
 ///
 /// A result containing the deserialized value of type `T` or a `JsonParseErrorWithContext`.
-pub fn from_slice<'a, T: Facet<'a>>(json: &[u8]) -> Result<T, JsonError<'_>> {
+pub fn from_slice<'input, 'facet, T>(json: &'input [u8]) -> Result<T, JsonError<'input>>
+where
+    T: Facet<'facet>,
+    'input: 'facet,
+{
     let wip = Wip::alloc::<T>();
     let heap_value = from_slice_wip(wip, json)?;
     Ok(heap_value.materialize::<T>().unwrap())
@@ -69,10 +77,10 @@ enum PopReason {
 /// # Returns
 ///
 /// A result containing the updated `Wip` or a `JsonParseErrorWithContext`.
-pub fn from_slice_wip<'input, 'a>(
-    mut wip: Wip<'a>,
+pub fn from_slice_wip<'input: 'facet, 'facet>(
+    mut wip: Wip<'facet>,
     input: &'input [u8],
-) -> Result<HeapValue<'a>, JsonError<'input>> {
+) -> Result<HeapValue<'facet>, JsonError<'input>> {
     let mut stack = vec![Instruction::Pop(PopReason::TopLevel), Instruction::Value];
     let mut tokenizer = Tokenizer::new(input);
     let mut last_span = Span { start: 0, len: 0 };
@@ -203,7 +211,7 @@ pub fn from_slice_wip<'input, 'a>(
 
                         if has_unset && container_shape.has_default_attr() {
                             // let's allocate and build a default value
-                            let default_val = Wip::alloc_shape(container_shape)
+                            let default_val = Wip::<'facet>::alloc_shape(container_shape)
                                 .put_default()
                                 .map_err(|e| {
                                     JsonError::new(

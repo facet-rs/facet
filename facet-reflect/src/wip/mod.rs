@@ -275,20 +275,22 @@ pub enum FrameMode {
 }
 
 /// A work-in-progress heap-allocated value
-pub struct Wip<'a> {
+pub struct Wip<'facet_lifetime> {
     /// stack of frames to keep track of deeply nested initialization
     frames: alloc::vec::Vec<Frame>,
 
     /// keeps track of initialization of out-of-tree frames
     istates: FlatMap<ValueId, IState>,
 
-    /// lifetime of the shortest reference we hold
-    phantom: PhantomData<*mut &'a ()>,
+    invariant: PhantomData<fn(&'facet_lifetime ()) -> &'facet_lifetime ()>,
 }
 
-impl<'a> Wip<'a> {
+impl<'facet_lifetime> Wip<'facet_lifetime> {
     /// Puts the value from a Peek into the current frame.
-    pub fn put_peek(self, peek: crate::Peek<'a>) -> Result<Wip<'a>, ReflectError> {
+    pub fn put_peek(
+        self,
+        peek: crate::Peek<'_, 'facet_lifetime>,
+    ) -> Result<Wip<'facet_lifetime>, ReflectError> {
         self.put_shape(peek.data, peek.shape)
     }
 
@@ -308,12 +310,12 @@ impl<'a> Wip<'a> {
                 istate: IState::new(0, FrameMode::Root, FrameFlags::ALLOCATED),
             }],
             istates: Default::default(),
-            phantom: PhantomData,
+            invariant: PhantomData,
         }
     }
 
     /// Allocates a new value of type `S`
-    pub fn alloc<S: Facet<'a>>() -> Self {
+    pub fn alloc<S: Facet<'facet_lifetime>>() -> Self {
         Self::alloc_shape(S::SHAPE)
     }
 
@@ -357,7 +359,7 @@ impl<'a> Wip<'a> {
     }
 
     /// Asserts everything is initialized and that invariants are upheld (if any)
-    pub fn build(mut self) -> Result<HeapValue<'a>, ReflectError> {
+    pub fn build(mut self) -> Result<HeapValue<'facet_lifetime>, ReflectError> {
         debug!("[{}] ⚒️ It's BUILD time", self.frames.len());
 
         // 1. Track all frames currently on the stack into istates
@@ -745,7 +747,10 @@ impl<'a> Wip<'a> {
     ///
     /// * `Ok(Self)` if the value was successfully put into the frame.
     /// * `Err(ReflectError)` if there was an error putting the value into the frame.
-    pub fn put<T: Facet<'a>>(self, t: T) -> Result<Wip<'a>, ReflectError> {
+    pub fn put<T: Facet<'facet_lifetime>>(
+        self,
+        t: T,
+    ) -> Result<Wip<'facet_lifetime>, ReflectError> {
         let shape = T::SHAPE;
         let ptr_const = PtrConst::new(&t as *const T as *const u8);
         let res = self.put_shape(ptr_const, shape);
@@ -754,7 +759,7 @@ impl<'a> Wip<'a> {
     }
 
     /// Checks if the current frame is of type `T`.
-    pub fn current_is_type<T: Facet<'static>>(&self) -> bool {
+    pub fn current_is_type<T: Facet<'facet_lifetime>>(&self) -> bool {
         self.frames
             .last()
             .is_some_and(|frame| frame.shape == T::SHAPE)
@@ -763,9 +768,9 @@ impl<'a> Wip<'a> {
     /// Puts a value from a `PtrConst` with the given shape into the current frame.
     pub fn put_shape(
         mut self,
-        src: PtrConst<'a>,
+        src: PtrConst<'_>,
         src_shape: &'static Shape,
-    ) -> Result<Wip<'a>, ReflectError> {
+    ) -> Result<Wip<'facet_lifetime>, ReflectError> {
         let Some(frame) = self.frames.last_mut() else {
             return Err(ReflectError::OperationFailed {
                 shape: src_shape,

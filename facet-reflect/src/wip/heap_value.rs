@@ -7,10 +7,10 @@ use facet_core::{Facet, PtrConst, PtrMut, Shape};
 use owo_colors::OwoColorize as _;
 
 /// A type-erased value stored on the heap
-pub struct HeapValue<'a> {
+pub struct HeapValue<'facet_lifetime> {
     pub(crate) guard: Option<Guard>,
     pub(crate) shape: &'static Shape,
-    pub(crate) phantom: PhantomData<*mut &'a ()>,
+    pub(crate) phantom: PhantomData<&'facet_lifetime ()>,
 }
 
 impl Drop for HeapValue<'_> {
@@ -24,14 +24,14 @@ impl Drop for HeapValue<'_> {
     }
 }
 
-impl<'a> HeapValue<'a> {
+impl<'facet_lifetime> HeapValue<'facet_lifetime> {
     /// Returns a peek that allows exploring the heap value.
-    pub fn peek(&self) -> Peek<'a> {
+    pub fn peek(&self) -> Peek<'_, 'facet_lifetime> {
         unsafe { Peek::unchecked_new(PtrConst::new(self.guard.as_ref().unwrap().ptr), self.shape) }
     }
 
     /// Turn this heapvalue into a concrete type
-    pub fn materialize<T: Facet<'a>>(mut self) -> Result<T, ReflectError> {
+    pub fn materialize<T: Facet<'facet_lifetime>>(mut self) -> Result<T, ReflectError> {
         if self.shape != T::SHAPE {
             return Err(ReflectError::WrongShape {
                 expected: self.shape,

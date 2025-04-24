@@ -12,7 +12,7 @@ pub fn to_string<'a, T: Facet<'a>>(value: &'a T) -> String {
 }
 
 /// Serializes a Peek instance to JSON
-pub fn peek_to_string(peek: &Peek<'_>) -> String {
+pub fn peek_to_string(peek: &Peek<'_, '_>) -> String {
     let mut output = Vec::new();
     serialize(peek, &mut output).unwrap();
     String::from_utf8(output).unwrap()
@@ -25,12 +25,12 @@ pub fn to_writer<'a, T: Facet<'a>, W: Write>(value: &'a T, writer: &mut W) -> io
 }
 
 /// Serializes a Peek instance to a writer in JSON format
-pub fn peek_to_writer<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()> {
+pub fn peek_to_writer<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<()> {
     serialize(peek, writer)
 }
 
 /// The core serialization function
-fn serialize<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()> {
+fn serialize<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<()> {
     use facet_core::{
         Struct,
         StructKind::{Tuple, TupleStruct},
@@ -55,7 +55,7 @@ fn serialize<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()> {
 }
 
 /// Serializes a scalar value to JSON
-fn serialize_scalar<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()> {
+fn serialize_scalar<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<()> {
     // Handle basic scalar types
     if peek.shape().is_type::<bool>() {
         let value = peek.get::<bool>().unwrap();
@@ -150,7 +150,7 @@ fn serialize_scalar<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()>
 }
 
 /// Serializes a struct to JSON
-fn serialize_struct<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()> {
+fn serialize_struct<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<()> {
     let struct_peek = peek
         .into_struct()
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Not a struct: {}", e)))?;
@@ -191,7 +191,7 @@ fn serialize_struct<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()>
 }
 
 /// Serializes a list to JSON
-fn serialize_list<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()> {
+fn serialize_list<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<()> {
     let list_peek = peek
         .into_list()
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Not a list: {}", e)))?;
@@ -214,7 +214,7 @@ fn serialize_list<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()> {
 }
 
 /// Serializes a tuple (struct) to JSON
-fn serialize_tuple<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()> {
+fn serialize_tuple<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<()> {
     let struct_peek = peek
         .into_struct()
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Not a struct: {}", e)))?;
@@ -237,7 +237,7 @@ fn serialize_tuple<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()> 
 }
 
 /// Serializes a map to JSON
-fn serialize_map<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()> {
+fn serialize_map<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<()> {
     let map_peek = peek
         .into_map()
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Not a map: {}", e)))?;
@@ -283,7 +283,7 @@ fn serialize_map<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()> {
 }
 
 /// Serializes an enum to JSON
-fn serialize_enum<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()> {
+fn serialize_enum<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<()> {
     let enum_peek = peek
         .into_enum()
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Not an enum: {}", e)))?;
@@ -355,7 +355,7 @@ fn serialize_enum<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()> {
 }
 
 /// Serializes an `Option<T>` to JSON
-fn serialize_option<W: Write>(peek: &Peek<'_>, writer: &mut W) -> io::Result<()> {
+fn serialize_option<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<()> {
     let option_peek = peek
         .into_option()
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Not an option: {}", e)))?;

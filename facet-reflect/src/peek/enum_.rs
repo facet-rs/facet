@@ -4,12 +4,12 @@ use crate::Peek;
 
 /// Lets you read from an enum (implements read-only enum operations)
 #[derive(Clone, Copy)]
-pub struct PeekEnum<'mem> {
+pub struct PeekEnum<'mem, 'facet_lifetime> {
     /// The internal data storage for the enum
     ///
     /// Note that this stores both the discriminant and the variant data
     /// (if any), and the layout depends on the enum representation.
-    pub(crate) value: Peek<'mem>,
+    pub(crate) value: Peek<'mem, 'facet_lifetime>,
 
     /// The definition of the enum.
     pub(crate) def: EnumDef,
@@ -33,8 +33,8 @@ pub fn peek_enum_variants(shape: &'static Shape) -> Option<&'static [Variant]> {
     peek_enum(shape).map(|enum_def| enum_def.variants)
 }
 
-impl<'mem> core::ops::Deref for PeekEnum<'mem> {
-    type Target = Peek<'mem>;
+impl<'mem, 'facet_lifetime> core::ops::Deref for PeekEnum<'mem, 'facet_lifetime> {
+    type Target = Peek<'mem, 'facet_lifetime>;
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
@@ -42,7 +42,7 @@ impl<'mem> core::ops::Deref for PeekEnum<'mem> {
     }
 }
 
-impl<'mem> PeekEnum<'mem> {
+impl<'mem, 'facet_lifetime> PeekEnum<'mem, 'facet_lifetime> {
     /// Returns the enum definition
     #[inline(always)]
     pub fn def(self) -> EnumDef {
@@ -127,7 +127,7 @@ impl<'mem> PeekEnum<'mem> {
     // variant_data has been removed to reduce unsafe code exposure
 
     /// Returns a PeekValue handle to a field of a tuple or struct variant by index
-    pub fn field(self, index: usize) -> Option<Peek<'mem>> {
+    pub fn field(self, index: usize) -> Option<Peek<'mem, 'facet_lifetime>> {
         let variant = self.active_variant();
         let fields = &variant.data.fields;
 
@@ -137,10 +137,7 @@ impl<'mem> PeekEnum<'mem> {
 
         let field = &fields[index];
         let field_data = unsafe { self.value.data().field(field.offset) };
-        Some(Peek {
-            data: field_data,
-            shape: field.shape(),
-        })
+        Some(unsafe { Peek::unchecked_new(field_data, field.shape()) })
     }
 
     /// Returns the index of a field in the active variant by name
@@ -154,31 +151,30 @@ impl<'mem> PeekEnum<'mem> {
     }
 
     /// Returns a PeekValue handle to a field of a tuple or struct variant by name
-    pub fn field_by_name(self, field_name: &str) -> Option<Peek<'mem>> {
+    pub fn field_by_name(self, field_name: &str) -> Option<Peek<'mem, 'facet_lifetime>> {
         let index = self.field_index(field_name)?;
         self.field(index)
     }
 
     /// Iterates over all fields in this enum variant, providing both field metadata and value
     #[inline]
-    pub fn fields(self) -> impl Iterator<Item = (&'static Field, Peek<'mem>)> {
+    pub fn fields(self) -> impl Iterator<Item = (&'static Field, Peek<'mem, 'facet_lifetime>)> {
         let variant = self.active_variant();
         let fields = &variant.data.fields;
 
         // Create an iterator that maps each field to a (Field, PeekValue) pair
         fields.iter().map(move |field| {
             let field_data = unsafe { self.value.data().field(field.offset) };
-            let peek = Peek {
-                data: field_data,
-                shape: field.shape(),
-            };
+            let peek = unsafe { Peek::unchecked_new(field_data, field.shape()) };
             (field, peek)
         })
     }
 
     /// Iterates over thos fields in this struct that should be included when it is serialized.
     #[inline]
-    pub fn fields_for_serialize(&self) -> impl Iterator<Item = (&'static Field, Peek<'mem>)> + '_ {
+    pub fn fields_for_serialize(
+        &self,
+    ) -> impl Iterator<Item = (&'static Field, Peek<'mem, 'facet_lifetime>)> + '_ {
         self.fields().filter(|(field, peek)| {
             for attr in field.attributes {
                 match attr {

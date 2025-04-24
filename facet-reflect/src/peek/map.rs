@@ -3,42 +3,36 @@ use facet_core::{MapDef, PtrConst, PtrMut};
 use super::Peek;
 
 /// Iterator over key-value pairs in a `PeekMap`
-pub struct PeekMapIter<'mem> {
-    map: PeekMap<'mem>,
+pub struct PeekMapIter<'mem, 'facet_lifetime> {
+    map: PeekMap<'mem, 'facet_lifetime>,
     iter: PtrMut<'mem>,
 }
 
-impl<'mem> Iterator for PeekMapIter<'mem> {
-    type Item = (Peek<'mem>, Peek<'mem>);
+impl<'mem, 'facet_lifetime> Iterator for PeekMapIter<'mem, 'facet_lifetime> {
+    type Item = (Peek<'mem, 'facet_lifetime>, Peek<'mem, 'facet_lifetime>);
 
     fn next(&mut self) -> Option<Self::Item> {
         unsafe {
             let next = (self.map.def.vtable.iter_vtable.next)(self.iter);
             next.map(|(key_ptr, value_ptr)| {
                 (
-                    Peek {
-                        data: key_ptr,
-                        shape: self.map.def.k,
-                    },
-                    Peek {
-                        data: value_ptr,
-                        shape: self.map.def.v,
-                    },
+                    Peek::unchecked_new(key_ptr, self.map.def.k),
+                    Peek::unchecked_new(value_ptr, self.map.def.v),
                 )
             })
         }
     }
 }
 
-impl Drop for PeekMapIter<'_> {
+impl Drop for PeekMapIter<'_, '_> {
     fn drop(&mut self) {
         unsafe { (self.map.def.vtable.iter_vtable.dealloc)(self.iter) }
     }
 }
 
-impl<'mem> IntoIterator for &'mem PeekMap<'mem> {
-    type Item = (Peek<'mem>, Peek<'mem>);
-    type IntoIter = PeekMapIter<'mem>;
+impl<'mem, 'facet_lifetime> IntoIterator for &'mem PeekMap<'mem, 'facet_lifetime> {
+    type Item = (Peek<'mem, 'facet_lifetime>, Peek<'mem, 'facet_lifetime>);
+    type IntoIter = PeekMapIter<'mem, 'facet_lifetime>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
@@ -47,15 +41,15 @@ impl<'mem> IntoIterator for &'mem PeekMap<'mem> {
 
 /// Lets you read from a map (implements read-only [`facet_core::MapVTable`] proxies)
 #[derive(Clone, Copy)]
-pub struct PeekMap<'mem> {
-    pub(crate) value: Peek<'mem>,
+pub struct PeekMap<'mem, 'facet_lifetime> {
+    pub(crate) value: Peek<'mem, 'facet_lifetime>,
 
     pub(crate) def: MapDef,
 }
 
-impl<'mem> PeekMap<'mem> {
+impl<'mem, 'facet_lifetime> PeekMap<'mem, 'facet_lifetime> {
     /// Constructor
-    pub fn new(value: Peek<'mem>, def: MapDef) -> Self {
+    pub fn new(value: Peek<'mem, 'facet_lifetime>, def: MapDef) -> Self {
         Self { value, def }
     }
 
@@ -70,7 +64,7 @@ impl<'mem> PeekMap<'mem> {
     }
 
     /// Check if the map contains a key
-    pub fn contains_key<T: facet_core::Facet<'mem>>(&self, key: &T) -> bool {
+    pub fn contains_key(&self, key: &impl facet_core::Facet<'facet_lifetime>) -> bool {
         unsafe {
             let key_ptr = PtrConst::new(key);
             (self.def.vtable.contains_key_fn)(self.value.data(), key_ptr)
@@ -78,19 +72,19 @@ impl<'mem> PeekMap<'mem> {
     }
 
     /// Get a value from the map for the given key
-    pub fn get<T: facet_core::Facet<'mem>>(&self, key: &T) -> Option<Peek<'mem>> {
+    pub fn get<'k>(
+        &self,
+        key: &'k impl facet_core::Facet<'facet_lifetime>,
+    ) -> Option<Peek<'mem, 'facet_lifetime>> {
         unsafe {
             let key_ptr = PtrConst::new(key);
             let value_ptr = (self.def.vtable.get_value_ptr_fn)(self.value.data(), key_ptr)?;
-            Some(Peek {
-                data: value_ptr,
-                shape: self.def.v,
-            })
+            Some(Peek::unchecked_new(value_ptr, self.def.v))
         }
     }
 
     /// Returns an iterator over the key-value pairs in the map
-    pub fn iter(self) -> PeekMapIter<'mem> {
+    pub fn iter(self) -> PeekMapIter<'mem, 'facet_lifetime> {
         let iter = unsafe { (self.def.vtable.iter_fn)(self.value.data()) };
         PeekMapIter { map: self, iter }
     }

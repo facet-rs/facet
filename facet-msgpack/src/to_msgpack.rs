@@ -13,7 +13,7 @@ pub fn to_vec<'a, T: Facet<'a>>(value: &'a T) -> Vec<u8> {
 }
 
 /// Serializes any Facet type to a writer in MessagePack format
-fn serialize<W: Write>(pv: Peek<'_>, writer: &mut W) -> io::Result<()> {
+fn serialize<W: Write>(pv: Peek<'_, '_>, writer: &mut W) -> io::Result<()> {
     let shape = pv.shape();
     match shape.def {
         Def::Scalar(_) => {

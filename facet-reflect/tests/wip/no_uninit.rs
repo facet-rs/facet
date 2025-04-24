@@ -82,7 +82,7 @@ fn smart_pointer_uninit() {
     test_uninit::<Arc<u8>>();
 }
 
-fn test_uninit<'a, T: Facet<'a>>() {
+fn test_uninit<T: Facet<'static>>() {
     facet_testhelpers::setup();
     let wip = Wip::alloc::<T>();
     assert!(
