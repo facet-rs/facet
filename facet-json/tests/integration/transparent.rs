@@ -121,6 +121,27 @@ fn transparent_option_non_zero_u64() -> eyre::Result<()> {
     Ok(())
 }
 
+#[test]
+fn transparent_option_non_zero_u16() -> eyre::Result<()> {
+    use std::num::NonZeroU16;
+
+    // Test deserializing a valid non-zero value
+    let markup = r#"
+        10
+    "#;
+    let opt_num: Option<NonZeroU16> = from_str(markup)?;
+    assert_eq!(opt_num, Some(NonZeroU16::new(10).unwrap()));
+
+    // Test deserializing a null into Option<NonZeroU16>, which should yield None
+    let markup = r#"
+        null
+    "#;
+    let opt_none: Option<NonZeroU16> = from_str(markup)?;
+    assert_eq!(opt_none, None);
+
+    Ok(())
+}
+
 #[cfg(feature = "ordered-float")]
 #[test]
 fn transparent_ordered_float_f64() -> eyre::Result<()> {

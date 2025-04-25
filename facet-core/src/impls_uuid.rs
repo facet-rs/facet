@@ -6,19 +6,19 @@ use uuid::Uuid;
 
 use crate::{
     ConstTypeId, Def, Facet, ParseError, PtrConst, PtrMut, PtrUninit, ScalarAffinity, ScalarDef,
-    Shape, TryBorrowInnerError, TryFromInnerError, TryIntoInnerError, value_vtable_inner,
+    Shape, TryBorrowInnerError, TryFromError, TryIntoInnerError, value_vtable_inner,
 };
 
 unsafe impl Facet<'_> for Uuid {
     const SHAPE: &'static Shape = &const {
         // Functions to transparently convert between Uuid and String
-        unsafe fn try_from_inner<'dst>(
+        unsafe fn try_from<'dst>(
             src_ptr: PtrConst<'_>,
             src_shape: &'static Shape,
             dst: PtrUninit<'dst>,
-        ) -> Result<PtrMut<'dst>, TryFromInnerError> {
+        ) -> Result<PtrMut<'dst>, TryFromError> {
             if src_shape.id != <String as Facet>::SHAPE.id {
-                return Err(TryFromInnerError::UnsupportedSourceShape {
+                return Err(TryFromError::UnsupportedSourceShape {
                     src_shape,
                     expected: &[<String as Facet>::SHAPE],
                 });
@@ -26,7 +26,7 @@ unsafe impl Facet<'_> for Uuid {
             let s = unsafe { src_ptr.get::<String>() };
             match Uuid::parse_str(s) {
                 Ok(uuid) => Ok(unsafe { dst.put(uuid) }),
-                Err(_) => Err(TryFromInnerError::UnsupportedSourceShape {
+                Err(_) => Err(TryFromError::UnsupportedSourceShape {
                     src_shape,
                     expected: &[<String as Facet>::SHAPE],
                 }),
@@ -68,7 +68,7 @@ unsafe impl Facet<'_> for Uuid {
                         Ok(uuid) => Ok(unsafe { target.put(uuid) }),
                         Err(_) => Err(ParseError::Generic("UUID parsing failed")),
                     });
-                    vtable.try_from_inner = Some(try_from_inner);
+                    vtable.try_from = Some(try_from);
                     vtable.try_into_inner = Some(try_into_inner);
                     vtable.try_borrow_inner = Some(try_borrow_inner);
                     vtable

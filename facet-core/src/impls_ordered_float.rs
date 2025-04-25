@@ -1,7 +1,6 @@
 use crate::{
     Characteristic, ConstTypeId, Def, Facet, PtrConst, PtrMut, PtrUninit, ScalarAffinity,
-    ScalarDef, Shape, TryBorrowInnerError, TryFromInnerError, TryIntoInnerError,
-    value_vtable_inner,
+    ScalarDef, Shape, TryBorrowInnerError, TryFromError, TryIntoInnerError, value_vtable_inner,
 };
 use core::alloc::Layout;
 use ordered_float::{NotNan, OrderedFloat};
@@ -9,14 +8,14 @@ use ordered_float::{NotNan, OrderedFloat};
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for OrderedFloat<T> {
     const SHAPE: &'static Shape = &const {
         // Conversion from inner float type to OrderedFloat<T>
-        unsafe fn try_from_inner<'a, 'dst, T: Facet<'a>>(
+        unsafe fn try_from<'a, 'dst, T: Facet<'a>>(
             src_ptr: PtrConst<'_>,
             src_shape: &'static Shape,
             dst: PtrUninit<'dst>,
-        ) -> Result<PtrMut<'dst>, TryFromInnerError> {
+        ) -> Result<PtrMut<'dst>, TryFromError> {
             // Only support conversion if shapes match the inner T
             if src_shape.id != <T as Facet>::SHAPE.id {
-                return Err(TryFromInnerError::UnsupportedSourceShape {
+                return Err(TryFromError::UnsupportedSourceShape {
                     src_shape,
                     expected: &[<T as Facet>::SHAPE],
                 });
@@ -64,7 +63,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for OrderedFloat<T> {
                         // `OrderedFloat` is `repr(transparent)`
                         vtable.parse = Some(inner_parse);
                     }
-                    vtable.try_from_inner = Some(try_from_inner::<T>);
+                    vtable.try_from = Some(try_from::<T>);
                     vtable.try_into_inner = Some(try_into_inner::<T>);
                     vtable.try_borrow_inner = Some(try_borrow_inner::<T>);
                     vtable
@@ -80,13 +79,13 @@ unsafe impl<'a, T: Facet<'a> + ordered_float::FloatCore + Clone + core::str::Fro
 {
     const SHAPE: &'static Shape = &const {
         // Conversion from inner float type to NotNan<T>
-        unsafe fn try_from_inner<'a, 'dst, T: Facet<'a> + ordered_float::FloatCore + Clone>(
+        unsafe fn try_from<'a, 'dst, T: Facet<'a> + ordered_float::FloatCore + Clone>(
             src_ptr: PtrConst<'_>,
             src_shape: &'static Shape,
             dst: PtrUninit<'dst>,
-        ) -> Result<PtrMut<'dst>, TryFromInnerError> {
+        ) -> Result<PtrMut<'dst>, TryFromError> {
             if src_shape.id != <T as Facet>::SHAPE.id {
-                return Err(TryFromInnerError::UnsupportedSourceShape {
+                return Err(TryFromError::UnsupportedSourceShape {
                     src_shape,
                     expected: &[<T as Facet>::SHAPE],
                 });
@@ -94,7 +93,7 @@ unsafe impl<'a, T: Facet<'a> + ordered_float::FloatCore + Clone + core::str::Fro
             let v = unsafe { src_ptr.read::<T>() };
             match NotNan::new(v) {
                 Ok(not_nan) => Ok(unsafe { dst.put(not_nan) }),
-                Err(_) => Err(TryFromInnerError::InvariantNotRespected),
+                Err(_) => Err(TryFromError::Generic("was NaN")),
             }
         }
 
@@ -142,7 +141,7 @@ unsafe impl<'a, T: Facet<'a> + ordered_float::FloatCore + Clone + core::str::Fro
                             "Failed to parse inner type for NotNan",
                         )),
                     });
-                    vtable.try_from_inner = Some(try_from_inner::<T>);
+                    vtable.try_from = Some(try_from::<T>);
                     vtable.try_into_inner = Some(try_into_inner::<T>);
                     vtable.try_borrow_inner = Some(try_borrow_inner::<T>);
                     vtable

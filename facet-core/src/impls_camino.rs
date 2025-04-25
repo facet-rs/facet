@@ -6,19 +6,19 @@ use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::{
     ConstTypeId, Def, Facet, PtrConst, PtrMut, PtrUninit, ScalarAffinity, ScalarDef, Shape,
-    TryBorrowInnerError, TryFromInnerError, TryIntoInnerError, value_vtable_inner,
+    TryBorrowInnerError, TryFromError, TryIntoInnerError, value_vtable_inner,
 };
 
 unsafe impl Facet<'_> for Utf8PathBuf {
     const SHAPE: &'static Shape = &const {
         // Define the functions for transparent conversion between Utf8PathBuf and String
-        unsafe fn try_from_inner<'dst>(
+        unsafe fn try_from<'dst>(
             src_ptr: PtrConst<'_>,
             src_shape: &'static Shape,
             dst: PtrUninit<'dst>,
-        ) -> Result<PtrMut<'dst>, TryFromInnerError> {
+        ) -> Result<PtrMut<'dst>, TryFromError> {
             if src_shape.id != <String as Facet>::SHAPE.id {
-                return Err(TryFromInnerError::UnsupportedSourceShape {
+                return Err(TryFromError::UnsupportedSourceShape {
                     src_shape,
                     expected: &[<String as Facet>::SHAPE],
                 });
@@ -60,7 +60,7 @@ unsafe impl Facet<'_> for Utf8PathBuf {
                     let mut vtable = value_vtable_inner!((), |f, _opts| write!(f, "Utf8PathBuf"));
                     vtable.parse =
                         Some(|s, target| Ok(unsafe { target.put(Utf8Path::new(s).to_owned()) }));
-                    vtable.try_from_inner = Some(try_from_inner);
+                    vtable.try_from = Some(try_from);
                     vtable.try_into_inner = Some(try_into_inner);
                     vtable.try_borrow_inner = Some(try_borrow_inner);
                     vtable
@@ -73,14 +73,14 @@ unsafe impl Facet<'_> for Utf8PathBuf {
 
 unsafe impl<'a> Facet<'a> for &'a Utf8Path {
     const SHAPE: &'static Shape = &const {
-        // Implement try_from_inner to allow conversion from &str to &Utf8Path
-        unsafe fn try_from_inner<'src, 'dst>(
+        // Allows conversion from &str to &Utf8Path
+        unsafe fn try_from<'src, 'dst>(
             src_ptr: PtrConst<'src>,
             src_shape: &'static Shape,
             dst: PtrUninit<'dst>,
-        ) -> Result<PtrMut<'dst>, TryFromInnerError> {
+        ) -> Result<PtrMut<'dst>, TryFromError> {
             if src_shape.id != <&'src str as Facet>::SHAPE.id {
-                return Err(TryFromInnerError::UnsupportedSourceShape {
+                return Err(TryFromError::UnsupportedSourceShape {
                     src_shape,
                     expected: &[<&'src str as Facet>::SHAPE],
                 });
@@ -101,7 +101,7 @@ unsafe impl<'a> Facet<'a> for &'a Utf8Path {
             .vtable(
                 &const {
                     let mut vtable = value_vtable_inner!((), |f, _opts| write!(f, "Utf8Path"));
-                    vtable.try_from_inner = Some(try_from_inner);
+                    vtable.try_from = Some(try_from);
                     vtable
                 },
             )

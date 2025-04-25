@@ -840,8 +840,8 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
                 // If the source shape matches the inner shape, we need to build the outer (transparent) wrapper
                 if src_shape == inner_shape {
                     // Look for a try_from_inner function in the vtable
-                    if let Some(try_from_inner_fn) = frame.shape.vtable.try_from_inner {
-                        match unsafe { (try_from_inner_fn)(src, src_shape, frame.data) } {
+                    if let Some(try_from_fn) = frame.shape.vtable.try_from {
+                        match unsafe { (try_from_fn)(src, src_shape, frame.data) } {
                             Ok(_) => {
                                 unsafe {
                                     frame.mark_fully_initialized();
@@ -863,7 +863,7 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
                                 return Ok(self);
                             }
                             Err(e) => {
-                                return Err(ReflectError::TryFromInnerError {
+                                return Err(ReflectError::TryFromError {
                                     inner: e,
                                     src_shape,
                                     dst_shape: frame.shape,

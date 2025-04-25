@@ -733,3 +733,59 @@ fn wip_fn_ptr() -> eyre::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn wip_put_u16_into_u64() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    // put a u16 into an u64 field (should work, coercion up)
+    #[derive(Facet, Debug, PartialEq, Eq)]
+    struct FooU64 {
+        value: u64,
+    }
+    let result = Wip::alloc::<FooU64>()?
+        .field_named("value")?
+        .put::<u16>(12345)?
+        .pop()?
+        .build()?
+        .materialize::<FooU64>()?;
+    assert_eq!(result.value, 12345u64);
+
+    Ok(())
+}
+
+#[test]
+fn wip_put_u64_into_u16() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Debug, PartialEq, Eq)]
+    struct FooU16 {
+        value: u16,
+    }
+    // should work when value fits
+    let result = Wip::alloc::<FooU16>()?
+        .field_named("value")?
+        .put::<u64>(54321)?
+        .pop()?
+        .build()?
+        .materialize::<FooU16>()?;
+    assert_eq!(result.value, 54321u16);
+
+    // should fail when value does not fit in u16
+    let err = Wip::alloc::<FooU16>()?
+        .field_named("value")?
+        .put::<u64>(70000);
+    assert!(
+        err.is_err(),
+        "Expected error when putting too large u64 into u16"
+    );
+
+    // should also fail for negative when putting an i64 into u16
+    let err = Wip::alloc::<FooU16>()?.field_named("value")?.put::<i64>(-1);
+    assert!(
+        err.is_err(),
+        "Expected error when putting negative i64 into u16"
+    );
+
+    Ok(())
+}

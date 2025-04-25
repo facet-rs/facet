@@ -2,20 +2,20 @@ use core::alloc::Layout;
 
 use crate::{
     ConstTypeId, Def, Facet, KnownSmartPointer, Opaque, PtrConst, PtrMut, PtrUninit, Shape,
-    SmartPointerDef, SmartPointerFlags, SmartPointerVTable, TryBorrowInnerError, TryFromInnerError,
+    SmartPointerDef, SmartPointerFlags, SmartPointerVTable, TryBorrowInnerError, TryFromError,
     TryIntoInnerError, value_vtable, value_vtable_inner,
 };
 
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
     const SHAPE: &'static crate::Shape = &const {
         // Define the functions for transparent conversion between Arc<T> and T
-        unsafe fn try_from_inner<'a, 'src, 'dst, T: Facet<'a>>(
+        unsafe fn try_from<'a, 'src, 'dst, T: Facet<'a>>(
             src_ptr: PtrConst<'src>,
             src_shape: &'static Shape,
             dst: PtrUninit<'dst>,
-        ) -> Result<PtrMut<'dst>, TryFromInnerError> {
+        ) -> Result<PtrMut<'dst>, TryFromError> {
             if src_shape.id != T::SHAPE.id {
-                return Err(TryFromInnerError::UnsupportedSourceShape {
+                return Err(TryFromError::UnsupportedSourceShape {
                     src_shape,
                     expected: &[T::SHAPE],
                 });
@@ -85,7 +85,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
                 &const {
                     let mut vtable =
                         value_vtable_inner!(alloc::sync::Arc<T>, |f, _opts| write!(f, "Arc"));
-                    vtable.try_from_inner = Some(try_from_inner::<T>);
+                    vtable.try_from = Some(try_from::<T>);
                     vtable.try_into_inner = Some(try_into_inner::<T>);
                     vtable.try_borrow_inner = Some(try_borrow_inner::<T>);
                     vtable
@@ -171,13 +171,13 @@ unsafe impl<'a, T: 'a> Facet<'a> for Opaque<alloc::sync::Arc<T>> {
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::rc::Rc<T> {
     const SHAPE: &'static crate::Shape = &const {
         // Define the functions for transparent conversion between Rc<T> and T
-        unsafe fn try_from_inner<'a, 'src, 'dst, T: Facet<'a>>(
+        unsafe fn try_from<'a, 'src, 'dst, T: Facet<'a>>(
             src_ptr: PtrConst<'src>,
             src_shape: &'static Shape,
             dst: PtrUninit<'dst>,
-        ) -> Result<PtrMut<'dst>, TryFromInnerError> {
+        ) -> Result<PtrMut<'dst>, TryFromError> {
             if src_shape.id != T::SHAPE.id {
-                return Err(TryFromInnerError::UnsupportedSourceShape {
+                return Err(TryFromError::UnsupportedSourceShape {
                     src_shape,
                     expected: &[T::SHAPE],
                 });
@@ -247,7 +247,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::rc::Rc<T> {
                 &const {
                     let mut vtable =
                         value_vtable_inner!(alloc::rc::Rc<T>, |f, _opts| write!(f, "Rc"));
-                    vtable.try_from_inner = Some(try_from_inner::<T>);
+                    vtable.try_from = Some(try_from::<T>);
                     vtable.try_into_inner = Some(try_into_inner::<T>);
                     vtable.try_borrow_inner = Some(try_borrow_inner::<T>);
                     vtable

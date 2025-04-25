@@ -151,27 +151,33 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     let try_from_inner_code = if is_transparent {
         format!(
             r#"
-            // Define the try_from_inner function for the value vtable
-            unsafe fn try_from_inner<'src, 'dst>(
+            // Define the try_from function for the value vtable
+            unsafe fn try_from<'src, 'dst>(
                 src_ptr: ::facet::PtrConst<'src>,
                 src_shape: &'static ::facet::Shape,
                 dst: ::facet::PtrUninit<'dst>
-            ) -> Result<::facet::PtrMut<'dst>, ::facet::TryFromInnerError> {{
-                // Check if source shape matches inner type's shape
-                if src_shape.id != <{inner_type} as ::facet::Facet>::SHAPE.id {{
-                    return Err(::facet::TryFromInnerError::UnsupportedSourceShape {{
-                        src_shape,
-                        expected: &[<{inner_type} as ::facet::Facet>::SHAPE],
-                    }});
-                }}
+            ) -> Result<::facet::PtrMut<'dst>, ::facet::TryFromError> {{
+                match <{inner_type} as ::facet::Facet>::SHAPE.vtable.try_from {{
+                    Some(inner_try) => {{
+                        unsafe {{
+                            (inner_try)(src_ptr, src_shape, dst)
+                        }}
+                    }},
+                    None => {{
+                        if src_shape != <{inner_type} as ::facet::Facet>::SHAPE {{
+                            return Err(::facet::TryFromError::UnsupportedSourceShape {{
+                                src_shape,
+                                expected: const {{ &[ &<{inner_type} as ::facet::Facet>::SHAPE ] }},
+                            }});
+                        }}
 
-                // Get the inner value and create our newtype wrapper
-                let inner_val = unsafe {{ src_ptr.get::<{inner_type}>() }};
-                // Put the inner value into the wrapper and return the destination
-                Ok(unsafe {{ dst.put({struct_name}{bgp_without_bounds}(inner_val.clone())) }})
+                        let inner: {inner_type} = unsafe {{ src_ptr.read() }};
+                        Ok(unsafe {{ dst.put(inner) }})
+                    }}
+                }}
             }}
 
-            vtable.try_from_inner = Some(try_from_inner);
+            vtable.try_from = Some(try_from);
 
             // Define the try_into_inner function for the value vtable
             unsafe fn try_into_inner<'src, 'dst>(
