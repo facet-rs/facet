@@ -44,13 +44,14 @@ Thanks to all individual and corporate sponsors, without whom this work could no
 </picture>
 </a> </p>
 
-
 # JSON Schema generation for Facet
+
 This module provides functionality to generate JSON Schema from Facet types.
 
 The main function is `to_string`, which takes a Facet type and returns its JSON Schema representation as a string.
 
 # Example
+
 ```rust
 use facet_jsonschema::to_string;
 use facet::Facet;
@@ -66,6 +67,7 @@ struct TestStruct {
 let schema = to_string::<TestStruct>();
 println!("JSON Schema: {schema}");
 ```
+
 ## License
 
 Licensed under either of:

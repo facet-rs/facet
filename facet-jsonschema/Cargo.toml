@@ -20,9 +20,7 @@ keywords = [
 categories = ["development-tools", "encoding"]
 
 [dependencies]
-facet-core = { version = "0.16.0", path = "../facet-core" }
-facet-derive = { version = "0.16.0", path = "../facet-derive" }
-facet-reflect = { version = "0.16.0", path = "../facet-reflect" }
+facet = { version = "0.16.0", path = "../facet" }
 
 [dev-dependencies]
 serde_json = "1.0"
