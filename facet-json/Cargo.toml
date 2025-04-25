@@ -16,7 +16,7 @@ alloc = ["facet-core/alloc", "facet-reflect/alloc"]    # Enables alloc support
 rich-diagnostics = ["dep:ariadne", "std"]
 default = ["std", "rich-diagnostics"]
 camino = ["alloc", "facet-core/camino"]                # Enable camino support
-ordered-float = ["facet-core/ordered-float"]
+ordered-float = ["alloc", "facet-core/ordered-float"]
 
 [dependencies]
 ariadne = { version = "=0.5.1", optional = true }
