@@ -467,3 +467,28 @@ fn test_field_rename_missing_required_error() {
     #[cfg(not(miri))]
     assert_snapshot!(e.to_string());
 }
+
+/// Rename to verify it's not an accidental alias
+#[test]
+fn test_field_rename_not_alias() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct ABTesting {
+        #[facet(rename = "b")]
+        a: String,
+
+        #[facet(rename = "c")]
+        b: String,
+    }
+
+    let json = r#"{"b":"focus group 1","c":"focus group 2"}"#;
+
+    let result: ABTesting = match from_str(json) {
+        Ok(s) => s,
+        Err(e) => panic!("Error deserializing JSON: {}", e),
+    };
+
+    assert_eq!(result.a, "focus group 1");
+    assert_eq!(result.b, "focus group 2");
+}
