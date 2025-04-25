@@ -159,3 +159,29 @@ fn transparent_not_nan_f32() -> eyre::Result<()> {
 
     Ok(())
 }
+
+#[cfg(feature = "uuid")]
+#[test]
+fn transparent_uuid() -> eyre::Result<()> {
+    use uuid::Uuid;
+
+    let markup = r#"
+        "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+    "#;
+
+    // Test deserializing into Uuid
+    let uuid: Uuid = from_str(markup)?;
+    assert_eq!(
+        uuid,
+        Uuid::parse_str("f47ac10b-58cc-4372-a567-0e02b2c3d479")?
+    );
+
+    // Test direct usage of Uuid
+    let direct_uuid = Uuid::parse_str("123e4567-e89b-12d3-a456-426614174000")?;
+    assert_eq!(
+        direct_uuid.to_string(),
+        "123e4567-e89b-12d3-a456-426614174000"
+    );
+
+    Ok(())
+}
