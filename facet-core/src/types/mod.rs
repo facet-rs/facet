@@ -135,7 +135,7 @@ impl Shape {
     }
 
     /// Check if this shape is of the given type
-    pub fn is_type<Other: Facet<'static>>(&'static self) -> bool {
+    pub fn is_type<Other: Facet<'static> + ?Sized>(&'static self) -> bool {
         let l = self;
         let r = Other::SHAPE;
         l == r

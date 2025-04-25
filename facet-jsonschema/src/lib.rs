@@ -4,7 +4,7 @@
 #![deny(unsafe_code)]
 #![doc = include_str!("../README.md")]
 
-use facet::{Def, Facet, ScalarDef, Shape};
+use facet::{Def, Facet, RefPtrDef, ScalarDef, Shape};
 
 use std::io::Write;
 
@@ -55,6 +55,7 @@ fn serialize<W: Write>(shape: &'static Shape, doc: &[&str], writer: &mut W) -> s
 
     match shape.def {
         Def::Scalar(ref scalar_def) => serialize_scalar(scalar_def, writer)?,
+        Def::RefPtr(ref ref_ptr_def) => serialize_ref_ptr(ref_ptr_def, writer)?,
         Def::Struct(ref struct_def) => serialize_struct(struct_def, writer)?,
         Def::Map(_map_def) => todo!("Map"),
         Def::List(list_def) => serialize_list(list_def, writer)?,
@@ -117,6 +118,33 @@ fn serialize_scalar<W: Write>(scalar_def: &ScalarDef, writer: &mut W) -> std::io
     }
 }
 
+fn serialize_ref_ptr<W: Write>(ref_ptr_def: &RefPtrDef, writer: &mut W) -> std::io::Result<()> {
+    match ref_ptr_def.typ {
+        facet_core::RefPtrType::Reference => {
+            if ref_ptr_def
+                .pointee
+                .is_some_and(|p| p.is_type::<str>() || p.is_type::<String>())
+            {
+                write!(writer, "\"type\": \"string\"")?;
+                Ok(())
+            } else {
+                if let Some(Def::Slice(slice_def)) = ref_ptr_def.pointee.map(|p| p.def) {
+                    return serialize_slice(slice_def, writer);
+                }
+
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Unsupported reference type: {ref_ptr_def:#?}"),
+                ))
+            }
+        }
+        facet::RefPtrType::Pointer => Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("Unsupported pointer type: {ref_ptr_def:#?}"),
+        )),
+    }
+}
+
 fn serialize_struct<W: Write>(struct_def: &facet::Struct, writer: &mut W) -> std::io::Result<()> {
     write!(writer, "\"type\": \"object\",")?;
     let required = struct_def
@@ -154,7 +182,7 @@ fn serialize_list<W: Write>(list_def: facet::ListDef, writer: &mut W) -> std::io
 fn serialize_slice<W: Write>(slice_def: facet::SliceDef, writer: &mut W) -> std::io::Result<()> {
     write!(writer, "\"type\": \"array\",")?;
     write!(writer, "\"items\": {{")?;
-    serialize(slice_def.t(), &[], writer)?;
+    serialize(slice_def.t, &[], writer)?;
     write!(writer, "}}")?;
     Ok(())
 }
