@@ -9,11 +9,10 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for UnitStruct {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const { [] };
         let vtable = &const {
-            let mut vtable =
-                ::facet::value_vtable_inner!(Self, |f, _opts| ::core::fmt::Write::write_str(
-                    f,
-                    "UnitStruct"
-                ));
+            let mut vtable = ::facet::value_vtable!(
+                Self,
+                |f, _opts| ::core::fmt::Write::write_str(f, "UnitStruct")
+            );
             vtable
         };
         ::facet::Shape::builder()

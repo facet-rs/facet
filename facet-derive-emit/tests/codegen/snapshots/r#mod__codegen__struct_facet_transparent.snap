@@ -17,10 +17,10 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Wrapper {
                 .build()]
         };
         let vtable = &const {
-            let mut vtable =
-                ::facet::value_vtable_inner!(Self, |f, _opts| ::core::fmt::Write::write_str(
-                    f, "Wrapper"
-                ));
+            let mut vtable = ::facet::value_vtable!(
+                Self,
+                |f, _opts| ::core::fmt::Write::write_str(f, "Wrapper")
+            );
             unsafe fn try_from<'src, 'dst>(
                 src_ptr: ::facet::PtrConst<'src>,
                 src_shape: &'static ::facet::Shape,

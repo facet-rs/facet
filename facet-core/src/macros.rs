@@ -46,14 +46,6 @@ pub struct Opaque<T>(T);
 #[macro_export]
 macro_rules! value_vtable {
     ($type_name:ty, $type_name_fn:expr) => {
-        &$crate::value_vtable_inner!($type_name, $type_name_fn)
-    };
-}
-
-/// Creates a `ValueVTable` for a given type, see [`value_vtable!`] for more details.
-#[macro_export]
-macro_rules! value_vtable_inner {
-    ($type_name:ty, $type_name_fn:expr) => {
         const {
             let mut builder = $crate::ValueVTable::builder()
                 .type_name($type_name_fn)
@@ -146,7 +138,7 @@ macro_rules! value_vtable_inner {
                     let res = unsafe { (&&SpezEmpty::<$type_name>::SPEZ).spez_parse(s, target) };
                     res.map(|_| unsafe { target.assume_init() })
                 });
-            }
+                            }
 
             builder.build()
         }

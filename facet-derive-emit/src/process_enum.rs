@@ -183,10 +183,10 @@ unsafe impl{bgp_def} ::facet::Facet<'__facet> for {enum_name}{bgp_without_bounds
             .id(::facet::ConstTypeId::of::<Self>())
             .layout(::core::alloc::Layout::new::<Self>())
             {type_params}
-            .vtable(::facet::value_vtable!(
+            .vtable(&const {{ ::facet::value_vtable!(
                 Self,
                 |f, _opts| ::core::fmt::Write::write_str(f, "{enum_name}")
-            ))
+            )}})
             .def(::facet::Def::Enum(::facet::EnumDef::builder()
                 // Use variant expressions that just reference the shadow structs
                 // which are now defined above

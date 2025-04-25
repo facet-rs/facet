@@ -235,7 +235,7 @@ unsafe impl{bgp_def} ::facet::Facet<'__facet> for {struct_name}{bgp_without_boun
         let fields: &'static [::facet::Field] = &const {{[{fields}]}};
 
         let vtable = &const {{
-            let mut vtable = ::facet::value_vtable_inner!(
+            let mut vtable = ::facet::value_vtable!(
                 Self,
                 |f, _opts| ::core::fmt::Write::write_str(f, "{struct_name}")
             );

@@ -44,9 +44,13 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Color {
         ::facet::Shape::builder()
             .id(::facet::ConstTypeId::of::<Self>())
             .layout(::core::alloc::Layout::new::<Self>())
-            .vtable(::facet::value_vtable!(Self, |f, _opts| {
-                ::core::fmt::Write::write_str(f, "Color")
-            }))
+            .vtable(
+                &const {
+                    ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
+                        f, "Color"
+                    ))
+                },
+            )
             .def(::facet::Def::Enum(
                 ::facet::EnumDef::builder()
                     .variants(__facet_variants)

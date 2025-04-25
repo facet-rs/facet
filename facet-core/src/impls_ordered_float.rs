@@ -1,6 +1,6 @@
 use crate::{
     Characteristic, ConstTypeId, Def, Facet, PtrConst, PtrMut, PtrUninit, ScalarAffinity,
-    ScalarDef, Shape, TryBorrowInnerError, TryFromError, TryIntoInnerError, value_vtable_inner,
+    ScalarDef, Shape, TryBorrowInnerError, TryFromError, TryIntoInnerError, value_vtable,
 };
 use core::alloc::Layout;
 use ordered_float::{NotNan, OrderedFloat};
@@ -56,7 +56,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for OrderedFloat<T> {
             ))
             .vtable(
                 &const {
-                    let mut vtable = value_vtable_inner!((), |f, _opts| write!(f, "OrderedFloat"));
+                    let mut vtable = value_vtable!((), |f, _opts| write!(f, "OrderedFloat"));
                     if <T as Facet>::SHAPE.is(Characteristic::FromStr) {
                         let inner_parse =
                             unsafe { <T as Facet>::SHAPE.vtable.parse.unwrap_unchecked() };
@@ -128,7 +128,7 @@ unsafe impl<'a, T: Facet<'a> + ordered_float::FloatCore + Clone + core::str::Fro
             ))
             .vtable(
                 &const {
-                    let mut vtable = value_vtable_inner!((), |f, _opts| write!(f, "NotNan"));
+                    let mut vtable = value_vtable!((), |f, _opts| write!(f, "NotNan"));
                     // Accept parsing as inner T, but enforce NotNan invariant
                     vtable.parse = Some(|s, target| match s.parse::<T>() {
                         Ok(inner) => match NotNan::new(inner) {

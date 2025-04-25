@@ -204,7 +204,7 @@ unsafe impl Facet<'_> for RandomState {
                     .affinity(ScalarAffinity::opaque().build())
                     .build(),
             ))
-            .vtable(value_vtable!((), |f, _opts| write!(f, "RandomState")))
+            .vtable(&const { value_vtable!((), |f, _opts| write!(f, "RandomState")) })
             .build()
     };
 }

@@ -18,9 +18,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Handle {
         };
         let vtable = &const {
             let mut vtable =
-                ::facet::value_vtable_inner!(Self, |f, _opts| ::core::fmt::Write::write_str(
-                    f, "Handle"
-                ));
+                ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "Handle"));
             vtable
         };
         ::facet::Shape::builder()

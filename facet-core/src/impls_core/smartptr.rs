@@ -37,10 +37,9 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for core::ptr::NonNull<T> {
                     )
                     .build(),
             ))
-            .vtable(value_vtable!(core::ptr::NonNull<T>, |f, _opts| write!(
-                f,
-                "NonNull"
-            )))
+            .vtable(
+                &const { value_vtable!(core::ptr::NonNull<T>, |f, _opts| write!(f, "NonNull")) },
+            )
             .build()
     };
 }

@@ -104,9 +104,14 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithVariants {
         ::facet::Shape::builder()
             .id(::facet::ConstTypeId::of::<Self>())
             .layout(::core::alloc::Layout::new::<Self>())
-            .vtable(::facet::value_vtable!(Self, |f, _opts| {
-                ::core::fmt::Write::write_str(f, "EnumWithVariants")
-            }))
+            .vtable(
+                &const {
+                    ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
+                        f,
+                        "EnumWithVariants"
+                    ))
+                },
+            )
             .def(::facet::Def::Enum(
                 ::facet::EnumDef::builder()
                     .variants(__facet_variants)

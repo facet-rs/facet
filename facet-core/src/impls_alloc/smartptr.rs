@@ -3,7 +3,7 @@ use core::alloc::Layout;
 use crate::{
     ConstTypeId, Def, Facet, KnownSmartPointer, Opaque, PtrConst, PtrMut, PtrUninit, Shape,
     SmartPointerDef, SmartPointerFlags, SmartPointerVTable, TryBorrowInnerError, TryFromError,
-    TryIntoInnerError, value_vtable, value_vtable_inner,
+    TryIntoInnerError, value_vtable,
 };
 
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
@@ -84,7 +84,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
             .vtable(
                 &const {
                     let mut vtable =
-                        value_vtable_inner!(alloc::sync::Arc<T>, |f, _opts| write!(f, "Arc"));
+                        value_vtable!(alloc::sync::Arc<T>, |f, _opts| write!(f, "Arc"));
                     vtable.try_from = Some(try_from::<T>);
                     vtable.try_into_inner = Some(try_into_inner::<T>);
                     vtable.try_borrow_inner = Some(try_borrow_inner::<T>);
@@ -127,9 +127,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Weak<T> {
                     )
                     .build(),
             ))
-            .vtable(
-                &const { value_vtable_inner!(alloc::sync::Arc<T>, |f, _opts| write!(f, "Arc")) },
-            )
+            .vtable(&const { value_vtable!(alloc::sync::Arc<T>, |f, _opts| write!(f, "Arc")) })
             .inner(inner_shape::<T>)
             .build()
     };
@@ -161,9 +159,7 @@ unsafe impl<'a, T: 'a> Facet<'a> for Opaque<alloc::sync::Arc<T>> {
                     )
                     .build(),
             ))
-            .vtable(
-                &const { value_vtable_inner!(alloc::sync::Arc<T>, |f, _opts| write!(f, "Arc")) },
-            )
+            .vtable(&const { value_vtable!(alloc::sync::Arc<T>, |f, _opts| write!(f, "Arc")) })
             .build()
     };
 }
@@ -245,8 +241,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::rc::Rc<T> {
             ))
             .vtable(
                 &const {
-                    let mut vtable =
-                        value_vtable_inner!(alloc::rc::Rc<T>, |f, _opts| write!(f, "Rc"));
+                    let mut vtable = value_vtable!(alloc::rc::Rc<T>, |f, _opts| write!(f, "Rc"));
                     vtable.try_from = Some(try_from::<T>);
                     vtable.try_into_inner = Some(try_into_inner::<T>);
                     vtable.try_borrow_inner = Some(try_borrow_inner::<T>);
@@ -289,7 +284,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::rc::Weak<T> {
                     )
                     .build(),
             ))
-            .vtable(&const { value_vtable_inner!(alloc::rc::Rc<T>, |f, _opts| write!(f, "Rc")) })
+            .vtable(&const { value_vtable!(alloc::rc::Rc<T>, |f, _opts| write!(f, "Rc")) })
             .inner(inner_shape::<T>)
             .build()
     };
@@ -320,7 +315,7 @@ unsafe impl<'a, T: 'a> Facet<'a> for Opaque<alloc::rc::Rc<T>> {
                     )
                     .build(),
             ))
-            .vtable(value_vtable!(alloc::rc::Rc<T>, |f, _opts| write!(f, "Rc")))
+            .vtable(&const { value_vtable!(alloc::rc::Rc<T>, |f, _opts| write!(f, "Rc")) })
             .build()
     };
 }

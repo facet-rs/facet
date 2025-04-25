@@ -12,7 +12,7 @@ unsafe impl Facet<'_> for std::path::PathBuf {
                     .affinity(ScalarAffinity::path().build())
                     .build(),
             ))
-            .vtable(value_vtable!((), |f, _opts| write!(f, "PathBuf")))
+            .vtable(&const { value_vtable!((), |f, _opts| write!(f, "PathBuf")) })
             .build()
     };
 }
@@ -27,7 +27,7 @@ unsafe impl<'a> Facet<'a> for &'a std::path::Path {
                     .affinity(ScalarAffinity::path().build())
                     .build(),
             ))
-            .vtable(value_vtable!((), |f, _opts| write!(f, "Path")))
+            .vtable(&const { value_vtable!((), |f, _opts| write!(f, "Path")) })
             .build()
     };
 }

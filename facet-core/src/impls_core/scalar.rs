@@ -14,7 +14,7 @@ unsafe impl Facet<'_> for ConstTypeId {
                     .affinity(ScalarAffinity::opaque().build())
                     .build(),
             ))
-            .vtable(value_vtable!((), |f, _opts| write!(f, "ConstTypeId")))
+            .vtable(&const { value_vtable!((), |f, _opts| write!(f, "ConstTypeId")) })
             .build()
     };
 }
@@ -29,7 +29,7 @@ unsafe impl Facet<'_> for () {
                     .affinity(ScalarAffinity::empty().build())
                     .build(),
             ))
-            .vtable(value_vtable!((), |f, _opts| write!(f, "()")))
+            .vtable(&const { value_vtable!((), |f, _opts| write!(f, "()")) })
             .build()
     };
 }
@@ -45,7 +45,7 @@ unsafe impl<'a, T: ?Sized + 'a> Facet<'a> for core::marker::PhantomData<T> {
                     .build(),
             ))
             // TODO: we might be able to do something with specialization re: the shape of T?
-            .vtable(value_vtable!((), |f, _opts| write!(f, "PhantomData")))
+            .vtable(&const { value_vtable!((), |f, _opts| write!(f, "PhantomData")) })
             .build()
     };
 }
@@ -62,10 +62,7 @@ unsafe impl Facet<'_> for alloc::string::String {
                     .affinity(ScalarAffinity::string().max_inline_length(0).build())
                     .build(),
             ))
-            .vtable(value_vtable!(alloc::string::String, |f, _opts| write!(
-                f,
-                "String"
-            )))
+            .vtable(&const { value_vtable!(alloc::string::String, |f, _opts| write!(f, "String")) })
             .build()
     };
 }
@@ -80,7 +77,7 @@ unsafe impl Facet<'_> for char {
                     .affinity(ScalarAffinity::char().build())
                     .build(),
             ))
-            .vtable(value_vtable!(char, |f, _opts| write!(f, "char")))
+            .vtable(&const { value_vtable!(char, |f, _opts| write!(f, "char")) })
             .build()
     };
 }
@@ -95,7 +92,7 @@ unsafe impl<'a> Facet<'a> for &'a str {
                     .affinity(ScalarAffinity::string().build())
                     .build(),
             ))
-            .vtable(value_vtable!(&str, |f, _opts| write!(f, "&str")))
+            .vtable(&const { value_vtable!(&str, |f, _opts| write!(f, "&str")) })
             .build()
     };
 }
@@ -111,10 +108,14 @@ unsafe impl<'a> Facet<'a> for alloc::borrow::Cow<'a, str> {
                     .affinity(ScalarAffinity::string().build())
                     .build(),
             ))
-            .vtable(value_vtable!(
-                alloc::borrow::Cow<'_, str>,
-                |f, _opts| write!(f, "Cow<'_, str>")
-            ))
+            .vtable(
+                &const {
+                    value_vtable!(alloc::borrow::Cow<'_, str>, |f, _opts| write!(
+                        f,
+                        "Cow<'_, str>"
+                    ))
+                },
+            )
             .build()
     };
 }
@@ -129,7 +130,7 @@ unsafe impl Facet<'_> for bool {
                     .affinity(ScalarAffinity::boolean().build())
                     .build(),
             ))
-            .vtable(value_vtable!(bool, |f, _opts| write!(f, "bool")))
+            .vtable(&const { value_vtable!(bool, |f, _opts| write!(f, "bool")) })
             .build()
     };
 }
@@ -146,11 +147,8 @@ macro_rules! impl_facet_for_integer {
                     ))
                     .vtable(
                         &const {
-                            let mut vtable = value_vtable_inner!($type, |f, _opts| write!(
-                                f,
-                                "{}",
-                                stringify!($type)
-                            ));
+                            let mut vtable =
+                                value_vtable!($type, |f, _opts| write!(f, "{}", stringify!($type)));
 
                             vtable.try_from = Some(|source, source_shape, dest| {
                                 if source_shape == Self::SHAPE {
@@ -379,7 +377,7 @@ macro_rules! impl_facet_for_integer {
                     ))
                     .vtable(
                         &const {
-                            let mut vtable = value_vtable_inner!($type, |f, _opts| write!(
+                            let mut vtable = value_vtable!($type, |f, _opts| write!(
                                 f,
                                 "NonZero<{}>",
                                 stringify!($type)
@@ -690,7 +688,7 @@ unsafe impl Facet<'_> for f32 {
             ))
             .vtable(
                 &const {
-                    let mut vtable = value_vtable_inner!(f32, |f, _opts| write!(f, "f32"));
+                    let mut vtable = value_vtable!(f32, |f, _opts| write!(f, "f32"));
 
                     vtable.try_from = Some(|source, source_shape, dest| {
                         if source_shape == Self::SHAPE {
@@ -748,7 +746,7 @@ unsafe impl Facet<'_> for f64 {
             ))
             .vtable(
                 &const {
-                    let mut vtable = value_vtable_inner!(f64, |f, _opts| write!(f, "f64"));
+                    let mut vtable = value_vtable!(f64, |f, _opts| write!(f, "f64"));
 
                     vtable.try_from = Some(|source, source_shape, dest| {
                         if source_shape == Self::SHAPE {
@@ -792,10 +790,9 @@ unsafe impl Facet<'_> for core::net::SocketAddr {
                     .affinity(ScalarAffinity::socket_addr().build())
                     .build(),
             ))
-            .vtable(value_vtable!(core::net::SocketAddr, |f, _opts| write!(
-                f,
-                "SocketAddr"
-            )))
+            .vtable(
+                &const { value_vtable!(core::net::SocketAddr, |f, _opts| write!(f, "SocketAddr")) },
+            )
             .build()
     };
 }
@@ -810,10 +807,7 @@ unsafe impl Facet<'_> for core::net::IpAddr {
                     .affinity(ScalarAffinity::ip_addr().build())
                     .build(),
             ))
-            .vtable(value_vtable!(core::net::IpAddr, |f, _opts| write!(
-                f,
-                "IpAddr"
-            )))
+            .vtable(&const { value_vtable!(core::net::IpAddr, |f, _opts| write!(f, "IpAddr")) })
             .build()
     };
 }
@@ -828,10 +822,7 @@ unsafe impl Facet<'_> for core::net::Ipv4Addr {
                     .affinity(ScalarAffinity::ip_addr().build())
                     .build(),
             ))
-            .vtable(value_vtable!(core::net::Ipv4Addr, |f, _opts| write!(
-                f,
-                "Ipv4Addr"
-            )))
+            .vtable(&const { value_vtable!(core::net::Ipv4Addr, |f, _opts| write!(f, "Ipv4Addr")) })
             .build()
     };
 }
@@ -846,10 +837,7 @@ unsafe impl Facet<'_> for core::net::Ipv6Addr {
                     .affinity(ScalarAffinity::ip_addr().build())
                     .build(),
             ))
-            .vtable(value_vtable!(core::net::Ipv6Addr, |f, _opts| write!(
-                f,
-                "Ipv6Addr"
-            )))
+            .vtable(&const { value_vtable!(core::net::Ipv6Addr, |f, _opts| write!(f, "Ipv6Addr")) })
             .build()
     };
 }

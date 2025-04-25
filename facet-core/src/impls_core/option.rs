@@ -2,9 +2,8 @@ use core::{alloc::Layout, mem::MaybeUninit};
 
 use crate::{
     ConstTypeId, Def, Facet, OptionDef, OptionVTable, PtrConst, PtrMut, PtrUninit, Shape,
-    TryBorrowInnerError, TryFromError, TryIntoInnerError, value_vtable_inner,
+    TryBorrowInnerError, TryFromError, TryIntoInnerError, value_vtable,
 };
-
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
     const SHAPE: &'static Shape = &const {
         // Define the functions for transparent conversion between Option<T> and T
@@ -88,7 +87,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
             ))
             .vtable(
                 &const {
-                    let mut vtable = value_vtable_inner!(core::option::Option<T>, |f, opts| {
+                    let mut vtable = value_vtable!(core::option::Option<T>, |f, opts| {
                         write!(f, "Option")?;
                         if let Some(opts) = opts.for_children() {
                             write!(f, "<")?;

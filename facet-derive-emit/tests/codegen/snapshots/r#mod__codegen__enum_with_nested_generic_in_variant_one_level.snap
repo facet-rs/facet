@@ -90,9 +90,14 @@ where
                 name: "T",
                 shape: || <T as ::facet::Facet>::SHAPE,
             }])
-            .vtable(::facet::value_vtable!(Self, |f, _opts| {
-                ::core::fmt::Write::write_str(f, "OneLevelNested")
-            }))
+            .vtable(
+                &const {
+                    ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
+                        f,
+                        "OneLevelNested"
+                    ))
+                },
+            )
             .def(::facet::Def::Enum(
                 ::facet::EnumDef::builder()
                     .variants(__facet_variants)

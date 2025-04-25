@@ -26,11 +26,10 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for TupleStruct {
             ]
         };
         let vtable = &const {
-            let mut vtable =
-                ::facet::value_vtable_inner!(Self, |f, _opts| ::core::fmt::Write::write_str(
-                    f,
-                    "TupleStruct"
-                ));
+            let mut vtable = ::facet::value_vtable!(
+                Self,
+                |f, _opts| ::core::fmt::Write::write_str(f, "TupleStruct")
+            );
             vtable
         };
         ::facet::Shape::builder()
