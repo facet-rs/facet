@@ -1,0 +1,48 @@
+---
+source: facet-derive-emit/tests/codegen/mod.rs
+expression: "expand(r#\"\n        #[derive(Facet)]\n        struct TupleStruct(i32, String);\n        \"#)"
+---
+#[used]
+static TUPLE_STRUCT_SHAPE: &'static ::facet::Shape = <TupleStruct as ::facet::Facet>::SHAPE;
+#[automatically_derived]
+unsafe impl<'__facet> ::facet::Facet<'__facet> for TupleStruct {
+    const SHAPE: &'static ::facet::Shape = &const {
+        let fields: &'static [::facet::Field] = &const {
+            [
+                ::facet::Field::builder()
+                    .name("0")
+                    .shape(|| ::facet::shape_of(&|s: &TupleStruct| &s.0))
+                    .offset(::core::mem::offset_of!(TupleStruct, 0))
+                    .flags(::facet::FieldFlags::EMPTY)
+                    .attributes(&const { [] })
+                    .build(),
+                ::facet::Field::builder()
+                    .name("1")
+                    .shape(|| ::facet::shape_of(&|s: &TupleStruct| &s.1))
+                    .offset(::core::mem::offset_of!(TupleStruct, 1))
+                    .flags(::facet::FieldFlags::EMPTY)
+                    .attributes(&const { [] })
+                    .build(),
+            ]
+        };
+        let vtable = &const {
+            let mut vtable =
+                ::facet::value_vtable_inner!(Self, |f, _opts| ::core::fmt::Write::write_str(
+                    f,
+                    "TupleStruct"
+                ));
+            vtable
+        };
+        ::facet::Shape::builder()
+            .id(::facet::ConstTypeId::of::<Self>())
+            .layout(::core::alloc::Layout::new::<Self>())
+            .vtable(vtable)
+            .def(::facet::Def::Struct(
+                ::facet::StructDef::builder()
+                    .kind(::facet::StructKind::TupleStruct)
+                    .fields(fields)
+                    .build(),
+            ))
+            .build()
+    };
+}

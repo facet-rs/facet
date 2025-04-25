@@ -1,0 +1,31 @@
+---
+source: facet-derive-emit/tests/codegen/mod.rs
+expression: "expand(r#\"\n        #[derive(Facet)]\n        struct Blah<const C: usize = 3>\n        where\n             [u8; C]: Debug; // Example bound using the const generic\n        \"#)"
+---
+#[automatically_derived]
+unsafe impl<'__facet, const C: usize> ::facet::Facet<'__facet> for Blah<C>
+where
+    [u8; C]: Debug,
+{
+    const SHAPE: &'static ::facet::Shape = &const {
+        let fields: &'static [::facet::Field] = &const { [] };
+        let vtable = &const {
+            let mut vtable =
+                ::facet::value_vtable_inner!(Self, |f, _opts| ::core::fmt::Write::write_str(
+                    f, "Blah"
+                ));
+            vtable
+        };
+        ::facet::Shape::builder()
+            .id(::facet::ConstTypeId::of::<Self>())
+            .layout(::core::alloc::Layout::new::<Self>())
+            .vtable(vtable)
+            .def(::facet::Def::Struct(
+                ::facet::StructDef::builder()
+                    .kind(::facet::StructKind::Unit)
+                    .fields(fields)
+                    .build(),
+            ))
+            .build()
+    };
+}

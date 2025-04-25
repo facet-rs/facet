@@ -167,7 +167,7 @@ fn test_skip_serializing_type_mismatch_wont_compile() {
     // Define the test case
     let test = CompilationTest {
         name: "poke_lifetime_error",
-        source: include_str!("compile_tests/skip_serializing_type_mismatch.rs"),
+        source: include_str!("./skip_serializing_type_mismatch.rs"),
         expected_errors: &["error[E0605]: non-primitive cast"],
     };
 

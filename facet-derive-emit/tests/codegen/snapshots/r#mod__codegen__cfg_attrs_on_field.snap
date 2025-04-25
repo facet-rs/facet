@@ -1,0 +1,40 @@
+---
+source: facet-derive-emit/tests/codegen/mod.rs
+expression: "expand(r#\"\n        #[derive(Facet)]\n        #[cfg_attr(feature = \"testfeat\", derive(Debug))]\n        #[cfg_attr(feature = \"testfeat\", facet(deny_unknown_fields))]\n        pub struct CubConfig {\n            /// size the disk cache is allowed to use\n            #[cfg_attr(feature = \"testfeat\", facet(skip_serializing))]\n            #[cfg_attr(\n                feature = \"testfeat\",\n                facet(default = \"serde_defaults::default_disk_cache_size\")\n            )]\n            pub disk_cache_size: String,\n        }\n        \"#)"
+---
+#[used]
+static CUB_CONFIG_SHAPE: &'static ::facet::Shape = <CubConfig as ::facet::Facet>::SHAPE;
+#[automatically_derived]
+unsafe impl<'__facet> ::facet::Facet<'__facet> for CubConfig {
+    const SHAPE: &'static ::facet::Shape = &const {
+        let fields: &'static [::facet::Field] = &const {
+            [::facet::Field::builder()
+                .name("disk_cache_size")
+                .shape(|| ::facet::shape_of(&|s: &CubConfig| &s.disk_cache_size))
+                .offset(::core::mem::offset_of!(CubConfig, disk_cache_size))
+                .flags(::facet::FieldFlags::EMPTY)
+                .attributes(&const { [] })
+                .doc(&[" size the disk cache is allowed to use"])
+                .build()]
+        };
+        let vtable = &const {
+            let mut vtable =
+                ::facet::value_vtable_inner!(Self, |f, _opts| ::core::fmt::Write::write_str(
+                    f,
+                    "CubConfig"
+                ));
+            vtable
+        };
+        ::facet::Shape::builder()
+            .id(::facet::ConstTypeId::of::<Self>())
+            .layout(::core::alloc::Layout::new::<Self>())
+            .vtable(vtable)
+            .def(::facet::Def::Struct(
+                ::facet::StructDef::builder()
+                    .kind(::facet::StructKind::Struct)
+                    .fields(fields)
+                    .build(),
+            ))
+            .build()
+    };
+}

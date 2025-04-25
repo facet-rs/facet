@@ -1,0 +1,144 @@
+---
+source: facet-derive-emit/tests/codegen/mod.rs
+expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n        enum ConfigValue {\n            #[facet(rename = \"TextValue\")]\n            Text(String),\n            #[facet(rename = \"NumberValue\")]\n            Number {\n                #[facet(rename = \"numValue\")]\n                value: f64,\n                #[facet(rename = \"unitName\", sensitive)]\n                unit: String,\n            },\n            #[facet(rename = \"BoolValue\")]\n            Boolean(bool),\n        }\n        \"#)"
+---
+#[used]
+static CONFIG_VALUE_SHAPE: &'static ::facet::Shape = <ConfigValue as ::facet::Facet>::SHAPE;
+#[automatically_derived]
+unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
+    const SHAPE: &'static ::facet::Shape = &const {
+        #[repr(C)]
+        struct __ShadowConfigValue_Text<'__facet> {
+            _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
+            _0: String,
+        }
+        #[repr(C)]
+        struct __ShadowConfigValue_Number<'__facet> {
+            _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
+            value: f64,
+            unit: String,
+        }
+        #[repr(C)]
+        struct __ShadowConfigValue_Boolean<'__facet> {
+            _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
+            _0: bool,
+        }
+        let __facet_variants: &'static [::facet::Variant] = &const {
+            [
+                {
+                    let fields: &'static [::facet::Field] = &const {
+                        [::facet::Field::builder()
+                            .name("_0")
+                            .shape(|| {
+                                ::facet::shape_of(&|s: &__ShadowConfigValue_Text<'__facet>| &s._0)
+                            })
+                            .offset(::core::mem::offset_of!(
+                                __ShadowConfigValue_Text<'__facet>,
+                                _0
+                            ))
+                            .flags(::facet::FieldFlags::EMPTY)
+                            .attributes(&const { [] })
+                            .build()]
+                    };
+                    ::facet::Variant::builder()
+                        .name("Text")
+                        .discriminant(0)
+                        .fields(::facet::StructDef::builder().tuple().fields(fields).build())
+                        .build()
+                },
+                {
+                    let fields: &'static [::facet::Field] =
+                        &const {
+                            [
+                                ::facet::Field::builder()
+                                    .name("value")
+                                    .shape(|| {
+                                        ::facet::shape_of(
+                                            &|s: &__ShadowConfigValue_Number<'__facet>| &s.value,
+                                        )
+                                    })
+                                    .offset(::core::mem::offset_of!(
+                                        __ShadowConfigValue_Number<'__facet>,
+                                        value
+                                    ))
+                                    .flags(::facet::FieldFlags::EMPTY)
+                                    .attributes(
+                                        &const { [::facet::FieldAttribute::Rename("numValue")] },
+                                    )
+                                    .build(),
+                                ::facet::Field::builder()
+                                    .name("unit")
+                                    .shape(|| {
+                                        ::facet::shape_of(
+                                            &|s: &__ShadowConfigValue_Number<'__facet>| &s.unit,
+                                        )
+                                    })
+                                    .offset(::core::mem::offset_of!(
+                                        __ShadowConfigValue_Number<'__facet>,
+                                        unit
+                                    ))
+                                    .flags(::facet::FieldFlags::EMPTY)
+                                    .attributes(
+                                        &const {
+                                            [::facet::FieldAttribute::Rename(
+                                                "unitName\" , sensitive",
+                                            )]
+                                        },
+                                    )
+                                    .build(),
+                            ]
+                        };
+                    ::facet::Variant::builder()
+                        .name("Number")
+                        .discriminant(1)
+                        .fields(
+                            ::facet::StructDef::builder()
+                                .struct_()
+                                .fields(fields)
+                                .build(),
+                        )
+                        .build()
+                },
+                {
+                    let fields: &'static [::facet::Field] = &const {
+                        [::facet::Field::builder()
+                            .name("_0")
+                            .shape(|| {
+                                ::facet::shape_of(&|s: &__ShadowConfigValue_Boolean<'__facet>| {
+                                    &s._0
+                                })
+                            })
+                            .offset(::core::mem::offset_of!(
+                                __ShadowConfigValue_Boolean<'__facet>,
+                                _0
+                            ))
+                            .flags(::facet::FieldFlags::EMPTY)
+                            .attributes(&const { [] })
+                            .build()]
+                    };
+                    ::facet::Variant::builder()
+                        .name("Boolean")
+                        .discriminant(2)
+                        .fields(::facet::StructDef::builder().tuple().fields(fields).build())
+                        .build()
+                },
+            ]
+        };
+        ::facet::Shape::builder()
+            .id(::facet::ConstTypeId::of::<Self>())
+            .layout(::core::alloc::Layout::new::<Self>())
+            .vtable(::facet::value_vtable!(Self, |f, _opts| {
+                ::core::fmt::Write::write_str(f, "ConfigValue")
+            }))
+            .def(::facet::Def::Enum(
+                ::facet::EnumDef::builder()
+                    .variants(__facet_variants)
+                    .repr(::facet::EnumRepr::U8)
+                    .build(),
+            ))
+            .build()
+    };
+}

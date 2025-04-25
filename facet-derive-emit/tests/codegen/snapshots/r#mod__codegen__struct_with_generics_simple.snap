@@ -1,0 +1,64 @@
+---
+source: facet-derive-emit/tests/codegen/mod.rs
+expression: "expand(r#\"\n        #[derive(Facet)]\n        struct StructWithGenericsSimple<T, U> {\n            field1: T,\n            field2: U,\n        }\n        \"#)"
+---
+#[automatically_derived]
+unsafe impl<'__facet, T, U> ::facet::Facet<'__facet> for StructWithGenericsSimple<T, U>
+where
+    T: ::facet::Facet<'__facet>,
+    U: ::facet::Facet<'__facet>,
+{
+    const SHAPE: &'static ::facet::Shape = &const {
+        let fields: &'static [::facet::Field] = &const {
+            [
+                ::facet::Field::builder()
+                    .name("field1")
+                    .shape(|| ::facet::shape_of(&|s: &StructWithGenericsSimple<T, U>| &s.field1))
+                    .offset(
+                        :: core :: mem :: offset_of ! (StructWithGenericsSimple < T , U >, field1),
+                    )
+                    .flags(::facet::FieldFlags::EMPTY)
+                    .attributes(&const { [] })
+                    .build(),
+                ::facet::Field::builder()
+                    .name("field2")
+                    .shape(|| ::facet::shape_of(&|s: &StructWithGenericsSimple<T, U>| &s.field2))
+                    .offset(
+                        :: core :: mem :: offset_of ! (StructWithGenericsSimple < T , U >, field2),
+                    )
+                    .flags(::facet::FieldFlags::EMPTY)
+                    .attributes(&const { [] })
+                    .build(),
+            ]
+        };
+        let vtable = &const {
+            let mut vtable =
+                ::facet::value_vtable_inner!(Self, |f, _opts| ::core::fmt::Write::write_str(
+                    f,
+                    "StructWithGenericsSimple"
+                ));
+            vtable
+        };
+        ::facet::Shape::builder()
+            .id(::facet::ConstTypeId::of::<Self>())
+            .layout(::core::alloc::Layout::new::<Self>())
+            .type_params(&[
+                ::facet::TypeParam {
+                    name: "T",
+                    shape: || <T as ::facet::Facet>::SHAPE,
+                },
+                ::facet::TypeParam {
+                    name: "U",
+                    shape: || <U as ::facet::Facet>::SHAPE,
+                },
+            ])
+            .vtable(vtable)
+            .def(::facet::Def::Struct(
+                ::facet::StructDef::builder()
+                    .kind(::facet::StructKind::Struct)
+                    .fields(fields)
+                    .build(),
+            ))
+            .build()
+    };
+}

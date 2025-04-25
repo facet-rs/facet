@@ -1,0 +1,172 @@
+---
+source: facet-derive-emit/tests/codegen/mod.rs
+expression: "expand(r#\"\n        #[allow(dead_code)]\n        #[derive(Facet)]\n        #[repr(u8)]\n        enum E<'a, T: Facet<'a> + core::hash::Hash, const C: usize = 3>\n        where\n            T: Debug, // Added Debug bound\n             [u8; C]: Debug, // Added Debug bound\n        {\n            Unit,\n            Tuple(T, core::marker::PhantomData<&'a [u8; C]>),\n            Record {\n                field: T,\n                phantom: core::marker::PhantomData<&'a ()>,\n                constant_val: [u8; C],\n            },\n        }\n        \"#)"
+---
+#[automatically_derived]
+unsafe impl<'a, '__facet, T: Facet<'a> + core::hash::Hash, const C: usize> ::facet::Facet<'__facet>
+    for E<'a, T, C>
+where
+    T: Debug,
+    [u8; C]: Debug,
+    'a: '__facet,
+    '__facet: 'a,
+    T: ::facet::Facet<'__facet>,
+{
+    const SHAPE: &'static ::facet::Shape = &const {
+        #[repr(C)]
+        struct __ShadowE_Tuple<'a, '__facet, T: Facet<'a> + core::hash::Hash, const C: usize>
+        where
+            T: Debug,
+            [u8; C]: Debug,
+            'a: '__facet,
+            '__facet: 'a,
+            T: ::facet::Facet<'__facet>,
+        {
+            _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<(*mut &'a (), *mut &'__facet (), T, [u32; C])>,
+            _0: T,
+            _1: core::marker::PhantomData<&'a [u8; C]>,
+        }
+        #[repr(C)]
+        struct __ShadowE_Record<'a, '__facet, T: Facet<'a> + core::hash::Hash, const C: usize>
+        where
+            T: Debug,
+            [u8; C]: Debug,
+            'a: '__facet,
+            '__facet: 'a,
+            T: ::facet::Facet<'__facet>,
+        {
+            _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<(*mut &'a (), *mut &'__facet (), T, [u32; C])>,
+            field: T,
+            phantom: core::marker::PhantomData<&'a ()>,
+            constant_val: [u8; C],
+        }
+        let __facet_variants: &'static [::facet::Variant] = &const {
+            [
+                ::facet::Variant::builder()
+                    .name("Unit")
+                    .discriminant(0)
+                    .fields(::facet::StructDef::builder().unit().build())
+                    .build(),
+                {
+                    let fields: &'static [::facet::Field] = &const {
+                        [
+                            ::facet::Field::builder()
+                                .name("_0")
+                                .shape(|| {
+                                    ::facet::shape_of(&|s: &__ShadowE_Tuple<'a, '__facet, T, C>| {
+                                        &s._0
+                                    })
+                                })
+                                .offset(::core::mem::offset_of!(
+                                    __ShadowE_Tuple<'a, '__facet, T, C>,
+                                    _0
+                                ))
+                                .flags(::facet::FieldFlags::EMPTY)
+                                .attributes(&const { [] })
+                                .build(),
+                            ::facet::Field::builder()
+                                .name("_1")
+                                .shape(|| {
+                                    ::facet::shape_of(&|s: &__ShadowE_Tuple<'a, '__facet, T, C>| {
+                                        &s._1
+                                    })
+                                })
+                                .offset(::core::mem::offset_of!(
+                                    __ShadowE_Tuple<'a, '__facet, T, C>,
+                                    _1
+                                ))
+                                .flags(::facet::FieldFlags::EMPTY)
+                                .attributes(&const { [] })
+                                .build(),
+                        ]
+                    };
+                    ::facet::Variant::builder()
+                        .name("Tuple")
+                        .discriminant(1)
+                        .fields(::facet::StructDef::builder().tuple().fields(fields).build())
+                        .build()
+                },
+                {
+                    let fields: &'static [::facet::Field] =
+                        &const {
+                            [
+                                ::facet::Field::builder()
+                                    .name("field")
+                                    .shape(|| {
+                                        ::facet::shape_of(
+                                            &|s: &__ShadowE_Record<'a, '__facet, T, C>| &s.field,
+                                        )
+                                    })
+                                    .offset(::core::mem::offset_of!(
+                                        __ShadowE_Record<'a, '__facet, T, C>,
+                                        field
+                                    ))
+                                    .flags(::facet::FieldFlags::EMPTY)
+                                    .attributes(&const { [] })
+                                    .build(),
+                                ::facet::Field::builder()
+                                    .name("phantom")
+                                    .shape(|| {
+                                        ::facet::shape_of(
+                                            &|s: &__ShadowE_Record<'a, '__facet, T, C>| &s.phantom,
+                                        )
+                                    })
+                                    .offset(::core::mem::offset_of!(
+                                        __ShadowE_Record<'a, '__facet, T, C>,
+                                        phantom
+                                    ))
+                                    .flags(::facet::FieldFlags::EMPTY)
+                                    .attributes(&const { [] })
+                                    .build(),
+                                ::facet::Field::builder()
+                                    .name("constant_val")
+                                    .shape(|| {
+                                        ::facet::shape_of(
+                                            &|s: &__ShadowE_Record<'a, '__facet, T, C>| {
+                                                &s.constant_val
+                                            },
+                                        )
+                                    })
+                                    .offset(::core::mem::offset_of!(
+                                        __ShadowE_Record<'a, '__facet, T, C>,
+                                        constant_val
+                                    ))
+                                    .flags(::facet::FieldFlags::EMPTY)
+                                    .attributes(&const { [] })
+                                    .build(),
+                            ]
+                        };
+                    ::facet::Variant::builder()
+                        .name("Record")
+                        .discriminant(2)
+                        .fields(
+                            ::facet::StructDef::builder()
+                                .struct_()
+                                .fields(fields)
+                                .build(),
+                        )
+                        .build()
+                },
+            ]
+        };
+        ::facet::Shape::builder()
+            .id(::facet::ConstTypeId::of::<Self>())
+            .layout(::core::alloc::Layout::new::<Self>())
+            .type_params(&[::facet::TypeParam {
+                name: "T",
+                shape: || <T as ::facet::Facet>::SHAPE,
+            }])
+            .vtable(::facet::value_vtable!(Self, |f, _opts| {
+                ::core::fmt::Write::write_str(f, "E")
+            }))
+            .def(::facet::Def::Enum(
+                ::facet::EnumDef::builder()
+                    .variants(__facet_variants)
+                    .repr(::facet::EnumRepr::U8)
+                    .build(),
+            ))
+            .build()
+    };
+}
