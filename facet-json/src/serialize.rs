@@ -32,13 +32,13 @@ pub fn peek_to_writer<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Resu
 /// The core serialization function
 fn serialize<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<()> {
     use facet_core::{
-        Struct,
+        StructDef,
         StructKind::{Tuple, TupleStruct},
     };
 
     match peek.shape().def {
         Def::Scalar(_) => serialize_scalar(peek, writer),
-        Def::Struct(Struct {
+        Def::Struct(StructDef {
             kind: Tuple | TupleStruct,
             ..
         }) => serialize_tuple(peek, writer),

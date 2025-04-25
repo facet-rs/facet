@@ -1,4 +1,4 @@
-use super::Struct;
+use super::StructDef;
 
 /// Fields for enum types
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -70,7 +70,7 @@ pub struct Variant {
     /// Fields for this variant (empty if unit, number-named if tuple).
     /// IMPORTANT: the offset for the fields already takes into account the size & alignment of the
     /// discriminant.
-    pub data: Struct,
+    pub data: StructDef,
 
     /// Doc comment for the variant
     pub doc: &'static [&'static str],
@@ -87,7 +87,7 @@ impl Variant {
 pub struct VariantBuilder {
     name: Option<&'static str>,
     discriminant: Option<i64>,
-    fields: Option<Struct>,
+    fields: Option<StructDef>,
     doc: &'static [&'static str],
 }
 
@@ -116,7 +116,7 @@ impl VariantBuilder {
     }
 
     /// Sets the fields for the Variant
-    pub const fn fields(mut self, fields: Struct) -> Self {
+    pub const fn fields(mut self, fields: StructDef) -> Self {
         self.fields = Some(fields);
         self
     }

@@ -352,7 +352,7 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                         match token.node {
                             Token::Null => unreachable!(),
                             Token::LBrace => {
-                                match wip.shape().def {
+                                match wip.innermost_shape().def {
                                     Def::Map(_md) => {
                                         trace!(
                                             "Object starting for map value ({})!",
@@ -376,7 +376,7 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                                     }
                                     _ => {
                                         bail!(JsonErrorKind::UnsupportedType {
-                                            got: wip.shape(),
+                                            got: wip.innermost_shape(),
                                             wanted: "map, enum, or struct"
                                         });
                                     }
@@ -385,7 +385,7 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                                 stack.push(Instruction::ObjectKeyOrObjectClose)
                             }
                             Token::LBracket => {
-                                match wip.shape().def {
+                                match wip.innermost_shape().def {
                                     Def::Array(_) => {
                                         trace!(
                                             "Array starting for array ({})!",
@@ -404,7 +404,7 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                                     }
                                     _ => {
                                         bail!(JsonErrorKind::UnsupportedType {
-                                            got: wip.shape(),
+                                            got: wip.innermost_shape(),
                                             wanted: "array, list, or slice"
                                         });
                                     }
@@ -420,7 +420,7 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                                     wanted: "value"
                                 });
                             }
-                            Token::String(s) => match wip.shape().def {
+                            Token::String(s) => match wip.innermost_shape().def {
                                 Def::Scalar(_sd) => {
                                     reflect!(put::<String>(s));
                                 }
@@ -443,7 +443,7 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                                     }
                                 }
                                 _ => bail!(JsonErrorKind::UnsupportedType {
-                                    got: wip.shape(),
+                                    got: wip.innermost_shape(),
                                     wanted: "enum or string"
                                 }),
                             },

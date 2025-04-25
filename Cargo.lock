@@ -232,6 +232,7 @@ name = "facet-json"
 version = "0.12.1"
 dependencies = [
  "ariadne",
+ "camino",
  "eyre",
  "facet",
  "facet-core",

@@ -184,6 +184,167 @@ impl From<UnsizedError> for TryFromError {
     }
 }
 
+/// Function to convert a transparent/newtype wrapper into its inner type.
+///
+/// This is used for types that wrap another type (like smart pointers, newtypes, etc.)
+/// where the wrapper can be unwrapped to access the inner value. Primarily used during serialization.
+///
+/// # Safety
+///
+/// This function is unsafe because it operates on raw pointers.
+///
+/// The `src_ptr` must point to a valid, initialized instance of the wrapper type.
+/// The `dst` pointer must point to valid, uninitialized memory suitable for holding an instance
+/// of the inner type.
+///
+/// The function will return a pointer to the initialized inner value.
+pub type TryIntoInnerFn = for<'src, 'dst> unsafe fn(
+    src_ptr: PtrConst<'src>,
+    dst: PtrUninit<'dst>,
+) -> Result<PtrMut<'dst>, TryIntoInnerError>;
+
+/// Error type returned by [`TryIntoInnerFn`] when attempting to extract
+/// the inner value from a wrapper type.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TryIntoInnerError {
+    /// Indicates that the inner value cannot be extracted at this time,
+    /// such as when a mutable borrow is already active.
+    Unavailable,
+    /// Indicates that another unspecified error occurred during extraction.
+    Other(&'static str),
+}
+
+impl core::fmt::Display for TryIntoInnerError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            TryIntoInnerError::Unavailable => {
+                write!(f, "inner value is unavailable for extraction")
+            }
+            TryIntoInnerError::Other(msg) => write!(f, "{}", msg),
+        }
+    }
+}
+
+impl core::error::Error for TryIntoInnerError {}
+
+/// Function to borrow the inner value from a transparent/newtype wrapper without copying.
+///
+/// This is used for types that wrap another type (like smart pointers, newtypes, etc.)
+/// to efficiently access the inner value without transferring ownership.
+///
+/// # Safety
+///
+/// This function is unsafe because it operates on raw pointers.
+///
+/// The `src_ptr` must point to a valid, initialized instance of the wrapper type.
+/// The returned pointer points to memory owned by the wrapper and remains valid
+/// as long as the wrapper is valid and not mutated.
+pub type TryBorrowInnerFn =
+    for<'src> unsafe fn(src_ptr: PtrConst<'src>) -> Result<PtrConst<'src>, TryBorrowInnerError>;
+
+/// Error type returned by [`TryBorrowInnerFn`] when attempting to borrow
+/// the inner value from a wrapper type.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TryBorrowInnerError {
+    /// Indicates that the inner value cannot be borrowed at this time,
+    /// such as when a mutable borrow is already active.
+    Unavailable,
+    /// Indicates an other, unspecified error occurred during the borrow attempt.
+    /// The contained string provides a description of the error.
+    Other(&'static str),
+}
+
+impl core::fmt::Display for TryBorrowInnerError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            TryBorrowInnerError::Unavailable => {
+                write!(f, "inner value is unavailable for borrowing")
+            }
+            TryBorrowInnerError::Other(msg) => {
+                write!(f, "{}", msg)
+            }
+        }
+    }
+}
+
+impl core::error::Error for TryBorrowInnerError {}
+
+/// Function to try to construct a transparent/newtype wrapper from its inner type.
+///
+/// This is used for types that wrap another type (like smart pointers, newtypes, etc.)
+/// where we need to create the wrapper from an inner value.
+///
+/// # Safety
+///
+/// This function is unsafe because it operates on raw pointers.
+///
+/// The `src_ptr` must point to a valid, initialized instance of the inner type.
+/// The `dst` pointer must point to valid, uninitialized memory suitable for holding an instance
+/// of the wrapper type.
+///
+/// If the function returns `Ok(ptr)`, the memory pointed to by `dst` (and returned `ptr`)
+/// is guaranteed to be initialized with the wrapper value.
+///
+/// # Errors
+///
+/// Returns `Err(TryFromInnerError)` if the conversion cannot be performed, most commonly
+/// when the source doesn't meet the wrapper's requirements (e.g., trying to create a `NonZero<u8>` from a zero u8).
+pub type TryFromInnerFn = for<'src, 'dst> unsafe fn(
+    src_ptr: PtrConst<'src>,
+    src_shape: &'static Shape,
+    dst: PtrUninit<'dst>,
+) -> Result<PtrMut<'dst>, TryFromInnerError>;
+
+/// Error type returned by [`TryFromInnerFn`] when attempting to convert
+/// an inner value into its wrapper type.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TryFromInnerError {
+    /// Indicates that the shape of the source (`src_shape`)
+    /// does not match the expected inner type shape.
+    UnsupportedSourceShape {
+        /// The shape definition of the source value that was provided.
+        src_shape: &'static Shape,
+        /// A list of shape definitions that are compatible as the inner type
+        /// for this transparent newtype.
+        expected: &'static [&'static Shape],
+    },
+    /// Indicates that the source value violates an invariant required by the wrapper type.
+    /// For example, this error would occur when trying to construct a `NonZeroU32`
+    /// from a `u32` value that is zero.
+    InvariantNotRespected,
+    /// Indicates an other, unspecified error occurred during the conversion attempt.
+    /// The contained string provides a description of the error.
+    Other(&'static str),
+}
+
+impl core::fmt::Display for TryFromInnerError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            TryFromInnerError::UnsupportedSourceShape {
+                src_shape,
+                expected,
+            } => {
+                write!(
+                    f,
+                    "unsupported source shape '{}', expected one of {:?}",
+                    src_shape, expected
+                )
+            }
+            TryFromInnerError::InvariantNotRespected => {
+                write!(f, "invariant not respected")
+            }
+            TryFromInnerError::Other(msg) => {
+                write!(f, "{}", msg)
+            }
+        }
+    }
+}
+
+impl core::error::Error for TryFromInnerError {}
+
 //======== Comparison ========
 
 /// Function to check if two values are partially equal
@@ -349,6 +510,23 @@ pub struct ValueVTable {
 
     /// cf. [`TryFromFn`]
     pub try_from: Option<TryFromFn>,
+
+    /// cf. [`TryFromInnerFn`]
+    ///
+    /// This is used by transparent types (like smart pointers, newtypes, etc.)
+    /// to construct the wrapper type from its inner value.
+    pub try_from_inner: Option<TryFromInnerFn>,
+
+    /// cf. [`TryIntoInnerFn`]
+    ///
+    /// This is used by transparent types to convert the wrapper type into its inner value.
+    /// Primarily used during serialization.
+    pub try_into_inner: Option<TryIntoInnerFn>,
+
+    /// cf. [`TryBorrowInnerFn`]
+    ///
+    /// This is used by transparent types to efficiently access the inner value without copying.
+    pub try_borrow_inner: Option<TryBorrowInnerFn>,
 }
 
 impl ValueVTable {
@@ -399,6 +577,9 @@ pub struct ValueVTableBuilder {
     invariants: Option<InvariantsFn>,
     parse: Option<ParseFn>,
     try_from: Option<TryFromFn>,
+    try_from_inner: Option<TryFromInnerFn>,
+    try_into_inner: Option<TryIntoInnerFn>,
+    try_borrow_inner: Option<TryBorrowInnerFn>,
 }
 
 impl ValueVTableBuilder {
@@ -420,6 +601,9 @@ impl ValueVTableBuilder {
             invariants: None,
             parse: None,
             try_from: None,
+            try_from_inner: None,
+            try_into_inner: None,
+            try_borrow_inner: None,
         }
     }
 
@@ -570,9 +754,27 @@ impl ValueVTableBuilder {
         self
     }
 
-    /// Sets the try_from function for this builder if Some.
-    pub const fn try_from_maybe(mut self, try_from: Option<TryFromFn>) -> Self {
-        self.try_from = try_from;
+    /// Sets the try_from_inner function for this builder.
+    pub const fn try_from_inner(mut self, try_from_inner: TryFromInnerFn) -> Self {
+        self.try_from_inner = Some(try_from_inner);
+        self
+    }
+
+    /// Sets the try_from_inner function for this builder if Some.
+    pub const fn try_from_inner_maybe(mut self, try_from_inner: Option<TryFromInnerFn>) -> Self {
+        self.try_from_inner = try_from_inner;
+        self
+    }
+
+    /// Sets the try_into_inner function for this builder.
+    pub const fn try_into_inner(mut self, try_into_inner: TryIntoInnerFn) -> Self {
+        self.try_into_inner = Some(try_into_inner);
+        self
+    }
+
+    /// Sets the borrow_inner function for this builder.
+    pub const fn try_borrow_inner(mut self, try_borrow_inner: TryBorrowInnerFn) -> Self {
+        self.try_borrow_inner = Some(try_borrow_inner);
         self
     }
 
@@ -593,6 +795,9 @@ impl ValueVTableBuilder {
             drop_in_place: self.drop_in_place,
             parse: self.parse,
             try_from: self.try_from,
+            try_from_inner: self.try_from_inner,
+            try_into_inner: self.try_into_inner,
+            try_borrow_inner: self.try_borrow_inner,
         }
     }
 }

@@ -1,12 +1,53 @@
 use core::alloc::Layout;
 
 use crate::{
-    ConstTypeId, Def, Facet, KnownSmartPointer, Opaque, PtrConst, SmartPointerDef,
-    SmartPointerFlags, SmartPointerVTable, value_vtable,
+    ConstTypeId, Def, Facet, KnownSmartPointer, Opaque, PtrConst, PtrMut, PtrUninit, Shape,
+    SmartPointerDef, SmartPointerFlags, SmartPointerVTable, TryBorrowInnerError, TryFromInnerError,
+    TryIntoInnerError, value_vtable, value_vtable_inner,
 };
 
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
     const SHAPE: &'static crate::Shape = &const {
+        // Define the functions for transparent conversion between Arc<T> and T
+        unsafe fn try_from_inner<'a, 'src, 'dst, T: Facet<'a>>(
+            src_ptr: PtrConst<'src>,
+            src_shape: &'static Shape,
+            dst: PtrUninit<'dst>,
+        ) -> Result<PtrMut<'dst>, TryFromInnerError> {
+            if src_shape.id != T::SHAPE.id {
+                return Err(TryFromInnerError::UnsupportedSourceShape {
+                    src_shape,
+                    expected: &[T::SHAPE],
+                });
+            }
+            let t = unsafe { src_ptr.read::<T>() };
+            let arc = alloc::sync::Arc::new(t);
+            Ok(unsafe { dst.put(arc) })
+        }
+
+        unsafe fn try_into_inner<'a, 'src, 'dst, T: Facet<'a>>(
+            src_ptr: PtrConst<'src>,
+            dst: PtrUninit<'dst>,
+        ) -> Result<PtrMut<'dst>, TryIntoInnerError> {
+            let arc = unsafe { src_ptr.get::<alloc::sync::Arc<T>>() };
+            match alloc::sync::Arc::try_unwrap(arc.clone()) {
+                Ok(t) => Ok(unsafe { dst.put(t) }),
+                Err(_) => Err(TryIntoInnerError::Unavailable),
+            }
+        }
+
+        unsafe fn try_borrow_inner<'a, 'src, T: Facet<'a>>(
+            src_ptr: PtrConst<'src>,
+        ) -> Result<PtrConst<'src>, TryBorrowInnerError> {
+            let arc = unsafe { src_ptr.get::<alloc::sync::Arc<T>>() };
+            Ok(PtrConst::new(&**arc))
+        }
+
+        // Function to return inner type's shape
+        fn inner_shape<'a, T: Facet<'a>>() -> &'static Shape {
+            T::SHAPE
+        }
+
         crate::Shape::builder()
             .id(ConstTypeId::of::<Self>())
             .layout(Layout::new::<Self>())
@@ -40,16 +81,28 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
                     )
                     .build(),
             ))
-            .vtable(value_vtable!(alloc::sync::Arc<T>, |f, _opts| write!(
-                f,
-                "Arc"
-            )))
+            .vtable(
+                &const {
+                    let mut vtable =
+                        value_vtable_inner!(alloc::sync::Arc<T>, |f, _opts| write!(f, "Arc"));
+                    vtable.try_from_inner = Some(try_from_inner::<T>);
+                    vtable.try_into_inner = Some(try_into_inner::<T>);
+                    vtable.try_borrow_inner = Some(try_borrow_inner::<T>);
+                    vtable
+                },
+            )
+            .inner(inner_shape::<T>)
             .build()
     };
 }
 
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Weak<T> {
     const SHAPE: &'static crate::Shape = &const {
+        // Function to return inner type's shape
+        fn inner_shape<'a, T: Facet<'a>>() -> &'static Shape {
+            T::SHAPE
+        }
+
         crate::Shape::builder()
             .id(ConstTypeId::of::<Self>())
             .layout(Layout::new::<Self>())
@@ -74,10 +127,10 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Weak<T> {
                     )
                     .build(),
             ))
-            .vtable(value_vtable!(alloc::sync::Arc<T>, |f, _opts| write!(
-                f,
-                "Arc"
-            )))
+            .vtable(
+                &const { value_vtable_inner!(alloc::sync::Arc<T>, |f, _opts| write!(f, "Arc")) },
+            )
+            .inner(inner_shape::<T>)
             .build()
     };
 }
@@ -108,16 +161,55 @@ unsafe impl<'a, T: 'a> Facet<'a> for Opaque<alloc::sync::Arc<T>> {
                     )
                     .build(),
             ))
-            .vtable(value_vtable!(alloc::sync::Arc<T>, |f, _opts| write!(
-                f,
-                "Arc"
-            )))
+            .vtable(
+                &const { value_vtable_inner!(alloc::sync::Arc<T>, |f, _opts| write!(f, "Arc")) },
+            )
             .build()
     };
 }
 
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::rc::Rc<T> {
     const SHAPE: &'static crate::Shape = &const {
+        // Define the functions for transparent conversion between Rc<T> and T
+        unsafe fn try_from_inner<'a, 'src, 'dst, T: Facet<'a>>(
+            src_ptr: PtrConst<'src>,
+            src_shape: &'static Shape,
+            dst: PtrUninit<'dst>,
+        ) -> Result<PtrMut<'dst>, TryFromInnerError> {
+            if src_shape.id != T::SHAPE.id {
+                return Err(TryFromInnerError::UnsupportedSourceShape {
+                    src_shape,
+                    expected: &[T::SHAPE],
+                });
+            }
+            let t = unsafe { src_ptr.read::<T>() };
+            let rc = alloc::rc::Rc::new(t);
+            Ok(unsafe { dst.put(rc) })
+        }
+
+        unsafe fn try_into_inner<'a, 'src, 'dst, T: Facet<'a>>(
+            src_ptr: PtrConst<'src>,
+            dst: PtrUninit<'dst>,
+        ) -> Result<PtrMut<'dst>, TryIntoInnerError> {
+            let rc = unsafe { src_ptr.get::<alloc::rc::Rc<T>>() };
+            match alloc::rc::Rc::try_unwrap(rc.clone()) {
+                Ok(t) => Ok(unsafe { dst.put(t) }),
+                Err(_) => Err(TryIntoInnerError::Unavailable),
+            }
+        }
+
+        unsafe fn try_borrow_inner<'a, 'src, T: Facet<'a>>(
+            src_ptr: PtrConst<'src>,
+        ) -> Result<PtrConst<'src>, TryBorrowInnerError> {
+            let rc = unsafe { src_ptr.get::<alloc::rc::Rc<T>>() };
+            Ok(PtrConst::new(&**rc))
+        }
+
+        // Function to return inner type's shape
+        fn inner_shape<'a, T: Facet<'a>>() -> &'static Shape {
+            T::SHAPE
+        }
+
         crate::Shape::builder()
             .id(ConstTypeId::of::<Self>())
             .layout(Layout::new::<Self>())
@@ -151,13 +243,28 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::rc::Rc<T> {
                     )
                     .build(),
             ))
-            .vtable(value_vtable!(alloc::rc::Rc<T>, |f, _opts| write!(f, "Rc")))
+            .vtable(
+                &const {
+                    let mut vtable =
+                        value_vtable_inner!(alloc::rc::Rc<T>, |f, _opts| write!(f, "Rc"));
+                    vtable.try_from_inner = Some(try_from_inner::<T>);
+                    vtable.try_into_inner = Some(try_into_inner::<T>);
+                    vtable.try_borrow_inner = Some(try_borrow_inner::<T>);
+                    vtable
+                },
+            )
+            .inner(inner_shape::<T>)
             .build()
     };
 }
 
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::rc::Weak<T> {
     const SHAPE: &'static crate::Shape = &const {
+        // Function to return inner type's shape
+        fn inner_shape<'a, T: Facet<'a>>() -> &'static Shape {
+            T::SHAPE
+        }
+
         crate::Shape::builder()
             .id(ConstTypeId::of::<Self>())
             .layout(Layout::new::<Self>())
@@ -182,7 +289,8 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::rc::Weak<T> {
                     )
                     .build(),
             ))
-            .vtable(value_vtable!(alloc::rc::Rc<T>, |f, _opts| write!(f, "Rc")))
+            .vtable(&const { value_vtable_inner!(alloc::rc::Rc<T>, |f, _opts| write!(f, "Rc")) })
+            .inner(inner_shape::<T>)
             .build()
     };
 }

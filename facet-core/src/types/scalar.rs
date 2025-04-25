@@ -1,7 +1,7 @@
 use crate::PtrConst;
 
 /// Definition for scalar types
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 #[non_exhaustive]
 pub struct ScalarDef {
@@ -46,7 +46,7 @@ impl ScalarDefBuilder {
 
 /// Scalar affinity: what a scalar spiritually is: a number, a string, a bool, something else
 /// entirely?
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 #[non_exhaustive]
 pub enum ScalarAffinity {

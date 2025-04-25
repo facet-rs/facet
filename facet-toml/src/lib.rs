@@ -19,7 +19,7 @@ use alloc::{
     string::{String, ToString},
 };
 use error::{TomlError, TomlErrorKind};
-use facet_core::{Def, Facet, Struct, StructKind};
+use facet_core::{Def, Facet, StructDef, StructKind};
 use facet_reflect::{ScalarType, Wip};
 use log::trace;
 use toml_edit::{ImDocument, Item, TomlError as TomlEditError};
@@ -109,7 +109,7 @@ fn deserialize_item<'input, 'facet>(
 fn deserialize_as_struct<'input, 'a>(
     toml: &'input str,
     mut wip: Wip<'a>,
-    def: Struct,
+    def: StructDef,
     item: &Item,
 ) -> Result<Wip<'a>, TomlError<'input>> {
     trace!(

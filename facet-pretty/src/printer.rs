@@ -692,7 +692,7 @@ impl PrettyPrinter {
     fn format_scalar(&self, value: Peek, f: &mut impl Write) -> fmt::Result {
         // Generate a color for this shape
         let mut hasher = DefaultHasher::new();
-        value.shape().def.hash(&mut hasher);
+        value.shape().id.hash(&mut hasher);
         let hash = hasher.finish();
         let color = self.color_generator.generate_color(hash);
 

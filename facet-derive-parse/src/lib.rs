@@ -475,3 +475,22 @@ impl core::fmt::Display for Expr {
         }
     }
 }
+
+impl Struct {
+    /// Returns an iterator over the `FacetInner` content of `#[facet(...)]` attributes
+    /// applied to this struct.
+    pub fn facet_attributes(&self) -> impl Iterator<Item = &FacetInner> {
+        self.attributes
+            .iter()
+            .filter_map(|attr| match &attr.body.content {
+                AttributeInner::Facet(f) => Some(&f.inner.content),
+                _ => None,
+            })
+    }
+
+    /// Returns `true` if the struct is marked `#[facet(transparent)]`.
+    pub fn is_transparent(&self) -> bool {
+        self.facet_attributes()
+            .any(|inner| matches!(inner, FacetInner::Transparent(_)))
+    }
+}

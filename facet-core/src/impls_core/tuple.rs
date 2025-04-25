@@ -2,7 +2,7 @@ use core::{alloc::Layout, cmp::Ordering, fmt, mem};
 
 use crate::{
     Characteristic, ConstTypeId, Def, Facet, Field, FieldFlags, MarkerTraits, PtrConst, Shape,
-    Struct, TypeNameOpts, ValueVTable, shape_of,
+    StructDef, TypeNameOpts, ValueVTable, shape_of,
 };
 
 #[inline(always)]
@@ -203,7 +203,7 @@ macro_rules! impl_facet_for_tuple {
                         builder.build()
                     })
                     .def(Def::Struct({
-                        Struct::builder()
+                        StructDef::builder()
                             .tuple()
                             .fields(
                                 &const {[

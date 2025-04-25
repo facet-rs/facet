@@ -1,4 +1,6 @@
-use facet_core::{Characteristic, EnumDef, Field, FieldError, Shape, TryFromError};
+use facet_core::{
+    Characteristic, EnumDef, Field, FieldError, Shape, TryFromError, TryFromInnerError,
+};
 use owo_colors::OwoColorize;
 
 /// Errors that can occur when reflecting on types.
@@ -116,6 +118,18 @@ pub enum ReflectError {
         shape: &'static Shape,
     },
 
+    /// An error occurred when trying to convert a transparent wrapper into its inner type
+    TryFromInnerError {
+        /// The shape of the value being converted from.
+        src_shape: &'static Shape,
+
+        /// The shape of the value being converted to.
+        dst_shape: &'static Shape,
+
+        /// The inner error
+        inner: TryFromInnerError,
+    },
+
     /// The type is unsized
     Unsized {
         /// The shape for the type that is unsized
@@ -211,6 +225,19 @@ impl core::fmt::Display for ReflectError {
                 "Shape '{}' has a `default` attribute but no default implementation",
                 shape
             ),
+            ReflectError::TryFromInnerError {
+                src_shape,
+                dst_shape,
+                inner,
+            } => {
+                write!(
+                    f,
+                    "While trying to convert {} into transparent type {}: {}",
+                    src_shape.green(),
+                    dst_shape.blue(),
+                    inner.red()
+                )
+            }
             ReflectError::Unsized { shape } => write!(f, "Shape '{}' is unsized", shape),
         }
     }

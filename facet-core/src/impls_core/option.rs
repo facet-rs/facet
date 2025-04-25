@@ -1,12 +1,55 @@
 use core::{alloc::Layout, mem::MaybeUninit};
 
 use crate::{
-    ConstTypeId, Def, Facet, OptionDef, OptionVTable, PtrConst, PtrUninit, Shape,
-    value_vtable_inner,
+    ConstTypeId, Def, Facet, OptionDef, OptionVTable, PtrConst, PtrMut, PtrUninit, Shape,
+    TryBorrowInnerError, TryFromInnerError, TryIntoInnerError, value_vtable_inner,
 };
 
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
     const SHAPE: &'static Shape = &const {
+        // Define the functions for transparent conversion between Option<T> and T
+        unsafe fn try_from_inner<'a, 'src, 'dst, T: Facet<'a>>(
+            src_ptr: PtrConst<'src>,
+            src_shape: &'static Shape,
+            dst: PtrUninit<'dst>,
+        ) -> Result<PtrMut<'dst>, TryFromInnerError> {
+            if src_shape.id != T::SHAPE.id {
+                return Err(TryFromInnerError::UnsupportedSourceShape {
+                    src_shape,
+                    expected: &[T::SHAPE],
+                });
+            }
+            let t = unsafe { src_ptr.read::<T>() };
+            let option = Some(t);
+            Ok(unsafe { dst.put(option) })
+        }
+
+        unsafe fn try_into_inner<'a, 'src, 'dst, T: Facet<'a>>(
+            src_ptr: PtrConst<'src>,
+            dst: PtrUninit<'dst>,
+        ) -> Result<PtrMut<'dst>, TryIntoInnerError> {
+            let option = unsafe { src_ptr.read::<Option<T>>() };
+            match option {
+                Some(t) => Ok(unsafe { dst.put(t) }),
+                None => Err(TryIntoInnerError::Unavailable),
+            }
+        }
+
+        unsafe fn try_borrow_inner<'a, 'src, T: Facet<'a>>(
+            src_ptr: PtrConst<'src>,
+        ) -> Result<PtrConst<'src>, TryBorrowInnerError> {
+            let option = unsafe { src_ptr.get::<Option<T>>() };
+            match option {
+                Some(t) => Ok(PtrConst::new(t)),
+                None => Err(TryBorrowInnerError::Unavailable),
+            }
+        }
+
+        // Function to return inner type's shape
+        fn inner_shape<'a, T: Facet<'a>>() -> &'static Shape {
+            T::SHAPE
+        }
+
         Shape::builder()
             .id(ConstTypeId::of::<Self>())
             .layout(Layout::new::<Self>())
@@ -89,9 +132,14 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
                         });
                     }
 
+                    vtable.try_from_inner = Some(try_from_inner::<T>);
+                    vtable.try_into_inner = Some(try_into_inner::<T>);
+                    vtable.try_borrow_inner = Some(try_borrow_inner::<T>);
+
                     vtable
                 },
             )
+            .inner(inner_shape::<T>)
             .build()
     };
 }

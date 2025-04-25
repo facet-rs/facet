@@ -407,7 +407,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkStruct {
             .layout(::core::alloc::Layout::new::<Self>())
             .vtable(vtable)
             .def(crate::Def::Struct(
-                crate::Struct::builder()
+                crate::StructDef::builder()
                     .kind(crate::StructKind::Struct)
                     .fields(fields)
                     .build(),
@@ -764,7 +764,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for Point {
             .layout(::core::alloc::Layout::new::<Self>())
             .vtable(vtable)
             .def(crate::Def::Struct(
-                crate::Struct::builder()
+                crate::StructDef::builder()
                     .kind(crate::StructKind::Struct)
                     .fields(fields)
                     .build(),
@@ -875,7 +875,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                 crate::Variant::builder()
                     .name("UnitVariant")
                     .discriminant(0)
-                    .fields(crate::Struct::builder().unit().build())
+                    .fields(crate::StructDef::builder().unit().build())
                     .doc(&[" A simple unit variant."])
                     .build(),
                 {
@@ -893,7 +893,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                     crate::Variant::builder()
                         .name("TupleVariantSimple")
                         .discriminant(1)
-                        .fields(crate::Struct::builder().tuple().fields(fields).build())
+                        .fields(crate::StructDef::builder().tuple().fields(fields).build())
                         .doc(&[
                             " A tuple variant with a single element.",
                             "",
@@ -934,7 +934,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                     crate::Variant::builder()
                         .name("TupleVariantMulti")
                         .discriminant(2)
-                        .fields(crate::Struct::builder().tuple().fields(fields).build())
+                        .fields(crate::StructDef::builder().tuple().fields(fields).build())
                         .doc(&[
                             " A tuple variant with multiple elements.",
                             "",
@@ -969,7 +969,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                     crate::Variant::builder()
                         .name("StructVariant")
                         .discriminant(3)
-                        .fields(crate::Struct::builder().struct_().fields(fields).build())
+                        .fields(crate::StructDef::builder().struct_().fields(fields).build())
                         .doc(&[" A struct variant with named fields."])
                         .build()
                 },
@@ -988,7 +988,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                     crate::Variant::builder()
                         .name("SensitiveTupleVariant")
                         .discriminant(4)
-                        .fields(crate::Struct::builder().tuple().fields(fields).build())
+                        .fields(crate::StructDef::builder().tuple().fields(fields).build())
                         .doc(&[" A tuple variant marked entirely as sensitive."])
                         .build()
                 },
@@ -1016,7 +1016,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                     crate::Variant::builder()
                         .name("StructVariantWithSensitiveField")
                         .discriminant(5)
-                        .fields(crate::Struct::builder().struct_().fields(fields).build())
+                        .fields(crate::StructDef::builder().struct_().fields(fields).build())
                         .doc(&[" A struct variant containing a sensitive field."])
                         .build()
                 },
@@ -1032,7 +1032,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                                                                                             []
                                                                                         }).build()]
                     };
-                    crate::Variant::builder().name("ArbitraryVariant").discriminant(6).fields(crate::Struct::builder().tuple().fields(fields).build()).doc(&[" A variant marked as arbitrary, potentially skipped during processing."]).build()
+                    crate::Variant::builder().name("ArbitraryVariant").discriminant(6).fields(crate::StructDef::builder().tuple().fields(fields).build()).doc(&[" A variant marked as arbitrary, potentially skipped during processing."]).build()
                 },
                 {
                     let fields: &'static [crate::Field] = &const {
@@ -1049,7 +1049,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                     crate::Variant::builder()
                         .name("NestedEnumVariant")
                         .discriminant(7)
-                        .fields(crate::Struct::builder().tuple().fields(fields).build())
+                        .fields(crate::StructDef::builder().tuple().fields(fields).build())
                         .doc(&[
                             " A variant containing another enum that derives Facet.",
                             "",
@@ -1413,7 +1413,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for SubEnum {
                 crate::Variant::builder()
                     .name("OptionA")
                     .discriminant(0)
-                    .fields(crate::Struct::builder().unit().build())
+                    .fields(crate::StructDef::builder().unit().build())
                     .doc(&[" Option A."])
                     .build(),
                 {
@@ -1433,7 +1433,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for SubEnum {
                     crate::Variant::builder()
                         .name("OptionB")
                         .discriminant(1)
-                        .fields(crate::Struct::builder().tuple().fields(fields).build())
+                        .fields(crate::StructDef::builder().tuple().fields(fields).build())
                         .doc(&[" Option B with data."])
                         .build()
                 },
@@ -1457,7 +1457,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for SubEnum {
                     crate::Variant::builder()
                         .name("SensitiveOption")
                         .discriminant(2)
-                        .fields(crate::Struct::builder().tuple().fields(fields).build())
+                        .fields(crate::StructDef::builder().tuple().fields(fields).build())
                         .doc(&[" A sensitive option."])
                         .build()
                 },
@@ -1481,7 +1481,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for SubEnum {
                     crate::Variant::builder()
                         .name("ArbitraryOption")
                         .discriminant(3)
-                        .fields(crate::Struct::builder().tuple().fields(fields).build())
+                        .fields(crate::StructDef::builder().tuple().fields(fields).build())
                         .doc(&[" An arbitrary option."])
                         .build()
                 },

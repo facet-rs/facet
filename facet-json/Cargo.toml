@@ -15,6 +15,7 @@ std = ["facet-core/std", "facet-reflect/std", "alloc"] # Uses libstd and alloc
 alloc = ["facet-core/alloc", "facet-reflect/alloc"]    # Enables alloc support
 rich-diagnostics = ["dep:ariadne", "std"]
 default = ["std", "rich-diagnostics"]
+camino = ["alloc", "facet-core/camino"]                # Enable camino support
 
 [dependencies]
 ariadne = { version = "=0.5.1", optional = true }
@@ -24,6 +25,7 @@ log = "0.4.27"
 owo-colors = "4.2.0"
 
 [dev-dependencies]
+camino = "1.1.9"
 eyre = "0.6.12"
 facet = { path = "../facet" }
 facet-testhelpers = { path = "../facet-testhelpers" }

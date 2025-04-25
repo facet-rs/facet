@@ -352,6 +352,20 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
         self.frames.last().expect("must have frames left").shape
     }
 
+    /// Returns the innermost shape for the current frame
+    /// If the current shape is a transparent wrapper, this returns the shape of the wrapped type
+    /// Otherwise, returns the current shape
+    pub fn innermost_shape(&self) -> &'static Shape {
+        let mut current_shape = self.shape();
+
+        // Keep unwrapping as long as we find inner shapes
+        while let Some(inner_fn) = current_shape.inner {
+            current_shape = inner_fn();
+        }
+
+        current_shape
+    }
+
     /// Return true if the last frame is in option mode
     pub fn in_option(&self) -> bool {
         let Some(frame) = self.frames.last() else {
@@ -810,6 +824,53 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
                 src_shape.yellow(),
                 frame.shape.magenta()
             );
+
+            // Check if the frame's shape has an inner type (is a transparent wrapper)
+            if let Some(inner_fn) = frame.shape.inner {
+                // Get the inner shape
+                let inner_shape = inner_fn();
+
+                // If the source shape matches the inner shape, we need to build the outer (transparent) wrapper
+                if src_shape == inner_shape {
+                    // Look for a try_from_inner function in the vtable
+                    if let Some(try_from_inner_fn) = frame.shape.vtable.try_from_inner {
+                        match unsafe { (try_from_inner_fn)(src, src_shape, frame.data) } {
+                            Ok(_) => {
+                                unsafe {
+                                    frame.mark_fully_initialized();
+                                }
+
+                                let shape = frame.shape;
+                                let index = frame.field_index_in_parent;
+
+                                // mark the field as initialized
+                                self.mark_field_as_initialized(shape, index)?;
+
+                                debug!(
+                                    "[{}] Just put a {} value into transparent type {}",
+                                    self.frames.len(),
+                                    src_shape.green(),
+                                    shape.blue()
+                                );
+
+                                return Ok(self);
+                            }
+                            Err(e) => {
+                                return Err(ReflectError::TryFromInnerError {
+                                    inner: e,
+                                    src_shape,
+                                    dst_shape: frame.shape,
+                                });
+                            }
+                        }
+                    } else {
+                        // No try_from_inner function, try normal TryFrom
+                        debug!(
+                            "No try_from_inner function for transparent type, falling back to TryFrom"
+                        );
+                    }
+                }
+            }
 
             // Maybe there's a `TryFrom` impl?
             if let Some(try_from) = frame.shape.vtable.try_from {

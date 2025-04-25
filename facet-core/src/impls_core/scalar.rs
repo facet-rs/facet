@@ -183,6 +183,50 @@ macro_rules! impl_facet_for_integer {
 
         unsafe impl<'a> Facet<'a> for NonZero<$type> {
             const SHAPE: &'static Shape = &const {
+                // Define conversion functions for transparency
+                unsafe fn try_from_inner<'dst>(
+                    src_ptr: PtrConst<'_>,
+                    src_shape: &'static Shape,
+                    dst: PtrUninit<'dst>,
+                ) -> Result<PtrMut<'dst>, TryFromInnerError> {
+                    if src_shape.id != <$type as Facet>::SHAPE.id {
+                        return Err(TryFromInnerError::UnsupportedSourceShape {
+                            src_shape,
+                            expected: &[<$type as Facet>::SHAPE],
+                        });
+                    }
+
+                    // Get the inner value and check that it's non-zero
+                    let value = unsafe { *src_ptr.get::<$type>() };
+                    let nz = NonZero::new(value)
+                        .ok_or_else(|| TryFromInnerError::InvariantNotRespected)?;
+
+                    // Put the NonZero value into the destination
+                    Ok(unsafe { dst.put(nz) })
+                }
+
+                unsafe fn try_into_inner<'dst>(
+                    src_ptr: PtrConst<'_>,
+                    dst: PtrUninit<'dst>,
+                ) -> Result<PtrMut<'dst>, TryIntoInnerError> {
+                    // Get the NonZero value and extract the inner value
+                    let nz = unsafe { *src_ptr.get::<NonZero<$type>>() };
+                    // Put the inner value into the destination
+                    Ok(unsafe { dst.put(nz.get()) })
+                }
+
+                unsafe fn try_borrow_inner(
+                    src_ptr: PtrConst<'_>,
+                ) -> Result<PtrConst<'_>, TryBorrowInnerError> {
+                    // NonZero<T> has the same memory layout as T, so we can return the input pointer directly
+                    Ok(src_ptr)
+                }
+
+                // Function to return inner type's shape
+                fn inner_shape() -> &'static Shape {
+                    <$type as Facet>::SHAPE
+                }
+
                 Shape::builder()
                     .id(ConstTypeId::of::<Self>())
                     .layout(Layout::new::<Self>())
@@ -197,6 +241,7 @@ macro_rules! impl_facet_for_integer {
                                 stringify!($type)
                             ));
 
+                            // Keep existing try_from for compatibility
                             vtable.try_from = Some(|source, source_shape, dest| {
                                 if source_shape == Self::SHAPE {
                                     return Ok(unsafe { dest.copy_from(source, source_shape)? });
@@ -211,9 +256,15 @@ macro_rules! impl_facet_for_integer {
                                 Err(TryFromError::Incompatible)
                             });
 
+                            // Add our new transparency functions
+                            vtable.try_from_inner = Some(try_from_inner);
+                            vtable.try_into_inner = Some(try_into_inner);
+                            vtable.try_borrow_inner = Some(try_borrow_inner);
+
                             vtable
                         },
                     )
+                    .inner(inner_shape)
                     .build()
             };
         }

@@ -117,7 +117,10 @@ fn serialize_scalar<W: Write>(scalar_def: &ScalarDef, writer: &mut W) -> std::io
     }
 }
 
-fn serialize_struct<W: Write>(struct_def: &facet::Struct, writer: &mut W) -> std::io::Result<()> {
+fn serialize_struct<W: Write>(
+    struct_def: &facet::StructDef,
+    writer: &mut W,
+) -> std::io::Result<()> {
     write!(writer, "\"type\": \"object\",")?;
     let required = struct_def
         .fields

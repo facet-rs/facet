@@ -1,4 +1,4 @@
-use facet::{Def, EnumDef, Facet, Field, Struct, Variant};
+use facet::{Def, EnumDef, Facet, Field, StructDef, Variant};
 use facet_reflect::Wip;
 
 #[derive(Facet, PartialEq, Eq, Debug)]
@@ -342,7 +342,7 @@ fn test_enum_reprs() -> eyre::Result<()> {
                     &[
                         Variant {
                             data:
-                                Struct {
+                                StructDef {
                                     fields:
                                         &[
                                             Field {

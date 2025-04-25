@@ -79,6 +79,24 @@ pub struct Shape {
 
     /// Attributes that can be applied to a shape
     pub attributes: &'static [ShapeAttribute],
+
+    /// As far as serialization and deserialization goes, we consider that this shape is a wrapper
+    /// for that shape This is true for "newtypes" like `NonZero<u8>`, wrappers like `Utf8PathBuf`,
+    /// smart pointers like `Arc<T>`, etc.
+    ///
+    /// When this is set, deserialization takes that into account. For example, facet-json
+    /// doesn't expect:
+    ///
+    ///   { "NonZero": { "value": 128 } }
+    ///
+    /// It expects just
+    ///
+    ///   128
+    ///
+    /// Same for `Utf8PathBuf`, which is parsed from and serialized to "just a string".
+    ///
+    /// See Wip's `innermost_shape` function (and its support in `put`).
+    pub inner: Option<fn() -> &'static Shape>,
 }
 
 /// Layout of the shape
@@ -121,6 +139,10 @@ pub enum ShapeAttribute {
     /// missing in the input should be filled with corresponding field values from
     /// a `T::default()` (where T is this shape)
     Default,
+    /// Indicates that this is a transparent wrapper type, like `NewType(T)`
+    /// it should not be treated like a struct, but like something that can be built
+    /// from `T` and converted back to `T`
+    Transparent,
     /// Custom field attribute containing arbitrary text
     Arbitrary(&'static str),
 }
@@ -167,6 +189,7 @@ pub struct ShapeBuilder {
     type_params: &'static [TypeParam],
     doc: &'static [&'static str],
     attributes: &'static [ShapeAttribute],
+    inner: Option<fn() -> &'static Shape>,
 }
 
 impl ShapeBuilder {
@@ -181,6 +204,7 @@ impl ShapeBuilder {
             type_params: &[],
             doc: &[],
             attributes: &[],
+            inner: None,
         }
     }
 
@@ -240,6 +264,19 @@ impl ShapeBuilder {
         self
     }
 
+    /// Sets the `inner` field of the `ShapeBuilder`.
+    ///
+    /// This indicates that this shape is a transparent wrapper for another shape,
+    /// like a newtype or smart pointer, and should be treated as such for serialization
+    /// and deserialization.
+    ///
+    /// The function `inner_fn` should return the static shape of the inner type.
+    #[inline]
+    pub const fn inner(mut self, inner_fn: fn() -> &'static Shape) -> Self {
+        self.inner = Some(inner_fn);
+        self
+    }
+
     /// Builds a `Shape` from the `ShapeBuilder`.
     ///
     /// # Panics
@@ -255,6 +292,7 @@ impl ShapeBuilder {
             def: self.def.unwrap(),
             doc: self.doc,
             attributes: self.attributes,
+            inner: self.inner,
         }
     }
 }
@@ -269,7 +307,7 @@ impl Eq for Shape {}
 
 impl core::hash::Hash for Shape {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        self.def.hash(state);
+        self.id.hash(state);
         self.layout.hash(state);
     }
 }
@@ -312,7 +350,7 @@ impl Shape {
     }
 }
 /// The definition of a shape: is it more like a struct, a map, a list?
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 #[non_exhaustive]
 // this enum is only ever going to be owned in static space,
@@ -328,7 +366,7 @@ pub enum Def {
     /// Various kinds of structs, see [`StructKind`]
     ///
     /// e.g. `struct Struct { field: u32 }`, `struct TupleStruct(u32, u32);`, `(u32, u32)`
-    Struct(Struct),
+    Struct(StructDef),
 
     /// Enum with variants
     ///
@@ -377,7 +415,7 @@ impl Def {
         }
     }
     /// Returns the `Struct` wrapped in an `Ok` if this is a [`Def::Struct`].
-    pub fn into_struct(self) -> Result<Struct, Self> {
+    pub fn into_struct(self) -> Result<StructDef, Self> {
         match self {
             Self::Struct(def) => Ok(def),
             _ => Err(self),
