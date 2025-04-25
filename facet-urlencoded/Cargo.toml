@@ -2,7 +2,6 @@
 name = "facet-urlencoded"
 version.workspace = true
 edition.workspace = true
-authors = ["Amos Wenger <amos@bearcove.eu>"]
 repository.workspace = true
 license.workspace = true
 description = "URL encoded form serialization and deserialization for Facet types"

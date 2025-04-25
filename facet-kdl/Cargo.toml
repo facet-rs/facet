@@ -1,7 +1,6 @@
 [package]
 name = "facet-kdl"
 version.workspace = true
-authors = ["Amos Wenger <amos@bearcove.eu>"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

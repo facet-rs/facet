@@ -1,10 +1,6 @@
 [package]
 name = "facet-jsonschema"
 version.workspace = true
-authors = [
-    "John Hughes <jondo2010@gmail.com>",
-    "Amos Wenger <amos@bearcove.eu>",
-]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

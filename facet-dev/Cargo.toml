@@ -2,7 +2,6 @@
 name = "facet-dev"
 publish = false
 version = "0.1.1"
-authors = ["Amos Wenger <amos@bearcove.eu>"]
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

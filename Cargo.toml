@@ -34,7 +34,6 @@ resolver = "3"
 
 [workspace.package]
 version = "0.16.0"
-authors = ["Amos Wenger <amos@bearcove.eu>"]
 edition = "2024"
 rust-version = "1.86.0"
 license = "MIT OR Apache-2.0"
