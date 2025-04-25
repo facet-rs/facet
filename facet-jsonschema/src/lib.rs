@@ -193,6 +193,7 @@ fn serialize_option<W: Write>(
 mod tests {
     use super::*;
     use facet_derive::Facet;
+    use insta::assert_snapshot;
 
     #[test]
     fn test_basic() {
@@ -210,26 +211,6 @@ mod tests {
         }
 
         let schema = to_string::<TestStruct>();
-
-        let round_trip: schemars::schema::RootSchema = serde_json::from_str(&schema).unwrap();
-        assert_eq!(
-            round_trip.meta_schema,
-            Some("https://json-schema.org/draft/2020-12/schema".to_string())
-        );
-        assert_eq!(
-            round_trip.schema.metadata.as_deref(),
-            Some(&schemars::schema::Metadata {
-                //title: Some("TestStruct".to_string()),
-                id: Some("http://example.com/schema".to_string()),
-                description: Some("Test documentation".to_string()),
-                ..Default::default()
-            })
-        );
-        assert_eq!(
-            round_trip.schema.instance_type,
-            Some(schemars::schema::SingleOrVec::from(
-                schemars::schema::InstanceType::Object,
-            ))
-        );
+        assert_snapshot!(schema);
     }
 }
