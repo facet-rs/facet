@@ -13,7 +13,7 @@ default: precommit prepush
 precommit: code-quality
 prepush: clippy test
 
-ci: precommit prepush docs msrv-lite miri
+ci: precommit prepush docs msrv miri
 
 nostd:
     rustup target add thumbv8m.main-none-eabihf
@@ -147,10 +147,10 @@ docsrs *args:
     export RUSTDOCFLAGS="--cfg docsrs"
     cargo +nightly doc {{args}}
 
-msrv-lite:
+msrv:
     cargo hack check --each-feature --locked --rust-version --ignore-private --workspace --keep-going --exclude-no-default-features --target-dir target/msrv
 
-msrv:
+msrv-power:
     cargo hack check --feature-powerset --locked --rust-version --ignore-private --workspace --all-targets --keep-going --exclude-no-default-features --target-dir target/msrv
 
 docs:
