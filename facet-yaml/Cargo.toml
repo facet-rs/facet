@@ -9,6 +9,9 @@ description = "YAML serialization and deserialization for Facet types"
 keywords = ["yaml", "serialization", "deserialization", "reflection", "facet"]
 categories = ["encoding", "parsing", "data-structures"]
 
+[features]
+ulid = ["facet-core/ulid"]
+
 [dependencies]
 yaml-rust2 = "0.10.1"
 facet-core = { version = "0.16.0", path = "../facet-core" }
@@ -16,3 +19,5 @@ facet-reflect = { version = "0.16.0", path = "../facet-reflect" }
 
 [dev-dependencies]
 facet = { path = "../facet" }
+eyre = "0.6.12"
+ulid = "1.2.1"

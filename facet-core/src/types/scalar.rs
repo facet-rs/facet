@@ -66,6 +66,8 @@ pub enum ScalarAffinity {
     IpAddr(IpAddrAffinity),
     /// UUID or UUID-like identifier, containing 16 bytes of information
     UUID(UuidAffinity),
+    /// ULID or ULID-like identifier, containing 16 bytes of information
+    ULID(UlidAffinity),
     /// Timestamp or Datetime-like scalar affinity
     Time(TimeAffinity),
     /// Something you're not supposed to look inside of
@@ -117,6 +119,11 @@ impl ScalarAffinity {
     /// Returns an UuidAffinityBuilder
     pub const fn uuid() -> UuidAffinityBuilder {
         UuidAffinityBuilder::new()
+    }
+
+    /// Returns a UlidAffinityBuilder
+    pub const fn ulid() -> UlidAffinityBuilder {
+        UlidAffinityBuilder::new()
     }
 
     /// Returns an TimeAffinityBuilder
@@ -673,6 +680,36 @@ impl UuidAffinityBuilder {
     /// Builds the ScalarAffinity
     pub const fn build(self) -> ScalarAffinity {
         ScalarAffinity::UUID(UuidAffinity {})
+    }
+}
+
+/// Definition for ULID and ULID-like scalar affinities
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[repr(C)]
+#[non_exhaustive]
+pub struct UlidAffinity {}
+
+impl UlidAffinity {
+    /// Returns a builder for UlidAffinity
+    pub const fn builder() -> UlidAffinityBuilder {
+        UlidAffinityBuilder::new()
+    }
+}
+
+/// Builder for UlidAffinity
+#[repr(C)]
+pub struct UlidAffinityBuilder {}
+
+impl UlidAffinityBuilder {
+    /// Creates a new UlidAffinityBuilder
+    #[allow(clippy::new_without_default)]
+    pub const fn new() -> Self {
+        UlidAffinityBuilder {}
+    }
+
+    /// Builds the ScalarAffinity
+    pub const fn build(self) -> ScalarAffinity {
+        ScalarAffinity::ULID(UlidAffinity {})
     }
 }
 

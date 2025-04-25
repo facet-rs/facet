@@ -37,6 +37,9 @@ mod impls_ordered_float;
 #[cfg(feature = "uuid")]
 mod impls_uuid;
 
+#[cfg(feature = "ulid")]
+mod impls_ulid;
+
 // Const type Id
 mod typeid;
 pub use typeid::*;

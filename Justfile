@@ -11,7 +11,7 @@ set dotenv-load
 default: precommit prepush
 
 precommit: code-quality
-prepush: clippy test msrv-lite
+prepush: clippy test
 
 ci: precommit prepush docs msrv miri
 

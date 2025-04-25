@@ -17,6 +17,7 @@ default = ["std", "rich-diagnostics"]
 camino = ["alloc", "facet-core/camino"]                # Enable camino support
 ordered-float = ["alloc", "facet-core/ordered-float"]
 uuid = ["alloc", "facet-core/uuid"]
+ulid = ["alloc", "facet-core/ulid"]
 
 [dependencies]
 ariadne = { version = "=0.5.1", optional = true }
@@ -29,6 +30,7 @@ owo-colors = "4.2.0"
 camino = "1.1.9"
 eyre = "0.6.12"
 uuid = "1.16.0"
+ulid = "1.2.1"
 facet = { path = "../facet" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 insta = { git = "https://github.com/mitsuhiko/insta" }
