@@ -15,6 +15,7 @@ fn test_struct_with_missing_field() -> eyre::Result<()> {
     let json_data = r#"{"foo": "example", "bar": 100}"#;
     let result: Result<ThreeField, _> = from_str(json_data);
     let err = result.expect_err("Expected an error, but deserialization succeeded");
+    #[cfg(not(miri))]
     insta::assert_debug_snapshot!(err);
     Ok(())
 }
@@ -39,6 +40,7 @@ fn test_deny_unknown_fields() -> eyre::Result<()> {
     let result_extra: Result<StrictStruct, _> = from_str(json_extra);
     let err =
         result_extra.expect_err("Expected error for json_extra, but deserialization succeeded");
+    #[cfg(not(miri))]
     insta::assert_debug_snapshot!(err);
     Ok(())
 }

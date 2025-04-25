@@ -464,5 +464,6 @@ fn test_field_rename_missing_required_error() {
         e.kind,
         facet_json::JsonErrorKind::MissingField(f) if f == "original_field"
     ));
+    #[cfg(not(miri))]
     assert_snapshot!(e.to_string());
 }

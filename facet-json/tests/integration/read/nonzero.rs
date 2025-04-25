@@ -30,6 +30,7 @@ fn json_read_nonzero_zero() -> Result<()> {
     let json = r#"{"foo": 0}"#;
     let result: Result<Foo> = from_str(json).map_err(Into::into);
     assert!(result.is_err());
+    #[cfg(not(miri))]
     assert_snapshot!(result.unwrap_err().to_string());
     Ok(())
 }

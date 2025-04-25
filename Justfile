@@ -93,7 +93,7 @@ miri *args:
     export RUSTUP_TOOLCHAIN=nightly-2025-04-25
     rustup toolchain install nightly-2025-04-25
     rustup +nightly-2025-04-25 component add miri rust-src
-    cargo +nightly-2025-04-25 miri nextest run --target-dir target/miri -p facet-reflect -p facet-core {{args}}
+    cargo +nightly-2025-04-25 miri nextest run --target-dir target/miri -p facet-reflect -p facet-core -p facet-json {{args}}
 
 miri-ci *args:
     #!/usr/bin/env -S bash -euxo pipefail

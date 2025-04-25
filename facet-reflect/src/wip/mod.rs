@@ -352,14 +352,6 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
                     // Ensure value is marked as MOVED.
                     istate.flags.insert(FrameFlags::MOVED);
 
-                    // Prevent memory leaks for heap-allocated values that are now moved.
-                    if istate.flags.contains(FrameFlags::ALLOCATED) {
-                        // `dealloc_if_needed` needs a `Frame`.
-                        let mut temp_frame = Frame::recompose(id, istate);
-                        temp_frame.dealloc_if_needed();
-                        istate = temp_frame.istate; // Update istate (ALLOCATED flag removed).
-                    }
-
                     // Ensure all owned fields within structs/enums are also marked.
                     match id.shape.def {
                         Def::Struct(sd) => {
@@ -391,6 +383,14 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
                         // individually when *their* ValueId is processed, if tracked.
                         _ => {}
                     }
+
+                    // Prevent memory leaks for heap-allocated values that are now moved.
+                    // Only deallocate AFTER recursively processing child fields to prevent use-after-free.
+                    if istate.flags.contains(FrameFlags::ALLOCATED) {
+                        // `dealloc_if_needed` needs a `Frame`.
+                        let mut temp_frame = Frame::recompose(id, istate);
+                        temp_frame.dealloc_if_needed();
+                    }
                 }
                 // If istate wasn't found, value was already handled or not tracked off-stack.
             }
@@ -399,63 +399,52 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
         // Function requires unsafe due to pointer manipulation, potential deallocation,
         // and calling other unsafe functions/methods.
         unsafe {
-            // 1. Process the primary frame being moved: mark MOVED, clear state, deallocate, untrack.
+            // 1. Process the primary frame being moved: mark MOVED, clear state
             let frame_id = frame.id();
-            // Temporarily move `istate` out of `frame` to avoid borrow issues while modifying
-            // it and potentially calling methods on `self` (viake ownership of istate to modify and potentially pass to Frame::recompose
-            let mut frame_istate = core::mem::replace(
-                &mut frame.istate,
-                // Placeholder: Create a dummy state. The real state is in frame_istate now.
-                // This avoids borrowing issues while we modify frame_istate and potentially call methods
-                // on `self` (like dealloc_if_needed via Frame::recompose).
-                IState::new(0, FrameMode::Root, FrameFlags::EMPTY),
-            );
 
-            frame_istate.flags.insert(FrameFlags::MOVED);
-            ISet::clear(&mut frame_istate.fields);
-            frame_istate.variant = None;
+            // Save variant information for recursive processing before we clear it
+            let variant_opt = frame.istate.variant;
 
-            // Need temporary frame for dealloc, using the istate we just modified
-            let mut temp_frame = Frame::recompose(frame_id, frame_istate); // Recompose uses the id's ptr & shape
-            temp_frame.dealloc_if_needed();
-            frame_istate = temp_frame.istate; // Get updated flags back (e.g., ALLOCATED removed)
+            // Mark as MOVED and clear any initialization progress.
+            frame.istate.flags.insert(FrameFlags::MOVED);
+            ISet::clear(&mut frame.istate.fields);
 
-            // Put final state back into the original frame reference
-            frame.istate = frame_istate;
-
-            // Remove from tracking *after* potential dealloc based on its state.
-            // If the frame was only on the stack and never stored in istates, this does nothing.
-            self.istates.remove(&frame_id);
-
-            // 2. Kick off recursive cleanup for descendants tracked in istates.
-            // This starts the recursive check/removal based on the fields of the *current* frame's shape.
-            // Note: We pass a *borrow* of the potentially updated istate here, just for reading the variant if needed.
+            // 2. Recursively mark descendants (struct/enum fields) in `istates` as MOVED.
+            // This ensures consistency if fields were pushed/popped and stored in `istates`.
             match frame.shape.def {
                 Def::Struct(sd) => {
                     let container_ptr = PtrUninit::new(frame_id.ptr as *mut u8);
                     for field in sd.fields.iter() {
-                        // These calls are now within the unsafe block
                         let field_ptr_uninit = container_ptr.field_uninit_at(field.offset);
                         let field_id = ValueId::new(field.shape(), field_ptr_uninit.as_byte_ptr());
-                        // Call the local helper function
                         mark_subtree_moved(self, field_id);
                     }
                 }
                 Def::Enum(_) => {
-                    // Use the final istate from the frame to check the variant
-                    if let Some(variant) = &frame.istate.variant {
+                    // Use the saved variant information for recursion
+                    if let Some(variant) = &variant_opt {
                         let container_ptr = PtrUninit::new(frame_id.ptr as *mut u8);
                         for field in variant.data.fields.iter() {
-                            // These calls are now within the unsafe block
                             let field_ptr_uninit = container_ptr.field_uninit_at(field.offset);
                             let field_id =
                                 ValueId::new(field.shape(), field_ptr_uninit.as_byte_ptr());
-                            // Call the local helper function
                             mark_subtree_moved(self, field_id);
                         }
                     }
                 }
-                _ => {} // No direct descendants via fields for List, Map, Scalar etc.
+                // Other types don't have direct fields requiring recursive marking here.
+                _ => {}
+            }
+
+            // Now clear the variant after processing is done
+            frame.istate.variant = None;
+
+            // Untrack the frame in `istates`
+            self.istates.remove(&frame_id);
+
+            // Deallocate AFTER all processing is complete to prevent use-after-free
+            if frame.istate.flags.contains(FrameFlags::ALLOCATED) {
+                frame.dealloc_if_needed();
             }
         }
     }
