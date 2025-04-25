@@ -22,6 +22,7 @@ alloc = ["facet-core/alloc"] # Enables alloc support
 camino = [
     "facet-core/camino",
 ] # Implements Facet for camino types (Utf8PathBuf, Utf8Path)
+uuid = ["facet-core/uuid"] # Implements Facet for Uuid
 
 [dependencies]
 facet-core = { path = "../facet-core", version = "0.12.0", default-features = false }

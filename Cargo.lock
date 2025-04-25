@@ -186,6 +186,7 @@ dependencies = [
  "facet-testhelpers",
  "impls",
  "ordered-float",
+ "uuid",
 ]
 
 [[package]]
@@ -243,6 +244,7 @@ dependencies = [
  "log",
  "ordered-float",
  "owo-colors",
+ "uuid",
 ]
 
 [[package]]
@@ -798,6 +800,12 @@ dependencies = [
  "proc-macro2",
  "shadow_counted",
 ]
+
+[[package]]
+name = "uuid"
+version = "1.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "458f7a779bf54acc9f347480ac654f68407d3aab21269a6e3c9f922acd9e2da9"
 
 [[package]]
 name = "wasi"
