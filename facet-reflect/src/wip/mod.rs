@@ -118,6 +118,7 @@ impl fmt::Debug for Frame {
             .field("kind", &def_kind(&self.shape.def))
             .field("index", &self.field_index_in_parent)
             .field("mode", &self.istate.mode)
+            .field("id", &self.id())
             .finish()
     }
 }
@@ -332,19 +333,131 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
         // the stack, we still need to track them _somewhere_
         //
         // the root also relies on being tracked in the drop impl
-        if !frame.istate.flags.contains(FrameFlags::MOVED) {
-            self.istates.insert(frame.id(), frame.istate);
+        if frame.istate.flags.contains(FrameFlags::MOVED) {
+            // don't track those
+            return;
         }
+
+        self.istates.insert(frame.id(), frame.istate);
     }
 
     unsafe fn mark_moved_out_of(&mut self, frame: &mut Frame) {
-        frame.dealloc_if_needed();
-        ISet::clear(&mut frame.istate.fields);
-        frame.istate.variant = None;
-        frame.istate.flags.insert(FrameFlags::MOVED);
-        // make sure this isn't tracked here anymore — we don't want to have
-        // any metadata associated with it that gets restored by mistake
-        self.istates.remove(&frame.id());
+        // Recursively mark `istates` entries as MOVED and deallocate. Needed because
+        // descendant values might be tracked separately in `istates`.
+        unsafe fn mark_subtree_moved(wip: &mut Wip, id: ValueId) {
+            // Function requires unsafe due to pointer manipulation and potential deallocation.
+            unsafe {
+                // Process only if the value is still tracked off-stack.
+                if let Some(mut istate) = wip.istates.remove(&id) {
+                    // Ensure value is marked as MOVED.
+                    istate.flags.insert(FrameFlags::MOVED);
+
+                    // Prevent memory leaks for heap-allocated values that are now moved.
+                    if istate.flags.contains(FrameFlags::ALLOCATED) {
+                        // `dealloc_if_needed` needs a `Frame`.
+                        let mut temp_frame = Frame::recompose(id, istate);
+                        temp_frame.dealloc_if_needed();
+                        istate = temp_frame.istate; // Update istate (ALLOCATED flag removed).
+                    }
+
+                    // Ensure all owned fields within structs/enums are also marked.
+                    match id.shape.def {
+                        Def::Struct(sd) => {
+                            let container_ptr = PtrUninit::new(id.ptr as *mut u8);
+                            for field in sd.fields.iter() {
+                                let field_ptr_uninit = container_ptr.field_uninit_at(field.offset);
+                                let field_id =
+                                    ValueId::new(field.shape(), field_ptr_uninit.as_byte_ptr());
+                                // Recurse.
+                                mark_subtree_moved(wip, field_id);
+                            }
+                        }
+                        Def::Enum(_) => {
+                            // Use the variant info from the processed istate.
+                            if let Some(variant) = &istate.variant {
+                                let container_ptr = PtrUninit::new(id.ptr as *mut u8);
+                                for field in variant.data.fields.iter() {
+                                    let field_ptr_uninit =
+                                        container_ptr.field_uninit_at(field.offset);
+                                    let field_id =
+                                        ValueId::new(field.shape(), field_ptr_uninit.as_byte_ptr());
+                                    // Recurse.
+                                    mark_subtree_moved(wip, field_id);
+                                }
+                            }
+                        }
+                        // Only recurse for direct fields (struct/enum). Other owned values
+                        // (list elements, map entries, option Some payload) are handled
+                        // individually when *their* ValueId is processed, if tracked.
+                        _ => {}
+                    }
+                }
+                // If istate wasn't found, value was already handled or not tracked off-stack.
+            }
+        }
+
+        // Function requires unsafe due to pointer manipulation, potential deallocation,
+        // and calling other unsafe functions/methods.
+        unsafe {
+            // 1. Process the primary frame being moved: mark MOVED, clear state, deallocate, untrack.
+            let frame_id = frame.id();
+            // Temporarily move `istate` out of `frame` to avoid borrow issues while modifying
+            // it and potentially calling methods on `self` (viake ownership of istate to modify and potentially pass to Frame::recompose
+            let mut frame_istate = core::mem::replace(
+                &mut frame.istate,
+                // Placeholder: Create a dummy state. The real state is in frame_istate now.
+                // This avoids borrowing issues while we modify frame_istate and potentially call methods
+                // on `self` (like dealloc_if_needed via Frame::recompose).
+                IState::new(0, FrameMode::Root, FrameFlags::EMPTY),
+            );
+
+            frame_istate.flags.insert(FrameFlags::MOVED);
+            ISet::clear(&mut frame_istate.fields);
+            frame_istate.variant = None;
+
+            // Need temporary frame for dealloc, using the istate we just modified
+            let mut temp_frame = Frame::recompose(frame_id, frame_istate); // Recompose uses the id's ptr & shape
+            temp_frame.dealloc_if_needed();
+            frame_istate = temp_frame.istate; // Get updated flags back (e.g., ALLOCATED removed)
+
+            // Put final state back into the original frame reference
+            frame.istate = frame_istate;
+
+            // Remove from tracking *after* potential dealloc based on its state.
+            // If the frame was only on the stack and never stored in istates, this does nothing.
+            self.istates.remove(&frame_id);
+
+            // 2. Kick off recursive cleanup for descendants tracked in istates.
+            // This starts the recursive check/removal based on the fields of the *current* frame's shape.
+            // Note: We pass a *borrow* of the potentially updated istate here, just for reading the variant if needed.
+            match frame.shape.def {
+                Def::Struct(sd) => {
+                    let container_ptr = PtrUninit::new(frame_id.ptr as *mut u8);
+                    for field in sd.fields.iter() {
+                        // These calls are now within the unsafe block
+                        let field_ptr_uninit = container_ptr.field_uninit_at(field.offset);
+                        let field_id = ValueId::new(field.shape(), field_ptr_uninit.as_byte_ptr());
+                        // Call the local helper function
+                        mark_subtree_moved(self, field_id);
+                    }
+                }
+                Def::Enum(_) => {
+                    // Use the final istate from the frame to check the variant
+                    if let Some(variant) = &frame.istate.variant {
+                        let container_ptr = PtrUninit::new(frame_id.ptr as *mut u8);
+                        for field in variant.data.fields.iter() {
+                            // These calls are now within the unsafe block
+                            let field_ptr_uninit = container_ptr.field_uninit_at(field.offset);
+                            let field_id =
+                                ValueId::new(field.shape(), field_ptr_uninit.as_byte_ptr());
+                            // Call the local helper function
+                            mark_subtree_moved(self, field_id);
+                        }
+                    }
+                }
+                _ => {} // No direct descendants via fields for List, Map, Scalar etc.
+            }
+        }
     }
 
     /// Returns the shape of the current frame
@@ -1030,10 +1143,7 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
 
         // de-initialize partially initialized fields, if any
         if frame.istate.variant.is_some() || frame.istate.fields.is_any_set() {
-            debug!(
-                "De-initializing partially initialized fields for {}",
-                frame.shape
-            );
+            debug!("De-initializing partially initialized {:?}", frame.yellow());
 
             match frame.shape.def {
                 Def::Struct(sd) => {
@@ -1066,7 +1176,9 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
                 _ => {
                     // For scalar types and other non-struct/enum, attempt to drop the field in place if initialized
                     if frame.istate.fields.is_any_set() {
+                        debug!("Scalar type was set...");
                         if let Some(drop_fn) = frame.shape.vtable.drop_in_place {
+                            debug!("And it has a drop fn, dropping now!");
                             unsafe {
                                 drop_fn(frame.data.assume_init());
                             }
@@ -1732,6 +1844,8 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
                 invariant: "No frame to pop — it was time to call build()",
             });
         };
+
+        eprintln!("Tracking frame: {:?}", frame);
         self.track(frame);
         Ok(self)
     }
