@@ -33,8 +33,15 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for &'a T {
                         // Slice reference &[U]
                         Def::Slice(_) => {
                             builder = builder.default_in_place(|dst| {
-                                const EMPTY: &[()] = &[];
-                                unsafe { dst.put(EMPTY) }
+                                let Def::Slice(slice) = T::SHAPE.def else {
+                                    unreachable!();
+                                };
+                                let item_layout = slice.t.layout.sized_layout().unwrap();
+
+                                let data: *const () =
+                                    core::ptr::without_provenance(item_layout.align());
+                                let slice = unsafe { core::slice::from_raw_parts(data, 0) };
+                                unsafe { dst.put(slice) }
                             });
                         }
                         Def::Str => {
