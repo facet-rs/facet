@@ -256,6 +256,8 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::rc::Rc<T> {
                     vtable.try_from = Some(try_from::<T>);
                     vtable.try_into_inner = Some(try_into_inner::<T>);
                     vtable.try_borrow_inner = Some(try_borrow_inner::<T>);
+                    vtable.drop_in_place =
+                        Some(|ptr| unsafe { ptr.drop_in_place::<alloc::rc::Rc<T>>() });
                     vtable
                 },
             )
@@ -295,7 +297,15 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::rc::Weak<T> {
                     )
                     .build(),
             ))
-            .vtable(&const { value_vtable!(alloc::rc::Rc<T>, |f, _opts| write!(f, "Rc")) })
+            .vtable(
+                &const {
+                    let mut vtable =
+                        value_vtable!(alloc::rc::Weak<T>, |f, _opts| write!(f, "Weak")); // Note: Weak<T> for type name
+                    vtable.drop_in_place =
+                        Some(|ptr| unsafe { ptr.drop_in_place::<alloc::rc::Weak<T>>() });
+                    vtable
+                },
+            )
             .inner(inner_shape::<T>)
             .build()
     };
@@ -336,11 +346,8 @@ mod tests {
     use alloc::rc::{Rc, Weak as RcWeak};
     use alloc::string::String;
     use alloc::sync::{Arc, Weak as ArcWeak};
-    use core::mem::MaybeUninit;
 
     use super::*;
-
-    use crate::PtrUninit;
 
     #[test]
     fn test_arc_type_params() {
@@ -537,7 +544,60 @@ mod tests {
     }
 
     #[test]
-    fn test_rc_vtable() {
+    fn test_rc_vtable_1_new_borrow_drop() -> eyre::Result<()> {
+        facet_testhelpers::setup();
+
+        let rc_shape = <Rc<String>>::SHAPE;
+        let rc_def = rc_shape
+            .def
+            .into_smart_pointer()
+            .expect("Rc<T> should have a smart pointer definition");
+
+        // Allocate memory for the Rc
+        let rc_uninit_ptr = rc_shape.allocate()?;
+
+        // Get the function pointer for creating a new Rc from a value
+        let new_into_fn = rc_def
+            .vtable
+            .new_into_fn
+            .expect("Rc<T> should have new_into_fn");
+
+        // Create the value and initialize the Rc
+        let value = String::from("example");
+        let rc_ptr = unsafe { new_into_fn(rc_uninit_ptr, PtrConst::new(&raw const value)) };
+        // The value now belongs to the Rc, prevent its drop
+        core::mem::forget(value);
+
+        // Get the function pointer for borrowing the inner value
+        let borrow_fn = rc_def
+            .vtable
+            .borrow_fn
+            .expect("Rc<T> should have borrow_fn");
+
+        // Borrow the inner value and check it
+        let borrowed_ptr = unsafe { borrow_fn(rc_ptr.as_const()) };
+        // SAFETY: borrowed_ptr points to a valid String within the Rc
+        assert_eq!(unsafe { borrowed_ptr.get::<String>() }, "example");
+
+        // Get the function pointer for dropping the Rc
+        let drop_fn = rc_shape
+            .vtable
+            .drop_in_place
+            .expect("Rc<T> should have drop_in_place");
+
+        // Drop the Rc in place
+        // SAFETY: rc_ptr points to a valid Rc<String>
+        unsafe { drop_fn(rc_ptr) };
+
+        // Deallocate the memory
+        // SAFETY: rc_ptr was allocated by rc_shape and is now dropped (but memory is still valid)
+        unsafe { rc_shape.deallocate_mut(rc_ptr)? };
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_rc_vtable_2_downgrade_upgrade_drop() -> eyre::Result<()> {
         facet_testhelpers::setup();
 
         let rc_shape = <Rc<String>>::SHAPE;
@@ -552,151 +612,112 @@ mod tests {
             .into_smart_pointer()
             .expect("RcWeak<T> should have a smart pointer definition");
 
-        // Keep this alive as long as the Rc inside it is used
-        let mut rc_storage = MaybeUninit::<Rc<String>>::zeroed();
-        let rc_ptr = unsafe {
-            let rc_uninit_ptr = PtrUninit::from_maybe_uninit(&mut rc_storage);
+        // 1. Create the first Rc (rc1)
+        let rc1_uninit_ptr = rc_shape.allocate()?;
+        let new_into_fn = rc_def.vtable.new_into_fn.unwrap();
+        let value = String::from("example");
+        let rc1_ptr = unsafe { new_into_fn(rc1_uninit_ptr, PtrConst::new(&raw const value)) };
+        core::mem::forget(value); // Value now owned by rc1
 
-            let value = String::from("example");
-            let value_ptr = PtrConst::new(&raw const value);
+        // 2. Downgrade rc1 to create a weak pointer (weak1)
+        let weak1_uninit_ptr = weak_shape.allocate()?;
+        let downgrade_into_fn = rc_def.vtable.downgrade_into_fn.unwrap();
+        // SAFETY: rc1_ptr points to a valid Rc, weak1_uninit_ptr is allocated for a Weak
+        let weak1_ptr = unsafe { downgrade_into_fn(rc1_ptr, weak1_uninit_ptr) };
 
-            // SAFETY:
-            // - `rc_uninit_ptr` has layout Rc<String>
-            // - `value_ptr` is String
-            // - `value_ptr` is deallocated after this without running the destructor
-            let returned_ptr = rc_def
-                .vtable
-                .new_into_fn
-                .expect("Rc<T> should have new_into_fn vtable function")(
-                rc_uninit_ptr, value_ptr
-            );
+        // 3. Upgrade weak1 to create a second Rc (rc2)
+        let rc2_uninit_ptr = rc_shape.allocate()?;
+        let upgrade_into_fn = weak_def.vtable.upgrade_into_fn.unwrap();
+        // SAFETY: weak1_ptr points to a valid Weak, rc2_uninit_ptr is allocated for an Rc.
+        // Upgrade should succeed as rc1 still exists.
+        let rc2_ptr = unsafe { upgrade_into_fn(weak1_ptr, rc2_uninit_ptr) }
+            .expect("Upgrade should succeed while original Rc exists");
 
-            // Don't run the destructor
-            core::mem::forget(value);
+        // Check the content of the upgraded Rc
+        let borrow_fn = rc_def.vtable.borrow_fn.unwrap();
+        // SAFETY: rc2_ptr points to a valid Rc<String>
+        let borrowed_ptr = unsafe { borrow_fn(rc2_ptr.as_const()) };
+        // SAFETY: borrowed_ptr points to a valid String
+        assert_eq!(unsafe { borrowed_ptr.get::<String>() }, "example");
 
-            // Test correctness of the return value of new_into_fn
-            // SAFETY: Using correct type Rc<String>
-            assert_eq!(
-                returned_ptr.as_ptr(),
-                rc_uninit_ptr.as_byte_ptr() as *const Rc<String>
-            );
-
-            returned_ptr
-        };
-
-        unsafe {
-            // SAFETY: `rc_ptr` is valid
-            let borrowed = rc_def
-                .vtable
-                .borrow_fn
-                .expect("Rc<T> should have borrow_fn vtable function")(
-                rc_ptr.as_const()
-            );
-            assert_eq!(borrowed.get::<String>(), "example");
-        }
-
-        // Keep this alive as long as the RcWeak inside it is used
-        let mut new_rc_storage = MaybeUninit::<RcWeak<String>>::zeroed();
-        let weak_ptr = unsafe {
-            let weak_uninit_ptr = PtrUninit::from_maybe_uninit(&mut new_rc_storage);
-
-            let returned_ptr = rc_def
-                .vtable
-                .downgrade_into_fn
-                .expect("Rc<T> should have downgrade_into_fn vtable function")(
-                rc_ptr,
-                weak_uninit_ptr,
-            );
-
-            // Test correctness of the return value of downgrade_into_fn
-            // SAFETY: Using correct type RcWeak<String>
-            assert_eq!(
-                returned_ptr.as_ptr(),
-                weak_uninit_ptr.as_byte_ptr() as *const RcWeak<String>
-            );
-
-            returned_ptr
-        };
-
-        {
-            let mut new_rc_storage = MaybeUninit::<Rc<String>>::zeroed();
-            let new_rc_ptr = unsafe {
-                let new_rc_uninit_ptr = PtrUninit::from_maybe_uninit(&mut new_rc_storage);
-
-                // SAFETY: `weak_ptr` is valid and `new_rc_uninit_ptr` has layout Weak<String>
-                let returned_ptr = weak_def
-                    .vtable
-                    .upgrade_into_fn
-                    .expect("RcWeak<T> should have upgrade_into_fn vtable function")(
-                    weak_ptr,
-                    new_rc_uninit_ptr,
-                )
-                .expect("Upgrade should be successful");
-
-                // Test correctness of the return value of upgrade_into_fn
-                // SAFETY: Using correct type Rc<String>
-                assert_eq!(
-                    returned_ptr.as_ptr(),
-                    new_rc_uninit_ptr.as_byte_ptr() as *const Rc<String>
-                );
-
-                returned_ptr
-            };
-
-            unsafe {
-                // SAFETY: `new_rc_ptr` is valid
-                let borrowed = rc_def
-                    .vtable
-                    .borrow_fn
-                    .expect("Rc<T> should have borrow_fn vtable function")(
-                    new_rc_ptr.as_const()
-                );
-                assert_eq!(borrowed.get::<String>(), "example");
-            }
-
-            unsafe {
-                // SAFETY: Proper value at `rc_ptr`, which is not accessed after this
-                rc_shape
-                    .vtable
-                    .drop_in_place
-                    .expect("Rc<T> should have drop_in_place vtable function")(
-                    new_rc_ptr
-                );
-            }
-        }
+        // 4. Drop everything and free memory
+        let rc_drop_fn = rc_shape.vtable.drop_in_place.unwrap();
+        let weak_drop_fn = weak_shape.vtable.drop_in_place.unwrap();
 
         unsafe {
-            // SAFETY: Proper value at `rc_ptr`, which is not accessed after this
-            rc_shape
-                .vtable
-                .drop_in_place
-                .expect("Rc<T> should have drop_in_place vtable function")(rc_ptr);
+            // Drop Rcs
+            rc_drop_fn(rc1_ptr);
+            rc_shape.deallocate_mut(rc1_ptr)?;
+            rc_drop_fn(rc2_ptr);
+            rc_shape.deallocate_mut(rc2_ptr)?;
+
+            // Drop Weak
+            weak_drop_fn(weak1_ptr);
+            weak_shape.deallocate_mut(weak1_ptr)?;
         }
 
-        unsafe {
-            let mut new_rc_storage = MaybeUninit::<Rc<String>>::zeroed();
-            let new_rc_uninit_ptr = PtrUninit::from_maybe_uninit(&mut new_rc_storage);
+        Ok(())
+    }
 
-            // SAFETY: `weak_ptr` is valid and `new_rc_uninit_ptr` has layout Weak<String>
-            if weak_def
-                .vtable
-                .upgrade_into_fn
-                .expect("RcWeak<T> should have upgrade_into_fn vtable function")(
-                weak_ptr,
-                new_rc_uninit_ptr,
-            )
-            .is_some()
-            {
-                panic!("Upgrade should be unsuccessful")
-            }
-        };
+    #[test]
+    fn test_rc_vtable_3_downgrade_drop_try_upgrade() -> eyre::Result<()> {
+        facet_testhelpers::setup();
 
+        let rc_shape = <Rc<String>>::SHAPE;
+        let rc_def = rc_shape
+            .def
+            .into_smart_pointer()
+            .expect("Rc<T> should have a smart pointer definition");
+
+        let weak_shape = <RcWeak<String>>::SHAPE;
+        let weak_def = weak_shape
+            .def
+            .into_smart_pointer()
+            .expect("RcWeak<T> should have a smart pointer definition");
+
+        // 1. Create the strong Rc (rc1)
+        let rc1_uninit_ptr = rc_shape.allocate()?;
+        let new_into_fn = rc_def.vtable.new_into_fn.unwrap();
+        let value = String::from("example");
+        let rc1_ptr = unsafe { new_into_fn(rc1_uninit_ptr, PtrConst::new(&raw const value)) };
+        core::mem::forget(value);
+
+        // 2. Downgrade rc1 to create a weak pointer (weak1)
+        let weak1_uninit_ptr = weak_shape.allocate()?;
+        let downgrade_into_fn = rc_def.vtable.downgrade_into_fn.unwrap();
+        // SAFETY: rc1_ptr is valid, weak1_uninit_ptr is allocated for Weak
+        let weak1_ptr = unsafe { downgrade_into_fn(rc1_ptr, weak1_uninit_ptr) };
+
+        // 3. Drop and free the strong pointer (rc1)
+        let rc_drop_fn = rc_shape.vtable.drop_in_place.unwrap();
         unsafe {
-            // SAFETY: Proper value at `weak_ptr`, which is not accessed after this
-            weak_shape
-                .vtable
-                .drop_in_place
-                .expect("RcWeak<T> should have drop_in_place vtable function")(weak_ptr);
+            rc_drop_fn(rc1_ptr);
+            rc_shape.deallocate_mut(rc1_ptr)?;
         }
+
+        // 4. Attempt to upgrade the weak pointer (weak1)
+        let upgrade_into_fn = weak_def.vtable.upgrade_into_fn.unwrap();
+        let rc2_uninit_ptr = rc_shape.allocate()?;
+        // SAFETY: weak1_ptr is valid (though points to dropped data), rc2_uninit_ptr is allocated for Rc
+        let upgrade_result = unsafe { upgrade_into_fn(weak1_ptr, rc2_uninit_ptr) };
+
+        // Assert that the upgrade failed
+        assert!(
+            upgrade_result.is_none(),
+            "Upgrade should fail after the strong Rc is dropped"
+        );
+
+        // 5. Clean up: Deallocate the memory intended for the failed upgrade and drop/deallocate the weak pointer
+        let weak_drop_fn = weak_shape.vtable.drop_in_place.unwrap();
+        unsafe {
+            // Deallocate the *uninitialized* memory allocated for the failed upgrade attempt
+            rc_shape.deallocate_uninit(rc2_uninit_ptr)?;
+
+            // Drop and deallocate the weak pointer
+            weak_drop_fn(weak1_ptr);
+            weak_shape.deallocate_mut(weak1_ptr)?;
+        }
+
+        Ok(())
     }
 }
