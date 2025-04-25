@@ -4,7 +4,6 @@ use insta::assert_snapshot;
 
 /// Basic deserialization with renamed fields
 #[test]
-#[ignore]
 fn test_field_rename_deserialization() {
     facet_testhelpers::setup();
 
