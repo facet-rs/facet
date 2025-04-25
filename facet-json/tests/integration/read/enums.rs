@@ -33,17 +33,45 @@ fn json_read_tuple_variant() -> Result<()> {
     #[repr(u8)]
     enum Point {
         X(u64),
-        Y(String),
+        Y(String, bool),
     }
 
     let json_x = r#"{ "X": 123 }"#;
-    let json_y = r#"{ "Y": "hello" }"#;
+    let json_y = r#"{ "Y": [ "hello", true ] }"#;
 
     let p_x: Point = from_str(json_x)?;
     assert_eq!(p_x, Point::X(123));
 
     let p_y: Point = from_str(json_y)?;
-    assert_eq!(p_y, Point::Y("hello".to_string()));
+    assert_eq!(p_y, Point::Y("hello".to_string(), true));
+
+    Ok(())
+}
+
+#[test]
+fn json_read_struct_variant() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    #[allow(dead_code)]
+    enum Point {
+        Thing,
+        Well { made: String, i: bool, guess: i32 },
+        Other(i32),
+    }
+
+    let json1 = r#"{ "Well": { "made": "in germany", "i": false, "guess": 3 } }"#;
+
+    let point1: Point = from_str(json1)?;
+    assert_eq!(
+        point1,
+        Point::Well {
+            made: "in germany".to_string(),
+            i: false,
+            guess: 3
+        }
+    );
 
     Ok(())
 }

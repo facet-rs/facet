@@ -1432,7 +1432,10 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
         Ok(self)
     }
 
-    /// Begins pushback mode for a list/array, allowing elements to be added one by one
+    /// Begins pushback mode for a list, array, tuple struct, or enum variant tuple struct,
+    /// allowing elements to be added one by one.
+    /// For lists/arrays, initializes an empty container if needed.
+    /// For tuple structs/variants, does nothing (expects subsequent `push` calls).
     pub fn begin_pushback(mut self) -> Result<Self, ReflectError> {
         let Some(frame) = self.frames.last_mut() else {
             return Err(ReflectError::OperationFailed {
@@ -1441,35 +1444,54 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
             });
         };
 
-        let is_tuple = if let Def::Struct(sd) = frame.shape.def {
-            sd.kind == facet_core::StructKind::Tuple
-        } else {
-            false
+        let is_list = matches!(frame.shape.def, Def::List(_));
+        let is_tuple_struct_or_variant = match frame.shape.def {
+            Def::Struct(sd) => sd.kind == facet_core::StructKind::Tuple,
+            Def::Enum(_) => {
+                // Check if a variant is selected and if that variant is a tuple-like struct
+                if let Some(variant) = &frame.istate.variant {
+                    variant.data.kind == facet_core::StructKind::Tuple
+                } else {
+                    // If no variant is selected yet, we can't determine if it's tuple-like.
+                    // We allow beginning pushback here, assuming a tuple variant *will* be selected
+                    // before pushing actual elements. The `push` operation will handle variant selection checks.
+                    // Alternatively, we could error here if no variant is selected. Let's allow it for now.
+                    // However, we definitely *don't* initialize anything if no variant is selected.
+                    // UPDATE: Decided to be stricter. If it's an enum, a variant MUST be selected
+                    // and it MUST be a tuple struct variant.
+                    false // Require variant to be selected *and* be a tuple.
+                }
+            }
+            _ => false,
         };
 
-        if !matches!(frame.shape.def, Def::List(_)) && !is_tuple {
+        if !is_list && !is_tuple_struct_or_variant {
             return Err(ReflectError::WasNotA {
-                expected: "list or array",
+                expected: "list, array, or tuple-like struct/enum variant",
                 actual: frame.shape,
             });
         }
 
-        let vtable = frame.shape.vtable;
+        // Only initialize for lists/arrays (which fall under Def::List)
+        if is_list {
+            let vtable = frame.shape.vtable;
+            // Initialize an empty list if it's not already marked as initialized (field 0)
+            if !frame.istate.fields.has(0) {
+                let Some(default_in_place) = vtable.default_in_place else {
+                    return Err(ReflectError::OperationFailed {
+                        shape: frame.shape,
+                        operation: "list type does not implement Default, cannot begin pushback",
+                    });
+                };
 
-        // Initialize an empty list if it's not already initialized
-        if !frame.istate.fields.has(0) {
-            let Some(default_in_place) = vtable.default_in_place else {
-                return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
-                    operation: "list type does not implement Default",
-                });
-            };
-
-            unsafe {
-                default_in_place(frame.data);
-                frame.istate.fields.set(0);
+                unsafe {
+                    default_in_place(frame.data);
+                    // Mark the list itself as initialized (representing the container exists)
+                    frame.istate.fields.set(0);
+                }
             }
         }
+        // For tuple structs/variants, do nothing here. Initialization happens field-by-field during `push`.
 
         Ok(self)
     }
@@ -1510,68 +1532,102 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
         Ok(self)
     }
 
-    /// Pushes a new element onto the list/array/tuple
+    /// Pushes a new element onto the list/array/tuple struct/tuple enum variant
     ///
     /// This creates a new frame for the element. When this frame is popped,
-    /// the element will be added to the list.
+    /// the element will be added to the list or the corresponding tuple field will be set.
     pub fn push(mut self) -> Result<Self, ReflectError> {
-        // Make sure we're initializing a list or a tuple
-        let frame = self.frames.last().unwrap();
+        // Get mutable access to the top frame early, we might need it for list_index
+        let frame_len = self.frames.len();
+        let frame = self
+            .frames
+            .last_mut()
+            .ok_or(ReflectError::OperationFailed {
+                shape: <()>::SHAPE,
+                operation: "tried to push but there was no frame",
+            })?;
         let seq_shape = frame.shape;
 
-        let is_tuple = if let Def::Struct(sd) = seq_shape.def {
-            sd.kind == facet_core::StructKind::Tuple
-        } else {
-            false
-        };
+        // Determine element shape and context string based on the container type
+        let (element_shape, context_str): (&'static Shape, &'static str) = match seq_shape.def {
+            Def::List(_) => {
+                // Check list initialization *before* getting element shape
+                if !frame.istate.fields.has(0) {
+                    // Replicate original recursive call pattern to handle initialization
+                    // Drop mutable borrow of frame before recursive call
+                    return self.begin_pushback()?.push();
+                }
+                // List is initialized, get element shape (requires immutable self)
+                // Drop mutable borrow of frame before calling immutable method
+                let shape = self.element_shape()?;
+                (shape, "list")
+            }
 
-        if !matches!(seq_shape.def, Def::List(_)) && !is_tuple {
-            return Err(ReflectError::WasNotA {
-                expected: "list, array, or tuple",
-                actual: seq_shape,
-            });
-        }
-
-        // For tuples, we need to find the next field to initialize
-        let element_shape = if is_tuple {
-            // We need to extract the info about the tuple now, before we potentially
-            // modify self with begin_pushback
-            if let Def::Struct(sd) = seq_shape.def {
-                // Find the next uninitialized field
+            Def::Struct(sd) if sd.kind == facet_core::StructKind::Tuple => {
+                // Handle tuple struct (requires mutable frame for list_index)
                 let field_index = {
-                    let f = self.frames.last().unwrap();
-                    // IMPORTANT: Keep track of which index we're currently processing
-                    // Store this in the frame's istate for later use
-                    let next_idx = f.istate.list_index.unwrap_or(0);
-                    // Update the list_index for next time
-                    let frame = self.frames.last_mut().unwrap();
+                    // Borrow frame mutably (already done) to update list_index
+                    let next_idx = frame.istate.list_index.unwrap_or(0);
                     frame.istate.list_index = Some(next_idx + 1);
                     next_idx
                 };
-
-                // Make sure the field index is valid
+                // Check if the field index is valid
                 if field_index >= sd.fields.len() {
                     return Err(ReflectError::FieldError {
                         shape: seq_shape,
+                        field_error: FieldError::NoSuchField, // Or maybe SequenceError::OutOfBounds?
+                    });
+                }
+                // Get the shape of the field at the calculated index
+                (sd.fields[field_index].shape(), "tuple struct")
+            }
+
+            Def::Enum(_) => {
+                // Handle tuple enum variant (requires mutable frame for list_index and variant check)
+                let variant =
+                    frame
+                        .istate
+                        .variant
+                        .as_ref()
+                        .ok_or(ReflectError::OperationFailed {
+                            shape: seq_shape,
+                            operation: "tried to push onto enum but no variant was selected",
+                        })?;
+                // Ensure the selected variant is tuple-like
+                if variant.data.kind != facet_core::StructKind::Tuple {
+                    return Err(ReflectError::WasNotA {
+                        expected: "tuple-like enum variant",
+                        actual: seq_shape, // Could provide variant name here for clarity
+                    });
+                }
+                // Get the next field index for the tuple variant
+                let field_index = {
+                    // Borrow frame mutably (already done) to update list_index
+                    let next_idx = frame.istate.list_index.unwrap_or(0);
+                    frame.istate.list_index = Some(next_idx + 1);
+                    next_idx
+                };
+                // Check if the field index is valid within the variant's fields
+                if field_index >= variant.data.fields.len() {
+                    return Err(ReflectError::FieldError {
+                        shape: seq_shape, // Could provide variant name here
                         field_error: FieldError::NoSuchField,
                     });
                 }
-
-                // Get the field at that index
-                let field = &sd.fields[field_index];
-                field.shape()
-            } else {
-                // This shouldn't happen because we checked is_tuple earlier
-                unreachable!("Should have returned earlier if not a tuple");
-            }
-        } else {
-            // If the list isn't initialized yet, initialize it
-            if !frame.istate.fields.has(0) {
-                return self.begin_pushback()?.push();
+                // Get the shape of the field at the calculated index within the variant
+                (
+                    variant.data.fields[field_index].shape(),
+                    "tuple enum variant",
+                )
             }
 
-            // For lists, use the element_shape method
-            self.element_shape()?
+            _ => {
+                // If it's not a list, tuple struct, or enum, it's an error
+                return Err(ReflectError::WasNotA {
+                    expected: "list, array, tuple struct, or tuple enum variant",
+                    actual: seq_shape,
+                });
+            }
         };
 
         // Allocate memory for the element
@@ -1585,21 +1641,22 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
         let element_frame = Frame {
             data: element_data,
             shape: element_shape,
-            field_index_in_parent: None, // No need for an index since we're using mode
+            field_index_in_parent: None, // Mode distinguishes it, not field index
             istate: IState::new(
-                self.frames.len(),
-                FrameMode::ListElement,
+                frame_len,              // Use captured length (depth of the new frame)
+                FrameMode::ListElement, // Keep using this mode for list/tuple elements
                 FrameFlags::ALLOCATED,
             ),
         };
 
         trace!(
             "[{}] Pushing element of type {} to {} {}",
-            self.frames.len(),
+            frame_len,
             element_shape.green(),
-            if is_tuple { "tuple" } else { "list" },
+            context_str, // Use the determined context string
             seq_shape.blue(),
         );
+        let _ = context_str;
 
         self.frames.push(element_frame);
         Ok(self)
@@ -1874,18 +1931,24 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
 
     /// Pops the current frame — goes back up one level
     pub fn pop(mut self) -> Result<Self, ReflectError> {
-        let Some(frame) = self.pop_inner() else {
-            return Err(ReflectError::InvariantViolation {
-                invariant: "No frame to pop — it was time to call build()",
-            });
+        let frame = match self.pop_inner()? {
+            Some(frame) => frame,
+            None => {
+                return Err(ReflectError::InvariantViolation {
+                    invariant: "No frame to pop — it was time to call build()",
+                });
+            }
         };
 
         self.track(frame);
         Ok(self)
     }
 
-    fn pop_inner(&mut self) -> Option<Frame> {
-        let mut frame = self.frames.pop()?;
+    fn pop_inner(&mut self) -> Result<Option<Frame>, ReflectError> {
+        let mut frame = match self.frames.pop() {
+            Some(f) => f,
+            None => return Ok(None),
+        };
         #[cfg(feature = "log")]
         let frame_shape = frame.shape;
 
@@ -1914,7 +1977,6 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
             FrameMode::ListElement => {
                 if frame.is_fully_initialized() {
                     // This was a list or tuple element, so we need to push it to the parent
-                    // Capture frame length and parent shape before mutable borrow
                     #[cfg(feature = "log")]
                     let frame_len = self.frames.len();
 
@@ -1922,30 +1984,9 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
                     let parent_frame = self.frames.last_mut().unwrap();
                     let parent_shape = parent_frame.shape;
 
-                    // Check if parent is a tuple
-                    let is_tuple = if let Def::Struct(sd) = parent_shape.def {
-                        sd.kind == facet_core::StructKind::Tuple
-                    } else {
-                        false
-                    };
-
-                    // Check if we're dealing with an empty unit type
-                    let is_empty_unit = match parent_shape.def {
-                        // Check for empty tuple struct
-                        Def::Struct(sd)
-                            if sd.kind == facet_core::StructKind::Tuple && sd.fields.is_empty() =>
-                        {
-                            true
-                        }
-                        // Check for scalar with Empty affinity
-                        Def::Scalar(s) if matches!(s.affinity, ScalarAffinity::Empty(_)) => true,
-                        _ => false,
-                    };
-
-                    // Make sure the parent is a list, array, or tuple
-                    if matches!(parent_shape.def, Def::List(_)) {
-                        // Get the list vtable from the ListDef
-                        if let Def::List(list_def) = parent_shape.def {
+                    match parent_shape.def {
+                        // Handle List/Array
+                        Def::List(list_def) => {
                             let list_vtable = list_def.vtable;
                             trace!(
                                 "[{}] Pushing element to list {}",
@@ -1953,48 +1994,64 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
                                 parent_shape.blue()
                             );
                             unsafe {
-                                // Convert the frame data pointer to Opaque and call push function from vtable
                                 (list_vtable.push)(
                                     PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
                                     PtrMut::new(frame.data.as_mut_byte_ptr()),
                                 );
                                 self.mark_moved_out_of(&mut frame);
                             }
-                        } else {
-                            panic!("parent frame is not a list type");
                         }
-                    } else if is_empty_unit {
-                        trace!(
-                            "[{}] Handling empty unit type {}",
-                            frame_len,
-                            parent_shape.blue()
-                        );
-                        // We need to mark the unit type as fully initialized
-                        unsafe {
-                            parent_frame.mark_fully_initialized();
-                        }
-                    } else if is_tuple {
-                        // For tuples, we need to set the field directly
-                        if let Def::Struct(sd) = parent_shape.def {
-                            // Get the field index from list_index we saved during push
-                            let previous_index = parent_frame.istate.list_index.unwrap_or(1);
-                            let field_index = previous_index - 1; // -1 because we already incremented in push
 
-                            // Make sure the field index is valid
+                        // Handle Empty Unit Types (including empty tuple structs)
+                        Def::Struct(sd)
+                            if sd.kind == facet_core::StructKind::Tuple && sd.fields.is_empty() =>
+                        {
+                            trace!(
+                                "[{}] Handling empty tuple struct unit type {}",
+                                frame_len,
+                                parent_shape.blue()
+                            );
+                            // Mark the parent unit struct as fully initialized
+                            unsafe {
+                                parent_frame.mark_fully_initialized();
+                            }
+                            // Element frame is implicitly moved/consumed, but nothing to dealloc if it was also unit
+                            unsafe { self.mark_moved_out_of(&mut frame) };
+                        }
+                        Def::Scalar(s) if matches!(s.affinity, ScalarAffinity::Empty(_)) => {
+                            trace!(
+                                "[{}] Handling scalar empty unit type {}",
+                                frame_len,
+                                parent_shape.blue()
+                            );
+                            // Mark the parent scalar unit as fully initialized
+                            unsafe {
+                                parent_frame.mark_fully_initialized();
+                                self.mark_moved_out_of(&mut frame);
+                            }
+                        }
+
+                        // Handle Tuple Structs
+                        Def::Struct(sd) if sd.kind == facet_core::StructKind::Tuple => {
+                            // Get the field index from list_index saved during push
+                            let previous_index = parent_frame.istate.list_index.unwrap_or(1);
+                            let field_index = previous_index - 1; // -1 because we incremented *after* using the index in push
+
                             if field_index >= sd.fields.len() {
                                 panic!(
-                                    "Field index {} out of bounds for tuple with {} fields",
+                                    "Field index {} out of bounds for tuple struct {} with {} fields",
                                     field_index,
+                                    parent_shape,
                                     sd.fields.len()
                                 );
                             }
 
-                            // Use the correct field index directly
                             let field = &sd.fields[field_index];
                             trace!(
-                                "[{}] Setting tuple field {} of {}",
+                                "[{}] Setting tuple struct field {} ({}) of {}",
                                 frame_len,
-                                field_index,
+                                field_index.to_string().yellow(),
+                                field.name.bright_blue(),
                                 parent_shape.blue()
                             );
 
@@ -2006,23 +2063,94 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
                                         PtrConst::new(frame.data.as_byte_ptr()),
                                         field.shape(),
                                     )
-                                    .unwrap();
+                                    .map_err(|_| ReflectError::Unsized {
+                                        shape: field.shape(),
+                                    })?; // Use ? to propagate potential unsized error
 
-                                // Mark the field as initialized - we use field_index+1
-                                parent_frame.istate.fields.set(field_index + 1); // +1 because the first field (0) is for the struct itself
+                                // Mark the specific field as initialized using its index
+                                parent_frame.istate.fields.set(field_index);
 
                                 // Mark the element as moved
                                 self.mark_moved_out_of(&mut frame);
                             }
-                        } else {
+                        }
+
+                        // Handle Tuple Enum Variants
+                        Def::Enum(_) => {
+                            // Ensure a variant is selected and it's a tuple variant
+                            let variant =
+                                parent_frame.istate.variant.as_ref().unwrap_or_else(|| {
+                                    panic!(
+                                        "Popping element for enum {} but no variant was selected",
+                                        parent_shape
+                                    )
+                                });
+
+                            if variant.data.kind != facet_core::StructKind::Tuple {
+                                panic!(
+                                    "Popping element for enum {}, but selected variant '{}' is not a tuple variant",
+                                    parent_shape, variant.name
+                                );
+                            }
+
+                            // Get the field index from list_index saved during push
+                            let previous_index = parent_frame.istate.list_index.unwrap_or(1);
+                            let field_index = previous_index - 1; // -1 because we incremented *after* using the index in push
+
+                            if field_index >= variant.data.fields.len() {
+                                panic!(
+                                    "Field index {} out of bounds for tuple enum variant '{}' of {} with {} fields",
+                                    field_index,
+                                    variant.name,
+                                    parent_shape,
+                                    variant.data.fields.len()
+                                );
+                            }
+
+                            let field = &variant.data.fields[field_index];
+                            trace!(
+                                "[{}] Setting tuple enum variant field {} ({}) of variant '{}' in {}",
+                                frame_len,
+                                field_index.to_string().yellow(),
+                                field.name.bright_blue(),
+                                variant.name.yellow(),
+                                parent_shape.blue()
+                            );
+
+                            unsafe {
+                                // Copy the element data to the tuple field within the enum's data payload
+                                let field_ptr = parent_frame.data.field_uninit_at(field.offset);
+                                field_ptr
+                                    .copy_from(
+                                        PtrConst::new(frame.data.as_byte_ptr()),
+                                        field.shape(),
+                                    )
+                                    .map_err(|_| ReflectError::Unsized {
+                                        shape: field.shape(),
+                                    })?; // Use ? to propagate potential unsized error
+
+                                // Mark the specific field as initialized using its index
+                                parent_frame.istate.fields.set(field_index);
+
+                                // Mark the element as moved
+                                self.mark_moved_out_of(&mut frame);
+                            }
+                        }
+
+                        // Unexpected parent type
+                        _ => {
                             panic!(
-                                "Expected tuple (struct with StructKind::Tuple), got {}",
-                                frame.shape
+                                "FrameMode::ListElement pop expected parent to be List, Tuple Struct, or Tuple Enum Variant, but got {}",
+                                parent_shape
                             );
                         }
-                    } else {
-                        panic!("Expected list or array, got {}", frame.shape);
                     }
+                } else {
+                    // Frame not fully initialized, just deallocate if needed (handled by Frame drop later)
+                    trace!(
+                        "Popping uninitialized ListElement frame ({}), potential leak if allocated resources are not managed",
+                        frame.shape.yellow()
+                    );
                 }
             }
 
@@ -2130,7 +2258,7 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
             _ => {}
         }
 
-        Some(frame)
+        Ok(Some(frame))
     }
 
     /// Evict a frame from istates, along with all its children

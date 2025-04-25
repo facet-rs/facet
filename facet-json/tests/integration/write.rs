@@ -1,3 +1,4 @@
+mod enums;
 mod json;
 mod map;
 mod nonzero;

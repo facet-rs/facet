@@ -18,3 +18,7 @@ pub use deserialize::*;
 mod serialize;
 #[cfg(feature = "std")]
 pub use serialize::*;
+
+fn variant_is_transparent(variant: &facet_core::Variant) -> bool {
+    variant.data.kind == facet_core::StructKind::Tuple && variant.data.fields.len() == 1
+}

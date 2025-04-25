@@ -260,8 +260,6 @@ impl Display for Fact {
 fn test_integer_traits() {
     facet_testhelpers::setup();
 
-    facet_testhelpers::setup();
-
     // i32 implements Debug, PartialEq, and Ord
     check_facts(
         42,
