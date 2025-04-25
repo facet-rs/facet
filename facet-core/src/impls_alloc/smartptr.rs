@@ -88,6 +88,8 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
                     vtable.try_from = Some(try_from::<T>);
                     vtable.try_into_inner = Some(try_into_inner::<T>);
                     vtable.try_borrow_inner = Some(try_borrow_inner::<T>);
+                    vtable.drop_in_place =
+                        Some(|ptr| unsafe { ptr.drop_in_place::<alloc::sync::Arc<T>>() });
                     vtable
                 },
             )
@@ -127,7 +129,16 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Weak<T> {
                     )
                     .build(),
             ))
-            .vtable(&const { value_vtable!(alloc::sync::Arc<T>, |f, _opts| write!(f, "Arc")) })
+            .vtable(
+                &const {
+                    let mut vtable =
+                        value_vtable!(alloc::sync::Arc<T>, |f, _opts| write!(f, "Arc"));
+                    vtable.drop_in_place =
+                        Some(|ptr| unsafe { ptr.drop_in_place::<alloc::sync::Weak<T>>() });
+
+                    vtable
+                },
+            )
             .inner(inner_shape::<T>)
             .build()
     };
@@ -340,7 +351,60 @@ mod tests {
     }
 
     #[test]
-    fn test_arc_vtable() {
+    fn test_arc_vtable_1_new_borrow_drop() -> eyre::Result<()> {
+        facet_testhelpers::setup();
+
+        let arc_shape = <Arc<String>>::SHAPE;
+        let arc_def = arc_shape
+            .def
+            .into_smart_pointer()
+            .expect("Arc<T> should have a smart pointer definition");
+
+        // Allocate memory for the Arc
+        let arc_uninit_ptr = arc_shape.allocate()?;
+
+        // Get the function pointer for creating a new Arc from a value
+        let new_into_fn = arc_def
+            .vtable
+            .new_into_fn
+            .expect("Arc<T> should have new_into_fn");
+
+        // Create the value and initialize the Arc
+        let value = String::from("example");
+        let arc_ptr = unsafe { new_into_fn(arc_uninit_ptr, PtrConst::new(&raw const value)) };
+        // The value now belongs to the Arc, prevent its drop
+        core::mem::forget(value);
+
+        // Get the function pointer for borrowing the inner value
+        let borrow_fn = arc_def
+            .vtable
+            .borrow_fn
+            .expect("Arc<T> should have borrow_fn");
+
+        // Borrow the inner value and check it
+        let borrowed_ptr = unsafe { borrow_fn(arc_ptr.as_const()) };
+        // SAFETY: borrowed_ptr points to a valid String within the Arc
+        assert_eq!(unsafe { borrowed_ptr.get::<String>() }, "example");
+
+        // Get the function pointer for dropping the Arc
+        let drop_fn = arc_shape
+            .vtable
+            .drop_in_place
+            .expect("Arc<T> should have drop_in_place");
+
+        // Drop the Arc in place
+        // SAFETY: arc_ptr points to a valid Arc<String>
+        unsafe { drop_fn(arc_ptr) };
+
+        // Deallocate the memory
+        // SAFETY: arc_ptr was allocated by arc_shape and is now dropped (but memory is still valid)
+        unsafe { arc_shape.deallocate_mut(arc_ptr)? };
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_arc_vtable_2_downgrade_upgrade_drop() -> eyre::Result<()> {
         facet_testhelpers::setup();
 
         let arc_shape = <Arc<String>>::SHAPE;
@@ -355,155 +419,113 @@ mod tests {
             .into_smart_pointer()
             .expect("ArcWeak<T> should have a smart pointer definition");
 
-        // Keep this alive as long as the Arc inside it is used
-        let mut arc_storage = MaybeUninit::<Arc<String>>::zeroed();
-        let arc_ptr = unsafe {
-            let arc_uninit_ptr = PtrUninit::from_maybe_uninit(&mut arc_storage);
+        // 1. Create the first Arc (arc1)
+        let arc1_uninit_ptr = arc_shape.allocate()?;
+        let new_into_fn = arc_def.vtable.new_into_fn.unwrap();
+        let value = String::from("example");
+        let arc1_ptr = unsafe { new_into_fn(arc1_uninit_ptr, PtrConst::new(&raw const value)) };
+        core::mem::forget(value); // Value now owned by arc1
 
-            let value = String::from("example");
-            let value_ptr = PtrConst::new(&raw const value);
+        // 2. Downgrade arc1 to create a weak pointer (weak1)
+        let weak1_uninit_ptr = weak_shape.allocate()?;
+        let downgrade_into_fn = arc_def.vtable.downgrade_into_fn.unwrap();
+        // SAFETY: arc1_ptr points to a valid Arc, weak1_uninit_ptr is allocated for a Weak
+        let weak1_ptr = unsafe { downgrade_into_fn(arc1_ptr, weak1_uninit_ptr) };
 
-            // SAFETY:
-            // - `arc_uninit_ptr` has layout Arc<String>
-            // - `value_ptr` is String
-            // - `value_ptr` is deallocated
-            let returned_ptr = arc_def
-                .vtable
-                .new_into_fn
-                .expect("Arc<T> should have new_into_fn vtable function")(
-                arc_uninit_ptr,
-                value_ptr,
-            );
+        // 3. Upgrade weak1 to create a second Arc (arc2)
+        let arc2_uninit_ptr = arc_shape.allocate()?;
+        let upgrade_into_fn = weak_def.vtable.upgrade_into_fn.unwrap();
+        // SAFETY: weak1_ptr points to a valid Weak, arc2_uninit_ptr is allocated for an Arc.
+        // Upgrade should succeed as arc1 still exists.
+        let arc2_ptr = unsafe { upgrade_into_fn(weak1_ptr, arc2_uninit_ptr) }
+            .expect("Upgrade should succeed while original Arc exists");
 
-            // Don't run the destructor
-            core::mem::forget(value);
+        // Check the content of the upgraded Arc
+        let borrow_fn = arc_def.vtable.borrow_fn.unwrap();
+        // SAFETY: arc2_ptr points to a valid Arc<String>
+        let borrowed_ptr = unsafe { borrow_fn(arc2_ptr.as_const()) };
+        // SAFETY: borrowed_ptr points to a valid String
+        assert_eq!(unsafe { borrowed_ptr.get::<String>() }, "example");
 
-            // Test correctness of the return value of new_into_fn
-            // SAFETY: Using correct type Arc<String>
-            assert_eq!(
-                returned_ptr.as_ptr(),
-                arc_uninit_ptr.as_byte_ptr() as *const Arc<String>
-            );
-
-            returned_ptr
-        };
-
-        unsafe {
-            // SAFETY: `arc_ptr` is valid
-            let borrowed = arc_def
-                .vtable
-                .borrow_fn
-                .expect("Arc<T> should have borrow_fn vtable function")(
-                arc_ptr.as_const()
-            );
-            assert_eq!(borrowed.get::<String>(), "example");
-        }
-
-        // Keep this alive as long as the RcWeak inside it is used
-        let mut new_arc_storage = MaybeUninit::<ArcWeak<String>>::zeroed();
-        let weak_ptr = unsafe {
-            let weak_uninit_ptr = PtrUninit::from_maybe_uninit(&mut new_arc_storage);
-
-            let returned_ptr = arc_def
-                .vtable
-                .downgrade_into_fn
-                .expect("Arc<T> should have downgrade_into_fn vtable function")(
-                arc_ptr,
-                weak_uninit_ptr,
-            );
-
-            // Test correctness of the return value of downgrade_into_fn
-            // SAFETY: Using correct type ArcWeak<String>
-            assert_eq!(
-                returned_ptr.as_ptr(),
-                weak_uninit_ptr.as_byte_ptr() as *const ArcWeak<String>
-            );
-
-            returned_ptr
-        };
-
-        {
-            let mut new_arc_storage = MaybeUninit::<Arc<String>>::zeroed();
-            let new_arc_ptr = unsafe {
-                let new_arc_uninit_ptr = PtrUninit::from_maybe_uninit(&mut new_arc_storage);
-
-                // SAFETY: `weak_ptr` is valid and `new_arc_uninit_ptr` has layout Weak<String>
-                let returned_ptr = weak_def
-                    .vtable
-                    .upgrade_into_fn
-                    .expect("ArcWeak<T> should have upgrade_into_fn vtable function")(
-                    weak_ptr,
-                    new_arc_uninit_ptr,
-                )
-                .expect("Upgrade should be successful");
-
-                // Test correctness of the return value of upgrade_into_fn
-                // SAFETY: Using correct type Arc<String>
-                assert_eq!(
-                    returned_ptr.as_ptr(),
-                    new_arc_uninit_ptr.as_byte_ptr() as *const Arc<String>
-                );
-
-                returned_ptr
-            };
-
-            unsafe {
-                // SAFETY: `new_arc_ptr` is valid
-                let borrowed = arc_def
-                    .vtable
-                    .borrow_fn
-                    .expect("Arc<T> should have borrow_fn vtable function")(
-                    new_arc_ptr.as_const()
-                );
-                assert_eq!(borrowed.get::<String>(), "example");
-            }
-
-            unsafe {
-                // SAFETY: Proper value at `arc_ptr`, which is not accessed after this
-                arc_shape
-                    .vtable
-                    .drop_in_place
-                    .expect("Arc<T> should have drop_in_place vtable function")(
-                    new_arc_ptr
-                );
-            }
-        }
+        // 4. Drop everything and free memory
+        let arc_drop_fn = arc_shape.vtable.drop_in_place.unwrap();
+        let weak_drop_fn = weak_shape.vtable.drop_in_place.unwrap();
 
         unsafe {
-            // SAFETY: Proper value at `arc_ptr`, which is not accessed after this
-            arc_shape
-                .vtable
-                .drop_in_place
-                .expect("Arc<T> should have drop_in_place vtable function")(arc_ptr);
+            // Drop Arcs
+            arc_drop_fn(arc1_ptr);
+            arc_shape.deallocate_mut(arc1_ptr)?;
+            arc_drop_fn(arc2_ptr);
+            arc_shape.deallocate_mut(arc2_ptr)?;
+
+            // Drop Weak
+            weak_drop_fn(weak1_ptr);
+            weak_shape.deallocate_mut(weak1_ptr)?;
         }
 
-        unsafe {
-            let mut new_arc_storage = MaybeUninit::<Arc<String>>::zeroed();
-            let new_arc_uninit_ptr = PtrUninit::from_maybe_uninit(&mut new_arc_storage);
+        Ok(())
+    }
 
-            // SAFETY: `weak_ptr` is valid and `new_arc_uninit_ptr` has layout Weak<String>
-            if weak_def
-                .vtable
-                .upgrade_into_fn
-                .expect("ArcWeak<T> should have upgrade_into_fn vtable function")(
-                weak_ptr,
-                new_arc_uninit_ptr,
-            )
-            .is_some()
-            {
-                panic!("Upgrade should be unsuccessful")
-            }
-        };
+    #[test]
+    fn test_arc_vtable_3_downgrade_drop_try_upgrade() -> eyre::Result<()> {
+        facet_testhelpers::setup();
 
+        let arc_shape = <Arc<String>>::SHAPE;
+        let arc_def = arc_shape
+            .def
+            .into_smart_pointer()
+            .expect("Arc<T> should have a smart pointer definition");
+
+        let weak_shape = <ArcWeak<String>>::SHAPE;
+        let weak_def = weak_shape
+            .def
+            .into_smart_pointer()
+            .expect("ArcWeak<T> should have a smart pointer definition");
+
+        // 1. Create the strong Arc (arc1)
+        let arc1_uninit_ptr = arc_shape.allocate()?;
+        let new_into_fn = arc_def.vtable.new_into_fn.unwrap();
+        let value = String::from("example");
+        let arc1_ptr = unsafe { new_into_fn(arc1_uninit_ptr, PtrConst::new(&raw const value)) };
+        core::mem::forget(value);
+
+        // 2. Downgrade arc1 to create a weak pointer (weak1)
+        let weak1_uninit_ptr = weak_shape.allocate()?;
+        let downgrade_into_fn = arc_def.vtable.downgrade_into_fn.unwrap();
+        // SAFETY: arc1_ptr is valid, weak1_uninit_ptr is allocated for Weak
+        let weak1_ptr = unsafe { downgrade_into_fn(arc1_ptr, weak1_uninit_ptr) };
+
+        // 3. Drop and free the strong pointer (arc1)
+        let arc_drop_fn = arc_shape.vtable.drop_in_place.unwrap();
         unsafe {
-            // SAFETY: Proper value at `weak_ptr`, which is not accessed after this
-            weak_shape
-                .vtable
-                .drop_in_place
-                .expect("ArcWeak<T> should have drop_in_place vtable function")(
-                weak_ptr
-            );
+            arc_drop_fn(arc1_ptr);
+            arc_shape.deallocate_mut(arc1_ptr)?;
         }
+
+        // 4. Attempt to upgrade the weak pointer (weak1)
+        let upgrade_into_fn = weak_def.vtable.upgrade_into_fn.unwrap();
+        let arc2_uninit_ptr = arc_shape.allocate()?;
+        // SAFETY: weak1_ptr is valid (though points to dropped data), arc2_uninit_ptr is allocated for Arc
+        let upgrade_result = unsafe { upgrade_into_fn(weak1_ptr, arc2_uninit_ptr) };
+
+        // Assert that the upgrade failed
+        assert!(
+            upgrade_result.is_none(),
+            "Upgrade should fail after the strong Arc is dropped"
+        );
+
+        // 5. Clean up: Deallocate the memory intended for the failed upgrade and drop/deallocate the weak pointer
+        let weak_drop_fn = weak_shape.vtable.drop_in_place.unwrap();
+        unsafe {
+            // Deallocate the *uninitialized* memory allocated for the failed upgrade attempt
+            arc_shape.deallocate_uninit(arc2_uninit_ptr)?;
+
+            // Drop and deallocate the weak pointer
+            weak_drop_fn(weak1_ptr);
+            weak_shape.deallocate_mut(weak1_ptr)?;
+        }
+
+        Ok(())
     }
 
     #[test]

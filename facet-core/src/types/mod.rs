@@ -1,5 +1,8 @@
 //! structs and vtable definitions used by Facet
 
+#[cfg(feature = "alloc")]
+use crate::PtrMut;
+
 use core::alloc::Layout;
 
 mod characteristic;
@@ -347,6 +350,54 @@ impl Shape {
             // SAFETY: We have checked that layout's size is non-zero
             unsafe { alloc::alloc::alloc(layout) }
         }))
+    }
+
+    /// Deallocate a heap-allocated value of this shape
+    ///
+    /// # Safety
+    ///
+    /// - `ptr` must have been allocated using [`Self::allocate`] and be aligned for this shape.
+    /// - `ptr` must point to a region that is not already deallocated.
+    #[cfg(feature = "alloc")]
+    pub unsafe fn deallocate_mut(&self, ptr: PtrMut) -> Result<(), UnsizedError> {
+        use alloc::alloc::dealloc;
+
+        let layout = self.layout.sized_layout()?;
+
+        if layout.size() == 0 {
+            // Nothing to deallocate
+            return Ok(());
+        }
+        // SAFETY: The user guarantees ptr is valid and from allocate, we checked size isn't 0
+        unsafe { dealloc(ptr.as_mut_byte_ptr(), layout) }
+
+        Ok(())
+    }
+
+    /// Deallocate a heap-allocated, uninitialized value of this shape.
+    ///
+    /// # Safety
+    ///
+    /// - `ptr` must have been allocated using [`Self::allocate`] (or equivalent) for this shape.
+    /// - `ptr` must not have been already deallocated.
+    /// - `ptr` must be properly aligned for this shape.
+    #[cfg(feature = "alloc")]
+    pub unsafe fn deallocate_uninit(
+        &self,
+        ptr: crate::ptr::PtrUninit<'static>,
+    ) -> Result<(), UnsizedError> {
+        use alloc::alloc::dealloc;
+
+        let layout = self.layout.sized_layout()?;
+
+        if layout.size() == 0 {
+            // Nothing to deallocate
+            return Ok(());
+        }
+        // SAFETY: The user guarantees ptr is valid and from allocate; layout is nonzero
+        unsafe { dealloc(ptr.as_mut_byte_ptr(), layout) };
+
+        Ok(())
     }
 }
 /// The definition of a shape: is it more like a struct, a map, a list?

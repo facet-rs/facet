@@ -183,6 +183,7 @@ version = "0.16.0"
 dependencies = [
  "bitflags",
  "camino",
+ "eyre",
  "facet-testhelpers",
  "impls",
  "ordered-float",
