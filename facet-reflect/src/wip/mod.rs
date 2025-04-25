@@ -1834,7 +1834,6 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
             });
         };
 
-        eprintln!("Tracking frame: {:?}", frame);
         self.track(frame);
         Ok(self)
     }
