@@ -99,7 +99,7 @@ jobs:
       - name: ✨ Check MSRV
         shell: bash
         run: |
-          just msrv
+          just msrv-lite
 
   minimal-versions:
     runs-on: depot-ubuntu-24.04-32

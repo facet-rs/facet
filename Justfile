@@ -11,7 +11,7 @@ set dotenv-load
 default: precommit prepush
 
 precommit: code-quality
-prepush: clippy test
+prepush: clippy test msrv-lite
 
 ci: precommit prepush docs msrv miri
 
@@ -146,6 +146,9 @@ docsrs *args:
     source .envrc
     export RUSTDOCFLAGS="--cfg docsrs"
     cargo +nightly doc {{args}}
+
+msrv-lite:
+    cargo hack check --each-feature --locked --rust-version --ignore-private --workspace --keep-going --exclude-no-default-features --target-dir target/msrv
 
 msrv:
     cargo hack check --feature-powerset --locked --rust-version --ignore-private --workspace --all-targets --keep-going --exclude-no-default-features --target-dir target/msrv
