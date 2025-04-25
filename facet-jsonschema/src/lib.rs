@@ -9,7 +9,7 @@ use facet::{Def, Facet, ScalarDef, Shape};
 use std::io::Write;
 
 /// Convert a `Facet` type to a JSON schema string.
-pub fn to_string<T: Facet>() -> String {
+pub fn to_string<'a, T: Facet<'a>>() -> String {
     let mut buffer = Vec::new();
     write!(buffer, "{{").unwrap();
     write!(

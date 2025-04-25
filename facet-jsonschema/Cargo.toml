@@ -8,8 +8,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-facet-core = { version = "0.11.0", path = "../facet-core" }
-facet-reflect = { version = "0.10.4", path = "../facet-reflect" }
+facet-core = { version = "0.12.0", path = "../facet-core" }
+facet-reflect = { version = "0.11.0", path = "../facet-reflect" }
 facet = { path = "../facet" }
 
 [dev-dependencies]
