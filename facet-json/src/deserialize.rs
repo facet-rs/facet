@@ -448,7 +448,11 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                                 }),
                             },
                             Token::F64(n) => {
-                                reflect!(put(n));
+                                if wip.innermost_shape() == <f32 as Facet>::SHAPE {
+                                    reflect!(put(n as f32));
+                                } else {
+                                    reflect!(put(n));
+                                }
                             }
                             Token::U64(n) => {
                                 reflect!(put(n));

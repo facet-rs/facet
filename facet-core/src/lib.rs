@@ -31,6 +31,9 @@ mod impls_std;
 #[cfg(feature = "camino")]
 mod impls_camino;
 
+#[cfg(feature = "ordered-float")]
+mod impls_ordered_float;
+
 // Const type Id
 mod typeid;
 pub use typeid::*;

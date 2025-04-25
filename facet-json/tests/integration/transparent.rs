@@ -22,14 +22,8 @@ fn transparent_tuple_struct() -> eyre::Result<()> {
     #[facet(transparent)]
     struct MyString(String);
 
-    // Test regular construction
     let t: MyString = from_str(markup)?;
     assert_eq!(t.0, "I look like a string".to_string());
-
-    // Test direct construction if needed (though not strictly required by the prompt,
-    // let's add a simple direct construction test to replace the builder test)
-    let t2 = MyString("direct created string".to_string());
-    assert_eq!(t2.0, "direct created string".to_string());
 
     Ok(())
 }
@@ -47,10 +41,6 @@ fn transparent_utf8_path_buf() -> eyre::Result<()> {
     let path: Utf8PathBuf = from_str(markup)?;
     assert_eq!(path, Utf8PathBuf::from("/some/test/path"));
 
-    // Test direct usage
-    let path2 = Utf8PathBuf::from("/another/path");
-    assert_eq!(path2, Utf8PathBuf::from("/another/path"));
-
     Ok(())
 }
 
@@ -65,10 +55,6 @@ fn transparent_non_zero_u64_with_42_value() -> eyre::Result<()> {
     // Test deserialization of NonZeroU64
     let number: NonZeroU64 = from_str(markup)?;
     assert_eq!(number, NonZeroU64::new(42).unwrap());
-
-    // Test direct usage
-    let number2 = NonZeroU64::new(100).unwrap();
-    assert_eq!(number2, NonZeroU64::new(100).unwrap());
 
     Ok(())
 }
@@ -97,10 +83,6 @@ fn transparent_arc_string() -> eyre::Result<()> {
     // Test deserializing directly into Arc<String>
     let arc_string: Arc<String> = from_str(markup)?;
     assert_eq!(*arc_string, "I'm in an Arc".to_string());
-
-    // Test direct usage
-    let direct_arc = Arc::new("Direct arc string".to_string());
-    assert_eq!(*direct_arc, "Direct arc string".to_string());
 
     Ok(())
 }
@@ -135,6 +117,45 @@ fn transparent_option_non_zero_u64() -> eyre::Result<()> {
     "#;
     let opt_none: Option<NonZeroU64> = from_str(markup)?;
     assert_eq!(opt_none, None);
+
+    Ok(())
+}
+
+#[cfg(feature = "ordered-float")]
+#[test]
+fn transparent_ordered_float_f64() -> eyre::Result<()> {
+    use ordered_float::OrderedFloat;
+
+    let markup = r#"
+        98.4148
+    "#;
+
+    // Test deserializing directly into OrderedFloat<f64>
+    let float: OrderedFloat<f64> = from_str(markup)?;
+    assert_eq!(float, OrderedFloat(98.4148));
+
+    Ok(())
+}
+
+#[cfg(feature = "ordered-float")]
+#[test]
+fn transparent_not_nan_f32() -> eyre::Result<()> {
+    use ordered_float::NotNan;
+
+    let markup = r#"
+        53.208
+    "#;
+
+    // Test deserializing directly into NotNan<f32>
+    let not_nan: NotNan<f32> = from_str(markup)?;
+    assert_eq!(not_nan, NotNan::new(53.208).unwrap());
+
+    // Test that deserializing a NaN fails
+    let markup_nan = r#"
+        NaN
+    "#;
+    let result: Result<NotNan<f32>, _> = from_str(markup_nan);
+    assert!(result.is_err());
 
     Ok(())
 }

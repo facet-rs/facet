@@ -15,11 +15,13 @@ default = ["std"]
 std = ["alloc"]
 alloc = []
 camino = ["dep:camino", "alloc"]
+ordered-float = ["dep:ordered-float"]
 
 [dependencies]
 impls = "1.0.3"
 bitflags = "2.9.0"
 camino = { version = "1", optional = true }
+ordered-float = { version = "5.0.0", optional = true, default-features = false }
 
 [dev-dependencies]
 facet-testhelpers = { path = "../facet-testhelpers" }
