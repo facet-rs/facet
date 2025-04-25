@@ -46,6 +46,7 @@ impl ScalarDefBuilder {
 
 /// Scalar affinity: what a scalar spiritually is: a number, a string, a bool, something else
 /// entirely?
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
 #[non_exhaustive]
@@ -399,6 +400,7 @@ pub struct ComplexNumberAffinity {
     inner: ComplexNumberAffinityInner,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
 #[non_exhaustive]
@@ -431,6 +433,7 @@ pub struct ComplexNumberAffinityBuilder {
     inner: ComplexNumberAffinityBuilderInner,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[repr(C)]
 enum ComplexNumberAffinityBuilderInner {
     Undefined,

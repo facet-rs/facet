@@ -2,172 +2,8 @@ use core::alloc::Layout;
 
 use crate::{
     ConstTypeId, Def, Facet, MarkerTraits, PtrConst, RefPtrDef, RefPtrMutability, RefPtrType,
-    Shape, TypeNameFn, TypeParam, ValueVTable, ValueVTableBuilder,
+    Shape, TypeNameFn, TypeParam, ValueVTable,
 };
-
-#[repr(C)]
-struct SlicePtr {
-    ptr: *const u8,
-    len: usize,
-}
-
-// Implements traits for `& [U]` where `T = [U]`
-const fn slice_ref_impl<'a, T: Facet<'a> + ?Sized>(
-    mut builder: ValueVTableBuilder,
-    item_shape: &'static Shape,
-) -> ValueVTableBuilder {
-    builder = builder.default_in_place(|dst| {
-        const EMPTY: &[()] = &[];
-        unsafe { dst.put(EMPTY) }
-    });
-
-    if item_shape.vtable.debug.is_some() {
-        builder = builder.debug(|value, f| {
-            let Def::Slice(slice) = T::SHAPE.def else {
-                unreachable!();
-            };
-            let item_shape = slice.t;
-            let item_layout = item_shape.layout.sized_layout().unwrap();
-
-            let SlicePtr { mut ptr, len } = unsafe { value.as_ptr::<SlicePtr>().read() };
-
-            write!(f, "[")?;
-            for i in 0..len {
-                if i > 0 {
-                    write!(f, ", ")?;
-                }
-                unsafe {
-                    (item_shape.vtable.debug.unwrap_unchecked())(PtrConst::new(ptr), f)?;
-                }
-                ptr = ptr.wrapping_add(item_layout.size());
-            }
-            write!(f, "]")
-        });
-    }
-
-    if item_shape.vtable.eq.is_some() {
-        builder = builder.eq(|a, b| {
-            let Def::Slice(slice) = T::SHAPE.def else {
-                unreachable!();
-            };
-            let item_shape = slice.t;
-            let item_layout = item_shape.layout.sized_layout().unwrap();
-
-            let a = unsafe { a.as_ptr::<SlicePtr>().read() };
-            let b = unsafe { b.as_ptr::<SlicePtr>().read() };
-
-            if a.len != b.len {
-                return false;
-            }
-
-            let mut a_ptr = a.ptr;
-            let mut b_ptr = b.ptr;
-
-            for _ in 0..a.len {
-                if !unsafe {
-                    (item_shape.vtable.eq.unwrap_unchecked())(
-                        PtrConst::new(a_ptr),
-                        PtrConst::new(b_ptr),
-                    )
-                } {
-                    return false;
-                }
-                a_ptr = a_ptr.wrapping_add(item_layout.size());
-                b_ptr = b_ptr.wrapping_add(item_layout.size());
-            }
-            true
-        });
-    }
-
-    if item_shape.vtable.ord.is_some() {
-        builder = builder.ord(|a, b| {
-            let Def::Slice(slice) = T::SHAPE.def else {
-                unreachable!();
-            };
-            let item_shape = slice.t;
-            let item_layout = item_shape.layout.sized_layout().unwrap();
-
-            let a = unsafe { a.as_ptr::<SlicePtr>().read() };
-            let b = unsafe { b.as_ptr::<SlicePtr>().read() };
-
-            let min = a.len.min(b.len);
-            let mut a_ptr = a.ptr;
-            let mut b_ptr = b.ptr;
-
-            for _ in 0..min {
-                let ord = unsafe {
-                    (item_shape.vtable.ord.unwrap_unchecked())(
-                        PtrConst::new(a_ptr),
-                        PtrConst::new(b_ptr),
-                    )
-                };
-                if ord != core::cmp::Ordering::Equal {
-                    return ord;
-                }
-                a_ptr = a_ptr.wrapping_add(item_layout.size());
-                b_ptr = b_ptr.wrapping_add(item_layout.size());
-            }
-
-            a.len.cmp(&b.len)
-        });
-    }
-
-    if item_shape.vtable.partial_ord.is_some() {
-        builder = builder.partial_ord(|a, b| {
-            let Def::Slice(slice) = T::SHAPE.def else {
-                unreachable!();
-            };
-            let item_shape = slice.t;
-            let item_layout = item_shape.layout.sized_layout().unwrap();
-
-            let a = unsafe { a.as_ptr::<SlicePtr>().read() };
-            let b = unsafe { b.as_ptr::<SlicePtr>().read() };
-
-            let min = a.len.min(b.len);
-            let mut a_ptr = a.ptr;
-            let mut b_ptr = b.ptr;
-
-            for _ in 0..min {
-                let ord = unsafe {
-                    (item_shape.vtable.partial_ord.unwrap_unchecked())(
-                        PtrConst::new(a_ptr),
-                        PtrConst::new(b_ptr),
-                    )
-                };
-                match ord {
-                    Some(core::cmp::Ordering::Equal) => {}
-                    Some(order) => return Some(order),
-                    None => return None,
-                }
-                a_ptr = a_ptr.wrapping_add(item_layout.size());
-                b_ptr = b_ptr.wrapping_add(item_layout.size());
-            }
-
-            a.len.partial_cmp(&b.len)
-        });
-    }
-
-    if item_shape.vtable.hash.is_some() {
-        builder = builder.hash(|value, state, hasher| {
-            let Def::Slice(slice) = T::SHAPE.def else {
-                unreachable!();
-            };
-            let item_shape = slice.t;
-            let item_layout = item_shape.layout.sized_layout().unwrap();
-
-            let SlicePtr { mut ptr, len } = unsafe { value.as_ptr::<SlicePtr>().read() };
-
-            for _ in 0..len {
-                unsafe {
-                    (item_shape.vtable.hash.unwrap_unchecked())(PtrConst::new(ptr), state, hasher)
-                };
-                ptr = ptr.wrapping_add(item_layout.size());
-            }
-        });
-    }
-
-    builder
-}
 
 // TODO: Also implement for `T: !Facet<'a>`
 unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for &'a T {
@@ -181,7 +17,7 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for &'a T {
             }])
             .vtable(
                 &const {
-                    let builder = ValueVTable::builder()
+                    let mut builder = ValueVTable::builder()
                         .type_name(|f, opts| {
                             if let Some(opts) = opts.for_children() {
                                 write!(f, "&")?;
@@ -193,40 +29,79 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for &'a T {
                         .drop_in_place(|value| unsafe { value.drop_in_place::<Self>() })
                         .clone_into(|src, dst| unsafe { dst.put(src.get::<Self>()) });
 
-                    let builder = match T::SHAPE.def {
+                    match T::SHAPE.def {
                         // Slice reference &[U]
-                        Def::Slice(slice) => {
-                            let item_shape = slice.t;
-                            slice_ref_impl::<T>(builder, item_shape)
+                        Def::Slice(_) => {
+                            builder = builder.default_in_place(|dst| {
+                                const EMPTY: &[()] = &[];
+                                unsafe { dst.put(EMPTY) }
+                            });
                         }
                         Def::Str => {
-                            let builder = slice_ref_impl::<T>(builder, u8::SHAPE);
-                            builder.debug(|_value, f| write!(f, "&str TODO"))
+                            builder = builder.default_in_place(|dst| unsafe { dst.put("") });
                         }
-                        _ => {
-                            /*
-                            if T::SHAPE.vtable.debug.is_some() {
-                                builder = builder.debug(|value, f| {
-                                    let v = unsafe { value.get::<Self>() };
-                                    let v = *v;
-                                    unsafe {
-                                        (T::SHAPE.vtable.debug.unwrap_unchecked())(
-                                            PtrConst::new(v),
-                                            f,
-                                        )
-                                    }
-                                });
+                        _ => {}
+                    }
+                    if T::SHAPE.vtable.debug.is_some() {
+                        builder = builder.debug(|value, f| {
+                            let value = unsafe { *value.get::<Self>() };
+                            unsafe {
+                                (T::SHAPE.vtable.debug.unwrap_unchecked())(PtrConst::new(value), f)
                             }
-                            */
+                        });
+                    }
 
-                            // TODO: More functions
+                    if T::SHAPE.vtable.eq.is_some() {
+                        builder = builder.eq(|a, b| {
+                            let a = unsafe { *a.get::<Self>() };
+                            let b = unsafe { *b.get::<Self>() };
+                            unsafe {
+                                (T::SHAPE.vtable.eq.unwrap_unchecked())(
+                                    PtrConst::new(a),
+                                    PtrConst::new(b),
+                                )
+                            }
+                        });
+                    }
 
-                            // TODO: Marker traits
-                            // builder = builder.marker_traits(traits);
+                    if T::SHAPE.vtable.ord.is_some() {
+                        builder = builder.ord(|a, b| {
+                            let a = unsafe { *a.get::<Self>() };
+                            let b = unsafe { *b.get::<Self>() };
+                            unsafe {
+                                (T::SHAPE.vtable.ord.unwrap_unchecked())(
+                                    PtrConst::new(a),
+                                    PtrConst::new(b),
+                                )
+                            }
+                        });
+                    }
 
-                            builder
-                        }
-                    };
+                    if T::SHAPE.vtable.partial_ord.is_some() {
+                        builder = builder.partial_ord(|a, b| {
+                            let a = unsafe { *a.get::<Self>() };
+                            let b = unsafe { *b.get::<Self>() };
+                            unsafe {
+                                (T::SHAPE.vtable.partial_ord.unwrap_unchecked())(
+                                    PtrConst::new(a),
+                                    PtrConst::new(b),
+                                )
+                            }
+                        });
+                    }
+
+                    if T::SHAPE.vtable.hash.is_some() {
+                        builder = builder.hash(|value, state, hasher| {
+                            let value = unsafe { *value.get::<Self>() };
+                            unsafe {
+                                (T::SHAPE.vtable.hash.unwrap_unchecked())(
+                                    PtrConst::new(value),
+                                    state,
+                                    hasher,
+                                )
+                            }
+                        });
+                    }
 
                     let t_marker_traits = T::SHAPE.vtable.marker_traits;
 

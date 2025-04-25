@@ -176,6 +176,12 @@ impl<'mem> PtrConst<'mem> {
         self.ptr.as_ptr()
     }
 
+    /// Returns the "fat" part of the pointer.
+    ///
+    /// For thin `Sized` pointers this returns `None`.
+    ///
+    /// For pointers to slices `[T]` or string slices `str`,
+    /// this returns `Some(len)`.
     pub const fn fat_part(self) -> Option<usize> {
         self.fat_part
     }
@@ -222,6 +228,11 @@ impl<'mem> PtrConst<'mem> {
         unsafe { core::ptr::read(self.as_ptr()) }
     }
 
+    /// Turns this into a `mut` ptr
+    ///
+    /// # Safety
+    ///
+    /// `new` must have been called with an unique pointer
     pub const unsafe fn as_mut(self) -> PtrMut<'mem> {
         PtrMut {
             ptr: self.ptr,
