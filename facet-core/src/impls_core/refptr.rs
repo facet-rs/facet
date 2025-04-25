@@ -42,6 +42,19 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for &'a T {
                         }
                         _ => {}
                     }
+
+                    if T::SHAPE.vtable.display.is_some() {
+                        builder = builder.display(|value, f| {
+                            let value = unsafe { *value.get::<Self>() };
+                            unsafe {
+                                (T::SHAPE.vtable.display.unwrap_unchecked())(
+                                    PtrConst::new(value),
+                                    f,
+                                )
+                            }
+                        });
+                    }
+
                     if T::SHAPE.vtable.debug.is_some() {
                         builder = builder.debug(|value, f| {
                             let value = unsafe { *value.get::<Self>() };

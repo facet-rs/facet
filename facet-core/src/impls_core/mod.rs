@@ -5,4 +5,5 @@ mod refptr;
 mod scalar;
 mod slice;
 mod smartptr;
+mod str;
 mod tuple;

@@ -38,6 +38,7 @@ fn serialize<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<()> {
 
     match peek.shape().def {
         Def::Scalar(_) => serialize_scalar(peek, writer),
+        Def::RefPtr(_) => serialize_ref_ptr(peek, writer),
         Def::Struct(Struct {
             kind: Tuple | TupleStruct,
             ..
@@ -62,9 +63,6 @@ fn serialize_scalar<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result
         write!(writer, "{}", if *value { "true" } else { "false" })
     } else if peek.shape().is_type::<String>() {
         let value = peek.get::<String>().unwrap();
-        write_json_string(writer, value)
-    } else if peek.shape().is_type::<&str>() {
-        let value = peek.get::<&str>().unwrap();
         write_json_string(writer, value)
     } else if peek.shape().is_type::<alloc::borrow::Cow<'_, str>>() {
         let value = peek.get::<alloc::borrow::Cow<'_, str>>().unwrap();
@@ -147,6 +145,22 @@ fn serialize_scalar<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result
             format!("Unsupported scalar type: {}", peek.shape()),
         ))
     }
+}
+
+fn serialize_ref_ptr<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<()> {
+    if peek.shape().is_type::<&str>() {
+        let value = peek.get::<&str>().unwrap();
+        return write_json_string(writer, value);
+    }
+    if peek.shape().is_type::<&String>() {
+        let value = peek.get::<&String>().unwrap();
+        return write_json_string(writer, value);
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::Other,
+        format!("Unsupported ref/ptr type: {}", peek.shape()),
+    ))
 }
 
 /// Serializes a struct to JSON
@@ -253,6 +267,12 @@ fn serialize_map<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<()
 
         // For map, keys must be converted to strings
         match key.shape().def {
+            _ if key.shape().is_type::<&str>() => {
+                write!(writer, "\"{}\"", key)?;
+            }
+            _ if key.shape().is_type::<&String>() => {
+                write!(writer, "\"{}\"", key)?;
+            }
             Def::Scalar(_) => {
                 // Try to convert key to string
                 if key.shape().is_type::<String>() {
@@ -266,7 +286,10 @@ fn serialize_map<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<()
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::Other,
-                    format!("Map keys must be scalar types, got: {}", key.shape()),
+                    format!(
+                        "Map keys must be scalar types, &str or &String, got: {}",
+                        key.shape()
+                    ),
                 ));
             }
         }

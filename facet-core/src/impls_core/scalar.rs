@@ -85,21 +85,6 @@ unsafe impl Facet<'_> for char {
     };
 }
 
-unsafe impl<'a> Facet<'a> for &'a str {
-    const SHAPE: &'static Shape = &const {
-        Shape::builder()
-            .id(ConstTypeId::of::<Self>())
-            .layout(Layout::new::<Self>())
-            .def(Def::Scalar(
-                ScalarDef::builder()
-                    .affinity(ScalarAffinity::string().build())
-                    .build(),
-            ))
-            .vtable(value_vtable!(&str, |f, _opts| write!(f, "&str")))
-            .build()
-    };
-}
-
 #[cfg(feature = "alloc")]
 unsafe impl<'a> Facet<'a> for alloc::borrow::Cow<'a, str> {
     const SHAPE: &'static Shape = &const {
