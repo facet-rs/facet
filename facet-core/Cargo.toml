@@ -16,7 +16,7 @@ std = ["alloc"]
 alloc = []
 camino = ["dep:camino", "alloc"]
 ordered-float = ["dep:ordered-float"]
-uuid = ["dep:uuid"]
+uuid = ["alloc", "dep:uuid"]
 
 [dependencies]
 impls = "1.0.3"
