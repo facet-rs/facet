@@ -13,7 +13,7 @@ default: precommit prepush
 precommit: code-quality
 prepush: clippy test
 
-ci: precommit prepush docs msrv miri
+ci: precommit prepush docs msrv-lite miri
 
 nostd:
     rustup target add thumbv8m.main-none-eabihf

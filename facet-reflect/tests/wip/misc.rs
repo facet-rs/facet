@@ -1,5 +1,5 @@
 use facet::{Def, EnumDef, Facet, Field, StructDef, Variant};
-use facet_reflect::Wip;
+use facet_reflect::{ReflectError, Wip};
 
 #[derive(Facet, PartialEq, Eq, Debug)]
 struct Outer {
@@ -694,6 +694,7 @@ fn wip_option_explicit_some_through_push_some() -> eyre::Result<()> {
         .field_named("foo")?
         .put::<u32>(42)?
         .pop()?
+        .pop()?
         .build()?
         .materialize::<Option<Foo>>()?;
 
@@ -787,5 +788,55 @@ fn wip_put_u64_into_u16() -> eyre::Result<()> {
         "Expected error when putting negative i64 into u16"
     );
 
+    Ok(())
+}
+
+#[test]
+fn gh_354_leak_1() -> Result<(), ReflectError> {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, Facet)]
+    struct Foo {
+        a: String,
+        b: String,
+    }
+
+    fn leak1() -> Result<(), ReflectError> {
+        Wip::alloc::<Foo>()?
+            .field_named("a")?
+            .put(String::from("Hello, World!"))?
+            .pop()?
+            .build()?
+            .materialize::<Foo>()?;
+        Ok(())
+    }
+    leak1().unwrap_err();
+    Ok(())
+}
+
+#[test]
+fn gh_354_leak_2() -> Result<(), ReflectError> {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, Facet)]
+    struct Foo {
+        a: String,
+        b: String,
+    }
+
+    fn leak2() -> Result<(), ReflectError> {
+        Wip::alloc::<Foo>()?
+            .field_named("a")?
+            .put(String::from("Hello, World!"))?
+            .pop()?
+            .field_named("a")?
+            .put(String::from("Hello, World!"))?
+            .pop()?
+            .build()?
+            .materialize::<Foo>()?;
+        Ok(())
+    }
+
+    leak2().unwrap_err();
     Ok(())
 }
