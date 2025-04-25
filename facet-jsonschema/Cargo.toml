@@ -25,5 +25,6 @@ facet-derive = { version = "0.16.0", path = "../facet-derive" }
 facet-reflect = { version = "0.16.0", path = "../facet-reflect" }
 
 [dev-dependencies]
+facet = { path = "../facet" }
 serde_json = "1.0"
 schemars = { version = "0.8" }
