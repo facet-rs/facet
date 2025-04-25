@@ -507,6 +507,14 @@ impl Def {
             _ => Err(self),
         }
     }
+    /// Returns the `TupleDef` wrapped in an `Ok` if this is a [`Def::Struct`] whose kind is
+    /// [`StructKind::Tuple`].
+    pub fn into_tuple(self) -> Result<StructDef, Self> {
+        match self {
+            Self::Struct(def) if def.kind == StructKind::Tuple => Ok(def),
+            _ => Err(self),
+        }
+    }
     /// Returns the `OptionDef` wrapped in an `Ok` if this is a [`Def::Option`].
     pub fn into_option(self) -> Result<OptionDef, Self> {
         match self {

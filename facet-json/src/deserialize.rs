@@ -3,7 +3,7 @@ use alloc::string::ToString;
 use alloc::vec;
 use facet_core::Characteristic;
 use facet_core::Def;
-use facet_core::Facet;
+use facet_core::{Facet, ScalarAffinity, StructKind};
 use facet_reflect::ReflectError;
 use facet_reflect::{HeapValue, Wip};
 use log::trace;
@@ -402,10 +402,60 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                                         trace!("Array starting for list ({})!", wip.shape().blue());
                                         reflect!(put_default());
                                     }
+                                    Def::Struct(s) => {
+                                        if s.kind == StructKind::Tuple {
+                                            trace!(
+                                                "Array starting for tuple ({})!",
+                                                wip.shape().blue()
+                                            );
+                                            // Special handling for unit type ()
+                                            if s.fields.is_empty() {
+                                                // Check if the array is empty by peeking at the next token
+                                                let next_token = read_token!();
+                                                if next_token.node == Token::RBracket {
+                                                    // Empty array means unit type () - we're good
+                                                    reflect!(put_default());
+                                                } else {
+                                                    // Non-empty array is not valid for unit type
+                                                    bail!(JsonErrorKind::UnsupportedType {
+                                                        got: wip.innermost_shape(),
+                                                        wanted: "empty array",
+                                                    });
+                                                }
+                                            } else {
+                                                reflect!(put_default());
+                                            }
+                                        } else {
+                                            bail!(JsonErrorKind::UnsupportedType {
+                                                got: wip.shape(),
+                                                wanted: "array, list, tuple, or slice"
+                                            });
+                                        }
+                                    }
+                                    Def::Scalar(s)
+                                        if matches!(s.affinity, ScalarAffinity::Empty(_)) =>
+                                    {
+                                        trace!(
+                                            "Array starting for tuple ({})!",
+                                            wip.shape().blue()
+                                        );
+                                        // reflect!(put_default());
+                                        // Check if the array is empty by peeking at the next token
+                                        let next_token = read_token!();
+                                        if next_token.node == Token::RBracket {
+                                            // Empty array means unit type () - we're good
+                                        } else {
+                                            // Non-empty array is not valid for unit type
+                                            bail!(JsonErrorKind::UnsupportedType {
+                                                got: wip.innermost_shape(),
+                                                wanted: "empty array",
+                                            });
+                                        }
+                                    }
                                     _ => {
                                         bail!(JsonErrorKind::UnsupportedType {
                                             got: wip.innermost_shape(),
-                                            wanted: "array, list, or slice"
+                                            wanted: "array, list, tuple, or slice"
                                         });
                                     }
                                 }

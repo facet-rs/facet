@@ -10,7 +10,8 @@ use alloc::{vec, vec::Vec};
 use bitflags::bitflags;
 use core::{fmt, marker::PhantomData};
 use facet_core::{
-    Def, DefaultInPlaceFn, Facet, FieldError, PtrConst, PtrMut, PtrUninit, Shape, Variant,
+    Def, DefaultInPlaceFn, Facet, FieldError, PtrConst, PtrMut, PtrUninit, ScalarAffinity, Shape,
+    Variant,
 };
 use flat_map::FlatMap;
 
@@ -1442,7 +1443,13 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
             });
         };
 
-        if !matches!(frame.shape.def, Def::List(_)) {
+        let is_tuple = if let Def::Struct(sd) = frame.shape.def {
+            sd.kind == facet_core::StructKind::Tuple
+        } else {
+            false
+        };
+
+        if !matches!(frame.shape.def, Def::List(_)) && !is_tuple {
             return Err(ReflectError::WasNotA {
                 expected: "list or array",
                 actual: frame.shape,
@@ -1505,29 +1512,69 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
         Ok(self)
     }
 
-    /// Pushes a new element onto the list/array
+    /// Pushes a new element onto the list/array/tuple
     ///
     /// This creates a new frame for the element. When this frame is popped,
     /// the element will be added to the list.
     pub fn push(mut self) -> Result<Self, ReflectError> {
-        // Make sure we're initializing a list
+        // Make sure we're initializing a list or a tuple
         let frame = self.frames.last().unwrap();
-        let list_shape = frame.shape;
+        let seq_shape = frame.shape;
 
-        if !matches!(list_shape.def, Def::List(_)) {
+        let is_tuple = if let Def::Struct(sd) = seq_shape.def {
+            sd.kind == facet_core::StructKind::Tuple
+        } else {
+            false
+        };
+
+        if !matches!(seq_shape.def, Def::List(_)) && !is_tuple {
             return Err(ReflectError::WasNotA {
-                expected: "list or array",
-                actual: list_shape,
+                expected: "list, array, or tuple",
+                actual: seq_shape,
             });
         }
 
-        // If the list isn't initialized yet, initialize it
-        if !frame.istate.fields.has(0) {
-            self = self.begin_pushback()?;
-        }
+        // For tuples, we need to find the next field to initialize
+        let element_shape = if is_tuple {
+            // We need to extract the info about the tuple now, before we potentially
+            // modify self with begin_pushback
+            if let Def::Struct(sd) = seq_shape.def {
+                // Find the next uninitialized field
+                let field_index = {
+                    let f = self.frames.last().unwrap();
+                    // IMPORTANT: Keep track of which index we're currently processing
+                    // Store this in the frame's istate for later use
+                    let next_idx = f.istate.list_index.unwrap_or(0);
+                    // Update the list_index for next time
+                    let frame = self.frames.last_mut().unwrap();
+                    frame.istate.list_index = Some(next_idx + 1);
+                    next_idx
+                };
 
-        // Get the element type
-        let element_shape = self.element_shape()?;
+                // Make sure the field index is valid
+                if field_index >= sd.fields.len() {
+                    return Err(ReflectError::FieldError {
+                        shape: seq_shape,
+                        field_error: FieldError::NoSuchField,
+                    });
+                }
+
+                // Get the field at that index
+                let field = &sd.fields[field_index];
+                field.shape()
+            } else {
+                // This shouldn't happen because we checked is_tuple earlier
+                unreachable!("Should have returned earlier if not a tuple");
+            }
+        } else {
+            // If the list isn't initialized yet, initialize it
+            if !frame.istate.fields.has(0) {
+                return self.begin_pushback()?.push();
+            }
+
+            // For lists, use the element_shape method
+            self.element_shape()?
+        };
 
         // Allocate memory for the element
         let element_data = element_shape
@@ -1549,10 +1596,11 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
         };
 
         trace!(
-            "[{}] Pushing element of type {} to list {}",
+            "[{}] Pushing element of type {} to {} {}",
             self.frames.len(),
             element_shape.green(),
-            list_shape.blue(),
+            if is_tuple { "tuple" } else { "list" },
+            seq_shape.blue(),
         );
 
         self.frames.push(element_frame);
@@ -1867,7 +1915,7 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
             // Handle list element frames
             FrameMode::ListElement => {
                 if frame.is_fully_initialized() {
-                    // This was a list element, so we need to push it to the parent list
+                    // This was a list or tuple element, so we need to push it to the parent
                     // Capture frame length and parent shape before mutable borrow
                     #[cfg(feature = "log")]
                     let frame_len = self.frames.len();
@@ -1876,32 +1924,106 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
                     let parent_frame = self.frames.last_mut().unwrap();
                     let parent_shape = parent_frame.shape;
 
-                    // Make sure the parent is a list
-                    match parent_shape.def {
-                        Def::List(_) => {
-                            // Get the list vtable from the ListDef
-                            if let Def::List(list_def) = parent_shape.def {
-                                let list_vtable = list_def.vtable;
-                                trace!(
-                                    "[{}] Pushing element to list {}",
-                                    frame_len,
-                                    parent_shape.blue()
+                    // Check if parent is a tuple
+                    let is_tuple = if let Def::Struct(sd) = parent_shape.def {
+                        sd.kind == facet_core::StructKind::Tuple
+                    } else {
+                        false
+                    };
+
+                    // Check if we're dealing with an empty unit type
+                    let is_empty_unit = match parent_shape.def {
+                        // Check for empty tuple struct
+                        Def::Struct(sd)
+                            if sd.kind == facet_core::StructKind::Tuple && sd.fields.is_empty() =>
+                        {
+                            true
+                        }
+                        // Check for scalar with Empty affinity
+                        Def::Scalar(s) if matches!(s.affinity, ScalarAffinity::Empty(_)) => true,
+                        _ => false,
+                    };
+
+                    // Make sure the parent is a list, array, or tuple
+                    if matches!(parent_shape.def, Def::List(_)) {
+                        // Get the list vtable from the ListDef
+                        if let Def::List(list_def) = parent_shape.def {
+                            let list_vtable = list_def.vtable;
+                            trace!(
+                                "[{}] Pushing element to list {}",
+                                frame_len,
+                                parent_shape.blue()
+                            );
+                            unsafe {
+                                // Convert the frame data pointer to Opaque and call push function from vtable
+                                (list_vtable.push)(
+                                    PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
+                                    PtrMut::new(frame.data.as_mut_byte_ptr()),
                                 );
-                                unsafe {
-                                    // Convert the frame data pointer to Opaque and call push function from vtable
-                                    (list_vtable.push)(
-                                        PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
-                                        PtrMut::new(frame.data.as_mut_byte_ptr()),
-                                    );
-                                    self.mark_moved_out_of(&mut frame);
-                                }
-                            } else {
-                                panic!("parent frame is not a list type");
+                                self.mark_moved_out_of(&mut frame);
                             }
+                        } else {
+                            panic!("parent frame is not a list type");
                         }
-                        _ => {
-                            panic!("Expected list or array, got {}", frame.shape);
+                    } else if is_empty_unit {
+                        trace!(
+                            "[{}] Handling empty unit type {}",
+                            frame_len,
+                            parent_shape.blue()
+                        );
+                        // We need to mark the unit type as fully initialized
+                        unsafe {
+                            parent_frame.mark_fully_initialized();
                         }
+                    } else if is_tuple {
+                        // For tuples, we need to set the field directly
+                        if let Def::Struct(sd) = parent_shape.def {
+                            // Get the field index from list_index we saved during push
+                            let previous_index = parent_frame.istate.list_index.unwrap_or(1);
+                            let field_index = previous_index - 1; // -1 because we already incremented in push
+
+                            // Make sure the field index is valid
+                            if field_index >= sd.fields.len() {
+                                panic!(
+                                    "Field index {} out of bounds for tuple with {} fields",
+                                    field_index,
+                                    sd.fields.len()
+                                );
+                            }
+
+                            // Use the correct field index directly
+                            let field = &sd.fields[field_index];
+                            trace!(
+                                "[{}] Setting tuple field {} of {}",
+                                frame_len,
+                                field_index,
+                                parent_shape.blue()
+                            );
+
+                            unsafe {
+                                // Copy the element data to the tuple field
+                                let field_ptr = parent_frame.data.field_uninit_at(field.offset);
+                                field_ptr
+                                    .copy_from(
+                                        PtrConst::new(frame.data.as_byte_ptr()),
+                                        field.shape(),
+                                    )
+                                    .unwrap();
+
+                                // Mark the field as initialized - we use field_index+1
+                                parent_frame.istate.fields.set(field_index + 1); // +1 because the first field (0) is for the struct itself
+
+                                // Mark the element as moved
+                                self.mark_moved_out_of(&mut frame);
+                            }
+                        } else {
+                            panic!(
+                                "Expected tuple (struct with StructKind::Tuple), got {}",
+                                frame.shape
+                            );
+                        }
+                    } else {
+                        panic!("Expected list or array, got {}", frame.shape);
                     }
                 }
             }
