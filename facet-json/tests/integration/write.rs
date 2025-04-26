@@ -5,4 +5,5 @@ mod nonzero;
 mod primitives;
 mod skip_serializing;
 mod string;
+mod structs;
 mod tuple;

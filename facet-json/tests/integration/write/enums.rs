@@ -1,5 +1,7 @@
 #[test]
 fn enum_() {
+    facet_testhelpers::setup();
+
     #[allow(dead_code)]
     #[derive(facet::Facet)]
     #[repr(C)]

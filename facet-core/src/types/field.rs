@@ -43,6 +43,12 @@ impl Field {
         self.attributes.contains(&FieldAttribute::Sensitive)
     }
 
+    /// See [`FieldAttribute::Arbitrary`]
+    pub fn has_arbitrary_attr(&self, content: &'static str) -> bool {
+        self.attributes
+            .contains(&FieldAttribute::Arbitrary(content))
+    }
+
     /// See [`FieldAttribute::Rename`]
     pub fn get_rename_attr(&'static self) -> Option<&'static str> {
         for attr in self.attributes {

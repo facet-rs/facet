@@ -9,30 +9,30 @@ use crate::First;
 pub fn to_string<'a, T: Facet<'a>>(value: &T) -> String {
     let peek = Peek::new(value);
     let mut output = Vec::new();
-    serialize(&peek, &mut output).unwrap();
+    serialize(&peek, true, &mut output).unwrap();
     String::from_utf8(output).unwrap()
 }
 
 /// Serializes a Peek instance to JSON
 pub fn peek_to_string(peek: &Peek<'_, '_>) -> String {
     let mut output = Vec::new();
-    serialize(peek, &mut output).unwrap();
+    serialize(peek, true, &mut output).unwrap();
     String::from_utf8(output).unwrap()
 }
 
 /// Serializes a value to a writer in JSON format
 pub fn to_writer<'a, T: Facet<'a>, W: Write>(value: &T, writer: &mut W) -> io::Result<()> {
     let peek = Peek::new(value);
-    serialize(&peek, writer)
+    serialize(&peek, true, writer)
 }
 
 /// Serializes a Peek instance to a writer in JSON format
 pub fn peek_to_writer<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<()> {
-    serialize(peek, writer)
+    serialize(peek, true, writer)
 }
 
 /// The core serialization function
-fn serialize<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<()> {
+fn serialize<W: Write>(peek: &Peek<'_, '_>, delimit: bool, writer: &mut W) -> io::Result<()> {
     use facet_core::{
         StructDef,
         StructKind::{Tuple, TupleStruct},
@@ -44,10 +44,10 @@ fn serialize<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<()> {
             kind: Tuple | TupleStruct,
             ..
         }) => serialize_tuple(peek, writer),
-        Def::Struct(_) => serialize_struct(peek, writer),
+        Def::Struct(_) => serialize_struct(peek, delimit, writer),
         Def::List(_) => serialize_list(peek, writer),
-        Def::Map(_) => serialize_map(peek, writer),
-        Def::Enum(_) => serialize_enum(peek, writer),
+        Def::Map(_) => serialize_map(peek, delimit, writer),
+        Def::Enum(_) => serialize_enum(peek, delimit, writer),
         Def::Option(_) => serialize_option(peek, writer),
         _ => Err(io::Error::new(
             io::ErrorKind::Other,
@@ -152,12 +152,18 @@ fn serialize_scalar<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result
 }
 
 /// Serializes a struct to JSON
-fn serialize_struct<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<()> {
+fn serialize_struct<W: Write>(
+    peek: &Peek<'_, '_>,
+    delimit: bool,
+    writer: &mut W,
+) -> io::Result<()> {
     let struct_peek = peek
         .into_struct()
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Not a struct: {}", e)))?;
 
-    write!(writer, "{{")?;
+    if delimit {
+        write!(writer, "{{")?;
+    }
 
     for (first, (field, field_peek)) in struct_peek.fields_for_serialize().with_first() {
         if !first {
@@ -176,16 +182,24 @@ fn serialize_struct<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result
                 }
             })
             .unwrap_or(field.name);
+        let should_delimit = !field
+            .attributes
+            .iter()
+            .any(|&attr| attr == FieldAttribute::Arbitrary("flatten"));
 
         // Write field name
-        write_json_string(writer, field_name)?;
-        write!(writer, ":")?;
+        if should_delimit {
+            write_json_string(writer, field_name)?;
+            write!(writer, ":")?;
+        }
 
         // Write field value
-        serialize(&field_peek, writer)?;
+        serialize(&field_peek, should_delimit, writer)?;
     }
 
-    write!(writer, "}}")?;
+    if delimit {
+        write!(writer, "}}")?;
+    }
 
     Ok(())
 }
@@ -203,7 +217,7 @@ fn serialize_list<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<(
             write!(writer, ",")?;
         }
 
-        serialize(&item_peek, writer)?;
+        serialize(&item_peek, true, writer)?;
     }
 
     write!(writer, "]")?;
@@ -224,7 +238,7 @@ fn serialize_tuple<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<
             write!(writer, ",")?;
         }
 
-        serialize(&item_peek, writer)?;
+        serialize(&item_peek, true, writer)?;
     }
 
     write!(writer, "]")?;
@@ -233,12 +247,14 @@ fn serialize_tuple<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<
 }
 
 /// Serializes a map to JSON
-fn serialize_map<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<()> {
+fn serialize_map<W: Write>(peek: &Peek<'_, '_>, delimit: bool, writer: &mut W) -> io::Result<()> {
     let map_peek = peek
         .into_map()
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Not a map: {}", e)))?;
 
-    write!(writer, "{{")?;
+    if delimit {
+        write!(writer, "{{")?;
+    }
 
     for (first, (key, value)) in map_peek.iter().with_first() {
         if !first {
@@ -268,16 +284,18 @@ fn serialize_map<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<()
         write!(writer, ":")?;
 
         // Write map value
-        serialize(&value, writer)?;
+        serialize(&value, true, writer)?;
     }
 
-    write!(writer, "}}")?;
+    if delimit {
+        write!(writer, "}}")?;
+    }
 
     Ok(())
 }
 
 /// Serializes an enum to JSON
-fn serialize_enum<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<()> {
+fn serialize_enum<W: Write>(peek: &Peek<'_, '_>, delimit: bool, writer: &mut W) -> io::Result<()> {
     let enum_peek = peek
         .into_enum()
         .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Not an enum: {}", e)))?;
@@ -291,7 +309,9 @@ fn serialize_enum<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<(
         write_json_string(writer, variant_name)
     } else {
         // Variant with data - output as an object with a single key
-        write!(writer, "{{")?;
+        if delimit {
+            write!(writer, "{{")?;
+        }
         write_json_string(writer, variant_name)?;
         write!(writer, ":")?;
 
@@ -307,9 +327,14 @@ fn serialize_enum<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<(
                     write!(writer, ",")?;
                 }
 
+                let should_delimit = field
+                    .attributes
+                    .iter()
+                    .any(|&attr| attr == FieldAttribute::Arbitrary("flatten"));
+
                 write_json_string(writer, field.name)?;
                 write!(writer, ":")?;
-                serialize(&field_peek, writer)?;
+                serialize(&field_peek, should_delimit, writer)?;
             }
 
             write!(writer, "}}")?
@@ -321,22 +346,30 @@ fn serialize_enum<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<(
                 let field = enum_peek.field(0).ok_or_else(|| {
                     io::Error::new(io::ErrorKind::Other, "Failed to access enum field")
                 })?;
-                serialize(&field, writer)?;
+                serialize(&field, true, writer)?;
             } else {
                 write!(writer, "[")?;
 
-                for (first, (_field, field_peek)) in enum_peek.fields_for_serialize().with_first() {
+                for (first, (field, field_peek)) in enum_peek.fields_for_serialize().with_first() {
                     if !first {
                         write!(writer, ",")?;
                     }
-                    serialize(&field_peek, writer)?;
+
+                    let should_delimit = field
+                        .attributes
+                        .iter()
+                        .any(|&attr| attr == FieldAttribute::Arbitrary("flatten"));
+
+                    serialize(&field_peek, should_delimit, writer)?;
                 }
 
                 write!(writer, "]")?;
             }
         }
 
-        write!(writer, "}}")?;
+        if delimit {
+            write!(writer, "}}")?;
+        }
         Ok(())
     }
 }
@@ -353,7 +386,7 @@ fn serialize_option<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result
         let value = option_peek
             .value()
             .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Failed to get option value"))?;
-        serialize(&value, writer)
+        serialize(&value, true, writer)
     }
 }
 
