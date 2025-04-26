@@ -34,7 +34,7 @@ where
             ])
             .vtable(
                 &const {
-                    let mut builder = ValueVTable::builder()
+                    let mut builder = ValueVTable::builder::<Self>()
                         .marker_traits({
                             let arg_dependent_traits = MarkerTraits::SEND
                                 .union(MarkerTraits::SYNC)
@@ -55,12 +55,11 @@ where
                             } else {
                                 write!(f, "BTreeMap<⋯>")
                             }
-                        })
-                        .drop_in_place(|value| unsafe { value.drop_in_place::<BTreeMap<K, V>>() });
+                        });
 
                     if K::SHAPE.vtable.debug.is_some() && V::SHAPE.vtable.debug.is_some() {
                         builder = builder.debug(|value, f| unsafe {
-                            let value = value.get::<BTreeMap<K, V>>();
+                            let value = value.get::<Self>();
                             let k_debug = K::SHAPE.vtable.debug.unwrap_unchecked();
                             let v_debug = V::SHAPE.vtable.debug.unwrap_unchecked();
                             write!(f, "{{")?;
@@ -78,13 +77,12 @@ where
 
                     builder =
                         builder.default_in_place(|target| unsafe { target.put(Self::default()) });
-                    builder = builder
-                        .clone_into(|src, dst| unsafe { dst.put(src.get::<BTreeMap<K, V>>()) });
+                    builder = builder.clone_into(|src, dst| unsafe { dst.put(src.get::<Self>()) });
 
                     if V::SHAPE.vtable.eq.is_some() {
                         builder = builder.eq(|a, b| unsafe {
-                            let a = a.get::<BTreeMap<K, V>>();
-                            let b = b.get::<BTreeMap<K, V>>();
+                            let a = a.get::<Self>();
+                            let b = b.get::<Self>();
                             let v_eq = V::SHAPE.vtable.eq.unwrap_unchecked();
                             a.len() == b.len()
                                 && a.iter().all(|(key_a, val_a)| {
@@ -103,7 +101,7 @@ where
                             use crate::HasherProxy;
                             use core::hash::Hash;
 
-                            let map = value.get::<BTreeMap<K, V>>();
+                            let map = value.get::<Self>();
                             let k_hash = K::SHAPE.vtable.hash.unwrap_unchecked();
                             let v_hash = V::SHAPE.vtable.hash.unwrap_unchecked();
                             let mut hasher = HasherProxy::new(hasher_this, hasher_write_fn);
@@ -137,25 +135,25 @@ where
                                     uninit.put(Self::new())
                                 })
                                 .insert(|ptr, key, value| unsafe {
-                                    let map = ptr.as_mut::<BTreeMap<K, V>>();
+                                    let map = ptr.as_mut::<Self>();
                                     let k = key.read::<K>();
                                     let v = value.read::<V>();
                                     map.insert(k, v);
                                 })
                                 .len(|ptr| unsafe {
-                                    let map = ptr.get::<BTreeMap<K, V>>();
+                                    let map = ptr.get::<Self>();
                                     map.len()
                                 })
                                 .contains_key(|ptr, key| unsafe {
-                                    let map = ptr.get::<BTreeMap<K, V>>();
+                                    let map = ptr.get::<Self>();
                                     map.contains_key(key.get())
                                 })
                                 .get_value_ptr(|ptr, key| unsafe {
-                                    let map = ptr.get::<BTreeMap<K, V>>();
+                                    let map = ptr.get::<Self>();
                                     map.get(key.get()).map(|v| PtrConst::new(v as *const _))
                                 })
                                 .iter(|ptr| unsafe {
-                                    let map = ptr.get::<BTreeMap<K, V>>();
+                                    let map = ptr.get::<Self>();
                                     let keys: VecDeque<&K> = map.keys().collect();
                                     let iter_state = Box::new(BTreeMapIterator { map: ptr, keys });
                                     PtrMut::new(Box::into_raw(iter_state) as *mut u8)
@@ -165,7 +163,7 @@ where
                                         .next(|iter_ptr| unsafe {
                                             let state =
                                                 iter_ptr.as_mut::<BTreeMapIterator<'_, K>>();
-                                            let map = state.map.get::<BTreeMap<K, V>>();
+                                            let map = state.map.get::<Self>();
                                             while let Some(key) = state.keys.pop_front() {
                                                 if let Some(value) = map.get(key) {
                                                     return Some((

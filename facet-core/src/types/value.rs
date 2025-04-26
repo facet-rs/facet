@@ -1,6 +1,6 @@
 use crate::ptr::{PtrConst, PtrMut, PtrUninit};
 use bitflags::bitflags;
-use core::cmp::Ordering;
+use core::{cmp::Ordering, marker::PhantomData, mem};
 
 use crate::Shape;
 
@@ -505,13 +505,13 @@ impl ValueVTable {
     }
 
     /// Creates a new [`ValueVTableBuilder`]
-    pub const fn builder() -> ValueVTableBuilder {
+    pub const fn builder<T>() -> ValueVTableBuilder<T> {
         ValueVTableBuilder::new()
     }
 }
 
 /// Builds a [`ValueVTable`]
-pub struct ValueVTableBuilder {
+pub struct ValueVTableBuilder<T: ?Sized> {
     type_name: Option<TypeNameFn>,
     display: Option<DisplayFn>,
     debug: Option<DebugFn>,
@@ -528,9 +528,10 @@ pub struct ValueVTableBuilder {
     try_from: Option<TryFromFn>,
     try_into_inner: Option<TryIntoInnerFn>,
     try_borrow_inner: Option<TryBorrowInnerFn>,
+    _pd: PhantomData<T>,
 }
 
-impl ValueVTableBuilder {
+impl<T> ValueVTableBuilder<T> {
     /// Creates a new [`ValueVTableBuilder`] with all fields set to `None`.
     #[allow(clippy::new_without_default)]
     pub const fn new() -> Self {
@@ -551,6 +552,7 @@ impl ValueVTableBuilder {
             try_from: None,
             try_into_inner: None,
             try_borrow_inner: None,
+            _pd: PhantomData,
         }
     }
 
@@ -665,7 +667,9 @@ impl ValueVTableBuilder {
         self
     }
 
-    /// Sets the drop_in_place function for this builder.
+    /// Overwrites the drop_in_place function for this builder.
+    ///
+    /// This is usually not necessary, the builder builder will default this to the appropriate type.
     pub const fn drop_in_place(mut self, drop_in_place: DropInPlaceFn) -> Self {
         self.drop_in_place = Some(drop_in_place);
         self
@@ -674,12 +678,6 @@ impl ValueVTableBuilder {
     /// Sets the invariants function for this builder.
     pub const fn invariants(mut self, invariants: InvariantsFn) -> Self {
         self.invariants = Some(invariants);
-        self
-    }
-
-    /// Sets the drop_in_place function for this builder if Some.
-    pub const fn drop_in_place_maybe(mut self, drop_in_place: Option<DropInPlaceFn>) -> Self {
-        self.drop_in_place = drop_in_place;
         self
     }
 
@@ -727,7 +725,13 @@ impl ValueVTableBuilder {
             partial_ord: self.partial_ord,
             ord: self.ord,
             hash: self.hash,
-            drop_in_place: self.drop_in_place,
+            drop_in_place: if let Some(drop_in_place) = self.drop_in_place {
+                Some(drop_in_place)
+            } else if mem::needs_drop::<T>() {
+                Some(|value| unsafe { value.drop_in_place::<T>() })
+            } else {
+                None
+            },
             parse: self.parse,
             try_from: self.try_from,
             try_into_inner: self.try_into_inner,

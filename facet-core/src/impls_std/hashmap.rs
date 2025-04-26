@@ -39,7 +39,7 @@ where
             ])
             .vtable(
                 &const {
-                    let mut builder = ValueVTable::builder()
+                    let mut builder = ValueVTable::builder::<Self>()
                         .marker_traits({
                             let arg_dependent_traits = MarkerTraits::SEND
                                 .union(MarkerTraits::SYNC)
@@ -59,8 +59,7 @@ where
                             } else {
                                 write!(f, "HashMap<⋯>")
                             }
-                        })
-                        .drop_in_place(|value| unsafe { value.drop_in_place::<HashMap<K, V>>() });
+                        });
 
                     if K::SHAPE.vtable.debug.is_some() && V::SHAPE.vtable.debug.is_some() {
                         builder = builder.debug(|value, f| unsafe {

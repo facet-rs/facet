@@ -105,9 +105,8 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkStruct {
         };
         let vtable = &const {
             let mut vtable = const {
-                let mut builder = ::facet_core::ValueVTable::builder()
-                    .type_name(|f, _opts| ::core::fmt::Write::write_str(f, "KitchenSinkStruct"))
-                    .drop_in_place(|data| unsafe { data.drop_in_place::<Self>() });
+                let mut builder = ::facet_core::ValueVTable::builder::<Self>()
+                    .type_name(|f, _opts| ::core::fmt::Write::write_str(f, "KitchenSinkStruct"));
                 if {
                     /// Fallback trait with `False` for `IMPLS` if the type does not
                     /// implement the given trait.
@@ -462,9 +461,8 @@ unsafe impl<'__facet> crate::Facet<'__facet> for Point {
         };
         let vtable = &const {
             let mut vtable = const {
-                let mut builder = ::facet_core::ValueVTable::builder()
-                    .type_name(|f, _opts| ::core::fmt::Write::write_str(f, "Point"))
-                    .drop_in_place(|data| unsafe { data.drop_in_place::<Self>() });
+                let mut builder = ::facet_core::ValueVTable::builder::<Self>()
+                    .type_name(|f, _opts| ::core::fmt::Write::write_str(f, "Point"));
                 if {
                     /// Fallback trait with `False` for `IMPLS` if the type does not
                     /// implement the given trait.
@@ -1065,11 +1063,10 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
             .vtable(
                 &const {
                     const {
-                        let mut builder = ::facet_core::ValueVTable::builder()
-                            .type_name(|f, _opts| {
+                        let mut builder =
+                            ::facet_core::ValueVTable::builder::<Self>().type_name(|f, _opts| {
                                 ::core::fmt::Write::write_str(f, "KitchenSinkEnum")
-                            })
-                            .drop_in_place(|data| unsafe { data.drop_in_place::<Self>() });
+                            });
                         if {
                             /// Fallback trait with `False` for `IMPLS` if the type does not
                             /// implement the given trait.
@@ -1498,9 +1495,8 @@ unsafe impl<'__facet> crate::Facet<'__facet> for SubEnum {
             .vtable(
                 &const {
                     const {
-                        let mut builder = ::facet_core::ValueVTable::builder()
-                            .type_name(|f, _opts| ::core::fmt::Write::write_str(f, "SubEnum"))
-                            .drop_in_place(|data| unsafe { data.drop_in_place::<Self>() });
+                        let mut builder = ::facet_core::ValueVTable::builder::<Self>()
+                            .type_name(|f, _opts| ::core::fmt::Write::write_str(f, "SubEnum"));
                         if {
                             /// Fallback trait with `False` for `IMPLS` if the type does not
                             /// implement the given trait.

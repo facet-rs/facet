@@ -682,7 +682,7 @@ fn main() {
                 "│                                                                            │"
             );
             error!(
-                "│  GENERATED FILES HAVE CHANGED - RUN `just codegen` TO UPDATE THEM          │"
+                "│  GENERATED FILES HAVE CHANGED - RUN `just gen` TO UPDATE THEM              │"
             );
             error!(
                 "│                                                                            │"
@@ -697,7 +697,7 @@ fn main() {
                 "│  • Don't edit README.md directly - edit the README.md.in template instead  │"
             );
             error!(
-                "│  • Then run `just codegen` to regenerate the README.md files               │"
+                "│  • Then run `just gen` to regenerate the README.md files                   │"
             );
             error!(
                 "│  • A pre-commit hook is set up by cargo-husky to do just that              │"

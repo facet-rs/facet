@@ -97,7 +97,7 @@ macro_rules! impl_facet_for_tuple {
                     .id(ConstTypeId::of::<Self>())
                     .layout(Layout::new::<Self>())
                     .vtable(&const {
-                        let mut builder = ValueVTable::builder()
+                        let mut builder = ValueVTable::builder::<Self>()
                             .type_name(|f, opts| {
                                 write_type_name_list(f, opts, "(", ", ", ")", &[$($elems::SHAPE),+])
                             })

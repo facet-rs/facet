@@ -15,7 +15,7 @@ where
             ])
             .vtable(
                 &const {
-                    let mut builder = ValueVTable::builder()
+                    let mut builder = ValueVTable::builder::<Self>()
                         .marker_traits(T::SHAPE.vtable.marker_traits)
                         .type_name(|f, opts| {
                             if let Some(opts) = opts.for_children() {
@@ -25,8 +25,7 @@ where
                             } else {
                                 write!(f, "[⋯; {L}]")
                             }
-                        })
-                        .drop_in_place(|value| unsafe { value.drop_in_place::<[T; L]>() });
+                        });
                     if T::SHAPE.vtable.display.is_some() {
                         builder = builder.display(|value, f| {
                             let value = unsafe { value.get::<[T; L]>() };

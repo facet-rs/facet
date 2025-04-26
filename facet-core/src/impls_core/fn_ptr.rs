@@ -68,7 +68,7 @@ macro_rules! impl_facet_for_fn_ptr {
                     .id(ConstTypeId::of::<Self>())
                     .layout(Layout::new::<Self>())
                     .vtable(const {
-                        &ValueVTable::builder()
+                        &ValueVTable::builder::<Self>()
                             .type_name(|f, opts| {
                                 write_type_name_list(f, opts, $abi, &[$($args::SHAPE),*], R::SHAPE)
                             })

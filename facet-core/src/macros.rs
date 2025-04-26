@@ -44,9 +44,8 @@ where
 macro_rules! value_vtable {
     ($type_name:ty, $type_name_fn:expr) => {
         const {
-            let mut builder = $crate::ValueVTable::builder()
-                .type_name($type_name_fn)
-                .drop_in_place(|data| unsafe { data.drop_in_place::<$type_name>() });
+            let mut builder = $crate::ValueVTable::builder::<$type_name>()
+                .type_name($type_name_fn);
 
             if $crate::spez::impls!($type_name: core::fmt::Display) {
                 builder = builder.display(|data, f| {

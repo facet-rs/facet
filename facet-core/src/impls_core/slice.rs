@@ -39,7 +39,7 @@ where
             ))
             .vtable(
                 &const {
-                    let mut builder = ValueVTable::builder()
+                    let mut builder = ValueVTable::builder::<Self>()
                         .type_name(|f, opts| {
                             if let Some(opts) = opts.for_children() {
                                 write!(f, "&[")?;
