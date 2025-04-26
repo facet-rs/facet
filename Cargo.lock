@@ -340,6 +340,7 @@ dependencies = [
 name = "facet-urlencoded"
 version = "0.16.0"
 dependencies = [
+ "eyre",
  "facet",
  "facet-core",
  "facet-reflect",

@@ -16,5 +16,6 @@ form_urlencoded = "1.2.1"
 log = "0.4.27"
 
 [dev-dependencies]
+eyre = "0.6.12"
 facet = { path = "../facet" }
 facet-testhelpers = { path = "../facet-testhelpers" }
