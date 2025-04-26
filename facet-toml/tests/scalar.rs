@@ -2,12 +2,13 @@
 
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
+use eyre::Result;
 use facet::Facet;
 use facet_toml::error::TomlErrorKind;
 
 #[cfg(feature = "std")]
 #[test]
-fn test_string() {
+fn test_string() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -16,7 +17,7 @@ fn test_string() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 'string'").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("value = 'string'")?,
         Root {
             value: "string".to_string()
         },
@@ -28,11 +29,13 @@ fn test_string() {
             got: "integer"
         }
     );
+
+    Ok(())
 }
 
 #[cfg(feature = "std")]
 #[test]
-fn test_cow_string() {
+fn test_cow_string() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -41,7 +44,7 @@ fn test_cow_string() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 'string'").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("value = 'string'")?,
         Root {
             value: std::borrow::Cow::Borrowed("string")
         },
@@ -53,10 +56,12 @@ fn test_cow_string() {
             got: "integer"
         }
     );
+
+    Ok(())
 }
 
 #[test]
-fn test_bool() {
+fn test_bool() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -65,11 +70,11 @@ fn test_bool() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = true").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("value = true")?,
         Root { value: true },
     );
     assert_eq!(
-        facet_toml::from_str::<Root>("value = false").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("value = false")?,
         Root { value: false },
     );
     assert_eq!(
@@ -95,11 +100,13 @@ fn test_bool() {
             got: "table"
         }
     );
+
+    Ok(())
 }
 
 #[cfg(feature = "std")]
 #[test]
-fn test_socket_addr() {
+fn test_socket_addr() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -108,15 +115,17 @@ fn test_socket_addr() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = '127.0.0.1:8000'").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("value = '127.0.0.1:8000'")?,
         Root {
             value: "127.0.0.1:8000".parse().unwrap()
         },
     );
+
+    Ok(())
 }
 
 #[test]
-fn test_ip_addr() {
+fn test_ip_addr() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -125,13 +134,13 @@ fn test_ip_addr() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = '127.0.0.1'").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("value = '127.0.0.1'")?,
         Root {
             value: "127.0.0.1".parse().unwrap()
         },
     );
     assert_eq!(
-        facet_toml::from_str::<Root>("value = '::1'").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("value = '::1'")?,
         Root {
             value: "::1".parse().unwrap()
         },
@@ -153,10 +162,12 @@ fn test_ip_addr() {
             got: "boolean"
         }
     );
+
+    Ok(())
 }
 
 #[test]
-fn test_ipv4_addr() {
+fn test_ipv4_addr() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -165,15 +176,17 @@ fn test_ipv4_addr() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = '127.0.0.1'").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("value = '127.0.0.1'")?,
         Root {
             value: "127.0.0.1".parse().unwrap()
         },
     );
+
+    Ok(())
 }
 
 #[test]
-fn test_ipv6_addr() {
+fn test_ipv6_addr() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -182,15 +195,17 @@ fn test_ipv6_addr() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = '::1'").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("value = '::1'")?,
         Root {
             value: "::1".parse().unwrap()
         },
     );
+
+    Ok(())
 }
 
 #[test]
-fn test_f64() {
+fn test_f64() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -199,7 +214,7 @@ fn test_f64() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 1").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("value = 1")?,
         Root { value: 1.0 },
     );
     assert_eq!(
@@ -211,10 +226,12 @@ fn test_f64() {
             got: "boolean"
         }
     );
+
+    Ok(())
 }
 
 #[test]
-fn test_f32() {
+fn test_f32() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -223,7 +240,7 @@ fn test_f32() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 1").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("value = 1")?,
         Root { value: 1.0 },
     );
     assert_eq!(
@@ -235,10 +252,12 @@ fn test_f32() {
             got: "boolean"
         }
     );
+
+    Ok(())
 }
 
 #[test]
-fn test_usize() {
+fn test_usize() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -247,7 +266,7 @@ fn test_usize() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 1").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("value = 1")?,
         Root { value: 1 },
     );
     assert!(facet_toml::from_str::<Root>("value = -1").is_err());
@@ -260,10 +279,12 @@ fn test_usize() {
             got: "boolean"
         }
     );
+
+    Ok(())
 }
 
 #[test]
-fn test_u64() {
+fn test_u64() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -272,7 +293,7 @@ fn test_u64() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 1").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("value = 1")?,
         Root { value: 1 },
     );
     assert!(facet_toml::from_str::<Root>("value = -1").is_err());
@@ -285,10 +306,12 @@ fn test_u64() {
             got: "boolean"
         }
     );
+
+    Ok(())
 }
 
 #[test]
-fn test_u32() {
+fn test_u32() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -297,7 +320,7 @@ fn test_u32() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 1").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("value = 1")?,
         Root { value: 1 },
     );
     assert!(facet_toml::from_str::<Root>("value = -1").is_err());
@@ -310,10 +333,12 @@ fn test_u32() {
             got: "boolean"
         }
     );
+
+    Ok(())
 }
 
 #[test]
-fn test_u16() {
+fn test_u16() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -322,7 +347,7 @@ fn test_u16() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 1").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("value = 1")?,
         Root { value: 1 },
     );
     assert!(facet_toml::from_str::<Root>("value = -1").is_err());
@@ -335,10 +360,12 @@ fn test_u16() {
             got: "boolean"
         }
     );
+
+    Ok(())
 }
 
 #[test]
-fn test_u8() {
+fn test_u8() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -347,7 +374,7 @@ fn test_u8() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 1").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("value = 1")?,
         Root { value: 1 },
     );
     assert!(facet_toml::from_str::<Root>("value = -1").is_err());
@@ -360,10 +387,12 @@ fn test_u8() {
             got: "boolean"
         }
     );
+
+    Ok(())
 }
 
 #[test]
-fn test_isize() {
+fn test_isize() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -372,7 +401,7 @@ fn test_isize() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 1").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("value = 1")?,
         Root { value: 1 },
     );
     assert_eq!(
@@ -384,10 +413,12 @@ fn test_isize() {
             got: "boolean"
         }
     );
+
+    Ok(())
 }
 
 #[test]
-fn test_i64() {
+fn test_i64() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -396,7 +427,7 @@ fn test_i64() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 1").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("value = 1")?,
         Root { value: 1 },
     );
     assert_eq!(
@@ -408,10 +439,12 @@ fn test_i64() {
             got: "boolean"
         }
     );
+
+    Ok(())
 }
 
 #[test]
-fn test_i32() {
+fn test_i32() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -420,7 +453,7 @@ fn test_i32() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 1").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("value = 1")?,
         Root { value: 1 },
     );
     assert_eq!(
@@ -432,10 +465,12 @@ fn test_i32() {
             got: "boolean"
         }
     );
+
+    Ok(())
 }
 
 #[test]
-fn test_i16() {
+fn test_i16() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -444,7 +479,7 @@ fn test_i16() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 1").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("value = 1")?,
         Root { value: 1 },
     );
     assert_eq!(
@@ -456,10 +491,12 @@ fn test_i16() {
             got: "boolean"
         }
     );
+
+    Ok(())
 }
 
 #[test]
-fn test_i8() {
+fn test_i8() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -468,7 +505,7 @@ fn test_i8() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 1").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("value = 1")?,
         Root { value: 1 },
     );
     assert_eq!(
@@ -490,6 +527,8 @@ fn test_i8() {
             got: "boolean"
         }
     );
+
+    Ok(())
 }
 
 #[test]

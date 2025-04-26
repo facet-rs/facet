@@ -324,6 +324,7 @@ name = "facet-toml"
 version = "0.16.0"
 dependencies = [
  "ariadne",
+ "eyre",
  "facet",
  "facet-core",
  "facet-reflect",

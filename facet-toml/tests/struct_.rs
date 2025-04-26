@@ -2,11 +2,12 @@
 
 use std::net::Ipv6Addr;
 
+use eyre::Result;
 use facet::Facet;
 use facet_toml::error::TomlErrorKind;
 
 #[test]
-fn test_table_to_struct() {
+fn test_table_to_struct() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -26,8 +27,7 @@ fn test_table_to_struct() {
             value = 1
             table.value = 2
             "#
-        )
-        .expect("Failed to parse TOML"),
+        )?,
         Root {
             value: 1,
             table: Table { value: 2 },
@@ -48,10 +48,12 @@ fn test_table_to_struct() {
             got: "table"
         }
     );
+
+    Ok(())
 }
 
 #[test]
-fn test_unit_struct() {
+fn test_unit_struct() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -69,8 +71,7 @@ fn test_unit_struct() {
             value = 1
             unit = 2
             "#
-        )
-        .expect("Failed to parse TOML"),
+        )?,
         Root {
             value: 1,
             unit: Unit(2),
@@ -91,10 +92,12 @@ fn test_unit_struct() {
             got: "boolean"
         }
     );
+
+    Ok(())
 }
 
 #[test]
-fn test_nested_unit_struct() {
+fn test_nested_unit_struct() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -115,17 +118,18 @@ fn test_nested_unit_struct() {
             value = 1
             unit = 2
             "#
-        )
-        .expect("Failed to parse TOML"),
+        )?,
         Root {
             value: 1,
             unit: NestedUnit(Unit(2)),
         },
     );
+
+    Ok(())
 }
 
 #[test]
-fn test_root_struct_multiple_fields() {
+fn test_root_struct_multiple_fields() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -142,8 +146,7 @@ fn test_root_struct_multiple_fields() {
             b = true
             c = '::1'
             "#
-        )
-        .expect("Failed to parse TOML"),
+        )?,
         Root {
             a: 1,
             b: true,
@@ -162,10 +165,12 @@ fn test_root_struct_multiple_fields() {
         .kind,
         TomlErrorKind::ExpectedFieldWithName("a")
     );
+
+    Ok(())
 }
 
 #[test]
-fn test_nested_struct_multiple_fields() {
+fn test_nested_struct_multiple_fields() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -188,8 +193,7 @@ fn test_nested_struct_multiple_fields() {
             b = true
             c = '::1'
             "#
-        )
-        .expect("Failed to parse TOML"),
+        )?,
         Root {
             nested: Nested {
                 a: 1,
@@ -209,4 +213,6 @@ fn test_nested_struct_multiple_fields() {
             .kind,
         TomlErrorKind::ParseSingleValueAsMultipleFieldStruct
     );
+
+    Ok(())
 }

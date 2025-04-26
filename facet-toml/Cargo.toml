@@ -27,5 +27,6 @@ facet-reflect = { version = "0.16.0", path = "../facet-reflect", default-feature
 yansi = "1.0.1"
 
 [dev-dependencies]
+eyre = "0.6.12"
 facet = { path = "../facet" }
 facet-testhelpers = { path = "../facet-testhelpers" }

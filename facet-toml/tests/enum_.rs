@@ -1,10 +1,11 @@
 //! Tests for TOML values to structs.
 
+use eyre::Result;
 use facet::Facet;
 use facet_toml::error::TomlErrorKind;
 
 #[test]
-fn test_unit_only_enum() {
+fn test_unit_only_enum() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -20,13 +21,13 @@ fn test_unit_only_enum() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 'VariantA'").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("value = 'VariantA'")?,
         Root {
             value: UnitOnlyEnum::VariantA,
         },
     );
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 'VariantB'").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("value = 'VariantB'")?,
         Root {
             value: UnitOnlyEnum::VariantB,
         },
@@ -38,10 +39,12 @@ fn test_unit_only_enum() {
             .kind,
         TomlErrorKind::ExpectedFieldWithName("value")
     );
+
+    Ok(())
 }
 
 #[test]
-fn test_single_value_on_non_unit_enum() {
+fn test_single_value_on_non_unit_enum() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -58,16 +61,18 @@ fn test_single_value_on_non_unit_enum() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 'VariantA'").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("value = 'VariantA'")?,
         Root {
             value: WithNonUnitVariant::VariantA
         },
     );
     assert!(facet_toml::from_str::<Root>("value = 'VariantB'").is_err());
+
+    Ok(())
 }
 
 #[test]
-fn test_tuple_enum() {
+fn test_tuple_enum() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -83,7 +88,7 @@ fn test_tuple_enum() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = { OneField = 0.5 }").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("value = { OneField = 0.5 }")?,
         Root {
             value: WithTupleVariants::OneField(0.5)
         },
@@ -95,16 +100,17 @@ fn test_tuple_enum() {
             0 = true
             1 = 1
             "#
-        )
-        .expect("Failed to parse TOML"),
+        )?,
         Root {
             value: WithTupleVariants::TwoFields(true, 1)
         },
     );
+
+    Ok(())
 }
 
 #[test]
-fn test_struct_enum() {
+fn test_struct_enum() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -120,7 +126,7 @@ fn test_struct_enum() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value.OneField.one = 0.5").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("value.OneField.one = 0.5")?,
         Root {
             value: WithStructVariants::OneField { one: 0.5 }
         },
@@ -132,8 +138,7 @@ fn test_struct_enum() {
             first = true
             second = 1
             "#
-        )
-        .expect("Failed to parse TOML"),
+        )?,
         Root {
             value: WithStructVariants::TwoFields {
                 first: true,
@@ -141,10 +146,12 @@ fn test_struct_enum() {
             }
         },
     );
+
+    Ok(())
 }
 
 #[test]
-fn test_nested_struct_enum() {
+fn test_nested_struct_enum() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -172,8 +179,7 @@ fn test_nested_struct_enum() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value.OneField.one.NestedOneField.nested_one = 0.5")
-            .expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("value.OneField.one.NestedOneField.nested_one = 0.5")?,
         Root {
             value: WithNestedStructVariants::OneField {
                 one: NestedStructs::NestedOneField { nested_one: 0.5 }
@@ -187,8 +193,7 @@ fn test_nested_struct_enum() {
             first.NestedTwoFields = { nested_first = false, nested_second = 8 }
             second = 1
             "#
-        )
-        .expect("Failed to parse TOML"),
+        )?,
         Root {
             value: WithNestedStructVariants::TwoFields {
                 first: NestedStructs::NestedTwoFields {
@@ -199,10 +204,12 @@ fn test_nested_struct_enum() {
             }
         },
     );
+
+    Ok(())
 }
 
 #[test]
-fn test_enum_root() {
+fn test_enum_root() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -214,15 +221,11 @@ fn test_enum_root() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("A.value = 1").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("A.value = 1")?,
         Root::A { value: 1 },
     );
-    assert_eq!(
-        facet_toml::from_str::<Root>("B = 2").expect("Failed to parse TOML"),
-        Root::B(2),
-    );
-    assert_eq!(
-        facet_toml::from_str::<Root>("[C]").expect("Failed to parse TOML"),
-        Root::C,
-    );
+    assert_eq!(facet_toml::from_str::<Root>("B = 2")?, Root::B(2));
+    assert_eq!(facet_toml::from_str::<Root>("[C]")?, Root::C);
+
+    Ok(())
 }

@@ -1,3 +1,4 @@
+use eyre::Result;
 use facet::Facet;
 
 #[derive(Debug, Facet, PartialEq)]
@@ -7,7 +8,7 @@ struct Person {
 }
 
 #[test]
-fn test_deserialize_person() {
+fn test_deserialize_person() -> Result<()> {
     facet_testhelpers::setup();
 
     let toml = r#"
@@ -15,7 +16,7 @@ fn test_deserialize_person() {
             age = 30
         "#;
 
-    let person: Person = facet_toml::from_str(toml).expect("Failed to parse TOML");
+    let person: Person = facet_toml::from_str(toml)?;
     assert_eq!(
         person,
         Person {
@@ -23,4 +24,6 @@ fn test_deserialize_person() {
             age: 30
         }
     );
+
+    Ok(())
 }

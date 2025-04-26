@@ -1,10 +1,11 @@
 //! Tests for TOML values to lists.
 
+use eyre::Result;
 use facet::Facet;
 use facet_toml::error::TomlErrorKind;
 
 #[test]
-fn test_scalar_list() {
+fn test_scalar_list() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -13,17 +14,17 @@ fn test_scalar_list() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("values = []").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("values = []")?,
         Root { values: Vec::new() },
     );
 
     assert_eq!(
-        facet_toml::from_str::<Root>("values = [2]").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("values = [2]")?,
         Root { values: vec![2] },
     );
 
     assert_eq!(
-        facet_toml::from_str::<Root>("values = [1, -1, 0, 100]").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("values = [1, -1, 0, 100]")?,
         Root {
             values: vec![1, -1, 0, 100],
         },
@@ -38,10 +39,12 @@ fn test_scalar_list() {
             got: "boolean"
         }
     );
+
+    Ok(())
 }
 
 #[test]
-fn test_unit_struct_list() {
+fn test_unit_struct_list() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -53,19 +56,19 @@ fn test_unit_struct_list() {
     struct Item(i32);
 
     assert_eq!(
-        facet_toml::from_str::<Root>("values = []").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("values = []")?,
         Root { values: Vec::new() },
     );
 
     assert_eq!(
-        facet_toml::from_str::<Root>("values = [2]").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("values = [2]")?,
         Root {
             values: vec![Item(2)]
         },
     );
 
     assert_eq!(
-        facet_toml::from_str::<Root>("values = [1, -1, 0, 100]").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("values = [1, -1, 0, 100]")?,
         Root {
             values: vec![Item(1), Item(-1), Item(0), Item(100)],
         },
@@ -98,10 +101,12 @@ fn test_unit_struct_list() {
             got: "boolean"
         }
     );
+
+    Ok(())
 }
 
 #[test]
-fn test_nested_lists() {
+fn test_nested_lists() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -110,26 +115,25 @@ fn test_nested_lists() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("values = []").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("values = []")?,
         Root { values: Vec::new() },
     );
     assert_eq!(
-        facet_toml::from_str::<Root>("values = [[], []]").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("values = [[], []]")?,
         Root {
             values: vec![Vec::new(); 2]
         },
     );
 
     assert_eq!(
-        facet_toml::from_str::<Root>("values = [[2]]").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("values = [[2]]")?,
         Root {
             values: vec![vec![2]]
         },
     );
 
     assert_eq!(
-        facet_toml::from_str::<Root>("values = [[1, -1], [0], [100], []]")
-            .expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("values = [[1, -1], [0], [100], []]")?,
         Root {
             values: vec![vec![1, -1], vec![0], vec![100], vec![]],
         },
@@ -162,4 +166,6 @@ fn test_nested_lists() {
             got: "boolean"
         }
     );
+
+    Ok(())
 }

@@ -2,11 +2,12 @@
 
 use std::collections::HashMap;
 
+use eyre::Result;
 use facet::Facet;
 use facet_toml::error::TomlErrorKind;
 
 #[test]
-fn test_scalar_map() {
+fn test_scalar_map() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -15,7 +16,7 @@ fn test_scalar_map() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("[values]").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("[values]")?,
         Root {
             values: HashMap::new()
         },
@@ -28,8 +29,7 @@ fn test_scalar_map() {
             a = 0
             b = -1
             "#
-        )
-        .expect("Failed to parse TOML"),
+        )?,
         Root {
             values: [("a".to_string(), 0), ("b".to_string(), -1)].into()
         },
@@ -60,10 +60,12 @@ fn test_scalar_map() {
             got: "table"
         }
     );
+
+    Ok(())
 }
 
 #[test]
-fn test_scalar_map_with_other_fields() {
+fn test_scalar_map_with_other_fields() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -78,8 +80,7 @@ fn test_scalar_map_with_other_fields() {
             other = 1
             [values]
             "#
-        )
-        .expect("Failed to parse TOML"),
+        )?,
         Root {
             values: HashMap::new(),
             other: 1,
@@ -94,8 +95,7 @@ fn test_scalar_map_with_other_fields() {
             a = 0
             b = -1
             "#
-        )
-        .expect("Failed to parse TOML"),
+        )?,
         Root {
             values: [("a".to_string(), 0), ("b".to_string(), -1)].into(),
             other: 2,
@@ -127,10 +127,12 @@ fn test_scalar_map_with_other_fields() {
             got: "table"
         }
     );
+
+    Ok(())
 }
 
 #[test]
-fn test_unit_struct_map() {
+fn test_unit_struct_map() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -142,7 +144,7 @@ fn test_unit_struct_map() {
     struct Item(bool);
 
     assert_eq!(
-        facet_toml::from_str::<Root>("[values]").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("[values]")?,
         Root {
             values: HashMap::new()
         },
@@ -154,8 +156,7 @@ fn test_unit_struct_map() {
             values.a = true
             values.b = false
             "#
-        )
-        .expect("Failed to parse TOML"),
+        )?,
         Root {
             values: [
                 ("a".to_string(), Item(true)),
@@ -183,10 +184,12 @@ fn test_unit_struct_map() {
             got: "integer"
         }
     );
+
+    Ok(())
 }
 
 #[test]
-fn test_struct_map() {
+fn test_struct_map() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -201,7 +204,7 @@ fn test_struct_map() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("[dependencies]").expect("Failed to parse TOML"),
+        facet_toml::from_str::<Root>("[dependencies]")?,
         Root {
             dependencies: HashMap::new()
         },
@@ -214,8 +217,7 @@ fn test_struct_map() {
             syn = { version = "1", optional = false }
             paste = { version = "0.0.1", optional = true }
             "#
-        )
-        .expect("Failed to parse TOML"),
+        )?,
         Root {
             dependencies: [
                 (
@@ -236,4 +238,6 @@ fn test_struct_map() {
             .into()
         },
     );
+
+    Ok(())
 }
