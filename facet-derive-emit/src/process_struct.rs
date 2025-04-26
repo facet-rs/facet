@@ -1,3 +1,4 @@
+use super::normalize_ident_str;
 use super::*;
 
 /// Processes a regular struct to implement Facet
@@ -45,9 +46,12 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 .0
                 .iter()
                 .map(|field| {
-                    let field_name = field.value.name.to_string();
+                    // Handle raw identifiers (like r#type) by stripping the 'r#' prefix.
+                    let raw_field_name = field.value.name.to_string(); // e.g., "r#type"
+                    let normalized_field_name = normalize_ident_str(&raw_field_name); // e.g., "type"
                     gen_struct_field(
-                        &field_name,
+                        &raw_field_name,
+                        normalized_field_name,
                         &field.value.typ.tokens_to_string(),
                         &struct_name,
                         &bgp,
@@ -72,6 +76,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 .map(|(index, field)| {
                     let field_name = format!("{index}");
                     gen_struct_field(
+                        &field_name,
                         &field_name,
                         &field.value.typ.tokens_to_string(),
                         &struct_name,

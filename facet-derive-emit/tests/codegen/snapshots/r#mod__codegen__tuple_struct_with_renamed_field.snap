@@ -10,21 +10,21 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Point {
         let fields: &'static [::facet::Field] = &const {
             [
                 ::facet::Field::builder()
-                    .name("0")
+                    .name("x_coordinate")
                     .shape(|| ::facet::shape_of(&|s: &Point| &s.0))
                     .offset(::core::mem::offset_of!(Point, 0))
                     .flags(::facet::FieldFlags::EMPTY)
                     .attributes(&const { [::facet::FieldAttribute::Rename("x_coordinate")] })
                     .build(),
                 ::facet::Field::builder()
-                    .name("1")
+                    .name("y_coordinate")
                     .shape(|| ::facet::shape_of(&|s: &Point| &s.1))
                     .offset(::core::mem::offset_of!(Point, 1))
                     .flags(::facet::FieldFlags::EMPTY)
                     .attributes(&const { [::facet::FieldAttribute::Rename("y_coordinate")] })
                     .build(),
                 ::facet::Field::builder()
-                    .name("2")
+                    .name("z_coordinate")
                     .shape(|| ::facet::shape_of(&|s: &Point| &s.2))
                     .offset(::core::mem::offset_of!(Point, 2))
                     .flags(::facet::FieldFlags::EMPTY)

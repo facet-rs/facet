@@ -10,19 +10,24 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for User {
         let fields: &'static [::facet::Field] = &const {
             [
                 ::facet::Field::builder()
-                    .name("name")
+                    .name("userName")
                     .shape(|| ::facet::shape_of(&|s: &User| &s.name))
                     .offset(::core::mem::offset_of!(User, name))
                     .flags(::facet::FieldFlags::EMPTY)
                     .attributes(&const { [::facet::FieldAttribute::Rename("userName")] })
                     .build(),
                 ::facet::Field::builder()
-                    .name("email")
+                    .name("userEmail")
                     .shape(|| ::facet::shape_of(&|s: &User| &s.email))
                     .offset(::core::mem::offset_of!(User, email))
-                    .flags(::facet::FieldFlags::EMPTY)
+                    .flags(::facet::FieldFlags::SENSITIVE)
                     .attributes(
-                        &const { [::facet::FieldAttribute::Rename("userEmail\" , sensitive")] },
+                        &const {
+                            [
+                                ::facet::FieldAttribute::Rename("userEmail"),
+                                ::facet::FieldAttribute::Sensitive,
+                            ]
+                        },
                     )
                     .build(),
                 ::facet::Field::builder()

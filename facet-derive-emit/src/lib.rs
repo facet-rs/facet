@@ -7,6 +7,11 @@ pub use generics::*;
 mod process_enum;
 mod process_struct;
 
+/// Removes the `r#` prefix from a raw identifier string, if present.
+fn normalize_ident_str(ident_str: &str) -> &str {
+    ident_str.strip_prefix("r#").unwrap_or(ident_str)
+}
+
 pub fn facet_derive(input: TokenStream) -> TokenStream {
     let mut i = input.to_token_iter();
 
@@ -72,8 +77,9 @@ pub(crate) fn build_maybe_doc(attrs: &[Attribute]) -> String {
 ///
 /// `base_field_offset` applies a shift to the field offset, which is useful for
 /// generating fields for a struct that is part of a #[repr(C)] enum.
-pub(crate) fn gen_struct_field(
-    field_name: &str,
+pub(crate) fn gen_struct_field<'a>(
+    raw_field_name: &str,
+    normalized_field_name: &'a str,
     field_type: &str,
     struct_name: &str,
     bgp: &BoundedGenericParams,
@@ -85,6 +91,8 @@ pub(crate) fn gen_struct_field(
     let mut attribute_list: Vec<String> = vec![];
     let mut doc_lines: Vec<&str> = vec![];
     let mut shape_of = "shape_of";
+    // Start with the normalized name, potentially overridden by `rename`
+    let mut name_for_metadata: Cow<'a, str> = Cow::Borrowed(normalized_field_name);
     for attr in attrs {
         match &attr.body.content {
             AttributeInner::Facet(facet_attr) => match &facet_attr.inner.content {
@@ -121,31 +129,43 @@ pub(crate) fn gen_struct_field(
                 }
                 FacetInner::Other(tt) => {
                     let attr_str = tt.tokens_to_string();
-                    if let Some(equal_pos) = attr_str.find('=') {
-                        let key = attr_str[..equal_pos].trim();
-                        if key == "rename" {
-                            let value = attr_str[equal_pos + 1..].trim().trim_matches('"');
+
+                    // Split the attributes by commas to handle multiple attributes
+                    let attrs = attr_str.split(',').map(|s| s.trim()).collect::<Vec<_>>();
+
+                    for attr in attrs {
+                        if let Some(equal_pos) = attr.find('=') {
+                            let key = attr[..equal_pos].trim();
+                            if key == "rename" {
+                                let value = attr[equal_pos + 1..].trim().trim_matches('"');
+                                // Use the renamed value for metadata name
+                                name_for_metadata = Cow::Owned(value.to_string());
+                                // Keep the Rename attribute for reflection
+                                attribute_list.push(format!(
+                                    r#"::facet::FieldAttribute::Rename({:?})"#,
+                                    value
+                                ));
+                            } else if key == "skip_serializing_if" {
+                                let value = attr[equal_pos + 1..].trim();
+                                attribute_list.push(format!(
+                                    r#"::facet::FieldAttribute::SkipSerializingIf(unsafe {{ ::std::mem::transmute({value} as fn(&{field_type}) -> bool) }})"#,
+                                ));
+                            } else {
+                                attribute_list.push(format!(
+                                    r#"::facet::FieldAttribute::Arbitrary({:?})"#,
+                                    attr
+                                ));
+                            }
+                        } else if attr == "skip_serializing" {
                             attribute_list
-                                .push(format!(r#"::facet::FieldAttribute::Rename({:?})"#, value));
-                        } else if key == "skip_serializing_if" {
-                            let value = attr_str[equal_pos + 1..].trim();
-                            attribute_list.push(format!(
-                                r#"::facet::FieldAttribute::SkipSerializingIf(unsafe {{ ::std::mem::transmute({value} as fn(&{field_type}) -> bool) }})"#,
-                            ));
+                                .push(r#"::facet::FieldAttribute::SkipSerializing"#.to_string());
+                        } else if attr == "sensitive" {
+                            flags = "::facet::FieldFlags::SENSITIVE";
+                            attribute_list.push("::facet::FieldAttribute::Sensitive".to_string());
                         } else {
-                            attribute_list.push(format!(
-                                r#"::facet::FieldAttribute::Arbitrary({:?})"#,
-                                attr_str
-                            ));
+                            attribute_list
+                                .push(format!(r#"::facet::FieldAttribute::Arbitrary({:?})"#, attr));
                         }
-                    } else if attr_str == "skip_serializing" {
-                        attribute_list
-                            .push(r#"::facet::FieldAttribute::SkipSerializing"#.to_string());
-                    } else {
-                        attribute_list.push(format!(
-                            r#"::facet::FieldAttribute::Arbitrary({:?})"#,
-                            attr_str
-                        ));
                     }
                 }
             },
@@ -173,9 +193,9 @@ pub(crate) fn gen_struct_field(
     // Generate each field definition
     format!(
         "::facet::Field::builder()
-            .name(\"{field_name}\")
-            .shape(|| ::facet::{shape_of}(&|s: &{struct_name}{bgp}| &s.{field_name}))
-            .offset(::core::mem::offset_of!({struct_name}{bgp}, {field_name}){maybe_base_field_offset})
+            .name(\"{name_for_metadata}\")
+            .shape(|| ::facet::{shape_of}(&|s: &{struct_name}{bgp}| &s.{raw_field_name}))
+            .offset(::core::mem::offset_of!({struct_name}{bgp}, {raw_field_name}){maybe_base_field_offset})
             .flags({flags})
             .attributes(&const {{ [{attributes}] }})
             {maybe_field_doc}

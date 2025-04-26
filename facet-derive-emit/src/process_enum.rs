@@ -1,3 +1,4 @@
+use super::normalize_ident_str;
 use super::*;
 
 // mirrors facet_core::types::EnumRepr
@@ -363,6 +364,7 @@ fn process_c_style_enum(
                         let field_name = format!("_{idx}");
                         gen_struct_field(
                             &field_name,
+                            &field_name,
                             &field.value.typ.tokens_to_string(),
                             &shadow_struct_name,
                             &facet_bgp,
@@ -429,10 +431,13 @@ fn process_c_style_enum(
                     .0
                     .iter()
                     .map(|field| {
-                        let field_name = field.value.name.to_string();
+                        // Handle raw identifiers (like r#type) by stripping the 'r#' prefix.
+                        let raw_field_name = field.value.name.to_string(); // e.g., "r#type"
+                        let normalized_field_name = normalize_ident_str(&raw_field_name); // e.g., "type"
                         let field_type = field.value.typ.tokens_to_string();
                         gen_struct_field(
-                            &field_name,
+                            &raw_field_name,
+                            normalized_field_name,
                             &field_type,
                             &shadow_struct_name,
                             &facet_bgp,
@@ -561,6 +566,7 @@ fn process_primitive_enum(
                         let field_name = format!("_{idx}");
                         gen_struct_field(
                             &field_name,
+                            &field_name,
                             &field.value.typ.tokens_to_string(),
                             &shadow_struct_name,
                             &facet_bgp,
@@ -627,9 +633,12 @@ fn process_primitive_enum(
                     .0
                     .iter()
                     .map(|field| {
-                        let field_name = field.value.name.to_string();
+                        // Handle raw identifiers (like r#type) by stripping the 'r#' prefix.
+                        let raw_field_name = field.value.name.to_string(); // e.g., "r#type"
+                        let normalized_field_name = normalize_ident_str(&raw_field_name); // e.g., "type"
                         gen_struct_field(
-                            &field_name,
+                            &raw_field_name,
+                            normalized_field_name,
                             &field.value.typ.tokens_to_string(),
                             &shadow_struct_name,
                             &facet_bgp,

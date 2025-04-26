@@ -10,14 +10,14 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Person {
         let fields: &'static [::facet::Field] = &const {
             [
                 ::facet::Field::builder()
-                    .name("first_name")
+                    .name("firstName")
                     .shape(|| ::facet::shape_of(&|s: &Person| &s.first_name))
                     .offset(::core::mem::offset_of!(Person, first_name))
                     .flags(::facet::FieldFlags::EMPTY)
                     .attributes(&const { [::facet::FieldAttribute::Rename("firstName")] })
                     .build(),
                 ::facet::Field::builder()
-                    .name("last_name")
+                    .name("lastName")
                     .shape(|| ::facet::shape_of(&|s: &Person| &s.last_name))
                     .offset(::core::mem::offset_of!(Person, last_name))
                     .flags(::facet::FieldFlags::EMPTY)

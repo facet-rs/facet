@@ -54,7 +54,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
                         &const {
                             [
                                 ::facet::Field::builder()
-                                    .name("value")
+                                    .name("numValue")
                                     .shape(|| {
                                         ::facet::shape_of(
                                             &|s: &__ShadowConfigValue_Number<'__facet>| &s.value,
@@ -70,7 +70,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
                                     )
                                     .build(),
                                 ::facet::Field::builder()
-                                    .name("unit")
+                                    .name("unitName")
                                     .shape(|| {
                                         ::facet::shape_of(
                                             &|s: &__ShadowConfigValue_Number<'__facet>| &s.unit,
@@ -80,12 +80,13 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
                                         __ShadowConfigValue_Number<'__facet>,
                                         unit
                                     ))
-                                    .flags(::facet::FieldFlags::EMPTY)
+                                    .flags(::facet::FieldFlags::SENSITIVE)
                                     .attributes(
                                         &const {
-                                            [::facet::FieldAttribute::Rename(
-                                                "unitName\" , sensitive",
-                                            )]
+                                            [
+                                                ::facet::FieldAttribute::Rename("unitName"),
+                                                ::facet::FieldAttribute::Sensitive,
+                                            ]
                                         },
                                     )
                                     .build(),

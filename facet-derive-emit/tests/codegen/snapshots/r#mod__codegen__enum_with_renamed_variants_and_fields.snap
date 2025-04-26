@@ -25,7 +25,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                 {
                     let fields: &'static [::facet::Field] = &const {
                         [::facet::Field::builder()
-                            .name("data")
+                            .name("responseData")
                             .shape(|| {
                                 ::facet::shape_of(&|s: &__ShadowApiResponse_Ok<'__facet>| &s.data)
                             })
@@ -54,7 +54,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                     let fields: &'static [::facet::Field] = &const {
                         [
                             ::facet::Field::builder()
-                                .name("code")
+                                .name("errorCode")
                                 .shape(|| {
                                     ::facet::shape_of(&|s: &__ShadowApiResponse_Err<'__facet>| {
                                         &s.code
@@ -70,7 +70,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                                 )
                                 .build(),
                             ::facet::Field::builder()
-                                .name("message")
+                                .name("errorMessage")
                                 .shape(|| {
                                     ::facet::shape_of(&|s: &__ShadowApiResponse_Err<'__facet>| {
                                         &s.message

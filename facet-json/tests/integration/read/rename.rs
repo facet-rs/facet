@@ -123,6 +123,36 @@ fn test_field_rename_with_unicode_name_emoji() {
     assert_eq!(test_struct, roundtrip);
 }
 
+/// Round-trip serialization/deserialization with raw identifiers as field names
+#[cfg(feature = "std")]
+#[test]
+fn test_raw_identifier_fields_roundtrip() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct RawIdentifiers {
+        // Use rename because the JSON key won't have the r# prefix
+        #[facet(rename = "type")]
+        r#type: String,
+
+        #[facet(rename = "match")]
+        r#match: bool,
+    }
+
+    let original = RawIdentifiers {
+        r#type: "keyword_value".to_string(),
+        r#match: false,
+    };
+
+    // Serialization should use the renamed keys
+    let json = facet_json::to_string(&original);
+    assert_eq!(json, r#"{"type":"keyword_value","match":false}"#);
+
+    // Deserialization should correctly map back to raw identifiers
+    let roundtrip: RawIdentifiers = facet_json::from_str(&json).unwrap();
+    assert_eq!(original, roundtrip);
+}
+
 /// Serialization and deserialization with Unicode characters in field name (Euro sign)
 #[test]
 #[cfg(feature = "std")]

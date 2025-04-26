@@ -14,12 +14,14 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithAttributes {
                     .name("id")
                     .shape(|| ::facet::shape_of(&|s: &StructWithAttributes| &s.id))
                     .offset(::core::mem::offset_of!(StructWithAttributes, id))
-                    .flags(::facet::FieldFlags::EMPTY)
+                    .flags(::facet::FieldFlags::SENSITIVE)
                     .attributes(
                         &const {
-                            [::facet::FieldAttribute::Arbitrary(
-                                "name = \"identifier\" , default = \"generate_id\" , sensitive",
-                            )]
+                            [
+                                ::facet::FieldAttribute::Arbitrary("name = \"identifier\""),
+                                ::facet::FieldAttribute::Arbitrary("default = \"generate_id\""),
+                                ::facet::FieldAttribute::Sensitive,
+                            ]
                         },
                     )
                     .build(),
@@ -29,7 +31,12 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithAttributes {
                     .offset(::core::mem::offset_of!(StructWithAttributes, internal_data))
                     .flags(::facet::FieldFlags::EMPTY)
                     .attributes(
-                        &const { [::facet::FieldAttribute::Arbitrary("skip , version = 3")] },
+                        &const {
+                            [
+                                ::facet::FieldAttribute::Arbitrary("skip"),
+                                ::facet::FieldAttribute::Arbitrary("version = 3"),
+                            ]
+                        },
                     )
                     .build(),
                 ::facet::Field::builder()
