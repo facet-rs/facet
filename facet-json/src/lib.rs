@@ -22,3 +22,16 @@ pub use serialize::*;
 fn variant_is_transparent(variant: &facet_core::Variant) -> bool {
     variant.data.kind == facet_core::StructKind::Tuple && variant.data.fields.len() == 1
 }
+
+trait First<T> {
+    fn with_first(self) -> impl Iterator<Item = (bool, T)>;
+}
+
+impl<Iter, T> First<T> for Iter
+where
+    Iter: Iterator<Item = T>,
+{
+    fn with_first(self) -> impl Iterator<Item = (bool, T)> {
+        self.enumerate().map(|(idx, elem)| (idx == 0, elem))
+    }
+}

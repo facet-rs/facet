@@ -3,6 +3,8 @@ use facet_core::{Def, Facet, FieldAttribute, StructKind};
 use facet_reflect::Peek;
 use std::io::{self, Write};
 
+use crate::First;
+
 /// Serializes a value to JSON
 pub fn to_string<'a, T: Facet<'a>>(value: &T) -> String {
     let peek = Peek::new(value);
@@ -157,12 +159,10 @@ fn serialize_struct<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result
 
     write!(writer, "{{")?;
 
-    let mut first = true;
-    for (field, field_peek) in struct_peek.fields_for_serialize() {
+    for (first, (field, field_peek)) in struct_peek.fields_for_serialize().with_first() {
         if !first {
             write!(writer, ",")?;
         }
-        first = false;
 
         // Check for rename attribute
         let field_name = field
@@ -198,12 +198,10 @@ fn serialize_list<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<(
 
     write!(writer, "[")?;
 
-    let mut first = true;
-    for item_peek in list_peek.iter() {
+    for (first, item_peek) in list_peek.iter().with_first() {
         if !first {
             write!(writer, ",")?;
         }
-        first = false;
 
         serialize(&item_peek, writer)?;
     }
@@ -221,12 +219,10 @@ fn serialize_tuple<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<
 
     write!(writer, "[")?;
 
-    let mut first = true;
-    for (_, item_peek) in struct_peek.fields_for_serialize() {
+    for (first, (_, item_peek)) in struct_peek.fields_for_serialize().with_first() {
         if !first {
             write!(writer, ",")?;
         }
-        first = false;
 
         serialize(&item_peek, writer)?;
     }
@@ -244,12 +240,10 @@ fn serialize_map<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<()
 
     write!(writer, "{{")?;
 
-    let mut first = true;
-    for (key, value) in map_peek.iter() {
+    for (first, (key, value)) in map_peek.iter().with_first() {
         if !first {
             write!(writer, ",")?;
         }
-        first = false;
 
         // For map, keys must be converted to strings
         match key.shape().def {
@@ -308,12 +302,10 @@ fn serialize_enum<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<(
             // Struct variant - output as an object
             write!(writer, "{{")?;
 
-            let mut first = true;
-            for (field, field_peek) in enum_peek.fields_for_serialize() {
+            for (first, (field, field_peek)) in enum_peek.fields_for_serialize().with_first() {
                 if !first {
                     write!(writer, ",")?;
                 }
-                first = false;
 
                 write_json_string(writer, field.name)?;
                 write!(writer, ":")?;
@@ -333,12 +325,10 @@ fn serialize_enum<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<(
             } else {
                 write!(writer, "[")?;
 
-                let mut first = true;
-                for (_field, field_peek) in enum_peek.fields_for_serialize() {
+                for (first, (_field, field_peek)) in enum_peek.fields_for_serialize().with_first() {
                     if !first {
                         write!(writer, ",")?;
                     }
-                    first = false;
                     serialize(&field_peek, writer)?;
                 }
 
