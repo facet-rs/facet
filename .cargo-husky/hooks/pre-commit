@@ -1,2 +1,2 @@
 #!/usr/bin/env sh
-cargo run -p facet-dev precommit
+cargo run -p facet-dev -- generate
