@@ -22,3 +22,9 @@ yansi = "1.0.1"
 
 [dev-dependencies]
 facet = { path = "../facet" }
+criterion = "0.5.1"
+
+[[bench]]
+path = "benches/compare_derive_more.rs"
+name = "compare_derive_more"
+harness = false
