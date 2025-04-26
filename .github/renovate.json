@@ -1,3 +1,28 @@
 {
-  "extends": ["config:recommended", "group:allNonMajor"]
+  "extends": [
+    "config:recommended",
+    ":automergeAll",
+    ":automergeBranch",
+    ":automergeRequireAllStatusChecks",
+    ":semanticCommits",
+    "schedule:daily",
+    "schedule:automergeDaily"
+  ],
+  "packageRules": [
+    {
+      "groupName": "rust dependencies",
+      "groupSlug": "rust",
+      "matchDatasources": ["crate"]
+    },
+    {
+      "groupName": "documentation dependencies",
+      "groupSlug": "doc",
+      "matchDatasources": ["npm"]
+    },
+    {
+      "groupName": "github ci dependencies",
+      "groupSlug": "ci",
+      "matchDatasources": ["github-tags", "gitea-tags", "github-runners"]
+    }
+  ]
 }
