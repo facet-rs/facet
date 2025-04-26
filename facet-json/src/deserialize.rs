@@ -86,7 +86,7 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
 ) -> Result<HeapValue<'facet>, JsonError<'input>> {
     let mut stack = vec![Instruction::Pop(PopReason::TopLevel), Instruction::Value];
     let mut tokenizer = Tokenizer::new(input);
-    let mut last_span = Span { start: 0, len: 0 };
+    let mut last_span = Span::new(0, 0);
     let mut unread_token: Option<Spanned<Token>> = None;
 
     macro_rules! bail {

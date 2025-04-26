@@ -182,10 +182,7 @@ fn serialize_struct<W: Write>(
                 }
             })
             .unwrap_or(field.name);
-        let should_delimit = !field
-            .attributes
-            .iter()
-            .any(|&attr| attr == FieldAttribute::Arbitrary("flatten"));
+        let should_delimit = !field.has_arbitrary_attr("flatten");
 
         // Write field name
         if should_delimit {

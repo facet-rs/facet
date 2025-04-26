@@ -36,7 +36,7 @@ fn test_writing_flat_structs() {
     });
     assert_eq!(expected1, actual1);
 
-    let expected2 = r#"{"name":"test1","val":2,"Variant2":"ccc"}"#;
+    let expected2 = r#"{"name":"test2","val":2,"Variant2":"ccc"}"#;
     let actual2 = facet_json::to_string(&Outer {
         name: "test2",
         struct_: InnerStruct { val: 2 },
@@ -44,7 +44,7 @@ fn test_writing_flat_structs() {
     });
     assert_eq!(expected2, actual2);
 
-    let expected3 = r#"{"name":"test1","val":3,"Variant3":["ddd","eee"]}"#;
+    let expected3 = r#"{"name":"test3","val":3,"Variant3":["ddd","eee"]}"#;
     let actual3 = facet_json::to_string(&Outer {
         name: "test3",
         struct_: InnerStruct { val: 3 },
