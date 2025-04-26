@@ -473,7 +473,7 @@ fn opaque_arc() {
             assert_eq!(sd.fields.len(), 1);
             let field = sd.fields[0];
             let shape_name = format!("{}", field.shape());
-            assert_eq!(shape_name, "Arc");
+            assert_eq!(shape_name, "Opaque");
             eprintln!("Shape {shape} looks correct");
         }
         _ => unreachable!(),

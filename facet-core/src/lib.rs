@@ -14,6 +14,10 @@ pub use macros::*;
 mod ptr;
 pub use ptr::*;
 
+// Opaque wrapper utility
+mod opaque;
+pub use opaque::*;
+
 // Specialization utilities
 pub mod spez;
 

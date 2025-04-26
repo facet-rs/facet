@@ -1,4 +1,4 @@
-use crate::{Facet, Shape};
+use crate::{Facet, Opaque, Shape};
 
 #[doc(hidden)]
 pub const fn shape_of<'a, TStruct, TField: Facet<'a>>(
@@ -16,9 +16,6 @@ where
 {
     Opaque::<TField>::SHAPE
 }
-
-/// Helper type for opaque members
-pub struct Opaque<T>(T);
 
 /// Creates a `ValueVTable` for a given type.
 ///
