@@ -951,22 +951,25 @@ fn pre_push() {
     let mut progress_bars: HashMap<String, ProgressBar> = HashMap::new();
 
     // --- Setup Communication Channel ---
-    // We need a channel that can send CommandResult with duration.
-    // CommandResult needs to be defined *before* this point if not already.
-    // (Checking... yes, it is defined after this block, needs to be moved up or redefined).
-    // Let's redefine it here locally for clarity or move the original struct definition.
-    // The original struct is defined just after the block, let's move it before.
-    // (Okay, I cannot move the definition outside the requested block. I will redefine it locally
-    // with the `duration` field inside this function scope, and the original `CommandResult`
-    // definition after the block will be ignored by the diff.)
     #[derive(Debug)]
-    struct CommandResultTimed {
-        info: CommandInfo,
-        output: std::io::Result<Output>,
-        duration: Duration, // Added duration
+    enum CommandResult {
+        Success {
+            info: CommandInfo,
+            duration: Duration,
+        },
+        Failure {
+            info: CommandInfo,
+            output: Output,
+            duration: Duration,
+        },
+        IoError {
+            info: CommandInfo,
+            error: io::Error,
+            duration: Duration,
+        },
     }
 
-    let (sender, receiver) = channel::<CommandResultTimed>();
+    let (sender, receiver) = channel::<CommandResult>();
     let mut handles = Vec::new();
 
     // --- Spawn Command Threads ---
@@ -1017,10 +1020,26 @@ fn pre_push() {
             }
 
             // Send the result back to the main thread
-            let cmd_result = CommandResultTimed {
-                info: cmd_info_clone.clone(),
-                output: output_result,
-                duration: command_duration, // Include duration
+            let cmd_result = match output_result {
+                Ok(output) => {
+                    if output.status.success() {
+                        CommandResult::Success {
+                            info: cmd_info_clone.clone(),
+                            duration: command_duration,
+                        }
+                    } else {
+                        CommandResult::Failure {
+                            info: cmd_info_clone.clone(),
+                            output,
+                            duration: command_duration,
+                        }
+                    }
+                }
+                Err(e) => CommandResult::IoError {
+                    info: cmd_info_clone.clone(),
+                    error: e,
+                    duration: command_duration,
+                },
             };
 
             if sender_clone.send(cmd_result).is_err() {
@@ -1047,28 +1066,33 @@ fn pre_push() {
         match receiver.recv_timeout(Duration::from_millis(100)) {
             Ok(result) => {
                 finished_count += 1;
-                let name = result.info.name.clone();
-                let duration_ms = result.duration.as_millis();
-                let time_str = format!("({} ms)", duration_ms); // Format duration
+                let (name, duration, status) = match &result {
+                    CommandResult::Success { info, duration, .. } => {
+                        (info.name.clone(), duration, "Success")
+                    }
+                    CommandResult::Failure { info, duration, .. } => {
+                        (info.name.clone(), duration, "Failure")
+                    }
+                    CommandResult::IoError { info, duration, .. } => {
+                        (info.name.clone(), duration, "IoError")
+                    }
+                };
+                let duration_ms = duration.as_millis();
+                let time_str = format!("({} ms)", duration_ms);
 
                 if let Some(pb) = progress_bars.get(&name) {
-                    match &result.output {
-                        Ok(output) if output.status.success() => {
+                    match status {
+                        "Success" => {
                             pb.finish_with_message(format!("{} {}", "✔ OK".green(), time_str));
                         }
-                        Ok(output) => {
-                            let exit_code = output
-                                .status
-                                .code()
-                                .map_or("Signal".to_string(), |c| c.to_string());
+                        "Failure" => {
                             pb.finish_with_message(format!(
-                                "{} Failed (Code: {}) {}",
+                                "{} Failed {}",
                                 "✖".red(),
-                                exit_code.red(),
                                 time_str.dim()
                             ));
                         }
-                        Err(_) => {
+                        "IoError" => {
                             pb.finish_with_message(format!(
                                 "{} {} {}",
                                 "⚠ Error".red(),
@@ -1076,13 +1100,9 @@ fn pre_push() {
                                 time_str.dim()
                             ));
                         }
+                        _ => unreachable!(),
                     }
                 }
-                // Store result regardless of interruption status, but need to convert it
-                // back to the original CommandResult struct structure for the failure list.
-                // This is a bit awkward because we added 'duration' locally.
-                // Let's adjust: collect results in a Vec of CommandResultTimed first,
-                // then process them into a Vec of (CommandInfo, Output) for failures.
                 results.push(result);
             }
             Err(RecvTimeoutError::Timeout) => {
@@ -1130,22 +1150,21 @@ fn pre_push() {
 
     let mut failures = Vec::new();
     for result in results {
-        match result.output {
-            Ok(output) => {
-                if !output.status.success() {
-                    failures.push((result.info, output));
-                }
+        match result {
+            CommandResult::Failure { info, output, .. } => {
+                failures.push((info, output));
             }
-            Err(e) => {
-                // Treat IO error during command execution as failure
-                let fake_output = Output {
-                    // Attempt to create a non-zero status. Using 1 is a common convention.
-                    status: std::process::ExitStatus::from_raw(1), // Use std::process::ExitStatus::from_raw
-                    stdout: Vec::new(),
-                    stderr: format!("Error executing command: {}", e).into_bytes(),
-                };
-                failures.push((result.info, fake_output));
+            CommandResult::IoError { info, error, .. } => {
+                failures.push((
+                    info,
+                    Output {
+                        status: std::process::ExitStatus::from_raw(1),
+                        stdout: Vec::new(),
+                        stderr: format!("Error executing command: {}", error).into_bytes(),
+                    },
+                ));
             }
+            CommandResult::Success { .. } => {}
         }
     }
 
