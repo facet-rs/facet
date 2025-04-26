@@ -279,6 +279,7 @@ dependencies = [
 name = "facet-msgpack"
 version = "0.16.0"
 dependencies = [
+ "eyre",
  "facet",
  "facet-core",
  "facet-reflect",

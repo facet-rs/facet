@@ -1,7 +1,8 @@
+use eyre::Result;
 use facet::Facet;
 
 #[test]
-fn it_works() {
+fn it_works() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, PartialEq, Facet)]
@@ -22,7 +23,7 @@ fn it_works() {
         0x00, 0x00, 0x00, 0x1e, // 30
     ];
 
-    let result: TestStruct = facet_msgpack::from_slice(&data).unwrap();
+    let result: TestStruct = facet_msgpack::from_slice(&data)?;
     assert_eq!(
         result,
         TestStruct {
@@ -30,4 +31,6 @@ fn it_works() {
             age: 30,
         }
     );
+
+    Ok(())
 }
