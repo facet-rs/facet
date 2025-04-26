@@ -142,7 +142,7 @@ With `facet`, serialization and deserialization is implemented:
   * Once per data format (JSON, TOML, etc.)
 
 You can have `mycrate-types` crates, with every struct deriving `Facet`, with no worries. No need
-to put it behind a feature flag even, the main `facet` crate is relatively late, thanks to its use
+to put it behind a feature flag even, the main `facet` crate is relatively light, thanks to its use
 of the lightweight [unsynn](https://docs.rs/unsynn) instead of `syn`.
 
 > *:bearsays*
