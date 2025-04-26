@@ -1,14 +1,11 @@
 use crate::*;
-use core::alloc::Layout;
 
 unsafe impl<'a, T> Facet<'a> for &'a [T]
 where
     T: Facet<'a>,
 {
     const SHAPE: &'static Shape = &const {
-        Shape::builder()
-            .id(ConstTypeId::of::<&[T]>())
-            .layout(Layout::new::<&[T]>())
+        Shape::builder_for_sized::<Self>()
             .type_params(&[
                 TypeParam {
                     name: "T",

@@ -1,6 +1,5 @@
-use crate::{ConstTypeId, Def, ScalarAffinity, ScalarDef, value_vtable};
+use crate::{Def, ScalarAffinity, ScalarDef, value_vtable};
 use crate::{Facet, Shape};
-use core::alloc::Layout;
 
 /// Helper type for opaque members
 #[repr(transparent)]
@@ -8,9 +7,7 @@ pub struct Opaque<T>(T);
 
 unsafe impl<'a, T: 'a> Facet<'a> for Opaque<T> {
     const SHAPE: &'static Shape = &const {
-        Shape::builder()
-            .id(ConstTypeId::of::<Self>())
-            .layout(Layout::new::<Self>())
+        Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::opaque().build())

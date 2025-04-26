@@ -1,5 +1,4 @@
 use crate::*;
-use core::alloc::Layout;
 use core::{cmp::Ordering, iter::zip};
 
 unsafe impl<'a, T, const L: usize> Facet<'a> for [T; L]
@@ -7,9 +6,7 @@ where
     T: Facet<'a>,
 {
     const SHAPE: &'static Shape = &const {
-        Shape::builder()
-            .id(ConstTypeId::of::<[T; L]>())
-            .layout(Layout::new::<[T; L]>())
+        Shape::builder_for_sized::<Self>()
             .type_params(&[
                 TypeParam {
                     name: "T",

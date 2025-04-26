@@ -1,9 +1,7 @@
-use core::alloc::Layout;
-
 use crate::{
-    ConstTypeId, Def, Facet, KnownSmartPointer, PtrConst, PtrMut, PtrUninit, Shape,
-    SmartPointerDef, SmartPointerFlags, SmartPointerVTable, TryBorrowInnerError, TryFromError,
-    TryIntoInnerError, value_vtable,
+    Def, Facet, KnownSmartPointer, PtrConst, PtrMut, PtrUninit, Shape, SmartPointerDef,
+    SmartPointerFlags, SmartPointerVTable, TryBorrowInnerError, TryFromError, TryIntoInnerError,
+    value_vtable,
 };
 
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
@@ -48,9 +46,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
             T::SHAPE
         }
 
-        crate::Shape::builder()
-            .id(ConstTypeId::of::<Self>())
-            .layout(Layout::new::<Self>())
+        crate::Shape::builder_for_sized::<Self>()
             .type_params(&[crate::TypeParam {
                 name: "T",
                 shape: || T::SHAPE,
@@ -112,9 +108,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Weak<T> {
             T::SHAPE
         }
 
-        crate::Shape::builder()
-            .id(ConstTypeId::of::<Self>())
-            .layout(Layout::new::<Self>())
+        crate::Shape::builder_for_sized::<Self>()
             .type_params(&[crate::TypeParam {
                 name: "T",
                 shape: || T::SHAPE,

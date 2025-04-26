@@ -6,9 +6,7 @@ use typeid::ConstTypeId;
 
 unsafe impl Facet<'_> for ConstTypeId {
     const SHAPE: &'static Shape = &const {
-        Shape::builder()
-            .id(ConstTypeId::of::<Self>())
-            .layout(Layout::new::<Self>())
+        Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::opaque().build())
@@ -21,9 +19,7 @@ unsafe impl Facet<'_> for ConstTypeId {
 
 unsafe impl Facet<'_> for () {
     const SHAPE: &'static Shape = &const {
-        Shape::builder()
-            .id(ConstTypeId::of::<Self>())
-            .layout(Layout::new::<Self>())
+        Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::empty().build())
@@ -36,9 +32,7 @@ unsafe impl Facet<'_> for () {
 
 unsafe impl<'a, T: ?Sized + 'a> Facet<'a> for core::marker::PhantomData<T> {
     const SHAPE: &'static Shape = &const {
-        Shape::builder()
-            .id(ConstTypeId::of::<Self>())
-            .layout(Layout::new::<Self>())
+        Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::empty().build())
@@ -53,9 +47,7 @@ unsafe impl<'a, T: ?Sized + 'a> Facet<'a> for core::marker::PhantomData<T> {
 #[cfg(feature = "alloc")]
 unsafe impl Facet<'_> for alloc::string::String {
     const SHAPE: &'static Shape = &const {
-        Shape::builder()
-            .id(ConstTypeId::of::<Self>())
-            .layout(Layout::new::<Self>())
+        Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()
                     // `String` is always on the heap
@@ -69,9 +61,7 @@ unsafe impl Facet<'_> for alloc::string::String {
 
 unsafe impl Facet<'_> for char {
     const SHAPE: &'static Shape = &const {
-        Shape::builder()
-            .id(ConstTypeId::of::<Self>())
-            .layout(Layout::new::<Self>())
+        Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::char().build())
@@ -84,9 +74,7 @@ unsafe impl Facet<'_> for char {
 
 unsafe impl<'a> Facet<'a> for &'a str {
     const SHAPE: &'static Shape = &const {
-        Shape::builder()
-            .id(ConstTypeId::of::<Self>())
-            .layout(Layout::new::<Self>())
+        Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::string().build())
@@ -100,9 +88,7 @@ unsafe impl<'a> Facet<'a> for &'a str {
 #[cfg(feature = "alloc")]
 unsafe impl<'a> Facet<'a> for alloc::borrow::Cow<'a, str> {
     const SHAPE: &'static Shape = &const {
-        Shape::builder()
-            .id(ConstTypeId::of::<Self>())
-            .layout(Layout::new::<Self>())
+        Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::string().build())
@@ -122,9 +108,7 @@ unsafe impl<'a> Facet<'a> for alloc::borrow::Cow<'a, str> {
 
 unsafe impl Facet<'_> for bool {
     const SHAPE: &'static Shape = &const {
-        Shape::builder()
-            .id(ConstTypeId::of::<Self>())
-            .layout(Layout::new::<Self>())
+        Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::boolean().build())
@@ -666,9 +650,7 @@ static EPSILON_F64: f64 = f64::EPSILON;
 
 unsafe impl Facet<'_> for f32 {
     const SHAPE: &'static Shape = &const {
-        Shape::builder()
-            .id(ConstTypeId::of::<f32>())
-            .layout(Layout::new::<Self>())
+        Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(
@@ -724,9 +706,7 @@ unsafe impl Facet<'_> for f32 {
 
 unsafe impl Facet<'_> for f64 {
     const SHAPE: &'static Shape = &const {
-        Shape::builder()
-            .id(ConstTypeId::of::<f64>())
-            .layout(Layout::new::<Self>())
+        Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(
@@ -782,9 +762,7 @@ unsafe impl Facet<'_> for f64 {
 
 unsafe impl Facet<'_> for core::net::SocketAddr {
     const SHAPE: &'static Shape = &const {
-        Shape::builder()
-            .id(ConstTypeId::of::<Self>())
-            .layout(Layout::new::<Self>())
+        Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::socket_addr().build())
@@ -799,9 +777,7 @@ unsafe impl Facet<'_> for core::net::SocketAddr {
 
 unsafe impl Facet<'_> for core::net::IpAddr {
     const SHAPE: &'static Shape = &const {
-        Shape::builder()
-            .id(ConstTypeId::of::<Self>())
-            .layout(Layout::new::<Self>())
+        Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::ip_addr().build())
@@ -814,9 +790,7 @@ unsafe impl Facet<'_> for core::net::IpAddr {
 
 unsafe impl Facet<'_> for core::net::Ipv4Addr {
     const SHAPE: &'static Shape = &const {
-        Shape::builder()
-            .id(ConstTypeId::of::<Self>())
-            .layout(Layout::new::<Self>())
+        Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::ip_addr().build())
@@ -829,9 +803,7 @@ unsafe impl Facet<'_> for core::net::Ipv4Addr {
 
 unsafe impl Facet<'_> for core::net::Ipv6Addr {
     const SHAPE: &'static Shape = &const {
-        Shape::builder()
-            .id(ConstTypeId::of::<Self>())
-            .layout(Layout::new::<Self>())
+        Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::ip_addr().build())

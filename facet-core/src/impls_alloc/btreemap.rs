@@ -1,4 +1,4 @@
-use core::{alloc::Layout, write};
+use core::write;
 
 use alloc::{
     boxed::Box,
@@ -6,8 +6,8 @@ use alloc::{
 };
 
 use crate::{
-    ConstTypeId, Def, Facet, MapDef, MapIterVTable, MapVTable, MarkerTraits, PtrConst, PtrMut,
-    Shape, ValueVTable,
+    Def, Facet, MapDef, MapIterVTable, MapVTable, MarkerTraits, PtrConst, PtrMut, Shape,
+    ValueVTable,
 };
 
 struct BTreeMapIterator<'mem, K> {
@@ -21,9 +21,7 @@ where
     V: Facet<'a>,
 {
     const SHAPE: &'static crate::Shape = &const {
-        Shape::builder()
-            .id(ConstTypeId::of::<BTreeMap<K, V>>())
-            .layout(Layout::new::<BTreeMap<K, V>>())
+        Shape::builder_for_sized::<Self>()
             .type_params(&[
                 crate::TypeParam {
                     name: "K",

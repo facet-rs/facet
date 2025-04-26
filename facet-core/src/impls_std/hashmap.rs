@@ -1,13 +1,13 @@
 use alloc::collections::VecDeque;
-use core::{alloc::Layout, hash::Hash};
+use core::hash::Hash;
 use std::collections::HashMap;
 use std::hash::RandomState;
 
 use crate::ptr::{PtrConst, PtrMut};
 
 use crate::{
-    ConstTypeId, Def, Facet, MapDef, MapIterVTable, MapVTable, MarkerTraits, ScalarAffinity,
-    ScalarDef, Shape, TypeParam, ValueVTable, value_vtable,
+    Def, Facet, MapDef, MapIterVTable, MapVTable, MarkerTraits, ScalarAffinity, ScalarDef, Shape,
+    TypeParam, ValueVTable, value_vtable,
 };
 
 struct HashMapIterator<'mem, K> {
@@ -22,9 +22,7 @@ where
     S: Facet<'a> + Default,
 {
     const SHAPE: &'static Shape = &const {
-        Shape::builder()
-            .id(ConstTypeId::of::<HashMap<K, V, S>>())
-            .layout(Layout::new::<HashMap<K, V>>())
+        Shape::builder_for_sized::<Self>()
             .type_params(&[
                 TypeParam {
                     name: "K",
@@ -196,9 +194,7 @@ where
 
 unsafe impl Facet<'_> for RandomState {
     const SHAPE: &'static Shape = &const {
-        Shape::builder()
-            .id(ConstTypeId::of::<RandomState>())
-            .layout(Layout::new::<Self>())
+        Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::opaque().build())

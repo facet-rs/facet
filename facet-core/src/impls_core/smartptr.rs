@@ -1,15 +1,11 @@
-use core::alloc::Layout;
-
 use crate::{
-    ConstTypeId, Def, Facet, KnownSmartPointer, PtrConst, SmartPointerDef, SmartPointerFlags,
+    Def, Facet, KnownSmartPointer, PtrConst, SmartPointerDef, SmartPointerFlags,
     SmartPointerVTable, value_vtable,
 };
 
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for core::ptr::NonNull<T> {
     const SHAPE: &'static crate::Shape = &const {
-        crate::Shape::builder()
-            .id(ConstTypeId::of::<Self>())
-            .layout(Layout::new::<Self>())
+        crate::Shape::builder_for_sized::<Self>()
             .type_params(&[crate::TypeParam {
                 name: "T",
                 shape: || T::SHAPE,

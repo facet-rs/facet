@@ -1,8 +1,8 @@
-use core::{alloc::Layout, mem::MaybeUninit};
+use core::mem::MaybeUninit;
 
 use crate::{
-    ConstTypeId, Def, Facet, OptionDef, OptionVTable, PtrConst, PtrMut, PtrUninit, Shape,
-    TryBorrowInnerError, TryFromError, TryIntoInnerError, value_vtable,
+    Def, Facet, OptionDef, OptionVTable, PtrConst, PtrMut, PtrUninit, Shape, TryBorrowInnerError,
+    TryFromError, TryIntoInnerError, value_vtable,
 };
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
     const SHAPE: &'static Shape = &const {
@@ -49,9 +49,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
             T::SHAPE
         }
 
-        Shape::builder()
-            .id(ConstTypeId::of::<Self>())
-            .layout(Layout::new::<Self>())
+        Shape::builder_for_sized::<Self>()
             .type_params(&[crate::TypeParam {
                 name: "T",
                 shape: || T::SHAPE,

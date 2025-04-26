@@ -156,6 +156,13 @@ impl Shape {
         ShapeBuilder::new()
     }
 
+    /// Returns a builder for a shape for some type `T`.
+    pub const fn builder_for_sized<T>() -> ShapeBuilder {
+        ShapeBuilder::new()
+            .layout(Layout::new::<T>())
+            .id(ConstTypeId::of::<T>())
+    }
+
     /// Check if this shape is of the given type
     pub fn is_type<Other: Facet<'static>>(&'static self) -> bool {
         let l = self;

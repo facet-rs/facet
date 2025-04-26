@@ -1,5 +1,5 @@
 use crate::*;
-use core::{alloc::Layout, hash::Hash as _};
+use core::hash::Hash as _;
 
 use alloc::vec::Vec;
 
@@ -8,9 +8,7 @@ where
     T: Facet<'a>,
 {
     const SHAPE: &'static Shape = &const {
-        Shape::builder()
-            .id(ConstTypeId::of::<Vec<T>>())
-            .layout(Layout::new::<Vec<T>>())
+        Shape::builder_for_sized::<Self>()
             .type_params(&[
                 TypeParam {
                     name: "T",
