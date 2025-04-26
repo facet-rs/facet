@@ -26,13 +26,6 @@ Expect some churn as APIs evolve. Keep up with changes in core libraries (like
 facet-reflect and facet-core) as needed. Coordination during rapid development
 is key.
 
-## Contributing Authors
-
-Once you’ve made contributions, add yourself to the list of authors in the crate
-metadata. (Keep previous contributors in the list as well. When changing from
-"inherit from workspace" to "an actual list", add "Amos Wenger <amos@bearcove.eu>",
-aka @fasterthanlime, since they're the original maintainer).
-
 ## Version Control & Checks
 
 You’re welcome to use alternative version control tools (like jujutsu/jj), but
