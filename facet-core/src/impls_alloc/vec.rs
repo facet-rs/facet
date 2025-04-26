@@ -28,38 +28,34 @@ where
                             }
                         })
                         .default_in_place(|target| unsafe { target.put(Self::default()) })
-                        .clone_into(|src, dst| unsafe { dst.put(src.get::<Self>()) });
+                    // FIXME: THIS IS VERY WRONG
+                        .clone_into(|src, dst| unsafe { dst.put(core::ptr::read(src)) });
 
                     if T::SHAPE.vtable.debug.is_some() {
                         builder = builder.debug(|value, f| {
-                            let value = unsafe { value.get::<Self>() };
                             write!(f, "[")?;
                             for (i, item) in value.iter().enumerate() {
                                 if i > 0 {
                                     write!(f, ", ")?;
                                 }
-                                unsafe {
-                                    (T::SHAPE.vtable.debug.unwrap_unchecked())(
-                                        PtrConst::new(item),
-                                        f,
-                                    )?;
-                                }
+                                (<VTableView<T>>::of().debug().unwrap())(
+                                    item,
+                                    f,
+                                )?;
                             }
                             write!(f, "]")
                         });
                     }
 
                     if T::SHAPE.vtable.eq.is_some() {
-                        builder = builder.eq(|a, b| unsafe {
-                            let a = a.get::<Self>();
-                            let b = b.get::<Self>();
+                        builder = builder.eq(|a, b|  {
                             if a.len() != b.len() {
                                 return false;
                             }
                             for (item_a, item_b) in a.iter().zip(b.iter()) {
-                                if !(T::SHAPE.vtable.eq.unwrap_unchecked())(
-                                    PtrConst::new(item_a),
-                                    PtrConst::new(item_b),
+                                if !(<VTableView<T>>::of().eq().unwrap())(
+                                    item_a,
+                                    item_b,
                                 ) {
                                     return false;
                                 }
@@ -69,14 +65,13 @@ where
                     }
 
                     if T::SHAPE.vtable.hash.is_some() {
-                        builder = builder.hash(|value, hasher_this, hasher_write_fn| unsafe {
+                        builder = builder.hash(|vec, hasher_this, hasher_write_fn| unsafe {
                             use crate::HasherProxy;
-                            let vec = value.get::<Self>();
-                            let t_hash = T::SHAPE.vtable.hash.unwrap_unchecked();
+                            let t_hash = <VTableView<T>>::of().hash().unwrap_unchecked();
                             let mut hasher = HasherProxy::new(hasher_this, hasher_write_fn);
                             vec.len().hash(&mut hasher);
                             for item in vec {
-                                (t_hash)(PtrConst::new(item), hasher_this, hasher_write_fn);
+                                (t_hash)(item, hasher_this, hasher_write_fn);
                             }
                         });
                     }

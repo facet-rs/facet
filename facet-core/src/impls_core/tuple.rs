@@ -1,8 +1,8 @@
 use core::{alloc::Layout, cmp::Ordering, fmt, mem};
 
 use crate::{
-    Characteristic, ConstTypeId, Def, Facet, Field, FieldFlags, MarkerTraits, PtrConst, Shape,
-    StructDef, TypeNameOpts, ValueVTable, shape_of,
+    Characteristic, ConstTypeId, Def, Facet, Field, FieldFlags, MarkerTraits, Shape, StructDef,
+    TypeNameOpts, VTableView, ValueVTable, shape_of,
 };
 
 #[inline(always)]
@@ -62,17 +62,11 @@ macro_rules! impl_facet_for_tuple {
     };
     // Common structure of eq, partial_ord & ord
     { ord on ($($elems:ident.$idx:tt,)+), $cmp:ident($a:ident, $b:ident), eq = $eq:expr } => {{
-        let a = unsafe { $a.get::<Self>() };
-        let b = unsafe { $b.get::<Self>() };
-
         $(
             unsafe {
-                let a_ptr = &a.$idx as *const $elems;
-                let b_ptr = &b.$idx as *const $elems;
-
-                let ordering = ($elems::SHAPE.vtable.$cmp.unwrap_unchecked())(
-                    PtrConst::new(a_ptr),
-                    PtrConst::new(b_ptr),
+                let ordering = (<VTableView<$elems>>::of().$cmp().unwrap_unchecked())(
+                    &$a.$idx,
+                    &$b.$idx,
                 );
 
                 if ordering != $eq {
@@ -110,18 +104,13 @@ macro_rules! impl_facet_for_tuple {
                         let elem_shapes = const { &[$($elems::SHAPE),+] };
                         if Characteristic::Debug.all(elem_shapes) {
                             builder = builder.debug(|value, f| {
-                                let value = unsafe { value.get::<Self>() };
-
                                 impl_facet_for_tuple! {
                                     debug on f {
                                         $(
-                                            unsafe {
-                                                let ptr = &value.$idx as *const $elems;
-                                                ($elems::SHAPE.vtable.debug.unwrap_unchecked())(
-                                                    PtrConst::new(ptr),
-                                                    f,
-                                                )
-                                            }?;
+                                            (<VTableView<$elems>>::of().debug().unwrap())(
+                                                &value.$idx,
+                                                f,
+                                            )?;
                                         )+
                                     }
                                 }
@@ -129,10 +118,10 @@ macro_rules! impl_facet_for_tuple {
                         }
 
                         if Characteristic::Default.all(elem_shapes) {
-                            builder = builder.default_in_place(|dst| {
+                            builder = builder.default_in_place(|mut dst| {
                                 $(
                                     unsafe {
-                                        ($elems::SHAPE.vtable.default_in_place.unwrap_unchecked())(
+                                        (<VTableView<$elems>>::of().default_in_place().unwrap())(
                                             dst.field_uninit_at(mem::offset_of!(Self, $idx))
                                         );
                                     }
@@ -142,21 +131,21 @@ macro_rules! impl_facet_for_tuple {
                             });
                         }
 
-                        if Characteristic::Clone.all(elem_shapes) {
-                             builder = builder.clone_into(|src, dst| {
-                                $({
-                                    let offset = mem::offset_of!(Self, $idx);
-                                    unsafe {
-                                        ($elems::SHAPE.vtable.clone_into.unwrap_unchecked())(
-                                            src.field(offset),
-                                            dst.field_uninit_at(offset),
-                                        );
-                                    }
-                                })+
+                    //     if Characteristic::Clone.all(elem_shapes) {
+                    //          builder = builder.clone_into(|src, dst| {
+                    //             $({
+                    //                 let offset = mem::offset_of!(Self, $idx);
+                    //                 unsafe {
+                    //                     (<VTableView<$elems>>::of().clone_into().unwrap())(
+                    //                         src.field(offset),
+                    //                         dst.field_uninit_at(offset),
+                    //                     );
+                    //                 }
+                    //             })+
 
-                                unsafe { dst.assume_init() }
-                            });
-                       }
+                    //             unsafe { dst.assume_init() }
+                    //         });
+                    //    }
 
                         if Characteristic::PartialEq.all(elem_shapes) {
                             builder = builder.eq(|a, b| impl_facet_for_tuple! {
@@ -184,18 +173,12 @@ macro_rules! impl_facet_for_tuple {
 
                         if Characteristic::Hash.all(elem_shapes) {
                             builder = builder.hash(|value, hasher_this, hasher_write_fn| {
-                                let value = unsafe { value.get::<Self>() };
-
                                 $(
-                                    unsafe {
-                                        let ptr = &value.$idx as *const $elems;
-
-                                        ($elems::SHAPE.vtable.hash.unwrap_unchecked())(
-                                            PtrConst::new(ptr),
-                                            hasher_this,
-                                            hasher_write_fn,
-                                        );
-                                    }
+                                    (<VTableView<$elems>>::of().hash().unwrap())(
+                                        &value.$idx,
+                                        hasher_this,
+                                        hasher_write_fn,
+                                    );
                                 )+
                            });
                         }

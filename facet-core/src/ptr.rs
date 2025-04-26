@@ -8,6 +8,7 @@ use crate::{Shape, UnsizedError};
 
 /// A type-erased pointer to an uninitialized value
 #[derive(Debug, Clone, Copy)]
+#[repr(transparent)]
 pub struct PtrUninit<'mem>(*mut u8, PhantomData<&'mem mut ()>);
 
 impl<'mem> PtrUninit<'mem> {
@@ -108,10 +109,128 @@ impl<'mem> PtrUninit<'mem> {
     }
 }
 
+impl<'mem, T> From<TypedPtrUninit<'mem, T>> for PtrUninit<'mem> {
+    fn from(ptr: TypedPtrUninit<'mem, T>) -> Self {
+        PtrUninit::new(ptr.0)
+    }
+}
+
+/// A pointer to an uninitialized value with a lifetime.
+#[derive(Debug)]
+#[repr(transparent)]
+pub struct TypedPtrUninit<'mem, T>(*mut T, PhantomData<&'mem mut ()>);
+
+impl<'mem, T> TypedPtrUninit<'mem, T> {
+    /// Create a new opaque pointer from a mutable pointer
+    ///
+    /// This is safe because it's generic over T
+    pub fn new(ptr: *mut T) -> Self {
+        Self(ptr, PhantomData)
+    }
+
+    /// Write a value to this location and convert to an initialized pointer
+    ///
+    /// # Safety
+    ///
+    /// The pointer must be properly aligned for T and point to allocated memory
+    /// that can be safely written to.
+    pub unsafe fn put(self, value: T) -> &'mem mut T {
+        unsafe {
+            core::ptr::write(self.0, value);
+            self.assume_init()
+        }
+    }
+    /// Assumes the pointer is initialized and returns an `Opaque` pointer
+    ///
+    /// # Safety
+    ///
+    /// The pointer must actually be pointing to initialized memory of the correct type.
+    pub unsafe fn assume_init(self) -> &'mem mut T {
+        unsafe { &mut *self.0 }
+    }
+
+    /// Returns a pointer with the given offset added
+    ///
+    /// # Safety
+    ///
+    /// Offset is within the bounds of the allocated memory and `U` is the correct type for the field.
+    pub unsafe fn field_uninit_at<U>(&mut self, offset: usize) -> TypedPtrUninit<'mem, U> {
+        TypedPtrUninit(unsafe { self.0.byte_add(offset).cast() }, PhantomData)
+    }
+}
+//     /// Copies memory from a source pointer into this location and returns PtrMut
+//     ///
+//     /// # Safety
+//     ///
+//     /// - The source pointer must be valid for reads of `len` bytes
+//     /// - This pointer must be valid for writes of `len` bytes and properly aligned
+//     /// - The regions may not overlap
+//     pub unsafe fn copy_from<'src>(
+//         self,
+//         src: PtrConst<'src>,
+//         shape: &'static Shape,
+//     ) -> Result<PtrMut<'mem>, UnsizedError> {
+//         let layout = shape.layout.sized_layout()?;
+//         // SAFETY: The caller is responsible for upholding the invariants:
+//         // - `src` must be valid for reads of `shape.size` bytes
+//         // - `self` must be valid for writes of `shape.size` bytes and properly aligned
+//         // - The regions may not overlap
+//         unsafe {
+//             core::ptr::copy_nonoverlapping(src.as_byte_ptr(), self.0, layout.size());
+//             Ok(self.assume_init())
+//         }
+//     }
+
+//     /// Creates a new opaque pointer from a reference to a [`core::mem::MaybeUninit`]
+//     ///
+//     /// The pointer will point to the potentially uninitialized contents
+//     ///
+//     /// This is safe because it's generic over T
+//     pub fn from_maybe_uninit<T>(borrow: &'mem mut core::mem::MaybeUninit<T>) -> Self {
+//         Self(borrow.as_mut_ptr() as *mut u8, PhantomData)
+//     }
+
+//     /// Assumes the pointer is initialized and returns an `Opaque` pointer
+//     ///
+//     /// # Safety
+//     ///
+//     /// The pointer must actually be pointing to initialized memory of the correct type.
+//     pub unsafe fn assume_init(self) -> PtrMut<'mem> {
+//         let ptr = unsafe { NonNull::new_unchecked(self.0) };
+//         PtrMut(ptr, PhantomData)
+//     }
+
+//     /// Returns the underlying raw pointer as a byte pointer
+//     pub fn as_mut_byte_ptr(self) -> *mut u8 {
+//         self.0
+//     }
+
+//     /// Returns the underlying raw pointer as a const byte pointer
+//     pub fn as_byte_ptr(self) -> *const u8 {
+//         self.0
+//     }
+
+//     /// Returns a pointer with the given offset added, assuming it's initialized
+//     ///
+//     /// # Safety
+//     ///
+//     /// The pointer plus offset must be:
+//     /// - Within bounds of the allocated object
+//     /// - Properly aligned for the type being pointed to
+//     /// - Point to initialized data of the correct type
+//     pub unsafe fn field_init_at(self, offset: usize) -> PtrMut<'mem> {
+//         PtrMut(
+//             unsafe { NonNull::new_unchecked(self.0.add(offset)) },
+//             PhantomData,
+//         )
+//     }
+// }
+
 /// A type-erased read-only pointer to an initialized value.
 ///
 /// Cannot be null. May be dangling (for ZSTs)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(transparent)]
 pub struct PtrConst<'mem>(NonNull<u8>, PhantomData<&'mem ()>);
 
 unsafe impl Send for PtrConst<'_> {}
@@ -180,6 +299,7 @@ impl<'mem> PtrConst<'mem> {
 
 /// A type-erased pointer to an initialized value
 #[derive(Clone, Copy)]
+#[repr(transparent)]
 pub struct PtrMut<'mem>(NonNull<u8>, PhantomData<&'mem mut ()>);
 
 impl<'mem> PtrMut<'mem> {

@@ -1,11 +1,14 @@
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use log::{LevelFilter, debug, error, warn};
 use similar::ChangeTag;
+#[cfg(not(windows))]
+use std::os::unix::process::ExitStatusExt;
+#[cfg(windows)]
+use std::os::windows::process::ExitStatusExt;
 use std::{
     collections::HashMap,
     fs,
     io::{self, Write},
-    os::unix::process::ExitStatusExt,
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
     sync::{

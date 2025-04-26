@@ -2,7 +2,7 @@ use core::mem::MaybeUninit;
 
 use crate::{
     Def, Facet, OptionDef, OptionVTable, PtrConst, PtrMut, PtrUninit, Shape, TryBorrowInnerError,
-    TryFromError, TryIntoInnerError, value_vtable,
+    TryFromError, TryIntoInnerError, TypedPtrUninit, VTableView, value_vtable,
 };
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
     const SHAPE: &'static Shape = &const {
@@ -102,12 +102,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
                             let this = unsafe { this.get::<Self>() };
                             if let Some(value) = &this {
                                 write!(f, "Some(")?;
-                                unsafe {
-                                    (T::SHAPE.vtable.debug.unwrap_unchecked())(
-                                        PtrConst::new(value),
-                                        f,
-                                    )?;
-                                }
+                                (<VTableView<T>>::of().debug().unwrap())(value, f)?;
                                 write!(f, ")")?;
                             } else {
                                 write!(f, "None")?;
@@ -119,8 +114,8 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
                     if T::SHAPE.is_from_str() {
                         vtable.parse = Some(|str, target| {
                             let mut t = MaybeUninit::<T>::uninit();
-                            let parse = unsafe { T::SHAPE.vtable.parse.unwrap_unchecked() };
-                            let _res = unsafe { (parse)(str, PtrUninit::new(t.as_mut_ptr()))? };
+                            let parse = <VTableView<T>>::of().parse().unwrap();
+                            let _res = (parse)(str, TypedPtrUninit::new(t.as_mut_ptr()))?;
                             // res points to t so we can't drop it yet. the option is not initialized though
                             unsafe {
                                 target.put(Some(t.assume_init()));

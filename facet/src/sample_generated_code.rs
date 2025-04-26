@@ -125,7 +125,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkStruct {
                 } {
                     builder = builder.display(|data, f| {
                         use ::facet_core::spez::*;
-                        (&&Spez(unsafe { data.get::<Self>() })).spez_display(f)
+                        (&&Spez(data)).spez_display(f)
                     });
                 }
                 if {
@@ -146,7 +146,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkStruct {
                 } {
                     builder = builder.debug(|data, f| {
                         use ::facet_core::spez::*;
-                        (&&Spez(unsafe { data.get::<Self>() })).spez_debug(f)
+                        (&&Spez(data)).spez_debug(f)
                     });
                 }
                 if {
@@ -165,9 +165,11 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkStruct {
                     }
                     <Wrapper<Self>>::IMPLS
                 } {
-                    builder = builder.default_in_place(|target| {
+                    builder = builder.default_in_place(|target| unsafe {
                         use ::facet_core::spez::*;
-                        unsafe { (&&SpezEmpty::<Self>::SPEZ).spez_default_in_place(target) }
+                        (&&SpezEmpty::<Self>::SPEZ)
+                            .spez_default_in_place(target.into())
+                            .as_mut()
                     });
                 }
                 if {
@@ -186,9 +188,9 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkStruct {
                     }
                     <Wrapper<Self>>::IMPLS
                 } {
-                    builder = builder.clone_into(|src, dst| {
+                    builder = builder.clone_into(|src, dst| unsafe {
                         use ::facet_core::spez::*;
-                        unsafe { (&&Spez(src.get::<Self>())).spez_clone_into(dst) }
+                        (&&Spez(src)).spez_clone_into(dst.into()).as_mut()
                     });
                 }
                 {
@@ -303,8 +305,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkStruct {
                 } {
                     builder = builder.eq(|left, right| {
                         use ::facet_core::spez::*;
-                        (&&Spez(unsafe { left.get::<Self>() }))
-                            .spez_eq(&&Spez(unsafe { right.get::<Self>() }))
+                        (&&Spez(left)).spez_eq(&&Spez(right))
                     });
                 }
                 if {
@@ -325,8 +326,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkStruct {
                 } {
                     builder = builder.partial_ord(|left, right| {
                         use ::facet_core::spez::*;
-                        (&&Spez(unsafe { left.get::<Self>() }))
-                            .spez_partial_cmp(&&Spez(unsafe { right.get::<Self>() }))
+                        (&&Spez(left)).spez_partial_cmp(&&Spez(right))
                     });
                 }
                 if {
@@ -347,8 +347,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkStruct {
                 } {
                     builder = builder.ord(|left, right| {
                         use ::facet_core::spez::*;
-                        (&&Spez(unsafe { left.get::<Self>() }))
-                            .spez_cmp(&&Spez(unsafe { right.get::<Self>() }))
+                        (&&Spez(left)).spez_cmp(&&Spez(right))
                     });
                 }
                 if {
@@ -370,7 +369,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkStruct {
                     builder = builder.hash(|value, hasher_this, hasher_write_fn| {
                         use ::facet_core::HasherProxy;
                         use ::facet_core::spez::*;
-                        (&&Spez(unsafe { value.get::<Self>() })).spez_hash(&mut unsafe {
+                        (&&Spez(value)).spez_hash(&mut unsafe {
                             HasherProxy::new(hasher_this, hasher_write_fn)
                         })
                     });
@@ -393,8 +392,9 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkStruct {
                 } {
                     builder = builder.parse(|s, target| {
                         use ::facet_core::spez::*;
-                        let res = unsafe { (&&SpezEmpty::<Self>::SPEZ).spez_parse(s, target) };
-                        res.map(|_| unsafe { target.assume_init() })
+                        let res =
+                            unsafe { (&&SpezEmpty::<Self>::SPEZ).spez_parse(s, target.into()) };
+                        res.map(|res| unsafe { res.as_mut() })
                     });
                 }
                 builder.build()
@@ -481,7 +481,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for Point {
                 } {
                     builder = builder.display(|data, f| {
                         use ::facet_core::spez::*;
-                        (&&Spez(unsafe { data.get::<Self>() })).spez_display(f)
+                        (&&Spez(data)).spez_display(f)
                     });
                 }
                 if {
@@ -502,7 +502,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for Point {
                 } {
                     builder = builder.debug(|data, f| {
                         use ::facet_core::spez::*;
-                        (&&Spez(unsafe { data.get::<Self>() })).spez_debug(f)
+                        (&&Spez(data)).spez_debug(f)
                     });
                 }
                 if {
@@ -521,9 +521,11 @@ unsafe impl<'__facet> crate::Facet<'__facet> for Point {
                     }
                     <Wrapper<Self>>::IMPLS
                 } {
-                    builder = builder.default_in_place(|target| {
+                    builder = builder.default_in_place(|target| unsafe {
                         use ::facet_core::spez::*;
-                        unsafe { (&&SpezEmpty::<Self>::SPEZ).spez_default_in_place(target) }
+                        (&&SpezEmpty::<Self>::SPEZ)
+                            .spez_default_in_place(target.into())
+                            .as_mut()
                     });
                 }
                 if {
@@ -542,9 +544,9 @@ unsafe impl<'__facet> crate::Facet<'__facet> for Point {
                     }
                     <Wrapper<Self>>::IMPLS
                 } {
-                    builder = builder.clone_into(|src, dst| {
+                    builder = builder.clone_into(|src, dst| unsafe {
                         use ::facet_core::spez::*;
-                        unsafe { (&&Spez(src.get::<Self>())).spez_clone_into(dst) }
+                        (&&Spez(src)).spez_clone_into(dst.into()).as_mut()
                     });
                 }
                 {
@@ -659,8 +661,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for Point {
                 } {
                     builder = builder.eq(|left, right| {
                         use ::facet_core::spez::*;
-                        (&&Spez(unsafe { left.get::<Self>() }))
-                            .spez_eq(&&Spez(unsafe { right.get::<Self>() }))
+                        (&&Spez(left)).spez_eq(&&Spez(right))
                     });
                 }
                 if {
@@ -681,8 +682,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for Point {
                 } {
                     builder = builder.partial_ord(|left, right| {
                         use ::facet_core::spez::*;
-                        (&&Spez(unsafe { left.get::<Self>() }))
-                            .spez_partial_cmp(&&Spez(unsafe { right.get::<Self>() }))
+                        (&&Spez(left)).spez_partial_cmp(&&Spez(right))
                     });
                 }
                 if {
@@ -703,8 +703,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for Point {
                 } {
                     builder = builder.ord(|left, right| {
                         use ::facet_core::spez::*;
-                        (&&Spez(unsafe { left.get::<Self>() }))
-                            .spez_cmp(&&Spez(unsafe { right.get::<Self>() }))
+                        (&&Spez(left)).spez_cmp(&&Spez(right))
                     });
                 }
                 if {
@@ -726,7 +725,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for Point {
                     builder = builder.hash(|value, hasher_this, hasher_write_fn| {
                         use ::facet_core::HasherProxy;
                         use ::facet_core::spez::*;
-                        (&&Spez(unsafe { value.get::<Self>() })).spez_hash(&mut unsafe {
+                        (&&Spez(value)).spez_hash(&mut unsafe {
                             HasherProxy::new(hasher_this, hasher_write_fn)
                         })
                     });
@@ -749,8 +748,9 @@ unsafe impl<'__facet> crate::Facet<'__facet> for Point {
                 } {
                     builder = builder.parse(|s, target| {
                         use ::facet_core::spez::*;
-                        let res = unsafe { (&&SpezEmpty::<Self>::SPEZ).spez_parse(s, target) };
-                        res.map(|_| unsafe { target.assume_init() })
+                        let res =
+                            unsafe { (&&SpezEmpty::<Self>::SPEZ).spez_parse(s, target.into()) };
+                        res.map(|res| unsafe { res.as_mut() })
                     });
                 }
                 builder.build()
@@ -1085,7 +1085,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                         } {
                             builder = builder.display(|data, f| {
                                 use ::facet_core::spez::*;
-                                (&&Spez(unsafe { data.get::<Self>() })).spez_display(f)
+                                (&&Spez(data)).spez_display(f)
                             });
                         }
                         if {
@@ -1106,7 +1106,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                         } {
                             builder = builder.debug(|data, f| {
                                 use ::facet_core::spez::*;
-                                (&&Spez(unsafe { data.get::<Self>() })).spez_debug(f)
+                                (&&Spez(data)).spez_debug(f)
                             });
                         }
                         if {
@@ -1125,9 +1125,11 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                             }
                             <Wrapper<Self>>::IMPLS
                         } {
-                            builder = builder.default_in_place(|target| {
+                            builder = builder.default_in_place(|target| unsafe {
                                 use ::facet_core::spez::*;
-                                unsafe { (&&SpezEmpty::<Self>::SPEZ).spez_default_in_place(target) }
+                                (&&SpezEmpty::<Self>::SPEZ)
+                                    .spez_default_in_place(target.into())
+                                    .as_mut()
                             });
                         }
                         if {
@@ -1146,9 +1148,9 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                             }
                             <Wrapper<Self>>::IMPLS
                         } {
-                            builder = builder.clone_into(|src, dst| {
+                            builder = builder.clone_into(|src, dst| unsafe {
                                 use ::facet_core::spez::*;
-                                unsafe { (&&Spez(src.get::<Self>())).spez_clone_into(dst) }
+                                (&&Spez(src)).spez_clone_into(dst.into()).as_mut()
                             });
                         }
                         {
@@ -1263,8 +1265,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                         } {
                             builder = builder.eq(|left, right| {
                                 use ::facet_core::spez::*;
-                                (&&Spez(unsafe { left.get::<Self>() }))
-                                    .spez_eq(&&Spez(unsafe { right.get::<Self>() }))
+                                (&&Spez(left)).spez_eq(&&Spez(right))
                             });
                         }
                         if {
@@ -1285,8 +1286,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                         } {
                             builder = builder.partial_ord(|left, right| {
                                 use ::facet_core::spez::*;
-                                (&&Spez(unsafe { left.get::<Self>() }))
-                                    .spez_partial_cmp(&&Spez(unsafe { right.get::<Self>() }))
+                                (&&Spez(left)).spez_partial_cmp(&&Spez(right))
                             });
                         }
                         if {
@@ -1307,8 +1307,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                         } {
                             builder = builder.ord(|left, right| {
                                 use ::facet_core::spez::*;
-                                (&&Spez(unsafe { left.get::<Self>() }))
-                                    .spez_cmp(&&Spez(unsafe { right.get::<Self>() }))
+                                (&&Spez(left)).spez_cmp(&&Spez(right))
                             });
                         }
                         if {
@@ -1330,7 +1329,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                             builder = builder.hash(|value, hasher_this, hasher_write_fn| {
                                 use ::facet_core::HasherProxy;
                                 use ::facet_core::spez::*;
-                                (&&Spez(unsafe { value.get::<Self>() })).spez_hash(&mut unsafe {
+                                (&&Spez(value)).spez_hash(&mut unsafe {
                                     HasherProxy::new(hasher_this, hasher_write_fn)
                                 })
                             });
@@ -1353,9 +1352,10 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                         } {
                             builder = builder.parse(|s, target| {
                                 use ::facet_core::spez::*;
-                                let res =
-                                    unsafe { (&&SpezEmpty::<Self>::SPEZ).spez_parse(s, target) };
-                                res.map(|_| unsafe { target.assume_init() })
+                                let res = unsafe {
+                                    (&&SpezEmpty::<Self>::SPEZ).spez_parse(s, target.into())
+                                };
+                                res.map(|res| unsafe { res.as_mut() })
                             });
                         }
                         builder.build()
@@ -1515,7 +1515,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for SubEnum {
                         } {
                             builder = builder.display(|data, f| {
                                 use ::facet_core::spez::*;
-                                (&&Spez(unsafe { data.get::<Self>() })).spez_display(f)
+                                (&&Spez(data)).spez_display(f)
                             });
                         }
                         if {
@@ -1536,7 +1536,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for SubEnum {
                         } {
                             builder = builder.debug(|data, f| {
                                 use ::facet_core::spez::*;
-                                (&&Spez(unsafe { data.get::<Self>() })).spez_debug(f)
+                                (&&Spez(data)).spez_debug(f)
                             });
                         }
                         if {
@@ -1555,9 +1555,11 @@ unsafe impl<'__facet> crate::Facet<'__facet> for SubEnum {
                             }
                             <Wrapper<Self>>::IMPLS
                         } {
-                            builder = builder.default_in_place(|target| {
+                            builder = builder.default_in_place(|target| unsafe {
                                 use ::facet_core::spez::*;
-                                unsafe { (&&SpezEmpty::<Self>::SPEZ).spez_default_in_place(target) }
+                                (&&SpezEmpty::<Self>::SPEZ)
+                                    .spez_default_in_place(target.into())
+                                    .as_mut()
                             });
                         }
                         if {
@@ -1576,9 +1578,9 @@ unsafe impl<'__facet> crate::Facet<'__facet> for SubEnum {
                             }
                             <Wrapper<Self>>::IMPLS
                         } {
-                            builder = builder.clone_into(|src, dst| {
+                            builder = builder.clone_into(|src, dst| unsafe {
                                 use ::facet_core::spez::*;
-                                unsafe { (&&Spez(src.get::<Self>())).spez_clone_into(dst) }
+                                (&&Spez(src)).spez_clone_into(dst.into()).as_mut()
                             });
                         }
                         {
@@ -1693,8 +1695,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for SubEnum {
                         } {
                             builder = builder.eq(|left, right| {
                                 use ::facet_core::spez::*;
-                                (&&Spez(unsafe { left.get::<Self>() }))
-                                    .spez_eq(&&Spez(unsafe { right.get::<Self>() }))
+                                (&&Spez(left)).spez_eq(&&Spez(right))
                             });
                         }
                         if {
@@ -1715,8 +1716,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for SubEnum {
                         } {
                             builder = builder.partial_ord(|left, right| {
                                 use ::facet_core::spez::*;
-                                (&&Spez(unsafe { left.get::<Self>() }))
-                                    .spez_partial_cmp(&&Spez(unsafe { right.get::<Self>() }))
+                                (&&Spez(left)).spez_partial_cmp(&&Spez(right))
                             });
                         }
                         if {
@@ -1737,8 +1737,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for SubEnum {
                         } {
                             builder = builder.ord(|left, right| {
                                 use ::facet_core::spez::*;
-                                (&&Spez(unsafe { left.get::<Self>() }))
-                                    .spez_cmp(&&Spez(unsafe { right.get::<Self>() }))
+                                (&&Spez(left)).spez_cmp(&&Spez(right))
                             });
                         }
                         if {
@@ -1760,7 +1759,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for SubEnum {
                             builder = builder.hash(|value, hasher_this, hasher_write_fn| {
                                 use ::facet_core::HasherProxy;
                                 use ::facet_core::spez::*;
-                                (&&Spez(unsafe { value.get::<Self>() })).spez_hash(&mut unsafe {
+                                (&&Spez(value)).spez_hash(&mut unsafe {
                                     HasherProxy::new(hasher_this, hasher_write_fn)
                                 })
                             });
@@ -1783,9 +1782,10 @@ unsafe impl<'__facet> crate::Facet<'__facet> for SubEnum {
                         } {
                             builder = builder.parse(|s, target| {
                                 use ::facet_core::spez::*;
-                                let res =
-                                    unsafe { (&&SpezEmpty::<Self>::SPEZ).spez_parse(s, target) };
-                                res.map(|_| unsafe { target.assume_init() })
+                                let res = unsafe {
+                                    (&&SpezEmpty::<Self>::SPEZ).spez_parse(s, target.into())
+                                };
+                                res.map(|res| unsafe { res.as_mut() })
                             });
                         }
                         builder.build()

@@ -65,9 +65,4 @@ pub use types::*;
 pub unsafe trait Facet<'a>: 'a {
     /// The shape of this type
     const SHAPE: &'static Shape;
-
-    /// Returns true if the type of `self` is equal to the type of `other`
-    fn type_eq<Other: Facet<'a>>() -> bool {
-        Self::SHAPE == Other::SHAPE
-    }
 }

@@ -72,8 +72,8 @@ macro_rules! impl_facet_for_fn_ptr {
                             .type_name(|f, opts| {
                                 write_type_name_list(f, opts, $abi, &[$($args::SHAPE),*], R::SHAPE)
                             })
-                            .debug(|data, f| fmt::Debug::fmt(unsafe { data.get::<Self>() }, f))
-                            .clone_into(|src, dst| unsafe { dst.put(src.get::<Self>().clone()) })
+                            .debug(|data, f| fmt::Debug::fmt(data, f))
+                            .clone_into(|src, dst| unsafe { dst.put(src.clone()) })
                             .marker_traits(
                                 MarkerTraits::EQ
                                     .union(MarkerTraits::SEND)
@@ -81,24 +81,19 @@ macro_rules! impl_facet_for_fn_ptr {
                                     .union(MarkerTraits::COPY)
                                     .union(MarkerTraits::UNPIN)
                             )
-                            .eq(|left, right| {
-                                fn_addr_eq(
-                                    *unsafe { left.get::<Self>() },
-                                    *unsafe { right.get::<Self>() },
-                                )
+                            .eq(|&left, &right| {
+                                fn_addr_eq(left, right)
                             })
                             .partial_ord(|left, right| {
                                 #[allow(unpredictable_function_pointer_comparisons)]
-                                unsafe { left.get::<Self>() }
-                                    .partial_cmp(unsafe { right.get::<Self>() })
+                                left.partial_cmp(right)
                             })
                             .ord(|left, right| {
                                 #[allow(unpredictable_function_pointer_comparisons)]
-                                unsafe { left.get::<Self>() }.cmp(unsafe { right.get::<Self>() })
+                                left.cmp(right)
                             })
                             .hash(|value, hasher_this, hasher_write_fn| {
-                                unsafe { value.get::<Self>() }
-                                    .hash(&mut unsafe {
+                                value.hash(&mut unsafe {
                                         HasherProxy::new(hasher_this, hasher_write_fn)
                                     })
                             })
