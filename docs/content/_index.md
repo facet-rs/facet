@@ -105,7 +105,12 @@ Also:
 ### A better `assert!`
 
 Crates like [pretty-assertions](https://docs.rs/pretty-assertions) make a diff
-of the `Debug` representation of two types. Wouldn't it be
+of the `Debug` representation of two types.
+
+Wouldn't it be better to have access to the whole type information of both sides
+and do a structural difference, knowing the affinity of every scalar, having
+access to display implementations, but not just, something more like
+[difftastic](https://github.com/Wilfred/difftastic). than `diff`?
 
 ### A more flexible `serde`
 
