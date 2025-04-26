@@ -10,8 +10,13 @@ set dotenv-load
 
 default: precommit prepush
 
-precommit: code-quality
-prepush: clippy test
+precommit: gen
+
+gen *args:
+    cargo run -p facet-dev generate -- {{args}}
+
+prepush:
+    cargo run -p facet-dev prepush
 
 ci: precommit prepush docs msrv miri
 
@@ -76,12 +81,6 @@ doc-tests-ci *args:
     echo -e "\033[1;36m📚 Running documentation tests...\033[0m"
     cmd_group "cargo test --doc {{args}}"
 
-gen *args:
-    cargo run -p facet-dev gen -- {{args}}
-
-code-quality: gen
-    just absolve
-
 code-quality-ci:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
@@ -104,15 +103,7 @@ miri-ci *args:
     cmd_group "cargo miri nextest run {{args}}"
 
 absolve:
-    #!/usr/bin/env -S bash -euo pipefail
-    source .envrc
-    if ! cargo tree -e no-dev -i syn 2>/dev/null | grep -q .; then
-    echo -e "\033[38;2;255;255;255;48;2;0;0;0m free of \033[38;2;255;255;255;48;2;255;105;180m syn \033[38;2;255;255;255;48;2;0;0;0m\033[0m"
-    else
-    echo -e "\033[1;31m❌ 'syn' found in dependency tree. Here's what's using 'syn':\033[0m"
-    cargo tree -i syn -e features
-    exit 1
-    fi
+    ./facet-dev/absolve.sh
 
 ship:
     #!/usr/bin/env -S bash -euo pipefail

@@ -11,8 +11,10 @@ keywords = ["code-generation", "templates"]
 categories = ["development-tools"]
 
 [dependencies]
+ctrlc = "3.4.6"
 facet-testhelpers = { version = "0.16.0", path = "../facet-testhelpers" }
 fs-err = "3.1.0"
+indicatif = "0.17.11"
 log = "0.4.27"
 num_cpus = "1.16.0"
 rayon = "1.10.0"
