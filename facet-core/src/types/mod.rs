@@ -146,6 +146,8 @@ pub enum ShapeAttribute {
     /// it should not be treated like a struct, but like something that can be built
     /// from `T` and converted back to `T`
     Transparent,
+    /// Specifies a case conversion rule for all fields or variants
+    RenameAll(&'static str),
     /// Custom field attribute containing arbitrary text
     Arbitrary(&'static str),
 }
@@ -187,6 +189,17 @@ impl Shape {
     /// See [`ShapeAttribute::Default`]
     pub fn has_default_attr(&'static self) -> bool {
         self.attributes.contains(&ShapeAttribute::Default)
+    }
+
+    /// See [`ShapeAttribute::RenameAll`]
+    pub fn get_rename_all_attr(&'static self) -> Option<&'static str> {
+        self.attributes.iter().find_map(|attr| {
+            if let ShapeAttribute::RenameAll(rule) = attr {
+                Some(*rule)
+            } else {
+                None
+            }
+        })
     }
 }
 

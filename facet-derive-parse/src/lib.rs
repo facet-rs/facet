@@ -38,6 +38,8 @@ keyword! {
     pub KDefault = "default";
     /// The "transparent" keyword.
     pub KTransparent = "transparent";
+    /// The "rename_all" keyword.
+    pub KRenameAll = "rename_all";
 }
 
 operator! {
@@ -131,6 +133,8 @@ unsynn! {
         Default(KDefault),
         /// A transparent attribute for containers
         Transparent(KTransparent),
+        /// A rename_all attribute that specifies a case conversion for all fields/variants (#[facet(rename_all = "camelCase")])
+        RenameAll(RenameAllInner),
         /// Any other attribute represented as a sequence of token trees.
         Other(Vec<TokenTree>),
     }
@@ -139,6 +143,16 @@ unsynn! {
     pub struct DefaultEqualsInner {
         /// The "default" keyword.
         pub _kw_default: KDefault,
+        /// The equals sign '='.
+        pub _eq: Eq,
+        /// The value assigned, as a literal string.
+        pub value: LiteralString,
+    }
+
+    /// Inner value for #[facet(rename_all = ...)]
+    pub struct RenameAllInner {
+        /// The "rename_all" keyword.
+        pub _kw_rename_all: KRenameAll,
         /// The equals sign '='.
         pub _eq: Eq,
         /// The value assigned, as a literal string.

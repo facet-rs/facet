@@ -1,6 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
-expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n        enum ApiResponse {\n            #[facet(rename = \"Success\")]\n            Ok {\n                #[facet(rename = \"responseData\")]\n                data: String,\n            },\n            #[facet(rename = \"Error\")]\n            Err {\n                #[facet(rename = \"errorCode\")]\n                code: u32,\n                #[facet(rename = \"errorMessage\")]\n                message: String,\n            },\n        }\n        \"#)"
+expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n        #[facet(rename_all = \"snake_case\")]\n        enum ApiResponse {\n            OkResponse {\n                #[facet(rename = \"responseData\")]\n                data: String,\n            },\n            ErrorResponse {\n                code: u32,\n                message: String,\n            },\n        }\n        \"#)"
 ---
 #[used]
 static API_RESPONSE_SHAPE: &'static ::facet::Shape = <ApiResponse as ::facet::Facet>::SHAPE;
@@ -8,13 +8,13 @@ static API_RESPONSE_SHAPE: &'static ::facet::Shape = <ApiResponse as ::facet::Fa
 unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
-        struct __ShadowApiResponse_Ok<'__facet> {
+        struct __ShadowApiResponse_OkResponse<'__facet> {
             _discriminant: u8,
             _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
             data: String,
         }
         #[repr(C)]
-        struct __ShadowApiResponse_Err<'__facet> {
+        struct __ShadowApiResponse_ErrorResponse<'__facet> {
             _discriminant: u8,
             _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
             code: u32,
@@ -27,10 +27,12 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                         [::facet::Field::builder()
                             .name("responseData")
                             .shape(|| {
-                                ::facet::shape_of(&|s: &__ShadowApiResponse_Ok<'__facet>| &s.data)
+                                ::facet::shape_of(&|s: &__ShadowApiResponse_OkResponse<
+                                    '__facet,
+                                >| &s.data)
                             })
                             .offset(::core::mem::offset_of!(
-                                __ShadowApiResponse_Ok<'__facet>,
+                                __ShadowApiResponse_OkResponse<'__facet>,
                                 data
                             ))
                             .flags(::facet::FieldFlags::EMPTY)
@@ -40,7 +42,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                             .build()]
                     };
                     ::facet::Variant::builder()
-                        .name("Success")
+                        .name("OkResponse")
                         .discriminant(0)
                         .fields(
                             ::facet::StructDef::builder()
@@ -54,41 +56,41 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                     let fields: &'static [::facet::Field] = &const {
                         [
                             ::facet::Field::builder()
-                                .name("errorCode")
+                                .name("code")
                                 .shape(|| {
-                                    ::facet::shape_of(&|s: &__ShadowApiResponse_Err<'__facet>| {
+                                    ::facet::shape_of(&|s: &__ShadowApiResponse_ErrorResponse<
+                                        '__facet,
+                                    >| {
                                         &s.code
                                     })
                                 })
                                 .offset(::core::mem::offset_of!(
-                                    __ShadowApiResponse_Err<'__facet>,
+                                    __ShadowApiResponse_ErrorResponse<'__facet>,
                                     code
                                 ))
                                 .flags(::facet::FieldFlags::EMPTY)
-                                .attributes(
-                                    &const { [::facet::FieldAttribute::Rename("errorCode")] },
-                                )
+                                .attributes(&const { [] })
                                 .build(),
                             ::facet::Field::builder()
-                                .name("errorMessage")
+                                .name("message")
                                 .shape(|| {
-                                    ::facet::shape_of(&|s: &__ShadowApiResponse_Err<'__facet>| {
+                                    ::facet::shape_of(&|s: &__ShadowApiResponse_ErrorResponse<
+                                        '__facet,
+                                    >| {
                                         &s.message
                                     })
                                 })
                                 .offset(::core::mem::offset_of!(
-                                    __ShadowApiResponse_Err<'__facet>,
+                                    __ShadowApiResponse_ErrorResponse<'__facet>,
                                     message
                                 ))
                                 .flags(::facet::FieldFlags::EMPTY)
-                                .attributes(
-                                    &const { [::facet::FieldAttribute::Rename("errorMessage")] },
-                                )
+                                .attributes(&const { [] })
                                 .build(),
                         ]
                     };
                     ::facet::Variant::builder()
-                        .name("Error")
+                        .name("ErrorResponse")
                         .discriminant(1)
                         .fields(
                             ::facet::StructDef::builder()

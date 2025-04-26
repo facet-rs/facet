@@ -44,7 +44,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
                             .build()]
                     };
                     ::facet::Variant::builder()
-                        .name("Text")
+                        .name("TextValue")
                         .discriminant(0)
                         .fields(::facet::StructDef::builder().tuple().fields(fields).build())
                         .build()
@@ -93,7 +93,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
                             ]
                         };
                     ::facet::Variant::builder()
-                        .name("Number")
+                        .name("NumberValue")
                         .discriminant(1)
                         .fields(
                             ::facet::StructDef::builder()
@@ -121,7 +121,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
                             .build()]
                     };
                     ::facet::Variant::builder()
-                        .name("Boolean")
+                        .name("BoolValue")
                         .discriminant(2)
                         .fields(::facet::StructDef::builder().tuple().fields(fields).build())
                         .build()

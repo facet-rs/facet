@@ -768,6 +768,183 @@ fn struct_with_renamed_field() {
 }
 
 #[test]
+fn struct_with_rename_all() {
+    // Test a struct with rename_all attribute using different case conventions
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        #[facet(rename_all = "camelCase")]
+        struct PersonInfo {
+            first_name: String,
+            last_name: String,
+            home_address: String,
+            phone_number: u32,
+        }
+        "#
+    ));
+}
+
+#[test]
+fn enum_with_rename_all() {
+    // Test an enum with rename_all attribute
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        #[repr(u8)]
+        #[facet(rename_all = "snake_case")]
+        enum ApiResponse {
+            OkResponse {
+                #[facet(rename = "responseData")]
+                data: String,
+            },
+            ErrorResponse {
+                code: u32,
+                message: String,
+            },
+        }
+        "#
+    ));
+}
+
+#[test]
+fn struct_with_mixed_rename_attributes() {
+    // Test struct with a mix of rename_all and individual rename attributes
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        #[facet(rename_all = "snake_case")]
+        struct ConfigSettings {
+            server_url: String,
+            #[facet(rename = "apiKey")]
+            api_key: String,
+            timeout_secs: u32,
+            max_retry_count: u8,
+        }
+        "#
+    ));
+}
+
+#[test]
+fn rename_all_lowercase() {
+    // Test lowercase conversion
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        #[facet(rename_all = "lowercase")]
+        struct LowerCaseExample {
+            field_one: String,
+            field_two: String,
+        }
+        "#
+    ));
+}
+
+#[test]
+fn rename_all_uppercase() {
+    // Test UPPERCASE conversion
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        #[facet(rename_all = "UPPERCASE")]
+        struct UpperCaseExample {
+            field_one: String,
+            field_two: String,
+        }
+        "#
+    ));
+}
+
+#[test]
+fn rename_all_pascalcase() {
+    // Test PascalCase conversion
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        #[facet(rename_all = "PascalCase")]
+        struct PascalCaseExample {
+            field_one: String,
+            field_two: String,
+        }
+        "#
+    ));
+}
+
+#[test]
+fn rename_all_camelcase() {
+    // Test camelCase conversion
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        #[facet(rename_all = "camelCase")]
+        struct CamelCaseExample {
+            field_one: String,
+            field_two: String,
+        }
+        "#
+    ));
+}
+
+#[test]
+fn rename_all_snakecase() {
+    // Test snake_case conversion
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        #[facet(rename_all = "snake_case")]
+        struct SnakeCaseExample {
+            fieldOne: String, // Note the camelCase input field name
+            fieldTwo: String,
+        }
+        "#
+    ));
+}
+
+#[test]
+fn rename_all_screaming_snakecase() {
+    // Test SCREAMING_SNAKE_CASE conversion
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        #[facet(rename_all = "SCREAMING_SNAKE_CASE")]
+        struct ScreamingSnakeCaseExample {
+            field_one: String,
+            field_two: String,
+        }
+        "#
+    ));
+}
+
+#[test]
+fn rename_all_kebabcase() {
+    // Test kebab-case conversion
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        #[facet(rename_all = "kebab-case")]
+        struct KebabCaseExample {
+            field_one: String,
+            field_two: String,
+        }
+        "#
+    ));
+}
+
+#[test]
+fn rename_all_screaming_kebabcase() {
+    // Test SCREAMING-KEBAB-CASE conversion
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        #[facet(rename_all = "SCREAMING-KEBAB-CASE")]
+        struct ScreamingKebabCaseExample {
+            field_one: String,
+            field_two: String,
+        }
+        "#
+    ));
+}
+
+#[test]
 fn tuple_struct_with_renamed_field() {
     // Test a tuple struct with positional fields that use rename attributes to give descriptive names
     insta::assert_snapshot!(expand(

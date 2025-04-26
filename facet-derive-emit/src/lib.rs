@@ -1,6 +1,10 @@
 use facet_derive_parse::*;
 use std::borrow::Cow;
 
+thread_local! {
+    static CURRENT_RENAME_RULE: std::cell::RefCell<Option<RenameRule>> = const { std::cell::RefCell::new(None) };
+}
+
 mod generics;
 pub use generics::*;
 
@@ -28,6 +32,231 @@ pub fn facet_derive(input: TokenStream) -> TokenStream {
             );
         }
     }
+}
+
+/// Represents different case conversion strategies for renaming
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum RenameRule {
+    /// Rename to lowercase: `FooBar` -> `foobar`
+    Lowercase,
+    /// Rename to UPPERCASE: `FooBar` -> `FOOBAR`
+    Uppercase,
+    /// Rename to PascalCase: `foo_bar` -> `FooBar`
+    PascalCase,
+    /// Rename to camelCase: `foo_bar` -> `fooBar`
+    CamelCase,
+    /// Rename to snake_case: `FooBar` -> `foo_bar`
+    SnakeCase,
+    /// Rename to SCREAMING_SNAKE_CASE: `FooBar` -> `FOO_BAR`
+    ScreamingSnakeCase,
+    /// Rename to kebab-case: `FooBar` -> `foo-bar`
+    KebabCase,
+    /// Rename to SCREAMING-KEBAB-CASE: `FooBar` -> `FOO-BAR`
+    ScreamingKebabCase,
+}
+
+impl RenameRule {
+    /// Parse a string into a `RenameRule`
+    pub(crate) fn from_str(rule: &str) -> Option<Self> {
+        match rule {
+            "lowercase" => Some(RenameRule::Lowercase),
+            "UPPERCASE" => Some(RenameRule::Uppercase),
+            "PascalCase" => Some(RenameRule::PascalCase),
+            "camelCase" => Some(RenameRule::CamelCase),
+            "snake_case" => Some(RenameRule::SnakeCase),
+            "SCREAMING_SNAKE_CASE" => Some(RenameRule::ScreamingSnakeCase),
+            "kebab-case" => Some(RenameRule::KebabCase),
+            "SCREAMING-KEBAB-CASE" => Some(RenameRule::ScreamingKebabCase),
+            _ => None,
+        }
+    }
+
+    /// Apply this renaming rule to a string
+    pub(crate) fn apply(self, input: &str) -> String {
+        match self {
+            RenameRule::Lowercase => to_lowercase(input),
+            RenameRule::Uppercase => to_uppercase(input),
+            RenameRule::PascalCase => to_pascal_case(input),
+            RenameRule::CamelCase => to_camel_case(input),
+            RenameRule::SnakeCase => to_snake_case(input),
+            RenameRule::ScreamingSnakeCase => to_screaming_snake_case(input),
+            RenameRule::KebabCase => to_kebab_case(input),
+            RenameRule::ScreamingKebabCase => to_screaming_kebab_case(input),
+        }
+    }
+}
+
+/// Converts a string to lowercase
+pub(crate) fn to_lowercase(input: &str) -> String {
+    input.to_lowercase()
+}
+
+/// Converts a string to UPPERCASE
+pub(crate) fn to_uppercase(input: &str) -> String {
+    input.to_uppercase()
+}
+
+/// Splits a string into words based on case and separators
+fn split_into_words(input: &str) -> Vec<String> {
+    if input.is_empty() {
+        return vec![];
+    }
+
+    let mut words = Vec::new();
+    let mut current_word = String::new();
+    let mut prev_is_lowercase = false;
+    let mut prev_is_uppercase = false;
+    // Removed prev_is_separator as it was unused
+
+    for c in input.chars() {
+        if c == '_' || c == '-' || c.is_whitespace() {
+            if !current_word.is_empty() {
+                words.push(std::mem::take(&mut current_word));
+            }
+            // Reset state for the next word
+            prev_is_lowercase = false;
+            prev_is_uppercase = false;
+        } else if c.is_uppercase() {
+            // Start a new word if:
+            // 1. The previous character was lowercase (e.g., 'aB')
+            // 2. The previous character was uppercase AND the character *after* the current one is lowercase
+            //    (to handle acronyms like 'HTTPRequest' -> 'HTTP', 'Request')
+            // And also ensure we don't push an empty word if the input starts with uppercase letters.
+            let next_char_is_lowercase = input
+                .chars()
+                .skip_while(|&x| x != c)
+                .nth(1)
+                .is_some_and(|next| next.is_lowercase());
+
+            if !current_word.is_empty()
+                && (prev_is_lowercase || (prev_is_uppercase && next_char_is_lowercase))
+            {
+                words.push(std::mem::take(&mut current_word));
+            }
+
+            current_word.push(c);
+            prev_is_uppercase = true;
+            prev_is_lowercase = false;
+        } else {
+            // The current character is lowercase or digit
+            // If the previous char was uppercase, we might need to start a new word
+            // Example: 'CamelCase' -> 'Camel', 'Case'
+            // But not for the first character of the string if it's lowercase
+            if prev_is_uppercase && !current_word.chars().all(|ch| ch.is_uppercase()) {
+                // This condition handles cases like 'HTTPRequest' where the last uppercase
+                // belongs to the previous word 'HTTP'. If the `current_word` contains
+                // lowercase it means we already split, e.g., 'CamelCase' -> 'Camel', 'c'.
+                // Instead, we handle the split *before* adding the lowercase char.
+                // Let's adjust the logic slightly. We split when transitioning from U->L
+                // *except* when the word is currently just a sequence of uppercase (like 'HTTP' in 'HTTPRequest').
+                // This seems overly complex. Let's stick to the original logic but refine the condition.
+                // The split should happen *before* pushing the lowercase character `c`.
+
+                // Correct logic: If transitioning from Uppercase to Lowercase,
+                // split off the last uppercase character into the new word,
+                // unless it's a sequence like 'HTTPReq'.
+                // Let's rethink the original condition: `prev_is_uppercase` meant the *last* char was uppercase.
+                // If `c` is lowercase, and `prev_is_uppercase` is true,
+                // we need to check if `current_word` has more than one char.
+                // If 'APIResponse', when we see 'R', current='API', prev_is_upper=true. We push 'R'. current='APIR'.
+                // When we see 'e', current='APIR', prev_is_upper=true. We push 'e'. current='APIRe'. This is wrong.
+
+                // Let's revert to a simpler split logic inspired by `heck` crate:
+                // Split happens before an uppercase letter if the previous was lowercase.
+                // Split happens before an uppercase letter if the *next* letter is lowercase (e.g. ApinRequest -> Api, Request)
+
+                // The existing logic for uppercase `c` handles the `aB` and `ABCd` cases.
+                // Now handle the lowercase `c`. If the previous was uppercase, it's usually
+                // part of the same word unless we detected an acronym boundary already.
+                // The original code didn't explicitly split on U -> L transition, relying on the L -> U split.
+                // Let's stick to that for now.
+            }
+            // If previous was uppercase, and current is lowercase, the word boundary was already handled
+            // when the uppercase char was processed (e.g. in 'PascalCase', the split happens *before* 'C').
+            current_word.push(c);
+            prev_is_lowercase = true;
+            prev_is_uppercase = false;
+        }
+    }
+
+    if !current_word.is_empty() {
+        words.push(current_word);
+    }
+
+    // Filter out empty strings that might result from multiple separators
+    words.into_iter().filter(|s| !s.is_empty()).collect()
+}
+
+/// Converts a string to PascalCase: `foo_bar` -> `FooBar`
+pub(crate) fn to_pascal_case(input: &str) -> String {
+    split_into_words(input)
+        .iter()
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(c) => {
+                    c.to_uppercase().collect::<String>() + &chars.collect::<String>().to_lowercase()
+                }
+            }
+        })
+        .collect()
+}
+
+/// Converts a string to camelCase: `foo_bar` -> `fooBar`
+pub(crate) fn to_camel_case(input: &str) -> String {
+    let pascal = to_pascal_case(input);
+    if pascal.is_empty() {
+        return String::new();
+    }
+
+    let mut result = String::new();
+    let mut chars = pascal.chars();
+    if let Some(first_char) = chars.next() {
+        result.push(first_char.to_lowercase().next().unwrap());
+    }
+    result.extend(chars);
+    result
+}
+
+/// Converts a string to snake_case: `FooBar` -> `foo_bar`
+pub(crate) fn to_snake_case(input: &str) -> String {
+    let words = split_into_words(input);
+    words
+        .iter()
+        .map(|word| word.to_lowercase())
+        .collect::<Vec<_>>()
+        .join("_")
+}
+
+/// Converts a string to SCREAMING_SNAKE_CASE: `FooBar` -> `FOO_BAR`
+pub(crate) fn to_screaming_snake_case(input: &str) -> String {
+    let words = split_into_words(input);
+    words
+        .iter()
+        .map(|word| word.to_uppercase())
+        .collect::<Vec<_>>()
+        .join("_")
+}
+
+/// Converts a string to kebab-case: `FooBar` -> `foo-bar`
+pub(crate) fn to_kebab_case(input: &str) -> String {
+    let words = split_into_words(input);
+    words
+        .iter()
+        .map(|word| word.to_lowercase())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+/// Converts a string to SCREAMING-KEBAB-CASE: `FooBar` -> `FOO-BAR`
+pub(crate) fn to_screaming_kebab_case(input: &str) -> String {
+    let words = split_into_words(input);
+    words
+        .iter()
+        .map(|word| word.to_uppercase())
+        .collect::<Vec<_>>()
+        .join("-")
 }
 
 /// Converts PascalCase to UPPER_SNAKE_CASE
@@ -93,6 +322,7 @@ pub(crate) fn gen_struct_field<'a>(
     let mut shape_of = "shape_of";
     // Start with the normalized name, potentially overridden by `rename`
     let mut name_for_metadata: Cow<'a, str> = Cow::Borrowed(normalized_field_name);
+    let mut has_explicit_rename = false;
     for attr in attrs {
         match &attr.body.content {
             AttributeInner::Facet(facet_attr) => match &facet_attr.inner.content {
@@ -127,6 +357,9 @@ pub(crate) fn gen_struct_field<'a>(
                 FacetInner::DenyUnknownFields(_) => {
                     // not applicable on fields
                 }
+                FacetInner::RenameAll(_) => {
+                    // not applicable on fields
+                }
                 FacetInner::Other(tt) => {
                     let attr_str = tt.tokens_to_string();
 
@@ -137,6 +370,7 @@ pub(crate) fn gen_struct_field<'a>(
                         if let Some(equal_pos) = attr.find('=') {
                             let key = attr[..equal_pos].trim();
                             if key == "rename" {
+                                has_explicit_rename = true;
                                 let value = attr[equal_pos + 1..].trim().trim_matches('"');
                                 // Use the renamed value for metadata name
                                 name_for_metadata = Cow::Owned(value.to_string());
@@ -178,6 +412,22 @@ pub(crate) fn gen_struct_field<'a>(
             }
         }
     }
+
+    // Apply rename_all rule if there's no explicit rename attribute
+    if !has_explicit_rename {
+        CURRENT_RENAME_RULE.with(|cell| {
+            if let Some(rule) = *cell.borrow() {
+                // Only apply to named fields (not tuple indices)
+                if !normalized_field_name.chars().all(|c| c.is_ascii_digit()) {
+                    let renamed = rule.apply(normalized_field_name);
+                    attribute_list
+                        .push(format!(r#"::facet::FieldAttribute::Rename({:?})"#, renamed));
+                    name_for_metadata = Cow::Owned(renamed);
+                }
+            }
+        });
+    }
+
     let attributes = attribute_list.join(",");
 
     let maybe_field_doc = if doc_lines.is_empty() {
@@ -270,10 +520,11 @@ fn build_type_params(generics: Option<&GenericParams>) -> String {
 
 fn build_container_attributes(attributes: &[Attribute]) -> String {
     let mut items: Vec<Cow<str>> = vec![];
+    let mut rename_all_rule: Option<RenameRule> = None;
 
     for attr in attributes {
         match &attr.body.content {
-            AttributeInner::Facet(facet_attr) => match facet_attr.inner.content {
+            AttributeInner::Facet(facet_attr) => match &facet_attr.inner.content {
                 FacetInner::DenyUnknownFields(_) => {
                     items.push("::facet::ShapeAttribute::DenyUnknownFields".into());
                 }
@@ -282,6 +533,15 @@ fn build_container_attributes(attributes: &[Attribute]) -> String {
                 }
                 FacetInner::Transparent(_) => {
                     items.push("::facet::ShapeAttribute::Transparent".into());
+                }
+                FacetInner::RenameAll(rename_all_inner) => {
+                    let rule_str = rename_all_inner.value.value().trim_matches('"');
+                    if let Some(rule) = RenameRule::from_str(rule_str) {
+                        rename_all_rule = Some(rule);
+                        items.push(
+                            format!(r#"::facet::ShapeAttribute::RenameAll({:?})"#, rule_str).into(),
+                        );
+                    }
                 }
                 FacetInner::Sensitive(_) => {
                     // TODO
@@ -292,20 +552,50 @@ fn build_container_attributes(attributes: &[Attribute]) -> String {
                 FacetInner::Opaque(_) => {
                     // TODO
                 }
-                FacetInner::Other(ref other) => {
-                    items.push(
-                        format!(
-                            r#"::facet::ShapeAttribute::Arbitrary({:?})"#,
-                            other.tokens_to_string()
-                        )
-                        .into(),
-                    );
+                FacetInner::Other(other) => {
+                    let attr_str = other.tokens_to_string();
+                    if let Some(equal_pos) = attr_str.find('=') {
+                        let key = attr_str[..equal_pos].trim();
+                        if key == "rename_all" {
+                            let value = attr_str[equal_pos + 1..].trim().trim_matches('"');
+                            if let Some(rule) = RenameRule::from_str(value) {
+                                rename_all_rule = Some(rule);
+                                items.push(
+                                    format!(r#"::facet::ShapeAttribute::RenameAll({:?})"#, value)
+                                        .into(),
+                                );
+                            }
+                        } else {
+                            items.push(
+                                format!(
+                                    r#"::facet::ShapeAttribute::Arbitrary({:?})"#,
+                                    other.tokens_to_string()
+                                )
+                                .into(),
+                            );
+                        }
+                    } else {
+                        items.push(
+                            format!(
+                                r#"::facet::ShapeAttribute::Arbitrary({:?})"#,
+                                other.tokens_to_string()
+                            )
+                            .into(),
+                        );
+                    }
                 }
             },
             _ => {
                 // do nothing.
             }
         }
+    }
+
+    // Store the rename_all rule in a thread-local variable so it can be accessed by gen_struct_field
+    if let Some(rule) = rename_all_rule {
+        CURRENT_RENAME_RULE.with(|cell| {
+            *cell.borrow_mut() = Some(rule);
+        });
     }
 
     if items.is_empty() {

@@ -1,6 +1,33 @@
 use super::normalize_ident_str;
 use super::*;
 
+/// Process a variant name, applying rename attribute or rename_all rule
+fn process_variant_name(variant_name: &str, attributes: &[Attribute]) -> String {
+    for attr in attributes {
+        if let AttributeInner::Facet(facet_attr) = &attr.body.content {
+            if let FacetInner::Other(tt) = &facet_attr.inner.content {
+                let attr_str = tt.tokens_to_string();
+                if let Some(equal_pos) = attr_str.find('=') {
+                    let key = attr_str[..equal_pos].trim();
+                    if key == "rename" {
+                        let value = attr_str[equal_pos + 1..].trim().trim_matches('"');
+                        return value.to_string();
+                    }
+                }
+            }
+        }
+    }
+
+    let mut final_name = variant_name.to_string();
+    CURRENT_RENAME_RULE.with(|cell| {
+        if let Some(rule) = *cell.borrow() {
+            final_name = rule.apply(variant_name);
+        }
+    });
+
+    final_name
+}
+
 // mirrors facet_core::types::EnumRepr
 #[derive(Clone, Copy)]
 enum Discriminant {
@@ -298,6 +325,7 @@ fn process_c_style_enum(
         match &var_like.value.variant {
             EnumVariantData::Unit(unit) => {
                 let variant_name = unit.name.to_string();
+                let display_name = process_variant_name(&variant_name, &unit.attributes);
                 let maybe_doc = build_maybe_doc(&unit.attributes);
 
                 // Generate shadow struct for this tuple variant to calculate offsets
@@ -313,7 +341,7 @@ fn process_c_style_enum(
                 // variant offset is offset of the `_fields` union
                 variant_expressions.push(format!(
                     "::facet::Variant::builder()
-                    .name({variant_name:?})
+                    .name({display_name:?})
                     .discriminant({discriminant_value})
                     .fields(::facet::StructDef::builder().unit().build())
                     {maybe_doc}
@@ -322,6 +350,7 @@ fn process_c_style_enum(
             }
             EnumVariantData::Tuple(tuple) => {
                 let variant_name = tuple.name.to_string();
+                let display_name = process_variant_name(&variant_name, &tuple.attributes);
                 let maybe_doc = build_maybe_doc(&tuple.attributes);
 
                 // Generate shadow struct for this tuple variant to calculate offsets
@@ -383,7 +412,7 @@ fn process_c_style_enum(
                         ]}};
 
                         ::facet::Variant::builder()
-                            .name({variant_name:?})
+                            .name({display_name:?})
                             .discriminant({discriminant_value})
                             .fields(::facet::StructDef::builder().tuple().fields(fields).build())
                             {maybe_doc}
@@ -393,6 +422,7 @@ fn process_c_style_enum(
             }
             EnumVariantData::Struct(struct_var) => {
                 let variant_name = struct_var.name.to_string();
+                let display_name = process_variant_name(&variant_name, &struct_var.attributes);
                 let maybe_doc = build_maybe_doc(&struct_var.attributes);
 
                 // Generate shadow struct for this struct variant to calculate offsets
@@ -456,7 +486,7 @@ fn process_c_style_enum(
                         ]}};
 
                         ::facet::Variant::builder()
-                            .name({variant_name:?})
+                            .name({display_name:?})
                             .discriminant({discriminant_value})
                             .fields(::facet::StructDef::builder().struct_().fields(fields).build())
                             {maybe_doc}
@@ -511,11 +541,12 @@ fn process_primitive_enum(
         match &var_like.value.variant {
             EnumVariantData::Unit(unit) => {
                 let variant_name = unit.name.to_string();
+                let display_name = process_variant_name(&variant_name, &unit.attributes);
                 let maybe_doc = build_maybe_doc(&unit.attributes);
 
                 variant_expressions.push(format!(
                     "::facet::Variant::builder()
-                    .name({variant_name:?})
+                    .name({display_name:?})
                     .discriminant({discriminant_value})
                     .fields(::facet::StructDef::builder().unit().build())
                     {maybe_doc}
@@ -524,6 +555,7 @@ fn process_primitive_enum(
             }
             EnumVariantData::Tuple(tuple) => {
                 let variant_name = tuple.name.to_string();
+                let display_name = process_variant_name(&variant_name, &tuple.attributes);
                 let maybe_doc = build_maybe_doc(&tuple.attributes);
 
                 // Generate shadow struct for this tuple variant to calculate offsets
@@ -585,7 +617,7 @@ fn process_primitive_enum(
                         ]}};
 
                         ::facet::Variant::builder()
-                            .name({variant_name:?})
+                            .name({display_name:?})
                             .discriminant({discriminant_value})
                             .fields(::facet::StructDef::builder().tuple().fields(fields).build())
                             {maybe_doc}
@@ -595,6 +627,7 @@ fn process_primitive_enum(
             }
             EnumVariantData::Struct(struct_var) => {
                 let variant_name = struct_var.name.to_string();
+                let display_name = process_variant_name(&variant_name, &struct_var.attributes);
                 let maybe_doc = build_maybe_doc(&struct_var.attributes);
 
                 // Generate shadow struct for this struct variant to calculate offsets
@@ -659,7 +692,7 @@ fn process_primitive_enum(
                         ]}};
 
                         ::facet::Variant::builder()
-                            .name({variant_name:?})
+                            .name({display_name:?})
                             .discriminant({discriminant_value})
                             .fields(::facet::StructDef::builder().struct_().fields(fields).build())
                             {maybe_doc}
