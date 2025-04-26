@@ -63,6 +63,30 @@ where
                 s = &s[1..];
                 wip = parse_field(field, value).unwrap();
             }
+        } else if let Some(key) = token.strip_prefix("-") {
+            log::trace!("Found short named argument: {}", key);
+            let Def::Struct(sd) = wip.shape().def else {
+                panic!("Expected struct definition");
+            };
+            for (field_index, f) in sd.fields.iter().enumerate() {
+                if f.attributes
+                    .iter()
+                    .any(|a| matches!(a, FieldAttribute::Arbitrary(a) if a.contains("short") && a.contains(key))
+                   )
+                {
+                    log::trace!("Found field matching short_code: {} for field {}", key, f.name);
+                    let field = wip.field(field_index).unwrap();
+                    if field.shape().is_type::<bool>() {
+                        wip = parse_field(field, "true").unwrap();
+                    } else {
+                        let value = s.first().expect("expected value after argument");
+                        log::trace!("Field value: {}", value);
+                        s = &s[1..];
+                        wip = parse_field(field, value).unwrap();
+                    }
+                    break;
+                }
+            }
         } else {
             log::trace!("Encountered positional argument: {}", token);
             let Def::Struct(sd) = wip.shape().def else {

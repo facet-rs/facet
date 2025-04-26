@@ -1,5 +1,4 @@
 use facet::Facet;
-use facet_pretty::FacetPretty;
 
 #[test]
 fn test_arg_parse() {
@@ -17,6 +16,8 @@ fn test_arg_parse() {
         concurrency: usize,
     }
 
-    let args: Args = facet_args::from_slice(&["--verbose", "--concurrency", "14", "example.rs"]);
-    eprintln!("args: {}", args.pretty());
+    let args: Args = facet_args::from_slice(&["--verbose", "-j", "14", "example.rs"]);
+    assert!(args.verbose);
+    assert_eq!(args.path, "example.rs");
+    assert_eq!(args.concurrency, 14);
 }
