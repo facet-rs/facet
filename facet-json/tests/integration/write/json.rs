@@ -1,9 +1,10 @@
 #![cfg(feature = "std")]
 
+use eyre::Result;
 use facet::Facet;
 
 #[test]
-fn test_to_json() {
+fn test_to_json() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, PartialEq, Clone, Facet)]
@@ -27,7 +28,9 @@ fn test_to_json() {
 
     // Test with indentation (using to_writer directly with a custom writer)
     let mut buffer = Vec::new();
-    facet_json::to_writer(&test_struct, &mut buffer).unwrap();
-    let json = String::from_utf8(buffer).unwrap();
+    facet_json::to_writer(&test_struct, &mut buffer)?;
+    let json = String::from_utf8(buffer)?;
     assert_eq!(json, expected_json);
+
+    Ok(())
 }

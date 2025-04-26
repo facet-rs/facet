@@ -1,8 +1,9 @@
+use eyre::Result;
 use facet::Facet;
 use facet_json::from_str;
 
 #[test]
-fn test_struct_with_missing_field() -> eyre::Result<()> {
+fn test_struct_with_missing_field() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Facet, Debug)]
@@ -21,7 +22,7 @@ fn test_struct_with_missing_field() -> eyre::Result<()> {
 }
 
 #[test]
-fn test_deny_unknown_fields() -> eyre::Result<()> {
+fn test_deny_unknown_fields() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Facet, Debug)]
@@ -46,7 +47,7 @@ fn test_deny_unknown_fields() -> eyre::Result<()> {
 }
 
 #[test]
-fn json_read_struct_level_default_unset_field() -> eyre::Result<()> {
+fn json_read_struct_level_default_unset_field() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Facet, Default, Debug)]
@@ -70,7 +71,7 @@ fn json_read_struct_level_default_unset_field() -> eyre::Result<()> {
 }
 
 #[test]
-fn json_read_field_level_default_no_function() -> eyre::Result<()> {
+fn json_read_field_level_default_no_function() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Facet, Debug, PartialEq)]
@@ -94,7 +95,7 @@ fn json_read_field_level_default_no_function() -> eyre::Result<()> {
 }
 
 #[test]
-fn json_read_field_level_default_function() -> eyre::Result<()> {
+fn json_read_field_level_default_function() -> Result<()> {
     facet_testhelpers::setup();
 
     fn default_number() -> i32 {
@@ -118,7 +119,7 @@ fn json_read_field_level_default_function() -> eyre::Result<()> {
 }
 
 #[test]
-fn test_allow_unknown_fields_1() -> eyre::Result<()> {
+fn test_allow_unknown_fields_1() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Facet, Debug)]
@@ -138,7 +139,7 @@ fn test_allow_unknown_fields_1() -> eyre::Result<()> {
 }
 
 #[test]
-fn test_allow_unknown_fields_complex() -> eyre::Result<()> {
+fn test_allow_unknown_fields_complex() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Facet, Debug)]

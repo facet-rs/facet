@@ -1,8 +1,9 @@
+use eyre::Result;
 use facet::Facet;
 use facet_json::from_str;
 
 #[test]
-fn json_read_unit_enum_variant() {
+fn json_read_unit_enum_variant() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Facet, Debug, PartialEq)]
@@ -15,21 +16,17 @@ fn json_read_unit_enum_variant() {
     let json_italic = r#""Italic""#;
     let json_oblique = r#""Oblique""#;
 
-    let s_italic: FontStyle = match from_str(json_italic) {
-        Ok(s) => s,
-        Err(e) => panic!("Error deserializing JSON: {}", e),
-    };
+    let s_italic: FontStyle = from_str(json_italic)?;
     assert_eq!(s_italic, FontStyle::Italic);
 
-    let s_oblique: FontStyle = match from_str(json_oblique) {
-        Ok(s) => s,
-        Err(e) => panic!("Error deserializing JSON: {}", e),
-    };
+    let s_oblique: FontStyle = from_str(json_oblique)?;
     assert_eq!(s_oblique, FontStyle::Oblique);
+
+    Ok(())
 }
 
 #[test]
-fn json_read_tuple_variant() {
+fn json_read_tuple_variant() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Facet, Debug, PartialEq)]
@@ -42,17 +39,13 @@ fn json_read_tuple_variant() {
     let json_x = r#"{ "X": 123 }"#;
     let json_y = r#"{ "Y": "hello" }"#;
 
-    let p_x: Point = match from_str(json_x) {
-        Ok(s) => s,
-        Err(e) => panic!("Error deserializing JSON: {}", e),
-    };
+    let p_x: Point = from_str(json_x)?;
     assert_eq!(p_x, Point::X(123));
 
-    let p_y: Point = match from_str(json_y) {
-        Ok(s) => s,
-        Err(e) => panic!("Error deserializing JSON: {}", e),
-    };
+    let p_y: Point = from_str(json_y)?;
     assert_eq!(p_y, Point::Y("hello".to_string()));
+
+    Ok(())
 }
 
 #[test]

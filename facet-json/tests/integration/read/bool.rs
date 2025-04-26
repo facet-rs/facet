@@ -1,8 +1,9 @@
+use eyre::Result;
 use facet::Facet;
 use facet_json::from_str;
 
 #[test]
-fn json_read_bool() {
+fn json_read_bool() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Facet, Debug, PartialEq)]
@@ -13,11 +14,7 @@ fn json_read_bool() {
 
     let json = r#"{"yes": true, "no": false}"#;
 
-    let s: BoolStruct = match from_str(json) {
-        Ok(s) => s,
-        Err(e) => panic!("Error deserializing JSON: {}", e),
-    };
-
+    let s: BoolStruct = from_str(json)?;
     assert_eq!(
         s,
         BoolStruct {
@@ -25,4 +22,6 @@ fn json_read_bool() {
             no: false
         }
     );
+
+    Ok(())
 }

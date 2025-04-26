@@ -1,8 +1,9 @@
+use eyre::Result;
 use facet::Facet;
 use facet_json::from_str;
 
 #[test]
-fn json_read_more_types() {
+fn json_read_more_types() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Facet)]
@@ -32,10 +33,7 @@ fn json_read_more_types() {
         "f64_val": 3.141592653589793
     }"#;
 
-    let test_struct: TestStructWithMoreTypes = match from_str(json) {
-        Ok(s) => s,
-        Err(e) => panic!("Error deserializing JSON: {}", e),
-    };
+    let test_struct: TestStructWithMoreTypes = from_str(json)?;
 
     assert_eq!(test_struct.u8_val, 255);
     assert_eq!(test_struct.u16_val, 65535);
@@ -47,4 +45,6 @@ fn json_read_more_types() {
     assert_eq!(test_struct.i64_val, -9223372036854775808);
     assert!((test_struct.f32_val - std::f32::consts::PI).abs() < f32::EPSILON);
     assert!((test_struct.f64_val - std::f64::consts::PI).abs() < f64::EPSILON);
+
+    Ok(())
 }

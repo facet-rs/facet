@@ -1,10 +1,11 @@
+use eyre::Result;
 use facet::Facet;
 use facet_json::from_str;
 use insta::assert_snapshot;
 
 /// Basic deserialization with renamed fields
 #[test]
-fn test_field_rename_deserialization() {
+fn test_field_rename_deserialization() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Facet, Debug, PartialEq)]
@@ -18,13 +19,12 @@ fn test_field_rename_deserialization() {
 
     let json = r#"{"bonjour":"monde","au_revoir":"world"}"#;
 
-    let result: Greetings = match from_str(json) {
-        Ok(s) => s,
-        Err(e) => panic!("Error deserializing JSON: {}", e),
-    };
+    let result: Greetings = from_str(json)?;
 
     assert_eq!(result.hello, "monde");
     assert_eq!(result.goodbye, "world");
+
+    Ok(())
 }
 
 /// Round-trip serialization then deserialization with a renamed field
@@ -52,7 +52,7 @@ fn test_field_rename_roundtrip() {
 
 /// Deserialization with common naming conventions (kebab-case, snake_case, camelCase)
 #[test]
-fn test_field_rename_common_case_styles() {
+fn test_field_rename_common_case_styles() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Facet, Debug, PartialEq)]
@@ -69,14 +69,12 @@ fn test_field_rename_common_case_styles() {
 
     let json = r#"{"kebab-case":"dash","snake_case":"underscore","camelCase":"hump"}"#;
 
-    let result: SpecialNames = match from_str(json) {
-        Ok(s) => s,
-        Err(e) => panic!("Error deserializing JSON: {}", e),
-    };
-
+    let result: SpecialNames = from_str(json)?;
     assert_eq!(result.kebab_case, "dash");
     assert_eq!(result.original_snake, "underscore");
     assert_eq!(result.camel_case, "hump");
+
+    Ok(())
 }
 
 /// Serialization and deserialization with special symbol characters in field name
@@ -470,7 +468,7 @@ fn test_field_rename_missing_required_error() {
 
 /// Rename to verify it's not an accidental alias
 #[test]
-fn test_field_rename_not_alias() {
+fn test_field_rename_not_alias() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Facet, Debug, PartialEq)]
@@ -484,11 +482,10 @@ fn test_field_rename_not_alias() {
 
     let json = r#"{"b":"focus group 1","c":"focus group 2"}"#;
 
-    let result: ABTesting = match from_str(json) {
-        Ok(s) => s,
-        Err(e) => panic!("Error deserializing JSON: {}", e),
-    };
+    let result: ABTesting = from_str(json)?;
 
     assert_eq!(result.a, "focus group 1");
     assert_eq!(result.b, "focus group 2");
+
+    Ok(())
 }
