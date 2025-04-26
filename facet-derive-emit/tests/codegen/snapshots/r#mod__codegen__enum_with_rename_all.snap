@@ -42,7 +42,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                             .build()]
                     };
                     ::facet::Variant::builder()
-                        .name("OkResponse")
+                        .name("ok_response")
                         .discriminant(0)
                         .fields(
                             ::facet::StructDef::builder()
@@ -69,7 +69,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                                     code
                                 ))
                                 .flags(::facet::FieldFlags::EMPTY)
-                                .attributes(&const { [] })
+                                .attributes(&const { [::facet::FieldAttribute::Rename("code")] })
                                 .build(),
                             ::facet::Field::builder()
                                 .name("message")
@@ -85,12 +85,12 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                                     message
                                 ))
                                 .flags(::facet::FieldFlags::EMPTY)
-                                .attributes(&const { [] })
+                                .attributes(&const { [::facet::FieldAttribute::Rename("message")] })
                                 .build(),
                         ]
                     };
                     ::facet::Variant::builder()
-                        .name("ErrorResponse")
+                        .name("error_response")
                         .discriminant(1)
                         .fields(
                             ::facet::StructDef::builder()
@@ -119,6 +119,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                     .repr(::facet::EnumRepr::U8)
                     .build(),
             ))
+            .attributes(&[::facet::ShapeAttribute::RenameAll("snake_case")])
             .build()
     };
 }

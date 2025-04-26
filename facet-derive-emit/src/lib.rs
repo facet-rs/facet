@@ -1,10 +1,6 @@
 use facet_derive_parse::*;
 use std::borrow::Cow;
 
-thread_local! {
-    static CURRENT_RENAME_RULE: std::cell::RefCell<Option<RenameRule>> = const { std::cell::RefCell::new(None) };
-}
-
 mod generics;
 pub use generics::*;
 
@@ -34,8 +30,13 @@ pub fn facet_derive(input: TokenStream) -> TokenStream {
     }
 }
 
+pub(crate) struct ContainerAttributes {
+    pub code: String,
+    pub rename_rule: RenameRule,
+}
+
 /// Represents different case conversion strategies for renaming
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RenameRule {
     /// Rename to lowercase: `FooBar` -> `foobar`
     Lowercase,
@@ -53,6 +54,8 @@ pub(crate) enum RenameRule {
     KebabCase,
     /// Rename to SCREAMING-KEBAB-CASE: `FooBar` -> `FOO-BAR`
     ScreamingKebabCase,
+    /// No renaming applied.
+    Passthrough,
 }
 
 impl RenameRule {
@@ -82,6 +85,7 @@ impl RenameRule {
             RenameRule::ScreamingSnakeCase => to_screaming_snake_case(input),
             RenameRule::KebabCase => to_kebab_case(input),
             RenameRule::ScreamingKebabCase => to_screaming_kebab_case(input),
+            RenameRule::Passthrough => input.to_string(),
         }
     }
 }
@@ -302,28 +306,47 @@ pub(crate) fn build_maybe_doc(attrs: &[Attribute]) -> String {
     }
 }
 
+struct FieldInfo<'a> {
+    /// something like `r#type`
+    raw_field_name: &'a str,
+
+    /// something like `type`
+    normalized_field_name: &'a str,
+
+    /// something like `String`
+    field_type: &'a str,
+
+    /// something like `Person`
+    struct_name: &'a str,
+
+    /// the bounded generic params for the container/struct
+    bgp: &'a BoundedGenericParams,
+
+    /// the attributes for that field
+    attrs: &'a [Attribute],
+
+    /// the base field offset — for structs it's always zero, for
+    /// enums it depends on the variant/discriminant
+    base_field_offset: Option<&'a str>,
+
+    /// the rename rule to use for the container
+    rename_rule: RenameRule,
+}
+
 /// Generates field definitions for a struct
 ///
 /// `base_field_offset` applies a shift to the field offset, which is useful for
 /// generating fields for a struct that is part of a #[repr(C)] enum.
-pub(crate) fn gen_struct_field<'a>(
-    raw_field_name: &str,
-    normalized_field_name: &'a str,
-    field_type: &str,
-    struct_name: &str,
-    bgp: &BoundedGenericParams,
-    attrs: &[Attribute],
-    base_field_offset: Option<&str>,
-) -> String {
+pub(crate) fn gen_struct_field<'a>(fi: FieldInfo<'a>) -> String {
     // Determine field flags
     let mut flags = "::facet::FieldFlags::EMPTY";
     let mut attribute_list: Vec<String> = vec![];
     let mut doc_lines: Vec<&str> = vec![];
     let mut shape_of = "shape_of";
     // Start with the normalized name, potentially overridden by `rename`
-    let mut name_for_metadata: Cow<'a, str> = Cow::Borrowed(normalized_field_name);
+    let mut name_for_metadata: Cow<'a, str> = Cow::Borrowed(fi.normalized_field_name);
     let mut has_explicit_rename = false;
-    for attr in attrs {
+    for attr in fi.attrs {
         match &attr.body.content {
             AttributeInner::Facet(facet_attr) => match &facet_attr.inner.content {
                 FacetInner::Sensitive(_ksensitive) => {
@@ -382,7 +405,7 @@ pub(crate) fn gen_struct_field<'a>(
                             } else if key == "skip_serializing_if" {
                                 let value = attr[equal_pos + 1..].trim();
                                 attribute_list.push(format!(
-                                    r#"::facet::FieldAttribute::SkipSerializingIf(unsafe {{ ::std::mem::transmute({value} as fn(&{field_type}) -> bool) }})"#,
+                                    r#"::facet::FieldAttribute::SkipSerializingIf(unsafe {{ ::std::mem::transmute({value} as fn(&{field_type}) -> bool) }})"#, field_type = fi.field_type
                                 ));
                             } else {
                                 attribute_list.push(format!(
@@ -414,18 +437,13 @@ pub(crate) fn gen_struct_field<'a>(
     }
 
     // Apply rename_all rule if there's no explicit rename attribute
-    if !has_explicit_rename {
-        CURRENT_RENAME_RULE.with(|cell| {
-            if let Some(rule) = *cell.borrow() {
-                // Only apply to named fields (not tuple indices)
-                if !normalized_field_name.chars().all(|c| c.is_ascii_digit()) {
-                    let renamed = rule.apply(normalized_field_name);
-                    attribute_list
-                        .push(format!(r#"::facet::FieldAttribute::Rename({:?})"#, renamed));
-                    name_for_metadata = Cow::Owned(renamed);
-                }
-            }
-        });
+    if !has_explicit_rename && fi.rename_rule != RenameRule::Passthrough {
+        // Only apply to named fields (not tuple indices)
+        if !fi.normalized_field_name.chars().all(|c| c.is_ascii_digit()) {
+            let renamed = fi.rename_rule.apply(fi.normalized_field_name);
+            attribute_list.push(format!(r#"::facet::FieldAttribute::Rename({:?})"#, renamed));
+            name_for_metadata = Cow::Owned(renamed);
+        }
     }
 
     let attributes = attribute_list.join(",");
@@ -436,7 +454,8 @@ pub(crate) fn gen_struct_field<'a>(
         format!(r#".doc(&[{}])"#, doc_lines.join(","))
     };
 
-    let maybe_base_field_offset = base_field_offset
+    let maybe_base_field_offset = fi
+        .base_field_offset
         .map(|offset| format!(" + {offset}"))
         .unwrap_or_default();
 
@@ -450,7 +469,9 @@ pub(crate) fn gen_struct_field<'a>(
             .attributes(&const {{ [{attributes}] }})
             {maybe_field_doc}
             .build()",
-        bgp = bgp.display_without_bounds()
+        struct_name = fi.struct_name,
+        raw_field_name = fi.raw_field_name,
+        bgp = fi.bgp.display_without_bounds()
     )
 }
 
@@ -518,7 +539,7 @@ fn build_type_params(generics: Option<&GenericParams>) -> String {
     }
 }
 
-fn build_container_attributes(attributes: &[Attribute]) -> String {
+fn build_container_attributes(attributes: &[Attribute]) -> ContainerAttributes {
     let mut items: Vec<Cow<str>> = vec![];
     let mut rename_all_rule: Option<RenameRule> = None;
 
@@ -591,17 +612,15 @@ fn build_container_attributes(attributes: &[Attribute]) -> String {
         }
     }
 
-    // Store the rename_all rule in a thread-local variable so it can be accessed by gen_struct_field
-    if let Some(rule) = rename_all_rule {
-        CURRENT_RENAME_RULE.with(|cell| {
-            *cell.borrow_mut() = Some(rule);
-        });
-    }
-
-    if items.is_empty() {
+    let attributes_string = if items.is_empty() {
         "".to_string()
     } else {
         format!(".attributes(&[{}])", items.join(", "))
+    };
+
+    ContainerAttributes {
+        code: attributes_string,
+        rename_rule: rename_all_rule.unwrap_or(RenameRule::Passthrough),
     }
 }
 

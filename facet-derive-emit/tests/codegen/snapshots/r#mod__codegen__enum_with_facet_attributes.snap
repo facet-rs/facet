@@ -139,6 +139,9 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                     .repr(::facet::EnumRepr::U16)
                     .build(),
             ))
+            .attributes(&[::facet::ShapeAttribute::Arbitrary(
+                "name = \"MyCoolEnum\" , repr = \"u16\"",
+            )])
             .build()
     };
 }
