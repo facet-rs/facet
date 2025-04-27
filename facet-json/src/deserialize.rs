@@ -144,10 +144,21 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
 
     loop {
         let frame_count = wip.frames_count();
+        dbg!(&wip.frames);
+        dbg!(&stack);
+        debug_assert!(
+            frame_count
+                >= stack
+                    .iter()
+                    .filter(|f| matches!(f, Instruction::Pop(_)))
+                    .count()
+        );
+
         let insn = match stack.pop() {
             Some(insn) => insn,
             None => unreachable!("Instruction stack is empty"),
         };
+
         trace!("[{frame_count}] Instruction {:?}", insn.yellow());
 
         match insn {
@@ -325,7 +336,7 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                 }
             }
             Instruction::Value => {
-                let token = read_token!();
+                let token = dbg!(read_token!());
                 match token.node {
                     Token::Null => {
                         reflect!(put_default());
@@ -554,7 +565,7 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                                                 trace!("Found key {} in flattened field", key);
                                                 reflect!(variant_named(&key));
                                                 found_in_flatten = true;
-                                                handled_by_flatten = true;
+                                                // handled_by_flatten = false;
                                                 break;
                                             } else {
                                                 // Key not in this flattened field, go back up
@@ -609,9 +620,7 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                                             });
                                         } else {
                                             trace!("Ignoring unknown field in variant");
-                                            // Mark to ignore this field below
-                                            // (We do not set ignore here since it's not in struct outer branch)
-                                            // Instead we handle ignoring in the calling code as needed
+                                            ignore = true;
                                         }
                                     } else {
                                         bail!(JsonErrorKind::NoSuchVariant {

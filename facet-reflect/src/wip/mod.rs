@@ -101,9 +101,9 @@ impl Frame {
     }
 }
 
-struct DebugToDisplay<T>(T);
+struct DisplayToDebug<T>(T);
 
-impl<T> fmt::Debug for DebugToDisplay<T>
+impl<T> fmt::Debug for DisplayToDebug<T>
 where
     T: fmt::Display,
 {
@@ -115,7 +115,7 @@ where
 impl fmt::Debug for Frame {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Frame")
-            .field("shape", &DebugToDisplay(&self.shape))
+            .field("shape", &DisplayToDebug(&self.shape))
             .field("kind", &def_kind(&self.shape.def))
             .field("index", &self.field_index_in_parent)
             .field("mode", &self.istate.mode)
@@ -284,7 +284,7 @@ pub enum FrameMode {
 /// A work-in-progress heap-allocated value
 pub struct Wip<'facet_lifetime> {
     /// stack of frames to keep track of deeply nested initialization
-    frames: alloc::vec::Vec<Frame>,
+    pub frames: alloc::vec::Vec<Frame>,
 
     /// keeps track of initialization of out-of-tree frames
     istates: FlatMap<ValueId, IState>,
