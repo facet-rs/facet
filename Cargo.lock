@@ -443,6 +443,7 @@ version = "0.17.0"
 dependencies = [
  "ariadne",
  "camino",
+ "criterion",
  "eyre",
  "facet",
  "facet-core",
@@ -452,6 +453,8 @@ dependencies = [
  "log",
  "ordered-float",
  "owo-colors 4.2.0",
+ "serde",
+ "serde_json",
  "ulid",
  "uuid",
 ]
