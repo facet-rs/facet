@@ -16,8 +16,9 @@ struct Args {
     concurrency: usize,
 }
 
-# fn main() {
-let args: Args = facet_args::from_slice(&["--verbose", "-j", "14", "example.rs"]);
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+let args: Args = facet_args::from_slice(&["--verbose", "-j", "14", "example.rs"])?;
 eprintln!("args: {}", args.pretty());
+Ok(())
 # }
 ```

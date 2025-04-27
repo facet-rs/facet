@@ -252,6 +252,7 @@ dependencies = [
 name = "facet-args"
 version = "0.18.1"
 dependencies = [
+ "eyre",
  "facet",
  "facet-core",
  "facet-pretty",

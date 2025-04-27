@@ -16,6 +16,7 @@ facet-core = { path = "../facet-core", version = "0.18.0" }
 log = "0.4.27"
 
 [dev-dependencies]
+eyre = "0.6.12"
 facet = { path = "../facet" }
 facet-pretty = { path = "../facet-pretty" }
 facet-testhelpers = { path = "../facet-testhelpers" }

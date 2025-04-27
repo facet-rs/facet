@@ -7,10 +7,13 @@
 extern crate alloc;
 use alloc::borrow::Cow;
 
+mod error;
+
+use error::{ArgsError, ArgsErrorKind};
 use facet_core::{Def, Facet, FieldAttribute};
 use facet_reflect::{ReflectError, Wip};
 
-fn parse_field<'facet>(wip: Wip<'facet>, value: &'facet str) -> Result<Wip<'facet>, ReflectError> {
+fn parse_field<'facet>(wip: Wip<'facet>, value: &'facet str) -> Result<Wip<'facet>, ArgsError> {
     let shape = wip.shape();
     match shape.def {
         Def::Scalar(_) => {
@@ -26,13 +29,19 @@ fn parse_field<'facet>(wip: Wip<'facet>, value: &'facet str) -> Result<Wip<'face
             }
         }
         _def => {
-            return Err(ReflectError::OperationFailed {
-                shape,
-                operation: "parsing field",
-            });
+            return Err(ArgsError::new(ArgsErrorKind::GenericReflect(
+                ReflectError::OperationFailed {
+                    shape,
+                    operation: "parsing field",
+                },
+            )));
         }
-    }?
+    }
+    .map_err(|e| ArgsError::new(ArgsErrorKind::GenericReflect(e)))?
     .pop()
+    .map_err(|e| ArgsError {
+        kind: ArgsErrorKind::GenericReflect(e),
+    })
 }
 
 fn kebab_to_snake(input: &str) -> Cow<str> {
@@ -45,15 +54,21 @@ fn kebab_to_snake(input: &str) -> Cow<str> {
 }
 
 /// Parses command-line arguments
-pub fn from_slice<'input, 'facet, T>(s: &[&'input str]) -> T
+pub fn from_slice<'input, 'facet, T>(s: &[&'input str]) -> Result<T, ArgsError>
 where
     T: Facet<'facet>,
     'input: 'facet,
 {
     log::trace!("Entering from_slice function");
     let mut s = s;
-    let mut wip = Wip::alloc::<T>().expect("failed to allocate");
+    let mut wip =
+        Wip::alloc::<T>().map_err(|e| ArgsError::new(ArgsErrorKind::GenericReflect(e)))?;
     log::trace!("Allocated Poke for type T");
+    let Def::Struct(sd) = wip.shape().def else {
+        return Err(ArgsError::new(ArgsErrorKind::GenericArgsError(
+            "Expected struct defintion".to_string(),
+        )));
+    };
 
     while let Some(token) = s.first() {
         log::trace!("Processing token: {}", token);
@@ -61,26 +76,35 @@ where
 
         if let Some(key) = token.strip_prefix("--") {
             let key = kebab_to_snake(key);
-            log::trace!("Found named argument: {}", key);
             let field_index = match wip.field_index(&key) {
                 Some(index) => index,
-                None => panic!("Unknown argument: {}", key),
+                None => {
+                    return Err(ArgsError::new(ArgsErrorKind::GenericArgsError(format!(
+                        "Unknown argument `{key}`",
+                    ))));
+                }
             };
-            let field = wip.field(field_index).unwrap();
+            log::trace!("Found named argument: {}", key);
+
+            let field = wip
+                .field(field_index)
+                .expect("field_index should be a valid field bound");
 
             if field.shape().is_type::<bool>() {
-                wip = parse_field(field, "true").unwrap();
+                // TODO: absence i.e "false" case is not handled
+                wip = parse_field(field, "true")?;
             } else {
-                let value = s.first().expect("expected value after argument");
+                let value = s
+                    .first()
+                    .ok_or(ArgsError::new(ArgsErrorKind::GenericArgsError(format!(
+                        "expected value after argument `{key}`"
+                    ))))?;
                 log::trace!("Field value: {}", value);
                 s = &s[1..];
-                wip = parse_field(field, value).unwrap();
+                wip = parse_field(field, value)?;
             }
         } else if let Some(key) = token.strip_prefix("-") {
             log::trace!("Found short named argument: {}", key);
-            let Def::Struct(sd) = wip.shape().def else {
-                panic!("Expected struct definition");
-            };
             for (field_index, f) in sd.fields.iter().enumerate() {
                 if f.attributes
                     .iter()
@@ -88,38 +112,47 @@ where
                    )
                 {
                     log::trace!("Found field matching short_code: {} for field {}", key, f.name);
-                    let field = wip.field(field_index).unwrap();
+                    let field = wip.field(field_index).expect("field_index is in bounds");
                     if field.shape().is_type::<bool>() {
-                        wip = parse_field(field, "true").unwrap();
+                        wip = parse_field(field, "true")?;
                     } else {
-                        let value = s.first().expect("expected value after argument");
+                        let value = s
+                            .first()
+                            .ok_or(ArgsError::new(ArgsErrorKind::GenericArgsError(format!(
+                                "expected value after argument `{key}`"
+                            ))))?;
                         log::trace!("Field value: {}", value);
                         s = &s[1..];
-                        wip = parse_field(field, value).unwrap();
+                        wip = parse_field(field, value)?;
                     }
                     break;
                 }
             }
         } else {
             log::trace!("Encountered positional argument: {}", token);
-            let Def::Struct(sd) = wip.shape().def else {
-                panic!("Expected struct definition");
-            };
-
             for (field_index, f) in sd.fields.iter().enumerate() {
                 if f.attributes
                     .iter()
                     .any(|a| matches!(a, FieldAttribute::Arbitrary(a) if a.contains("positional")))
                 {
-                    if wip.is_field_set(field_index).unwrap() {
+                    if wip
+                        .is_field_set(field_index)
+                        .expect("field_index is in bounds")
+                    {
                         continue;
                     }
-                    let field = wip.field(field_index).unwrap();
-                    wip = parse_field(field, token).unwrap();
+                    let field = wip.field(field_index).expect("field_index is in bounds");
+                    wip = parse_field(field, token)?;
                     break;
                 }
             }
         }
     }
-    wip.build().unwrap().materialize().unwrap()
+    let heap_vale = wip
+        .build()
+        .map_err(|e| ArgsError::new(ArgsErrorKind::GenericReflect(e)))?;
+    let result = heap_vale
+        .materialize()
+        .map_err(|e| ArgsError::new(ArgsErrorKind::GenericReflect(e)))?;
+    Ok(result)
 }
