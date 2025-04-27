@@ -47,6 +47,13 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
                         .name("TextValue")
                         .discriminant(0)
                         .fields(::facet::StructDef::builder().tuple().fields(fields).build())
+                        .attributes(
+                            &const {
+                                [::facet::VariantAttribute::Arbitrary(
+                                    "rename, =, \"TextValue\"",
+                                )]
+                            },
+                        )
                         .build()
                 },
                 {
@@ -101,6 +108,13 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
                                 .fields(fields)
                                 .build(),
                         )
+                        .attributes(
+                            &const {
+                                [::facet::VariantAttribute::Arbitrary(
+                                    "rename, =, \"NumberValue\"",
+                                )]
+                            },
+                        )
                         .build()
                 },
                 {
@@ -124,6 +138,13 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
                         .name("BoolValue")
                         .discriminant(2)
                         .fields(::facet::StructDef::builder().tuple().fields(fields).build())
+                        .attributes(
+                            &const {
+                                [::facet::VariantAttribute::Arbitrary(
+                                    "rename, =, \"BoolValue\"",
+                                )]
+                            },
+                        )
                         .build()
                 },
             ]

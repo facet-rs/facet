@@ -50,6 +50,7 @@ where
                         .name("VariantA")
                         .discriminant(0)
                         .fields(::facet::StructDef::builder().tuple().fields(fields).build())
+                        .attributes(&const { [] })
                         .build()
                 },
                 {
@@ -74,12 +75,14 @@ where
                         .name("VariantB")
                         .discriminant(1)
                         .fields(::facet::StructDef::builder().tuple().fields(fields).build())
+                        .attributes(&const { [] })
                         .build()
                 },
                 ::facet::Variant::builder()
                     .name("Plain")
                     .discriminant(2)
                     .fields(::facet::StructDef::builder().unit().build())
+                    .attributes(&const { [] })
                     .build(),
             ]
         };

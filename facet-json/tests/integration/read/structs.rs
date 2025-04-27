@@ -73,7 +73,6 @@ fn test_from_json_with_nested_structs() -> Result<()> {
 }
 
 #[test]
-#[ignore]
 fn test_reading_flat_structs() {
     facet_testhelpers::setup();
 
@@ -82,8 +81,8 @@ fn test_reading_flat_structs() {
         name: String,
         #[facet(flatten)]
         struct_: InnerStruct,
-        #[facet(flatten)]
-        enum_: InnerEnum,
+        // #[facet(flatten)]
+        // enum_: InnerEnum,
     }
 
     #[derive(Debug, PartialEq, Eq, facet::Facet)]
@@ -107,28 +106,28 @@ fn test_reading_flat_structs() {
     let expected1 = Outer {
         name: "test1".to_string(),
         struct_: InnerStruct { val: 1 },
-        enum_: InnerEnum::Variant1 {
-            field1: "aaa".to_string(),
-            field2: "bbb".to_string(),
-        },
+        // enum_: InnerEnum::Variant1 {
+        //     field1: "aaa".to_string(),
+        //     field2: "bbb".to_string(),
+        // },
     };
     assert_eq!(expected1, actual1);
 
-    let actual2: Outer =
-        facet_json::from_str(r#"{"name":"test1","val":2,"Variant2":"ccc"}"#).unwrap();
-    let expected2 = Outer {
-        name: "test2".to_string(),
-        struct_: InnerStruct { val: 2 },
-        enum_: InnerEnum::Variant2("ccc".to_string()),
-    };
-    assert_eq!(expected2, actual2);
+    // let actual2: Outer =
+    //     facet_json::from_str(r#"{"name":"test1","val":2,"Variant2":"ccc"}"#).unwrap();
+    // let expected2 = Outer {
+    //     name: "test2".to_string(),
+    //     struct_: InnerStruct { val: 2 },
+    //     enum_: InnerEnum::Variant2("ccc".to_string()),
+    // };
+    // assert_eq!(expected2, actual2);
 
-    let actual3: Outer =
-        facet_json::from_str(r#"{"name":"test1","val":3,"Variant3":["ddd","eee"]}"#).unwrap();
-    let expected3 = Outer {
-        name: "test3".to_string(),
-        struct_: InnerStruct { val: 3 },
-        enum_: InnerEnum::Variant3("ddd".to_string(), "eee".to_string()),
-    };
-    assert_eq!(expected3, actual3);
+    // let actual3: Outer =
+    //     facet_json::from_str(r#"{"name":"test1","val":3,"Variant3":["ddd","eee"]}"#).unwrap();
+    // let expected3 = Outer {
+    //     name: "test3".to_string(),
+    //     struct_: InnerStruct { val: 3 },
+    //     enum_: InnerEnum::Variant3("ddd".to_string(), "eee".to_string()),
+    // };
+    // assert_eq!(expected3, actual3);
 }

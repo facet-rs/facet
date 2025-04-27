@@ -13,26 +13,31 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for BitFlags {
                     .name("None")
                     .discriminant(0)
                     .fields(::facet::StructDef::builder().unit().build())
+                    .attributes(&const { [] })
                     .build(),
                 ::facet::Variant::builder()
                     .name("Read")
                     .discriminant(1)
                     .fields(::facet::StructDef::builder().unit().build())
+                    .attributes(&const { [] })
                     .build(),
                 ::facet::Variant::builder()
                     .name("Write")
                     .discriminant(2)
                     .fields(::facet::StructDef::builder().unit().build())
+                    .attributes(&const { [] })
                     .build(),
                 ::facet::Variant::builder()
                     .name("Execute")
                     .discriminant(4)
                     .fields(::facet::StructDef::builder().unit().build())
+                    .attributes(&const { [] })
                     .build(),
                 ::facet::Variant::builder()
                     .name("All")
                     .discriminant(7)
                     .fields(::facet::StructDef::builder().unit().build())
+                    .attributes(&const { [] })
                     .build(),
             ]
         };

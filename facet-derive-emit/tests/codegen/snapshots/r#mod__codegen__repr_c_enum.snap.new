@@ -1,0 +1,166 @@
+---
+source: facet-derive-emit/tests/codegen/mod.rs
+assertion_line: 133
+expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(C)]\n        enum EnumWithVariants {\n            /// Comment A\n            Variant1,\n            /// Comment B\n            Variant2(i32),\n            Variant3 { field1: i32, field2: String },\n        }\n        \"#)"
+---
+#[used]
+static ENUM_WITH_VARIANTS_SHAPE: &'static ::facet::Shape =
+    <EnumWithVariants as ::facet::Facet>::SHAPE;
+#[automatically_derived]
+unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithVariants {
+    const SHAPE: &'static ::facet::Shape = &const {
+        #[repr(C)]
+        enum __ShadowDiscriminantEnumWithVariants {
+            Variant1,
+            Variant2,
+            Variant3,
+        }
+        #[repr(C)]
+        union __ShadowFieldsEnumWithVariants<'__facet> {
+            Variant1: std::mem::ManuallyDrop<__ShadowFieldEnumWithVariants_Variant1<'__facet>>,
+            Variant2: std::mem::ManuallyDrop<__ShadowFieldEnumWithVariants_Variant2<'__facet>>,
+            Variant3: std::mem::ManuallyDrop<__ShadowFieldEnumWithVariants_Variant3<'__facet>>,
+        }
+        #[repr(C)]
+        struct __ShadowReprEnumWithVariants<'__facet> {
+            _discriminant: __ShadowDiscriminantEnumWithVariants,
+            _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
+            _fields: __ShadowFieldsEnumWithVariants<'__facet>,
+        }
+        #[repr(C)]
+        struct __ShadowFieldEnumWithVariants_Variant1<'__facet> {
+            _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
+        }
+        #[repr(C)]
+        struct __ShadowFieldEnumWithVariants_Variant2<'__facet> {
+            _0: i32,
+            _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
+        }
+        #[repr(C)]
+        struct __ShadowFieldEnumWithVariants_Variant3<'__facet> {
+            field1: i32,
+            field2: String,
+            _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
+        }
+        let __facet_variants: &'static [::facet::Variant] = &const {
+            [
+                ::facet::Variant::builder()
+                    .name("Variant1")
+                    .discriminant(0)
+                    .fields(::facet::StructDef::builder().unit().build())
+                    .attributes(&const { [] })
+                    .doc(&[" Comment A"])
+                    .build(),
+                {
+                    let fields: &'static [::facet::Field] = &const {
+                        [::facet::Field::builder()
+                            .name("_0")
+                            .shape(|| {
+                                ::facet::shape_of(&|s: &__ShadowFieldEnumWithVariants_Variant2<
+                                    '__facet,
+                                >| &s._0)
+                            })
+                            .offset(
+                                ::core::mem::offset_of!(
+                                    __ShadowFieldEnumWithVariants_Variant2<'__facet>,
+                                    _0
+                                ) + ::core::mem::offset_of!(
+                                    __ShadowReprEnumWithVariants<'__facet>,
+                                    _fields
+                                ),
+                            )
+                            .flags(::facet::FieldFlags::EMPTY)
+                            .attributes(&const { [] })
+                            .build()]
+                    };
+                    ::facet::Variant::builder()
+                        .name("Variant2")
+                        .discriminant(1)
+                        .fields(::facet::StructDef::builder().tuple().fields(fields).build())
+                        .attributes(&const { [] })
+                        .doc(&[" Comment B"])
+                        .build()
+                },
+                {
+                    let fields: &'static [::facet::Field] = &const {
+                        [
+                            ::facet::Field::builder()
+                                .name("field1")
+                                .shape(|| {
+                                    ::facet::shape_of(
+                                        &|s: &__ShadowFieldEnumWithVariants_Variant3<'__facet>| {
+                                            &s.field1
+                                        },
+                                    )
+                                })
+                                .offset(
+                                    ::core::mem::offset_of!(
+                                        __ShadowFieldEnumWithVariants_Variant3<'__facet>,
+                                        field1
+                                    ) + ::core::mem::offset_of!(
+                                        __ShadowReprEnumWithVariants<'__facet>,
+                                        _fields
+                                    ),
+                                )
+                                .flags(::facet::FieldFlags::EMPTY)
+                                .attributes(&const { [] })
+                                .build(),
+                            ::facet::Field::builder()
+                                .name("field2")
+                                .shape(|| {
+                                    ::facet::shape_of(
+                                        &|s: &__ShadowFieldEnumWithVariants_Variant3<'__facet>| {
+                                            &s.field2
+                                        },
+                                    )
+                                })
+                                .offset(
+                                    ::core::mem::offset_of!(
+                                        __ShadowFieldEnumWithVariants_Variant3<'__facet>,
+                                        field2
+                                    ) + ::core::mem::offset_of!(
+                                        __ShadowReprEnumWithVariants<'__facet>,
+                                        _fields
+                                    ),
+                                )
+                                .flags(::facet::FieldFlags::EMPTY)
+                                .attributes(&const { [] })
+                                .build(),
+                        ]
+                    };
+                    ::facet::Variant::builder()
+                        .name("Variant3")
+                        .discriminant(2)
+                        .fields(
+                            ::facet::StructDef::builder()
+                                .struct_()
+                                .fields(fields)
+                                .build(),
+                        )
+                        .attributes(&const { [] })
+                        .build()
+                },
+            ]
+        };
+        ::facet::Shape::builder()
+            .id(::facet::ConstTypeId::of::<Self>())
+            .layout(::core::alloc::Layout::new::<Self>())
+            .vtable(
+                &const {
+                    ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
+                        f,
+                        "EnumWithVariants"
+                    ))
+                },
+            )
+            .def(::facet::Def::Enum(
+                ::facet::EnumDef::builder()
+                    .variants(__facet_variants)
+                    .repr(::facet::EnumRepr::from_discriminant_size::<
+                        __ShadowDiscriminantEnumWithVariants,
+                    >())
+                    .build(),
+            ))
+            .build()
+    };
+}

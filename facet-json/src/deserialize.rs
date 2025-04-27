@@ -527,7 +527,7 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                         let mut handled_by_flatten = false;
 
                         match wip.shape().def {
-                            Def::Struct(_) => {
+                            Def::Struct(sd) => {
                                 // First try to find a direct field match
                                 if let Some(index) = wip.field_index(&key) {
                                     trace!("It's a struct field");
@@ -535,25 +535,22 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                                 } else {
                                     // Check for flattened fields
                                     let mut found_in_flatten = false;
-                                    if let Def::Struct(sd) = wip.shape().def {
-                                        for (index, field) in sd.fields.iter().enumerate() {
-                                            if field.has_arbitrary_attr("flatten") {
-                                                trace!("Found flattened field #{}", index);
-                                                // Enter the flattened field
-                                                reflect!(field(index));
+                                    for (index, field) in sd.fields.iter().enumerate() {
+                                        if field.has_arbitrary_attr("flatten") {
+                                            trace!("Found flattened field #{}", index);
+                                            // Enter the flattened field
+                                            reflect!(field(index));
 
-                                                // Check if this flattened field has the requested key
-                                                if let Some(subfield_index) = wip.field_index(&key)
-                                                {
-                                                    trace!("Found key {} in flattened field", key);
-                                                    reflect!(field(subfield_index));
-                                                    found_in_flatten = true;
-                                                    handled_by_flatten = true;
-                                                    break;
-                                                } else {
-                                                    // Key not in this flattened field, go back up
-                                                    reflect!(pop());
-                                                }
+                                            // Check if this flattened field has the requested key
+                                            if let Some(subfield_index) = wip.field_index(&key) {
+                                                trace!("Found key {} in flattened field", key);
+                                                reflect!(field(subfield_index));
+                                                found_in_flatten = true;
+                                                handled_by_flatten = true;
+                                                break;
+                                            } else {
+                                                // Key not in this flattened field, go back up
+                                                reflect!(pop());
                                             }
                                         }
                                     }
@@ -576,7 +573,7 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                                     }
                                 }
                             }
-                            Def::Enum(_sd) => match wip.find_variant(&key) {
+                            Def::Enum(_ed) => match wip.find_variant(&key) {
                                 Some((index, variant)) => {
                                     trace!("Variant {} selected", variant.name.blue());
                                     reflect!(variant(index));

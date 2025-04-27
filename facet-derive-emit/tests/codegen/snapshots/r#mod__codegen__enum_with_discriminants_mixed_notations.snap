@@ -13,21 +13,25 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Status {
                     .name("Ok")
                     .discriminant(1)
                     .fields(::facet::StructDef::builder().unit().build())
+                    .attributes(&const { [] })
                     .build(),
                 ::facet::Variant::builder()
                     .name("Warn")
                     .discriminant(10)
                     .fields(::facet::StructDef::builder().unit().build())
+                    .attributes(&const { [] })
                     .build(),
                 ::facet::Variant::builder()
                     .name("Error")
                     .discriminant(15)
                     .fields(::facet::StructDef::builder().unit().build())
+                    .attributes(&const { [] })
                     .build(),
                 ::facet::Variant::builder()
                     .name("Timeout")
                     .discriminant(63)
                     .fields(::facet::StructDef::builder().unit().build())
+                    .attributes(&const { [] })
                     .build(),
             ]
         };

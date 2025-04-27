@@ -27,6 +27,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithVariants {
                     .name("Variant1")
                     .discriminant(0)
                     .fields(::facet::StructDef::builder().unit().build())
+                    .attributes(&const { [] })
                     .build(),
                 {
                     let fields: &'static [::facet::Field] = &const {
@@ -49,6 +50,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithVariants {
                         .name("Variant2")
                         .discriminant(1)
                         .fields(::facet::StructDef::builder().tuple().fields(fields).build())
+                        .attributes(&const { [] })
                         .build()
                 },
                 {
@@ -97,6 +99,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithVariants {
                                 .fields(fields)
                                 .build(),
                         )
+                        .attributes(&const { [] })
                         .build()
                 },
             ]
