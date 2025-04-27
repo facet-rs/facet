@@ -1,0 +1,25 @@
+[package]
+name = "facet-jsonschema"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Generate JSON Schema from Facet types. Provides a `to_string` function to get a JSON Schema representation as a string. Useful for reflection, introspection, serialization, and deserialization."
+keywords = [
+    "reflection",
+    "introspection",
+    "serialization",
+    "deserialization",
+    "json-schema",
+]
+categories = ["development-tools", "encoding"]
+
+[dependencies]
+facet-core = { version = "0.18.0", path = "../facet-core" }
+facet-derive = { version = "0.18.2", path = "../facet-derive" }
+facet-reflect = { version = "0.18.0", path = "../facet-reflect" }
+
+[dev-dependencies]
+insta = { git = "https://github.com/mitsuhiko/insta" }
+facet = { path = "../facet" }

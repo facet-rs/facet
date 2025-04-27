@@ -1,4 +1,34 @@
+use super::normalize_ident_str;
 use super::*;
+
+/// Process a variant name, applying rename attribute or rename_all rule
+fn process_variant_name(
+    variant_name: &str,
+    attributes: &[Attribute],
+    rename_rule: RenameRule,
+) -> String {
+    for attr in attributes {
+        if let AttributeInner::Facet(facet_attr) = &attr.body.content {
+            if let FacetInner::Other(tt) = &facet_attr.inner.content {
+                let attr_str = tt.tokens_to_string();
+                if let Some(equal_pos) = attr_str.find('=') {
+                    let key = attr_str[..equal_pos].trim();
+                    if key == "rename" {
+                        let value = attr_str[equal_pos + 1..].trim().trim_matches('"');
+                        return value.to_string();
+                    }
+                }
+            }
+        }
+    }
+
+    let mut final_name = variant_name.to_string();
+    if rename_rule != RenameRule::Passthrough {
+        final_name = rename_rule.apply(variant_name);
+    }
+
+    final_name
+}
 
 // mirrors facet_core::types::EnumRepr
 #[derive(Clone, Copy)]
@@ -72,6 +102,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     let bgp = BoundedGenericParams::parse(parsed.generics.as_ref());
     let where_clauses = build_where_clauses(parsed.clauses.as_ref(), parsed.generics.as_ref());
     let type_params = build_type_params(parsed.generics.as_ref());
+    let container_attributes = build_container_attributes(&parsed.attributes);
 
     // collect all `#repr(..)` attrs
     // either multiple attrs, or a single attr with multiple values
@@ -131,6 +162,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                 discriminant_type,
                 &bgp,
                 &where_clauses,
+                container_attributes.rename_rule,
             )
         }
         (false, Some(discriminant_type)) => process_primitive_enum(
@@ -139,6 +171,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
             discriminant_type,
             &bgp,
             &where_clauses,
+            container_attributes.rename_rule,
         ),
         _ => {
             return r#"compile_error!("Enums must have an explicit representation (e.g. #[repr(u8)] or #[repr(C)]) to be used with Facet")"#
@@ -183,10 +216,10 @@ unsafe impl{bgp_def} ::facet::Facet<'__facet> for {enum_name}{bgp_without_bounds
             .id(::facet::ConstTypeId::of::<Self>())
             .layout(::core::alloc::Layout::new::<Self>())
             {type_params}
-            .vtable(::facet::value_vtable!(
+            .vtable(&const {{ ::facet::value_vtable!(
                 Self,
                 |f, _opts| ::core::fmt::Write::write_str(f, "{enum_name}")
-            ))
+            )}})
             .def(::facet::Def::Enum(::facet::EnumDef::builder()
                 // Use variant expressions that just reference the shadow structs
                 // which are now defined above
@@ -194,12 +227,14 @@ unsafe impl{bgp_def} ::facet::Facet<'__facet> for {enum_name}{bgp_without_bounds
                 .repr(::facet::EnumRepr::{repr_type})
                 .build()))
             {maybe_container_doc}
+            {container_attributes}
             .build()
     }};
 }}
         "#,
         bgp_def = bgp.with_lifetime("__facet").display_with_bounds(),
         bgp_without_bounds = bgp.display_without_bounds(),
+        container_attributes = container_attributes.code,
     );
 
     // Uncomment to see generated code before lexin
@@ -222,6 +257,7 @@ fn process_c_style_enum(
     discriminant_type: Option<Discriminant>,
     bgp: &BoundedGenericParams,
     where_clauses: &str,
+    rename_rule: RenameRule,
 ) -> ProcessedEnumBody {
     let facet_bgp = bgp.with(BoundedGenericParam {
         bounds: None,
@@ -297,6 +333,8 @@ fn process_c_style_enum(
         match &var_like.value.variant {
             EnumVariantData::Unit(unit) => {
                 let variant_name = unit.name.to_string();
+                let display_name =
+                    process_variant_name(&variant_name, &unit.attributes, rename_rule);
                 let maybe_doc = build_maybe_doc(&unit.attributes);
 
                 // Generate shadow struct for this tuple variant to calculate offsets
@@ -312,15 +350,17 @@ fn process_c_style_enum(
                 // variant offset is offset of the `_fields` union
                 variant_expressions.push(format!(
                     "::facet::Variant::builder()
-                    .name({variant_name:?})
+                    .name({display_name:?})
                     .discriminant({discriminant_value})
-                    .fields(::facet::Struct::builder().unit().build())
+                    .fields(::facet::StructDef::builder().unit().build())
                     {maybe_doc}
                     .build()",
                 ));
             }
             EnumVariantData::Tuple(tuple) => {
                 let variant_name = tuple.name.to_string();
+                let display_name =
+                    process_variant_name(&variant_name, &tuple.attributes, rename_rule);
                 let maybe_doc = build_maybe_doc(&tuple.attributes);
 
                 // Generate shadow struct for this tuple variant to calculate offsets
@@ -361,14 +401,16 @@ fn process_c_style_enum(
                     .enumerate()
                     .map(|(idx, field)| {
                         let field_name = format!("_{idx}");
-                        gen_struct_field(
-                            &field_name,
-                            &field.value.typ.tokens_to_string(),
-                            &shadow_struct_name,
-                            &facet_bgp,
-                            &field.value.attributes,
-                            Some(&variant_offset),
-                        )
+                        gen_struct_field(FieldInfo {
+                            raw_field_name: &field_name,
+                            normalized_field_name: &field_name,
+                            field_type: &field.value.typ.tokens_to_string(),
+                            struct_name: &shadow_struct_name,
+                            bgp: &facet_bgp,
+                            attrs: &field.value.attributes,
+                            base_field_offset: Some(&variant_offset),
+                            rename_rule,
+                        })
                     })
                     .collect::<Vec<String>>()
                     .join(", ");
@@ -381,9 +423,9 @@ fn process_c_style_enum(
                         ]}};
 
                         ::facet::Variant::builder()
-                            .name({variant_name:?})
+                            .name({display_name:?})
                             .discriminant({discriminant_value})
-                            .fields(::facet::Struct::builder().tuple().fields(fields).build())
+                            .fields(::facet::StructDef::builder().tuple().fields(fields).build())
                             {maybe_doc}
                             .build()
                     }}",
@@ -391,6 +433,8 @@ fn process_c_style_enum(
             }
             EnumVariantData::Struct(struct_var) => {
                 let variant_name = struct_var.name.to_string();
+                let display_name =
+                    process_variant_name(&variant_name, &struct_var.attributes, rename_rule);
                 let maybe_doc = build_maybe_doc(&struct_var.attributes);
 
                 // Generate shadow struct for this struct variant to calculate offsets
@@ -429,16 +473,20 @@ fn process_c_style_enum(
                     .0
                     .iter()
                     .map(|field| {
-                        let field_name = field.value.name.to_string();
+                        // Handle raw identifiers (like r#type) by stripping the 'r#' prefix.
+                        let raw_field_name = field.value.name.to_string(); // e.g., "r#type"
+                        let normalized_field_name = normalize_ident_str(&raw_field_name); // e.g., "type"
                         let field_type = field.value.typ.tokens_to_string();
-                        gen_struct_field(
-                            &field_name,
-                            &field_type,
-                            &shadow_struct_name,
-                            &facet_bgp,
-                            &field.value.attributes,
-                            Some(&variant_offset),
-                        )
+                        gen_struct_field(FieldInfo {
+                            raw_field_name: &raw_field_name,
+                            normalized_field_name,
+                            field_type: &field_type,
+                            struct_name: &shadow_struct_name,
+                            bgp: &facet_bgp,
+                            attrs: &field.value.attributes,
+                            base_field_offset: Some(&variant_offset),
+                            rename_rule,
+                        })
                     })
                     .collect::<Vec<String>>()
                     .join(", ");
@@ -451,9 +499,9 @@ fn process_c_style_enum(
                         ]}};
 
                         ::facet::Variant::builder()
-                            .name({variant_name:?})
+                            .name({display_name:?})
                             .discriminant({discriminant_value})
-                            .fields(::facet::Struct::builder().struct_().fields(fields).build())
+                            .fields(::facet::StructDef::builder().struct_().fields(fields).build())
                             {maybe_doc}
                             .build()
                     }}",
@@ -486,6 +534,7 @@ fn process_primitive_enum(
     discriminant_type: Discriminant,
     bgp: &BoundedGenericParams,
     where_clauses: &str,
+    rename_rule: RenameRule,
 ) -> ProcessedEnumBody {
     let facet_bgp = bgp.with(BoundedGenericParam {
         bounds: None,
@@ -506,19 +555,23 @@ fn process_primitive_enum(
         match &var_like.value.variant {
             EnumVariantData::Unit(unit) => {
                 let variant_name = unit.name.to_string();
+                let display_name =
+                    process_variant_name(&variant_name, &unit.attributes, rename_rule);
                 let maybe_doc = build_maybe_doc(&unit.attributes);
 
                 variant_expressions.push(format!(
                     "::facet::Variant::builder()
-                    .name({variant_name:?})
+                    .name({display_name:?})
                     .discriminant({discriminant_value})
-                    .fields(::facet::Struct::builder().unit().build())
+                    .fields(::facet::StructDef::builder().unit().build())
                     {maybe_doc}
                     .build()",
                 ));
             }
             EnumVariantData::Tuple(tuple) => {
                 let variant_name = tuple.name.to_string();
+                let display_name =
+                    process_variant_name(&variant_name, &tuple.attributes, rename_rule);
                 let maybe_doc = build_maybe_doc(&tuple.attributes);
 
                 // Generate shadow struct for this tuple variant to calculate offsets
@@ -559,14 +612,16 @@ fn process_primitive_enum(
                     .enumerate()
                     .map(|(idx, field)| {
                         let field_name = format!("_{idx}");
-                        gen_struct_field(
-                            &field_name,
-                            &field.value.typ.tokens_to_string(),
-                            &shadow_struct_name,
-                            &facet_bgp,
-                            &field.value.attributes,
-                            None,
-                        )
+                        gen_struct_field(FieldInfo {
+                            raw_field_name: &field_name,
+                            normalized_field_name: &field_name,
+                            field_type: &field.value.typ.tokens_to_string(),
+                            struct_name: &shadow_struct_name,
+                            bgp: &facet_bgp,
+                            attrs: &field.value.attributes,
+                            base_field_offset: None,
+                            rename_rule,
+                        })
                     })
                     .collect::<Vec<String>>()
                     .join(", ");
@@ -579,9 +634,9 @@ fn process_primitive_enum(
                         ]}};
 
                         ::facet::Variant::builder()
-                            .name({variant_name:?})
+                            .name({display_name:?})
                             .discriminant({discriminant_value})
-                            .fields(::facet::Struct::builder().tuple().fields(fields).build())
+                            .fields(::facet::StructDef::builder().tuple().fields(fields).build())
                             {maybe_doc}
                             .build()
                     }}",
@@ -589,6 +644,8 @@ fn process_primitive_enum(
             }
             EnumVariantData::Struct(struct_var) => {
                 let variant_name = struct_var.name.to_string();
+                let display_name =
+                    process_variant_name(&variant_name, &struct_var.attributes, rename_rule);
                 let maybe_doc = build_maybe_doc(&struct_var.attributes);
 
                 // Generate shadow struct for this struct variant to calculate offsets
@@ -627,15 +684,19 @@ fn process_primitive_enum(
                     .0
                     .iter()
                     .map(|field| {
-                        let field_name = field.value.name.to_string();
-                        gen_struct_field(
-                            &field_name,
-                            &field.value.typ.tokens_to_string(),
-                            &shadow_struct_name,
-                            &facet_bgp,
-                            &field.value.attributes,
-                            None,
-                        )
+                        // Handle raw identifiers (like r#type) by stripping the 'r#' prefix.
+                        let raw_field_name = field.value.name.to_string(); // e.g., "r#type"
+                        let normalized_field_name = normalize_ident_str(&raw_field_name); // e.g., "type"
+                        gen_struct_field(FieldInfo {
+                            raw_field_name: &raw_field_name,
+                            normalized_field_name,
+                            field_type: &field.value.typ.tokens_to_string(),
+                            struct_name: &shadow_struct_name,
+                            bgp: &facet_bgp,
+                            attrs: &field.value.attributes,
+                            base_field_offset: None,
+                            rename_rule,
+                        })
                     })
                     .collect::<Vec<String>>()
                     .join(", ");
@@ -650,9 +711,9 @@ fn process_primitive_enum(
                         ]}};
 
                         ::facet::Variant::builder()
-                            .name({variant_name:?})
+                            .name({display_name:?})
                             .discriminant({discriminant_value})
-                            .fields(::facet::Struct::builder().struct_().fields(fields).build())
+                            .fields(::facet::StructDef::builder().struct_().fields(fields).build())
                             {maybe_doc}
                             .build()
                     }}",

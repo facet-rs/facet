@@ -1,11 +1,7 @@
-use alloc::string::String;
-use alloc::string::ToString;
+use alloc::string::{String, ToString};
 use alloc::vec;
-use facet_core::Characteristic;
-use facet_core::Def;
-use facet_core::Facet;
-use facet_reflect::ReflectError;
-use facet_reflect::{HeapValue, Wip};
+use facet_core::{Characteristic, Def, Facet, ScalarAffinity, StructKind};
+use facet_reflect::{HeapValue, ReflectError, Wip};
 use log::trace;
 use owo_colors::OwoColorize;
 
@@ -352,7 +348,7 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                         match token.node {
                             Token::Null => unreachable!(),
                             Token::LBrace => {
-                                match wip.shape().def {
+                                match wip.innermost_shape().def {
                                     Def::Map(_md) => {
                                         trace!(
                                             "Object starting for map value ({})!",
@@ -376,7 +372,7 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                                     }
                                     _ => {
                                         bail!(JsonErrorKind::UnsupportedType {
-                                            got: wip.shape(),
+                                            got: wip.innermost_shape(),
                                             wanted: "map, enum, or struct"
                                         });
                                     }
@@ -385,7 +381,7 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                                 stack.push(Instruction::ObjectKeyOrObjectClose)
                             }
                             Token::LBracket => {
-                                match wip.shape().def {
+                                match wip.innermost_shape().def {
                                     Def::Array(_) => {
                                         trace!(
                                             "Array starting for array ({})!",
@@ -402,10 +398,63 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                                         trace!("Array starting for list ({})!", wip.shape().blue());
                                         reflect!(put_default());
                                     }
+                                    Def::Enum(_) => {
+                                        trace!("Array starting for enum ({})!", wip.shape().blue());
+                                    }
+                                    Def::Struct(s) => {
+                                        if s.kind == StructKind::Tuple {
+                                            trace!(
+                                                "Array starting for tuple ({})!",
+                                                wip.shape().blue()
+                                            );
+                                            // Special handling for unit type ()
+                                            if s.fields.is_empty() {
+                                                // Check if the array is empty by peeking at the next token
+                                                let next_token = read_token!();
+                                                if next_token.node == Token::RBracket {
+                                                    // Empty array means unit type () - we're good
+                                                    reflect!(put_default());
+                                                } else {
+                                                    // Non-empty array is not valid for unit type
+                                                    bail!(JsonErrorKind::UnsupportedType {
+                                                        got: wip.innermost_shape(),
+                                                        wanted: "empty array",
+                                                    });
+                                                }
+                                            } else {
+                                                reflect!(put_default());
+                                            }
+                                        } else {
+                                            bail!(JsonErrorKind::UnsupportedType {
+                                                got: wip.shape(),
+                                                wanted: "array, list, tuple, or slice"
+                                            });
+                                        }
+                                    }
+                                    Def::Scalar(s)
+                                        if matches!(s.affinity, ScalarAffinity::Empty(_)) =>
+                                    {
+                                        trace!(
+                                            "Array starting for tuple ({})!",
+                                            wip.shape().blue()
+                                        );
+                                        // reflect!(put_default());
+                                        // Check if the array is empty by peeking at the next token
+                                        let next_token = read_token!();
+                                        if next_token.node == Token::RBracket {
+                                            // Empty array means unit type () - we're good
+                                        } else {
+                                            // Non-empty array is not valid for unit type
+                                            bail!(JsonErrorKind::UnsupportedType {
+                                                got: wip.innermost_shape(),
+                                                wanted: "empty array",
+                                            });
+                                        }
+                                    }
                                     _ => {
                                         bail!(JsonErrorKind::UnsupportedType {
-                                            got: wip.shape(),
-                                            wanted: "array, list, or slice"
+                                            got: wip.innermost_shape(),
+                                            wanted: "array, list, tuple, or slice"
                                         });
                                     }
                                 }
@@ -420,12 +469,14 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                                     wanted: "value"
                                 });
                             }
-                            Token::String(s) => match wip.shape().def {
+                            Token::String(s) => match wip.innermost_shape().def {
                                 Def::Scalar(_sd) => {
                                     reflect!(put::<String>(s));
                                 }
                                 Def::Enum(_ed) => {
                                     if wip.selected_variant().is_some() {
+                                        trace!("Have variant selected arleady, just putting");
+
                                         // just put, then — if it's a tuple field it'll work
                                         reflect!(put::<String>(s));
                                     } else {
@@ -443,12 +494,16 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                                     }
                                 }
                                 _ => bail!(JsonErrorKind::UnsupportedType {
-                                    got: wip.shape(),
+                                    got: wip.innermost_shape(),
                                     wanted: "enum or string"
                                 }),
                             },
                             Token::F64(n) => {
-                                reflect!(put(n));
+                                if wip.innermost_shape() == <f32 as Facet>::SHAPE {
+                                    reflect!(put(n as f32));
+                                } else {
+                                    reflect!(put(n));
+                                }
                             }
                             Token::U64(n) => {
                                 reflect!(put(n));
@@ -473,25 +528,31 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                 let token = read_token!();
                 match token.node {
                     Token::String(key) => {
-                        trace!("Object key: {}", key);
+                        trace!("Parsed object key: {}", key);
 
                         let mut ignore = false;
-                        let mut transparent = false;
+                        let mut needs_pop = true;
 
                         match wip.shape().def {
                             Def::Struct(_) => match wip.field_index(&key) {
                                 Some(index) => {
+                                    trace!("It's a struct field");
                                     reflect!(field(index));
                                 }
                                 None => {
                                     if wip.shape().has_deny_unknown_fields_attr() {
+                                        trace!(
+                                            "It's not a struct field AND we're denying unknown fields"
+                                        );
                                         // well, it all depends.
                                         bail!(JsonErrorKind::UnknownField {
                                             field_name: key.to_string(),
                                             shape: wip.shape(),
                                         })
                                     } else {
-                                        trace!("Will ignore key ");
+                                        trace!(
+                                            "It's not a struct field and we're ignoring unknown fields"
+                                        );
                                         ignore = true;
                                     }
                                 }
@@ -500,13 +561,40 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                                 Some((index, variant)) => {
                                     trace!("Variant {} selected", variant.name.blue());
                                     reflect!(variant(index));
-                                    transparent = true;
+                                    needs_pop = false;
                                 }
                                 None => {
-                                    bail!(JsonErrorKind::NoSuchVariant {
-                                        name: key.to_string(),
-                                        enum_shape: wip.shape()
-                                    });
+                                    if let Some(_variant_index) = wip.selected_variant() {
+                                        trace!(
+                                            "Already have a variant selected, treating key as struct field of variant"
+                                        );
+                                        // Try to find the field index of the key within the selected variant
+                                        if let Some(index) = wip.field_index(&key) {
+                                            trace!(
+                                                "Found field {} in selected variant",
+                                                key.blue()
+                                            );
+                                            reflect!(field(index));
+                                        } else if wip.shape().has_deny_unknown_fields_attr() {
+                                            trace!(
+                                                "Unknown field in variant and denying unknown fields"
+                                            );
+                                            bail!(JsonErrorKind::UnknownField {
+                                                field_name: key.to_string(),
+                                                shape: wip.shape(),
+                                            });
+                                        } else {
+                                            trace!("Ignoring unknown field in variant");
+                                            // Mark to ignore this field below
+                                            // (We do not set ignore here since it's not in struct outer branch)
+                                            // Instead we handle ignoring in the calling code as needed
+                                        }
+                                    } else {
+                                        bail!(JsonErrorKind::NoSuchVariant {
+                                            name: key.to_string(),
+                                            enum_shape: wip.shape()
+                                        });
+                                    }
                                 }
                             },
                             Def::Map(_) => {
@@ -532,11 +620,8 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                         if ignore {
                             stack.push(Instruction::SkipValue);
                         } else {
-                            if transparent {
-                                trace!(
-                                    "Transparent wrapper (like an outer-tagged enum), not pushing Pop insn to stack"
-                                )
-                            } else {
+                            if needs_pop {
+                                trace!("Pushing Pop insn to stack (ObjectVal)");
                                 stack.push(Instruction::Pop(PopReason::ObjectVal));
                             }
                             stack.push(Instruction::Value);
@@ -584,6 +669,7 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                         reflect!(push());
 
                         stack.push(Instruction::CommaThenArrayItemOrArrayClose);
+                        trace!("Pushing Pop insn to stack (arrayitem)");
                         stack.push(Instruction::Pop(PopReason::ArrayItem));
                         stack.push(Instruction::Value);
                     }
@@ -599,6 +685,7 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                         trace!("Array comma");
                         reflect!(push());
                         stack.push(Instruction::CommaThenArrayItemOrArrayClose);
+                        trace!("Pushing Pop insn to stack (arrayitem)");
                         stack.push(Instruction::Pop(PopReason::ArrayItem));
                         stack.push(Instruction::Value);
                     }

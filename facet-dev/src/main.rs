@@ -1,15 +1,29 @@
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use log::{LevelFilter, debug, error, warn};
 use similar::ChangeTag;
-use std::fs;
-use std::io::{self, Write};
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+#[cfg(not(windows))]
+use std::os::unix::process::ExitStatusExt;
+#[cfg(windows)]
+use std::os::windows::process::ExitStatusExt;
+use std::{
+    collections::HashMap,
+    fs,
+    io::{self, Write},
+    path::{Path, PathBuf},
+    process::{Command, Output, Stdio},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{RecvTimeoutError, channel},
+    },
+    thread,
+    time::{Duration, Instant},
+};
 use yansi::{Paint as _, Style};
 
 mod menu;
 mod readme;
 mod sample;
-mod tuples;
 
 #[derive(Debug, Clone)]
 pub struct Job {
@@ -123,8 +137,6 @@ impl Job {
 }
 
 pub fn enqueue_readme_jobs(sender: std::sync::mpsc::Sender<Job>) {
-    use std::path::Path;
-
     let workspace_dir = std::env::current_dir().unwrap();
     let entries = match fs_err::read_dir(&workspace_dir) {
         Ok(e) => e,
@@ -259,87 +271,6 @@ pub fn enqueue_readme_jobs(sender: std::sync::mpsc::Sender<Job>) {
             )
             .red()
         );
-    }
-}
-
-pub fn enqueue_tuple_job(sender: std::sync::mpsc::Sender<Job>) {
-    use std::process::{Command, Stdio};
-    use std::time::Instant;
-
-    // Path where tuple impls should be written
-    let base_path = Path::new("facet-core/src/impls_core/tuple.rs");
-
-    debug!("Generating tuple impls for {}", base_path.display().blue());
-
-    // Generate the tuple impls code
-    let start = Instant::now();
-    let output = tuples::generate();
-    let duration = start.elapsed();
-
-    // Format content via rustfmt edition 2024
-    let mut rustfmt_cmd = Command::new("rustfmt")
-        .arg("--edition")
-        .arg("2024")
-        .arg("--emit")
-        .arg("stdout")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("failed to start rustfmt");
-
-    {
-        use std::io::Write;
-        let stdin = rustfmt_cmd
-            .stdin
-            .as_mut()
-            .expect("failed to open rustfmt stdin");
-        stdin
-            .write_all(output.as_bytes())
-            .expect("failed to write to rustfmt stdin");
-    }
-
-    let rustfmt_output = rustfmt_cmd
-        .wait_with_output()
-        .expect("failed to read rustfmt stdout");
-
-    if !rustfmt_output.status.success() {
-        let stderr = String::from_utf8_lossy(&rustfmt_output.stderr);
-        error!(
-            "rustfmt failed formatting {}: {}",
-            base_path.display(),
-            stderr
-        );
-    }
-
-    let content = if rustfmt_output.status.success() {
-        rustfmt_output.stdout
-    } else {
-        output.into_bytes()
-    };
-
-    let size_mb = (content.len() as f64) / (1024.0 * 1024.0);
-    let secs = duration.as_secs_f64();
-    let mbps = if secs > 0.0 { size_mb / secs } else { 0.0 };
-    debug!(
-        "Generated and formatted tuple impls for {}: {:.2} MiB in {:.2} s ({:.2} MiB/s)",
-        base_path.display().blue(),
-        size_mb,
-        secs,
-        mbps.bright_magenta()
-    );
-
-    // Attempt to read existing file
-    let old_content = fs::read(base_path).ok();
-
-    let job = Job {
-        path: base_path.to_path_buf(),
-        old_content,
-        new_content: content,
-    };
-
-    if let Err(e) = sender.send(job) {
-        error!("Failed to send tuple job: {e}");
     }
 }
 
@@ -638,9 +569,10 @@ pub fn show_jobs_and_apply_if_consent_is_given(jobs: &mut [Job]) {
     }
 }
 
-#[derive(Debug, Clone)]
-struct Options {
-    check: bool,
+enum Subcommand {
+    Check,
+    Generate,
+    Prepush,
 }
 
 fn main() {
@@ -663,19 +595,44 @@ fn main() {
         }
     }
 
-    // Parse opts from args
+    // Parse subcommand
     let args: Vec<String> = std::env::args().collect();
-    let mut opts = Options { check: false };
-    for arg in &args[1..] {
-        if arg == "--check" || arg == "-c" {
-            opts.check = true;
+    let subcommand = if args.len() < 2 {
+        eprintln!("Usage: {} <check|generate|prepush>", args[0]);
+        std::process::exit(1);
+    } else {
+        match args[1].as_str() {
+            "check" => Subcommand::Check,
+            "generate" => Subcommand::Generate,
+            "prepush" => Subcommand::Prepush,
+            other => {
+                eprintln!("Unknown subcommand: {}", other);
+                eprintln!("Usage: {} <check|generate|prepush>", args[0]);
+                std::process::exit(1);
+            }
         }
+    };
+
+    // Handle prepush immediately
+    if matches!(subcommand, Subcommand::Prepush) {
+        pre_push();
+        std::process::exit(0); // Exit after pre-push check
     }
 
     // Check if current directory has a Cargo.toml with [workspace]
+    // (Required for check and generate)
     let cargo_toml_path = std::env::current_dir().unwrap().join("Cargo.toml");
-    let cargo_toml_content =
-        fs_err::read_to_string(cargo_toml_path).expect("Failed to read Cargo.toml");
+    let cargo_toml_content = match fs_err::read_to_string(&cargo_toml_path) {
+        Ok(content) => content,
+        Err(e) => {
+            error!(
+                "🚫 Failed to read {}: {}",
+                cargo_toml_path.display(),
+                e.to_string().red()
+            );
+            std::process::exit(1);
+        }
+    };
     if !cargo_toml_content.contains("[workspace]") {
         error!(
             "🚫 {}",
@@ -685,6 +642,7 @@ fn main() {
         std::process::exit(1);
     }
 
+    // Collect staged files (needed for rustfmt jobs in check/generate)
     let staged_files = match collect_staged_files() {
         Ok(sf) => sf,
         Err(e) => {
@@ -706,6 +664,8 @@ fn main() {
         }
     };
 
+    // --- Generate jobs (for check and generate) ---
+
     // Use a channel to collect jobs from all tasks.
     use std::sync::mpsc;
     let (sender, receiver) = mpsc::channel();
@@ -716,17 +676,13 @@ fn main() {
         enqueue_readme_jobs(send1);
     });
     let send2 = sender.clone();
-    let handle_tuple = std::thread::spawn(move || {
-        enqueue_tuple_job(send2);
-    });
-    let send3 = sender.clone();
     let handle_sample = std::thread::spawn(move || {
-        enqueue_sample_job(send3);
+        enqueue_sample_job(send2);
     });
     // Rustfmt job: enqueue formatting for staged .rs files
-    let send4 = sender.clone();
+    let send3 = sender.clone();
     let handle_rustfmt = std::thread::spawn(move || {
-        enqueue_rustfmt_jobs(send4, &staged_files);
+        enqueue_rustfmt_jobs(send3, &staged_files);
     });
 
     // Drop original sender so the channel closes when all workers finish
@@ -740,77 +696,98 @@ fn main() {
 
     // Wait for all job enqueuers to finish
     handle_readme.join().unwrap();
-    handle_tuple.join().unwrap();
     handle_sample.join().unwrap();
     handle_rustfmt.join().unwrap();
 
+    // --- Process jobs based on subcommand ---
+
     if jobs.is_empty() {
         println!("{}", "No codegen changes detected.".green().bold());
-        return;
+        return; // Exit 0
     }
 
-    if opts.check {
-        let mut any_diffs = false;
-        for job in &jobs {
-            // Compare old_content (current file content) to new_content (generated content)
-            let disk_content = std::fs::read(&job.path).unwrap_or_default();
-            if disk_content != job.new_content {
+    match subcommand {
+        Subcommand::Check => {
+            let mut any_diffs = false;
+            for job in &jobs {
+                // Compare disk content (could be None if file doesn't exist) to new_content
+                let disk_content_opt = std::fs::read(&job.path).ok();
+                let disk_content = disk_content_opt.unwrap_or_default(); // Treat non-existent as empty
+
+                if disk_content != job.new_content {
+                    error!(
+                        "Diff detected in {}",
+                        job.path.display().to_string().yellow().bold()
+                    );
+                    // Optionally show the diff here? For now, just flag it.
+                    any_diffs = true;
+                }
+            }
+            if any_diffs {
+                // Print a big banner with error message about generated files
                 error!(
-                    "Diff detected in {}",
-                    job.path.display().to_string().yellow().bold()
+                    "┌────────────────────────────────────────────────────────────────────────────┐"
                 );
-                any_diffs = true;
+                error!(
+                    "│                                                                            │"
+                );
+                error!(
+                    "│  GENERATED FILES HAVE CHANGED - RUN `just gen` TO UPDATE THEM              │"
+                );
+                error!(
+                    "│                                                                            │"
+                );
+                error!(
+                    "│  For README.md files:                                                      │"
+                );
+                error!(
+                    "│                                                                            │"
+                );
+                error!(
+                    "│  • Don't edit README.md directly - edit the README.md.in template instead  │"
+                );
+                error!(
+                    "│  • Then run `just gen` to regenerate the README.md files                   │"
+                );
+                error!(
+                    "│  • A pre-commit hook is set up by cargo-husky to do just that              │"
+                );
+                error!(
+                    "│                                                                            │"
+                );
+                error!(
+                    "│  See CONTRIBUTING.md                                                       │"
+                );
+                error!(
+                    "│                                                                            │"
+                );
+                error!(
+                    "└────────────────────────────────────────────────────────────────────────────┘"
+                );
+                std::process::exit(1);
+            } else {
+                println!("{}", "✅ All generated files up to date.".green().bold());
+                std::process::exit(0);
             }
         }
-        if any_diffs {
-            // Print a big banner with error message about generated files
-            error!(
-                "┌────────────────────────────────────────────────────────────────────────────┐"
-            );
-            error!(
-                "│                                                                            │"
-            );
-            error!(
-                "│  GENERATED FILES HAVE CHANGED - RUN `just codegen` TO UPDATE THEM          │"
-            );
-            error!(
-                "│                                                                            │"
-            );
-            error!(
-                "│  For README.md files:                                                      │"
-            );
-            error!(
-                "│                                                                            │"
-            );
-            error!(
-                "│  • Don't edit README.md directly - edit the README.md.in template instead  │"
-            );
-            error!(
-                "│  • Then run `just codegen` to regenerate the README.md files               │"
-            );
-            error!(
-                "│  • A pre-commit hook is set up by cargo-husky to do just that              │"
-            );
-            error!(
-                "│                                                                            │"
-            );
-            error!(
-                "│  See CONTRIBUTING.md                                                       │"
-            );
-            error!(
-                "│                                                                            │"
-            );
-            error!(
-                "└────────────────────────────────────────────────────────────────────────────┘"
-            );
-            std::process::exit(1);
-        } else {
-            println!("{}", "✅ All generated files up to date.".green().bold());
+        Subcommand::Generate => {
+            // Remove no-op jobs (where the content is unchanged).
+            jobs.retain(|job| !job.is_noop());
+            if jobs.is_empty() {
+                println!(
+                    "{}",
+                    "All generated files are already up-to-date.".green().bold()
+                );
+                return; // Exit 0
+            }
+            // Show menu and potentially apply changes
+            show_jobs_and_apply_if_consent_is_given(&mut jobs);
+            // The show_jobs... function handles exit status based on user choice.
         }
-    } else {
-        // Remove no-op jobs (where the content is unchanged).
-        jobs.retain(|job| !job.is_noop());
-        show_jobs_and_apply_if_consent_is_given(&mut jobs);
+        Subcommand::Prepush => {
+            // This case was handled earlier
+            unreachable!("Prepush should have exited earlier");
+        }
     }
 }
 
@@ -906,4 +883,341 @@ pub fn collect_staged_files() -> io::Result<StagedFiles> {
         dirty,
         unstaged,
     })
+}
+
+#[derive(Debug, Clone)]
+struct CommandInfo {
+    /// Short name for display purposes
+    name: String,
+    /// The actual command and its arguments
+    command: Vec<String>,
+}
+
+fn pre_push() {
+    println!("{}", "🚀 Running pre-push checks...".bold());
+    let overall_start_time = Instant::now();
+
+    // --- Setup Ctrl+C Handling ---
+    let interrupted = Arc::new(AtomicBool::new(false));
+    let i = interrupted.clone();
+    ctrlc::set_handler(move || {
+        if i.load(Ordering::SeqCst) { // Already received, force exit
+            eprintln!("{}", "\n🛑 Force exiting...".red().bold());
+            std::process::exit(130); // Standard exit code for Ctrl+C
+        }
+        i.store(true, Ordering::SeqCst);
+        eprintln!("{}", "\n⏳ Ctrl-C received, attempting graceful shutdown... Press Ctrl-C again to force exit.".yellow().bold());
+    })
+    .expect("Error setting Ctrl-C handler");
+
+    // --- Define Commands ---
+    let commands = vec![
+        CommandInfo {
+            name: "codegen check".to_string(),
+            command: {
+                let current_exe =
+                    std::env::current_exe().expect("Failed to get current executable path");
+
+                vec![current_exe.to_string_lossy().into_owned(), "check".into()]
+            },
+        },
+        CommandInfo {
+            name: "absolve".to_string(),
+            command: vec!["./facet-dev/absolve.sh".into()],
+        },
+        CommandInfo {
+            name: "clippy".to_string(),
+            command: vec![
+                "cargo".into(),
+                "clippy".into(),
+                "--workspace".into(),
+                "--all-targets".into(),
+                "--target-dir".into(),
+                "target/clippy".into(),
+                "--".into(),
+                "-D".into(),
+                "warnings".into(),
+            ],
+        },
+        CommandInfo {
+            name: "test".to_string(),
+            command: vec!["cargo".into(), "nextest".into(), "run".into()],
+        },
+    ];
+    let total_commands = commands.len();
+
+    // --- Setup Indicatif ---
+    let multi_progress = MultiProgress::new();
+    let mut progress_bars: HashMap<String, ProgressBar> = HashMap::new();
+
+    // --- Setup Communication Channel ---
+    #[derive(Debug)]
+    enum CommandResult {
+        Success {
+            info: CommandInfo,
+            duration: Duration,
+        },
+        Failure {
+            info: CommandInfo,
+            output: Output,
+            duration: Duration,
+        },
+        IoError {
+            info: CommandInfo,
+            error: io::Error,
+            duration: Duration,
+        },
+    }
+
+    let (sender, receiver) = channel::<CommandResult>();
+    let mut handles = Vec::new();
+
+    // --- Spawn Command Threads ---
+    for cmd_info in commands.into_iter() {
+        if interrupted.load(Ordering::SeqCst) {
+            break; // Don't start new tasks if already interrupted
+        }
+
+        let pb = multi_progress.add(ProgressBar::new_spinner());
+        pb.set_style(
+            ProgressStyle::default_spinner()
+                .template("{spinner:.cyan.bold} {prefix:>15!.yellow.bold} {msg}")
+                .unwrap()
+                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏", " "]),
+        );
+        pb.enable_steady_tick(Duration::from_millis(80));
+        pb.set_prefix(cmd_info.name.clone());
+        pb.set_message("Running...");
+        progress_bars.insert(cmd_info.name.clone(), pb.clone());
+
+        let sender_clone = sender.clone();
+        let cmd_info_clone = cmd_info.clone(); // Clone info for the thread
+        let interrupted_clone = interrupted.clone();
+
+        let handle = thread::spawn(move || {
+            // Don't start if interrupted before thread execution
+            if interrupted_clone.load(Ordering::SeqCst) {
+                return;
+            }
+
+            let command_start_time = Instant::now(); // Start timer for this command
+
+            let mut command_process = Command::new(&cmd_info_clone.command[0]);
+            command_process
+                .args(&cmd_info_clone.command[1..])
+                .env("CLICOLOR_FORCE", "1") // Force color output for tools that support it
+                .env("CARGO_TERM_COLOR", "always") // Force color for cargo commands
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+
+            // Execute and wait for the command
+            let output_result = command_process.output();
+            let command_duration = command_start_time.elapsed(); // Stop timer
+
+            // Check interruption *after* potentially long command finishes, before sending result
+            if interrupted_clone.load(Ordering::SeqCst) {
+                return; // Don't send result if interrupted
+            }
+
+            // Send the result back to the main thread
+            let cmd_result = match output_result {
+                Ok(output) => {
+                    if output.status.success() {
+                        CommandResult::Success {
+                            info: cmd_info_clone.clone(),
+                            duration: command_duration,
+                        }
+                    } else {
+                        CommandResult::Failure {
+                            info: cmd_info_clone.clone(),
+                            output,
+                            duration: command_duration,
+                        }
+                    }
+                }
+                Err(e) => CommandResult::IoError {
+                    info: cmd_info_clone.clone(),
+                    error: e,
+                    duration: command_duration,
+                },
+            };
+
+            if sender_clone.send(cmd_result).is_err() {
+                // Receiver disconnected (main thread likely exited or panicked)
+                // Can't log using `log` crate here easily without setup.
+                // eprintln!("Warning: Failed to send result for command '{}', main thread may have exited.", cmd_info_clone.name);
+            }
+        });
+        handles.push(handle);
+    }
+
+    drop(sender); // Drop original sender so receiver knows when all threads are done
+
+    // --- Collect Results and Update Progress ---
+    let mut results = Vec::new();
+    let mut finished_count = 0;
+
+    // Keep polling for results and check for interruption
+    while finished_count < handles.len() {
+        if interrupted.load(Ordering::SeqCst) {
+            break; // Exit collection loop if interrupted
+        }
+
+        match receiver.recv_timeout(Duration::from_millis(100)) {
+            Ok(result) => {
+                finished_count += 1;
+                let (name, duration, status) = match &result {
+                    CommandResult::Success { info, duration, .. } => {
+                        (info.name.clone(), duration, "Success")
+                    }
+                    CommandResult::Failure { info, duration, .. } => {
+                        (info.name.clone(), duration, "Failure")
+                    }
+                    CommandResult::IoError { info, duration, .. } => {
+                        (info.name.clone(), duration, "IoError")
+                    }
+                };
+                let duration_ms = duration.as_millis();
+                let time_str = format!("({} ms)", duration_ms);
+
+                if let Some(pb) = progress_bars.get(&name) {
+                    match status {
+                        "Success" => {
+                            pb.finish_with_message(format!("{} {}", "✔ OK".green(), time_str));
+                        }
+                        "Failure" => {
+                            pb.finish_with_message(format!(
+                                "{} Failed {}",
+                                "✖".red(),
+                                time_str.dim()
+                            ));
+                        }
+                        "IoError" => {
+                            pb.finish_with_message(format!(
+                                "{} {} {}",
+                                "⚠ Error".red(),
+                                "IO Error".red(),
+                                time_str.dim()
+                            ));
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                results.push(result);
+            }
+            Err(RecvTimeoutError::Timeout) => {
+                // No result yet, continue loop and check interruption flag again
+            }
+            Err(RecvTimeoutError::Disconnected) => {
+                // All senders dropped. This means all threads finished or panicked.
+                break;
+            }
+        }
+    }
+
+    // --- Wait for Threads and Final Cleanup ---
+    // Ensure all spawned threads have completed (or acknowledged interruption)
+    for handle in handles {
+        let _ = handle.join(); // Ignore join errors, maybe thread panicked
+    }
+
+    // Mark any remaining spinners as interrupted/cancelled if needed
+    if interrupted.load(Ordering::SeqCst) {
+        for pb in progress_bars.values() {
+            if !pb.is_finished() {
+                pb.finish_with_message(format!("{}", "↪ Cancelled".dim()));
+            }
+        }
+    }
+
+    // Explicitly finish the MultiProgress manager (optional, but good practice)
+    multi_progress.clear().ok(); // Clear progress bars before final message
+
+    println!(); // Add a newline after progress bars finish
+
+    let overall_duration = overall_start_time.elapsed(); // Stop overall timer
+    let overall_duration_ms = overall_duration.as_millis();
+    let overall_time_str = format!("in {} ms", overall_duration_ms);
+
+    // --- Process Results and Exit ---
+    if interrupted.load(Ordering::SeqCst) {
+        println!(
+            "{}",
+            "🛑 Pre-push checks cancelled by user.".yellow().bold()
+        );
+        std::process::exit(130); // Standard exit code for Ctrl+C
+    }
+
+    let mut failures = Vec::new();
+    for result in results {
+        match result {
+            CommandResult::Failure { info, output, .. } => {
+                failures.push((info, output));
+            }
+            CommandResult::IoError { info, error, .. } => {
+                failures.push((
+                    info,
+                    Output {
+                        status: std::process::ExitStatus::from_raw(1),
+                        stdout: Vec::new(),
+                        stderr: format!("Error executing command: {}", error).into_bytes(),
+                    },
+                ));
+            }
+            CommandResult::Success { .. } => {}
+        }
+    }
+
+    if failures.is_empty() {
+        println!(
+            "{} {} {}",
+            "✅ All pre-push checks passed!".green().bold(),
+            "ACCEPTED".green().bold(),
+            overall_time_str.dim()
+        );
+        std::process::exit(0);
+    } else {
+        println!(
+            "{} {} {}",
+            format!(
+                "❌ {}/{} pre-push checks failed:",
+                failures.len(),
+                total_commands
+            )
+            .red()
+            .bold(),
+            "REJECTED".red().bold(),
+            overall_time_str
+        );
+        for (info, output) in failures {
+            println!(
+                "\n{}",
+                "--------------------------------------------------".dim()
+            );
+            println!(
+                "Failed Check: {} {}",
+                info.name.yellow().bold(),
+                format!("(Command: {})", info.command.join(" ")).dim()
+            );
+            println!("Exit Status: {}", output.status.to_string().red());
+
+            let stdout_str = String::from_utf8_lossy(&output.stdout);
+            if !stdout_str.trim().is_empty() {
+                println!("{}", "\n--- Standard Output ---".cyan());
+                println!("{}", stdout_str.trim_end());
+            }
+
+            let stderr_str = String::from_utf8_lossy(&output.stderr);
+            if !stderr_str.trim().is_empty() {
+                println!("{}", "\n--- Standard Error ---".red());
+                println!("{}", stderr_str.trim_end());
+            }
+            println!(
+                "{}",
+                "--------------------------------------------------".dim()
+            );
+        }
+        println!("\n{}", " PUSH REJECTED ".on_red().white().bold());
+        std::process::exit(1);
+    }
 }

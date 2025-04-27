@@ -12,6 +12,7 @@ struct FooBar {
     bar: String,
 }
 
+#[cfg(not(miri))]
 #[test]
 fn bad_json_1() -> eyre::Result<()> {
     facet_testhelpers::setup();
@@ -22,6 +23,7 @@ fn bad_json_1() -> eyre::Result<()> {
     Ok(())
 }
 
+#[cfg(not(miri))]
 #[test]
 fn bad_json_2() -> eyre::Result<()> {
     facet_testhelpers::setup();
@@ -32,6 +34,7 @@ fn bad_json_2() -> eyre::Result<()> {
     Ok(())
 }
 
+#[cfg(not(miri))]
 #[test]
 fn bad_json_3() -> eyre::Result<()> {
     facet_testhelpers::setup();
@@ -42,6 +45,7 @@ fn bad_json_3() -> eyre::Result<()> {
     Ok(())
 }
 
+#[cfg(not(miri))]
 #[test]
 fn bad_json_4() -> eyre::Result<()> {
     facet_testhelpers::setup();
@@ -52,6 +56,7 @@ fn bad_json_4() -> eyre::Result<()> {
     Ok(())
 }
 
+#[cfg(not(miri))]
 #[test]
 fn bad_json_5() -> eyre::Result<()> {
     facet_testhelpers::setup();
@@ -62,6 +67,7 @@ fn bad_json_5() -> eyre::Result<()> {
     Ok(())
 }
 
+#[cfg(not(miri))]
 #[test]
 fn bad_json_6_string_as_number_subpath() -> eyre::Result<()> {
     facet_testhelpers::setup();
@@ -72,6 +78,7 @@ fn bad_json_6_string_as_number_subpath() -> eyre::Result<()> {
     Ok(())
 }
 
+#[cfg(not(miri))]
 #[test]
 fn unknown_field_with_rename() -> eyre::Result<()> {
     facet_testhelpers::setup();
@@ -87,6 +94,26 @@ fn unknown_field_with_rename() -> eyre::Result<()> {
     // or the renamed field name
     let json = r#"{"wrong_name": "value"}"#;
     let err = from_str::<RenamedFields>(json).unwrap_err();
+    insta::assert_snapshot!(err);
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn test_deserialize_tuple_empty_but_isnt() -> eyre::Result<()> {
+    let result: Result<(), _> = from_str(r#"[10]"#);
+    let err = result.unwrap_err();
+    insta::assert_snapshot!(err);
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn test_deserialize_tuple_wrong_size_one_too_many() -> eyre::Result<()> {
+    let result: Result<(i32,), _> = from_str(r#"[10,20]"#);
+    let err = result.unwrap_err();
     insta::assert_snapshot!(err);
 
     Ok(())

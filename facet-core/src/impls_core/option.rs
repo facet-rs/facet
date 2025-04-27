@@ -1,15 +1,55 @@
-use core::{alloc::Layout, mem::MaybeUninit};
+use core::mem::MaybeUninit;
 
 use crate::{
-    ConstTypeId, Def, Facet, OptionDef, OptionVTable, PtrConst, PtrUninit, Shape,
-    value_vtable_inner,
+    Def, Facet, OptionDef, OptionVTable, PtrConst, PtrMut, PtrUninit, Shape, TryBorrowInnerError,
+    TryFromError, TryIntoInnerError, TypedPtrUninit, VTableView, value_vtable,
 };
-
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
     const SHAPE: &'static Shape = &const {
-        Shape::builder()
-            .id(ConstTypeId::of::<Self>())
-            .layout(Layout::new::<Self>())
+        // Define the functions for transparent conversion between Option<T> and T
+        unsafe fn try_from<'a, 'src, 'dst, T: Facet<'a>>(
+            src_ptr: PtrConst<'src>,
+            src_shape: &'static Shape,
+            dst: PtrUninit<'dst>,
+        ) -> Result<PtrMut<'dst>, TryFromError> {
+            if src_shape.id != T::SHAPE.id {
+                return Err(TryFromError::UnsupportedSourceShape {
+                    src_shape,
+                    expected: &[T::SHAPE],
+                });
+            }
+            let t = unsafe { src_ptr.read::<T>() };
+            let option = Some(t);
+            Ok(unsafe { dst.put(option) })
+        }
+
+        unsafe fn try_into_inner<'a, 'src, 'dst, T: Facet<'a>>(
+            src_ptr: PtrConst<'src>,
+            dst: PtrUninit<'dst>,
+        ) -> Result<PtrMut<'dst>, TryIntoInnerError> {
+            let option = unsafe { src_ptr.read::<Option<T>>() };
+            match option {
+                Some(t) => Ok(unsafe { dst.put(t) }),
+                None => Err(TryIntoInnerError::Unavailable),
+            }
+        }
+
+        unsafe fn try_borrow_inner<'a, 'src, T: Facet<'a>>(
+            src_ptr: PtrConst<'src>,
+        ) -> Result<PtrConst<'src>, TryBorrowInnerError> {
+            let option = unsafe { src_ptr.get::<Option<T>>() };
+            match option {
+                Some(t) => Ok(PtrConst::new(t)),
+                None => Err(TryBorrowInnerError::Unavailable),
+            }
+        }
+
+        // Function to return inner type's shape
+        fn inner_shape<'a, T: Facet<'a>>() -> &'static Shape {
+            T::SHAPE
+        }
+
+        Shape::builder_for_sized::<Self>()
             .type_params(&[crate::TypeParam {
                 name: "T",
                 shape: || T::SHAPE,
@@ -45,7 +85,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
             ))
             .vtable(
                 &const {
-                    let mut vtable = value_vtable_inner!(core::option::Option<T>, |f, opts| {
+                    let mut vtable = value_vtable!(core::option::Option<T>, |f, opts| {
                         write!(f, "Option")?;
                         if let Some(opts) = opts.for_children() {
                             write!(f, "<")?;
@@ -62,12 +102,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
                             let this = unsafe { this.get::<Self>() };
                             if let Some(value) = &this {
                                 write!(f, "Some(")?;
-                                unsafe {
-                                    (T::SHAPE.vtable.debug.unwrap_unchecked())(
-                                        PtrConst::new(value),
-                                        f,
-                                    )?;
-                                }
+                                (<VTableView<T>>::of().debug().unwrap())(value, f)?;
                                 write!(f, ")")?;
                             } else {
                                 write!(f, "None")?;
@@ -79,8 +114,8 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
                     if T::SHAPE.is_from_str() {
                         vtable.parse = Some(|str, target| {
                             let mut t = MaybeUninit::<T>::uninit();
-                            let parse = unsafe { T::SHAPE.vtable.parse.unwrap_unchecked() };
-                            let _res = unsafe { (parse)(str, PtrUninit::new(t.as_mut_ptr()))? };
+                            let parse = <VTableView<T>>::of().parse().unwrap();
+                            let _res = (parse)(str, TypedPtrUninit::new(t.as_mut_ptr()))?;
                             // res points to t so we can't drop it yet. the option is not initialized though
                             unsafe {
                                 target.put(Some(t.assume_init()));
@@ -89,9 +124,14 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
                         });
                     }
 
+                    vtable.try_from = Some(try_from::<T>);
+                    vtable.try_into_inner = Some(try_into_inner::<T>);
+                    vtable.try_borrow_inner = Some(try_borrow_inner::<T>);
+
                     vtable
                 },
             )
+            .inner(inner_shape::<T>)
             .build()
     };
 }

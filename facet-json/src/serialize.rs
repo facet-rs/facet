@@ -1,7 +1,9 @@
 use core::num::NonZero;
-use facet_core::{Def, Facet, FieldAttribute};
+use facet_core::{Def, Facet, FieldAttribute, StructKind};
 use facet_reflect::Peek;
 use std::io::{self, Write};
+
+use crate::First;
 
 /// Serializes a value to JSON
 pub fn to_string<'a, T: Facet<'a>>(value: &T) -> String {
@@ -32,13 +34,13 @@ pub fn peek_to_writer<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Resu
 /// The core serialization function
 fn serialize<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<()> {
     use facet_core::{
-        Struct,
+        StructDef,
         StructKind::{Tuple, TupleStruct},
     };
 
     match peek.shape().def {
         Def::Scalar(_) => serialize_scalar(peek, writer),
-        Def::Struct(Struct {
+        Def::Struct(StructDef {
             kind: Tuple | TupleStruct,
             ..
         }) => serialize_tuple(peek, writer),
@@ -157,12 +159,10 @@ fn serialize_struct<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result
 
     write!(writer, "{{")?;
 
-    let mut first = true;
-    for (field, field_peek) in struct_peek.fields_for_serialize() {
+    for (first, (field, field_peek)) in struct_peek.fields_for_serialize().with_first() {
         if !first {
             write!(writer, ",")?;
         }
-        first = false;
 
         // Check for rename attribute
         let field_name = field
@@ -198,12 +198,10 @@ fn serialize_list<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<(
 
     write!(writer, "[")?;
 
-    let mut first = true;
-    for item_peek in list_peek.iter() {
+    for (first, item_peek) in list_peek.iter().with_first() {
         if !first {
             write!(writer, ",")?;
         }
-        first = false;
 
         serialize(&item_peek, writer)?;
     }
@@ -221,12 +219,10 @@ fn serialize_tuple<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<
 
     write!(writer, "[")?;
 
-    let mut first = true;
-    for (_, item_peek) in struct_peek.fields_for_serialize() {
+    for (first, (_, item_peek)) in struct_peek.fields_for_serialize().with_first() {
         if !first {
             write!(writer, ",")?;
         }
-        first = false;
 
         serialize(&item_peek, writer)?;
     }
@@ -244,12 +240,10 @@ fn serialize_map<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<()
 
     write!(writer, "{{")?;
 
-    let mut first = true;
-    for (key, value) in map_peek.iter() {
+    for (first, (key, value)) in map_peek.iter().with_first() {
         if !first {
             write!(writer, ",")?;
         }
-        first = false;
 
         // For map, keys must be converted to strings
         match key.shape().def {
@@ -301,47 +295,40 @@ fn serialize_enum<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<(
         write_json_string(writer, variant_name)?;
         write!(writer, ":")?;
 
-        // If it's a single-field tuple variant, output just the value
-        if variant.data.fields.len() == 1 {
-            let field = enum_peek.field(0).ok_or_else(|| {
-                io::Error::new(io::ErrorKind::Other, "Failed to access enum field")
-            })?;
-            serialize(&field, writer)?;
-        } else {
-            // Multi-field variant - output as an array or object depending on variant type
-            let is_struct = variant
-                .data
-                .fields
-                .iter()
-                .any(|f| !f.name.starts_with("__"));
+        // Multi-field variant - output as an array or object depending on variant type
+        let is_struct = variant.data.kind == StructKind::Struct;
 
-            if is_struct {
-                // Struct variant - output as an object
-                write!(writer, "{{")?;
+        if is_struct {
+            // Struct variant - output as an object
+            write!(writer, "{{")?;
 
-                let mut first = true;
-                for (field, field_peek) in enum_peek.fields_for_serialize() {
-                    if !first {
-                        write!(writer, ",")?;
-                    }
-                    first = false;
-
-                    write_json_string(writer, field.name)?;
-                    write!(writer, ":")?;
-                    serialize(&field_peek, writer)?;
+            for (first, (field, field_peek)) in enum_peek.fields_for_serialize().with_first() {
+                if !first {
+                    write!(writer, ",")?;
                 }
 
-                write!(writer, "}}")?
+                write_json_string(writer, field.name)?;
+                write!(writer, ":")?;
+                serialize(&field_peek, writer)?;
+            }
+
+            write!(writer, "}}")?
+        } else {
+            // Tuple variant - output as an array if has more than 1 element, otherwise just output
+            // the element.
+
+            if crate::variant_is_transparent(variant) {
+                let field = enum_peek.field(0).ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::Other, "Failed to access enum field")
+                })?;
+                serialize(&field, writer)?;
             } else {
-                // Tuple variant - output as an array
                 write!(writer, "[")?;
 
-                let mut first = true;
-                for (_field, field_peek) in enum_peek.fields_for_serialize() {
+                for (first, (_field, field_peek)) in enum_peek.fields_for_serialize().with_first() {
                     if !first {
                         write!(writer, ",")?;
                     }
-                    first = false;
                     serialize(&field_peek, writer)?;
                 }
 

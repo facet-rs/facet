@@ -1,2 +1,2 @@
 #!/usr/bin/env sh
-just prepush
+cargo run -p facet-dev prepush

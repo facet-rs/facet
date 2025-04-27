@@ -1,5 +1,4 @@
 use crate::*;
-use core::alloc::Layout;
 use core::{cmp::Ordering, iter::zip};
 
 unsafe impl<'a, T, const L: usize> Facet<'a> for [T; L]
@@ -7,9 +6,7 @@ where
     T: Facet<'a>,
 {
     const SHAPE: &'static Shape = &const {
-        Shape::builder()
-            .id(ConstTypeId::of::<[T; L]>())
-            .layout(Layout::new::<[T; L]>())
+        Shape::builder_for_sized::<Self>()
             .type_params(&[
                 TypeParam {
                     name: "T",
@@ -18,7 +15,7 @@ where
             ])
             .vtable(
                 &const {
-                    let mut builder = ValueVTable::builder()
+                    let mut builder = ValueVTable::builder::<Self>()
                         .marker_traits(T::SHAPE.vtable.marker_traits)
                         .type_name(|f, opts| {
                             if let Some(opts) = opts.for_children() {
@@ -28,20 +25,16 @@ where
                             } else {
                                 write!(f, "[⋯; {L}]")
                             }
-                        })
-                        .drop_in_place(|value| unsafe { value.drop_in_place::<[T; L]>() });
+                        });
                     if T::SHAPE.vtable.display.is_some() {
                         builder = builder.display(|value, f| {
-                            let value = unsafe { value.get::<[T; L]>() };
                             write!(f, "[")?;
 
                             for (idx, value) in value.iter().enumerate() {
-                                unsafe {
-                                    (T::SHAPE.vtable.display.unwrap_unchecked())(
-                                        PtrConst::new(value),
-                                        f,
-                                    )?
-                                };
+                                (<VTableView<T>>::of().display().unwrap())(
+                                    value,
+                                    f,
+                                )?;
                                 if idx != L - 1 {
                                     write!(f, ", ")?;
                                 }
@@ -51,16 +44,13 @@ where
                     }
                     if T::SHAPE.vtable.debug.is_some() {
                         builder = builder.debug(|value, f| {
-                            let value = unsafe { value.get::<[T; L]>() };
                             write!(f, "[")?;
 
                             for (idx, value) in value.iter().enumerate() {
-                                unsafe {
-                                    (T::SHAPE.vtable.debug.unwrap_unchecked())(
-                                        PtrConst::new(value),
-                                        f,
-                                    )?
-                                };
+                                (<VTableView<T>>::of().debug().unwrap())(
+                                    value,
+                                    f,
+                                )?;
                                 if idx != L - 1 {
                                     write!(f, ", ")?;
                                 }
@@ -70,12 +60,10 @@ where
                     }
                     if T::SHAPE.vtable.eq.is_some() {
                         builder = builder.eq(|a, b| {
-                            let a = unsafe { a.get::<[T; L]>() };
-                            let b = unsafe { b.get::<[T; L]>() };
-                            zip(a, b).all(|(a, b)| unsafe {
-                                (T::SHAPE.vtable.eq.unwrap_unchecked())(
-                                    PtrConst::new(a),
-                                    PtrConst::new(b),
+                            zip(a, b).all(|(a, b)| {
+                                (<VTableView<T>>::of().eq().unwrap())(
+                                    a,
+                                    b,
                                 )
                             })
                         });
@@ -85,8 +73,8 @@ where
                         builder =
                             builder.default_in_place(|target| unsafe { target.assume_init() });
                     } else if L <= 32 && T::SHAPE.vtable.default_in_place.is_some() {
-                        builder = builder.default_in_place(|target| unsafe {
-                            let t_dip = T::SHAPE.vtable.default_in_place.unwrap_unchecked();
+                        builder = builder.default_in_place(|mut target| unsafe {
+                            let t_dip = <VTableView<T>>::of().default_in_place().unwrap();
                             let stride = T::SHAPE.layout.sized_layout().unwrap().pad_to_align().size();
                             for idx in 0..L {
                                 t_dip(target.field_uninit_at(idx * stride));
@@ -98,25 +86,22 @@ where
                         // specializing the `0` len case
                     }
                     if T::SHAPE.vtable.clone_into.is_some() {
-                        builder = builder.clone_into(|src, dst| unsafe {
-                            let t_cip = T::SHAPE.vtable.clone_into.unwrap_unchecked();
-                            let src = src.get::<[T; L]>();
+                        builder = builder.clone_into(|src, mut dst| unsafe {
+                            let t_cip = <VTableView<T>>::of().clone_into().unwrap();
                             let stride = T::SHAPE.layout.sized_layout().unwrap().pad_to_align().size();
                             for (idx, src) in src.iter().enumerate() {
-                                (t_cip)(PtrConst::new(src), dst.field_uninit_at(idx * stride));
+                                (t_cip)(src, dst.field_uninit_at(idx * stride));
                             }
                             dst.assume_init()
                         });
                     }
                     if T::SHAPE.vtable.partial_ord.is_some() {
                         builder = builder.partial_ord(|a, b| {
-                            let a = unsafe { a.get::<[T; L]>() };
-                            let b = unsafe { b.get::<[T; L]>() };
                             zip(a, b)
-                                .find_map(|(a, b)| unsafe {
-                                    match (T::SHAPE.vtable.partial_ord.unwrap_unchecked())(
-                                        PtrConst::new(a),
-                                        PtrConst::new(b),
+                                .find_map(|(a, b)|  {
+                                    match (<VTableView<T>>::of().partial_ord().unwrap())(
+                                        a,
+                                        b,
                                     ) {
                                         Some(Ordering::Equal) => None,
                                         c => Some(c),
@@ -127,13 +112,11 @@ where
                     }
                     if T::SHAPE.vtable.ord.is_some() {
                         builder = builder.ord(|a, b| {
-                            let a = unsafe { a.get::<[T; L]>() };
-                            let b = unsafe { b.get::<[T; L]>() };
                             zip(a, b)
-                                .find_map(|(a, b)| unsafe {
-                                    match (T::SHAPE.vtable.ord.unwrap_unchecked())(
-                                        PtrConst::new(a),
-                                        PtrConst::new(b),
+                                .find_map(|(a, b)| {
+                                    match (<VTableView<T>>::of().ord().unwrap())(
+                                        a,
+                                        b,
                                     ) {
                                         Ordering::Equal => None,
                                         c => Some(c),
@@ -144,15 +127,12 @@ where
                     }
                     if T::SHAPE.vtable.hash.is_some() {
                         builder = builder.hash(|value, state, hasher| {
-                            let value = unsafe { value.get::<[T; L]>() };
                             for value in value {
-                                unsafe {
-                                    (T::SHAPE.vtable.hash.unwrap_unchecked())(
-                                        PtrConst::new(value),
-                                        state,
-                                        hasher,
-                                    )
-                                }
+                                (<VTableView<T>>::of().hash().unwrap())(
+                                    value,
+                                    state,
+                                    hasher,
+                                )
                             }
                         });
                     }

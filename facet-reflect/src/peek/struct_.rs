@@ -1,4 +1,4 @@
-use facet_core::{Field, FieldAttribute, FieldError, Struct};
+use facet_core::{Field, FieldAttribute, FieldError, StructDef};
 
 use crate::Peek;
 
@@ -9,13 +9,13 @@ pub struct PeekStruct<'mem, 'facet_lifetime> {
     pub(crate) value: Peek<'mem, 'facet_lifetime>,
 
     /// the definition of the struct!
-    pub(crate) def: Struct,
+    pub(crate) def: StructDef,
 }
 
 impl<'mem, 'facet_lifetime> PeekStruct<'mem, 'facet_lifetime> {
     /// Returns the struct definition
     #[inline(always)]
-    pub fn def(&self) -> &Struct {
+    pub fn def(&self) -> &StructDef {
         &self.def
     }
 

@@ -1,7 +1,6 @@
 [package]
 name = "facet-args"
-version.workspace = true
-authors.workspace = true
+version = "0.18.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -12,8 +11,8 @@ keywords = ["cli", "args", "parser", "facet"]
 categories = ["command-line-interface"]
 
 [dependencies]
-facet-reflect = { path = "../facet-reflect", version = "0.11.0" }
-facet-core = { path = "../facet-core", version = "0.12.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.18.0" }
+facet-core = { path = "../facet-core", version = "0.18.0" }
 log = "0.4.27"
 
 [dev-dependencies]

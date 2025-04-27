@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 
+use eyre::Result;
 use facet::Facet;
 use facet_json::from_str;
 
 #[test]
-fn json_read_empty_object_for_struct() -> eyre::Result<()> {
+fn json_read_empty_object_for_struct() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Facet)]
@@ -16,7 +17,7 @@ fn json_read_empty_object_for_struct() -> eyre::Result<()> {
 }
 
 #[test]
-fn json_read_empty_object_for_hashmap() -> eyre::Result<()> {
+fn json_read_empty_object_for_hashmap() -> Result<()> {
     facet_testhelpers::setup();
 
     let json = r#"{}"#;
@@ -26,7 +27,7 @@ fn json_read_empty_object_for_hashmap() -> eyre::Result<()> {
 }
 
 #[test]
-fn test_str_escaped() {
+fn test_str_escaped() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Facet, Debug)]
@@ -35,6 +36,8 @@ fn test_str_escaped() {
     }
 
     let json_ok = r#"{"foo":"\"\\abc"}"#;
-    let result_ok: Result<S, _> = from_str(json_ok);
-    assert_eq!(&result_ok.unwrap().foo, "\"\\abc");
+    let ok: S = from_str(json_ok)?;
+    assert_eq!(ok.foo, "\"\\abc");
+
+    Ok(())
 }

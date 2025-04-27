@@ -105,7 +105,12 @@ Also:
 ### A better `assert!`
 
 Crates like [pretty-assertions](https://docs.rs/pretty-assertions) make a diff
-of the `Debug` representation of two types. Wouldn't it be
+of the `Debug` representation of two types.
+
+Wouldn't it be better to have access to the whole type information of both sides
+and do a structural difference, knowing the affinity of every scalar, having
+access to display implementations, but not just, something more like
+[difftastic](https://github.com/Wilfred/difftastic). than `diff`?
 
 ### A more flexible `serde`
 
@@ -137,7 +142,7 @@ With `facet`, serialization and deserialization is implemented:
   * Once per data format (JSON, TOML, etc.)
 
 You can have `mycrate-types` crates, with every struct deriving `Facet`, with no worries. No need
-to put it behind a feature flag even, the main `facet` crate is relatively late, thanks to its use
+to put it behind a feature flag even, the main `facet` crate is relatively light, thanks to its use
 of the lightweight [unsynn](https://docs.rs/unsynn) instead of `syn`.
 
 > *:bearsays*

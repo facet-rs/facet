@@ -1,3 +1,4 @@
+use eyre::Result;
 use facet::Facet;
 
 #[derive(Debug, Facet, PartialEq)]
@@ -7,13 +8,13 @@ struct Person {
 }
 
 #[test]
-fn test_deserialize_person() {
+fn test_deserialize_person() -> Result<()> {
     let yaml = r#"
             name: Alice
             age: 30
         "#;
 
-    let person: Person = facet_yaml::from_str(yaml).expect("Failed to parse YAML");
+    let person: Person = facet_yaml::from_str(yaml)?;
     assert_eq!(
         person,
         Person {
@@ -21,4 +22,6 @@ fn test_deserialize_person() {
             age: 30
         }
     );
+
+    Ok(())
 }

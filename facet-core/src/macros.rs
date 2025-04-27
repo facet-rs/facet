@@ -1,4 +1,4 @@
-use crate::{Facet, Shape};
+use crate::{Facet, Opaque, Shape};
 
 #[doc(hidden)]
 pub const fn shape_of<'a, TStruct, TField: Facet<'a>>(
@@ -16,9 +16,6 @@ where
 {
     Opaque::<TField>::SHAPE
 }
-
-/// Helper type for opaque members
-pub struct Opaque<T>(T);
 
 /// Creates a `ValueVTable` for a given type.
 ///
@@ -46,44 +43,35 @@ pub struct Opaque<T>(T);
 #[macro_export]
 macro_rules! value_vtable {
     ($type_name:ty, $type_name_fn:expr) => {
-        &$crate::value_vtable_inner!($type_name, $type_name_fn)
-    };
-}
-
-/// Creates a `ValueVTable` for a given type, see [`value_vtable!`] for more details.
-#[macro_export]
-macro_rules! value_vtable_inner {
-    ($type_name:ty, $type_name_fn:expr) => {
         const {
-            let mut builder = $crate::ValueVTable::builder()
-                .type_name($type_name_fn)
-                .drop_in_place(|data| unsafe { data.drop_in_place::<$type_name>() });
+            let mut builder = $crate::ValueVTable::builder::<$type_name>()
+                .type_name($type_name_fn);
 
             if $crate::spez::impls!($type_name: core::fmt::Display) {
                 builder = builder.display(|data, f| {
                     use $crate::spez::*;
-                    (&&Spez(unsafe { data.get::<$type_name>() })).spez_display(f)
+                    (&&Spez(data)).spez_display(f)
                 });
             }
 
             if $crate::spez::impls!($type_name: core::fmt::Debug) {
                 builder = builder.debug(|data, f| {
                     use $crate::spez::*;
-                    (&&Spez(unsafe { data.get::<$type_name>() })).spez_debug(f)
+                    (&&Spez(data)).spez_debug(f)
                 });
             }
 
             if $crate::spez::impls!($type_name: core::default::Default) {
-                builder = builder.default_in_place(|target| {
+                builder = builder.default_in_place(|target| unsafe {
                     use $crate::spez::*;
-                    unsafe { (&&SpezEmpty::<$type_name>::SPEZ).spez_default_in_place(target) }
+                    (&&SpezEmpty::<$type_name>::SPEZ).spez_default_in_place(target.into()).as_mut()
                 });
             }
 
             if $crate::spez::impls!($type_name: core::clone::Clone) {
-                builder = builder.clone_into(|src, dst| {
+                builder = builder.clone_into(|src, dst| unsafe {
                     use $crate::spez::*;
-                    unsafe { (&&Spez(src.get::<$type_name>())).spez_clone_into(dst) }
+                    (&&Spez(src)).spez_clone_into(dst.into()).as_mut()
                 });
             }
 
@@ -110,24 +98,24 @@ macro_rules! value_vtable_inner {
             if $crate::spez::impls!($type_name: core::cmp::PartialEq) {
                 builder = builder.eq(|left, right| {
                     use $crate::spez::*;
-                    (&&Spez(unsafe { left.get::<$type_name>() }))
-                        .spez_eq(&&Spez(unsafe { right.get::<$type_name>() }))
+                    (&&Spez(left))
+                        .spez_eq(&&Spez(right))
                 });
             }
 
             if $crate::spez::impls!($type_name: core::cmp::PartialOrd) {
                 builder = builder.partial_ord(|left, right| {
                     use $crate::spez::*;
-                    (&&Spez(unsafe { left.get::<$type_name>() }))
-                        .spez_partial_cmp(&&Spez(unsafe { right.get::<$type_name>() }))
+                    (&&Spez(left))
+                        .spez_partial_cmp(&&Spez(right))
                 });
             }
 
             if $crate::spez::impls!($type_name: core::cmp::Ord) {
                 builder = builder.ord(|left, right| {
                     use $crate::spez::*;
-                    (&&Spez(unsafe { left.get::<$type_name>() }))
-                        .spez_cmp(&&Spez(unsafe { right.get::<$type_name>() }))
+                    (&&Spez(left))
+                        .spez_cmp(&&Spez(right))
                 });
             }
 
@@ -135,7 +123,7 @@ macro_rules! value_vtable_inner {
                 builder = builder.hash(|value, hasher_this, hasher_write_fn| {
                     use $crate::spez::*;
                     use $crate::HasherProxy;
-                    (&&Spez(unsafe { value.get::<$type_name>() }))
+                    (&&Spez(value))
                         .spez_hash(&mut unsafe { HasherProxy::new(hasher_this, hasher_write_fn) })
                 });
             }
@@ -143,10 +131,10 @@ macro_rules! value_vtable_inner {
             if $crate::spez::impls!($type_name: core::str::FromStr) {
                 builder = builder.parse(|s, target| {
                     use $crate::spez::*;
-                    let res = unsafe { (&&SpezEmpty::<$type_name>::SPEZ).spez_parse(s, target) };
-                    res.map(|_| unsafe { target.assume_init() })
+                    let res = unsafe { (&&SpezEmpty::<$type_name>::SPEZ).spez_parse(s, target.into()) };
+                    res.map(|res| unsafe { res.as_mut() })
                 });
-            }
+                            }
 
             builder.build()
         }

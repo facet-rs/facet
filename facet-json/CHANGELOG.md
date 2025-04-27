@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.2](https://github.com/facet-rs/facet/compare/facet-json-v0.18.1...facet-json-v0.18.2) - 2025-04-27
+
+### Other
+
+- update Cargo.toml dependencies
+
+## [0.18.1](https://github.com/facet-rs/facet/compare/facet-json-v0.18.0...facet-json-v0.18.1) - 2025-04-26
+
+### Added
+
+- Add support for rename_all on containers
+
 ## [0.12.1](https://github.com/facet-rs/facet/compare/facet-json-v0.12.0...facet-json-v0.12.1) - 2025-04-23
 
 ### Other

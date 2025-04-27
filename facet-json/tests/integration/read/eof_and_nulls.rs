@@ -1,3 +1,4 @@
+use eyre::Result;
 use facet::Facet;
 use facet_json::{JsonErrorKind, Token, TokenErrorKind, from_slice, from_str};
 use std::fmt::Debug;
@@ -83,7 +84,7 @@ fn test_invalid_utf8_handling() {
 }
 
 #[test]
-fn test_null_handling() {
+fn test_null_handling() -> Result<()> {
     facet_testhelpers::setup();
 
     // Test with invalid null value
@@ -101,7 +102,8 @@ fn test_null_handling() {
     }
 
     let json = r#"{"val": null}"#;
-    let result = from_str::<OptionalStruct>(json);
-    assert!(result.is_ok());
-    assert_eq!(result.unwrap().val, None);
+    let ok = from_str::<OptionalStruct>(json)?;
+    assert_eq!(ok.val, None);
+
+    Ok(())
 }

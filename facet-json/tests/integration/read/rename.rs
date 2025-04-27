@@ -1,11 +1,11 @@
+use eyre::Result;
 use facet::Facet;
 use facet_json::from_str;
 use insta::assert_snapshot;
 
 /// Basic deserialization with renamed fields
 #[test]
-#[ignore]
-fn test_field_rename_deserialization() {
+fn test_field_rename_deserialization() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Facet, Debug, PartialEq)]
@@ -19,19 +19,17 @@ fn test_field_rename_deserialization() {
 
     let json = r#"{"bonjour":"monde","au_revoir":"world"}"#;
 
-    let result: Greetings = match from_str(json) {
-        Ok(s) => s,
-        Err(e) => panic!("Error deserializing JSON: {}", e),
-    };
+    let result: Greetings = from_str(json)?;
 
     assert_eq!(result.hello, "monde");
     assert_eq!(result.goodbye, "world");
+
+    Ok(())
 }
 
 /// Round-trip serialization then deserialization with a renamed field
 #[cfg(feature = "std")]
 #[test]
-#[ignore]
 fn test_field_rename_roundtrip() {
     facet_testhelpers::setup();
 
@@ -54,8 +52,7 @@ fn test_field_rename_roundtrip() {
 
 /// Deserialization with common naming conventions (kebab-case, snake_case, camelCase)
 #[test]
-#[ignore]
-fn test_field_rename_common_case_styles() {
+fn test_field_rename_common_case_styles() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Facet, Debug, PartialEq)]
@@ -72,20 +69,17 @@ fn test_field_rename_common_case_styles() {
 
     let json = r#"{"kebab-case":"dash","snake_case":"underscore","camelCase":"hump"}"#;
 
-    let result: SpecialNames = match from_str(json) {
-        Ok(s) => s,
-        Err(e) => panic!("Error deserializing JSON: {}", e),
-    };
-
+    let result: SpecialNames = from_str(json)?;
     assert_eq!(result.kebab_case, "dash");
     assert_eq!(result.original_snake, "underscore");
     assert_eq!(result.camel_case, "hump");
+
+    Ok(())
 }
 
 /// Serialization and deserialization with special symbol characters in field name
 #[test]
 #[cfg(feature = "std")]
-#[ignore]
 fn test_field_rename_with_symbol_chars_name() {
     facet_testhelpers::setup();
 
@@ -109,7 +103,6 @@ fn test_field_rename_with_symbol_chars_name() {
 /// Serialization and deserialization with Unicode characters in field name (emoji)
 #[test]
 #[cfg(feature = "std")]
-#[ignore]
 fn test_field_rename_with_unicode_name_emoji() {
     facet_testhelpers::setup();
 
@@ -130,10 +123,39 @@ fn test_field_rename_with_unicode_name_emoji() {
     assert_eq!(test_struct, roundtrip);
 }
 
+/// Round-trip serialization/deserialization with raw identifiers as field names
+#[cfg(feature = "std")]
+#[test]
+fn test_raw_identifier_fields_roundtrip() {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct RawIdentifiers {
+        // Use rename because the JSON key won't have the r# prefix
+        #[facet(rename = "type")]
+        r#type: String,
+
+        #[facet(rename = "match")]
+        r#match: bool,
+    }
+
+    let original = RawIdentifiers {
+        r#type: "keyword_value".to_string(),
+        r#match: false,
+    };
+
+    // Serialization should use the renamed keys
+    let json = facet_json::to_string(&original);
+    assert_eq!(json, r#"{"type":"keyword_value","match":false}"#);
+
+    // Deserialization should correctly map back to raw identifiers
+    let roundtrip: RawIdentifiers = facet_json::from_str(&json).unwrap();
+    assert_eq!(original, roundtrip);
+}
+
 /// Serialization and deserialization with Unicode characters in field name (Euro sign)
 #[test]
 #[cfg(feature = "std")]
-#[ignore]
 fn test_field_rename_with_unicode_name_special_signs() {
     facet_testhelpers::setup();
 
@@ -157,7 +179,6 @@ fn test_field_rename_with_unicode_name_special_signs() {
 /// Serialization and deserialization with numeric field name
 #[cfg(feature = "std")]
 #[test]
-#[ignore]
 fn test_field_rename_with_numeric_name() {
     facet_testhelpers::setup();
 
@@ -179,7 +200,6 @@ fn test_field_rename_with_numeric_name() {
 /// Serialization and deserialization with empty field name
 #[cfg(feature = "std")]
 #[test]
-#[ignore]
 fn test_field_rename_with_empty_name() {
     facet_testhelpers::setup();
 
@@ -293,7 +313,6 @@ fn test_enum_struct_variant_field_rename() {
 /// Serialization and deserialization of renamed fields in nested data structures
 #[cfg(feature = "std")]
 #[test]
-#[ignore]
 fn test_field_rename_nested_structures() {
     facet_testhelpers::setup();
 
@@ -356,7 +375,6 @@ fn test_field_rename_nested_structures() {
 /// Serialization and deserialization of renamed optional fields (Some and None cases)
 #[cfg(feature = "std")]
 #[test]
-#[ignore]
 fn test_field_rename_optional_values() {
     facet_testhelpers::setup();
 
@@ -407,7 +425,6 @@ fn test_field_rename_optional_values() {
 
 /// Deserialization with extra fields in JSON that aren't in the target struct
 #[test]
-#[ignore]
 fn test_field_rename_ignore_extra_fields() {
     facet_testhelpers::setup();
 
@@ -475,5 +492,30 @@ fn test_field_rename_missing_required_error() {
         e.kind,
         facet_json::JsonErrorKind::MissingField(f) if f == "original_field"
     ));
+    #[cfg(not(miri))]
     assert_snapshot!(e.to_string());
+}
+
+/// Rename to verify it's not an accidental alias
+#[test]
+fn test_field_rename_not_alias() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct ABTesting {
+        #[facet(rename = "b")]
+        a: String,
+
+        #[facet(rename = "c")]
+        b: String,
+    }
+
+    let json = r#"{"b":"focus group 1","c":"focus group 2"}"#;
+
+    let result: ABTesting = from_str(json)?;
+
+    assert_eq!(result.a, "focus group 1");
+    assert_eq!(result.b, "focus group 2");
+
+    Ok(())
 }

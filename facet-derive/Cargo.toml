@@ -1,8 +1,7 @@
 [package]
 name = "facet-derive"
-version = "0.9.8"
+version = "0.18.2"
 edition.workspace = true
-authors.workspace = true
 repository.workspace = true
 license.workspace = true
 rust-version.workspace = true
@@ -20,8 +19,8 @@ categories = ["development-tools", "encoding"]
 proc-macro = true
 
 [dependencies]
-facet-derive-emit = { version = "0.15.0", path = "../facet-derive-emit" }
+facet-derive-emit = { version = "0.18.2", path = "../facet-derive-emit" }
 
 # cf. https://hachyderm.io/@epage/114141126315983016
 [target.'cfg(any())'.dependencies]
-facet-core = { path = "../facet-core", version = "0.12.0" }
+facet-core = { path = "../facet-core", version = "0.18.0" }

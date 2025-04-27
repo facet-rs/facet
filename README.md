@@ -123,7 +123,7 @@ facet supports deserialization from multiple data formats through dedicated crat
 Internal crates include:
 
 - [facet-codegen](https://github.com/facet-rs/facet/tree/main/facet-codegen) is internal and generates some of the code of `facet-core`
-- [facet-testhelpers] a simpler log logger and color-backtrace configured with the lightweight btparse backend
+- [facet-testhelpers](https://github.com/facet-rs/facet/tree/main/facet-testhelpers) a simpler log logger and color-backtrace configured with the lightweight btparse backend
 
 ## License
 

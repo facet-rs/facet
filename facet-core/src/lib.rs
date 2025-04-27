@@ -14,6 +14,10 @@ pub use macros::*;
 mod ptr;
 pub use ptr::*;
 
+// Opaque wrapper utility
+mod opaque;
+pub use opaque::*;
+
 // Specialization utilities
 pub mod spez;
 
@@ -30,6 +34,15 @@ mod impls_std;
 
 #[cfg(feature = "camino")]
 mod impls_camino;
+
+#[cfg(feature = "ordered-float")]
+mod impls_ordered_float;
+
+#[cfg(feature = "uuid")]
+mod impls_uuid;
+
+#[cfg(feature = "ulid")]
+mod impls_ulid;
 
 // Const type Id
 mod typeid;
@@ -52,9 +65,4 @@ pub use types::*;
 pub unsafe trait Facet<'a>: 'a {
     /// The shape of this type
     const SHAPE: &'static Shape;
-
-    /// Returns true if the type of `self` is equal to the type of `other`
-    fn type_eq<Other: Facet<'a>>() -> bool {
-        Self::SHAPE == Other::SHAPE
-    }
 }

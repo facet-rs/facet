@@ -1,5 +1,5 @@
 use crate::*;
-use core::{alloc::Layout, hash::Hash as _};
+use core::hash::Hash as _;
 
 use alloc::vec::Vec;
 
@@ -8,9 +8,7 @@ where
     T: Facet<'a>,
 {
     const SHAPE: &'static Shape = &const {
-        Shape::builder()
-            .id(ConstTypeId::of::<Vec<T>>())
-            .layout(Layout::new::<Vec<T>>())
+        Shape::builder_for_sized::<Self>()
             .type_params(&[
                 TypeParam {
                     name: "T",
@@ -19,7 +17,7 @@ where
             ])
             .vtable(
                 &const {
-                    let mut builder = ValueVTable::builder()
+                    let mut builder = ValueVTable::builder::<Self>()
                         .type_name(|f, opts| {
                             if let Some(opts) = opts.for_children() {
                                 write!(f, "Vec<")?;
@@ -29,40 +27,35 @@ where
                                 write!(f, "Vec<⋯>")
                             }
                         })
-                        .drop_in_place(|value| unsafe { value.drop_in_place::<Vec<T>>() })
                         .default_in_place(|target| unsafe { target.put(Self::default()) })
-                        .clone_into(|src, dst| unsafe { dst.put(src.get::<Vec<T>>()) });
+                    // FIXME: THIS IS VERY WRONG
+                        .clone_into(|src, dst| unsafe { dst.put(core::ptr::read(src)) });
 
                     if T::SHAPE.vtable.debug.is_some() {
                         builder = builder.debug(|value, f| {
-                            let value = unsafe { value.get::<Vec<T>>() };
                             write!(f, "[")?;
                             for (i, item) in value.iter().enumerate() {
                                 if i > 0 {
                                     write!(f, ", ")?;
                                 }
-                                unsafe {
-                                    (T::SHAPE.vtable.debug.unwrap_unchecked())(
-                                        PtrConst::new(item),
-                                        f,
-                                    )?;
-                                }
+                                (<VTableView<T>>::of().debug().unwrap())(
+                                    item,
+                                    f,
+                                )?;
                             }
                             write!(f, "]")
                         });
                     }
 
                     if T::SHAPE.vtable.eq.is_some() {
-                        builder = builder.eq(|a, b| unsafe {
-                            let a = a.get::<Vec<T>>();
-                            let b = b.get::<Vec<T>>();
+                        builder = builder.eq(|a, b|  {
                             if a.len() != b.len() {
                                 return false;
                             }
                             for (item_a, item_b) in a.iter().zip(b.iter()) {
-                                if !(T::SHAPE.vtable.eq.unwrap_unchecked())(
-                                    PtrConst::new(item_a),
-                                    PtrConst::new(item_b),
+                                if !(<VTableView<T>>::of().eq().unwrap())(
+                                    item_a,
+                                    item_b,
                                 ) {
                                     return false;
                                 }
@@ -72,14 +65,13 @@ where
                     }
 
                     if T::SHAPE.vtable.hash.is_some() {
-                        builder = builder.hash(|value, hasher_this, hasher_write_fn| unsafe {
+                        builder = builder.hash(|vec, hasher_this, hasher_write_fn| unsafe {
                             use crate::HasherProxy;
-                            let vec = value.get::<Vec<T>>();
-                            let t_hash = T::SHAPE.vtable.hash.unwrap_unchecked();
+                            let t_hash = <VTableView<T>>::of().hash().unwrap_unchecked();
                             let mut hasher = HasherProxy::new(hasher_this, hasher_write_fn);
                             vec.len().hash(&mut hasher);
                             for item in vec {
-                                (t_hash)(PtrConst::new(item), hasher_this, hasher_write_fn);
+                                (t_hash)(item, hasher_this, hasher_write_fn);
                             }
                         });
                     }
@@ -103,16 +95,16 @@ where
                                     data.put(Self::with_capacity(capacity))
                                 })
                                 .push(|ptr, item| unsafe {
-                                    let vec = ptr.as_mut::<Vec<T>>();
+                                    let vec = ptr.as_mut::<Self>();
                                     let item = item.read::<T>();
                                     (*vec).push(item);
                                 })
                                 .len(|ptr| unsafe {
-                                    let vec = ptr.get::<Vec<T>>();
+                                    let vec = ptr.get::<Self>();
                                     vec.len()
                                 })
                                 .get_item_ptr(|ptr, index| unsafe {
-                                    let vec = ptr.get::<Vec<T>>();
+                                    let vec = ptr.get::<Self>();
                                     let len = vec.len();
                                     if index >= len {
                                         panic!(

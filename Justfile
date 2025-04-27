@@ -10,8 +10,13 @@ set dotenv-load
 
 default: precommit prepush
 
-precommit: code-quality
-prepush: clippy test
+precommit: gen
+
+gen *args:
+    cargo run -p facet-dev generate -- {{args}}
+
+prepush:
+    cargo run -p facet-dev prepush
 
 ci: precommit prepush docs msrv miri
 
@@ -76,12 +81,6 @@ doc-tests-ci *args:
     echo -e "\033[1;36m📚 Running documentation tests...\033[0m"
     cmd_group "cargo test --doc {{args}}"
 
-gen *args:
-    cargo run -p facet-dev gen -- {{args}}
-
-code-quality: gen
-    just absolve
-
 code-quality-ci:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
@@ -90,10 +89,10 @@ code-quality-ci:
     cmd_group "just absolve"
 
 miri *args:
-    export RUSTUP_TOOLCHAIN=nightly-2025-04-05
-    rustup toolchain install nightly-2025-04-05
-    rustup +nightly-2025-04-05 component add miri rust-src
-    cargo +nightly-2025-04-05 miri nextest run --target-dir target/miri -p facet-reflect {{args}}
+    export RUSTUP_TOOLCHAIN=nightly-2025-04-25
+    rustup toolchain install nightly-2025-04-25
+    rustup +nightly-2025-04-25 component add miri rust-src
+    cargo +nightly-2025-04-25 miri nextest run --target-dir target/miri -p facet-reflect -p facet-core -p facet-json {{args}}
 
 miri-ci *args:
     #!/usr/bin/env -S bash -euxo pipefail
@@ -104,15 +103,7 @@ miri-ci *args:
     cmd_group "cargo miri nextest run {{args}}"
 
 absolve:
-    #!/usr/bin/env -S bash -euo pipefail
-    source .envrc
-    if ! cargo tree -i syn 2>/dev/null | grep -q .; then
-    echo -e "\033[38;2;255;255;255;48;2;0;0;0m free of \033[38;2;255;255;255;48;2;255;105;180m syn \033[38;2;255;255;255;48;2;0;0;0m\033[0m"
-    else
-    echo -e "\033[1;31m❌ 'syn' found in dependency tree. Here's what's using 'syn':\033[0m"
-    cargo tree -i syn -e features
-    exit 1
-    fi
+    ./facet-dev/absolve.sh
 
 ship:
     #!/usr/bin/env -S bash -euo pipefail
@@ -148,6 +139,9 @@ docsrs *args:
     cargo +nightly doc {{args}}
 
 msrv:
+    cargo hack check --each-feature --locked --rust-version --ignore-private --workspace --keep-going --exclude-no-default-features --target-dir target/msrv
+
+msrv-power:
     cargo hack check --feature-powerset --locked --rust-version --ignore-private --workspace --all-targets --keep-going --exclude-no-default-features --target-dir target/msrv
 
 docs:

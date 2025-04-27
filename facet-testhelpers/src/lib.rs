@@ -44,7 +44,10 @@ impl Log for SimpleLogger {
 /// Installs color-backtrace (except on miri), and sets up a simple logger.
 pub fn setup() {
     #[cfg(not(miri))]
+    color_eyre::install().expect("Failed to set up color-eyre");
+    #[cfg(not(miri))]
     color_backtrace::install();
+
     let logger = Box::new(SimpleLogger);
     _ = log::set_boxed_logger(logger);
     log::set_max_level(LevelFilter::Trace);

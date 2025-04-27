@@ -17,7 +17,7 @@ struct Args {
 }
 
 # fn main() {
-let args: Args = facet_args::from_slice(&["--verbose", "--concurrency", "14", "example.rs"]);
+let args: Args = facet_args::from_slice(&["--verbose", "-j", "14", "example.rs"]);
 eprintln!("args: {}", args.pretty());
 # }
 ```

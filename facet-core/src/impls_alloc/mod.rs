@@ -1,3 +1,4 @@
+mod arc;
 mod btreemap;
-mod smartptr;
+mod rc;
 mod vec;

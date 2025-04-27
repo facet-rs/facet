@@ -13,7 +13,6 @@ fn wip_map_trivial() -> eyre::Result<()> {
         .push_map_value()?
         .put::<String>("value".into())?
         .pop()?
-        .pop()?
         .build()?
         .materialize::<HashMap<String, String>>()?;
 
@@ -48,6 +47,7 @@ fn wip_map_twice() -> eyre::Result<()> {
         .put::<String>("second".into())?
         .push_map_value()?
         .put::<String>("dos".into())?
+        .pop()?
         .pop()?
         .build()?
         .materialize::<MapWrap>()?;

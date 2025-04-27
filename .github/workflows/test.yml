@@ -188,33 +188,37 @@ jobs:
         run: |
           cargo clippy --workspace --all-features --all-targets --keep-going -- -D warnings --allow deprecated
 
-  clippy-macos:
+  test-macos:
     runs-on: depot-macos-latest
-    env:
-      CLICOLOR_FORCE: "1"
     steps:
       - uses: actions/checkout@v4
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: ✨ Run clippy (macOS)
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: ✨ Run nextest tests (macOS)
         shell: bash
         run: |
-          cargo clippy --workspace --all-features --all-targets -- -D warnings
+          cargo nextest run --all-features
 
-  clippy-windows:
+  test-windows:
     runs-on: depot-windows-2022
-    env:
-      CLICOLOR_FORCE: "1"
     steps:
       - uses: actions/checkout@v4
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: ✨ Run clippy (Windows)
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: ✨ Run nextest tests (Windows)
         shell: bash
         run: |
-          cargo clippy --workspace --all-features --all-targets -- -D warnings
+          cargo nextest run --all-features
 
   coverage:
     runs-on: depot-ubuntu-24.04-32

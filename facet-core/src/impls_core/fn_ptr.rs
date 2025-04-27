@@ -64,31 +64,16 @@ macro_rules! impl_facet_for_fn_ptr {
             R: Facet<'a>,
         {
             const SHAPE: &'static Shape = &const {
-                fn type_name<'a, $($args,)* R>(
-                    f: &mut fmt::Formatter,
-                    opts: TypeNameOpts
-                ) -> fmt::Result
-                where
-                    $($args: Facet<'a>,)*
-                    R: Facet<'a>
-                {
-                    write_type_name_list(
-                        f,
-                        opts,
-                        $abi,
-                        &[$($args::SHAPE),*],
-                        R::SHAPE,
-                    )
-                }
-
                 Shape::builder()
                     .id(ConstTypeId::of::<Self>())
                     .layout(Layout::new::<Self>())
                     .vtable(const {
-                        &ValueVTable::builder()
-                            .type_name(type_name::<$($args,)* R>)
-                            .debug(|data, f| fmt::Debug::fmt(unsafe { data.get::<Self>() }, f))
-                            .clone_into(|src, dst| unsafe { dst.put(src.get::<Self>().clone()) })
+                        &ValueVTable::builder::<Self>()
+                            .type_name(|f, opts| {
+                                write_type_name_list(f, opts, $abi, &[$($args::SHAPE),*], R::SHAPE)
+                            })
+                            .debug(|data, f| fmt::Debug::fmt(data, f))
+                            .clone_into(|src, dst| unsafe { dst.put(src.clone()) })
                             .marker_traits(
                                 MarkerTraits::EQ
                                     .union(MarkerTraits::SEND)
@@ -96,24 +81,19 @@ macro_rules! impl_facet_for_fn_ptr {
                                     .union(MarkerTraits::COPY)
                                     .union(MarkerTraits::UNPIN)
                             )
-                            .eq(|left, right| {
-                                fn_addr_eq(
-                                    *unsafe { left.get::<Self>() },
-                                    *unsafe { right.get::<Self>() },
-                                )
+                            .eq(|&left, &right| {
+                                fn_addr_eq(left, right)
                             })
                             .partial_ord(|left, right| {
                                 #[allow(unpredictable_function_pointer_comparisons)]
-                                unsafe { left.get::<Self>() }
-                                    .partial_cmp(unsafe { right.get::<Self>() })
+                                left.partial_cmp(right)
                             })
                             .ord(|left, right| {
                                 #[allow(unpredictable_function_pointer_comparisons)]
-                                unsafe { left.get::<Self>() }.cmp(unsafe { right.get::<Self>() })
+                                left.cmp(right)
                             })
                             .hash(|value, hasher_this, hasher_write_fn| {
-                                unsafe { value.get::<Self>() }
-                                    .hash(&mut unsafe {
+                                value.hash(&mut unsafe {
                                         HasherProxy::new(hasher_this, hasher_write_fn)
                                     })
                             })
@@ -146,5 +126,5 @@ macro_rules! impl_facet_for_fn_ptr {
     };
 }
 
-impl_facet_for_fn_ptr! {fn(T0, T1, T2, T3, T4, T5) -> R with FunctionAbi::Rust}
-impl_facet_for_fn_ptr! {extern "C" fn(T0, T1, T2, T3, T4, T5) -> R with FunctionAbi::C}
+impl_facet_for_fn_ptr! { fn(T0, T1, T2, T3, T4, T5) -> R with FunctionAbi::Rust }
+impl_facet_for_fn_ptr! { extern "C" fn(T0, T1, T2, T3, T4, T5) -> R with FunctionAbi::C }

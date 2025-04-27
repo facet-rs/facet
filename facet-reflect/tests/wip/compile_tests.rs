@@ -71,8 +71,8 @@ edition = "2021"
 
 [dependencies]
 eyre = "0.6"
-facet = {{ path = "{}" }}
-facet-reflect = {{ path = "{}" }}
+facet = {{ path = {:?} }}
+facet-reflect = {{ path = {:?} }}
     "#,
         facet_path.display(),
         facet_reflect_path.display()

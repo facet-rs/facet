@@ -10,7 +10,8 @@ use alloc::{vec, vec::Vec};
 use bitflags::bitflags;
 use core::{fmt, marker::PhantomData};
 use facet_core::{
-    Def, DefaultInPlaceFn, Facet, FieldError, PtrConst, PtrMut, PtrUninit, Shape, Variant,
+    Def, DefaultInPlaceFn, Facet, FieldError, PtrConst, PtrMut, PtrUninit, ScalarAffinity, Shape,
+    Variant,
 };
 use flat_map::FlatMap;
 
@@ -118,6 +119,7 @@ impl fmt::Debug for Frame {
             .field("kind", &def_kind(&self.shape.def))
             .field("index", &self.field_index_in_parent)
             .field("mode", &self.istate.mode)
+            .field("id", &self.id())
             .finish()
     }
 }
@@ -332,24 +334,139 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
         // the stack, we still need to track them _somewhere_
         //
         // the root also relies on being tracked in the drop impl
-        if !frame.istate.flags.contains(FrameFlags::MOVED) {
-            self.istates.insert(frame.id(), frame.istate);
+        if frame.istate.flags.contains(FrameFlags::MOVED) {
+            // don't track those
+            return;
         }
+
+        self.istates.insert(frame.id(), frame.istate);
     }
 
     unsafe fn mark_moved_out_of(&mut self, frame: &mut Frame) {
-        frame.dealloc_if_needed();
-        ISet::clear(&mut frame.istate.fields);
-        frame.istate.variant = None;
-        frame.istate.flags.insert(FrameFlags::MOVED);
-        // make sure this isn't tracked here anymore — we don't want to have
-        // any metadata associated with it that gets restored by mistake
-        self.istates.remove(&frame.id());
+        // Recursively mark `istates` entries as MOVED and deallocate. Needed because
+        // descendant values might be tracked separately in `istates`.
+        unsafe fn mark_subtree_moved(wip: &mut Wip, id: ValueId) {
+            // Function requires unsafe due to pointer manipulation and potential deallocation.
+            unsafe {
+                // Process only if the value is still tracked off-stack.
+                if let Some(mut istate) = wip.istates.remove(&id) {
+                    // Ensure value is marked as MOVED.
+                    istate.flags.insert(FrameFlags::MOVED);
+
+                    // Ensure all owned fields within structs/enums are also marked.
+                    match id.shape.def {
+                        Def::Struct(sd) => {
+                            let container_ptr = PtrUninit::new(id.ptr as *mut u8);
+                            for field in sd.fields.iter() {
+                                let field_ptr_uninit = container_ptr.field_uninit_at(field.offset);
+                                let field_id =
+                                    ValueId::new(field.shape(), field_ptr_uninit.as_byte_ptr());
+                                // Recurse.
+                                mark_subtree_moved(wip, field_id);
+                            }
+                        }
+                        Def::Enum(_) => {
+                            // Use the variant info from the processed istate.
+                            if let Some(variant) = &istate.variant {
+                                let container_ptr = PtrUninit::new(id.ptr as *mut u8);
+                                for field in variant.data.fields.iter() {
+                                    let field_ptr_uninit =
+                                        container_ptr.field_uninit_at(field.offset);
+                                    let field_id =
+                                        ValueId::new(field.shape(), field_ptr_uninit.as_byte_ptr());
+                                    // Recurse.
+                                    mark_subtree_moved(wip, field_id);
+                                }
+                            }
+                        }
+                        // Only recurse for direct fields (struct/enum). Other owned values
+                        // (list elements, map entries, option Some payload) are handled
+                        // individually when *their* ValueId is processed, if tracked.
+                        _ => {}
+                    }
+
+                    // Prevent memory leaks for heap-allocated values that are now moved.
+                    // Only deallocate AFTER recursively processing child fields to prevent use-after-free.
+                    if istate.flags.contains(FrameFlags::ALLOCATED) {
+                        // `dealloc_if_needed` needs a `Frame`.
+                        let mut temp_frame = Frame::recompose(id, istate);
+                        temp_frame.dealloc_if_needed();
+                    }
+                }
+                // If istate wasn't found, value was already handled or not tracked off-stack.
+            }
+        }
+
+        // Function requires unsafe due to pointer manipulation, potential deallocation,
+        // and calling other unsafe functions/methods.
+        unsafe {
+            // 1. Process the primary frame being moved: mark MOVED, clear state
+            let frame_id = frame.id();
+
+            // Save variant information for recursive processing before we clear it
+            let variant_opt = frame.istate.variant;
+
+            // Mark as MOVED and clear any initialization progress.
+            frame.istate.flags.insert(FrameFlags::MOVED);
+            ISet::clear(&mut frame.istate.fields);
+
+            // 2. Recursively mark descendants (struct/enum fields) in `istates` as MOVED.
+            // This ensures consistency if fields were pushed/popped and stored in `istates`.
+            match frame.shape.def {
+                Def::Struct(sd) => {
+                    let container_ptr = PtrUninit::new(frame_id.ptr as *mut u8);
+                    for field in sd.fields.iter() {
+                        let field_ptr_uninit = container_ptr.field_uninit_at(field.offset);
+                        let field_id = ValueId::new(field.shape(), field_ptr_uninit.as_byte_ptr());
+                        mark_subtree_moved(self, field_id);
+                    }
+                }
+                Def::Enum(_) => {
+                    // Use the saved variant information for recursion
+                    if let Some(variant) = &variant_opt {
+                        let container_ptr = PtrUninit::new(frame_id.ptr as *mut u8);
+                        for field in variant.data.fields.iter() {
+                            let field_ptr_uninit = container_ptr.field_uninit_at(field.offset);
+                            let field_id =
+                                ValueId::new(field.shape(), field_ptr_uninit.as_byte_ptr());
+                            mark_subtree_moved(self, field_id);
+                        }
+                    }
+                }
+                // Other types don't have direct fields requiring recursive marking here.
+                _ => {}
+            }
+
+            // Now clear the variant after processing is done
+            frame.istate.variant = None;
+
+            // Untrack the frame in `istates`
+            self.istates.remove(&frame_id);
+
+            // Deallocate AFTER all processing is complete to prevent use-after-free
+            if frame.istate.flags.contains(FrameFlags::ALLOCATED) {
+                frame.dealloc_if_needed();
+            }
+        }
     }
 
     /// Returns the shape of the current frame
     pub fn shape(&self) -> &'static Shape {
         self.frames.last().expect("must have frames left").shape
+    }
+
+    /// Returns the innermost shape for the current frame
+    /// If the current shape is a transparent wrapper, this returns the shape of the wrapped type
+    /// Otherwise, returns the current shape
+    pub fn innermost_shape(&self) -> &'static Shape {
+        let mut current_shape = self.shape();
+
+        // Keep unwrapping as long as we find inner shapes
+        while let Some(inner_fn) = current_shape.inner {
+            current_shape = inner_fn();
+        }
+
+        current_shape
     }
 
     /// Return true if the last frame is in option mode
@@ -369,60 +486,47 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
     pub fn build(mut self) -> Result<HeapValue<'facet_lifetime>, ReflectError> {
         debug!("[{}] ⚒️ It's BUILD time", self.frames.len());
 
-        // 1. Track all frames currently on the stack into istates
-        while let Some(frame) = self.pop_inner() {
-            self.track(frame);
+        // 1. Require that there is exactly one frame on the stack (the root frame)
+        if self.frames.is_empty() {
+            panic!("No frames in WIP during build: stack is empty (you popped too much)");
+        }
+        if self.frames.len() != 1 {
+            panic!(
+                "You must pop frames so that only the root frame remains before calling build (frames left: {})",
+                self.frames.len()
+            );
         }
 
-        // 2. Find the root frame
-        let Some((root_id, _)) = self.istates.iter().find(|(_k, istate)| istate.depth == 0) else {
-            debug!("No root found, possibly already built or empty WIP");
-            return Err(ReflectError::OperationFailed {
-                shape: <()>::SHAPE,
-                operation: "tried to build a value but there was no root frame tracked",
-            });
-        };
+        // now the root frame is at index 0
+        let root_frame = &self.frames[0];
 
-        let root_id = *root_id;
-        // We need to *keep* the root istate for the check, so we clone it or get it immutably.
-        // Let's retrieve it immutably first. The `istates` map will be dropped with `Wip` anyway.
-        let root_istate = self
-            .istates
-            .remove(&root_id)
-            .expect("Root ID found but not present in istates, this is a bug"); // Clone needed to avoid borrowing issues later potentially
-
-        let root_frame = Frame::recompose(root_id, root_istate);
-        let root_shape = root_frame.shape;
-        let root_data_ptr = root_frame.data; // Keep the root pointer for the final HeapValue
-        let root_layout = root_shape
-            .layout
-            .sized_layout()
-            .map_err(|_| ReflectError::Unsized { shape: root_shape })?;
-
-        // 6. Transfer ownership of the root data to the HeapValue
-        // The root frame should have had the ALLOCATED flag if it was heap allocated.
-        // We need to ensure the Guard takes ownership correctly.
-        // Find the original root istate again to check the flag.
-        let guard = Guard {
-            ptr: root_data_ptr.as_mut_byte_ptr(),
-            layout: root_layout,
-        };
-
-        // 3. Initialize `to_check`
-        let mut to_check = alloc::vec![root_frame];
+        enum FrameRef {
+            Root,
+            ById(ValueId),
+        }
+        let mut to_check = alloc::vec![FrameRef::Root];
 
         // 4. Traverse the tree
-        while let Some(frame) = to_check.pop() {
+        while let Some(fr) = to_check.pop() {
+            let (id, istate) = match fr {
+                FrameRef::Root => (root_frame.id(), &root_frame.istate),
+                FrameRef::ById(id) => {
+                    // Look up the istate for the frame with this ValueId.
+                    let istate = self.istates.get(&id).unwrap();
+                    (id, istate)
+                }
+            };
+
             trace!(
-                "Checking frame: shape={} at {:p}, flags={:?}, mode={:?}",
-                frame.shape.blue(),
-                frame.data.as_byte_ptr(),
-                frame.istate.flags.bright_magenta(),
-                frame.istate.mode,
+                "Checking shape {} at {:p}, flags={:?}, mode={:?}",
+                id.shape.blue(),
+                id.ptr,
+                istate.flags.bright_magenta(),
+                istate.mode,
             );
 
             // Skip moved frames
-            if frame.istate.flags.contains(FrameFlags::MOVED) {
+            if istate.flags.contains(FrameFlags::MOVED) {
                 trace!(
                     "{}",
                     "Frame was moved out of, skipping initialization check".yellow()
@@ -431,92 +535,80 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
             }
 
             // Check initialization for the current frame
-            match frame.shape.def {
+            match id.shape.def {
                 Def::Struct(sd) => {
-                    if !frame.is_fully_initialized() {
-                        // find the field that's not initialized
-                        for i in 0..sd.fields.len() {
-                            if !frame.istate.fields.has(i) {
-                                let field = &sd.fields[i];
-                                return Err(ReflectError::UninitializedField {
-                                    shape: frame.shape,
-                                    field_name: field.name,
-                                });
-                            }
+                    // find the field that's not initialized
+                    for i in 0..sd.fields.len() {
+                        if !istate.fields.has(i) {
+                            let field = &sd.fields[i];
+                            return Err(ReflectError::UninitializedField {
+                                shape: id.shape,
+                                field_name: field.name,
+                            });
                         }
-                        // Should be unreachable
-                        unreachable!(
-                            "Enum variant not fully initialized but couldn't find which field"
-                        );
                     }
+
+                    let container_ptr = PtrUninit::new(id.ptr as *mut u8);
 
                     // If initialized, push children to check stack
                     #[allow(clippy::unused_enumerate_index)]
                     for (_i, field) in sd.fields.iter().enumerate() {
                         let field_shape = field.shape();
-                        let field_ptr = unsafe { frame.data.field_init_at(field.offset) };
+                        let field_ptr = unsafe { container_ptr.field_init_at(field.offset) };
                         let field_id = ValueId::new(field_shape, field_ptr.as_byte_ptr());
 
-                        if let Some(field_istate) = self.istates.remove(&field_id) {
+                        if self.istates.contains_key(&field_id) {
                             debug!(
                                 "Queueing struct field check: #{} '{}' of {}: shape={}, ptr={:p}",
                                 _i.to_string().bright_cyan(),
                                 field.name.bright_blue(),
-                                frame.shape.blue(),
+                                id.shape.blue(),
                                 field_shape.green(),
                                 field_ptr.as_byte_ptr()
                             );
-                            let field_frame = Frame::recompose(field_id, field_istate);
-                            to_check.push(field_frame);
+                            to_check.push(FrameRef::ById(field_id));
                         }
                     }
                 }
                 Def::Enum(_ed) => {
-                    if let Some(variant) = &frame.istate.variant {
-                        if !frame.istate.fields.are_all_set(variant.data.fields.len()) {
-                            // Find the uninitialized field
-                            for (i, field) in variant.data.fields.iter().enumerate() {
-                                if !frame.istate.fields.has(i) {
-                                    return Err(ReflectError::UninitializedEnumField {
-                                        shape: frame.shape,
-                                        variant_name: variant.name,
-                                        field_name: field.name,
-                                    });
-                                }
+                    if let Some(variant) = &istate.variant {
+                        // Check each field, just like for structs
+                        for (i, field) in variant.data.fields.iter().enumerate() {
+                            if !istate.fields.has(i) {
+                                return Err(ReflectError::UninitializedEnumField {
+                                    shape: id.shape,
+                                    variant_name: variant.name,
+                                    field_name: field.name,
+                                });
                             }
-                            // Should be unreachable
-                            unreachable!(
-                                "Enum variant not fully initialized but couldn't find which field"
-                            );
                         }
 
-                        // If initialized, push children to check stack
+                        // All fields initialized, push children to check stack
                         #[allow(clippy::unused_enumerate_index)]
                         for (_i, field) in variant.data.fields.iter().enumerate() {
                             let field_shape = field.shape();
-                            // Enum fields are potentially at different offsets depending on the variant layout.
-                            // We assume the `frame.data` points to the start of the enum's data payload
-                            // (after the discriminant if applicable and handled by layout).
-                            let field_ptr = unsafe { frame.data.field_init_at(field.offset) };
+                            let container_ptr = PtrUninit::new(id.ptr as *mut u8);
+                            // We're in an enum, so get the field ptr out of the variant's payload
+                            let field_ptr = unsafe { container_ptr.field_init_at(field.offset) };
                             let field_id = ValueId::new(field_shape, field_ptr.as_byte_ptr());
 
-                            if let Some(field_istate) = self.istates.remove(&field_id) {
+                            if self.istates.contains_key(&field_id) {
                                 debug!(
                                     "Queueing enum field check: #{} '{}' of variant '{}' of {}: shape={}, ptr={:p}",
                                     _i.to_string().bright_cyan(),
                                     field.name.bright_blue(),
                                     variant.name.yellow(),
-                                    frame.shape.blue(),
+                                    id.shape.blue(),
                                     field_shape.green(),
                                     field_ptr.as_byte_ptr()
                                 );
-                                let field_frame = Frame::recompose(field_id, field_istate);
-                                to_check.push(field_frame);
+                                to_check.push(FrameRef::ById(field_id));
                             }
                         }
                     } else {
                         // No variant selected is an error during build
-                        return Err(ReflectError::NoVariantSelected { shape: frame.shape });
+                        debug!("Found no variant selected for enum");
+                        return Err(ReflectError::NoVariantSelected { shape: id.shape });
                     }
                 }
                 // For types that manage their own contents (List, Map, Option, Scalar, etc.),
@@ -530,20 +622,18 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
                 | Def::SmartPointer(_)
                 | Def::Array(_)
                 | Def::Slice(_) => {
-                    if !frame.istate.fields.are_all_set(1) {
+                    if !istate.fields.are_all_set(1) {
                         // Check specific modes for better errors
-                        match frame.istate.mode {
+                        match istate.mode {
                             FrameMode::OptionNone => {
                                 // This should technically be marked initialized, but if not, treat as uninit Option
-                                return Err(ReflectError::UninitializedValue {
-                                    shape: frame.shape,
-                                });
+                                debug!("Found uninitialized value (option none)");
+                                return Err(ReflectError::UninitializedValue { shape: id.shape });
                             }
                             // Add more specific checks if needed, e.g., for lists/maps that started but weren't finished?
                             _ => {
-                                return Err(ReflectError::UninitializedValue {
-                                    shape: frame.shape,
-                                });
+                                debug!("Found uninitialized value (list/map/option/etc.)");
+                                return Err(ReflectError::UninitializedValue { shape: id.shape });
                             }
                         }
                     }
@@ -558,8 +648,9 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
                 // Handle other Def variants if necessary
                 _ => {
                     // Default: Check if initialized using the standard method
-                    if !frame.istate.fields.are_all_set(1) {
-                        return Err(ReflectError::UninitializedValue { shape: frame.shape });
+                    if !istate.fields.are_all_set(1) {
+                        debug!("Found uninitialized value (other)");
+                        return Err(ReflectError::UninitializedValue { shape: id.shape });
                     }
                 }
             }
@@ -569,14 +660,16 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
         debug!("All reachable frames checked and initialized.");
 
         // 5. Check invariants on the root
-        let data = unsafe { root_data_ptr.assume_init() };
+        // We have already checked root is fully initialized above, so we only need to check its invariants.
+        let root_shape = root_frame.shape;
+        let root_data = unsafe { root_frame.data.assume_init() };
         if let Some(invariant_fn) = root_shape.vtable.invariants {
             debug!(
                 "Checking invariants for root shape {} at {:p}",
                 root_shape.green(),
-                data.as_byte_ptr()
+                root_data.as_byte_ptr()
             );
-            if !unsafe { invariant_fn(PtrConst::new(data.as_byte_ptr())) } {
+            if !unsafe { invariant_fn(PtrConst::new(root_data.as_byte_ptr())) } {
                 return Err(ReflectError::InvariantViolation {
                     invariant: "Custom validation function returned false",
                 });
@@ -588,7 +681,20 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
             );
         }
 
-        FlatMap::clear(&mut self.istates); // Prevent Drop from running on the successfully built value.
+        // Prevent Drop from running on the successfully built value.
+        {
+            FlatMap::clear(&mut self.istates);
+            self.frames.clear();
+        }
+
+        // Build the guard from the root data.
+        let guard = Guard {
+            ptr: root_data.as_mut_byte_ptr(),
+            layout: match root_shape.layout {
+                facet_core::ShapeLayout::Sized(layout) => layout,
+                facet_core::ShapeLayout::Unsized => panic!("Unsized layout not supported"),
+            },
+        };
 
         Ok(HeapValue {
             guard: Some(guard),
@@ -703,13 +809,18 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
     /// * `None` if the current frame is not a struct or an enum with a selected variant,
     ///   or if the field doesn't exist.
     pub fn field_index(&self, name: &str) -> Option<usize> {
+        fn find_field_index(fields: &'static [facet_core::Field], name: &str) -> Option<usize> {
+            fields
+                .iter()
+                .position(|f| f.get_rename_attr().unwrap_or(f.name) == name)
+        }
+
         let frame = self.frames.last()?;
         match frame.shape.def {
-            Def::Struct(def) => def.fields.iter().position(|f| f.name == name),
+            Def::Struct(def) => find_field_index(def.fields, name),
             Def::Enum(_) => {
-                // Get the selected variant
                 let variant = frame.istate.variant.as_ref()?;
-                variant.data.fields.iter().position(|f| f.name == name)
+                find_field_index(variant.data.fields, name)
             }
             _ => None,
         }
@@ -810,6 +921,53 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
                 src_shape.yellow(),
                 frame.shape.magenta()
             );
+
+            // Check if the frame's shape has an inner type (is a transparent wrapper)
+            if let Some(inner_fn) = frame.shape.inner {
+                // Get the inner shape
+                let inner_shape = inner_fn();
+
+                // If the source shape matches the inner shape, we need to build the outer (transparent) wrapper
+                if src_shape == inner_shape {
+                    // Look for a try_from_inner function in the vtable
+                    if let Some(try_from_fn) = frame.shape.vtable.try_from {
+                        match unsafe { (try_from_fn)(src, src_shape, frame.data) } {
+                            Ok(_) => {
+                                unsafe {
+                                    frame.mark_fully_initialized();
+                                }
+
+                                let shape = frame.shape;
+                                let index = frame.field_index_in_parent;
+
+                                // mark the field as initialized
+                                self.mark_field_as_initialized(shape, index)?;
+
+                                debug!(
+                                    "[{}] Just put a {} value into transparent type {}",
+                                    self.frames.len(),
+                                    src_shape.green(),
+                                    shape.blue()
+                                );
+
+                                return Ok(self);
+                            }
+                            Err(e) => {
+                                return Err(ReflectError::TryFromError {
+                                    inner: e,
+                                    src_shape,
+                                    dst_shape: frame.shape,
+                                });
+                            }
+                        }
+                    } else {
+                        // No try_from_inner function, try normal TryFrom
+                        debug!(
+                            "No try_from_inner function for transparent type, falling back to TryFrom"
+                        );
+                    }
+                }
+            }
 
             // Maybe there's a `TryFrom` impl?
             if let Some(try_from) = frame.shape.vtable.try_from {
@@ -973,10 +1131,7 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
 
         // de-initialize partially initialized fields, if any
         if frame.istate.variant.is_some() || frame.istate.fields.is_any_set() {
-            debug!(
-                "De-initializing partially initialized fields for {}",
-                frame.shape
-            );
+            debug!("De-initializing partially initialized {:?}", frame.yellow());
 
             match frame.shape.def {
                 Def::Struct(sd) => {
@@ -1007,7 +1162,16 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
                     }
                 }
                 _ => {
-                    // For scalar types, nothing to do if not fully initialized
+                    // For scalar types and other non-struct/enum, attempt to drop the field in place if initialized
+                    if frame.istate.fields.is_any_set() {
+                        debug!("Scalar type was set...");
+                        if let Some(drop_fn) = frame.shape.vtable.drop_in_place {
+                            debug!("And it has a drop fn, dropping now!");
+                            unsafe {
+                                drop_fn(frame.data.assume_init());
+                            }
+                        }
+                    }
                 }
             }
 
@@ -1268,7 +1432,10 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
         Ok(self)
     }
 
-    /// Begins pushback mode for a list/array, allowing elements to be added one by one
+    /// Begins pushback mode for a list, array, tuple struct, or enum variant tuple struct,
+    /// allowing elements to be added one by one.
+    /// For lists/arrays, initializes an empty container if needed.
+    /// For tuple structs/variants, does nothing (expects subsequent `push` calls).
     pub fn begin_pushback(mut self) -> Result<Self, ReflectError> {
         let Some(frame) = self.frames.last_mut() else {
             return Err(ReflectError::OperationFailed {
@@ -1277,29 +1444,54 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
             });
         };
 
-        if !matches!(frame.shape.def, Def::List(_)) {
+        let is_list = matches!(frame.shape.def, Def::List(_));
+        let is_tuple_struct_or_variant = match frame.shape.def {
+            Def::Struct(sd) => sd.kind == facet_core::StructKind::Tuple,
+            Def::Enum(_) => {
+                // Check if a variant is selected and if that variant is a tuple-like struct
+                if let Some(variant) = &frame.istate.variant {
+                    variant.data.kind == facet_core::StructKind::Tuple
+                } else {
+                    // If no variant is selected yet, we can't determine if it's tuple-like.
+                    // We allow beginning pushback here, assuming a tuple variant *will* be selected
+                    // before pushing actual elements. The `push` operation will handle variant selection checks.
+                    // Alternatively, we could error here if no variant is selected. Let's allow it for now.
+                    // However, we definitely *don't* initialize anything if no variant is selected.
+                    // UPDATE: Decided to be stricter. If it's an enum, a variant MUST be selected
+                    // and it MUST be a tuple struct variant.
+                    false // Require variant to be selected *and* be a tuple.
+                }
+            }
+            _ => false,
+        };
+
+        if !is_list && !is_tuple_struct_or_variant {
             return Err(ReflectError::WasNotA {
-                expected: "list or array",
+                expected: "list, array, or tuple-like struct/enum variant",
                 actual: frame.shape,
             });
         }
 
-        let vtable = frame.shape.vtable;
+        // Only initialize for lists/arrays (which fall under Def::List)
+        if is_list {
+            let vtable = frame.shape.vtable;
+            // Initialize an empty list if it's not already marked as initialized (field 0)
+            if !frame.istate.fields.has(0) {
+                let Some(default_in_place) = vtable.default_in_place else {
+                    return Err(ReflectError::OperationFailed {
+                        shape: frame.shape,
+                        operation: "list type does not implement Default, cannot begin pushback",
+                    });
+                };
 
-        // Initialize an empty list if it's not already initialized
-        if !frame.istate.fields.has(0) {
-            let Some(default_in_place) = vtable.default_in_place else {
-                return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
-                    operation: "list type does not implement Default",
-                });
-            };
-
-            unsafe {
-                default_in_place(frame.data);
-                frame.istate.fields.set(0);
+                unsafe {
+                    default_in_place(frame.data);
+                    // Mark the list itself as initialized (representing the container exists)
+                    frame.istate.fields.set(0);
+                }
             }
         }
+        // For tuple structs/variants, do nothing here. Initialization happens field-by-field during `push`.
 
         Ok(self)
     }
@@ -1340,29 +1532,103 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
         Ok(self)
     }
 
-    /// Pushes a new element onto the list/array
+    /// Pushes a new element onto the list/array/tuple struct/tuple enum variant
     ///
     /// This creates a new frame for the element. When this frame is popped,
-    /// the element will be added to the list.
+    /// the element will be added to the list or the corresponding tuple field will be set.
     pub fn push(mut self) -> Result<Self, ReflectError> {
-        // Make sure we're initializing a list
-        let frame = self.frames.last().unwrap();
-        let list_shape = frame.shape;
+        // Get mutable access to the top frame early, we might need it for list_index
+        let frame_len = self.frames.len();
+        let frame = self
+            .frames
+            .last_mut()
+            .ok_or(ReflectError::OperationFailed {
+                shape: <()>::SHAPE,
+                operation: "tried to push but there was no frame",
+            })?;
+        let seq_shape = frame.shape;
 
-        if !matches!(list_shape.def, Def::List(_)) {
-            return Err(ReflectError::WasNotA {
-                expected: "list or array",
-                actual: list_shape,
-            });
-        }
+        // Determine element shape and context string based on the container type
+        let (element_shape, context_str): (&'static Shape, &'static str) = match seq_shape.def {
+            Def::List(_) => {
+                // Check list initialization *before* getting element shape
+                if !frame.istate.fields.has(0) {
+                    // Replicate original recursive call pattern to handle initialization
+                    // Drop mutable borrow of frame before recursive call
+                    return self.begin_pushback()?.push();
+                }
+                // List is initialized, get element shape (requires immutable self)
+                // Drop mutable borrow of frame before calling immutable method
+                let shape = self.element_shape()?;
+                (shape, "list")
+            }
 
-        // If the list isn't initialized yet, initialize it
-        if !frame.istate.fields.has(0) {
-            self = self.begin_pushback()?;
-        }
+            Def::Struct(sd) if sd.kind == facet_core::StructKind::Tuple => {
+                // Handle tuple struct (requires mutable frame for list_index)
+                let field_index = {
+                    // Borrow frame mutably (already done) to update list_index
+                    let next_idx = frame.istate.list_index.unwrap_or(0);
+                    frame.istate.list_index = Some(next_idx + 1);
+                    next_idx
+                };
+                // Check if the field index is valid
+                if field_index >= sd.fields.len() {
+                    return Err(ReflectError::FieldError {
+                        shape: seq_shape,
+                        field_error: FieldError::NoSuchField, // Or maybe SequenceError::OutOfBounds?
+                    });
+                }
+                // Get the shape of the field at the calculated index
+                (sd.fields[field_index].shape(), "tuple struct")
+            }
 
-        // Get the element type
-        let element_shape = self.element_shape()?;
+            Def::Enum(_) => {
+                // Handle tuple enum variant (requires mutable frame for list_index and variant check)
+                let variant =
+                    frame
+                        .istate
+                        .variant
+                        .as_ref()
+                        .ok_or(ReflectError::OperationFailed {
+                            shape: seq_shape,
+                            operation: "tried to push onto enum but no variant was selected",
+                        })?;
+                // Ensure the selected variant is tuple-like
+                if variant.data.kind != facet_core::StructKind::Tuple {
+                    return Err(ReflectError::WasNotA {
+                        expected: "tuple-like enum variant",
+                        actual: seq_shape, // Could provide variant name here for clarity
+                    });
+                }
+                // Get the next field index for the tuple variant
+                let field_index = {
+                    // Borrow frame mutably (already done) to update list_index
+                    let next_idx = frame.istate.list_index.unwrap_or(0);
+                    frame.istate.list_index = Some(next_idx + 1);
+                    next_idx
+                };
+                // Check if the field index is valid within the variant's fields
+                if field_index >= variant.data.fields.len() {
+                    return Err(ReflectError::FieldError {
+                        shape: seq_shape, // Could provide variant name here
+                        field_error: FieldError::NoSuchField,
+                    });
+                }
+                // Get the shape of the field at the calculated index within the variant
+                (
+                    variant.data.fields[field_index].shape(),
+                    "tuple enum variant",
+                )
+            }
+
+            _ => {
+                // If it's not a list, tuple struct, or enum, it's an error
+                return Err(ReflectError::WasNotA {
+                    expected: "list, array, tuple struct, or tuple enum variant",
+                    actual: seq_shape,
+                });
+            }
+        };
 
         // Allocate memory for the element
         let element_data = element_shape
@@ -1375,20 +1641,22 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
         let element_frame = Frame {
             data: element_data,
             shape: element_shape,
-            field_index_in_parent: None, // No need for an index since we're using mode
+            field_index_in_parent: None, // Mode distinguishes it, not field index
             istate: IState::new(
-                self.frames.len(),
-                FrameMode::ListElement,
+                frame_len,              // Use captured length (depth of the new frame)
+                FrameMode::ListElement, // Keep using this mode for list/tuple elements
                 FrameFlags::ALLOCATED,
             ),
         };
 
         trace!(
-            "[{}] Pushing element of type {} to list {}",
-            self.frames.len(),
+            "[{}] Pushing element of type {} to {} {}",
+            frame_len,
             element_shape.green(),
-            list_shape.blue(),
+            context_str, // Use the determined context string
+            seq_shape.blue(),
         );
+        let _ = context_str;
 
         self.frames.push(element_frame);
         Ok(self)
@@ -1663,17 +1931,24 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
 
     /// Pops the current frame — goes back up one level
     pub fn pop(mut self) -> Result<Self, ReflectError> {
-        let Some(frame) = self.pop_inner() else {
-            return Err(ReflectError::InvariantViolation {
-                invariant: "No frame to pop — it was time to call build()",
-            });
+        let frame = match self.pop_inner()? {
+            Some(frame) => frame,
+            None => {
+                return Err(ReflectError::InvariantViolation {
+                    invariant: "No frame to pop — it was time to call build()",
+                });
+            }
         };
+
         self.track(frame);
         Ok(self)
     }
 
-    fn pop_inner(&mut self) -> Option<Frame> {
-        let mut frame = self.frames.pop()?;
+    fn pop_inner(&mut self) -> Result<Option<Frame>, ReflectError> {
+        let mut frame = match self.frames.pop() {
+            Some(f) => f,
+            None => return Ok(None),
+        };
         #[cfg(feature = "log")]
         let frame_shape = frame.shape;
 
@@ -1701,8 +1976,7 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
             // Handle list element frames
             FrameMode::ListElement => {
                 if frame.is_fully_initialized() {
-                    // This was a list element, so we need to push it to the parent list
-                    // Capture frame length and parent shape before mutable borrow
+                    // This was a list or tuple element, so we need to push it to the parent
                     #[cfg(feature = "log")]
                     let frame_len = self.frames.len();
 
@@ -1710,33 +1984,173 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
                     let parent_frame = self.frames.last_mut().unwrap();
                     let parent_shape = parent_frame.shape;
 
-                    // Make sure the parent is a list
                     match parent_shape.def {
-                        Def::List(_) => {
-                            // Get the list vtable from the ListDef
-                            if let Def::List(list_def) = parent_shape.def {
-                                let list_vtable = list_def.vtable;
-                                trace!(
-                                    "[{}] Pushing element to list {}",
-                                    frame_len,
-                                    parent_shape.blue()
+                        // Handle List/Array
+                        Def::List(list_def) => {
+                            let list_vtable = list_def.vtable;
+                            trace!(
+                                "[{}] Pushing element to list {}",
+                                frame_len,
+                                parent_shape.blue()
+                            );
+                            unsafe {
+                                (list_vtable.push)(
+                                    PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
+                                    PtrMut::new(frame.data.as_mut_byte_ptr()),
                                 );
-                                unsafe {
-                                    // Convert the frame data pointer to Opaque and call push function from vtable
-                                    (list_vtable.push)(
-                                        PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
-                                        PtrMut::new(frame.data.as_mut_byte_ptr()),
-                                    );
-                                    self.mark_moved_out_of(&mut frame);
-                                }
-                            } else {
-                                panic!("parent frame is not a list type");
+                                self.mark_moved_out_of(&mut frame);
                             }
                         }
+
+                        // Handle Empty Unit Types (including empty tuple structs)
+                        Def::Struct(sd)
+                            if sd.kind == facet_core::StructKind::Tuple && sd.fields.is_empty() =>
+                        {
+                            trace!(
+                                "[{}] Handling empty tuple struct unit type {}",
+                                frame_len,
+                                parent_shape.blue()
+                            );
+                            // Mark the parent unit struct as fully initialized
+                            unsafe {
+                                parent_frame.mark_fully_initialized();
+                            }
+                            // Element frame is implicitly moved/consumed, but nothing to dealloc if it was also unit
+                            unsafe { self.mark_moved_out_of(&mut frame) };
+                        }
+                        Def::Scalar(s) if matches!(s.affinity, ScalarAffinity::Empty(_)) => {
+                            trace!(
+                                "[{}] Handling scalar empty unit type {}",
+                                frame_len,
+                                parent_shape.blue()
+                            );
+                            // Mark the parent scalar unit as fully initialized
+                            unsafe {
+                                parent_frame.mark_fully_initialized();
+                                self.mark_moved_out_of(&mut frame);
+                            }
+                        }
+
+                        // Handle Tuple Structs
+                        Def::Struct(sd) if sd.kind == facet_core::StructKind::Tuple => {
+                            // Get the field index from list_index saved during push
+                            let previous_index = parent_frame.istate.list_index.unwrap_or(1);
+                            let field_index = previous_index - 1; // -1 because we incremented *after* using the index in push
+
+                            if field_index >= sd.fields.len() {
+                                panic!(
+                                    "Field index {} out of bounds for tuple struct {} with {} fields",
+                                    field_index,
+                                    parent_shape,
+                                    sd.fields.len()
+                                );
+                            }
+
+                            let field = &sd.fields[field_index];
+                            trace!(
+                                "[{}] Setting tuple struct field {} ({}) of {}",
+                                frame_len,
+                                field_index.to_string().yellow(),
+                                field.name.bright_blue(),
+                                parent_shape.blue()
+                            );
+
+                            unsafe {
+                                // Copy the element data to the tuple field
+                                let field_ptr = parent_frame.data.field_uninit_at(field.offset);
+                                field_ptr
+                                    .copy_from(
+                                        PtrConst::new(frame.data.as_byte_ptr()),
+                                        field.shape(),
+                                    )
+                                    .map_err(|_| ReflectError::Unsized {
+                                        shape: field.shape(),
+                                    })?; // Use ? to propagate potential unsized error
+
+                                // Mark the specific field as initialized using its index
+                                parent_frame.istate.fields.set(field_index);
+
+                                // Mark the element as moved
+                                self.mark_moved_out_of(&mut frame);
+                            }
+                        }
+
+                        // Handle Tuple Enum Variants
+                        Def::Enum(_) => {
+                            // Ensure a variant is selected and it's a tuple variant
+                            let variant =
+                                parent_frame.istate.variant.as_ref().unwrap_or_else(|| {
+                                    panic!(
+                                        "Popping element for enum {} but no variant was selected",
+                                        parent_shape
+                                    )
+                                });
+
+                            if variant.data.kind != facet_core::StructKind::Tuple {
+                                panic!(
+                                    "Popping element for enum {}, but selected variant '{}' is not a tuple variant",
+                                    parent_shape, variant.name
+                                );
+                            }
+
+                            // Get the field index from list_index saved during push
+                            let previous_index = parent_frame.istate.list_index.unwrap_or(1);
+                            let field_index = previous_index - 1; // -1 because we incremented *after* using the index in push
+
+                            if field_index >= variant.data.fields.len() {
+                                panic!(
+                                    "Field index {} out of bounds for tuple enum variant '{}' of {} with {} fields",
+                                    field_index,
+                                    variant.name,
+                                    parent_shape,
+                                    variant.data.fields.len()
+                                );
+                            }
+
+                            let field = &variant.data.fields[field_index];
+                            trace!(
+                                "[{}] Setting tuple enum variant field {} ({}) of variant '{}' in {}",
+                                frame_len,
+                                field_index.to_string().yellow(),
+                                field.name.bright_blue(),
+                                variant.name.yellow(),
+                                parent_shape.blue()
+                            );
+
+                            unsafe {
+                                // Copy the element data to the tuple field within the enum's data payload
+                                let field_ptr = parent_frame.data.field_uninit_at(field.offset);
+                                field_ptr
+                                    .copy_from(
+                                        PtrConst::new(frame.data.as_byte_ptr()),
+                                        field.shape(),
+                                    )
+                                    .map_err(|_| ReflectError::Unsized {
+                                        shape: field.shape(),
+                                    })?; // Use ? to propagate potential unsized error
+
+                                // Mark the specific field as initialized using its index
+                                parent_frame.istate.fields.set(field_index);
+
+                                // Mark the element as moved
+                                self.mark_moved_out_of(&mut frame);
+                            }
+                        }
+
+                        // Unexpected parent type
                         _ => {
-                            panic!("Expected list or array, got {}", frame.shape);
+                            panic!(
+                                "FrameMode::ListElement pop expected parent to be List, Tuple Struct, or Tuple Enum Variant, but got {}",
+                                parent_shape
+                            );
                         }
                     }
+                } else {
+                    // Frame not fully initialized, just deallocate if needed (handled by Frame drop later)
+                    trace!(
+                        "Popping uninitialized ListElement frame ({}), potential leak if allocated resources are not managed",
+                        frame.shape.yellow()
+                    );
                 }
             }
 
@@ -1844,7 +2258,7 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
             _ => {}
         }
 
-        Some(frame)
+        Ok(Some(frame))
     }
 
     /// Evict a frame from istates, along with all its children

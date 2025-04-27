@@ -1,5 +1,6 @@
 /node_modules
 /stats.html
 /.home
+/dist
 .envrc
 .env

@@ -1,7 +1,6 @@
 [package]
 name = "facet-yaml"
-version.workspace = true
-authors.workspace = true
+version = "0.18.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -10,10 +9,15 @@ description = "YAML serialization and deserialization for Facet types"
 keywords = ["yaml", "serialization", "deserialization", "reflection", "facet"]
 categories = ["encoding", "parsing", "data-structures"]
 
+[features]
+ulid = ["facet-core/ulid"]
+
 [dependencies]
 yaml-rust2 = "0.10.1"
-facet-core = { version = "0.12.0", path = "../facet-core" }
-facet-reflect = { version = "0.11.0", path = "../facet-reflect" }
+facet-core = { version = "0.18.0", path = "../facet-core" }
+facet-reflect = { version = "0.18.0", path = "../facet-reflect" }
 
 [dev-dependencies]
 facet = { path = "../facet" }
+eyre = "0.6.12"
+ulid = "1.2.1"

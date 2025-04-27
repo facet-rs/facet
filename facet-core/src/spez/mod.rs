@@ -200,15 +200,20 @@ pub trait SpezParseYes {
     ///
     /// This function operates on uninitialized memory and requires that `target`
     /// has sufficient space allocated for type `T`.
-    unsafe fn spez_parse(&self, s: &str, target: PtrUninit) -> Result<(), ParseError>;
+    unsafe fn spez_parse<'mem>(
+        &self,
+        s: &str,
+        target: PtrUninit<'mem>,
+    ) -> Result<PtrMut<'mem>, ParseError>;
 }
 impl<T: core::str::FromStr> SpezParseYes for &SpezEmpty<T> {
-    unsafe fn spez_parse(&self, s: &str, target: PtrUninit) -> Result<(), ParseError> {
+    unsafe fn spez_parse<'mem>(
+        &self,
+        s: &str,
+        target: PtrUninit<'mem>,
+    ) -> Result<PtrMut<'mem>, ParseError> {
         match <T as core::str::FromStr>::from_str(s) {
-            Ok(value) => {
-                unsafe { target.put(value) };
-                Ok(())
-            }
+            Ok(value) => Ok(unsafe { target.put(value) }),
             Err(_) => Err(ParseError::Generic(
                 const { concat!("parse error for ", stringify!(T)) },
             )),
@@ -227,10 +232,18 @@ pub trait SpezParseNo {
     ///
     /// This function is marked unsafe as it deals with uninitialized memory,
     /// but it should never be reachable in practice.
-    unsafe fn spez_parse(&self, _s: &str, _target: PtrUninit) -> Result<(), ParseError>;
+    unsafe fn spez_parse<'mem>(
+        &self,
+        _s: &str,
+        _target: PtrUninit<'mem>,
+    ) -> Result<PtrMut<'mem>, ParseError>;
 }
 impl<T> SpezParseNo for SpezEmpty<T> {
-    unsafe fn spez_parse(&self, _s: &str, _target: PtrUninit) -> Result<(), ParseError> {
+    unsafe fn spez_parse<'mem>(
+        &self,
+        _s: &str,
+        _target: PtrUninit<'mem>,
+    ) -> Result<PtrMut<'mem>, ParseError> {
         unreachable!()
     }
 }
