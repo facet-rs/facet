@@ -1,4 +1,3 @@
-use alloc::collections::VecDeque;
 use core::num::NonZero;
 use facet_core::{Def, Facet, FieldAttribute, StructKind};
 use facet_reflect::Peek;
@@ -110,47 +109,47 @@ fn serialize<W: Write>(peek: &Peek<'_, '_>, delimit: bool, writer: &mut W) -> io
         StructKind::{Tuple, TupleStruct},
     };
 
-    let mut stack = VecDeque::new();
-    stack.push_back(SerializeTask::Value {
+    let mut stack = Vec::new();
+    stack.push(SerializeTask::Value {
         peek: *peek,
         delimit,
     });
 
-    while let Some(task) = stack.pop_front() {
+    while let Some(task) = stack.pop() {
         match task {
             SerializeTask::Value { peek, delimit } => match peek.shape().def {
                 Def::Scalar(_) => {
-                    stack.push_front(SerializeTask::ScalarValue(peek));
+                    stack.push(SerializeTask::ScalarValue(peek));
                 }
                 Def::Struct(StructDef {
                     kind: Tuple | TupleStruct,
                     ..
                 }) => {
-                    stack.push_front(SerializeTask::StartTuple(peek));
+                    stack.push(SerializeTask::StartTuple(peek));
                 }
                 Def::Struct(_) => {
-                    stack.push_front(SerializeTask::StartStruct {
+                    stack.push(SerializeTask::StartStruct {
                         struct_peek: peek,
                         delimit,
                     });
                 }
                 Def::List(_) => {
-                    stack.push_front(SerializeTask::StartList(peek));
+                    stack.push(SerializeTask::StartList(peek));
                 }
                 Def::Map(_) => {
-                    stack.push_front(SerializeTask::StartMap {
+                    stack.push(SerializeTask::StartMap {
                         map_peek: peek,
                         delimit,
                     });
                 }
                 Def::Enum(_) => {
-                    stack.push_front(SerializeTask::StartEnum {
+                    stack.push(SerializeTask::StartEnum {
                         enum_peek: peek,
                         delimit,
                     });
                 }
                 Def::Option(_) => {
-                    stack.push_front(SerializeTask::StartOption(peek));
+                    stack.push(SerializeTask::StartOption(peek));
                 }
                 _ => {
                     return Err(io::Error::new(
@@ -180,7 +179,7 @@ fn serialize<W: Write>(peek: &Peek<'_, '_>, delimit: bool, writer: &mut W) -> io
                     .with_first()
                     .collect::<Vec<_>>();
 
-                stack.push_front(SerializeTask::EndStruct { delimit });
+                stack.push(SerializeTask::EndStruct { delimit });
 
                 for (first, (field, field_peek)) in fields.into_iter().rev() {
                     // Check for rename attribute
@@ -197,7 +196,7 @@ fn serialize<W: Write>(peek: &Peek<'_, '_>, delimit: bool, writer: &mut W) -> io
                         .unwrap_or(field.name);
                     let should_delimit = !field.has_arbitrary_attr("flatten");
 
-                    stack.push_front(SerializeTask::StructField {
+                    stack.push(SerializeTask::StructField {
                         field_peek,
                         field_name,
                         should_delimit,
@@ -223,7 +222,7 @@ fn serialize<W: Write>(peek: &Peek<'_, '_>, delimit: bool, writer: &mut W) -> io
                 }
 
                 // Push the field value to serialize
-                stack.push_front(SerializeTask::Value {
+                stack.push(SerializeTask::Value {
                     peek: field_peek,
                     delimit: should_delimit,
                 });
@@ -242,10 +241,10 @@ fn serialize<W: Write>(peek: &Peek<'_, '_>, delimit: bool, writer: &mut W) -> io
 
                 // Process items in reverse order for the stack
                 let items = list_peek.iter().with_first().collect::<Vec<_>>();
-                stack.push_front(SerializeTask::EndList);
+                stack.push(SerializeTask::EndList);
 
                 for (first, item_peek) in items.into_iter().rev() {
-                    stack.push_front(SerializeTask::ListItem {
+                    stack.push(SerializeTask::ListItem {
                         item_peek,
                         is_first: first,
                     });
@@ -259,7 +258,7 @@ fn serialize<W: Write>(peek: &Peek<'_, '_>, delimit: bool, writer: &mut W) -> io
                     write!(writer, ",")?;
                 }
 
-                stack.push_front(SerializeTask::Value {
+                stack.push(SerializeTask::Value {
                     peek: item_peek,
                     delimit: true,
                 });
@@ -280,10 +279,10 @@ fn serialize<W: Write>(peek: &Peek<'_, '_>, delimit: bool, writer: &mut W) -> io
                     .with_first()
                     .collect::<Vec<_>>();
 
-                stack.push_front(SerializeTask::EndTuple);
+                stack.push(SerializeTask::EndTuple);
 
                 for (first, (_, item_peek)) in fields.into_iter().rev() {
-                    stack.push_front(SerializeTask::TupleItem {
+                    stack.push(SerializeTask::TupleItem {
                         item_peek,
                         is_first: first,
                     });
@@ -297,7 +296,7 @@ fn serialize<W: Write>(peek: &Peek<'_, '_>, delimit: bool, writer: &mut W) -> io
                     write!(writer, ",")?;
                 }
 
-                stack.push_front(SerializeTask::Value {
+                stack.push(SerializeTask::Value {
                     peek: item_peek,
                     delimit: true,
                 });
@@ -316,10 +315,10 @@ fn serialize<W: Write>(peek: &Peek<'_, '_>, delimit: bool, writer: &mut W) -> io
 
                 // Process entries in reverse order for the stack
                 let entries = map_peek.iter().with_first().collect::<Vec<_>>();
-                stack.push_front(SerializeTask::EndMap { delimit });
+                stack.push(SerializeTask::EndMap { delimit });
 
                 for (first, (key, value)) in entries.into_iter().rev() {
-                    stack.push_front(SerializeTask::MapEntry {
+                    stack.push(SerializeTask::MapEntry {
                         key,
                         value,
                         is_first: first,
@@ -358,7 +357,7 @@ fn serialize<W: Write>(peek: &Peek<'_, '_>, delimit: bool, writer: &mut W) -> io
                 write!(writer, ":")?;
 
                 // Push the value to serialize
-                stack.push_front(SerializeTask::Value {
+                stack.push(SerializeTask::Value {
                     peek: value,
                     delimit: true,
                 });
@@ -389,7 +388,7 @@ fn serialize<W: Write>(peek: &Peek<'_, '_>, delimit: bool, writer: &mut W) -> io
 
                     let is_transparent = crate::variant_is_transparent(enum_peek.active_variant());
 
-                    stack.push_front(SerializeTask::EndEnum {
+                    stack.push(SerializeTask::EndEnum {
                         delimit,
                         is_struct,
                         is_transparent,
@@ -406,7 +405,7 @@ fn serialize<W: Write>(peek: &Peek<'_, '_>, delimit: bool, writer: &mut W) -> io
                             .collect::<Vec<_>>();
 
                         for (first, (field, field_peek)) in fields.into_iter().rev() {
-                            stack.push_front(SerializeTask::EnumStructField {
+                            stack.push(SerializeTask::EnumStructField {
                                 field,
                                 field_peek,
                                 field_name: field.name,
@@ -416,7 +415,7 @@ fn serialize<W: Write>(peek: &Peek<'_, '_>, delimit: bool, writer: &mut W) -> io
                     } else if is_transparent {
                         // Transparent variant - output the field directly
                         if let Some(field) = enum_peek.field(0) {
-                            stack.push_front(SerializeTask::Value {
+                            stack.push(SerializeTask::Value {
                                 peek: field,
                                 delimit: true,
                             });
@@ -437,7 +436,7 @@ fn serialize<W: Write>(peek: &Peek<'_, '_>, delimit: bool, writer: &mut W) -> io
                             .collect::<Vec<_>>();
 
                         for (first, (field, field_peek)) in fields.into_iter().rev() {
-                            stack.push_front(SerializeTask::EnumTupleField {
+                            stack.push(SerializeTask::EnumTupleField {
                                 field,
                                 field_peek,
                                 is_first: first,
@@ -464,7 +463,7 @@ fn serialize<W: Write>(peek: &Peek<'_, '_>, delimit: bool, writer: &mut W) -> io
                 write_json_string(writer, field_name)?;
                 write!(writer, ":")?;
 
-                stack.push_front(SerializeTask::Value {
+                stack.push(SerializeTask::Value {
                     peek: field_peek,
                     delimit: should_delimit,
                 });
@@ -484,7 +483,7 @@ fn serialize<W: Write>(peek: &Peek<'_, '_>, delimit: bool, writer: &mut W) -> io
                     .iter()
                     .any(|&attr| attr == FieldAttribute::Arbitrary("flatten"));
 
-                stack.push_front(SerializeTask::Value {
+                stack.push(SerializeTask::Value {
                     peek: field_peek,
                     delimit: should_delimit,
                 });
@@ -516,7 +515,7 @@ fn serialize<W: Write>(peek: &Peek<'_, '_>, delimit: bool, writer: &mut W) -> io
                         io::Error::new(io::ErrorKind::Other, "Failed to get option value")
                     })?;
 
-                    stack.push_front(SerializeTask::Value {
+                    stack.push(SerializeTask::Value {
                         peek: value,
                         delimit: true,
                     });
