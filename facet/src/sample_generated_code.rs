@@ -1030,7 +1030,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                                                                                             []
                                                                                         }).build()]
                     };
-                    crate::Variant::builder().name("ArbitraryVariant").discriminant(6).fields(crate::StructDef::builder().tuple().fields(fields).build()).doc(&[" A variant marked as arbitrary, potentially skipped during processing."]).build()
+                    crate::Variant::builder().name("ArbitraryVariant").attributes(&[crate::VariantAttribute::Arbitrary("arbitrary")]).discriminant(6).fields(crate::StructDef::builder().tuple().fields(fields).build()).doc(&[" A variant marked as arbitrary, potentially skipped during processing."]).build()
                 },
                 {
                     let fields: &'static [crate::Field] = &const {
@@ -1482,6 +1482,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for SubEnum {
                     };
                     crate::Variant::builder()
                         .name("ArbitraryOption")
+                        .attributes(&[crate::VariantAttribute::Arbitrary("arbitrary")])
                         .discriminant(3)
                         .fields(crate::StructDef::builder().tuple().fields(fields).build())
                         .doc(&[" An arbitrary option."])

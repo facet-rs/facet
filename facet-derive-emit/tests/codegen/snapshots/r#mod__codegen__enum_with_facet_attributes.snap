@@ -30,6 +30,10 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
             [
                 ::facet::Variant::builder()
                     .name("VariantA")
+                    .attributes(&[
+                        ::facet::VariantAttribute::Arbitrary("name = \"FirstVariant\""),
+                        ::facet::VariantAttribute::Arbitrary("discriminant = 10"),
+                    ])
                     .discriminant(0)
                     .fields(::facet::StructDef::builder().unit().build())
                     .build(),
@@ -54,6 +58,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                     };
                     ::facet::Variant::builder()
                         .name("InternalVariant")
+                        .attributes(&[::facet::VariantAttribute::Arbitrary("skip")])
                         .discriminant(1)
                         .fields(::facet::StructDef::builder().tuple().fields(fields).build())
                         .build()
@@ -77,6 +82,9 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                     };
                     ::facet::Variant::builder()
                         .name("VariantC")
+                        .attributes(&[::facet::VariantAttribute::Arbitrary(
+                            "deprecated = \"Use VariantD instead\"",
+                        )])
                         .discriminant(2)
                         .fields(
                             ::facet::StructDef::builder()
