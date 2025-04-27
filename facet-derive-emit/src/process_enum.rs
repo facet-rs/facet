@@ -753,7 +753,6 @@ fn variant_attrs(attributes: &[Attribute]) -> String {
             }
         })
         .map(|attr| {
-            // dbg!(&attr.body.content);
             match &attr.inner.content {
                 FacetInner::Sensitive(_sensitive) => {
                     r#"::facet::VariantAttribute::Sensitive"#.to_string()

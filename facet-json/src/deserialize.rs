@@ -144,8 +144,6 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
 
     loop {
         let frame_count = wip.frames_count();
-        dbg!(&wip.frames);
-        dbg!(&stack);
         debug_assert!(
             frame_count
                 >= stack
@@ -336,7 +334,7 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                 }
             }
             Instruction::Value => {
-                let token = dbg!(read_token!());
+                let token = read_token!();
                 match token.node {
                     Token::Null => {
                         reflect!(put_default());
