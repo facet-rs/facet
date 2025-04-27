@@ -4,6 +4,9 @@
 #![forbid(unsafe_code)]
 #![doc = include_str!("../README.md")]
 
+extern crate alloc;
+use alloc::borrow::Cow;
+
 use facet_core::{Def, Facet, FieldAttribute};
 use facet_reflect::{ReflectError, Wip};
 
@@ -32,6 +35,15 @@ fn parse_field<'facet>(wip: Wip<'facet>, value: &'facet str) -> Result<Wip<'face
     .pop()
 }
 
+fn kebab_to_snake(input: &str) -> Cow<str> {
+    // ASSUMPTION: We only support GNU/Unix kebab-case named argument
+    // ASSUMPTION: struct fields are snake_case
+    if !input.contains('-') {
+        return Cow::Borrowed(input);
+    }
+    Cow::Owned(input.replace('-', "_"))
+}
+
 /// Parses command-line arguments
 pub fn from_slice<'input, 'facet, T>(s: &[&'input str]) -> T
 where
@@ -48,8 +60,9 @@ where
         s = &s[1..];
 
         if let Some(key) = token.strip_prefix("--") {
+            let key = kebab_to_snake(key);
             log::trace!("Found named argument: {}", key);
-            let field_index = match wip.field_index(key) {
+            let field_index = match wip.field_index(&key) {
                 Some(index) => index,
                 None => panic!("Unknown argument: {}", key),
             };
