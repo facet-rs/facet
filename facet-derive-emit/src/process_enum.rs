@@ -554,6 +554,19 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                         Self,
                         |f, _opts| ::core::fmt::Write::write_str(f, #enum_name_str)
                     )})
+                    .ty(::facet::Type::User(::facet::UserType {
+                        repr: ::facet::Repr {
+                            base: ::facet::BaseRepr::C,
+                            packed: false,
+                            align: None,
+                        },
+                        subtype: ::facet::UserSubtype::Enum(::facet::EnumDef::builder()
+                            // Use variant expressions that just reference the shadow structs
+                            // which are now defined above
+                            .variants(__facet_variants)
+                            .repr(#repr_type_tokenstream)
+                            .build())
+                    }))
                     .def(::facet::Def::Enum(::facet::EnumDef::builder()
                         .variants(__facet_variants)
                         .repr(#repr_type_tokenstream)

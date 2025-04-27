@@ -2,7 +2,7 @@ use core::mem::MaybeUninit;
 
 use crate::{
     Def, Facet, OptionDef, OptionVTable, PtrConst, PtrMut, PtrUninit, Shape, TryBorrowInnerError,
-    TryFromError, TryIntoInnerError, TypedPtrUninit, VTableView, value_vtable,
+    TryFromError, TryIntoInnerError, Type, TypedPtrUninit, UserType, VTableView, value_vtable,
 };
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
     const SHAPE: &'static Shape = &const {
@@ -54,6 +54,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
                 name: "T",
                 shape: || T::SHAPE,
             }])
+            .ty(Type::User(UserType::opaque()))
             .def(Def::Option(
                 OptionDef::builder()
                     .t(|| T::SHAPE)

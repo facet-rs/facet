@@ -1,8 +1,8 @@
 use core::{alloc::Layout, fmt, hash::Hash, ptr::fn_addr_eq};
 
 use crate::{
-    ConstTypeId, Def, Facet, FunctionAbi, FunctionPointerDef, HasherProxy, MarkerTraits, Shape,
-    TypeNameOpts, TypeParam, ValueVTable,
+    ConstTypeId, Def, Facet, FunctionAbi, FunctionPointerDef, HasherProxy, MarkerTraits,
+    PointerType, Shape, Type, TypeNameOpts, TypeParam, ValueVTable,
 };
 
 #[inline(always)]
@@ -102,6 +102,13 @@ macro_rules! impl_facet_for_fn_ptr {
                     .type_params(&[
                         $(TypeParam { name: stringify!($args), shape: || $args::SHAPE },)*
                     ])
+                    .ty(Type::Pointer(PointerType::Function(({
+                        FunctionPointerDef::builder()
+                            .parameter_types(&const { [$(|| $args::SHAPE),*] })
+                            .return_type(|| R::SHAPE)
+                            .abi($abi)
+                            .build()
+                    }))))
                     .def(Def::FunctionPointer({
                         FunctionPointerDef::builder()
                             .parameter_types(&const { [$(|| $args::SHAPE),*] })

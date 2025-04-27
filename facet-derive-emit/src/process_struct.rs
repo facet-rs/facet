@@ -411,6 +411,18 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                     .layout(::core::alloc::Layout::new::<Self>())
                     #type_params // Still from parsed.generics
                     .vtable(vtable)
+                    .ty(::facet::Type::User(::facet::UserType {
+                        repr: ::facet::Repr {
+                            base: ::facet::BaseRepr::C,
+                            packed: false,
+                            align: None,
+                        },
+                        subtype: ::facet::UserSubtype::Struct(::facet::StructDef::builder()
+                            .kind(#kind)
+                            .fields(fields)
+                            .build()
+                        )
+                    }))
                     .def(::facet::Def::Struct(::facet::StructDef::builder()
                         .kind(#kind) // From ps.kind match
                         .fields(fields)

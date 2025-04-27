@@ -12,6 +12,31 @@ unsafe impl Facet<'_> for ConstTypeId {
                     .affinity(ScalarAffinity::opaque().build())
                     .build(),
             ))
+            .ty(Type::User(UserType {
+                repr: Repr {
+                    base: BaseRepr::C,
+                    packed: false,
+                    align: None,
+                },
+                subtype: UserSubtype::Struct(StructDef {
+                    kind: StructKind::Struct,
+                    fields: &const { [field_in_type!(ConstTypeId, type_id_fn)] },
+                }),
+            }))
+            .vtable(&const { value_vtable!((), |f, _opts| write!(f, "ConstTypeId")) })
+            .build()
+    };
+}
+
+unsafe impl Facet<'_> for core::any::TypeId {
+    const SHAPE: &'static Shape = &const {
+        Shape::builder_for_sized::<Self>()
+            .def(Def::Scalar(
+                ScalarDef::builder()
+                    .affinity(ScalarAffinity::opaque().build())
+                    .build(),
+            ))
+            .ty(Type::User(UserType::opaque()))
             .vtable(&const { value_vtable!((), |f, _opts| write!(f, "ConstTypeId")) })
             .build()
     };
@@ -25,6 +50,9 @@ unsafe impl Facet<'_> for () {
                     .affinity(ScalarAffinity::empty().build())
                     .build(),
             ))
+            .ty(Type::Sequence(SequenceType::Tuple(TupleType {
+                fields: &[],
+            })))
             .vtable(&const { value_vtable!((), |f, _opts| write!(f, "()")) })
             .build()
     };
@@ -38,6 +66,13 @@ unsafe impl<'a, T: ?Sized + 'a> Facet<'a> for core::marker::PhantomData<T> {
                     .affinity(ScalarAffinity::empty().build())
                     .build(),
             ))
+            .ty(Type::User(UserType {
+                repr: Repr::default(),
+                subtype: UserSubtype::Struct(StructDef {
+                    kind: StructKind::Unit,
+                    fields: &[],
+                }),
+            }))
             // TODO: we might be able to do something with specialization re: the shape of T?
             .vtable(&const { value_vtable!((), |f, _opts| write!(f, "PhantomData")) })
             .build()
@@ -54,6 +89,7 @@ unsafe impl Facet<'_> for alloc::string::String {
                     .affinity(ScalarAffinity::string().max_inline_length(0).build())
                     .build(),
             ))
+            .ty(Type::User(UserType::opaque()))
             .vtable(&const { value_vtable!(alloc::string::String, |f, _opts| write!(f, "String")) })
             .build()
     };
@@ -67,7 +103,17 @@ unsafe impl Facet<'_> for char {
                     .affinity(ScalarAffinity::char().build())
                     .build(),
             ))
+            .ty(Type::Primitive(PrimitiveType::Textual(TextualType::Char)))
             .vtable(&const { value_vtable!(char, |f, _opts| write!(f, "char")) })
+            .build()
+    };
+}
+
+unsafe impl Facet<'_> for str {
+    const SHAPE: &'static Shape = &const {
+        Shape::builder_for_unsized::<Self>()
+            .ty(Type::Primitive(PrimitiveType::Textual(TextualType::Str)))
+            .vtable(&const { value_vtable!(&str, |f, _opts| write!(f, "str")) })
             .build()
     };
 }
@@ -75,6 +121,11 @@ unsafe impl Facet<'_> for char {
 unsafe impl<'a> Facet<'a> for &'a str {
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
+            .ty(Type::Pointer(PointerType::Reference(ValuePointerType {
+                target: || str::SHAPE,
+                mutable: false,
+                wide: true,
+            })))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::string().build())
@@ -94,6 +145,7 @@ unsafe impl<'a> Facet<'a> for alloc::borrow::Cow<'a, str> {
                     .affinity(ScalarAffinity::string().build())
                     .build(),
             ))
+            .ty(Type::User(UserType::opaque()))
             .vtable(
                 &const {
                     value_vtable!(alloc::borrow::Cow<'_, str>, |f, _opts| write!(
@@ -114,6 +166,7 @@ unsafe impl Facet<'_> for bool {
                     .affinity(ScalarAffinity::boolean().build())
                     .build(),
             ))
+            .ty(Type::Primitive(PrimitiveType::Boolean))
             .vtable(&const { value_vtable!(bool, |f, _opts| write!(f, "bool")) })
             .build()
     };
@@ -126,6 +179,12 @@ macro_rules! impl_facet_for_integer {
                 Shape::builder()
                     .id(ConstTypeId::of::<Self>())
                     .layout(Layout::new::<Self>())
+                    .ty(Type::Primitive(PrimitiveType::Numeric(
+                        NumericType::Integer(IntegerType {
+                            signed: (1 as $type).checked_neg().is_some(),
+                            bits: ::core::mem::size_of::<$type>() * 8,
+                        }),
+                    )))
                     .def(Def::Scalar(
                         ScalarDef::builder().affinity($affinity).build(),
                     ))
@@ -359,6 +418,26 @@ macro_rules! impl_facet_for_integer {
                     .def(Def::Scalar(
                         ScalarDef::builder().affinity($nz_affinity).build(),
                     ))
+                    .ty(Type::User(UserType {
+                        repr: Repr {
+                            base: BaseRepr::Transparent,
+                            packed: false,
+                            align: None,
+                        },
+                        subtype: UserSubtype::Struct(StructDef {
+                            kind: StructKind::TupleStruct,
+                            fields: &const {
+                                [Field::builder()
+                                    .name("0")
+                                    // TODO: is it correct to represent $type here, when we, in
+                                    // fact, store $type::NonZeroInner.
+                                    .shape(|| <$type>::SHAPE)
+                                    .offset(0)
+                                    .flags(FieldFlags::EMPTY)
+                                    .build()]
+                            },
+                        }),
+                    }))
                     .vtable(
                         &const {
                             let mut vtable = value_vtable!($type, |f, _opts| write!(
@@ -651,6 +730,9 @@ static EPSILON_F64: f64 = f64::EPSILON;
 unsafe impl Facet<'_> for f32 {
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
+            .ty(Type::Primitive(PrimitiveType::Numeric(NumericType::Float(
+                FloatType { bits: 32 },
+            ))))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(
@@ -707,6 +789,9 @@ unsafe impl Facet<'_> for f32 {
 unsafe impl Facet<'_> for f64 {
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
+            .ty(Type::Primitive(PrimitiveType::Numeric(NumericType::Float(
+                FloatType { bits: 64 },
+            ))))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(
@@ -763,6 +848,7 @@ unsafe impl Facet<'_> for f64 {
 unsafe impl Facet<'_> for core::net::SocketAddr {
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
+            .ty(Type::User(UserType::opaque()))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::socket_addr().build())
@@ -778,6 +864,7 @@ unsafe impl Facet<'_> for core::net::SocketAddr {
 unsafe impl Facet<'_> for core::net::IpAddr {
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
+            .ty(Type::User(UserType::opaque()))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::ip_addr().build())
@@ -791,6 +878,7 @@ unsafe impl Facet<'_> for core::net::IpAddr {
 unsafe impl Facet<'_> for core::net::Ipv4Addr {
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
+            .ty(Type::User(UserType::opaque()))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::ip_addr().build())
@@ -804,6 +892,7 @@ unsafe impl Facet<'_> for core::net::Ipv4Addr {
 unsafe impl Facet<'_> for core::net::Ipv6Addr {
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
+            .ty(Type::User(UserType::opaque()))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::ip_addr().build())

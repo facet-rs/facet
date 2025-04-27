@@ -171,6 +171,8 @@ pub enum VariantAttribute {
 #[repr(C)]
 #[non_exhaustive]
 pub enum EnumRepr {
+    /// Default Rust representation
+    Rust,
     /// u8 representation (#[repr(u8)])
     U8,
     /// u16 representation (#[repr(u16)])

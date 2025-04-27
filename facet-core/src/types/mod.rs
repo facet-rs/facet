@@ -17,6 +17,9 @@ pub use struct_::*;
 mod enum_;
 pub use enum_::*;
 
+mod union_;
+pub use union_::*;
+
 mod array;
 pub use array::*;
 
@@ -44,6 +47,18 @@ pub use scalar::*;
 mod function;
 pub use function::*;
 
+mod primitive;
+pub use primitive::*;
+
+mod sequence;
+pub use sequence::*;
+
+mod user;
+pub use user::*;
+
+mod pointer;
+pub use pointer::*;
+
 use crate::{ConstTypeId, Facet};
 
 /// Schema for reflection of a type
@@ -62,6 +77,8 @@ pub struct Shape {
     /// name (with generic type parameters), use the Display implementation,
     /// the Debug implementation, build a default value, clone, etc.
     ///
+    /// If the shape has `ShapeLayout::Unsized`, then the parent pointer needs to be passed.
+    ///
     /// There are more specific vtables in variants of [`Def`]
     pub vtable: &'static ValueVTable,
 
@@ -72,6 +89,12 @@ pub struct Shape {
     /// and contains vtables that let you perform other operations, like inserting
     /// into a map or fetching a value from a list.
     pub def: Def,
+
+    /// Underlying type: primitive, sequence, user, pointer.
+    ///
+    /// This follows the [`Rust Reference`](https://doc.rust-lang.org/reference/types.html), but
+    /// omits function types, and trait types, as they cannot be represented here.
+    pub ty: Type,
 
     /// Generic parameters for the shape
     pub type_params: &'static [TypeParam],
@@ -165,6 +188,11 @@ impl Shape {
             .id(ConstTypeId::of::<T>())
     }
 
+    /// Returns a builder for a shape for some type `T`.
+    pub const fn builder_for_unsized<T: ?Sized>() -> ShapeBuilder {
+        ShapeBuilder::new().set_unsized().id(ConstTypeId::of::<T>())
+    }
+
     /// Check if this shape is of the given type
     pub fn is_type<Other: Facet<'static>>(&'static self) -> bool {
         let l = self;
@@ -208,7 +236,8 @@ pub struct ShapeBuilder {
     id: Option<ConstTypeId>,
     layout: Option<ShapeLayout>,
     vtable: Option<&'static ValueVTable>,
-    def: Option<Def>,
+    def: Def,
+    ty: Type,
     type_params: &'static [TypeParam],
     doc: &'static [&'static str],
     attributes: &'static [ShapeAttribute],
@@ -223,7 +252,8 @@ impl ShapeBuilder {
             id: None,
             layout: None,
             vtable: None,
-            def: None,
+            def: Def::Unimplemented,
+            ty: Type::Unimplemented,
             type_params: &[],
             doc: &[],
             attributes: &[],
@@ -262,7 +292,14 @@ impl ShapeBuilder {
     /// Sets the `def` field of the `ShapeBuilder`.
     #[inline]
     pub const fn def(mut self, def: Def) -> Self {
-        self.def = Some(def);
+        self.def = def;
+        self
+    }
+
+    /// Sets the `ty` field of the `ShapeBuilder`.
+    #[inline]
+    pub const fn ty(mut self, ty: Type) -> Self {
+        self.ty = ty;
         self
     }
 
@@ -312,7 +349,8 @@ impl ShapeBuilder {
             layout: self.layout.unwrap(),
             vtable: self.vtable.unwrap(),
             type_params: self.type_params,
-            def: self.def.unwrap(),
+            def: self.def,
+            ty: self.ty,
             doc: self.doc,
             attributes: self.attributes,
             inner: self.inner,
@@ -420,6 +458,26 @@ impl Shape {
         Ok(())
     }
 }
+
+/// The definition of a shape in accordance to rust reference:
+///
+/// See https://doc.rust-lang.org/reference/types.html
+#[derive(Clone, Copy, Debug)]
+#[repr(C)]
+#[non_exhaustive]
+pub enum Type {
+    /// Built-in primitive.
+    Primitive(PrimitiveType),
+    /// Sequence (tuple, array, slice).
+    Sequence(SequenceType),
+    /// User-defined type (struct, enum, union).
+    User(UserType),
+    /// Pointer type (reference, raw, function pointer).
+    Pointer(PointerType),
+    // Not implemented: trait objects and function items.
+    Unimplemented,
+}
+
 /// The definition of a shape: is it more like a struct, a map, a list?
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
@@ -474,6 +532,8 @@ pub enum Def {
 
     /// Function pointers, like `fn(u32) -> String`, `extern "C" fn() -> *const T`, etc.
     FunctionPointer(FunctionPointerDef),
+
+    Unimplemented,
 }
 
 #[expect(clippy::result_large_err, reason = "See comment of expect above Def")]

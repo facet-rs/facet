@@ -139,6 +139,10 @@ where
                     builder.build()
                 },
             )
+            .ty(Type::Sequence(SequenceType::Array(ArrayType {
+                ty: T::SHAPE,
+                len: L,
+            })))
             .def(Def::Array(
                 ArrayDef::builder()
                     .vtable(

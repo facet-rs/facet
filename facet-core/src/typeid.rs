@@ -15,7 +15,7 @@ use core::mem;
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct ConstTypeId {
-    type_id_fn: fn() -> TypeId,
+    pub(crate) type_id_fn: fn() -> TypeId,
 }
 
 impl ConstTypeId {
