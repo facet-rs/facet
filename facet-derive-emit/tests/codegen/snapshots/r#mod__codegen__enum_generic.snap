@@ -48,7 +48,6 @@ where
                     .name("Unit")
                     .discriminant(0)
                     .fields(::facet::StructDef::builder().unit().build())
-                    .attributes(&const { [] })
                     .build(),
                 {
                     let fields: &'static [::facet::Field] = &const {
@@ -87,7 +86,6 @@ where
                         .name("Tuple")
                         .discriminant(1)
                         .fields(::facet::StructDef::builder().tuple().fields(fields).build())
-                        .attributes(&const { [] })
                         .build()
                 },
                 {
@@ -149,7 +147,6 @@ where
                                 .fields(fields)
                                 .build(),
                         )
-                        .attributes(&const { [] })
                         .build()
                 },
             ]

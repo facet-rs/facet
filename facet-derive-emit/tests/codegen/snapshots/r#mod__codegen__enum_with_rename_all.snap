@@ -50,7 +50,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                                 .fields(fields)
                                 .build(),
                         )
-                        .attributes(&const { [] })
                         .build()
                 },
                 {
@@ -70,7 +69,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                                     code
                                 ))
                                 .flags(::facet::FieldFlags::EMPTY)
-                                .attributes(&const { [::facet::FieldAttribute::Rename("code")] })
+                                .attributes(&const { [] })
                                 .build(),
                             ::facet::Field::builder()
                                 .name("message")
@@ -86,7 +85,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                                     message
                                 ))
                                 .flags(::facet::FieldFlags::EMPTY)
-                                .attributes(&const { [::facet::FieldAttribute::Rename("message")] })
+                                .attributes(&const { [] })
                                 .build(),
                         ]
                     };
@@ -99,7 +98,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                                 .fields(fields)
                                 .build(),
                         )
-                        .attributes(&const { [] })
                         .build()
                 },
             ]

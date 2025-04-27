@@ -67,6 +67,9 @@ pub struct Variant {
     /// Discriminant value (if available). Might fit in a u8, etc.
     pub discriminant: i64,
 
+    /// Attributes set for this variant via the derive macro
+    pub attributes: &'static [VariantAttribute],
+
     /// Fields for this variant (empty if unit, number-named if tuple).
     /// IMPORTANT: the offset for the fields already takes into account the size & alignment of the
     /// discriminant.
@@ -74,9 +77,6 @@ pub struct Variant {
 
     /// Doc comment for the variant
     pub doc: &'static [&'static str],
-
-    /// arbitrary attributes set via the derive macro
-    pub attributes: &'static [VariantAttribute],
 }
 
 impl Variant {
@@ -93,24 +93,12 @@ impl Variant {
     }
 }
 
-/// An attribute that can be set on an enum variant.
-#[non_exhaustive]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-#[repr(C)]
-pub enum VariantAttribute {
-    /// This variant is sensitive. If the enum is of this variant, it should not be shown in the
-    /// debug or display impl
-    Sensitive,
-    /// Other variant attributes go here.
-    Arbitrary(&'static str),
-}
-
 /// Builder for Variant
 pub struct VariantBuilder {
     name: Option<&'static str>,
     discriminant: Option<i64>,
+    attributes: &'static [VariantAttribute],
     fields: Option<StructDef>,
-    attributes: Option<&'static [VariantAttribute]>,
     doc: &'static [&'static str],
 }
 
@@ -121,8 +109,8 @@ impl VariantBuilder {
         Self {
             name: None,
             discriminant: None,
+            attributes: &[],
             fields: None,
-            attributes: None,
             doc: &[],
         }
     }
@@ -139,15 +127,15 @@ impl VariantBuilder {
         self
     }
 
-    /// Sets the fields for the Variant
-    pub const fn fields(mut self, fields: StructDef) -> Self {
-        self.fields = Some(fields);
+    /// Sets the attributes for the variant
+    pub const fn attributes(mut self, attributes: &'static [VariantAttribute]) -> Self {
+        self.attributes = attributes;
         self
     }
 
-    /// Sets the attributes for the Field
-    pub const fn attributes(mut self, attributes: &'static [VariantAttribute]) -> Self {
-        self.attributes = Some(attributes);
+    /// Sets the fields for the Variant
+    pub const fn fields(mut self, fields: StructDef) -> Self {
+        self.fields = Some(fields);
         self
     }
 
@@ -162,11 +150,24 @@ impl VariantBuilder {
         Variant {
             name: self.name.unwrap(),
             discriminant: self.discriminant.unwrap(),
+            attributes: self.attributes,
             data: self.fields.unwrap(),
-            attributes: self.attributes.unwrap(),
             doc: self.doc,
         }
     }
+}
+
+/// An attribute that can be set on an enum variant
+#[non_exhaustive]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[repr(C)]
+pub enum VariantAttribute {
+    /// Specifies an alternative name for the variant (for serialization/deserialization)
+    Rename(&'static str),
+    /// Specifies a case conversion for all fields inside the variant
+    RenameAll(&'static str),
+    /// Custom field attribute containing arbitrary text
+    Arbitrary(&'static str),
 }
 
 /// All possible representations for Rust enums — ie. the type/size of the discriminant

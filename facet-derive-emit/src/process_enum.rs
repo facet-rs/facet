@@ -1,33 +1,110 @@
 use super::normalize_ident_str;
 use super::*;
 
-/// Process a variant name, applying rename attribute or rename_all rule
-fn process_variant_name(
+/// Build a variant name and attributes, applying rename attribute or rename_all rule
+fn build_variant_attributes(
     variant_name: &str,
     attributes: &[Attribute],
     rename_rule: RenameRule,
-) -> String {
+) -> ContainerAttributes {
+    let mut has_explicit_rename = false;
+    let mut display_name = variant_name.to_string();
+    let mut attribute_list: Vec<String> = vec![];
+    let mut rename_all_rule: Option<RenameRule> = None;
     for attr in attributes {
         if let AttributeInner::Facet(facet_attr) = &attr.body.content {
-            if let FacetInner::Other(tt) = &facet_attr.inner.content {
-                let attr_str = tt.tokens_to_string();
-                if let Some(equal_pos) = attr_str.find('=') {
-                    let key = attr_str[..equal_pos].trim();
-                    if key == "rename" {
-                        let value = attr_str[equal_pos + 1..].trim().trim_matches('"');
-                        return value.to_string();
+            match &facet_attr.inner.content {
+                FacetInner::Sensitive(_) => {
+                    // TODO
+                }
+                FacetInner::Invariants(_) => {
+                    // dealt with elsewhere
+                }
+                FacetInner::Opaque(_) => {
+                    // TODO
+                }
+                FacetInner::DenyUnknownFields(_) => {
+                    // not applicable to variants
+                }
+                FacetInner::DefaultEquals(_) | FacetInner::Default(_) => {
+                    // not applicable to variants
+                }
+                FacetInner::Transparent(_) => {
+                    // not applicable to variants
+                }
+                FacetInner::RenameAll(rename_all_inner) => {
+                    let rule_str = rename_all_inner.value.value().trim_matches('"');
+                    if let Some(rule) = RenameRule::from_str(rule_str) {
+                        rename_all_rule = Some(rule);
+                        attribute_list.push(format!(
+                            r#"::facet::VariantAttribute::RenameAll({:?})"#,
+                            rule_str
+                        ));
+                    }
+                }
+                FacetInner::Other(tt) => {
+                    let attr_str = tt.tokens_to_string();
+
+                    // Split the attributes by commas to handle multiple attributes
+                    let attrs = attr_str.split(',').map(|s| s.trim()).collect::<Vec<_>>();
+
+                    for attr in attrs {
+                        if let Some(equal_pos) = attr.find('=') {
+                            let key = attr[..equal_pos].trim();
+                            if key == "rename" {
+                                has_explicit_rename = true;
+                                let value = attr_str[equal_pos + 1..].trim().trim_matches('"');
+                                // Keep the Rename attribute for reflection
+                                attribute_list.push(format!(
+                                    r#"::facet::VariantAttribute::Rename({:?})"#,
+                                    value
+                                ));
+                                display_name = value.to_string();
+                            } else if key == "rename_all" {
+                                let rule_str = attr[equal_pos + 1..].trim().trim_matches('"');
+                                if let Some(rule) = RenameRule::from_str(rule_str) {
+                                    rename_all_rule = Some(rule);
+                                    attribute_list.push(format!(
+                                        r#"::facet::VariantAttribute::RenameAll({:?})"#,
+                                        rule_str
+                                    ));
+                                }
+                            } else {
+                                attribute_list.push(format!(
+                                    r#"::facet::VariantAttribute::Arbitrary({:?})"#,
+                                    attr
+                                ));
+                            }
+                        } else {
+                            attribute_list.push(format!(
+                                r#"::facet::VariantAttribute::Arbitrary({:?})"#,
+                                attr
+                            ));
+                        }
                     }
                 }
             }
         }
     }
 
-    let mut final_name = variant_name.to_string();
-    if rename_rule != RenameRule::Passthrough {
-        final_name = rename_rule.apply(variant_name);
+    if !has_explicit_rename && rename_rule != RenameRule::Passthrough {
+        display_name = rename_rule.apply(variant_name);
     }
 
-    final_name
+    let attributes_string = if attribute_list.is_empty() {
+        format!(".name({:?})", display_name)
+    } else {
+        format!(
+            ".name({:?}).attributes(&[{}])",
+            display_name,
+            attribute_list.join(", ")
+        )
+    };
+
+    ContainerAttributes {
+        code: attributes_string,
+        rename_rule: rename_all_rule.unwrap_or(RenameRule::Passthrough),
+    }
 }
 
 // mirrors facet_core::types::EnumRepr
@@ -330,12 +407,12 @@ fn process_c_style_enum(
         if let Some(x) = &var_like.value.discriminant {
             discriminant_value = get_discriminant_value(&x.second);
         }
+
         match &var_like.value.variant {
             EnumVariantData::Unit(unit) => {
                 let variant_name = unit.name.to_string();
-                let display_name =
-                    process_variant_name(&variant_name, &unit.attributes, rename_rule);
-                let attributes = variant_attrs(&unit.attributes);
+                let container_attributes =
+                    build_variant_attributes(&variant_name, &unit.attributes, rename_rule);
                 let maybe_doc = build_maybe_doc(&unit.attributes);
 
                 // Generate shadow struct for this tuple variant to calculate offsets
@@ -351,19 +428,18 @@ fn process_c_style_enum(
                 // variant offset is offset of the `_fields` union
                 variant_expressions.push(format!(
                     "::facet::Variant::builder()
-                    .name({display_name:?})
+                    {container_attributes}
                     .discriminant({discriminant_value})
                     .fields(::facet::StructDef::builder().unit().build())
-                    .attributes(&const {{ [{attributes}] }})
                     {maybe_doc}
                     .build()",
+                    container_attributes = container_attributes.code
                 ));
             }
             EnumVariantData::Tuple(tuple) => {
                 let variant_name = tuple.name.to_string();
-                let display_name =
-                    process_variant_name(&variant_name, &tuple.attributes, rename_rule);
-                let attributes = variant_attrs(&tuple.attributes);
+                let container_attributes =
+                    build_variant_attributes(&variant_name, &tuple.attributes, rename_rule);
                 let maybe_doc = build_maybe_doc(&tuple.attributes);
 
                 // Generate shadow struct for this tuple variant to calculate offsets
@@ -412,7 +488,7 @@ fn process_c_style_enum(
                             bgp: &facet_bgp,
                             attrs: &field.value.attributes,
                             base_field_offset: Some(&variant_offset),
-                            rename_rule,
+                            rename_rule: container_attributes.rename_rule,
                         })
                     })
                     .collect::<Vec<String>>()
@@ -426,20 +502,19 @@ fn process_c_style_enum(
                         ]}};
 
                         ::facet::Variant::builder()
-                            .name({display_name:?})
+                            {container_attributes}
                             .discriminant({discriminant_value})
                             .fields(::facet::StructDef::builder().tuple().fields(fields).build())
-                            .attributes(&const {{ [{attributes}] }})
                             {maybe_doc}
                             .build()
                     }}",
+                    container_attributes = container_attributes.code
                 ));
             }
             EnumVariantData::Struct(struct_var) => {
                 let variant_name = struct_var.name.to_string();
-                let display_name =
-                    process_variant_name(&variant_name, &struct_var.attributes, rename_rule);
-                let attributes = variant_attrs(&struct_var.attributes);
+                let container_attributes =
+                    build_variant_attributes(&variant_name, &struct_var.attributes, rename_rule);
                 let maybe_doc = build_maybe_doc(&struct_var.attributes);
 
                 // Generate shadow struct for this struct variant to calculate offsets
@@ -490,7 +565,7 @@ fn process_c_style_enum(
                             bgp: &facet_bgp,
                             attrs: &field.value.attributes,
                             base_field_offset: Some(&variant_offset),
-                            rename_rule,
+                            rename_rule: container_attributes.rename_rule,
                         })
                     })
                     .collect::<Vec<String>>()
@@ -504,13 +579,13 @@ fn process_c_style_enum(
                         ]}};
 
                         ::facet::Variant::builder()
-                            .name({display_name:?})
+                            {container_attributes}
                             .discriminant({discriminant_value})
                             .fields(::facet::StructDef::builder().struct_().fields(fields).build())
-                            .attributes(&const {{ [{attributes}] }})
                             {maybe_doc}
                             .build()
                     }}",
+                    container_attributes = container_attributes.code
                 ));
             }
         }
@@ -561,26 +636,24 @@ fn process_primitive_enum(
         match &var_like.value.variant {
             EnumVariantData::Unit(unit) => {
                 let variant_name = unit.name.to_string();
-                let display_name =
-                    process_variant_name(&variant_name, &unit.attributes, rename_rule);
-                let attributes = variant_attrs(&unit.attributes);
+                let container_attributes =
+                    build_variant_attributes(&variant_name, &unit.attributes, rename_rule);
                 let maybe_doc = build_maybe_doc(&unit.attributes);
 
                 variant_expressions.push(format!(
                     "::facet::Variant::builder()
-                    .name({display_name:?})
+                    {container_attributes}
                     .discriminant({discriminant_value})
                     .fields(::facet::StructDef::builder().unit().build())
-                    .attributes(&const {{ [{attributes}] }})
                     {maybe_doc}
                     .build()",
+                    container_attributes = container_attributes.code
                 ));
             }
             EnumVariantData::Tuple(tuple) => {
                 let variant_name = tuple.name.to_string();
-                let display_name =
-                    process_variant_name(&variant_name, &tuple.attributes, rename_rule);
-                let attributes = variant_attrs(&tuple.attributes);
+                let container_attributes =
+                    build_variant_attributes(&variant_name, &tuple.attributes, rename_rule);
                 let maybe_doc = build_maybe_doc(&tuple.attributes);
 
                 // Generate shadow struct for this tuple variant to calculate offsets
@@ -629,7 +702,7 @@ fn process_primitive_enum(
                             bgp: &facet_bgp,
                             attrs: &field.value.attributes,
                             base_field_offset: None,
-                            rename_rule,
+                            rename_rule: container_attributes.rename_rule,
                         })
                     })
                     .collect::<Vec<String>>()
@@ -643,20 +716,19 @@ fn process_primitive_enum(
                         ]}};
 
                         ::facet::Variant::builder()
-                            .name({display_name:?})
+                            {container_attributes}
                             .discriminant({discriminant_value})
                             .fields(::facet::StructDef::builder().tuple().fields(fields).build())
-                            .attributes(&const {{ [{attributes}] }})
                             {maybe_doc}
                             .build()
                     }}",
+                    container_attributes = container_attributes.code
                 ));
             }
             EnumVariantData::Struct(struct_var) => {
                 let variant_name = struct_var.name.to_string();
-                let display_name =
-                    process_variant_name(&variant_name, &struct_var.attributes, rename_rule);
-                let attributes = variant_attrs(&struct_var.attributes);
+                let container_attributes =
+                    build_variant_attributes(&variant_name, &struct_var.attributes, rename_rule);
                 let maybe_doc = build_maybe_doc(&struct_var.attributes);
 
                 // Generate shadow struct for this struct variant to calculate offsets
@@ -706,7 +778,7 @@ fn process_primitive_enum(
                             bgp: &facet_bgp,
                             attrs: &field.value.attributes,
                             base_field_offset: None,
-                            rename_rule,
+                            rename_rule: container_attributes.rename_rule,
                         })
                     })
                     .collect::<Vec<String>>()
@@ -722,13 +794,13 @@ fn process_primitive_enum(
                         ]}};
 
                         ::facet::Variant::builder()
-                            .name({display_name:?})
+                            {container_attributes}
                             .discriminant({discriminant_value})
                             .fields(::facet::StructDef::builder().struct_().fields(fields).build())
-                            .attributes(&const {{ [{attributes}] }})
                             {maybe_doc}
                             .build()
                     }}",
+                    container_attributes = container_attributes.code
                 ));
             }
         }
@@ -740,61 +812,4 @@ fn process_primitive_enum(
         variant_expressions,
         repr_type: discriminant_type.as_enum_repr().to_string(),
     }
-}
-
-fn variant_attrs(attributes: &[Attribute]) -> String {
-    attributes
-        .iter()
-        .filter_map(|attr| {
-            if let AttributeInner::Facet(facet) = &attr.body.content {
-                Some(facet)
-            } else {
-                None
-            }
-        })
-        .map(|attr| match &attr.inner.content {
-            FacetInner::Sensitive(_sensitive) => {
-                r#"::facet::VariantAttribute::Sensitive"#.to_string()
-            }
-            FacetInner::Invariants(_invariants) => r#"compile_error!(
-                    "`invariants` is not a valid attribute for an enum variant"
-                )"#
-            .to_string(),
-            FacetInner::Opaque(_opaque) => r#"compile_error!(
-                    "`opaque` is not a valid attribute for an enum variant"
-                )"#
-            .to_string(),
-            FacetInner::DenyUnknownFields(_deny_unknown_fields) => r#"compile_error!(
-                    "`deny_unknown_fields` is not a valid attribute for an enum variant"
-                )"#
-            .to_string(),
-            FacetInner::DefaultEquals(_default_equals) => r#"compile_error!(
-                    "`default_equals` is not a valid attribute for an enum variant"
-                )"#
-            .to_string(),
-            FacetInner::Default(_default) => r#"compile_error!(
-                    "`default` is not a valid attribute for an enum variant"
-                )"#
-            .to_string(),
-            FacetInner::Transparent(_transparent) => r#"compile_error!(
-                    "`transparent` is not a valid attribute for an enum variant"
-                )"#
-            .to_string(),
-            FacetInner::RenameAll(_rename_all) => r#"compile_error!(
-                    "`rename_all` is not a valid attribute for an enum variant"
-                )"#
-            .to_string(),
-            FacetInner::Other(other) => {
-                format!(
-                    r#"::facet::VariantAttribute::Arbitrary({:?})"#,
-                    other
-                        .iter()
-                        .map(|o| o.to_string())
-                        .collect::<Vec<String>>()
-                        .join(", ")
-                )
-            }
-        })
-        .collect::<Vec<String>>()
-        .join(",")
 }

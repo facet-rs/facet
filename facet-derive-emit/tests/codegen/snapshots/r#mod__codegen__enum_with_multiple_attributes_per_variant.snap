@@ -45,15 +45,9 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
                     };
                     ::facet::Variant::builder()
                         .name("TextValue")
+                        .attributes(&[::facet::VariantAttribute::Rename("TextValue")])
                         .discriminant(0)
                         .fields(::facet::StructDef::builder().tuple().fields(fields).build())
-                        .attributes(
-                            &const {
-                                [::facet::VariantAttribute::Arbitrary(
-                                    "rename, =, \"TextValue\"",
-                                )]
-                            },
-                        )
                         .build()
                 },
                 {
@@ -101,19 +95,13 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
                         };
                     ::facet::Variant::builder()
                         .name("NumberValue")
+                        .attributes(&[::facet::VariantAttribute::Rename("NumberValue")])
                         .discriminant(1)
                         .fields(
                             ::facet::StructDef::builder()
                                 .struct_()
                                 .fields(fields)
                                 .build(),
-                        )
-                        .attributes(
-                            &const {
-                                [::facet::VariantAttribute::Arbitrary(
-                                    "rename, =, \"NumberValue\"",
-                                )]
-                            },
                         )
                         .build()
                 },
@@ -136,15 +124,9 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
                     };
                     ::facet::Variant::builder()
                         .name("BoolValue")
+                        .attributes(&[::facet::VariantAttribute::Rename("BoolValue")])
                         .discriminant(2)
                         .fields(::facet::StructDef::builder().tuple().fields(fields).build())
-                        .attributes(
-                            &const {
-                                [::facet::VariantAttribute::Arbitrary(
-                                    "rename, =, \"BoolValue\"",
-                                )]
-                            },
-                        )
                         .build()
                 },
             ]

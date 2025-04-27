@@ -13,13 +13,11 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for MyEnum {
                     .name("A")
                     .discriminant(0)
                     .fields(::facet::StructDef::builder().unit().build())
-                    .attributes(&const { [] })
                     .build(),
                 ::facet::Variant::builder()
                     .name("B")
                     .discriminant(1)
                     .fields(::facet::StructDef::builder().unit().build())
-                    .attributes(&const { [] })
                     .build(),
             ]
         };

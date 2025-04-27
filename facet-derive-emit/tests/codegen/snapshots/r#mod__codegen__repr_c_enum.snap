@@ -47,7 +47,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithVariants {
                     .name("Variant1")
                     .discriminant(0)
                     .fields(::facet::StructDef::builder().unit().build())
-                    .attributes(&const { [] })
                     .doc(&[" Comment A"])
                     .build(),
                 {
@@ -76,7 +75,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithVariants {
                         .name("Variant2")
                         .discriminant(1)
                         .fields(::facet::StructDef::builder().tuple().fields(fields).build())
-                        .attributes(&const { [] })
                         .doc(&[" Comment B"])
                         .build()
                 },
@@ -136,7 +134,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithVariants {
                                 .fields(fields)
                                 .build(),
                         )
-                        .attributes(&const { [] })
                         .build()
                 },
             ]

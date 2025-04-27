@@ -41,19 +41,13 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                     };
                     ::facet::Variant::builder()
                         .name("Success")
+                        .attributes(&[::facet::VariantAttribute::Rename("Success")])
                         .discriminant(0)
                         .fields(
                             ::facet::StructDef::builder()
                                 .struct_()
                                 .fields(fields)
                                 .build(),
-                        )
-                        .attributes(
-                            &const {
-                                [::facet::VariantAttribute::Arbitrary(
-                                    "rename, =, \"Success\"",
-                                )]
-                            },
                         )
                         .build()
                 },
@@ -94,7 +88,17 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                                 .build(),
                         ]
                     };
-                    :: facet :: Variant :: builder () . name ("Error") . discriminant (1) . fields (:: facet :: StructDef :: builder () . struct_ () . fields (fields) . build ()) . attributes (& const { [:: facet :: VariantAttribute :: Arbitrary ("rename, =, \"Error\"")] }) . build ()
+                    ::facet::Variant::builder()
+                        .name("Error")
+                        .attributes(&[::facet::VariantAttribute::Rename("Error")])
+                        .discriminant(1)
+                        .fields(
+                            ::facet::StructDef::builder()
+                                .struct_()
+                                .fields(fields)
+                                .build(),
+                        )
+                        .build()
                 },
             ]
         };
