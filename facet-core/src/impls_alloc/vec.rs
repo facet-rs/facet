@@ -7,105 +7,97 @@ unsafe impl<'a, T> Facet<'a> for Vec<T>
 where
     T: Facet<'a>,
 {
+    const VTABLE: &'static ValueVTable = &const {
+        let mut builder = ValueVTable::builder::<Self>()
+            .type_name(|f, opts| {
+                if let Some(opts) = opts.for_children() {
+                    write!(f, "Vec<")?;
+                    (T::SHAPE.vtable.type_name)(f, opts)?;
+                    write!(f, ">")
+                } else {
+                    write!(f, "Vec<⋯>")
+                }
+            })
+            .default_in_place(|target| unsafe { target.put(Self::default()) });
+
+        if T::SHAPE.vtable.clone_into.is_some() {
+            builder = builder.clone_into(|src, dst| unsafe {
+                let mut new_vec = Vec::with_capacity(src.len());
+
+                let t_clone_into = <VTableView<T>>::of().clone_into().unwrap();
+
+                for item in src {
+                    use crate::TypedPtrUninit;
+                    use core::mem::MaybeUninit;
+
+                    let mut new_item = MaybeUninit::<T>::uninit();
+                    let uninit_item = TypedPtrUninit::new(new_item.as_mut_ptr());
+
+                    (t_clone_into)(item, uninit_item);
+
+                    new_vec.push(new_item.assume_init());
+                }
+
+                dst.put(new_vec)
+            });
+        }
+
+        if T::SHAPE.vtable.debug.is_some() {
+            builder = builder.debug(|value, f| {
+                write!(f, "[")?;
+                for (i, item) in value.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    (<VTableView<T>>::of().debug().unwrap())(item, f)?;
+                }
+                write!(f, "]")
+            });
+        }
+
+        if T::SHAPE.vtable.eq.is_some() {
+            builder = builder.eq(|a, b| {
+                if a.len() != b.len() {
+                    return false;
+                }
+                for (item_a, item_b) in a.iter().zip(b.iter()) {
+                    if !(<VTableView<T>>::of().eq().unwrap())(item_a, item_b) {
+                        return false;
+                    }
+                }
+                true
+            });
+        }
+
+        if T::SHAPE.vtable.hash.is_some() {
+            builder = builder.hash(|vec, hasher_this, hasher_write_fn| unsafe {
+                use crate::HasherProxy;
+                let t_hash = <VTableView<T>>::of().hash().unwrap_unchecked();
+                let mut hasher = HasherProxy::new(hasher_this, hasher_write_fn);
+                vec.len().hash(&mut hasher);
+                for item in vec {
+                    (t_hash)(item, hasher_this, hasher_write_fn);
+                }
+            });
+        }
+
+        let traits = MarkerTraits::SEND
+            .union(MarkerTraits::SYNC)
+            .union(MarkerTraits::EQ)
+            .union(MarkerTraits::UNPIN)
+            .intersection(T::SHAPE.vtable.marker_traits);
+        builder = builder.marker_traits(traits);
+
+        builder.build()
+    };
+
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
-            .type_params(&[
-                TypeParam {
-                    name: "T",
-                    shape: || T::SHAPE,
-                }
-            ])
-            .vtable(
-                &const {
-                    let mut builder = ValueVTable::builder::<Self>()
-                        .type_name(|f, opts| {
-                            if let Some(opts) = opts.for_children() {
-                                write!(f, "Vec<")?;
-                                (T::SHAPE.vtable.type_name)(f, opts)?;
-                                write!(f, ">")
-                            } else {
-                                write!(f, "Vec<⋯>")
-                            }
-                        })
-                        .default_in_place(|target| unsafe { target.put(Self::default()) });
-
-                        if T::SHAPE.vtable.clone_into.is_some() {
-                            builder = builder.clone_into(|src, dst| unsafe {
-                                let mut new_vec = Vec::with_capacity(src.len());
-
-                                let t_clone_into = <VTableView<T>>::of().clone_into().unwrap();
-
-                                for item in src {
-                                    use crate::TypedPtrUninit;
-                                    use core::mem::MaybeUninit;
-
-                                    let mut new_item = MaybeUninit::<T>::uninit();
-                                    let uninit_item = TypedPtrUninit::new(new_item.as_mut_ptr());
-
-                                    (t_clone_into)(item, uninit_item);
-
-                                    new_vec.push(new_item.assume_init());
-                                }
-
-                                dst.put(new_vec)
-                            });
-                        }
-
-                    if T::SHAPE.vtable.debug.is_some() {
-                        builder = builder.debug(|value, f| {
-                            write!(f, "[")?;
-                            for (i, item) in value.iter().enumerate() {
-                                if i > 0 {
-                                    write!(f, ", ")?;
-                                }
-                                (<VTableView<T>>::of().debug().unwrap())(
-                                    item,
-                                    f,
-                                )?;
-                            }
-                            write!(f, "]")
-                        });
-                    }
-
-                    if T::SHAPE.vtable.eq.is_some() {
-                        builder = builder.eq(|a, b|  {
-                            if a.len() != b.len() {
-                                return false;
-                            }
-                            for (item_a, item_b) in a.iter().zip(b.iter()) {
-                                if !(<VTableView<T>>::of().eq().unwrap())(
-                                    item_a,
-                                    item_b,
-                                ) {
-                                    return false;
-                                }
-                            }
-                            true
-                        });
-                    }
-
-                    if T::SHAPE.vtable.hash.is_some() {
-                        builder = builder.hash(|vec, hasher_this, hasher_write_fn| unsafe {
-                            use crate::HasherProxy;
-                            let t_hash = <VTableView<T>>::of().hash().unwrap_unchecked();
-                            let mut hasher = HasherProxy::new(hasher_this, hasher_write_fn);
-                            vec.len().hash(&mut hasher);
-                            for item in vec {
-                                (t_hash)(item, hasher_this, hasher_write_fn);
-                            }
-                        });
-                    }
-
-                    let traits = MarkerTraits::SEND
-                        .union(MarkerTraits::SYNC)
-                        .union(MarkerTraits::EQ)
-                        .union(MarkerTraits::UNPIN)
-                        .intersection(T::SHAPE.vtable.marker_traits);
-                    builder = builder.marker_traits(traits);
-
-                    builder.build()
-                },
-            )
+            .type_params(&[TypeParam {
+                name: "T",
+                shape: || T::SHAPE,
+            }])
+            .ty(Type::User(UserType::Opaque))
             .def(Def::List(
                 ListDef::builder()
                     .vtable(
@@ -123,15 +115,9 @@ where
                                     let vec = ptr.get::<Self>();
                                     vec.len()
                                 })
-                                .get_item_ptr(|ptr, index| unsafe {
+                                .as_ptr(|ptr| unsafe {
                                     let vec = ptr.get::<Self>();
-                                    let len = vec.len();
-                                    if index >= len {
-                                        panic!(
-                                            "Index out of bounds: the len is {len} but the index is {index}"
-                                        );
-                                    }
-                                    PtrConst::new(vec.as_ptr().add(index))
+                                    PtrConst::new(vec.as_ptr())
                                 })
                                 .build()
                         },

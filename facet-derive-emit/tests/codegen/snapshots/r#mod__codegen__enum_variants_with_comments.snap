@@ -7,6 +7,12 @@ static COMMENTED_ENUM_SHAPE: &'static ::facet::Shape = <CommentedEnum as ::facet
 #[automatically_derived]
 #[allow(non_camel_case_types)]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for CommentedEnum {
+    const VTABLE: &'static ::facet::ValueVTable = &const {
+        ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
+            f,
+            "CommentedEnum"
+        ))
+    };
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
         #[allow(non_snake_case, dead_code)]
@@ -28,79 +34,77 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for CommentedEnum {
                 ::facet::Variant::builder()
                     .name("A")
                     .discriminant(0i64)
-                    .fields(::facet::StructDef::builder().unit().build())
+                    .data(
+                        ::facet::StructType::builder()
+                            .repr(::facet::Repr::c())
+                            .unit()
+                            .build(),
+                    )
                     .doc(&[" This is variant A"])
                     .build(),
                 {
                     let fields: &'static [::facet::Field] = &const {
-                        [{
-                            ::facet::Field::builder()
-                                .name("0")
-                                .shape(|| {
-                                    ::facet::shape_of(
-                                        &|s: &__Shadow_RustRepr_Tuple_for_CommentedEnum_B<
-                                            '__facet,
-                                        >| &s._0,
-                                    )
-                                })
-                                .offset(::core::mem::offset_of!(
-                                    __Shadow_RustRepr_Tuple_for_CommentedEnum_B<'__facet>,
-                                    _0
-                                ))
-                                .build()
-                        }]
+                        [::facet::Field::builder()
+                            .name("0")
+                            .shape(::facet::shape_of(
+                                &|s: &__Shadow_RustRepr_Tuple_for_CommentedEnum_B<'__facet>| &s._0,
+                            ))
+                            .offset(::core::mem::offset_of!(
+                                __Shadow_RustRepr_Tuple_for_CommentedEnum_B<'__facet>,
+                                _0
+                            ))
+                            .build()]
                     };
                     ::facet::Variant::builder()
                         .name("B")
                         .discriminant(1i64)
-                        .fields(::facet::StructDef::builder().tuple().fields(fields).build())
+                        .data(
+                            ::facet::StructType::builder()
+                                .repr(::facet::Repr::c())
+                                .tuple()
+                                .fields(fields)
+                                .build(),
+                        )
                         .doc(&[" This is variant B", " with multiple lines"])
                         .build()
                 },
                 {
                     let fields: &'static [::facet::Field] = &const {
                         [
-                            {
-                                ::facet::Field::builder()
-                                    .name("x")
-                                    .shape(|| {
-                                        ::facet::shape_of(
-                                            &|s: &__Shadow_RustRepr_Struct_for_CommentedEnum_C<
-                                                '__facet,
-                                            >| &s.x,
-                                        )
-                                    })
-                                    .offset(::core::mem::offset_of!(
-                                        __Shadow_RustRepr_Struct_for_CommentedEnum_C<'__facet>,
-                                        x
-                                    ))
-                                    .doc(&[" This is field x"])
-                                    .build()
-                            },
-                            {
-                                ::facet::Field::builder()
-                                    .name("y")
-                                    .shape(|| {
-                                        ::facet::shape_of(
-                                            &|s: &__Shadow_RustRepr_Struct_for_CommentedEnum_C<
-                                                '__facet,
-                                            >| &s.y,
-                                        )
-                                    })
-                                    .offset(::core::mem::offset_of!(
-                                        __Shadow_RustRepr_Struct_for_CommentedEnum_C<'__facet>,
-                                        y
-                                    ))
-                                    .doc(&[" This is field y"])
-                                    .build()
-                            },
+                            ::facet::Field::builder()
+                                .name("x")
+                                .shape(::facet::shape_of(
+                                    &|s: &__Shadow_RustRepr_Struct_for_CommentedEnum_C<
+                                        '__facet,
+                                    >| &s.x,
+                                ))
+                                .offset(::core::mem::offset_of!(
+                                    __Shadow_RustRepr_Struct_for_CommentedEnum_C<'__facet>,
+                                    x
+                                ))
+                                .doc(&[" This is field x"])
+                                .build(),
+                            ::facet::Field::builder()
+                                .name("y")
+                                .shape(::facet::shape_of(
+                                    &|s: &__Shadow_RustRepr_Struct_for_CommentedEnum_C<
+                                        '__facet,
+                                    >| &s.y,
+                                ))
+                                .offset(::core::mem::offset_of!(
+                                    __Shadow_RustRepr_Struct_for_CommentedEnum_C<'__facet>,
+                                    y
+                                ))
+                                .doc(&[" This is field y"])
+                                .build(),
                         ]
                     };
                     ::facet::Variant::builder()
                         .name("C")
                         .discriminant(2i64)
-                        .fields(
-                            ::facet::StructDef::builder()
+                        .data(
+                            ::facet::StructType::builder()
+                                .repr(::facet::Repr::c())
                                 .struct_()
                                 .fields(fields)
                                 .build(),
@@ -110,23 +114,14 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for CommentedEnum {
                 },
             ]
         };
-        ::facet::Shape::builder()
-            .id(::facet::ConstTypeId::of::<Self>())
-            .layout(::core::alloc::Layout::new::<Self>())
-            .vtable(
-                &const {
-                    ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
-                        f,
-                        "CommentedEnum"
-                    ))
-                },
-            )
-            .def(::facet::Def::Enum(
-                ::facet::EnumDef::builder()
+        ::facet::Shape::builder_for_sized::<Self>()
+            .ty(::facet::Type::User(::facet::UserType::Enum(
+                ::facet::EnumType::builder()
                     .variants(__facet_variants)
-                    .repr(::facet::EnumRepr::U8)
+                    .repr(::facet::Repr::c())
+                    .enum_repr(::facet::EnumRepr::U8)
                     .build(),
-            ))
+            )))
             .build()
     };
 }

@@ -6,47 +6,39 @@ expression: "expand(r#\"\n        #[derive(Facet)]\n        struct Point(\n     
 static POINT_SHAPE: &'static ::facet::Shape = <Point as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for Point {
+    const VTABLE: &'static ::facet::ValueVTable = &const {
+        let mut vtable =
+            ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "Point"));
+        vtable
+    };
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [
-                {
-                    ::facet::Field::builder()
-                        .name("x_coordinate")
-                        .shape(|| ::facet::shape_of(&|s: &Point| &s.0))
-                        .offset(::core::mem::offset_of!(Point, 0))
-                        .build()
-                },
-                {
-                    ::facet::Field::builder()
-                        .name("y_coordinate")
-                        .shape(|| ::facet::shape_of(&|s: &Point| &s.1))
-                        .offset(::core::mem::offset_of!(Point, 1))
-                        .build()
-                },
-                {
-                    ::facet::Field::builder()
-                        .name("z_coordinate")
-                        .shape(|| ::facet::shape_of(&|s: &Point| &s.2))
-                        .offset(::core::mem::offset_of!(Point, 2))
-                        .build()
-                },
+                ::facet::Field::builder()
+                    .name("x_coordinate")
+                    .shape(::facet::shape_of(&|s: &Point| &s.0))
+                    .offset(::core::mem::offset_of!(Point, 0))
+                    .build(),
+                ::facet::Field::builder()
+                    .name("y_coordinate")
+                    .shape(::facet::shape_of(&|s: &Point| &s.1))
+                    .offset(::core::mem::offset_of!(Point, 1))
+                    .build(),
+                ::facet::Field::builder()
+                    .name("z_coordinate")
+                    .shape(::facet::shape_of(&|s: &Point| &s.2))
+                    .offset(::core::mem::offset_of!(Point, 2))
+                    .build(),
             ]
         };
-        let vtable = &const {
-            let mut vtable =
-                ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "Point"));
-            vtable
-        };
-        ::facet::Shape::builder()
-            .id(::facet::ConstTypeId::of::<Self>())
-            .layout(::core::alloc::Layout::new::<Self>())
-            .vtable(vtable)
-            .def(::facet::Def::Struct(
-                ::facet::StructDef::builder()
+        ::facet::Shape::builder_for_sized::<Self>()
+            .ty(::facet::Type::User(::facet::UserType::Struct(
+                ::facet::StructType::builder()
+                    .repr(::facet::Repr::c())
                     .kind(::facet::StructKind::TupleStruct)
                     .fields(fields)
                     .build(),
-            ))
+            )))
             .build()
     };
 }

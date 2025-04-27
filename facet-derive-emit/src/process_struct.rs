@@ -146,21 +146,17 @@ pub(crate) fn gen_field_from_pfield(
     };
 
     quote! {
-        {
-            #(#asserts)*;
-
-            ::facet::Field::builder()
-                // Use the effective name (after rename rules) for metadata
-                .name(#field_name_effective)
-                // Use the raw field name/index TokenStream for shape_of and offset_of
-                .shape(|| ::facet::#shape_of(&|s: &#struct_name #bgp_without_bounds| &s.#field_name_raw))
-                .offset(#final_offset)
-                #maybe_flags
-                #maybe_attributes
-                #maybe_field_doc
-                #maybe_vtable
-                .build()
-        }
+        ::facet::Field::builder()
+            // Use the effective name (after rename rules) for metadata
+            .name(#field_name_effective)
+            // Use the raw field name/index TokenStream for shape_of and offset_of
+            .shape(::facet::#shape_of(&|s: &#struct_name #bgp_without_bounds| &s.#field_name_raw))
+            .offset(#final_offset)
+            #maybe_flags
+            #maybe_attributes
+            #maybe_field_doc
+            #maybe_vtable
+            .build()
     }
 }
 
@@ -441,30 +437,29 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
 
         #[automatically_derived]
         unsafe impl #bgp_def ::facet::Facet<'__facet> for #struct_name_ident #bgp_without_bounds #where_clauses {
+            const VTABLE: &'static ::facet::ValueVTable = &const {
+                let mut vtable = ::facet::value_vtable!(
+                    Self,
+                    |f, _opts| ::core::fmt::Write::write_str(f, #struct_name_str)
+                );
+                #invariant_maybe
+                #try_from_inner_code // Use the generated code for transparent types
+                vtable
+            };
+
             const SHAPE: &'static ::facet::Shape = &const {
                 let fields: &'static [::facet::Field] = &const {[#(#fields_vec),*]};
 
-                let vtable = &const {
-                    let mut vtable = ::facet::value_vtable!(
-                        Self,
-                        |f, _opts| ::core::fmt::Write::write_str(f, #struct_name_str)
-                    );
-                    #invariant_maybe
-                    #try_from_inner_code // Use the generated code for transparent types
-                    vtable
-                };
-
                 #inner_shape_fn // Include inner_shape function if needed
 
-                ::facet::Shape::builder()
-                    .id(::facet::ConstTypeId::of::<Self>())
-                    .layout(::core::alloc::Layout::new::<Self>())
+                ::facet::Shape::builder_for_sized::<Self>()
                     #type_params // Still from parsed.generics
-                    .vtable(vtable)
-                    .def(::facet::Def::Struct(::facet::StructDef::builder()
-                        .kind(#kind) // From ps.kind match
+                    .ty(::facet::Type::User(::facet::UserType::Struct(::facet::StructType::builder()
+                        .repr(::facet::Repr::c())
+                        .kind(#kind)
                         .fields(fields)
-                        .build()))
+                        .build()
+                    )))
                     #inner_setter // Use transparency flag from PStruct
                     #maybe_container_doc // From ps.container.attrs.doc
                     #container_attributes_tokens // From ps.container.attrs.facet

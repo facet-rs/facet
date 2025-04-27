@@ -6,40 +6,34 @@ expression: "expand(r#\"\n        #[derive(Facet)]\n        struct BarFoo {\n   
 static BAR_FOO_SHAPE: &'static ::facet::Shape = <BarFoo as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for BarFoo {
+    const VTABLE: &'static ::facet::ValueVTable = &const {
+        let mut vtable =
+            ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "BarFoo"));
+        vtable
+    };
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [
-                {
-                    ::facet::Field::builder()
-                        .name("bar")
-                        .shape(|| ::facet::shape_of(&|s: &BarFoo| &s.bar))
-                        .offset(::core::mem::offset_of!(BarFoo, bar))
-                        .build()
-                },
-                {
-                    ::facet::Field::builder()
-                        .name("foo")
-                        .shape(|| ::facet::shape_of(&|s: &BarFoo| &s.foo))
-                        .offset(::core::mem::offset_of!(BarFoo, foo))
-                        .build()
-                },
+                ::facet::Field::builder()
+                    .name("bar")
+                    .shape(::facet::shape_of(&|s: &BarFoo| &s.bar))
+                    .offset(::core::mem::offset_of!(BarFoo, bar))
+                    .build(),
+                ::facet::Field::builder()
+                    .name("foo")
+                    .shape(::facet::shape_of(&|s: &BarFoo| &s.foo))
+                    .offset(::core::mem::offset_of!(BarFoo, foo))
+                    .build(),
             ]
         };
-        let vtable = &const {
-            let mut vtable =
-                ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "BarFoo"));
-            vtable
-        };
-        ::facet::Shape::builder()
-            .id(::facet::ConstTypeId::of::<Self>())
-            .layout(::core::alloc::Layout::new::<Self>())
-            .vtable(vtable)
-            .def(::facet::Def::Struct(
-                ::facet::StructDef::builder()
+        ::facet::Shape::builder_for_sized::<Self>()
+            .ty(::facet::Type::User(::facet::UserType::Struct(
+                ::facet::StructType::builder()
+                    .repr(::facet::Repr::c())
                     .kind(::facet::StructKind::Struct)
                     .fields(fields)
                     .build(),
-            ))
+            )))
             .build()
     };
 }

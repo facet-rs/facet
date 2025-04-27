@@ -1,6 +1,12 @@
-use crate::{Def, Facet, ScalarAffinity, ScalarDef, Shape, value_vtable};
+use crate::{
+    Def, Facet, ScalarAffinity, ScalarDef, Shape, Type, UserType, ValueVTable, value_vtable,
+};
 
+#[cfg(feature = "alloc")]
 unsafe impl Facet<'_> for alloc::string::String {
+    const VTABLE: &'static ValueVTable =
+        &const { value_vtable!(alloc::string::String, |f, _opts| write!(f, "String")) };
+
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
@@ -9,12 +15,19 @@ unsafe impl Facet<'_> for alloc::string::String {
                     .affinity(ScalarAffinity::string().max_inline_length(0).build())
                     .build(),
             ))
-            .vtable(&const { value_vtable!(alloc::string::String, |f, _opts| write!(f, "String")) })
+            .ty(Type::User(UserType::Opaque))
             .build()
     };
 }
 
 unsafe impl<'a> Facet<'a> for alloc::borrow::Cow<'a, str> {
+    const VTABLE: &'static ValueVTable = &const {
+        value_vtable!(alloc::borrow::Cow<'_, str>, |f, _opts| write!(
+            f,
+            "Cow<'_, str>"
+        ))
+    };
+
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
@@ -22,14 +35,7 @@ unsafe impl<'a> Facet<'a> for alloc::borrow::Cow<'a, str> {
                     .affinity(ScalarAffinity::string().build())
                     .build(),
             ))
-            .vtable(
-                &const {
-                    value_vtable!(alloc::borrow::Cow<'_, str>, |f, _opts| write!(
-                        f,
-                        "Cow<'_, str>"
-                    ))
-                },
-            )
+            .ty(Type::User(UserType::Opaque))
             .build()
     };
 }

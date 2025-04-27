@@ -1,4 +1,4 @@
-use facet_core::{Def, FieldError, Variant};
+use facet_core::{FieldError, Type, UserType, Variant};
 #[cfg(feature = "log")]
 use owo_colors::OwoColorize;
 
@@ -19,7 +19,7 @@ impl Wip<'_> {
     pub fn variant(mut self, index: usize) -> Result<Self, ReflectError> {
         let frame = self.frames.last_mut().unwrap();
         let shape = frame.shape;
-        let Def::Enum(def) = shape.def else {
+        let Type::User(UserType::Enum(def)) = shape.ty else {
             return Err(ReflectError::WasNotA {
                 expected: "enum",
                 actual: shape,
@@ -45,7 +45,7 @@ impl Wip<'_> {
         let discriminant = variant.discriminant;
         unsafe {
             let data_ptr = frame.data.as_mut_byte_ptr();
-            match def.repr {
+            match def.enum_repr {
                 facet_core::EnumRepr::U8 => *data_ptr = discriminant as u8,
                 facet_core::EnumRepr::U16 => *(data_ptr as *mut u16) = discriminant as u16,
                 facet_core::EnumRepr::U32 => *(data_ptr as *mut u32) = discriminant as u32,
@@ -56,6 +56,7 @@ impl Wip<'_> {
                 facet_core::EnumRepr::I32 => *(data_ptr as *mut i32) = discriminant as i32,
                 facet_core::EnumRepr::I64 => *(data_ptr as *mut i64) = discriminant,
                 facet_core::EnumRepr::ISize => *(data_ptr as *mut isize) = discriminant as isize,
+                facet_core::EnumRepr::RustNPO => (),
                 _ => {
                     // Default to a reasonable size for other representations
                     *(data_ptr as *mut u32) = discriminant as u32;
@@ -90,7 +91,7 @@ impl Wip<'_> {
     pub fn variant_named(self, name: &str) -> Result<Self, ReflectError> {
         let frame = self.frames.last().unwrap();
         let shape = frame.shape;
-        let Def::Enum(def) = shape.def else {
+        let Type::User(UserType::Enum(def)) = shape.ty else {
             return Err(ReflectError::WasNotA {
                 expected: "enum",
                 actual: shape,
@@ -121,7 +122,7 @@ impl Wip<'_> {
     /// * `None` if the current frame is not an enum or no variant with the given name exists.
     pub fn find_variant(&self, name: &str) -> Option<(usize, Variant)> {
         let frame = self.frames.last()?;
-        if let Def::Enum(def) = frame.shape.def {
+        if let Type::User(UserType::Enum(def)) = frame.shape.ty {
             def.variants
                 .iter()
                 .enumerate()

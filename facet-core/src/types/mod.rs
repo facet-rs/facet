@@ -8,41 +8,14 @@ use core::alloc::Layout;
 mod characteristic;
 pub use characteristic::*;
 
-mod field;
-pub use field::*;
-
-mod struct_;
-pub use struct_::*;
-
-mod enum_;
-pub use enum_::*;
-
-mod array;
-pub use array::*;
-
-mod slice;
-pub use slice::*;
-
-mod list;
-pub use list::*;
-
-mod map;
-pub use map::*;
-
 mod value;
 pub use value::*;
 
-mod option;
-pub use option::*;
+mod def;
+pub use def::*;
 
-mod smartptr;
-pub use smartptr::*;
-
-mod scalar;
-pub use scalar::*;
-
-mod function;
-pub use function::*;
+mod ty;
+pub use ty::*;
 
 use crate::{ConstTypeId, Facet};
 
@@ -62,15 +35,19 @@ pub struct Shape {
     /// name (with generic type parameters), use the Display implementation,
     /// the Debug implementation, build a default value, clone, etc.
     ///
+    /// If the shape has `ShapeLayout::Unsized`, then the parent pointer needs to be passed.
+    ///
     /// There are more specific vtables in variants of [`Def`]
     pub vtable: &'static ValueVTable,
 
-    /// Further definition of the value: details for structs, enums, scalars,
-    /// options, smart pointers, arrays, slices, tuples, etc.
+    /// Underlying type: primitive, sequence, user, pointer.
     ///
-    /// This typically lists fields (with shapes and offsets), reprs, variants
-    /// and contains vtables that let you perform other operations, like inserting
-    /// into a map or fetching a value from a list.
+    /// This follows the [`Rust Reference`](https://doc.rust-lang.org/reference/types.html), but
+    /// omits function types, and trait types, as they cannot be represented here.
+    pub ty: Type,
+
+    /// Functional definition of the value: details for scalars, functions for inserting values into
+    /// a map, or fetching a value from a list.
     pub def: Def,
 
     /// Generic parameters for the shape
@@ -153,15 +130,17 @@ pub enum ShapeAttribute {
 }
 
 impl Shape {
-    /// Returns a builder for shape
-    pub const fn builder() -> ShapeBuilder {
-        ShapeBuilder::new()
+    /// Returns a builder for a shape for some type `T`.
+    pub const fn builder_for_sized<'a, T: Facet<'a>>() -> ShapeBuilder {
+        ShapeBuilder::new(T::VTABLE)
+            .layout(Layout::new::<T>())
+            .id(ConstTypeId::of::<T>())
     }
 
     /// Returns a builder for a shape for some type `T`.
-    pub const fn builder_for_sized<T>() -> ShapeBuilder {
-        ShapeBuilder::new()
-            .layout(Layout::new::<T>())
+    pub const fn builder_for_unsized<'a, T: Facet<'a> + ?Sized>() -> ShapeBuilder {
+        ShapeBuilder::new(T::VTABLE)
+            .set_unsized()
             .id(ConstTypeId::of::<T>())
     }
 
@@ -207,8 +186,9 @@ impl Shape {
 pub struct ShapeBuilder {
     id: Option<ConstTypeId>,
     layout: Option<ShapeLayout>,
-    vtable: Option<&'static ValueVTable>,
-    def: Option<Def>,
+    vtable: &'static ValueVTable,
+    def: Def,
+    ty: Option<Type>,
     type_params: &'static [TypeParam],
     doc: &'static [&'static str],
     attributes: &'static [ShapeAttribute],
@@ -218,12 +198,13 @@ pub struct ShapeBuilder {
 impl ShapeBuilder {
     /// Creates a new `ShapeBuilder` with all fields set to `None`.
     #[allow(clippy::new_without_default)]
-    pub const fn new() -> Self {
+    pub const fn new(vtable: &'static ValueVTable) -> Self {
         Self {
             id: None,
             layout: None,
-            vtable: None,
-            def: None,
+            vtable,
+            def: Def::Undefined,
+            ty: None,
             type_params: &[],
             doc: &[],
             attributes: &[],
@@ -252,17 +233,17 @@ impl ShapeBuilder {
         self
     }
 
-    /// Sets the `vtable` field of the `ShapeBuilder`.
-    #[inline]
-    pub const fn vtable(mut self, vtable: &'static ValueVTable) -> Self {
-        self.vtable = Some(vtable);
-        self
-    }
-
     /// Sets the `def` field of the `ShapeBuilder`.
     #[inline]
     pub const fn def(mut self, def: Def) -> Self {
-        self.def = Some(def);
+        self.def = def;
+        self
+    }
+
+    /// Sets the `ty` field of the `ShapeBuilder`.
+    #[inline]
+    pub const fn ty(mut self, ty: Type) -> Self {
+        self.ty = Some(ty);
         self
     }
 
@@ -310,9 +291,10 @@ impl ShapeBuilder {
         Shape {
             id: self.id.unwrap(),
             layout: self.layout.unwrap(),
-            vtable: self.vtable.unwrap(),
+            vtable: self.vtable,
             type_params: self.type_params,
-            def: self.def.unwrap(),
+            def: self.def,
+            ty: self.ty.unwrap(),
             doc: self.doc,
             attributes: self.attributes,
             inner: self.inner,
@@ -418,136 +400,6 @@ impl Shape {
         unsafe { dealloc(ptr.as_mut_byte_ptr(), layout) };
 
         Ok(())
-    }
-}
-/// The definition of a shape: is it more like a struct, a map, a list?
-#[derive(Clone, Copy, Debug)]
-#[repr(C)]
-#[non_exhaustive]
-// this enum is only ever going to be owned in static space,
-// right?
-#[expect(clippy::large_enum_variant)]
-pub enum Def {
-    /// Scalar — those don't have a def, they're not composed of other things.
-    /// You can interact with them through [`ValueVTable`].
-    ///
-    /// e.g. `u32`, `String`, `bool`, `SocketAddr`, etc.
-    Scalar(ScalarDef),
-
-    /// Various kinds of structs, see [`StructKind`]
-    ///
-    /// e.g. `struct Struct { field: u32 }`, `struct TupleStruct(u32, u32);`, `(u32, u32)`
-    Struct(StructDef),
-
-    /// Enum with variants
-    ///
-    /// e.g. `enum Enum { Variant1, Variant2 }`
-    Enum(EnumDef),
-
-    /// Map — keys are dynamic (and strings, sorry), values are homogeneous
-    ///
-    /// e.g. `Map<String, T>`
-    Map(MapDef),
-
-    /// Ordered list of heterogenous values, variable size
-    ///
-    /// e.g. `Vec<T>`
-    List(ListDef),
-
-    /// Fixed-size array of heterogenous values
-    ///
-    /// e.g. `[T; 32]`
-    Array(ArrayDef),
-
-    /// Slice — a reference to a contiguous sequence of elements
-    ///
-    /// e.g. `&[T]`
-    Slice(SliceDef),
-
-    /// Option
-    ///
-    /// e.g. `Option<T>`
-    Option(OptionDef),
-
-    /// Smart pointers, like `Arc<T>`, `Rc<T>`, etc.
-    SmartPointer(SmartPointerDef),
-
-    /// Function pointers, like `fn(u32) -> String`, `extern "C" fn() -> *const T`, etc.
-    FunctionPointer(FunctionPointerDef),
-}
-
-#[expect(clippy::result_large_err, reason = "See comment of expect above Def")]
-impl Def {
-    /// Returns the `ScalarDef` wrapped in an `Ok` if this is a [`Def::Scalar`].
-    pub fn into_scalar(self) -> Result<ScalarDef, Self> {
-        match self {
-            Self::Scalar(def) => Ok(def),
-            _ => Err(self),
-        }
-    }
-    /// Returns the `Struct` wrapped in an `Ok` if this is a [`Def::Struct`].
-    pub fn into_struct(self) -> Result<StructDef, Self> {
-        match self {
-            Self::Struct(def) => Ok(def),
-            _ => Err(self),
-        }
-    }
-    /// Returns the `EnumDef` wrapped in an `Ok` if this is a [`Def::Enum`].
-    pub fn into_enum(self) -> Result<EnumDef, Self> {
-        match self {
-            Self::Enum(def) => Ok(def),
-            _ => Err(self),
-        }
-    }
-    /// Returns the `MapDef` wrapped in an `Ok` if this is a [`Def::Map`].
-    pub fn into_map(self) -> Result<MapDef, Self> {
-        match self {
-            Self::Map(def) => Ok(def),
-            _ => Err(self),
-        }
-    }
-    /// Returns the `ListDef` wrapped in an `Ok` if this is a [`Def::List`].
-    pub fn into_list(self) -> Result<ListDef, Self> {
-        match self {
-            Self::List(def) => Ok(def),
-            _ => Err(self),
-        }
-    }
-    /// Returns the `ArrayDef` wrapped in an `Ok` if this is a [`Def::Array`].
-    pub fn into_array(self) -> Result<ArrayDef, Self> {
-        match self {
-            Self::Array(def) => Ok(def),
-            _ => Err(self),
-        }
-    }
-    /// Returns the `SliceDef` wrapped in an `Ok` if this is a [`Def::Slice`].
-    pub fn into_slice(self) -> Result<SliceDef, Self> {
-        match self {
-            Self::Slice(def) => Ok(def),
-            _ => Err(self),
-        }
-    }
-    /// Returns the `TupleDef` wrapped in an `Ok` if this is a [`Def::Struct`] whose kind is
-    /// [`StructKind::Tuple`].
-    pub fn into_tuple(self) -> Result<StructDef, Self> {
-        match self {
-            Self::Struct(def) if def.kind == StructKind::Tuple => Ok(def),
-            _ => Err(self),
-        }
-    }
-    /// Returns the `OptionDef` wrapped in an `Ok` if this is a [`Def::Option`].
-    pub fn into_option(self) -> Result<OptionDef, Self> {
-        match self {
-            Self::Option(def) => Ok(def),
-            _ => Err(self),
-        }
-    }
-    /// Returns the `SmartPointerDef` wrapped in an `Ok` if this is a [`Def::SmartPointer`].
-    pub fn into_smart_pointer(self) -> Result<SmartPointerDef, Self> {
-        match self {
-            Self::SmartPointer(def) => Ok(def),
-            _ => Err(self),
-        }
     }
 }
 

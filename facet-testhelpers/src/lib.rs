@@ -49,6 +49,6 @@ pub fn setup() {
     color_backtrace::install();
 
     let logger = Box::new(SimpleLogger);
-    _ = log::set_boxed_logger(logger);
+    log::set_boxed_logger(logger).unwrap();
     log::set_max_level(LevelFilter::Trace);
 }

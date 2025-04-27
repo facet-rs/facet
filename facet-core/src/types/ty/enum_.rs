@@ -1,18 +1,21 @@
-use super::StructDef;
+use super::{Repr, StructType};
 
 /// Fields for enum types
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
 #[non_exhaustive]
-pub struct EnumDef {
-    /// representation of the enum (u8, u16, etc.)
-    pub repr: EnumRepr,
+pub struct EnumType {
+    /// Representation of the enum's data
+    pub repr: Repr,
+
+    /// representation of the enum's discriminant (u8, u16, etc.)
+    pub enum_repr: EnumRepr,
 
     /// all variants for this enum
     pub variants: &'static [Variant],
 }
 
-impl EnumDef {
+impl EnumType {
     /// Returns a builder for EnumDef
     pub const fn builder() -> EnumDefBuilder {
         EnumDefBuilder::new()
@@ -21,7 +24,8 @@ impl EnumDef {
 
 /// Builder for EnumDef
 pub struct EnumDefBuilder {
-    repr: Option<EnumRepr>,
+    repr: Option<Repr>,
+    enum_repr: Option<EnumRepr>,
     variants: Option<&'static [Variant]>,
 }
 
@@ -31,13 +35,20 @@ impl EnumDefBuilder {
     pub const fn new() -> Self {
         Self {
             repr: None,
+            enum_repr: None,
             variants: None,
         }
     }
 
     /// Sets the representation for the EnumDef
-    pub const fn repr(mut self, repr: EnumRepr) -> Self {
+    pub const fn repr(mut self, repr: Repr) -> Self {
         self.repr = Some(repr);
+        self
+    }
+
+    /// Sets the discriminant representation for the EnumDef
+    pub const fn enum_repr(mut self, enum_repr: EnumRepr) -> Self {
+        self.enum_repr = Some(enum_repr);
         self
     }
 
@@ -48,9 +59,10 @@ impl EnumDefBuilder {
     }
 
     /// Builds the EnumDef
-    pub const fn build(self) -> EnumDef {
-        EnumDef {
+    pub const fn build(self) -> EnumType {
+        EnumType {
             repr: self.repr.unwrap(),
+            enum_repr: self.enum_repr.unwrap(),
             variants: self.variants.unwrap(),
         }
     }
@@ -61,7 +73,7 @@ impl EnumDefBuilder {
 #[repr(C)]
 #[non_exhaustive]
 pub struct Variant {
-    /// Name of the variant, e.g. `Foo` for `enum FooBar { Foo, Bar }`
+    /// Name of the jariant, e.g. `Foo` for `enum FooBar { Foo, Bar }`
     pub name: &'static str,
 
     /// Discriminant value (if available). Might fit in a u8, etc.
@@ -73,7 +85,7 @@ pub struct Variant {
     /// Fields for this variant (empty if unit, number-named if tuple).
     /// IMPORTANT: the offset for the fields already takes into account the size & alignment of the
     /// discriminant.
-    pub data: StructDef,
+    pub data: StructType,
 
     /// Doc comment for the variant
     pub doc: &'static [&'static str],
@@ -98,7 +110,7 @@ pub struct VariantBuilder {
     name: Option<&'static str>,
     discriminant: Option<i64>,
     attributes: &'static [VariantAttribute],
-    fields: Option<StructDef>,
+    data: Option<StructType>,
     doc: &'static [&'static str],
 }
 
@@ -110,7 +122,7 @@ impl VariantBuilder {
             name: None,
             discriminant: None,
             attributes: &[],
-            fields: None,
+            data: None,
             doc: &[],
         }
     }
@@ -134,8 +146,8 @@ impl VariantBuilder {
     }
 
     /// Sets the fields for the Variant
-    pub const fn fields(mut self, fields: StructDef) -> Self {
-        self.fields = Some(fields);
+    pub const fn data(mut self, data: StructType) -> Self {
+        self.data = Some(data);
         self
     }
 
@@ -151,7 +163,7 @@ impl VariantBuilder {
             name: self.name.unwrap(),
             discriminant: self.discriminant.unwrap(),
             attributes: self.attributes,
-            data: self.fields.unwrap(),
+            data: self.data.unwrap(),
             doc: self.doc,
         }
     }
@@ -171,6 +183,10 @@ pub enum VariantAttribute {
 #[repr(C)]
 #[non_exhaustive]
 pub enum EnumRepr {
+    /// Special-case representation discriminated by zeros under non-nullable pointer
+    ///
+    /// See: <https://rust-lang.github.io/unsafe-code-guidelines/layout/enums.html#discriminant-elision-on-option-like-enums>
+    RustNPO,
     /// u8 representation (#[repr(u8)])
     U8,
     /// u16 representation (#[repr(u16)])

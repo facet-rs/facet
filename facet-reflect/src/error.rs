@@ -1,4 +1,4 @@
-use facet_core::{Characteristic, EnumDef, Field, FieldError, Shape, TryFromError};
+use facet_core::{Characteristic, EnumType, Field, FieldError, Shape, TryFromError};
 use owo_colors::OwoColorize;
 
 /// Errors that can occur when reflecting on types.
@@ -14,7 +14,7 @@ pub enum ReflectError {
     /// Tried to set an enum to a variant that does not exist
     NoSuchVariant {
         /// The enum definition containing all known variants.
-        enum_def: EnumDef,
+        enum_type: EnumType,
     },
 
     /// Tried to get the wrong shape out of a value — e.g. we were manipulating
@@ -133,9 +133,9 @@ impl core::fmt::Display for ReflectError {
                     field.name.yellow()
                 )
             }
-            ReflectError::NoSuchVariant { enum_def } => {
+            ReflectError::NoSuchVariant { enum_type } => {
                 write!(f, "No such variant in enum. Known variants: ")?;
-                for v in enum_def.variants {
+                for v in enum_type.variants {
                     write!(f, ", {}", v.name.cyan())?;
                 }
                 write!(f, ", that's it.")

@@ -1,4 +1,4 @@
-use facet_core::{EnumDef, EnumRepr, Field, Shape, Variant};
+use facet_core::{EnumRepr, EnumType, Field, Shape, UserType, Variant};
 
 use crate::Peek;
 
@@ -14,7 +14,7 @@ pub struct PeekEnum<'mem, 'facet_lifetime> {
     pub(crate) value: Peek<'mem, 'facet_lifetime>,
 
     /// The definition of the enum.
-    pub(crate) def: EnumDef,
+    pub(crate) ty: EnumType,
 }
 
 impl core::fmt::Debug for PeekEnum<'_, '_> {
@@ -28,16 +28,16 @@ impl core::fmt::Debug for PeekEnum<'_, '_> {
 }
 
 /// Returns the enum definition if the shape represents an enum, None otherwise
-pub fn peek_enum(shape: &'static Shape) -> Option<EnumDef> {
-    match shape.def {
-        facet_core::Def::Enum(enum_def) => Some(enum_def),
+pub fn peek_enum(shape: &'static Shape) -> Option<EnumType> {
+    match shape.ty {
+        facet_core::Type::User(UserType::Enum(enum_ty)) => Some(enum_ty),
         _ => None,
     }
 }
 
 /// Returns the enum representation if the shape represents an enum, None otherwise
 pub fn peek_enum_repr(shape: &'static Shape) -> Option<EnumRepr> {
-    peek_enum(shape).map(|enum_def| enum_def.repr)
+    peek_enum(shape).map(|enum_def| enum_def.enum_repr)
 }
 
 /// Returns the enum variants if the shape represents an enum, None otherwise
@@ -57,32 +57,32 @@ impl<'mem, 'facet_lifetime> core::ops::Deref for PeekEnum<'mem, 'facet_lifetime>
 impl<'mem, 'facet_lifetime> PeekEnum<'mem, 'facet_lifetime> {
     /// Returns the enum definition
     #[inline(always)]
-    pub fn def(self) -> EnumDef {
-        self.def
+    pub fn ty(self) -> EnumType {
+        self.ty
     }
 
     /// Returns the enum representation
     #[inline(always)]
-    pub fn repr(self) -> EnumRepr {
-        self.def.repr
+    pub fn enum_repr(self) -> EnumRepr {
+        self.ty.enum_repr
     }
 
     /// Returns the enum variants
     #[inline(always)]
     pub fn variants(self) -> &'static [Variant] {
-        self.def.variants
+        self.ty.variants
     }
 
     /// Returns the number of variants in this enum
     #[inline(always)]
     pub fn variant_count(self) -> usize {
-        self.def.variants.len()
+        self.ty.variants.len()
     }
 
     /// Returns the variant name at the given index
     #[inline(always)]
     pub fn variant_name(self, index: usize) -> Option<&'static str> {
-        self.def.variants.get(index).map(|variant| variant.name)
+        self.ty.variants.get(index).map(|variant| variant.name)
     }
 
     /// Returns the discriminant value for the current enum value
@@ -91,7 +91,7 @@ impl<'mem, 'facet_lifetime> PeekEnum<'mem, 'facet_lifetime> {
         // Read the discriminant based on the enum representation
         unsafe {
             let data = self.value.data();
-            match self.def.repr {
+            match self.ty.enum_repr {
                 EnumRepr::U8 => data.read::<u8>() as i64,
                 EnumRepr::U16 => data.read::<u16>() as i64,
                 EnumRepr::U32 => data.read::<u32>() as i64,
@@ -113,21 +113,63 @@ impl<'mem, 'facet_lifetime> PeekEnum<'mem, 'facet_lifetime> {
     /// Returns the variant index for this enum value
     #[inline]
     pub fn variant_index(self) -> usize {
-        let discriminant = self.discriminant();
+        if self.ty.enum_repr == EnumRepr::RustNPO {
+            // Check if enum is all zeros
+            let layout = self
+                .value
+                .shape
+                .layout
+                .sized_layout()
+                .expect("Unsized enums in NPO repr are unsupported");
 
-        // Find the variant with matching discriminant using position method
-        self.def
-            .variants
-            .iter()
-            .position(|variant| variant.discriminant == discriminant)
-            .expect("No variant found with matching discriminant")
+            let data = self.value.data();
+            let slice = unsafe { core::slice::from_raw_parts(data.as_byte_ptr(), layout.size()) };
+            let all_zero = slice.iter().all(|v| *v == 0);
+
+            self.ty
+                .variants
+                .iter()
+                .position(|variant| {
+                    // Find the mazimum end bound
+                    let mut max_offset = 0;
+
+                    for field in variant.data.fields {
+                        let offset = field.offset
+                            + field
+                                .shape
+                                .layout
+                                .sized_layout()
+                                .map(|v| v.size())
+                                .unwrap_or(0);
+                        max_offset = core::cmp::max(max_offset, offset);
+                    }
+
+                    // If we are all zero, then find the enum variant that has no size,
+                    // otherwise, the one with size.
+                    if all_zero {
+                        max_offset == 0
+                    } else {
+                        max_offset != 0
+                    }
+                })
+                .expect("No variant found with matching discriminant")
+        } else {
+            let discriminant = self.discriminant();
+
+            // Find the variant with matching discriminant using position method
+            self.ty
+                .variants
+                .iter()
+                .position(|variant| variant.discriminant == discriminant)
+                .expect("No variant found with matching discriminant")
+        }
     }
 
     /// Returns the active variant
     #[inline]
     pub fn active_variant(self) -> &'static Variant {
         let index = self.variant_index();
-        &self.def.variants[index]
+        &self.ty.variants[index]
     }
 
     /// Returns the name of the active variant for this enum value

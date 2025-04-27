@@ -1,16 +1,15 @@
 use alloc::string::String;
 use alloc::string::ToString;
-use core::alloc::Layout;
 
 use uuid::Uuid;
 
 use crate::{
-    ConstTypeId, Def, Facet, ParseError, PtrConst, PtrMut, PtrUninit, ScalarAffinity, ScalarDef,
-    Shape, TryBorrowInnerError, TryFromError, TryIntoInnerError, value_vtable,
+    value_vtable, Def, Facet, ParseError, PtrConst, PtrMut, PtrUninit, ScalarAffinity, ScalarDef,
+    Shape, TryBorrowInnerError, TryFromError, TryIntoInnerError, Type, UserType, ValueVTable,
 };
 
 unsafe impl Facet<'_> for Uuid {
-    const SHAPE: &'static Shape = &const {
+    const VTABLE: &'static ValueVTable = &const {
         // Functions to transparently convert between Uuid and String
         unsafe fn try_from<'dst>(
             src_ptr: PtrConst<'_>,
@@ -48,32 +47,30 @@ unsafe impl Facet<'_> for Uuid {
             Ok(PtrConst::new(uuid.as_bytes().as_ptr()))
         }
 
+        let mut vtable = value_vtable!((), |f, _opts| write!(f, "Uuid"));
+        vtable.parse = Some(|s, target| match Uuid::parse_str(s) {
+            Ok(uuid) => Ok(unsafe { target.put(uuid) }),
+            Err(_) => Err(ParseError::Generic("UUID parsing failed")),
+        });
+        vtable.try_from = Some(try_from);
+        vtable.try_into_inner = Some(try_into_inner);
+        vtable.try_borrow_inner = Some(try_borrow_inner);
+        vtable
+    };
+
+    const SHAPE: &'static Shape = &const {
         // Return the Shape of the inner type (String)
         fn inner_shape() -> &'static Shape {
             <String as Facet>::SHAPE
         }
 
-        Shape::builder()
-            .id(ConstTypeId::of::<Self>())
-            .layout(Layout::new::<Self>())
+        Shape::builder_for_sized::<Self>()
+            .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::uuid().build())
                     .build(),
             ))
-            .vtable(
-                &const {
-                    let mut vtable = value_vtable!((), |f, _opts| write!(f, "Uuid"));
-                    vtable.parse = Some(|s, target| match Uuid::parse_str(s) {
-                        Ok(uuid) => Ok(unsafe { target.put(uuid) }),
-                        Err(_) => Err(ParseError::Generic("UUID parsing failed")),
-                    });
-                    vtable.try_from = Some(try_from);
-                    vtable.try_into_inner = Some(try_into_inner);
-                    vtable.try_borrow_inner = Some(try_borrow_inner);
-                    vtable
-                },
-            )
             .inner(inner_shape)
             .build()
     };

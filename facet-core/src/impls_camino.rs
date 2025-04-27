@@ -1,16 +1,15 @@
 use alloc::borrow::ToOwned;
 use alloc::string::String;
-use core::alloc::Layout;
 
 use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::{
-    ConstTypeId, Def, Facet, PtrConst, PtrMut, PtrUninit, ScalarAffinity, ScalarDef, Shape,
-    TryBorrowInnerError, TryFromError, TryIntoInnerError, value_vtable,
+    value_vtable, Def, Facet, PtrConst, PtrMut, PtrUninit, ScalarAffinity, ScalarDef, Shape,
+    TryBorrowInnerError, TryFromError, TryIntoInnerError, Type, UserType, ValueVTable,
 };
 
 unsafe impl Facet<'_> for Utf8PathBuf {
-    const SHAPE: &'static Shape = &const {
+    const VTABLE: &'static ValueVTable = &const {
         // Define the functions for transparent conversion between Utf8PathBuf and String
         unsafe fn try_from<'dst>(
             src_ptr: PtrConst<'_>,
@@ -42,38 +41,34 @@ unsafe impl Facet<'_> for Utf8PathBuf {
             Ok(PtrConst::new(path.as_str().as_ptr()))
         }
 
+        let mut vtable = value_vtable!(Utf8PathBuf, |f, _opts| write!(f, "Utf8PathBuf"));
+        vtable.parse = Some(|s, target| Ok(unsafe { target.put(Utf8Path::new(s).to_owned()) }));
+        vtable.try_from = Some(try_from);
+        vtable.try_into_inner = Some(try_into_inner);
+        vtable.try_borrow_inner = Some(try_borrow_inner);
+        vtable
+    };
+
+    const SHAPE: &'static Shape = &const {
         // Function to return inner type's shape
         fn inner_shape() -> &'static Shape {
             <String as Facet>::SHAPE
         }
 
-        Shape::builder()
-            .id(ConstTypeId::of::<Self>())
-            .layout(Layout::new::<Self>())
+        Shape::builder_for_sized::<Self>()
+            .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::path().build())
                     .build(),
             ))
-            .vtable(
-                &const {
-                    let mut vtable =
-                        value_vtable!(Utf8PathBuf, |f, _opts| write!(f, "Utf8PathBuf"));
-                    vtable.parse =
-                        Some(|s, target| Ok(unsafe { target.put(Utf8Path::new(s).to_owned()) }));
-                    vtable.try_from = Some(try_from);
-                    vtable.try_into_inner = Some(try_into_inner);
-                    vtable.try_borrow_inner = Some(try_borrow_inner);
-                    vtable
-                },
-            )
             .inner(inner_shape)
             .build()
     };
 }
 
-unsafe impl<'a> Facet<'a> for &'a Utf8Path {
-    const SHAPE: &'static Shape = &const {
+unsafe impl Facet<'_> for Utf8Path {
+    const VTABLE: &'static ValueVTable = &const {
         // Allows conversion from &str to &Utf8Path
         unsafe fn try_from<'src, 'dst>(
             src_ptr: PtrConst<'src>,
@@ -91,21 +86,19 @@ unsafe impl<'a> Facet<'a> for &'a Utf8Path {
             Ok(unsafe { dst.put(path) })
         }
 
-        Shape::builder()
-            .id(ConstTypeId::of::<Self>())
-            .layout(Layout::new::<Self>())
+        let mut vtable = value_vtable!(&Utf8Path, |f, _opts| write!(f, "Utf8Path"));
+        vtable.try_from = Some(try_from);
+        vtable
+    };
+
+    const SHAPE: &'static Shape = &const {
+        Shape::builder_for_unsized::<Self>()
+            .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::path().build())
                     .build(),
             ))
-            .vtable(
-                &const {
-                    let mut vtable = value_vtable!(&Utf8Path, |f, _opts| write!(f, "Utf8Path"));
-                    vtable.try_from = Some(try_from);
-                    vtable
-                },
-            )
             .build()
     };
 }

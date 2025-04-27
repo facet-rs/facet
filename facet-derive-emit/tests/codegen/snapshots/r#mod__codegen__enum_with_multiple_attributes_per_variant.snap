@@ -7,6 +7,12 @@ static CONFIG_VALUE_SHAPE: &'static ::facet::Shape = <ConfigValue as ::facet::Fa
 #[automatically_derived]
 #[allow(non_camel_case_types)]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
+    const VTABLE: &'static ::facet::ValueVTable = &const {
+        ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
+            f,
+            "ConfigValue"
+        ))
+    };
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
         #[allow(non_snake_case, dead_code)]
@@ -34,45 +40,65 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
             [
                 {
                     let fields: &'static [::facet::Field] = &const {
-                        [{
-                            ::facet::Field::builder()
-                                .name("0")
-                                .shape(|| {
-                                    ::facet::shape_of(
-                                        &|s: &__Shadow_RustRepr_Tuple_for_ConfigValue_Text<
-                                            '__facet,
-                                        >| &s._0,
-                                    )
-                                })
-                                .offset(::core::mem::offset_of!(
-                                    __Shadow_RustRepr_Tuple_for_ConfigValue_Text<'__facet>,
-                                    _0
-                                ))
-                                .build()
-                        }]
+                        [::facet::Field::builder()
+                            .name("0")
+                            .shape(::facet::shape_of(
+                                &|s: &__Shadow_RustRepr_Tuple_for_ConfigValue_Text<'__facet>| &s._0,
+                            ))
+                            .offset(::core::mem::offset_of!(
+                                __Shadow_RustRepr_Tuple_for_ConfigValue_Text<'__facet>,
+                                _0
+                            ))
+                            .build()]
                     };
                     ::facet::Variant::builder()
                         .name("TextValue")
                         .discriminant(0i64)
-                        .fields(::facet::StructDef::builder().tuple().fields(fields).build())
+                        .data(
+                            ::facet::StructType::builder()
+                                .repr(::facet::Repr::c())
+                                .tuple()
+                                .fields(fields)
+                                .build(),
+                        )
                         .build()
                 },
                 {
                     let fields: &'static [::facet::Field] = &const {
                         [
-                            {
-                                :: facet :: Field :: builder () . name ("numValue") . shape (|| :: facet :: shape_of (& | s : & __Shadow_RustRepr_Struct_for_ConfigValue_Number < '__facet > | & s . value)) . offset (:: core :: mem :: offset_of ! (__Shadow_RustRepr_Struct_for_ConfigValue_Number < '__facet > , value)) . build ()
-                            },
-                            {
-                                :: facet :: Field :: builder () . name ("unitName") . shape (|| :: facet :: shape_of (& | s : & __Shadow_RustRepr_Struct_for_ConfigValue_Number < '__facet > | & s . unit)) . offset (:: core :: mem :: offset_of ! (__Shadow_RustRepr_Struct_for_ConfigValue_Number < '__facet > , unit)) . flags (:: facet :: FieldFlags :: SENSITIVE) . build ()
-                            },
+                            ::facet::Field::builder()
+                                .name("numValue")
+                                .shape(::facet::shape_of(
+                                    &|s: &__Shadow_RustRepr_Struct_for_ConfigValue_Number<
+                                        '__facet,
+                                    >| &s.value,
+                                ))
+                                .offset(::core::mem::offset_of!(
+                                    __Shadow_RustRepr_Struct_for_ConfigValue_Number<'__facet>,
+                                    value
+                                ))
+                                .build(),
+                            ::facet::Field::builder()
+                                .name("unitName")
+                                .shape(::facet::shape_of(
+                                    &|s: &__Shadow_RustRepr_Struct_for_ConfigValue_Number<
+                                        '__facet,
+                                    >| &s.unit,
+                                ))
+                                .offset(::core::mem::offset_of!(
+                                    __Shadow_RustRepr_Struct_for_ConfigValue_Number<'__facet>,
+                                    unit
+                                ))
+                                .flags(::facet::FieldFlags::SENSITIVE)
+                                .build(),
                         ]
                     };
                     ::facet::Variant::builder()
                         .name("NumberValue")
                         .discriminant(1i64)
-                        .fields(
-                            ::facet::StructDef::builder()
+                        .data(
+                            ::facet::StructType::builder()
+                                .repr(::facet::Repr::c())
                                 .struct_()
                                 .fields(fields)
                                 .build(),
@@ -81,48 +107,41 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
                 },
                 {
                     let fields: &'static [::facet::Field] = &const {
-                        [{
-                            ::facet::Field::builder()
-                                .name("0")
-                                .shape(|| {
-                                    ::facet::shape_of(
-                                        &|s: &__Shadow_RustRepr_Tuple_for_ConfigValue_Boolean<
-                                            '__facet,
-                                        >| &s._0,
-                                    )
-                                })
-                                .offset(::core::mem::offset_of!(
-                                    __Shadow_RustRepr_Tuple_for_ConfigValue_Boolean<'__facet>,
-                                    _0
-                                ))
-                                .build()
-                        }]
+                        [::facet::Field::builder()
+                            .name("0")
+                            .shape(::facet::shape_of(
+                                &|s: &__Shadow_RustRepr_Tuple_for_ConfigValue_Boolean<'__facet>| {
+                                    &s._0
+                                },
+                            ))
+                            .offset(::core::mem::offset_of!(
+                                __Shadow_RustRepr_Tuple_for_ConfigValue_Boolean<'__facet>,
+                                _0
+                            ))
+                            .build()]
                     };
                     ::facet::Variant::builder()
                         .name("BoolValue")
                         .discriminant(2i64)
-                        .fields(::facet::StructDef::builder().tuple().fields(fields).build())
+                        .data(
+                            ::facet::StructType::builder()
+                                .repr(::facet::Repr::c())
+                                .tuple()
+                                .fields(fields)
+                                .build(),
+                        )
                         .build()
                 },
             ]
         };
-        ::facet::Shape::builder()
-            .id(::facet::ConstTypeId::of::<Self>())
-            .layout(::core::alloc::Layout::new::<Self>())
-            .vtable(
-                &const {
-                    ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
-                        f,
-                        "ConfigValue"
-                    ))
-                },
-            )
-            .def(::facet::Def::Enum(
-                ::facet::EnumDef::builder()
+        ::facet::Shape::builder_for_sized::<Self>()
+            .ty(::facet::Type::User(::facet::UserType::Enum(
+                ::facet::EnumType::builder()
                     .variants(__facet_variants)
-                    .repr(::facet::EnumRepr::U8)
+                    .repr(::facet::Repr::c())
+                    .enum_repr(::facet::EnumRepr::U8)
                     .build(),
-            ))
+            )))
             .build()
     };
 }

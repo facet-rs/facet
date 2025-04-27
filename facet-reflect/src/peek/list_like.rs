@@ -1,4 +1,4 @@
-use facet_core::{PtrConst, Shape};
+use facet_core::{PtrConst, Shape, ShapeLayout};
 
 use super::Peek;
 use core::fmt::Debug;
@@ -75,7 +75,7 @@ pub struct PeekListLike<'mem, 'facet_lifetime> {
     pub(crate) value: Peek<'mem, 'facet_lifetime>,
     pub(crate) def: ListLikeDef,
     len: usize,
-    get_item_ptr: unsafe fn(array: PtrConst, index: usize) -> PtrConst,
+    as_ptr: unsafe fn(this: PtrConst) -> PtrConst,
 }
 
 impl Debug for PeekListLike<'_, '_> {
@@ -87,22 +87,16 @@ impl Debug for PeekListLike<'_, '_> {
 impl<'mem, 'facet_lifetime> PeekListLike<'mem, 'facet_lifetime> {
     /// Creates a new peek list
     pub fn new(value: Peek<'mem, 'facet_lifetime>, def: ListLikeDef) -> Self {
-        let (len, get_item_ptr) = match def {
-            ListLikeDef::List(v) => (
-                unsafe { (v.vtable.len)(value.data()) },
-                v.vtable.get_item_ptr,
-            ),
-            ListLikeDef::Slice(v) => (
-                unsafe { (v.vtable.len)(value.data()) },
-                v.vtable.get_item_ptr,
-            ),
-            ListLikeDef::Array(v) => (v.n, v.vtable.get_item_ptr),
+        let (len, as_ptr_fn) = match def {
+            ListLikeDef::List(v) => (unsafe { (v.vtable.len)(value.data()) }, v.vtable.as_ptr),
+            ListLikeDef::Slice(v) => (unsafe { (v.vtable.len)(value.data()) }, v.vtable.as_ptr),
+            ListLikeDef::Array(v) => (v.n, v.vtable.as_ptr),
         };
         Self {
             value,
             def,
             len,
-            get_item_ptr,
+            as_ptr: as_ptr_fn,
         }
     }
 
@@ -126,7 +120,21 @@ impl<'mem, 'facet_lifetime> PeekListLike<'mem, 'facet_lifetime> {
             return None;
         }
 
-        let item_ptr = unsafe { (self.get_item_ptr)(self.value.data(), index) };
+        // Get the base pointer of the array
+        let base_ptr = unsafe { (self.as_ptr)(self.value.data()) };
+
+        // Get the layout of the element type
+        let elem_layout = match self.def.t().layout {
+            ShapeLayout::Sized(layout) => layout,
+            ShapeLayout::Unsized => return None, // Cannot handle unsized elements
+        };
+
+        // Calculate the offset based on element size
+        let offset = index * elem_layout.size();
+
+        // Apply the offset to get the item's pointer
+        let item_ptr = unsafe { base_ptr.field(offset) };
+
         Some(unsafe { Peek::unchecked_new(item_ptr, self.def.t()) })
     }
 

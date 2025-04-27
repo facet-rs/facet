@@ -1,4 +1,4 @@
-use facet::{Def, Facet};
+use facet::{Facet, Type, UserType};
 
 #[test]
 fn enum_doc_comment() {
@@ -30,7 +30,7 @@ fn enum_with_unit_variants_u8() {
 
     assert_eq!(format!("{}", shape), "UnitVariantEnum");
 
-    if let Def::Enum(enum_def) = shape.def {
+    if let Type::User(UserType::Enum(enum_def)) = shape.ty {
         assert_eq!(enum_def.variants.len(), 3);
 
         assert_eq!(enum_def.variants[0].name, "A");
@@ -60,7 +60,7 @@ fn enum_with_unit_variants_c() {
 
     assert_eq!(format!("{}", shape), "UnitVariantEnum");
 
-    if let Def::Enum(enum_def) = shape.def {
+    if let Type::User(UserType::Enum(enum_def)) = shape.ty {
         assert_eq!(enum_def.variants.len(), 3);
 
         assert_eq!(enum_def.variants[0].name, "A");
@@ -88,7 +88,7 @@ fn enum_with_tuple_variants_u16() {
 
     let shape = TupleVariantEnum::SHAPE;
 
-    if let Def::Enum(enum_def) = shape.def {
+    if let Type::User(UserType::Enum(enum_def)) = shape.ty {
         assert_eq!(enum_def.variants.len(), 3);
 
         let variant_a = &enum_def.variants[0];
@@ -120,7 +120,7 @@ fn enum_with_tuple_variants_c() {
 
     let shape = TupleVariantEnum::SHAPE;
 
-    if let Def::Enum(enum_def) = shape.def {
+    if let Type::User(UserType::Enum(enum_def)) = shape.ty {
         assert_eq!(enum_def.variants.len(), 3);
 
         let variant_a = &enum_def.variants[0];
@@ -161,7 +161,7 @@ fn enum_with_struct_variants_u16() {
 
     let shape = StructVariantEnum::SHAPE;
 
-    if let Def::Enum(enum_def) = shape.def {
+    if let Type::User(UserType::Enum(enum_def)) = shape.ty {
         assert_eq!(enum_def.variants.len(), 3);
 
         let variant_a = &enum_def.variants[0];
@@ -208,7 +208,7 @@ fn enum_with_struct_variants_c() {
 
     let shape = StructVariantEnum::SHAPE;
 
-    if let Def::Enum(enum_def) = shape.def {
+    if let Type::User(UserType::Enum(enum_def)) = shape.ty {
         assert_eq!(enum_def.variants.len(), 3);
 
         let variant_a = &enum_def.variants[0];
@@ -246,7 +246,7 @@ fn enum_with_mixed_variants_u32() {
 
     let shape = MixedVariantEnum::SHAPE;
 
-    if let Def::Enum(enum_def) = shape.def {
+    if let Type::User(UserType::Enum(enum_def)) = shape.ty {
         assert_eq!(enum_def.variants.len(), 3);
 
         let unit_variant = &enum_def.variants[0];
@@ -280,7 +280,7 @@ fn enum_with_mixed_variants_c() {
 
     let shape = MixedVariantEnum::SHAPE;
 
-    if let Def::Enum(enum_def) = shape.def {
+    if let Type::User(UserType::Enum(enum_def)) = shape.ty {
         assert_eq!(enum_def.variants.len(), 3);
 
         let unit_variant = &enum_def.variants[0];
@@ -313,7 +313,7 @@ fn enum_with_generic_u8() {
 
     let shape = MyOption::<u32>::SHAPE;
 
-    if let Def::Enum(enum_def) = shape.def {
+    if let Type::User(UserType::Enum(enum_def)) = shape.ty {
         assert_eq!(enum_def.variants.len(), 2);
 
         let some_variant = &enum_def.variants[0];
@@ -340,7 +340,7 @@ fn enum_with_generic_c() {
 
     let shape = MyOption::<String>::SHAPE;
 
-    if let Def::Enum(enum_def) = shape.def {
+    if let Type::User(UserType::Enum(enum_def)) = shape.ty {
         assert_eq!(enum_def.variants.len(), 2);
 
         let some_variant = &enum_def.variants[0];
@@ -367,7 +367,7 @@ fn enum_with_multiple_generics_u8() {
 
     let shape = MyResult::<u32, String>::SHAPE;
 
-    if let Def::Enum(enum_def) = shape.def {
+    if let Type::User(UserType::Enum(enum_def)) = shape.ty {
         assert_eq!(enum_def.variants.len(), 2);
 
         let ok_variant = &enum_def.variants[0];
@@ -394,7 +394,7 @@ fn enum_with_multiple_generics_c() {
 
     let shape = MyResult::<bool, u64>::SHAPE;
 
-    if let Def::Enum(enum_def) = shape.def {
+    if let Type::User(UserType::Enum(enum_def)) = shape.ty {
         assert_eq!(enum_def.variants.len(), 2);
 
         let ok_variant = &enum_def.variants[0];

@@ -11,51 +11,43 @@ where
     '__facet: 'a,
     T: ::facet::Facet<'__facet>,
 {
+    const VTABLE: &'static ::facet::ValueVTable = &const {
+        let mut vtable =
+            ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "Blah"));
+        vtable
+    };
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [
-                {
-                    ::facet::Field::builder()
-                        .name("field")
-                        .shape(|| ::facet::shape_of(&|s: &Blah<'a, T, C>| &s.field))
-                        .offset(::core::mem::offset_of!(Blah<'a, T, C>, field))
-                        .build()
-                },
-                {
-                    ::facet::Field::builder()
-                        .name("another")
-                        .shape(|| ::facet::shape_of(&|s: &Blah<'a, T, C>| &s.another))
-                        .offset(::core::mem::offset_of!(Blah<'a, T, C>, another))
-                        .build()
-                },
-                {
-                    ::facet::Field::builder()
-                        .name("constant_val")
-                        .shape(|| ::facet::shape_of(&|s: &Blah<'a, T, C>| &s.constant_val))
-                        .offset(::core::mem::offset_of!(Blah<'a, T, C>, constant_val))
-                        .build()
-                },
+                ::facet::Field::builder()
+                    .name("field")
+                    .shape(::facet::shape_of(&|s: &Blah<'a, T, C>| &s.field))
+                    .offset(::core::mem::offset_of!(Blah<'a, T, C>, field))
+                    .build(),
+                ::facet::Field::builder()
+                    .name("another")
+                    .shape(::facet::shape_of(&|s: &Blah<'a, T, C>| &s.another))
+                    .offset(::core::mem::offset_of!(Blah<'a, T, C>, another))
+                    .build(),
+                ::facet::Field::builder()
+                    .name("constant_val")
+                    .shape(::facet::shape_of(&|s: &Blah<'a, T, C>| &s.constant_val))
+                    .offset(::core::mem::offset_of!(Blah<'a, T, C>, constant_val))
+                    .build(),
             ]
         };
-        let vtable = &const {
-            let mut vtable =
-                ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "Blah"));
-            vtable
-        };
-        ::facet::Shape::builder()
-            .id(::facet::ConstTypeId::of::<Self>())
-            .layout(::core::alloc::Layout::new::<Self>())
+        ::facet::Shape::builder_for_sized::<Self>()
             .type_params(&[::facet::TypeParam {
                 name: "T",
                 shape: || <T as ::facet::Facet>::SHAPE,
             }])
-            .vtable(vtable)
-            .def(::facet::Def::Struct(
-                ::facet::StructDef::builder()
+            .ty(::facet::Type::User(::facet::UserType::Struct(
+                ::facet::StructType::builder()
+                    .repr(::facet::Repr::c())
                     .kind(::facet::StructKind::Struct)
                     .fields(fields)
                     .build(),
-            ))
+            )))
             .build()
     };
 }

@@ -6,33 +6,27 @@ expression: "expand(r#\"\n        #[derive(Debug, Facet, PartialEq)]\n        st
 static MACROED_SHAPE: &'static ::facet::Shape = <Macroed as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for Macroed {
+    const VTABLE: &'static ::facet::ValueVTable = &const {
+        let mut vtable =
+            ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "Macroed"));
+        vtable
+    };
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
-            [{
-                ::facet::Field::builder()
-                    .name("value")
-                    .shape(|| ::facet::shape_of(&|s: &Macroed| &s.value))
-                    .offset(::core::mem::offset_of!(Macroed, value))
-                    .build()
-            }]
+            [::facet::Field::builder()
+                .name("value")
+                .shape(::facet::shape_of(&|s: &Macroed| &s.value))
+                .offset(::core::mem::offset_of!(Macroed, value))
+                .build()]
         };
-        let vtable = &const {
-            let mut vtable = ::facet::value_vtable!(
-                Self,
-                |f, _opts| ::core::fmt::Write::write_str(f, "Macroed")
-            );
-            vtable
-        };
-        ::facet::Shape::builder()
-            .id(::facet::ConstTypeId::of::<Self>())
-            .layout(::core::alloc::Layout::new::<Self>())
-            .vtable(vtable)
-            .def(::facet::Def::Struct(
-                ::facet::StructDef::builder()
+        ::facet::Shape::builder_for_sized::<Self>()
+            .ty(::facet::Type::User(::facet::UserType::Struct(
+                ::facet::StructType::builder()
+                    .repr(::facet::Repr::c())
                     .kind(::facet::StructKind::Struct)
                     .fields(fields)
                     .build(),
-            ))
+            )))
             .build()
     };
 }

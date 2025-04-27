@@ -7,42 +7,36 @@ static CAMEL_CASE_EXAMPLE_SHAPE: &'static ::facet::Shape =
     <CamelCaseExample as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for CamelCaseExample {
+    const VTABLE: &'static ::facet::ValueVTable = &const {
+        let mut vtable = ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
+            f,
+            "CamelCaseExample"
+        ));
+        vtable
+    };
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [
-                {
-                    ::facet::Field::builder()
-                        .name("fieldOne")
-                        .shape(|| ::facet::shape_of(&|s: &CamelCaseExample| &s.field_one))
-                        .offset(::core::mem::offset_of!(CamelCaseExample, field_one))
-                        .build()
-                },
-                {
-                    ::facet::Field::builder()
-                        .name("fieldTwo")
-                        .shape(|| ::facet::shape_of(&|s: &CamelCaseExample| &s.field_two))
-                        .offset(::core::mem::offset_of!(CamelCaseExample, field_two))
-                        .build()
-                },
+                ::facet::Field::builder()
+                    .name("fieldOne")
+                    .shape(::facet::shape_of(&|s: &CamelCaseExample| &s.field_one))
+                    .offset(::core::mem::offset_of!(CamelCaseExample, field_one))
+                    .build(),
+                ::facet::Field::builder()
+                    .name("fieldTwo")
+                    .shape(::facet::shape_of(&|s: &CamelCaseExample| &s.field_two))
+                    .offset(::core::mem::offset_of!(CamelCaseExample, field_two))
+                    .build(),
             ]
         };
-        let vtable = &const {
-            let mut vtable = ::facet::value_vtable!(
-                Self,
-                |f, _opts| ::core::fmt::Write::write_str(f, "CamelCaseExample")
-            );
-            vtable
-        };
-        ::facet::Shape::builder()
-            .id(::facet::ConstTypeId::of::<Self>())
-            .layout(::core::alloc::Layout::new::<Self>())
-            .vtable(vtable)
-            .def(::facet::Def::Struct(
-                ::facet::StructDef::builder()
+        ::facet::Shape::builder_for_sized::<Self>()
+            .ty(::facet::Type::User(::facet::UserType::Struct(
+                ::facet::StructType::builder()
+                    .repr(::facet::Repr::c())
                     .kind(::facet::StructKind::Struct)
                     .fields(fields)
                     .build(),
-            ))
+            )))
             .build()
     };
 }

@@ -11,27 +11,26 @@ members = [
 
     # reflection
     "facet-reflect",
-    "facet-serialize",
+    # "facet-serialize",
 
     # dev helpers
     "facet-dev",
 
-    # test helpers
+    # # test helpers
     "facet-testhelpers",
 
-    # formats / ecosystem
-    "facet-args",
-    "facet-json",
-    "facet-msgpack",
-    "facet-pretty",
-    "facet-toml",
-    "facet-kdl",
-    "facet-urlencoded",
-    "facet-yaml",
-    "facet-jsonschema",
-    "facet-deserialize",
-    "facet-json",
-    "facet-bench",
+    # # formats / ecosystem
+    # "facet-args",
+    # "facet-json",
+    # "facet-msgpack",
+    # "facet-pretty",
+    # "facet-toml",
+    # "facet-kdl",
+    # "facet-urlencoded",
+    # "facet-yaml",
+    # "facet-jsonschema",
+    # "facet-deserialize",
+    # "facet-bench",
 ]
 exclude = ["outside-workspace"]
 resolver = "3"

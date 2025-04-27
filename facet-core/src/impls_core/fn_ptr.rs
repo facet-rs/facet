@@ -1,7 +1,7 @@
-use core::{alloc::Layout, fmt, hash::Hash, ptr::fn_addr_eq};
+use core::{fmt, hash::Hash, ptr::fn_addr_eq};
 
 use crate::{
-    ConstTypeId, Def, Facet, FunctionAbi, FunctionPointerDef, HasherProxy, MarkerTraits, Shape,
+    Facet, FunctionAbi, FunctionPointerDef, HasherProxy, MarkerTraits, PointerType, Shape, Type,
     TypeNameOpts, TypeParam, ValueVTable,
 };
 
@@ -63,52 +63,51 @@ macro_rules! impl_facet_for_fn_ptr {
             $($args: Facet<'a>,)*
             R: Facet<'a>,
         {
-            const SHAPE: &'static Shape = &const {
-                Shape::builder()
-                    .id(ConstTypeId::of::<Self>())
-                    .layout(Layout::new::<Self>())
-                    .vtable(const {
-                        &ValueVTable::builder::<Self>()
-                            .type_name(|f, opts| {
-                                write_type_name_list(f, opts, $abi, &[$($args::SHAPE),*], R::SHAPE)
-                            })
-                            .debug(|data, f| fmt::Debug::fmt(data, f))
-                            .clone_into(|src, dst| unsafe { dst.put(src.clone()) })
-                            .marker_traits(
-                                MarkerTraits::EQ
-                                    .union(MarkerTraits::SEND)
-                                    .union(MarkerTraits::SYNC)
-                                    .union(MarkerTraits::COPY)
-                                    .union(MarkerTraits::UNPIN)
-                            )
-                            .eq(|&left, &right| {
-                                fn_addr_eq(left, right)
-                            })
-                            .partial_ord(|left, right| {
-                                #[allow(unpredictable_function_pointer_comparisons)]
-                                left.partial_cmp(right)
-                            })
-                            .ord(|left, right| {
-                                #[allow(unpredictable_function_pointer_comparisons)]
-                                left.cmp(right)
-                            })
-                            .hash(|value, hasher_this, hasher_write_fn| {
-                                value.hash(&mut unsafe {
-                                        HasherProxy::new(hasher_this, hasher_write_fn)
-                                    })
-                            })
-                            .build()
+            const VTABLE: &'static ValueVTable = &const {
+                ValueVTable::builder::<Self>()
+                    .type_name(|f, opts| {
+                        write_type_name_list(f, opts, $abi, &[$($args::SHAPE),*], R::SHAPE)
                     })
+                    .debug(|data, f| fmt::Debug::fmt(data, f))
+                    .clone_into(|src, dst| unsafe { dst.put(src.clone()) })
+                    .marker_traits(
+                        MarkerTraits::EQ
+                            .union(MarkerTraits::SEND)
+                            .union(MarkerTraits::SYNC)
+                            .union(MarkerTraits::COPY)
+                            .union(MarkerTraits::UNPIN)
+                    )
+                    .eq(|&left, &right| {
+                        fn_addr_eq(left, right)
+                    })
+                    .partial_ord(|left, right| {
+                        #[allow(unpredictable_function_pointer_comparisons)]
+                        left.partial_cmp(right)
+                    })
+                    .ord(|left, right| {
+                        #[allow(unpredictable_function_pointer_comparisons)]
+                        left.cmp(right)
+                    })
+                    .hash(|value, hasher_this, hasher_write_fn| {
+                        value.hash(&mut unsafe {
+                                HasherProxy::new(hasher_this, hasher_write_fn)
+                            })
+                    })
+                    .build()
+            };
+
+            const SHAPE: &'static Shape = &const {
+                Shape::builder_for_sized::<Self>()
                     .type_params(&[
                         $(TypeParam { name: stringify!($args), shape: || $args::SHAPE },)*
                     ])
-                    .def(Def::FunctionPointer({
+                    .ty(Type::Pointer(PointerType::Function(({
                         FunctionPointerDef::builder()
                             .parameter_types(&const { [$(|| $args::SHAPE),*] })
                             .return_type(|| R::SHAPE)
                             .abi($abi)
                             .build()
-                    }))
+                    }))))
                     .build()
             };
         }

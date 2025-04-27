@@ -6,42 +6,36 @@ expression: "expand(r#\"\n        #[derive(Facet)]\n        struct TupleStruct(i
 static TUPLE_STRUCT_SHAPE: &'static ::facet::Shape = <TupleStruct as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for TupleStruct {
+    const VTABLE: &'static ::facet::ValueVTable = &const {
+        let mut vtable = ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
+            f,
+            "TupleStruct"
+        ));
+        vtable
+    };
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [
-                {
-                    ::facet::Field::builder()
-                        .name("0")
-                        .shape(|| ::facet::shape_of(&|s: &TupleStruct| &s.0))
-                        .offset(::core::mem::offset_of!(TupleStruct, 0))
-                        .build()
-                },
-                {
-                    ::facet::Field::builder()
-                        .name("1")
-                        .shape(|| ::facet::shape_of(&|s: &TupleStruct| &s.1))
-                        .offset(::core::mem::offset_of!(TupleStruct, 1))
-                        .build()
-                },
+                ::facet::Field::builder()
+                    .name("0")
+                    .shape(::facet::shape_of(&|s: &TupleStruct| &s.0))
+                    .offset(::core::mem::offset_of!(TupleStruct, 0))
+                    .build(),
+                ::facet::Field::builder()
+                    .name("1")
+                    .shape(::facet::shape_of(&|s: &TupleStruct| &s.1))
+                    .offset(::core::mem::offset_of!(TupleStruct, 1))
+                    .build(),
             ]
         };
-        let vtable = &const {
-            let mut vtable = ::facet::value_vtable!(
-                Self,
-                |f, _opts| ::core::fmt::Write::write_str(f, "TupleStruct")
-            );
-            vtable
-        };
-        ::facet::Shape::builder()
-            .id(::facet::ConstTypeId::of::<Self>())
-            .layout(::core::alloc::Layout::new::<Self>())
-            .vtable(vtable)
-            .def(::facet::Def::Struct(
-                ::facet::StructDef::builder()
+        ::facet::Shape::builder_for_sized::<Self>()
+            .ty(::facet::Type::User(::facet::UserType::Struct(
+                ::facet::StructType::builder()
+                    .repr(::facet::Repr::c())
                     .kind(::facet::StructKind::TupleStruct)
                     .fields(fields)
                     .build(),
-            ))
+            )))
             .build()
     };
 }

@@ -67,16 +67,20 @@ impl<'mem, 'facet_lifetime> PeekList<'mem, 'facet_lifetime> {
         self.len() == 0
     }
     /// Get an item from the list at the specified index
-    ///
-    /// # Panics
-    ///
-    /// Panics if the index is out of bounds
     pub fn get(&self, index: usize) -> Option<Peek<'mem, 'facet_lifetime>> {
         if index >= self.len() {
             return None;
         }
 
-        let item_ptr = unsafe { (self.def.vtable.get_item_ptr)(self.value.data(), index) };
+        let Ok(layout) = self.def.t().layout.sized_layout() else {
+            return None;
+        };
+
+        let data = unsafe { (self.def.vtable.as_ptr)(self.value.data()) };
+
+        // SAFETY: we verify index bounds at the start of the function
+        let item_ptr = unsafe { data.field(layout.size() * index) };
+
         Some(unsafe { Peek::unchecked_new(item_ptr, self.def.t()) })
     }
 

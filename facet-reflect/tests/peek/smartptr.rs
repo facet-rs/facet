@@ -17,7 +17,7 @@ fn test_peek_arc() {
     let def = peek_smart_pointer.def();
 
     // Verify the inner type is correct
-    assert_eq!(def.pointee, Some(i32::SHAPE));
+    assert_eq!(def.pointee(), Some(i32::SHAPE));
 }
 
 #[test]
@@ -34,7 +34,7 @@ fn test_peek_arc_with_string() {
     let def = peek_smart_pointer.def();
 
     // Verify the inner type is correct
-    assert_eq!(def.pointee, Some(String::SHAPE));
+    assert_eq!(def.pointee(), Some(String::SHAPE));
 }
 
 #[test]
@@ -63,7 +63,7 @@ fn test_peek_arc_in_struct() {
     assert!(def.flags.contains(facet_core::SmartPointerFlags::ATOMIC));
 
     // Verify inner type is String
-    assert_eq!(def.pointee, Some(String::SHAPE));
+    assert_eq!(def.pointee(), Some(String::SHAPE));
 }
 
 #[test]
@@ -81,7 +81,7 @@ fn test_peek_arc_in_vec() {
 
         // Test definition
         let def = peek_smart_pointer.def();
-        assert_eq!(def.pointee, Some(i32::SHAPE));
+        assert_eq!(def.pointee(), Some(i32::SHAPE));
         assert!(def.flags.contains(facet_core::SmartPointerFlags::ATOMIC));
     }
 }
@@ -120,7 +120,7 @@ fn test_peek_rc() {
     let def = peek_smart_pointer.def();
 
     // Verify the inner type is correct
-    assert_eq!(def.pointee, Some(i32::SHAPE));
+    assert_eq!(def.pointee(), Some(i32::SHAPE));
 }
 
 #[test]
@@ -137,5 +137,5 @@ fn test_peek_rc_with_string() {
     let def = peek_smart_pointer.def();
 
     // Verify the inner type is correct
-    assert_eq!(def.pointee, Some(String::SHAPE));
+    assert_eq!(def.pointee(), Some(String::SHAPE));
 }

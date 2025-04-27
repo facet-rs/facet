@@ -1,15 +1,14 @@
 use alloc::string::String;
-use core::alloc::Layout;
 
 use ulid::Ulid;
 
 use crate::{
-    ConstTypeId, Def, Facet, ParseError, PtrConst, PtrMut, PtrUninit, ScalarAffinity, ScalarDef,
-    Shape, TryFromError, TryIntoInnerError, value_vtable,
+    value_vtable, Def, Facet, ParseError, PtrConst, PtrMut, PtrUninit, ScalarAffinity, ScalarDef,
+    Shape, TryFromError, TryIntoInnerError, Type, UserType, ValueVTable,
 };
 
 unsafe impl Facet<'_> for Ulid {
-    const SHAPE: &'static Shape = &const {
+    const VTABLE: &'static ValueVTable = &const {
         // Functions to transparently convert between Ulid and String
         unsafe fn try_from<'dst>(
             src_ptr: PtrConst<'_>,
@@ -40,31 +39,29 @@ unsafe impl Facet<'_> for Ulid {
             Ok(unsafe { dst.put(ulid.to_string()) })
         }
 
+        let mut vtable = value_vtable!((), |f, _opts| write!(f, "Ulid"));
+        vtable.parse = Some(|s, target| match Ulid::from_string(s) {
+            Ok(ulid) => Ok(unsafe { target.put(ulid) }),
+            Err(_) => Err(ParseError::Generic("ULID parsing failed")),
+        });
+        vtable.try_from = Some(try_from);
+        vtable.try_into_inner = Some(try_into_inner);
+        vtable
+    };
+
+    const SHAPE: &'static Shape = &const {
         // Return the Shape of the inner type (String)
         fn inner_shape() -> &'static Shape {
             <String as Facet>::SHAPE
         }
 
-        Shape::builder()
-            .id(ConstTypeId::of::<Self>())
-            .layout(Layout::new::<Self>())
+        Shape::builder_for_sized::<Self>()
+            .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::ulid().build())
                     .build(),
             ))
-            .vtable(
-                &const {
-                    let mut vtable = value_vtable!((), |f, _opts| write!(f, "Ulid"));
-                    vtable.parse = Some(|s, target| match Ulid::from_string(s) {
-                        Ok(ulid) => Ok(unsafe { target.put(ulid) }),
-                        Err(_) => Err(ParseError::Generic("ULID parsing failed")),
-                    });
-                    vtable.try_from = Some(try_from);
-                    vtable.try_into_inner = Some(try_into_inner);
-                    vtable
-                },
-            )
             .inner(inner_shape)
             .build()
     };

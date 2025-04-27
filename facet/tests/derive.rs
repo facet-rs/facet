@@ -1,5 +1,5 @@
 use core::{fmt::Debug, mem::offset_of};
-use facet::{Def, Facet, FieldFlags, Shape, StructDef, StructKind};
+use facet::{Facet, FieldFlags, SequenceType, Shape, StructKind, StructType, Type, UserType};
 
 #[test]
 fn unit_struct() {
@@ -15,7 +15,7 @@ fn unit_struct() {
     assert_eq!(layout.size(), 0);
     assert_eq!(layout.align(), 1);
 
-    if let Def::Struct(StructDef { kind, fields, .. }) = shape.def {
+    if let Type::User(UserType::Struct(StructType { kind, fields, .. })) = shape.ty {
         assert_eq!(kind, StructKind::Unit);
         assert_eq!(fields.len(), 0);
     } else {
@@ -42,7 +42,7 @@ fn simple_struct() {
         assert_eq!(layout.size(), 32);
         assert_eq!(layout.align(), 8);
 
-        if let Def::Struct(StructDef { kind, fields, .. }) = shape.def {
+        if let Type::User(UserType::Struct(StructType { kind, fields, .. })) = shape.ty {
             assert_eq!(kind, StructKind::Struct);
             assert_eq!(fields.len(), 2);
 
@@ -79,13 +79,13 @@ fn struct_with_sensitive_field() {
     if !cfg!(miri) {
         let shape = Blah::SHAPE;
 
-        if let Def::Struct(StructDef { fields, .. }) = shape.def {
+        if let Type::User(UserType::Struct(StructType { fields, .. })) = shape.ty {
             let bar_field = &fields[1];
             assert_eq!(bar_field.name, "bar");
-            match shape.def {
-                Def::Struct(struct_def) => {
-                    assert!(!struct_def.fields[0].flags.contains(FieldFlags::SENSITIVE));
-                    assert!(struct_def.fields[1].flags.contains(FieldFlags::SENSITIVE));
+            match shape.ty {
+                Type::User(UserType::Struct(struct_kind)) => {
+                    assert!(!struct_kind.fields[0].flags.contains(FieldFlags::SENSITIVE));
+                    assert!(struct_kind.fields[1].flags.contains(FieldFlags::SENSITIVE));
                 }
                 _ => panic!("Expected struct"),
             }
@@ -151,7 +151,7 @@ fn struct_field_doc_comment() {
         bar: u32,
     }
 
-    if let Def::Struct(StructDef { fields, .. }) = Foo::SHAPE.def {
+    if let Type::User(UserType::Struct(StructType { fields, .. })) = Foo::SHAPE.ty {
         assert_eq!(fields[0].doc, &[" This field has a doc comment"]);
     } else {
         panic!("Expected Struct innards");
@@ -170,7 +170,7 @@ fn tuple_struct_field_doc_comment_test() {
 
     let shape = MyTupleStruct::SHAPE;
 
-    if let Def::Struct(StructDef { kind, fields, .. }) = shape.def {
+    if let Type::User(UserType::Struct(StructType { fields, kind, .. })) = shape.ty {
         assert_eq!(kind, StructKind::TupleStruct);
         assert_eq!(fields[0].doc, &[" This is a documented field"]);
         assert_eq!(fields[1].doc, &[" This is another documented field"]);
@@ -204,16 +204,16 @@ fn enum_variants_with_comments() {
 
     let shape = CommentedEnum::SHAPE;
 
-    if let Def::Enum(enum_def) = shape.def {
-        assert_eq!(enum_def.variants.len(), 3);
+    if let Type::User(UserType::Enum(enum_kind)) = shape.ty {
+        assert_eq!(enum_kind.variants.len(), 3);
 
         // Check variant A
-        let variant_a = &enum_def.variants[0];
+        let variant_a = &enum_kind.variants[0];
         assert_eq!(variant_a.name, "A");
         assert_eq!(variant_a.doc, &[" This is variant A"]);
 
         // Check variant B
-        let variant_b = &enum_def.variants[1];
+        let variant_b = &enum_kind.variants[1];
         assert_eq!(variant_b.name, "B");
         assert_eq!(
             variant_b.doc,
@@ -221,7 +221,7 @@ fn enum_variants_with_comments() {
         );
 
         // Check variant C
-        let variant_c = &enum_def.variants[2];
+        let variant_c = &enum_kind.variants[2];
         assert_eq!(variant_c.name, "C");
         assert_eq!(
             variant_c.doc,
@@ -373,10 +373,10 @@ fn struct_with_std_string() {
 #[test]
 fn macroed_type() {
     fn validate_shape(shape: &Shape) {
-        match shape.def {
-            Def::Struct(sd) => {
-                assert_eq!(sd.fields.len(), 1);
-                let field = sd.fields[0];
+        match shape.ty {
+            Type::User(UserType::Struct(sk)) => {
+                assert_eq!(sk.fields.len(), 1);
+                let field = sk.fields[0];
                 let shape_name = format!("{}", field.shape());
                 assert_eq!(shape_name, "u32");
                 eprintln!("Shape {shape} looks correct");
@@ -418,14 +418,14 @@ fn array_field() {
     }
 
     let shape = Packet::SHAPE;
-    match shape.def {
-        Def::Enum(e) => {
+    match shape.ty {
+        Type::User(UserType::Enum(e)) => {
             let variant = &e.variants[0];
             let fields = &variant.data.fields;
             let field = &fields[0];
-            match field.shape().def {
-                Def::Array(ad) => {
-                    assert_eq!(ad.n, 4);
+            match field.shape().ty {
+                Type::Sequence(SequenceType::Array(ak)) => {
+                    assert_eq!(ak.n, 4);
                     eprintln!("Shape {shape} looks correct");
                 }
                 _ => unreachable!(),
@@ -468,10 +468,10 @@ fn opaque_arc() {
     pub struct Handle(#[facet(opaque)] std::sync::Arc<NotDerivingFacet>);
 
     let shape = Handle::SHAPE;
-    match shape.def {
-        Def::Struct(sd) => {
-            assert_eq!(sd.fields.len(), 1);
-            let field = sd.fields[0];
+    match shape.ty {
+        Type::User(UserType::Struct(sk)) => {
+            assert_eq!(sk.fields.len(), 1);
+            let field = sk.fields[0];
             let shape_name = format!("{}", field.shape());
             assert_eq!(shape_name, "Opaque");
             eprintln!("Shape {shape} looks correct");
@@ -496,14 +496,14 @@ fn enum_rename_all_snake_case() {
 
     assert_eq!(format!("{}", shape), "MaybeFontStyle");
 
-    if let Def::Enum(enum_def) = shape.def {
-        assert_eq!(enum_def.variants.len(), 3);
+    if let Type::User(UserType::Enum(enum_kind)) = shape.ty {
+        assert_eq!(enum_kind.variants.len(), 3);
 
-        assert_eq!(enum_def.variants[0].name, "regular");
-        assert_eq!(enum_def.variants[1].name, "italic");
-        assert_eq!(enum_def.variants[2].name, "bold");
+        assert_eq!(enum_kind.variants[0].name, "regular");
+        assert_eq!(enum_kind.variants[1].name, "italic");
+        assert_eq!(enum_kind.variants[2].name, "bold");
 
-        for variant in enum_def.variants {
+        for variant in enum_kind.variants {
             assert_eq!(variant.data.fields.len(), 0);
         }
     } else {

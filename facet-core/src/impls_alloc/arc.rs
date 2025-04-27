@@ -1,11 +1,11 @@
 use crate::{
     Def, Facet, KnownSmartPointer, PtrConst, PtrMut, PtrUninit, Shape, SmartPointerDef,
     SmartPointerFlags, SmartPointerVTable, TryBorrowInnerError, TryFromError, TryIntoInnerError,
-    value_vtable,
+    Type, UserType, ValueVTable, value_vtable,
 };
 
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
-    const SHAPE: &'static crate::Shape = &const {
+    const VTABLE: &'static ValueVTable = &const {
         // Define the functions for transparent conversion between Arc<T> and T
         unsafe fn try_from<'a, 'src, 'dst, T: Facet<'a>>(
             src_ptr: PtrConst<'src>,
@@ -41,6 +41,24 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
             Ok(PtrConst::new(&**arc))
         }
 
+        let mut vtable = value_vtable!(alloc::sync::Arc<T>, |f, opts| {
+            write!(f, "Arc")?;
+            if let Some(opts) = opts.for_children() {
+                write!(f, "<")?;
+                (T::SHAPE.vtable.type_name)(f, opts)?;
+                write!(f, ">")?;
+            } else {
+                write!(f, "<…>")?;
+            }
+            Ok(())
+        });
+        vtable.try_from = Some(try_from::<T>);
+        vtable.try_into_inner = Some(try_into_inner::<T>);
+        vtable.try_borrow_inner = Some(try_borrow_inner::<T>);
+        vtable
+    };
+
+    const SHAPE: &'static crate::Shape = &const {
         // Function to return inner type's shape
         fn inner_shape<'a, T: Facet<'a>>() -> &'static Shape {
             T::SHAPE
@@ -51,9 +69,10 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
                 name: "T",
                 shape: || T::SHAPE,
             }])
+            .ty(Type::User(UserType::Opaque))
             .def(Def::SmartPointer(
                 SmartPointerDef::builder()
-                    .pointee(T::SHAPE)
+                    .pointee(|| T::SHAPE)
                     .flags(SmartPointerFlags::ATOMIC)
                     .known(KnownSmartPointer::Arc)
                     .weak(|| <alloc::sync::Weak<T> as Facet>::SHAPE)
@@ -77,31 +96,26 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
                     )
                     .build(),
             ))
-            .vtable(
-                &const {
-                    let mut vtable = value_vtable!(alloc::sync::Arc<T>, |f, opts| {
-                        write!(f, "Arc")?;
-                        if let Some(opts) = opts.for_children() {
-                            write!(f, "<")?;
-                            (T::SHAPE.vtable.type_name)(f, opts)?;
-                            write!(f, ">")?;
-                        } else {
-                            write!(f, "<…>")?;
-                        }
-                        Ok(())
-                    });
-                    vtable.try_from = Some(try_from::<T>);
-                    vtable.try_into_inner = Some(try_into_inner::<T>);
-                    vtable.try_borrow_inner = Some(try_borrow_inner::<T>);
-                    vtable
-                },
-            )
             .inner(inner_shape::<T>)
             .build()
     };
 }
 
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Weak<T> {
+    const VTABLE: &'static ValueVTable = &const {
+        value_vtable!(alloc::sync::Weak<T>, |f, opts| {
+            write!(f, "Weak")?;
+            if let Some(opts) = opts.for_children() {
+                write!(f, "<")?;
+                (T::SHAPE.vtable.type_name)(f, opts)?;
+                write!(f, ">")?;
+            } else {
+                write!(f, "<…>")?;
+            }
+            Ok(())
+        })
+    };
+
     const SHAPE: &'static crate::Shape = &const {
         // Function to return inner type's shape
         fn inner_shape<'a, T: Facet<'a>>() -> &'static Shape {
@@ -113,9 +127,10 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Weak<T> {
                 name: "T",
                 shape: || T::SHAPE,
             }])
+            .ty(Type::User(UserType::Opaque))
             .def(Def::SmartPointer(
                 SmartPointerDef::builder()
-                    .pointee(T::SHAPE)
+                    .pointee(|| T::SHAPE)
                     .flags(SmartPointerFlags::ATOMIC.union(SmartPointerFlags::WEAK))
                     .known(KnownSmartPointer::ArcWeak)
                     .strong(|| <alloc::sync::Arc<T> as Facet>::SHAPE)
@@ -130,21 +145,6 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Weak<T> {
                     )
                     .build(),
             ))
-            .vtable(
-                &const {
-                    value_vtable!(alloc::sync::Weak<T>, |f, opts| {
-                        write!(f, "Weak")?;
-                        if let Some(opts) = opts.for_children() {
-                            write!(f, "<")?;
-                            (T::SHAPE.vtable.type_name)(f, opts)?;
-                            write!(f, ">")?;
-                        } else {
-                            write!(f, "<…>")?;
-                        }
-                        Ok(())
-                    })
-                },
-            )
             .inner(inner_shape::<T>)
             .build()
     };

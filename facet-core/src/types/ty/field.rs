@@ -12,7 +12,7 @@ pub struct Field {
     pub name: &'static str,
 
     /// shape of the inner type
-    pub shape: fn() -> &'static Shape,
+    pub shape: &'static Shape,
 
     /// offset of the field in the struct (obtained through `core::mem::offset_of`)
     pub offset: usize,
@@ -69,8 +69,8 @@ pub type SkipSerializingIfFn = for<'mem> unsafe fn(value: PtrConst<'mem>) -> boo
 
 impl Field {
     /// Returns the shape of the inner type
-    pub fn shape(&self) -> &'static Shape {
-        (self.shape)()
+    pub const fn shape(&self) -> &'static Shape {
+        self.shape
     }
 
     /// Returns a builder for Field
@@ -140,7 +140,7 @@ impl FieldVTable {
 /// Builder for Field
 pub struct FieldBuilder {
     name: Option<&'static str>,
-    shape: Option<fn() -> &'static Shape>,
+    shape: Option<&'static Shape>,
     offset: Option<usize>,
     flags: Option<FieldFlags>,
     attributes: &'static [FieldAttribute],
@@ -175,7 +175,7 @@ impl FieldBuilder {
     }
 
     /// Sets the shape for the Field
-    pub const fn shape(mut self, shape: fn() -> &'static Shape) -> Self {
+    pub const fn shape(mut self, shape: &'static Shape) -> Self {
         self.shape = Some(shape);
         self
     }
@@ -334,3 +334,16 @@ impl core::fmt::Display for FieldError {
         }
     }
 }
+
+macro_rules! field_in_type {
+    ($container:ty, $field:tt) => {
+        $crate::Field::builder()
+            .name(stringify!($idx))
+            .shape($crate::shape_of(&|t: &Self| &t.$field))
+            .offset(::core::mem::offset_of!(Self, $field))
+            .flags($crate::FieldFlags::EMPTY)
+            .build()
+    };
+}
+
+pub(crate) use field_in_type;

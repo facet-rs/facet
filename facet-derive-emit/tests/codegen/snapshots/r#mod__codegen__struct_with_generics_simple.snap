@@ -8,27 +8,37 @@ where
     T: ::facet::Facet<'__facet>,
     U: ::facet::Facet<'__facet>,
 {
+    const VTABLE: &'static ::facet::ValueVTable = &const {
+        let mut vtable = ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
+            f,
+            "StructWithGenericsSimple"
+        ));
+        vtable
+    };
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [
-                {
-                    :: facet :: Field :: builder () . name ("field1") . shape (|| :: facet :: shape_of (& | s : & StructWithGenericsSimple < T , U > | & s . field1)) . offset (:: core :: mem :: offset_of ! (StructWithGenericsSimple < T , U > , field1)) . build ()
-                },
-                {
-                    :: facet :: Field :: builder () . name ("field2") . shape (|| :: facet :: shape_of (& | s : & StructWithGenericsSimple < T , U > | & s . field2)) . offset (:: core :: mem :: offset_of ! (StructWithGenericsSimple < T , U > , field2)) . build ()
-                },
+                ::facet::Field::builder()
+                    .name("field1")
+                    .shape(::facet::shape_of(&|s: &StructWithGenericsSimple<T, U>| {
+                        &s.field1
+                    }))
+                    .offset(
+                        :: core :: mem :: offset_of ! (StructWithGenericsSimple < T , U > , field1),
+                    )
+                    .build(),
+                ::facet::Field::builder()
+                    .name("field2")
+                    .shape(::facet::shape_of(&|s: &StructWithGenericsSimple<T, U>| {
+                        &s.field2
+                    }))
+                    .offset(
+                        :: core :: mem :: offset_of ! (StructWithGenericsSimple < T , U > , field2),
+                    )
+                    .build(),
             ]
         };
-        let vtable = &const {
-            let mut vtable = ::facet::value_vtable!(
-                Self,
-                |f, _opts| ::core::fmt::Write::write_str(f, "StructWithGenericsSimple")
-            );
-            vtable
-        };
-        ::facet::Shape::builder()
-            .id(::facet::ConstTypeId::of::<Self>())
-            .layout(::core::alloc::Layout::new::<Self>())
+        ::facet::Shape::builder_for_sized::<Self>()
             .type_params(&[
                 ::facet::TypeParam {
                     name: "T",
@@ -39,13 +49,13 @@ where
                     shape: || <U as ::facet::Facet>::SHAPE,
                 },
             ])
-            .vtable(vtable)
-            .def(::facet::Def::Struct(
-                ::facet::StructDef::builder()
+            .ty(::facet::Type::User(::facet::UserType::Struct(
+                ::facet::StructType::builder()
+                    .repr(::facet::Repr::c())
                     .kind(::facet::StructKind::Struct)
                     .fields(fields)
                     .build(),
-            ))
+            )))
             .build()
     };
 }

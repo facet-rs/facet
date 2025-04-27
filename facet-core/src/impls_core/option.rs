@@ -1,11 +1,13 @@
 use core::mem::MaybeUninit;
 
 use crate::{
-    Def, Facet, OptionDef, OptionVTable, PtrConst, PtrMut, PtrUninit, Shape, TryBorrowInnerError,
-    TryFromError, TryIntoInnerError, TypedPtrUninit, VTableView, value_vtable,
+    Def, EnumRepr, EnumType, Facet, Field, FieldFlags, OptionDef, OptionVTable, PtrConst, PtrMut,
+    PtrUninit, Repr, Shape, StructKind, StructType, TryBorrowInnerError, TryFromError,
+    TryIntoInnerError, Type, TypedPtrUninit, UserType, VTableView, ValueVTable, Variant,
+    value_vtable,
 };
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
-    const SHAPE: &'static Shape = &const {
+    const VTABLE: &'static ValueVTable = &const {
         // Define the functions for transparent conversion between Option<T> and T
         unsafe fn try_from<'a, 'src, 'dst, T: Facet<'a>>(
             src_ptr: PtrConst<'src>,
@@ -44,6 +46,53 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
             }
         }
 
+        let mut vtable = value_vtable!(core::option::Option<T>, |f, opts| {
+            write!(f, "Option")?;
+            if let Some(opts) = opts.for_children() {
+                write!(f, "<")?;
+                (T::SHAPE.vtable.type_name)(f, opts)?;
+                write!(f, ">")?;
+            } else {
+                write!(f, "<…>")?;
+            }
+            Ok(())
+        });
+
+        if T::SHAPE.is_debug() {
+            vtable.debug = Some(|this, f| {
+                let this = unsafe { this.get::<Self>() };
+                if let Some(value) = &this {
+                    write!(f, "Some(")?;
+                    (<VTableView<T>>::of().debug().unwrap())(value, f)?;
+                    write!(f, ")")?;
+                } else {
+                    write!(f, "None")?;
+                }
+                Ok(())
+            });
+        }
+
+        if T::SHAPE.is_from_str() {
+            vtable.parse = Some(|str, target| {
+                let mut t = MaybeUninit::<T>::uninit();
+                let parse = <VTableView<T>>::of().parse().unwrap();
+                let _res = (parse)(str, TypedPtrUninit::new(t.as_mut_ptr()))?;
+                // res points to t so we can't drop it yet. the option is not initialized though
+                unsafe {
+                    target.put(Some(t.assume_init()));
+                    Ok(target.assume_init())
+                }
+            });
+        }
+
+        vtable.try_from = Some(try_from::<T>);
+        vtable.try_into_inner = Some(try_into_inner::<T>);
+        vtable.try_borrow_inner = Some(try_borrow_inner::<T>);
+
+        vtable
+    };
+
+    const SHAPE: &'static Shape = &const {
         // Function to return inner type's shape
         fn inner_shape<'a, T: Facet<'a>>() -> &'static Shape {
             T::SHAPE
@@ -54,9 +103,57 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
                 name: "T",
                 shape: || T::SHAPE,
             }])
+            .ty(Type::User(
+                // Null-Pointer-Optimization - we verify that this Option variant has no
+                // discriminant.
+                //
+                // See: https://doc.rust-lang.org/std/option/index.html#representation
+                if core::mem::size_of::<T>() == core::mem::size_of::<Option<T>>() {
+                    UserType::Enum(EnumType {
+                        repr: Repr::default(),
+                        enum_repr: EnumRepr::RustNPO,
+                        variants: &const {
+                            [
+                                Variant::builder()
+                                    .name("None")
+                                    .discriminant(0)
+                                    .data(
+                                        StructType::builder()
+                                            .repr(Repr::default())
+                                            .kind(StructKind::Unit)
+                                            .build(),
+                                    )
+                                    .build(),
+                                Variant::builder()
+                                    .name("Some")
+                                    .discriminant(0)
+                                    .data(
+                                        StructType::builder()
+                                            .repr(Repr::default())
+                                            .kind(StructKind::TupleStruct)
+                                            .fields(
+                                                &const {
+                                                    [Field::builder()
+                                                        .name("0")
+                                                        .shape(T::SHAPE)
+                                                        .offset(0)
+                                                        .flags(FieldFlags::EMPTY)
+                                                        .build()]
+                                                },
+                                            )
+                                            .build(),
+                                    )
+                                    .build(),
+                            ]
+                        },
+                    })
+                } else {
+                    UserType::Opaque
+                },
+            ))
             .def(Def::Option(
                 OptionDef::builder()
-                    .t(|| T::SHAPE)
+                    .t(T::SHAPE)
                     .vtable(
                         const {
                             &OptionVTable::builder()
@@ -83,54 +180,6 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
                     )
                     .build(),
             ))
-            .vtable(
-                &const {
-                    let mut vtable = value_vtable!(core::option::Option<T>, |f, opts| {
-                        write!(f, "Option")?;
-                        if let Some(opts) = opts.for_children() {
-                            write!(f, "<")?;
-                            (T::SHAPE.vtable.type_name)(f, opts)?;
-                            write!(f, ">")?;
-                        } else {
-                            write!(f, "<…>")?;
-                        }
-                        Ok(())
-                    });
-
-                    if T::SHAPE.is_debug() {
-                        vtable.debug = Some(|this, f| {
-                            let this = unsafe { this.get::<Self>() };
-                            if let Some(value) = &this {
-                                write!(f, "Some(")?;
-                                (<VTableView<T>>::of().debug().unwrap())(value, f)?;
-                                write!(f, ")")?;
-                            } else {
-                                write!(f, "None")?;
-                            }
-                            Ok(())
-                        });
-                    }
-
-                    if T::SHAPE.is_from_str() {
-                        vtable.parse = Some(|str, target| {
-                            let mut t = MaybeUninit::<T>::uninit();
-                            let parse = <VTableView<T>>::of().parse().unwrap();
-                            let _res = (parse)(str, TypedPtrUninit::new(t.as_mut_ptr()))?;
-                            // res points to t so we can't drop it yet. the option is not initialized though
-                            unsafe {
-                                target.put(Some(t.assume_init()));
-                                Ok(target.assume_init())
-                            }
-                        });
-                    }
-
-                    vtable.try_from = Some(try_from::<T>);
-                    vtable.try_into_inner = Some(try_into_inner::<T>);
-                    vtable.try_borrow_inner = Some(try_borrow_inner::<T>);
-
-                    vtable
-                },
-            )
             .inner(inner_shape::<T>)
             .build()
     };

@@ -1,4 +1,4 @@
-use facet::{Def, Facet};
+use facet::{Facet, Type, UserType};
 
 #[test]
 fn vec_wrapper() {
@@ -8,8 +8,8 @@ fn vec_wrapper() {
     }
 
     let shape = VecWrapper::<u32>::SHAPE;
-    match shape.def {
-        Def::Struct(sd) => {
+    match shape.ty {
+        Type::User(UserType::Struct(sd)) => {
             assert_eq!(sd.fields.len(), 1);
             let field = sd.fields[0];
             let shape_name = format!("{}", field.shape());
@@ -40,8 +40,8 @@ fn hash_map_wrapper() {
     }
 
     let shape = HashMapWrapper::<u16, String>::SHAPE;
-    match shape.def {
-        Def::Struct(sd) => {
+    match shape.ty {
+        Type::User(UserType::Struct(sd)) => {
             assert_eq!(sd.fields.len(), 1);
             let field = sd.fields[0];
             let shape_name = format!("{}", field.shape());
@@ -66,8 +66,8 @@ fn tuple_struct_vec_wrapper() {
     struct TupleVecWrapper<T>(Vec<T>);
 
     let shape = TupleVecWrapper::<u32>::SHAPE;
-    match shape.def {
-        Def::Struct(sd) => {
+    match shape.ty {
+        Type::User(UserType::Struct(sd)) => {
             assert_eq!(sd.fields.len(), 1);
             let field = sd.fields[0];
             let shape_name = format!("{}", field.shape());
@@ -94,8 +94,8 @@ fn enum_vec_variant_wrapper() {
     }
 
     let shape = EnumVecWrapper::<u32>::SHAPE;
-    match shape.def {
-        facet::Def::Enum(ed) => {
+    match shape.ty {
+        Type::User(UserType::Enum(ed)) => {
             // Should have two variants: VecVariant, None
             assert_eq!(ed.variants.len(), 2);
 
@@ -202,6 +202,16 @@ fn type_params_array_f32_12() {
 #[test]
 fn type_params_slice_ref_bool() {
     let shape = <&[bool]>::SHAPE;
+    // Reference has a type param for referent, named "T"
+    assert_eq!(shape.type_params.len(), 1);
+    let t = &shape.type_params[0];
+    assert_eq!(t.name, "T");
+    assert_eq!(format!("{}", t.shape()), "[bool]");
+}
+
+#[test]
+fn type_params_slice_bool() {
+    let shape = <[bool]>::SHAPE;
     // Reference has a type param for referent, named "T"
     assert_eq!(shape.type_params.len(), 1);
     let t = &shape.type_params[0];
