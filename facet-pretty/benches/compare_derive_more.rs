@@ -1,6 +1,8 @@
+#![allow(clippy::approx_constant)]
+
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use facet::Facet;
-use facet_pretty::{FacetPretty, PrettyPrinter};
+use facet_pretty::PrettyPrinter;
 
 // --- Data Structures for Benchmarking ---
 
@@ -29,8 +31,13 @@ struct Outer {
 #[repr(u8)]
 enum Enum {
     Unit,
+    #[allow(dead_code)]
     Tuple(i32, bool),
-    Struct { a: u8, b: String },
+    #[allow(dead_code)]
+    Struct {
+        a: u8,
+        b: String,
+    },
 }
 
 // --- Complex Case (Deeper Nesting, Option, Vec) ---
