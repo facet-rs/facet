@@ -98,6 +98,9 @@ where
                     .iter()
                     .any(|a| matches!(a, FieldAttribute::Arbitrary(a) if a.contains("positional")))
                 {
+                    if wip.is_field_set(field_index).unwrap() {
+                        continue;
+                    }
                     let field = wip.field(field_index).unwrap();
                     wip = parse_field(field, token).unwrap();
                     break;
