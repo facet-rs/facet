@@ -1,4 +1,4 @@
-#[cfg(feature = "alloc")]
+#[cfg(feature = "rich-diagnostics")]
 use alloc::format;
 #[cfg(feature = "alloc")]
 use alloc::string::String;
@@ -192,7 +192,7 @@ impl core::fmt::Display for JsonError<'_> {
             f,
             "{} at byte {} in path {}",
             self.message(),
-            self.span.start,
+            self.span.start(),
             self.path
         )
     }
