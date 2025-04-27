@@ -32,6 +32,13 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                     .name("VariantA")
                     .discriminant(0)
                     .fields(::facet::StructDef::builder().unit().build())
+                    .attributes(
+                        &const {
+                            [::facet::VariantAttribute::Arbitrary(
+                                "name, =, \"FirstVariant\", ,, discriminant, =, 10",
+                            )]
+                        },
+                    )
                     .build(),
                 {
                     let fields: &'static [::facet::Field] = &const {
@@ -56,6 +63,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                         .name("InternalVariant")
                         .discriminant(1)
                         .fields(::facet::StructDef::builder().tuple().fields(fields).build())
+                        .attributes(&const { [::facet::VariantAttribute::Arbitrary("skip")] })
                         .build()
                 },
                 {
@@ -83,6 +91,13 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                                 .struct_()
                                 .fields(fields)
                                 .build(),
+                        )
+                        .attributes(
+                            &const {
+                                [::facet::VariantAttribute::Arbitrary(
+                                    "deprecated, =, \"Use VariantD instead\"",
+                                )]
+                            },
                         )
                         .build()
                 },
@@ -118,6 +133,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                                 .fields(fields)
                                 .build(),
                         )
+                        .attributes(&const { [] })
                         .build()
                 },
             ]

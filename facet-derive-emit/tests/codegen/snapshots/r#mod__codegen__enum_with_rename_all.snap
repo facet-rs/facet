@@ -50,6 +50,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                                 .fields(fields)
                                 .build(),
                         )
+                        .attributes(&const { [] })
                         .build()
                 },
                 {
@@ -98,6 +99,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                                 .fields(fields)
                                 .build(),
                         )
+                        .attributes(&const { [] })
                         .build()
                 },
             ]

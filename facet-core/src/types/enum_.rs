@@ -74,6 +74,9 @@ pub struct Variant {
 
     /// Doc comment for the variant
     pub doc: &'static [&'static str],
+
+    /// arbitrary attributes set via the derive macro
+    pub attributes: &'static [VariantAttribute],
 }
 
 impl Variant {
@@ -81,6 +84,25 @@ impl Variant {
     pub const fn builder() -> VariantBuilder {
         VariantBuilder::new()
     }
+
+    /// Checks whether the `Variant` has an attribute of form `VariantAttribute::Arbitrary` with the
+    /// given content.
+    pub fn has_arbitrary_attr(&self, content: &'static str) -> bool {
+        self.attributes
+            .contains(&VariantAttribute::Arbitrary(content))
+    }
+}
+
+/// An attribute that can be set on an enum variant.
+#[non_exhaustive]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[repr(C)]
+pub enum VariantAttribute {
+    /// This variant is sensitive. If the enum is of this variant, it should not be shown in the
+    /// debug or display impl
+    Sensitive,
+    /// Other variant attributes go here.
+    Arbitrary(&'static str),
 }
 
 /// Builder for Variant
@@ -88,6 +110,7 @@ pub struct VariantBuilder {
     name: Option<&'static str>,
     discriminant: Option<i64>,
     fields: Option<StructDef>,
+    attributes: Option<&'static [VariantAttribute]>,
     doc: &'static [&'static str],
 }
 
@@ -99,6 +122,7 @@ impl VariantBuilder {
             name: None,
             discriminant: None,
             fields: None,
+            attributes: None,
             doc: &[],
         }
     }
@@ -121,6 +145,12 @@ impl VariantBuilder {
         self
     }
 
+    /// Sets the attributes for the Field
+    pub const fn attributes(mut self, attributes: &'static [VariantAttribute]) -> Self {
+        self.attributes = Some(attributes);
+        self
+    }
+
     /// Sets the doc comment for the Variant
     pub const fn doc(mut self, doc: &'static [&'static str]) -> Self {
         self.doc = doc;
@@ -133,6 +163,7 @@ impl VariantBuilder {
             name: self.name.unwrap(),
             discriminant: self.discriminant.unwrap(),
             data: self.fields.unwrap(),
+            attributes: self.attributes.unwrap(),
             doc: self.doc,
         }
     }

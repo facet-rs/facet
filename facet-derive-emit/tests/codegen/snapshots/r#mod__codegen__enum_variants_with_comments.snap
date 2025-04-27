@@ -26,6 +26,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for CommentedEnum {
                     .name("A")
                     .discriminant(0)
                     .fields(::facet::StructDef::builder().unit().build())
+                    .attributes(&const { [] })
                     .doc(&[" This is variant A"])
                     .build(),
                 {
@@ -47,6 +48,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for CommentedEnum {
                         .name("B")
                         .discriminant(1)
                         .fields(::facet::StructDef::builder().tuple().fields(fields).build())
+                        .attributes(&const { [] })
                         .doc(&[" This is variant B", " with multiple lines"])
                         .build()
                 },
@@ -90,6 +92,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for CommentedEnum {
                                 .fields(fields)
                                 .build(),
                         )
+                        .attributes(&const { [] })
                         .doc(&[" This is variant C", " which has named fields"])
                         .build()
                 },

@@ -50,6 +50,7 @@ where
                         .name("LevelOne")
                         .discriminant(0)
                         .fields(::facet::StructDef::builder().tuple().fields(fields).build())
+                        .attributes(&const { [] })
                         .build()
                 },
                 {
@@ -74,6 +75,7 @@ where
                         .name("Simple")
                         .discriminant(1)
                         .fields(::facet::StructDef::builder().tuple().fields(fields).build())
+                        .attributes(&const { [] })
                         .build()
                 },
             ]

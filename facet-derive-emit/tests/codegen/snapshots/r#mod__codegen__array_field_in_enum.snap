@@ -37,6 +37,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Packet {
                         .name("Header")
                         .discriminant(0)
                         .fields(::facet::StructDef::builder().tuple().fields(fields).build())
+                        .attributes(&const { [] })
                         .doc(&[" Array of bytes representing the header"])
                         .build()
                 },
@@ -59,6 +60,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Packet {
                         .name("Payload")
                         .discriminant(1)
                         .fields(::facet::StructDef::builder().tuple().fields(fields).build())
+                        .attributes(&const { [] })
                         .build()
                 },
             ]
