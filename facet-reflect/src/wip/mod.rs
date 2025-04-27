@@ -819,8 +819,8 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
         match frame.shape.def {
             Def::Struct(def) => find_field_index(def.fields, name),
             Def::Enum(_) => {
-                let variant = dbg!(frame.istate.variant.as_ref())?;
-                dbg!(find_field_index(variant.data.fields, name))
+                let variant = frame.istate.variant.as_ref()?;
+                find_field_index(variant.data.fields, name)
             }
             _ => None,
         }

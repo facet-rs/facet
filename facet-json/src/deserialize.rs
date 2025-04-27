@@ -548,6 +548,14 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                                                 found_in_flatten = true;
                                                 handled_by_flatten = true;
                                                 break;
+                                            } else if let Some((_variant_index, _variant)) =
+                                                wip.find_variant(&key)
+                                            {
+                                                trace!("Found key {} in flattened field", key);
+                                                reflect!(variant_named(&key));
+                                                found_in_flatten = true;
+                                                handled_by_flatten = true;
+                                                break;
                                             } else {
                                                 // Key not in this flattened field, go back up
                                                 reflect!(pop());
