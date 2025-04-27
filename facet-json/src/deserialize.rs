@@ -278,16 +278,8 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
 
                 if reason == PopReason::TopLevel {
                     let path = wip.path();
-                    return Ok(match wip.build() {
-                        Ok(hv) => hv,
-                        Err(e) => {
-                            return Err(JsonError::new(
-                                JsonErrorKind::ReflectError(e),
-                                input,
-                                last_span,
-                                path,
-                            ));
-                        }
+                    return wip.build().map_err(|e| {
+                        JsonError::new(JsonErrorKind::ReflectError(e), input, last_span, path)
                     });
                 } else {
                     reflect!(pop());

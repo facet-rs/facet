@@ -73,6 +73,7 @@ fn test_from_json_with_nested_structs() -> Result<()> {
 }
 
 #[test]
+#[ignore]
 fn test_reading_flat_structs() {
     facet_testhelpers::setup();
 

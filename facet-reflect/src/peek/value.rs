@@ -69,7 +69,7 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
 
     /// Returns the vtable
     #[inline(always)]
-    fn vtable(&self) -> &'static ValueVTable {
+    pub(super) fn vtable(&self) -> &'static ValueVTable {
         self.shape.vtable
     }
 
