@@ -1,5 +1,3 @@
-// Basic tests go here
-
 use facet::Facet;
 use indoc::indoc;
 
@@ -7,9 +5,25 @@ use indoc::indoc;
 fn basic_node() {
     facet_testhelpers::setup();
 
+    // QUESTION: I don't know when this would be particularly good practice, but it could be nice if `facet` shipped
+    // some sort of macro that allowed libraries to rename the Facet trait / attributes? This might make it clearer
+    // what's going on if you're ever mixing several `Facet` libraries that all use different arbitrary attributes? I
+    // just think that `#[kdl(child)]` would be a lot clearer than `#[facet(child)]` if, say, you also wanted to
+    // deserialize from something like XML? Or command-line arguments? Those would also need attributes, e.g.
+    // `#[facet(text)]` or `#[facet(positional)]`, and I think things would be a lot clearer as `#[xml(text)]` and
+    // `#[args(positional)]`. If, however, it's far too evil or hard to implment something like that, then arbitrary
+    // attributes should be given "namespaces", maybe? Like `#[facet(kdl, child)]` or `#[facet(xml, text)]`?
+    //
+    // Overall I think this is a hard design question, but I do think it's worth considering how several `facet` crates
+    // relying on arbitrary attributes should interact...
     #[derive(Facet)]
     struct Basic {
-        // FIXME: This is wrong, should be `child, unwrap(argument)`?
+        #[facet(child)]
+        title: Title,
+    }
+
+    #[derive(Facet)]
+    struct Title {
         #[facet(argument)]
         title: String,
     }
