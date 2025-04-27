@@ -19,8 +19,8 @@ use alloc::{
     string::{String, ToString},
 };
 use error::{TomlError, TomlErrorKind};
-use facet_core::{Def, Facet, StructDef, StructKind};
-use facet_reflect::{ScalarType, Wip};
+use facet_core::{Characteristic, Def, Facet, StructDef, StructKind};
+use facet_reflect::{ReflectError, ScalarType, Wip};
 use log::trace;
 use toml_edit::{ImDocument, Item, TomlError as TomlEditError};
 use yansi::Paint as _;
@@ -166,6 +166,25 @@ fn deserialize_as_struct<'input, 'a>(
                 if let Def::Option(..) = field.shape().def {
                     // Default of `Option<T>` is `None`
                     reflect!(wip, toml, item.span(), put_default());
+                } else if let Some(default_in_place_fn) = field.maybe_default_fn() {
+                    // Handle the default function
+                    if let Some(default_in_place_fn) = default_in_place_fn {
+                        reflect!(wip, toml, item.span(), put_from_fn(default_in_place_fn));
+                    } else if field.shape().is(Characteristic::Default) {
+                        reflect!(wip, toml, item.span(), put_default());
+                    } else {
+                        // Throw an error when there's a "default" attribute but no implementation for the type
+                        return Err(TomlError::new(
+                            toml,
+                            TomlErrorKind::GenericReflect(
+                                ReflectError::DefaultAttrButNoDefaultImpl {
+                                    shape: field.shape(),
+                                },
+                            ),
+                            item.span(),
+                            wip.path(),
+                        ));
+                    }
                 } else {
                     return Err(TomlError::new(
                         toml,
