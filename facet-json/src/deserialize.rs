@@ -563,7 +563,6 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                                                 trace!("Found key {} in flattened field", key);
                                                 reflect!(variant_named(&key));
                                                 found_in_flatten = true;
-                                                // handled_by_flatten = false;
                                                 break;
                                             } else {
                                                 // Key not in this flattened field, go back up
@@ -655,7 +654,8 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                                 trace!("Pushing Pop insn to stack (ObjectVal)");
                                 stack.push(Instruction::Pop(PopReason::ObjectVal));
                             } else if handled_by_flatten {
-                                // We need two pops for flattened fields - one for the field itself, one for the containing struct
+                                // We need two pops for flattened fields - one for the field itself,
+                                // one for the containing struct
                                 trace!("Pushing Pop insn to stack (ObjectVal) for flattened field");
                                 stack.push(Instruction::Pop(PopReason::ObjectVal));
                                 stack.push(Instruction::Pop(PopReason::ObjectVal));
