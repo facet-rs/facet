@@ -2,7 +2,7 @@
 
 use eyre::Result;
 use facet::Facet;
-use facet_toml::error::TomlErrorKind;
+use facet_toml::TomlErrorKind;
 
 #[test]
 fn test_unit_only_enum() -> Result<()> {

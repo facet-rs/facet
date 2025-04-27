@@ -5,7 +5,7 @@ use std::net::Ipv6Addr;
 use eyre::Result;
 use facet::Facet;
 use facet_reflect::ReflectError;
-use facet_toml::error::TomlErrorKind;
+use facet_toml::TomlErrorKind;
 
 #[test]
 fn test_table_to_struct() -> Result<()> {

@@ -4,7 +4,7 @@ use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use eyre::Result;
 use facet::Facet;
-use facet_toml::error::TomlErrorKind;
+use facet_toml::TomlErrorKind;
 
 #[cfg(feature = "std")]
 #[test]
