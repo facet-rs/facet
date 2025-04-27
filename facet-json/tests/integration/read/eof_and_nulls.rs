@@ -47,7 +47,6 @@ fn test_eof_errors() {
     // Test object with EOF after key
     let result = from_str::<SimpleObject>("{\"key\"");
     let err = result.unwrap_err();
-    dbg!(&err.kind);
     assert!(matches!(
         err.kind,
         JsonErrorKind::UnexpectedToken {
