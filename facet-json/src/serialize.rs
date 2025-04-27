@@ -1,3 +1,4 @@
+use alloc::collections::VecDeque;
 use core::num::NonZero;
 use facet_core::{Def, Facet, FieldAttribute, StructKind};
 use facet_reflect::Peek;
@@ -31,29 +32,500 @@ pub fn peek_to_writer<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Resu
     serialize(peek, true, writer)
 }
 
-/// The core serialization function
+/// Task items for the serialization stack.
+#[derive(Debug)]
+enum SerializeTask<'a, 'mem, 'facet> {
+    Value {
+        peek: Peek<'mem, 'facet>,
+        delimit: bool,
+    },
+    ScalarValue(Peek<'mem, 'facet>),
+    StartStruct {
+        struct_peek: Peek<'mem, 'facet>,
+        delimit: bool,
+    },
+    StructField {
+        field_peek: Peek<'mem, 'facet>,
+        field_name: &'a str,
+        should_delimit: bool,
+        is_first: bool,
+    },
+    EndStruct {
+        delimit: bool,
+    },
+    StartList(Peek<'mem, 'facet>),
+    ListItem {
+        item_peek: Peek<'mem, 'facet>,
+        is_first: bool,
+    },
+    EndList,
+    StartTuple(Peek<'mem, 'facet>),
+    TupleItem {
+        item_peek: Peek<'mem, 'facet>,
+        is_first: bool,
+    },
+    EndTuple,
+    StartMap {
+        map_peek: Peek<'mem, 'facet>,
+        delimit: bool,
+    },
+    MapEntry {
+        key: Peek<'mem, 'facet>,
+        value: Peek<'mem, 'facet>,
+        is_first: bool,
+    },
+    EndMap {
+        delimit: bool,
+    },
+    StartEnum {
+        enum_peek: Peek<'mem, 'facet>,
+        // variant_name: &'a str,
+        delimit: bool,
+        // is_empty: bool,
+        // is_struct: bool,
+    },
+    EnumStructField {
+        field: &'a facet_core::Field,
+        field_peek: Peek<'mem, 'facet>,
+        field_name: &'a str,
+        is_first: bool,
+    },
+    EnumTupleField {
+        field: &'a facet_core::Field,
+        field_peek: Peek<'mem, 'facet>,
+        is_first: bool,
+    },
+    EndEnum {
+        delimit: bool,
+        is_struct: bool,
+        is_transparent: bool,
+    },
+    StartOption(Peek<'mem, 'facet>),
+}
+
+/// The core serialization function - iterative approach
 fn serialize<W: Write>(peek: &Peek<'_, '_>, delimit: bool, writer: &mut W) -> io::Result<()> {
     use facet_core::{
         StructDef,
         StructKind::{Tuple, TupleStruct},
     };
 
-    match peek.shape().def {
-        Def::Scalar(_) => serialize_scalar(peek, writer),
-        Def::Struct(StructDef {
-            kind: Tuple | TupleStruct,
-            ..
-        }) => serialize_tuple(peek, writer),
-        Def::Struct(_) => serialize_struct(peek, delimit, writer),
-        Def::List(_) => serialize_list(peek, writer),
-        Def::Map(_) => serialize_map(peek, delimit, writer),
-        Def::Enum(_) => serialize_enum(peek, delimit, writer),
-        Def::Option(_) => serialize_option(peek, writer),
-        _ => Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("Unsupported type: {}", peek.shape()),
-        )),
+    let mut stack = VecDeque::new();
+    stack.push_back(SerializeTask::Value {
+        peek: *peek,
+        delimit,
+    });
+
+    while let Some(task) = stack.pop_front() {
+        match task {
+            SerializeTask::Value { peek, delimit } => match peek.shape().def {
+                Def::Scalar(_) => {
+                    stack.push_front(SerializeTask::ScalarValue(peek));
+                }
+                Def::Struct(StructDef {
+                    kind: Tuple | TupleStruct,
+                    ..
+                }) => {
+                    stack.push_front(SerializeTask::StartTuple(peek));
+                }
+                Def::Struct(_) => {
+                    stack.push_front(SerializeTask::StartStruct {
+                        struct_peek: peek,
+                        delimit,
+                    });
+                }
+                Def::List(_) => {
+                    stack.push_front(SerializeTask::StartList(peek));
+                }
+                Def::Map(_) => {
+                    stack.push_front(SerializeTask::StartMap {
+                        map_peek: peek,
+                        delimit,
+                    });
+                }
+                Def::Enum(_) => {
+                    stack.push_front(SerializeTask::StartEnum {
+                        enum_peek: peek,
+                        delimit,
+                    });
+                }
+                Def::Option(_) => {
+                    stack.push_front(SerializeTask::StartOption(peek));
+                }
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        format!("Unsupported type: {}", peek.shape()),
+                    ));
+                }
+            },
+            SerializeTask::ScalarValue(peek) => {
+                serialize_scalar(&peek, writer)?;
+            }
+            SerializeTask::StartStruct {
+                struct_peek,
+                delimit,
+            } => {
+                let struct_peek = struct_peek.into_struct().map_err(|e| {
+                    io::Error::new(io::ErrorKind::Other, format!("Not a struct: {}", e))
+                })?;
+
+                if delimit {
+                    write!(writer, "{{")?;
+                }
+
+                // Process fields in reverse order for the stack
+                let fields = struct_peek
+                    .fields_for_serialize()
+                    .with_first()
+                    .collect::<Vec<_>>();
+
+                stack.push_front(SerializeTask::EndStruct { delimit });
+
+                for (first, (field, field_peek)) in fields.into_iter().rev() {
+                    // Check for rename attribute
+                    let field_name = field
+                        .attributes
+                        .iter()
+                        .find_map(|attr| {
+                            if let FieldAttribute::Rename(name) = attr {
+                                Some(*name)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(field.name);
+                    let should_delimit = !field.has_arbitrary_attr("flatten");
+
+                    stack.push_front(SerializeTask::StructField {
+                        field_peek,
+                        field_name,
+                        should_delimit,
+                        is_first: first,
+                    });
+                }
+            }
+            SerializeTask::StructField {
+                field_peek,
+                field_name,
+                should_delimit,
+                is_first,
+                ..
+            } => {
+                if !is_first {
+                    write!(writer, ",")?;
+                }
+
+                // Write field name
+                if should_delimit {
+                    write_json_string(writer, field_name)?;
+                    write!(writer, ":")?;
+                }
+
+                // Push the field value to serialize
+                stack.push_front(SerializeTask::Value {
+                    peek: field_peek,
+                    delimit: should_delimit,
+                });
+            }
+            SerializeTask::EndStruct { delimit } => {
+                if delimit {
+                    write!(writer, "}}")?;
+                }
+            }
+            SerializeTask::StartList(peek) => {
+                let list_peek = peek.into_list().map_err(|e| {
+                    io::Error::new(io::ErrorKind::Other, format!("Not a list: {}", e))
+                })?;
+
+                write!(writer, "[")?;
+
+                // Process items in reverse order for the stack
+                let items = list_peek.iter().with_first().collect::<Vec<_>>();
+                stack.push_front(SerializeTask::EndList);
+
+                for (first, item_peek) in items.into_iter().rev() {
+                    stack.push_front(SerializeTask::ListItem {
+                        item_peek,
+                        is_first: first,
+                    });
+                }
+            }
+            SerializeTask::ListItem {
+                item_peek,
+                is_first,
+            } => {
+                if !is_first {
+                    write!(writer, ",")?;
+                }
+
+                stack.push_front(SerializeTask::Value {
+                    peek: item_peek,
+                    delimit: true,
+                });
+            }
+            SerializeTask::EndList => {
+                write!(writer, "]")?;
+            }
+            SerializeTask::StartTuple(peek) => {
+                let struct_peek = peek.into_struct().map_err(|e| {
+                    io::Error::new(io::ErrorKind::Other, format!("Not a struct: {}", e))
+                })?;
+
+                write!(writer, "[")?;
+
+                // Process fields in reverse order for the stack
+                let fields = struct_peek
+                    .fields_for_serialize()
+                    .with_first()
+                    .collect::<Vec<_>>();
+
+                stack.push_front(SerializeTask::EndTuple);
+
+                for (first, (_, item_peek)) in fields.into_iter().rev() {
+                    stack.push_front(SerializeTask::TupleItem {
+                        item_peek,
+                        is_first: first,
+                    });
+                }
+            }
+            SerializeTask::TupleItem {
+                item_peek,
+                is_first,
+            } => {
+                if !is_first {
+                    write!(writer, ",")?;
+                }
+
+                stack.push_front(SerializeTask::Value {
+                    peek: item_peek,
+                    delimit: true,
+                });
+            }
+            SerializeTask::EndTuple => {
+                write!(writer, "]")?;
+            }
+            SerializeTask::StartMap { map_peek, delimit } => {
+                let map_peek = map_peek.into_map().map_err(|e| {
+                    io::Error::new(io::ErrorKind::Other, format!("Not a map: {}", e))
+                })?;
+
+                if delimit {
+                    write!(writer, "{{")?;
+                }
+
+                // Process entries in reverse order for the stack
+                let entries = map_peek.iter().with_first().collect::<Vec<_>>();
+                stack.push_front(SerializeTask::EndMap { delimit });
+
+                for (first, (key, value)) in entries.into_iter().rev() {
+                    stack.push_front(SerializeTask::MapEntry {
+                        key,
+                        value,
+                        is_first: first,
+                    });
+                }
+            }
+            SerializeTask::MapEntry {
+                key,
+                value,
+                is_first,
+            } => {
+                if !is_first {
+                    write!(writer, ",")?;
+                }
+
+                // For map, keys must be converted to strings
+                match key.shape().def {
+                    Def::Scalar(_) => {
+                        // Try to convert key to string
+                        if key.shape().is_type::<String>() {
+                            let key_str = key.get::<String>().unwrap();
+                            write_json_string(writer, key_str)?;
+                        } else {
+                            // For other scalar types, use their Display implementation
+                            write!(writer, "\"{}\"", key)?;
+                        }
+                    }
+                    _ => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::Other,
+                            format!("Map keys must be scalar types, got: {}", key.shape()),
+                        ));
+                    }
+                }
+
+                write!(writer, ":")?;
+
+                // Push the value to serialize
+                stack.push_front(SerializeTask::Value {
+                    peek: value,
+                    delimit: true,
+                });
+            }
+            SerializeTask::EndMap { delimit } => {
+                if delimit {
+                    write!(writer, "}}")?;
+                }
+            }
+            SerializeTask::StartEnum { enum_peek, delimit } => {
+                let enum_peek = enum_peek.into_enum().map_err(|e| {
+                    io::Error::new(io::ErrorKind::Other, format!("Not a map: {}", e))
+                })?;
+                let variant = enum_peek.active_variant();
+                let variant_name = variant.name;
+                let is_empty = variant.data.fields.is_empty();
+                let is_struct = variant.data.kind == StructKind::Struct;
+                if is_empty {
+                    // Unit variant - just output the name as a string
+                    write_json_string(writer, variant_name)?;
+                } else {
+                    // Variant with data - output as an object with a single key
+                    if delimit {
+                        write!(writer, "{{")?;
+                    }
+                    write_json_string(writer, variant_name)?;
+                    write!(writer, ":")?;
+
+                    let is_transparent = crate::variant_is_transparent(enum_peek.active_variant());
+
+                    stack.push_front(SerializeTask::EndEnum {
+                        delimit,
+                        is_struct,
+                        is_transparent,
+                    });
+
+                    if is_struct {
+                        // Struct variant - output as an object
+                        write!(writer, "{{")?;
+
+                        // Process fields in reverse order for the stack
+                        let fields = enum_peek
+                            .fields_for_serialize()
+                            .with_first()
+                            .collect::<Vec<_>>();
+
+                        for (first, (field, field_peek)) in fields.into_iter().rev() {
+                            stack.push_front(SerializeTask::EnumStructField {
+                                field,
+                                field_peek,
+                                field_name: field.name,
+                                is_first: first,
+                            });
+                        }
+                    } else if is_transparent {
+                        // Transparent variant - output the field directly
+                        if let Some(field) = enum_peek.field(0) {
+                            stack.push_front(SerializeTask::Value {
+                                peek: field,
+                                delimit: true,
+                            });
+                        } else {
+                            return Err(io::Error::new(
+                                io::ErrorKind::Other,
+                                "Failed to access enum field",
+                            ));
+                        }
+                    } else {
+                        // Tuple variant - output as an array
+                        write!(writer, "[")?;
+
+                        // Process fields in reverse order for the stack
+                        let fields = enum_peek
+                            .fields_for_serialize()
+                            .with_first()
+                            .collect::<Vec<_>>();
+
+                        for (first, (field, field_peek)) in fields.into_iter().rev() {
+                            stack.push_front(SerializeTask::EnumTupleField {
+                                field,
+                                field_peek,
+                                is_first: first,
+                            });
+                        }
+                    }
+                }
+            }
+            SerializeTask::EnumStructField {
+                field_peek,
+                field_name,
+                is_first,
+                field,
+            } => {
+                if !is_first {
+                    write!(writer, ",")?;
+                }
+
+                let should_delimit = field
+                    .attributes
+                    .iter()
+                    .any(|&attr| attr == FieldAttribute::Arbitrary("flatten"));
+
+                write_json_string(writer, field_name)?;
+                write!(writer, ":")?;
+
+                stack.push_front(SerializeTask::Value {
+                    peek: field_peek,
+                    delimit: should_delimit,
+                });
+            }
+            SerializeTask::EnumTupleField {
+                field_peek,
+                is_first,
+                field,
+                ..
+            } => {
+                if !is_first {
+                    write!(writer, ",")?;
+                }
+
+                let should_delimit = field
+                    .attributes
+                    .iter()
+                    .any(|&attr| attr == FieldAttribute::Arbitrary("flatten"));
+
+                stack.push_front(SerializeTask::Value {
+                    peek: field_peek,
+                    delimit: should_delimit,
+                });
+            }
+            SerializeTask::EndEnum {
+                delimit,
+                is_struct,
+                is_transparent,
+            } => {
+                if is_struct {
+                    write!(writer, "}}")?;
+                } else if !is_transparent {
+                    write!(writer, "]")?;
+                }
+
+                if delimit {
+                    write!(writer, "}}")?;
+                }
+            }
+            SerializeTask::StartOption(peek) => {
+                let option_peek = peek.into_option().map_err(|e| {
+                    io::Error::new(io::ErrorKind::Other, format!("Not an option: {}", e))
+                })?;
+
+                if option_peek.is_none() {
+                    write!(writer, "null")?;
+                } else {
+                    let value = option_peek.value().ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::Other, "Failed to get option value")
+                    })?;
+
+                    stack.push_front(SerializeTask::Value {
+                        peek: value,
+                        delimit: true,
+                    });
+                }
+            }
+        }
     }
+
+    Ok(())
 }
 
 /// Serializes a scalar value to JSON
@@ -148,242 +620,6 @@ fn serialize_scalar<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result
             io::ErrorKind::Other,
             format!("Unsupported scalar type: {}", peek.shape()),
         ))
-    }
-}
-
-/// Serializes a struct to JSON
-fn serialize_struct<W: Write>(
-    peek: &Peek<'_, '_>,
-    delimit: bool,
-    writer: &mut W,
-) -> io::Result<()> {
-    let struct_peek = peek
-        .into_struct()
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Not a struct: {}", e)))?;
-
-    if delimit {
-        write!(writer, "{{")?;
-    }
-
-    for (first, (field, field_peek)) in struct_peek.fields_for_serialize().with_first() {
-        if !first {
-            write!(writer, ",")?;
-        }
-
-        // Check for rename attribute
-        let field_name = field
-            .attributes
-            .iter()
-            .find_map(|attr| {
-                if let FieldAttribute::Rename(name) = attr {
-                    Some(*name)
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(field.name);
-        let should_delimit = !field.has_arbitrary_attr("flatten");
-
-        // Write field name
-        if should_delimit {
-            write_json_string(writer, field_name)?;
-            write!(writer, ":")?;
-        }
-
-        // Write field value
-        serialize(&field_peek, should_delimit, writer)?;
-    }
-
-    if delimit {
-        write!(writer, "}}")?;
-    }
-
-    Ok(())
-}
-
-/// Serializes a list to JSON
-fn serialize_list<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<()> {
-    let list_peek = peek
-        .into_list()
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Not a list: {}", e)))?;
-
-    write!(writer, "[")?;
-
-    for (first, item_peek) in list_peek.iter().with_first() {
-        if !first {
-            write!(writer, ",")?;
-        }
-
-        serialize(&item_peek, true, writer)?;
-    }
-
-    write!(writer, "]")?;
-
-    Ok(())
-}
-
-/// Serializes a tuple (struct) to JSON
-fn serialize_tuple<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<()> {
-    let struct_peek = peek
-        .into_struct()
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Not a struct: {}", e)))?;
-
-    write!(writer, "[")?;
-
-    for (first, (_, item_peek)) in struct_peek.fields_for_serialize().with_first() {
-        if !first {
-            write!(writer, ",")?;
-        }
-
-        serialize(&item_peek, true, writer)?;
-    }
-
-    write!(writer, "]")?;
-
-    Ok(())
-}
-
-/// Serializes a map to JSON
-fn serialize_map<W: Write>(peek: &Peek<'_, '_>, delimit: bool, writer: &mut W) -> io::Result<()> {
-    let map_peek = peek
-        .into_map()
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Not a map: {}", e)))?;
-
-    if delimit {
-        write!(writer, "{{")?;
-    }
-
-    for (first, (key, value)) in map_peek.iter().with_first() {
-        if !first {
-            write!(writer, ",")?;
-        }
-
-        // For map, keys must be converted to strings
-        match key.shape().def {
-            Def::Scalar(_) => {
-                // Try to convert key to string
-                if key.shape().is_type::<String>() {
-                    let key_str = key.get::<String>().unwrap();
-                    write_json_string(writer, key_str)?;
-                } else {
-                    // For other scalar types, use their Display implementation
-                    write!(writer, "\"{}\"", key)?;
-                }
-            }
-            _ => {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("Map keys must be scalar types, got: {}", key.shape()),
-                ));
-            }
-        }
-
-        write!(writer, ":")?;
-
-        // Write map value
-        serialize(&value, true, writer)?;
-    }
-
-    if delimit {
-        write!(writer, "}}")?;
-    }
-
-    Ok(())
-}
-
-/// Serializes an enum to JSON
-fn serialize_enum<W: Write>(peek: &Peek<'_, '_>, delimit: bool, writer: &mut W) -> io::Result<()> {
-    let enum_peek = peek
-        .into_enum()
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Not an enum: {}", e)))?;
-
-    let variant = enum_peek.active_variant();
-    let variant_name = variant.name;
-
-    // Check if this is a unit variant or a variant with data
-    if variant.data.fields.is_empty() {
-        // Unit variant - just output the name as a string
-        write_json_string(writer, variant_name)
-    } else {
-        // Variant with data - output as an object with a single key
-        if delimit {
-            write!(writer, "{{")?;
-        }
-        write_json_string(writer, variant_name)?;
-        write!(writer, ":")?;
-
-        // Multi-field variant - output as an array or object depending on variant type
-        let is_struct = variant.data.kind == StructKind::Struct;
-
-        if is_struct {
-            // Struct variant - output as an object
-            write!(writer, "{{")?;
-
-            for (first, (field, field_peek)) in enum_peek.fields_for_serialize().with_first() {
-                if !first {
-                    write!(writer, ",")?;
-                }
-
-                let should_delimit = field
-                    .attributes
-                    .iter()
-                    .any(|&attr| attr == FieldAttribute::Arbitrary("flatten"));
-
-                write_json_string(writer, field.name)?;
-                write!(writer, ":")?;
-                serialize(&field_peek, should_delimit, writer)?;
-            }
-
-            write!(writer, "}}")?
-        } else {
-            // Tuple variant - output as an array if has more than 1 element, otherwise just output
-            // the element.
-
-            if crate::variant_is_transparent(variant) {
-                let field = enum_peek.field(0).ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::Other, "Failed to access enum field")
-                })?;
-                serialize(&field, true, writer)?;
-            } else {
-                write!(writer, "[")?;
-
-                for (first, (field, field_peek)) in enum_peek.fields_for_serialize().with_first() {
-                    if !first {
-                        write!(writer, ",")?;
-                    }
-
-                    let should_delimit = field
-                        .attributes
-                        .iter()
-                        .any(|&attr| attr == FieldAttribute::Arbitrary("flatten"));
-
-                    serialize(&field_peek, should_delimit, writer)?;
-                }
-
-                write!(writer, "]")?;
-            }
-        }
-
-        if delimit {
-            write!(writer, "}}")?;
-        }
-        Ok(())
-    }
-}
-
-/// Serializes an `Option<T>` to JSON
-fn serialize_option<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<()> {
-    let option_peek = peek
-        .into_option()
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Not an option: {}", e)))?;
-
-    if option_peek.is_none() {
-        write!(writer, "null")
-    } else {
-        let value = option_peek
-            .value()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Failed to get option value"))?;
-        serialize(&value, true, writer)
     }
 }
 

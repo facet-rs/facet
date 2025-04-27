@@ -15,6 +15,16 @@ pub struct PeekEnum<'mem, 'facet_lifetime> {
     pub(crate) def: EnumDef,
 }
 
+impl core::fmt::Debug for PeekEnum<'_, '_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if let Some(debug_fn) = self.vtable().debug {
+            unsafe { debug_fn(self.data, f) }
+        } else {
+            write!(f, "⟨{}⟩", self.shape)
+        }
+    }
+}
+
 /// Returns the enum definition if the shape represents an enum, None otherwise
 pub fn peek_enum(shape: &'static Shape) -> Option<EnumDef> {
     match shape.def {
