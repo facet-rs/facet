@@ -12,9 +12,31 @@ fn json_read_unit_enum_variant() -> Result<()> {
         Italic,
         Oblique,
     }
-    // TODO: support rename/rename_all
     let json_italic = r#""Italic""#;
     let json_oblique = r#""Oblique""#;
+
+    let s_italic: FontStyle = from_str(json_italic)?;
+    assert_eq!(s_italic, FontStyle::Italic);
+
+    let s_oblique: FontStyle = from_str(json_oblique)?;
+    assert_eq!(s_oblique, FontStyle::Oblique);
+
+    Ok(())
+}
+
+#[test]
+fn json_read_unit_enum_variant_lowercase() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(rename_all = "lowercase")]
+    #[repr(u8)]
+    enum FontStyle {
+        Italic,
+        Oblique,
+    }
+    let json_italic = r#""italic""#;
+    let json_oblique = r#""oblique""#;
 
     let s_italic: FontStyle = from_str(json_italic)?;
     assert_eq!(s_italic, FontStyle::Italic);

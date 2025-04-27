@@ -9,6 +9,7 @@ use facet_reflect::ReflectError;
 use owo_colors::OwoColorize;
 
 use super::{Token, TokenErrorKind, tokenizer::Span};
+use facet_core::Def;
 use facet_core::Shape;
 
 /// A JSON parse error, with context. Never would've guessed huh.
@@ -43,51 +44,85 @@ impl<'input> JsonError<'input> {
         }
     }
 
-    /// Returns a human-readable error message for this JSON error.
-    pub fn message(&self) -> String {
-        match &self.kind {
-            JsonErrorKind::UnexpectedEof(msg) => format!("Unexpected end of file: {}", msg.red()),
-            JsonErrorKind::MissingField(fld) => format!("Missing required field: {}", fld.red()),
+    /// Returns a wrapper type that displays a human-readable error message for this JSON error.
+    pub fn message(&self) -> JsonErrorMessage<'_> {
+        JsonErrorMessage(self)
+    }
+}
+
+/// A wrapper type for displaying JSON error messages
+pub struct JsonErrorMessage<'a>(&'a JsonError<'a>);
+
+impl core::fmt::Display for JsonErrorMessage<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match &self.0.kind {
+            JsonErrorKind::UnexpectedEof(msg) => write!(f, "Unexpected end of file: {}", msg.red()),
+            JsonErrorKind::MissingField(fld) => write!(f, "Missing required field: {}", fld.red()),
             JsonErrorKind::UnexpectedToken { got, wanted } => {
-                format!(
+                write!(
+                    f,
                     "Unexpected token: got {}, wanted {}",
                     got.red(),
                     wanted.green()
                 )
             }
             JsonErrorKind::NumberOutOfRange(n) => {
-                format!("Number out of range: {}", n.red())
+                write!(f, "Number out of range: {}", n.red())
             }
             JsonErrorKind::StringAsNumber(s) => {
-                format!("Expected a string but got number: {}", s.red())
+                write!(f, "Expected a string but got number: {}", s.red())
             }
             JsonErrorKind::UnknownField { field_name, shape } => {
-                format!(
+                write!(
+                    f,
                     "Unknown field: {} for shape {}",
                     field_name.red(),
                     shape.yellow()
                 )
             }
-            JsonErrorKind::InvalidUtf8(e) => format!("Invalid UTF-8 encoding: {}", e.red()),
-            JsonErrorKind::ReflectError(e) => format!("{e}"),
-            JsonErrorKind::SyntaxError(e) => format!("{e}"),
+            JsonErrorKind::InvalidUtf8(e) => write!(f, "Invalid UTF-8 encoding: {}", e.red()),
+            JsonErrorKind::ReflectError(e) => write!(f, "{e}"),
+            JsonErrorKind::SyntaxError(e) => write!(f, "{e}"),
             JsonErrorKind::Unimplemented(s) => {
-                format!("Feature not yet implemented: {}", s.yellow())
+                write!(f, "Feature not yet implemented: {}", s.yellow())
             }
             JsonErrorKind::UnsupportedType { got, wanted } => {
-                format!(
+                write!(
+                    f,
                     "Unsupported type: got {}, wanted {}",
                     got.red(),
                     wanted.green()
                 )
             }
-            JsonErrorKind::NoSuchVariant { name, enum_shape } => {
-                format!(
-                    "Enum variant not found: {} in enum {}",
-                    name.red(),
-                    enum_shape.yellow()
-                )
-            }
+            JsonErrorKind::NoSuchVariant { name, enum_shape } => match enum_shape.def {
+                Def::Enum(ed) => {
+                    write!(
+                        f,
+                        "Enum variant not found: {} in enum {}. Available variants: [",
+                        name.red(),
+                        enum_shape.yellow()
+                    )?;
+
+                    let mut first = true;
+                    for variant in ed.variants.iter() {
+                        if !first {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "{}", variant.name.green())?;
+                        first = false;
+                    }
+
+                    write!(f, "]")
+                }
+                _ => {
+                    write!(
+                        f,
+                        "Enum variant not found: {} in enum {}. No variants available (not an enum)",
+                        name.red(),
+                        enum_shape.yellow()
+                    )
+                }
+            },
         }
     }
 }

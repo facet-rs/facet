@@ -1,6 +1,6 @@
 [package]
 name = "facet-derive-emit"
-version = "0.18.0"
+version = "0.18.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -19,7 +19,7 @@ categories = ["development-tools", "encoding"]
 slow-tests = [] # Enable slow tests (compile tests)
 
 [dependencies]
-facet-derive-parse = { version = "0.18.0", path = "../facet-derive-parse" }
+facet-derive-parse = { version = "0.19.0", path = "../facet-derive-parse" }
 
 [dev-dependencies]
 insta = { git = "https://github.com/mitsuhiko/insta" }

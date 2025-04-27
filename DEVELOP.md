@@ -37,6 +37,15 @@ merging to avoid CI failures.
 Use `just gen` to regenerate the `README.md` whenever documentation needs to be
 updated — that's normally part of the precommit hook.
 
+## Precommit/prepush hook
+
+Sometimes the hook just won't pass, and in that case you can just pass
+`--no-verify` to either `git commit` or `git push`. Nobody'll get mad at you
+except for the CI pipeline.
+
+Those hooks are only here to save you from back-and-forths with CI! They should
+serve you, they're a sign, not a cop, etc.
+
 ## Shipping
 
 Only @fasterthanlime has publish rights for the crates.

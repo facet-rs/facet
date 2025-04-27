@@ -17,7 +17,7 @@ categories = ["development-tools", "encoding"]
 
 [dependencies]
 facet-core = { version = "0.18.0", path = "../facet-core" }
-facet-derive = { version = "0.18.0", path = "../facet-derive" }
+facet-derive = { version = "0.18.2", path = "../facet-derive" }
 facet-reflect = { version = "0.18.0", path = "../facet-reflect" }
 
 [dev-dependencies]

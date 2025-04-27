@@ -239,7 +239,7 @@ dependencies = [
 
 [[package]]
 name = "facet"
-version = "0.18.0"
+version = "0.18.2"
 dependencies = [
  "cargo-husky",
  "eyre",
@@ -250,7 +250,7 @@ dependencies = [
 
 [[package]]
 name = "facet-args"
-version = "0.18.0"
+version = "0.18.1"
 dependencies = [
  "facet",
  "facet-core",
@@ -276,7 +276,7 @@ dependencies = [
 
 [[package]]
 name = "facet-derive"
-version = "0.18.0"
+version = "0.18.2"
 dependencies = [
  "facet-core",
  "facet-derive-emit",
@@ -284,7 +284,7 @@ dependencies = [
 
 [[package]]
 name = "facet-derive-emit"
-version = "0.18.0"
+version = "0.18.2"
 dependencies = [
  "facet-derive-parse",
  "insta",
@@ -295,7 +295,7 @@ dependencies = [
 
 [[package]]
 name = "facet-derive-parse"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "unsynn",
 ]
@@ -318,7 +318,7 @@ dependencies = [
 
 [[package]]
 name = "facet-json"
-version = "0.18.0"
+version = "0.18.2"
 dependencies = [
  "ariadne",
  "camino",
@@ -337,7 +337,7 @@ dependencies = [
 
 [[package]]
 name = "facet-jsonschema"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "facet",
  "facet-core",
@@ -348,7 +348,7 @@ dependencies = [
 
 [[package]]
 name = "facet-kdl"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "ariadne",
  "facet",
@@ -374,7 +374,7 @@ dependencies = [
 
 [[package]]
 name = "facet-pretty"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "facet",
  "facet-core",
@@ -408,7 +408,7 @@ dependencies = [
 
 [[package]]
 name = "facet-toml"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "ariadne",
  "eyre",
@@ -419,12 +419,13 @@ dependencies = [
  "log",
  "num-traits",
  "toml_edit",
+ "toml_write",
  "yansi",
 ]
 
 [[package]]
 name = "facet-urlencoded"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "eyre",
  "facet",
@@ -950,6 +951,12 @@ dependencies = [
  "toml_datetime",
  "winnow",
 ]
+
+[[package]]
+name = "toml_write"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "28391a4201ba7eb1984cfeb6862c0b3ea2cfe23332298967c749dddc0d6cd976"
 
 [[package]]
 name = "tracing"

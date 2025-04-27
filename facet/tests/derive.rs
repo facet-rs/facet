@@ -479,3 +479,34 @@ fn opaque_arc() {
         _ => unreachable!(),
     }
 }
+
+#[test]
+fn enum_rename_all_lowercase() {
+    #[derive(Debug, Facet)]
+    #[repr(u8)]
+    #[facet(rename_all = "lowercase")]
+    #[allow(dead_code)]
+    enum MaybeFontStyle {
+        Regular,
+        Italic,
+        Bold,
+    }
+
+    let shape = MaybeFontStyle::SHAPE;
+
+    assert_eq!(format!("{}", shape), "MaybeFontStyle");
+
+    if let Def::Enum(enum_def) = shape.def {
+        assert_eq!(enum_def.variants.len(), 3);
+
+        assert_eq!(enum_def.variants[0].name, "regular");
+        assert_eq!(enum_def.variants[1].name, "italic");
+        assert_eq!(enum_def.variants[2].name, "bold");
+
+        for variant in enum_def.variants {
+            assert_eq!(variant.data.fields.len(), 0);
+        }
+    } else {
+        panic!("Expected Enum definition");
+    }
+}

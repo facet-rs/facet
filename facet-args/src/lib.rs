@@ -4,6 +4,9 @@
 #![forbid(unsafe_code)]
 #![doc = include_str!("../README.md")]
 
+extern crate alloc;
+use alloc::borrow::Cow;
+
 use facet_core::{Def, Facet, FieldAttribute};
 use facet_reflect::{ReflectError, Wip};
 
@@ -32,6 +35,15 @@ fn parse_field<'facet>(wip: Wip<'facet>, value: &'facet str) -> Result<Wip<'face
     .pop()
 }
 
+fn kebab_to_snake(input: &str) -> Cow<str> {
+    // ASSUMPTION: We only support GNU/Unix kebab-case named argument
+    // ASSUMPTION: struct fields are snake_case
+    if !input.contains('-') {
+        return Cow::Borrowed(input);
+    }
+    Cow::Owned(input.replace('-', "_"))
+}
+
 /// Parses command-line arguments
 pub fn from_slice<'input, 'facet, T>(s: &[&'input str]) -> T
 where
@@ -48,8 +60,9 @@ where
         s = &s[1..];
 
         if let Some(key) = token.strip_prefix("--") {
+            let key = kebab_to_snake(key);
             log::trace!("Found named argument: {}", key);
-            let field_index = match wip.field_index(key) {
+            let field_index = match wip.field_index(&key) {
                 Some(index) => index,
                 None => panic!("Unknown argument: {}", key),
             };
@@ -63,6 +76,30 @@ where
                 s = &s[1..];
                 wip = parse_field(field, value).unwrap();
             }
+        } else if let Some(key) = token.strip_prefix("-") {
+            log::trace!("Found short named argument: {}", key);
+            let Def::Struct(sd) = wip.shape().def else {
+                panic!("Expected struct definition");
+            };
+            for (field_index, f) in sd.fields.iter().enumerate() {
+                if f.attributes
+                    .iter()
+                    .any(|a| matches!(a, FieldAttribute::Arbitrary(a) if a.contains("short") && a.contains(key))
+                   )
+                {
+                    log::trace!("Found field matching short_code: {} for field {}", key, f.name);
+                    let field = wip.field(field_index).unwrap();
+                    if field.shape().is_type::<bool>() {
+                        wip = parse_field(field, "true").unwrap();
+                    } else {
+                        let value = s.first().expect("expected value after argument");
+                        log::trace!("Field value: {}", value);
+                        s = &s[1..];
+                        wip = parse_field(field, value).unwrap();
+                    }
+                    break;
+                }
+            }
         } else {
             log::trace!("Encountered positional argument: {}", token);
             let Def::Struct(sd) = wip.shape().def else {
@@ -74,6 +111,9 @@ where
                     .iter()
                     .any(|a| matches!(a, FieldAttribute::Arbitrary(a) if a.contains("positional")))
                 {
+                    if wip.is_field_set(field_index).unwrap() {
+                        continue;
+                    }
                     let field = wip.field(field_index).unwrap();
                     wip = parse_field(field, token).unwrap();
                     break;

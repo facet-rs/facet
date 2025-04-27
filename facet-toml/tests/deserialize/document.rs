@@ -1,6 +1,6 @@
 //! Tests for TOML document parsing.
 
-use facet_toml::error::TomlErrorKind;
+use facet_toml::TomlErrorKind;
 
 #[test]
 fn test_invalid_toml() {

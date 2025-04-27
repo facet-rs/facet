@@ -1,22 +1,39 @@
 use facet::Facet;
-use facet_pretty::FacetPretty;
 
 #[test]
 fn test_arg_parse() {
     facet_testhelpers::setup();
 
     #[derive(Facet)]
-    struct Args {
+    struct Args<'a> {
         #[facet(positional)]
         path: String,
+
+        #[facet(positional)]
+        path_borrow: &'a str,
 
         #[facet(named, short = 'v')]
         verbose: bool,
 
         #[facet(named, short = 'j')]
         concurrency: usize,
+
+        #[facet(named, short = 'x')]
+        consider_casing: usize,
     }
 
-    let args: Args = facet_args::from_slice(&["--verbose", "--concurrency", "14", "example.rs"]);
-    eprintln!("args: {}", args.pretty());
+    let args: Args = facet_args::from_slice(&[
+        "--verbose",
+        "-j",
+        "14",
+        "--consider-casing",
+        "0",
+        "example.rs",
+        "test.rs",
+    ]);
+    assert!(args.verbose);
+    assert_eq!(args.path, "example.rs");
+    assert_eq!(args.path_borrow, "test.rs");
+    assert_eq!(args.concurrency, 14);
+    assert_eq!(args.consider_casing, 0);
 }

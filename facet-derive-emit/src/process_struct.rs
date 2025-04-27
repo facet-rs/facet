@@ -20,7 +20,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     let kind;
     let where_clauses;
     let type_params = build_type_params(parsed.generics.as_ref());
-    let set_attributes = build_container_attributes(&parsed.attributes);
+    let container_attributes = build_container_attributes(&parsed.attributes);
 
     // For transparent, extract the inner type
     let inner_type = if is_transparent {
@@ -49,15 +49,16 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                     // Handle raw identifiers (like r#type) by stripping the 'r#' prefix.
                     let raw_field_name = field.value.name.to_string(); // e.g., "r#type"
                     let normalized_field_name = normalize_ident_str(&raw_field_name); // e.g., "type"
-                    gen_struct_field(
-                        &raw_field_name,
+                    gen_struct_field(FieldInfo {
+                        raw_field_name: &raw_field_name,
                         normalized_field_name,
-                        &field.value.typ.tokens_to_string(),
-                        &struct_name,
-                        &bgp,
-                        &field.value.attributes,
-                        None,
-                    )
+                        field_type: &field.value.typ.tokens_to_string(),
+                        struct_name: &struct_name,
+                        bgp: &bgp,
+                        attrs: &field.value.attributes,
+                        base_field_offset: None,
+                        rename_rule: container_attributes.rename_rule,
+                    })
                 })
                 .collect::<Vec<String>>()
         }
@@ -75,15 +76,16 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 .enumerate()
                 .map(|(index, field)| {
                     let field_name = format!("{index}");
-                    gen_struct_field(
-                        &field_name,
-                        &field_name,
-                        &field.value.typ.tokens_to_string(),
-                        &struct_name,
-                        &bgp,
-                        &field.value.attributes,
-                        None,
-                    )
+                    gen_struct_field(FieldInfo {
+                        raw_field_name: &field_name,
+                        normalized_field_name: &field_name,
+                        field_type: &field.value.typ.tokens_to_string(),
+                        struct_name: &struct_name,
+                        bgp: &bgp,
+                        attrs: &field.value.attributes,
+                        base_field_offset: None,
+                        rename_rule: container_attributes.rename_rule,
+                    })
                 })
                 .collect::<Vec<String>>()
         }
@@ -262,7 +264,7 @@ unsafe impl{bgp_def} ::facet::Facet<'__facet> for {struct_name}{bgp_without_boun
                 .build()))
             {inner_setter}
             {maybe_container_doc}
-            {set_attributes}
+            {container_attributes}
             .build()
     }};
 }}
@@ -274,6 +276,7 @@ unsafe impl{bgp_def} ::facet::Facet<'__facet> for {struct_name}{bgp_without_boun
         } else {
             ""
         },
+        container_attributes = container_attributes.code
     );
 
     // Uncomment to see generated code before lexin

@@ -6,7 +6,7 @@ use facet_reflect::{ReflectError, Wip};
 use num_traits::cast::NumCast;
 use toml_edit::{Item, Value};
 
-use crate::error::{TomlError, TomlErrorKind};
+use super::error::{TomlError, TomlErrorKind};
 
 /// Try to convert a TOML integer or float to a Rust number.
 ///

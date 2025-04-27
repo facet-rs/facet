@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.1](https://github.com/facet-rs/facet/compare/facet-args-v0.18.0...facet-args-v0.18.1) - 2025-04-27
+
+### Added
+
+- *(facet-args)* support multi-word argument values
+
+### Other
+
+- Handle multiple positional args
+- Resolve #443 - handle short named argument
+
 ## [0.15.0](https://github.com/facet-rs/facet/compare/facet-args-v0.14.0...facet-args-v0.15.0) - 2025-04-23
 
 ### Other

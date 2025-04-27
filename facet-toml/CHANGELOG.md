@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0](https://github.com/facet-rs/facet/compare/facet-toml-v0.18.1...facet-toml-v0.19.0) - 2025-04-27
+
+### Added
+
+- *(toml)* implement 'default' attribute
+
+### Other
+
+- *(toml)* [**breaking**] setup structure for serialize implementation
+
 ## [0.15.0](https://github.com/facet-rs/facet/compare/facet-toml-v0.14.0...facet-toml-v0.15.0) - 2025-04-23
 
 ### Added

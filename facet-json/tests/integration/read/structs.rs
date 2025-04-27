@@ -81,8 +81,8 @@ fn test_reading_flat_structs() {
         name: String,
         #[facet(flatten)]
         struct_: InnerStruct,
-        // #[facet(flatten)]
-        // enum_: InnerEnum,
+        #[facet(flatten)]
+        enum_: InnerEnum,
     }
 
     #[derive(Debug, PartialEq, Eq, facet::Facet)]
@@ -106,10 +106,10 @@ fn test_reading_flat_structs() {
     let expected1 = Outer {
         name: "test1".to_string(),
         struct_: InnerStruct { val: 1 },
-        // enum_: InnerEnum::Variant1 {
-        //     field1: "aaa".to_string(),
-        //     field2: "bbb".to_string(),
-        // },
+        enum_: InnerEnum::Variant1 {
+            field1: "aaa".to_string(),
+            field2: "bbb".to_string(),
+        },
     };
     assert_eq!(expected1, actual1);
 

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use eyre::Result;
 use facet::Facet;
-use facet_toml::error::TomlErrorKind;
+use facet_toml::TomlErrorKind;
 
 #[test]
 fn test_scalar_map() -> Result<()> {
