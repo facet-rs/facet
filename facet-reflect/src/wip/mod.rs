@@ -284,7 +284,7 @@ pub enum FrameMode {
 /// A work-in-progress heap-allocated value
 pub struct Wip<'facet_lifetime> {
     /// stack of frames to keep track of deeply nested initialization
-    pub frames: alloc::vec::Vec<Frame>,
+    frames: alloc::vec::Vec<Frame>,
 
     /// keeps track of initialization of out-of-tree frames
     istates: FlatMap<ValueId, IState>,
