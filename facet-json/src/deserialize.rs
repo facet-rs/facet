@@ -524,31 +524,58 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
 
                         let mut ignore = false;
                         let mut needs_pop = true;
+                        let mut handled_by_flatten = false;
 
                         match wip.shape().def {
-                            Def::Struct(_) => match wip.field_index(&key) {
-                                Some(index) => {
+                            Def::Struct(_) => {
+                                // First try to find a direct field match
+                                if let Some(index) = wip.field_index(&key) {
                                     trace!("It's a struct field");
                                     reflect!(field(index));
-                                }
-                                None => {
-                                    if wip.shape().has_deny_unknown_fields_attr() {
-                                        trace!(
-                                            "It's not a struct field AND we're denying unknown fields"
-                                        );
-                                        // well, it all depends.
-                                        bail!(JsonErrorKind::UnknownField {
-                                            field_name: key.to_string(),
-                                            shape: wip.shape(),
-                                        })
-                                    } else {
-                                        trace!(
-                                            "It's not a struct field and we're ignoring unknown fields"
-                                        );
-                                        ignore = true;
+                                } else {
+                                    // Check for flattened fields
+                                    let mut found_in_flatten = false;
+                                    if let Def::Struct(sd) = wip.shape().def {
+                                        for (index, field) in sd.fields.iter().enumerate() {
+                                            if field.has_arbitrary_attr("flatten") {
+                                                trace!("Found flattened field #{}", index);
+                                                // Enter the flattened field
+                                                reflect!(field(index));
+
+                                                // Check if this flattened field has the requested key
+                                                if let Some(subfield_index) = wip.field_index(&key)
+                                                {
+                                                    trace!("Found key {} in flattened field", key);
+                                                    reflect!(field(subfield_index));
+                                                    found_in_flatten = true;
+                                                    handled_by_flatten = true;
+                                                    break;
+                                                } else {
+                                                    // Key not in this flattened field, go back up
+                                                    reflect!(pop());
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    if !found_in_flatten {
+                                        if wip.shape().has_deny_unknown_fields_attr() {
+                                            trace!(
+                                                "It's not a struct field AND we're denying unknown fields"
+                                            );
+                                            bail!(JsonErrorKind::UnknownField {
+                                                field_name: key.to_string(),
+                                                shape: wip.shape(),
+                                            })
+                                        } else {
+                                            trace!(
+                                                "It's not a struct field and we're ignoring unknown fields"
+                                            );
+                                            ignore = true;
+                                        }
                                     }
                                 }
-                            },
+                            }
                             Def::Enum(_sd) => match wip.find_variant(&key) {
                                 Some((index, variant)) => {
                                     trace!("Variant {} selected", variant.name.blue());
@@ -612,8 +639,13 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                         if ignore {
                             stack.push(Instruction::SkipValue);
                         } else {
-                            if needs_pop {
+                            if needs_pop && !handled_by_flatten {
                                 trace!("Pushing Pop insn to stack (ObjectVal)");
+                                stack.push(Instruction::Pop(PopReason::ObjectVal));
+                            } else if handled_by_flatten {
+                                // We need two pops for flattened fields - one for the field itself, one for the containing struct
+                                trace!("Pushing Pop insn to stack (ObjectVal) for flattened field");
+                                stack.push(Instruction::Pop(PopReason::ObjectVal));
                                 stack.push(Instruction::Pop(PopReason::ObjectVal));
                             }
                             stack.push(Instruction::Value);
