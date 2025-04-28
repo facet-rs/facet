@@ -8,12 +8,14 @@ static CONFIG_VALUE_SHAPE: &'static ::facet::Shape = <ConfigValue as ::facet::Fa
 unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
         struct __ShadowConfigValue_Text<'__facet> {
             _discriminant: u8,
             _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
             _0: String,
         }
         #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
         struct __ShadowConfigValue_Number<'__facet> {
             _discriminant: u8,
             _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
@@ -21,6 +23,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
             unit: String,
         }
         #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
         struct __ShadowConfigValue_Boolean<'__facet> {
             _discriminant: u8,
             _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
@@ -46,7 +49,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
                     ::facet::Variant::builder()
                         .name("TextValue")
                         .attributes(&[::facet::VariantAttribute::Rename("TextValue")])
-                        .discriminant(0)
+                        .discriminant(0i64)
                         .fields(::facet::StructDef::builder().tuple().fields(fields).build())
                         .build()
                 },
@@ -96,7 +99,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
                     ::facet::Variant::builder()
                         .name("NumberValue")
                         .attributes(&[::facet::VariantAttribute::Rename("NumberValue")])
-                        .discriminant(1)
+                        .discriminant(1i64)
                         .fields(
                             ::facet::StructDef::builder()
                                 .struct_()
@@ -125,7 +128,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
                     ::facet::Variant::builder()
                         .name("BoolValue")
                         .attributes(&[::facet::VariantAttribute::Rename("BoolValue")])
-                        .discriminant(2)
+                        .discriminant(2i64)
                         .fields(::facet::StructDef::builder().tuple().fields(fields).build())
                         .build()
                 },

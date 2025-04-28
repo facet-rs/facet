@@ -9,33 +9,40 @@ static ENUM_WITH_VARIANTS_SHAPE: &'static ::facet::Shape =
 unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithVariants {
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
+        #[allow(dead_code)]
         enum __ShadowDiscriminantEnumWithVariants {
             Variant1,
             Variant2,
             Variant3,
         }
         #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
         union __ShadowFieldsEnumWithVariants<'__facet> {
-            Variant1: std::mem::ManuallyDrop<__ShadowFieldEnumWithVariants_Variant1<'__facet>>,
-            Variant2: std::mem::ManuallyDrop<__ShadowFieldEnumWithVariants_Variant2<'__facet>>,
-            Variant3: std::mem::ManuallyDrop<__ShadowFieldEnumWithVariants_Variant3<'__facet>>,
+            Variant1: ::core::mem::ManuallyDrop<__ShadowFieldEnumWithVariants_Variant1<'__facet>>,
+            Variant2: ::core::mem::ManuallyDrop<__ShadowFieldEnumWithVariants_Variant2<'__facet>>,
+            Variant3: ::core::mem::ManuallyDrop<__ShadowFieldEnumWithVariants_Variant3<'__facet>>,
         }
         #[repr(C)]
+        #[allow(non_snake_case)]
+        #[allow(dead_code)]
         struct __ShadowReprEnumWithVariants<'__facet> {
             _discriminant: __ShadowDiscriminantEnumWithVariants,
             _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
             _fields: __ShadowFieldsEnumWithVariants<'__facet>,
         }
         #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
         struct __ShadowFieldEnumWithVariants_Variant1<'__facet> {
             _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
         }
         #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
         struct __ShadowFieldEnumWithVariants_Variant2<'__facet> {
             _0: i32,
             _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
         }
         #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
         struct __ShadowFieldEnumWithVariants_Variant3<'__facet> {
             field1: i32,
             field2: String,
@@ -45,7 +52,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithVariants {
             [
                 ::facet::Variant::builder()
                     .name("Variant1")
-                    .discriminant(0)
+                    .discriminant(0i64)
                     .fields(::facet::StructDef::builder().unit().build())
                     .doc(&[" Comment A"])
                     .build(),
@@ -73,7 +80,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithVariants {
                     };
                     ::facet::Variant::builder()
                         .name("Variant2")
-                        .discriminant(1)
+                        .discriminant(1i64)
                         .fields(::facet::StructDef::builder().tuple().fields(fields).build())
                         .doc(&[" Comment B"])
                         .build()
@@ -127,7 +134,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithVariants {
                     };
                     ::facet::Variant::builder()
                         .name("Variant3")
-                        .discriminant(2)
+                        .discriminant(2i64)
                         .fields(
                             ::facet::StructDef::builder()
                                 .struct_()

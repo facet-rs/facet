@@ -8,12 +8,14 @@ static PACKET_SHAPE: &'static ::facet::Shape = <Packet as ::facet::Facet>::SHAPE
 unsafe impl<'__facet> ::facet::Facet<'__facet> for Packet {
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
         struct __ShadowPacket_Header<'__facet> {
             _discriminant: u8,
             _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
             _0: [u8; 4],
         }
         #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
         struct __ShadowPacket_Payload<'__facet> {
             _discriminant: u8,
             _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
@@ -35,7 +37,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Packet {
                     };
                     ::facet::Variant::builder()
                         .name("Header")
-                        .discriminant(0)
+                        .discriminant(0i64)
                         .fields(::facet::StructDef::builder().tuple().fields(fields).build())
                         .doc(&[" Array of bytes representing the header"])
                         .build()
@@ -57,7 +59,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Packet {
                     };
                     ::facet::Variant::builder()
                         .name("Payload")
-                        .discriminant(1)
+                        .discriminant(1i64)
                         .fields(::facet::StructDef::builder().tuple().fields(fields).build())
                         .build()
                 },

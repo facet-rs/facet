@@ -11,22 +11,22 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Test {
             [
                 ::facet::Variant::builder()
                     .name("Red")
-                    .discriminant(0)
+                    .discriminant(0i64)
                     .fields(::facet::StructDef::builder().unit().build())
                     .build(),
                 ::facet::Variant::builder()
                     .name("Blue")
-                    .discriminant(7)
+                    .discriminant(7i64)
                     .fields(::facet::StructDef::builder().unit().build())
                     .build(),
                 ::facet::Variant::builder()
                     .name("Green")
-                    .discriminant(8)
+                    .discriminant(8i64)
                     .fields(::facet::StructDef::builder().unit().build())
                     .build(),
                 ::facet::Variant::builder()
                     .name("Yellow")
-                    .discriminant(10)
+                    .discriminant(10i64)
                     .fields(::facet::StructDef::builder().unit().build())
                     .build(),
             ]

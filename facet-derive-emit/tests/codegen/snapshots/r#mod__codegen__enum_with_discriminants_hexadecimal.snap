@@ -11,32 +11,32 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Color {
             [
                 ::facet::Variant::builder()
                     .name("Red")
-                    .discriminant(1)
+                    .discriminant(1i64)
                     .fields(::facet::StructDef::builder().unit().build())
                     .build(),
                 ::facet::Variant::builder()
                     .name("Blue")
-                    .discriminant(127)
+                    .discriminant(127i64)
                     .fields(::facet::StructDef::builder().unit().build())
                     .build(),
                 ::facet::Variant::builder()
                     .name("Green")
-                    .discriminant(128)
+                    .discriminant(128i64)
                     .fields(::facet::StructDef::builder().unit().build())
                     .build(),
                 ::facet::Variant::builder()
                     .name("Yellow")
-                    .discriminant(16)
+                    .discriminant(16i64)
                     .fields(::facet::StructDef::builder().unit().build())
                     .build(),
                 ::facet::Variant::builder()
                     .name("Magenta")
-                    .discriminant(65261)
+                    .discriminant(65261i64)
                     .fields(::facet::StructDef::builder().unit().build())
                     .build(),
                 ::facet::Variant::builder()
                     .name("Cyan")
-                    .discriminant(48879)
+                    .discriminant(48879i64)
                     .fields(::facet::StructDef::builder().unit().build())
                     .build(),
             ]

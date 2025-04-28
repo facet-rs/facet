@@ -9,18 +9,21 @@ static ENUM_WITH_ATTRIBUTES_SHAPE: &'static ::facet::Shape =
 unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
         struct __ShadowEnumWithAttributes_InternalVariant<'__facet> {
             _discriminant: u16,
             _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
             _0: i32,
         }
         #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
         struct __ShadowEnumWithAttributes_VariantC<'__facet> {
             _discriminant: u16,
             _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
             secret: String,
         }
         #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
         struct __ShadowEnumWithAttributes_VariantD<'__facet> {
             _discriminant: u16,
             _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
@@ -34,7 +37,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                         ::facet::VariantAttribute::Arbitrary("name = \"FirstVariant\""),
                         ::facet::VariantAttribute::Arbitrary("discriminant = 10"),
                     ])
-                    .discriminant(0)
+                    .discriminant(0i64)
                     .fields(::facet::StructDef::builder().unit().build())
                     .build(),
                 {
@@ -59,7 +62,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                     ::facet::Variant::builder()
                         .name("InternalVariant")
                         .attributes(&[::facet::VariantAttribute::Arbitrary("skip")])
-                        .discriminant(1)
+                        .discriminant(1i64)
                         .fields(::facet::StructDef::builder().tuple().fields(fields).build())
                         .build()
                 },
@@ -85,7 +88,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                         .attributes(&[::facet::VariantAttribute::Arbitrary(
                             "deprecated = \"Use VariantD instead\"",
                         )])
-                        .discriminant(2)
+                        .discriminant(2i64)
                         .fields(
                             ::facet::StructDef::builder()
                                 .struct_()
@@ -119,7 +122,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                     };
                     ::facet::Variant::builder()
                         .name("VariantD")
-                        .discriminant(3)
+                        .discriminant(3i64)
                         .fields(
                             ::facet::StructDef::builder()
                                 .struct_()

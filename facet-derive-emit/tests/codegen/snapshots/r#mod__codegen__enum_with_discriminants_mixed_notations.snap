@@ -11,22 +11,22 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Status {
             [
                 ::facet::Variant::builder()
                     .name("Ok")
-                    .discriminant(1)
+                    .discriminant(1i64)
                     .fields(::facet::StructDef::builder().unit().build())
                     .build(),
                 ::facet::Variant::builder()
                     .name("Warn")
-                    .discriminant(10)
+                    .discriminant(10i64)
                     .fields(::facet::StructDef::builder().unit().build())
                     .build(),
                 ::facet::Variant::builder()
                     .name("Error")
-                    .discriminant(15)
+                    .discriminant(15i64)
                     .fields(::facet::StructDef::builder().unit().build())
                     .build(),
                 ::facet::Variant::builder()
                     .name("Timeout")
-                    .discriminant(63)
+                    .discriminant(63i64)
                     .fields(::facet::StructDef::builder().unit().build())
                     .build(),
             ]

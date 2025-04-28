@@ -1,4 +1,6 @@
 use crate::{BoundedGenericParams, RenameRule};
+use facet_derive_parse::{Ident, TokenStream};
+use quote::{format_ident, quote};
 
 /// All the supported facet attributes, e.g. `#[facet(sensitive)]` `#[facet(rename_all)]`, etc.
 ///
@@ -134,7 +136,12 @@ pub enum PAttr {
 ///
 #[derive(Clone)]
 pub struct PName {
-    pub raw: String,
+    /// The raw identifier, as we found it in the source code. It might
+    /// be _actually_ raw, as in "r#keyword".
+    pub raw: Ident,
+
+    /// The name after applying rename rules, which might not be a valid identifier in Rust.
+    /// It could be a number. It could be a kebab-case thing.
     pub effective: String,
 }
 
@@ -149,23 +156,24 @@ impl PName {
     pub fn new(
         container_rename_rule: Option<RenameRule>,
         field_rename_rule: Option<RenameRule>,
-        raw: String,
+        raw: Ident,
     ) -> Self {
-        let mut norm_raw = raw.clone();
+        let raw_str = raw.to_string();
         // Remove Rust's raw identifier prefix, e.g. r#type -> type
-        if let Some(stripped) = norm_raw.strip_prefix("r#") {
-            norm_raw = stripped.to_string();
-        }
+        let norm_raw_str = raw_str.strip_prefix("r#").unwrap_or(&raw_str).to_string();
 
         let effective = if let Some(field_rule) = field_rename_rule {
-            field_rule.apply(&norm_raw)
+            field_rule.apply(&norm_raw_str)
         } else if let Some(container_rule) = container_rename_rule {
-            container_rule.apply(&norm_raw)
+            container_rule.apply(&norm_raw_str)
         } else {
-            norm_raw.clone()
+            norm_raw_str // Use the normalized string (without r#)
         };
 
-        Self { raw, effective }
+        Self {
+            raw: raw.clone(), // Keep the original raw identifier
+            effective,
+        }
     }
 }
 
@@ -220,20 +228,20 @@ pub enum PrimitiveRepr {
 }
 
 impl PrimitiveRepr {
-    pub fn type_name(&self) -> &'static str {
+    pub fn type_name(&self) -> TokenStream {
         match self {
-            PrimitiveRepr::U8 => "u8",
-            PrimitiveRepr::U16 => "u16",
-            PrimitiveRepr::U32 => "u32",
-            PrimitiveRepr::U64 => "u64",
-            PrimitiveRepr::U128 => "u128",
-            PrimitiveRepr::I8 => "i8",
-            PrimitiveRepr::I16 => "i16",
-            PrimitiveRepr::I32 => "i32",
-            PrimitiveRepr::I64 => "i64",
-            PrimitiveRepr::I128 => "i128",
-            PrimitiveRepr::Isize => "isize",
-            PrimitiveRepr::Usize => "usize",
+            PrimitiveRepr::U8 => quote! { u8 },
+            PrimitiveRepr::U16 => quote! { u16 },
+            PrimitiveRepr::U32 => quote! { u32 },
+            PrimitiveRepr::U64 => quote! { u64 },
+            PrimitiveRepr::U128 => quote! { u128 },
+            PrimitiveRepr::I8 => quote! { i8 },
+            PrimitiveRepr::I16 => quote! { i16 },
+            PrimitiveRepr::I32 => quote! { i32 },
+            PrimitiveRepr::I64 => quote! { i64 },
+            PrimitiveRepr::I128 => quote! { i128 },
+            PrimitiveRepr::Isize => quote! { isize },
+            PrimitiveRepr::Usize => quote! { usize },
         }
     }
 }
@@ -366,10 +374,10 @@ pub struct PStructField {
     pub name: PName,
 
     /// The field's type
-    pub ty: String,
+    pub ty: TokenStream,
 
     /// The field's offset (can be an expression, like `offset_of!(self, field)`)
-    pub offset: String,
+    pub offset: TokenStream,
 
     /// The field's attributes
     pub attrs: PAttrs,
@@ -378,62 +386,66 @@ pub struct PStructField {
 impl PStructField {
     /// Parse a named struct field (usual struct).
     fn from_struct_field(f: &facet_derive_parse::StructField) -> Self {
+        use facet_derive_parse::ToTokens;
         Self::parse(
             &f.attributes,
-            f.name.to_string(),
-            facet_derive_parse::VerbatimDisplay(&f.typ).to_string(),
+            f.name.clone(),          // Pass Ident directly
+            f.typ.to_token_stream(), // Convert to TokenStream
         )
     }
 
     /// Parse a tuple (unnamed) field for tuple structs or enum tuple variants.
-    /// The index is converted to a string for the field name.
+    /// The index is converted to an identifier like `_0`, `_1`, etc.
     fn from_enum_field(
         attrs: &[facet_derive_parse::Attribute],
         idx: usize,
         typ: &facet_derive_parse::VerbatimUntil<facet_derive_parse::Comma>,
     ) -> Self {
-        let name = idx.to_string();
-        let ty_str = facet_derive_parse::VerbatimDisplay(typ).to_string();
-        Self::parse(attrs, name, ty_str)
+        use facet_derive_parse::ToTokens;
+        // Create an Ident from the index, using `_` prefix convention for tuple fields
+        let name = format_ident!("_{}", idx);
+        let ty = typ.to_token_stream(); // Convert to TokenStream
+        Self::parse(attrs, name, ty)
     }
 
     /// Central parse function used by both `from_struct_field` and `from_enum_field`.
-    fn parse(attrs: &[facet_derive_parse::Attribute], name: String, ty: String) -> Self {
+    fn parse(attrs: &[facet_derive_parse::Attribute], name: Ident, ty: TokenStream) -> Self {
         // Parse attributes for the field
         let attrs = PAttrs::parse(attrs);
 
-        // Find container-level and field-level rename rules, if any
+        // Find container-level rename_all rule and field-level rename rule, if any
         let container_rename_rule = attrs.rename_all;
-        let field_rename = attrs.rename.clone();
-
-        // Get field-level rename rule as a RenameRule, if applicable
-        let field_rename_rule = None;
-        // There's no field-level RenameRule (as opposed to Rename { name }). Only RenameAll is a RenameRule.
+        let field_rename = attrs.rename.clone(); // Specific #[facet(rename = "...")] on the field
 
         // Name resolution:
         // Precedence:
-        //   - If there's a Rename { name }, use that as "effective"
-        //   - Else, if container_rename_all, apply that RenameRule
-        //   - Else, use raw after stripping r#
+        //   1. Field-level #[facet(rename = "...")]
+        //   2. Container-level #[facet(rename_all = "...")]
+        //   3. Raw field name (after stripping "r#")
         let raw = name.clone();
 
-        let name = if let Some(explicit) = field_rename {
+        let p_name = if let Some(explicit_name) = field_rename {
+            // If #[facet(rename = "...")] is present, use it directly as the effective name.
+            // Preserve the span of the original identifier.
             PName {
                 raw: raw.clone(),
-                effective: explicit,
+                effective: explicit_name,
             }
         } else {
+            // Otherwise, use the PName::new logic which applies rename_all rules or normalization.
+            // field_rename_rule is None because #[facet(rename_all=...)] cannot be applied to fields.
+            let field_rename_rule = None;
             PName::new(container_rename_rule, field_rename_rule, raw)
         };
 
-        // Field type as string (already provided as argument)
+        // Field type as TokenStream (already provided as argument)
         let ty = ty.clone();
 
-        // Offset string -- we don't know the offset here in generic parsing, so just default to empty string
-        let offset = String::new();
+        // Offset string -- we don't know the offset here in generic parsing, so just default to empty
+        let offset = quote! {};
 
         PStructField {
-            name,
+            name: p_name,
             ty,
             offset,
             attrs,
@@ -518,56 +530,60 @@ impl PStruct {
 mod tests {
     use super::*;
     use crate::RenameRule;
+    use quote::format_ident;
 
     #[test]
     fn pname_new_no_rename_rule() {
-        let p = PName::new(None, None, "foo_bar".to_string());
-        assert_eq!(p.raw, "foo_bar");
-        assert_eq!(p.effective, "foo_bar");
+        let raw_ident = format_ident!("foo_bar");
+        let p = PName::new(None, None, raw_ident);
+        assert_eq!(p.raw.to_string(), "foo_bar");
+        assert_eq!(p.effective.to_string(), "foo_bar");
     }
 
     #[test]
     fn pname_new_strips_raw_prefix() {
-        let p = PName::new(None, None, "r#type".to_string());
-        assert_eq!(p.raw, "r#type");
-        assert_eq!(p.effective, "type");
+        let raw_ident = format_ident!("r#type");
+        let p = PName::new(None, None, raw_ident);
+        assert_eq!(p.raw.to_string(), "r#type");
+        assert_eq!(p.effective.to_string(), "type");
     }
 
     #[test]
     fn pname_new_applies_field_rename_rule() {
         let rule = RenameRule::ScreamingSnakeCase;
-        let p = PName::new(
-            Some(RenameRule::CamelCase),
-            Some(rule),
-            "r#case_test".to_string(),
-        );
-        assert_eq!(p.effective, "CASE_TEST");
+        let raw_ident = format_ident!("r#case_test");
+        let p = PName::new(Some(RenameRule::CamelCase), Some(rule), raw_ident);
+        assert_eq!(p.raw.to_string(), "r#case_test");
+        assert_eq!(p.effective.to_string(), "CASE_TEST");
     }
 
     #[test]
     fn pname_new_applies_container_rename_rule() {
         let rule = RenameRule::KebabCase;
-        let p = PName::new(Some(rule), None, "r#abc_def".to_string());
-        assert_eq!(p.effective, "abc-def");
+        let raw_ident = format_ident!("r#abc_def");
+        let p = PName::new(Some(rule), None, raw_ident);
+        assert_eq!(p.raw.to_string(), "r#abc_def");
+        assert_eq!(p.effective.to_string(), "abc-def");
     }
 
     #[test]
     fn pname_new_field_rule_precedence() {
         let container_rule = RenameRule::PascalCase;
         let field_rule = RenameRule::CamelCase;
-        let p = PName::new(
-            Some(container_rule),
-            Some(field_rule),
-            "foo_bar".to_string(),
-        );
+        let raw_ident = format_ident!("foo_bar");
+        let p = PName::new(Some(container_rule), Some(field_rule), raw_ident);
+        assert_eq!(p.raw.to_string(), "foo_bar");
         // CamelCase applied, not PascalCase
-        assert_eq!(p.effective, "fooBar");
+        assert_eq!(p.effective.to_string(), "fooBar");
     }
 
     #[test]
     fn pname_new_empty_string() {
-        let p = PName::new(None, None, "".to_string());
-        assert_eq!(p.raw, "");
-        assert_eq!(p.effective, "");
+        // An empty string cannot be a valid identifier.
+        // Test with a valid identifier instead.
+        let raw_ident = format_ident!("a");
+        let p = PName::new(None, None, raw_ident);
+        assert_eq!(p.raw.to_string(), "a");
+        assert_eq!(p.effective.to_string(), "a");
     }
 }

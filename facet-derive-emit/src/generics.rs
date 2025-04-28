@@ -1,17 +1,19 @@
-use facet_derive_parse::{GenericParam, GenericParams, ToTokens};
+use facet_derive_parse::{GenericParam, GenericParams, ToTokens, TokenStream};
 use quote::quote;
+
+use crate::LifetimeName;
 
 /// The name of a generic parameter
 #[derive(Clone)]
 pub enum GenericParamName {
     /// "a" but formatted as "'a"
-    Lifetime(std::borrow::Cow<'static, str>),
+    Lifetime(LifetimeName),
 
     /// "T", formatted as "T"
-    Type(std::borrow::Cow<'static, str>),
+    Type(TokenStream),
 
     /// "N", formatted as "N"
-    Const(std::borrow::Cow<'static, str>),
+    Const(TokenStream),
 }
 
 /// The name of a generic parameter with bounds
@@ -21,7 +23,7 @@ pub struct BoundedGenericParam {
     pub param: GenericParamName,
 
     /// bounds like `'static`, or `Send + Sync`, etc. — None if no bounds
-    pub bounds: Option<String>,
+    pub bounds: Option<TokenStream>,
 }
 
 /// Stores different representations of generic parameters for implementing traits.
@@ -65,34 +67,46 @@ pub struct WithoutBounds<'a>(&'a BoundedGenericParams);
 /// `::core::marker::PhantomData<(*mut &'__facet (), T, [u32; N])>`.
 pub struct AsPhantomData<'a>(&'a BoundedGenericParams);
 
-impl std::fmt::Display for AsPhantomData<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "::core::marker::PhantomData<(")?;
+impl quote::ToTokens for AsPhantomData<'_> {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let mut temp = TokenStream::new();
 
-        // Track if we've written anything to handle commas correctly
-        let mut first_param = true;
+        {
+            #[expect(unused)]
+            let tokens = ();
 
-        // Generate all parameters in the tuple
-        for param in &self.0.params {
-            if !first_param {
-                write!(f, ", ")?;
+            // Track if we've written anything to handle commas correctly
+            let mut first_param = true;
+
+            // Generate all parameters in the tuple
+            for param in &self.0.params {
+                if !first_param {
+                    temp.extend(quote! { , });
+                }
+
+                match &param.param {
+                    GenericParamName::Lifetime(name) => {
+                        temp.extend(quote! { *mut &#name () });
+                    }
+                    GenericParamName::Type(name) => {
+                        temp.extend(quote! { #name });
+                    }
+                    GenericParamName::Const(name) => {
+                        temp.extend(quote! { [u32; #name] });
+                    }
+                }
+
+                first_param = false;
             }
 
-            match &param.param {
-                GenericParamName::Lifetime(name) => write!(f, "*mut &'{} ()", name)?,
-                GenericParamName::Type(name) => write!(f, "{}", name)?,
-                GenericParamName::Const(name) => write!(f, "[u32; {}]", name)?,
+            // If no parameters at all, add a unit type to make the PhantomData valid
+            if first_param {
+                temp.extend(quote! { () });
             }
-
-            first_param = false;
         }
-
-        // If no parameters at all, add a unit type to make the PhantomData valid
-        if first_param {
-            write!(f, "()")?;
-        }
-
-        write!(f, ")>")
+        tokens.extend(quote! {
+         ::core::marker::PhantomData<(#temp)>
+        })
     }
 }
 
@@ -102,32 +116,8 @@ impl BoundedGenericParams {
     }
 }
 
-impl std::fmt::Display for WithBounds<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.0.params.is_empty() {
-            return Ok(());
-        }
-
-        write!(f, "<")?;
-        for (i, param) in self.0.params.iter().enumerate() {
-            if i > 0 {
-                write!(f, ", ")?;
-            }
-            match &param.param {
-                GenericParamName::Lifetime(name) => write!(f, "'{}", name)?,
-                GenericParamName::Type(name) => write!(f, "{}", name)?,
-                GenericParamName::Const(name) => write!(f, "const {}", name)?,
-            }
-            if let Some(bounds) = &param.bounds {
-                write!(f, ": {}", bounds)?;
-            }
-        }
-        write!(f, ">")
-    }
-}
-
 impl quote::ToTokens for WithBounds<'_> {
-    fn to_tokens(&self, tokens: &mut facet_derive_parse::TokenStream) {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
         if self.0.params.is_empty() {
             return;
         }
@@ -143,26 +133,19 @@ impl quote::ToTokens for WithBounds<'_> {
 
             match &param.param {
                 GenericParamName::Lifetime(name) => {
-                    let punct = facet_derive_parse::TokenTree::Punct(
-                        facet_derive_parse::Punct::new('\'', facet_derive_parse::Spacing::Joint),
-                    );
-                    let lifetime_ident = quote::format_ident!("{name}");
-                    tokens.extend(quote! { #punct #lifetime_ident });
+                    tokens.extend(quote! { #name });
                 }
                 GenericParamName::Type(name) => {
-                    let ident = quote::format_ident!("{}", name);
-                    tokens.extend(quote! { #ident });
+                    tokens.extend(quote! { #name });
                 }
                 GenericParamName::Const(name) => {
-                    let ident = quote::format_ident!("{}", name);
-                    tokens.extend(quote! { const #ident });
+                    tokens.extend(quote! { const #name });
                 }
             }
 
             // Add bounds if they exist
             if let Some(bounds) = &param.bounds {
-                let bounds_str = bounds.clone();
-                tokens.extend(quote! { : #bounds_str });
+                tokens.extend(quote! { : #bounds });
             }
         }
 
@@ -172,29 +155,8 @@ impl quote::ToTokens for WithBounds<'_> {
     }
 }
 
-impl std::fmt::Display for WithoutBounds<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.0.params.is_empty() {
-            return Ok(());
-        }
-
-        write!(f, "<")?;
-        for (i, param) in self.0.params.iter().enumerate() {
-            if i > 0 {
-                write!(f, ", ")?;
-            }
-            match &param.param {
-                GenericParamName::Lifetime(name) => write!(f, "'{}", name)?,
-                GenericParamName::Type(name) => write!(f, "{}", name)?,
-                GenericParamName::Const(name) => write!(f, "{}", name)?,
-            }
-        }
-        write!(f, ">")
-    }
-}
-
 impl quote::ToTokens for WithoutBounds<'_> {
-    fn to_tokens(&self, tokens: &mut facet_derive_parse::TokenStream) {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
         if self.0.params.is_empty() {
             return;
         }
@@ -210,19 +172,13 @@ impl quote::ToTokens for WithoutBounds<'_> {
 
             match &param.param {
                 GenericParamName::Lifetime(name) => {
-                    let punct = facet_derive_parse::TokenTree::Punct(
-                        facet_derive_parse::Punct::new('\'', facet_derive_parse::Spacing::Joint),
-                    );
-                    let lifetime_ident = quote::format_ident!("{name}");
-                    tokens.extend(quote! { #punct #lifetime_ident });
+                    tokens.extend(quote! { #name });
                 }
                 GenericParamName::Type(name) => {
-                    let ident = quote::format_ident!("{}", name);
-                    tokens.extend(quote! { #ident });
+                    tokens.extend(quote! { #name });
                 }
                 GenericParamName::Const(name) => {
-                    let ident = quote::format_ident!("{}", name);
-                    tokens.extend(quote! { #ident });
+                    tokens.extend(quote! { #name });
                 }
             }
         }
@@ -297,9 +253,9 @@ impl BoundedGenericParams {
     ///
     /// This is a convenience method for adding a lifetime parameter
     /// that's commonly used in trait implementations.
-    pub fn with_lifetime(&self, name: impl Into<std::borrow::Cow<'static, str>>) -> Self {
+    pub fn with_lifetime(&self, name: LifetimeName) -> Self {
         self.with(BoundedGenericParam {
-            param: GenericParamName::Lifetime(name.into()),
+            param: GenericParamName::Lifetime(name),
             bounds: None,
         })
     }
@@ -308,9 +264,9 @@ impl BoundedGenericParams {
     ///
     /// This is a convenience method for adding a type parameter
     /// that's commonly used in trait implementations.
-    pub fn with_type(&self, name: impl Into<std::borrow::Cow<'static, str>>) -> Self {
+    pub fn with_type(&self, name: TokenStream) -> Self {
         self.with(BoundedGenericParam {
-            param: GenericParamName::Type(name.into()),
+            param: GenericParamName::Type(name),
             bounds: None,
         })
     }
@@ -340,23 +296,19 @@ impl BoundedGenericParams {
                     bounds,
                     default: _,
                 } => {
-                    let name_str = name.to_string();
-                    let bounds_str = bounds
-                        .as_ref()
-                        .map(|bounds| bounds.second.tokens_to_string());
                     params.push(BoundedGenericParam {
-                        param: GenericParamName::Type(name_str.into()),
-                        bounds: bounds_str,
+                        param: GenericParamName::Type(name.to_token_stream()),
+                        bounds: bounds
+                            .as_ref()
+                            .map(|bounds| bounds.second.to_token_stream()),
                     });
                 }
                 GenericParam::Lifetime { name, bounds } => {
-                    let name_str = name.name.to_string();
-                    let bounds_str = bounds
-                        .as_ref()
-                        .map(|bounds| bounds.second.tokens_to_string());
                     params.push(BoundedGenericParam {
-                        param: GenericParamName::Lifetime(name_str.into()),
-                        bounds: bounds_str,
+                        param: GenericParamName::Lifetime(LifetimeName(name.name.clone())),
+                        bounds: bounds
+                            .as_ref()
+                            .map(|bounds| bounds.second.to_token_stream()),
                     });
                 }
                 GenericParam::Const {
@@ -366,10 +318,9 @@ impl BoundedGenericParams {
                     typ,
                     default: _,
                 } => {
-                    let name_str = name.to_string();
                     params.push(BoundedGenericParam {
-                        param: GenericParamName::Const(name_str.into()),
-                        bounds: Some(typ.tokens_to_string()),
+                        param: GenericParamName::Const(name.to_token_stream()),
+                        bounds: Some(typ.to_token_stream()),
                     });
                 }
             }
@@ -382,72 +333,19 @@ impl BoundedGenericParams {
 #[cfg(test)]
 mod tests {
     use super::{BoundedGenericParam, BoundedGenericParams, GenericParamName};
+    use crate::LifetimeName;
+    use quote::{ToTokens as _, quote};
+
+    // Helper to render ToTokens implementors to string for comparison
+    fn render_to_string<T: quote::ToTokens>(t: T) -> String {
+        quote!(#t).to_string()
+    }
 
     #[test]
     fn test_empty_generic_params() {
         let p = BoundedGenericParams { params: vec![] };
-        assert_eq!(p.display_with_bounds().to_string(), "");
-        assert_eq!(p.display_without_bounds().to_string(), "");
-    }
-
-    #[test]
-    fn print_type_no_bounds() {
-        let p = BoundedGenericParams {
-            params: vec![BoundedGenericParam {
-                bounds: None,
-                param: GenericParamName::Type("T".into()),
-            }],
-        };
-        assert_eq!(p.display_with_bounds().to_string(), "<T>");
-        assert_eq!(p.display_without_bounds().to_string(), "<T>");
-    }
-
-    #[test]
-    fn print_type_with_clone_bound() {
-        let p = BoundedGenericParams {
-            params: vec![BoundedGenericParam {
-                bounds: Some("Clone".into()),
-                param: GenericParamName::Type("T".into()),
-            }],
-        };
-        assert_eq!(p.display_with_bounds().to_string(), "<T: Clone>");
-        assert_eq!(p.display_without_bounds().to_string(), "<T>");
-    }
-
-    #[test]
-    fn print_lifetime_no_bounds() {
-        let p = BoundedGenericParams {
-            params: vec![BoundedGenericParam {
-                bounds: None,
-                param: GenericParamName::Lifetime("a".into()),
-            }],
-        };
-        assert_eq!(p.display_with_bounds().to_string(), "<'a>");
-        assert_eq!(p.display_without_bounds().to_string(), "<'a>");
-    }
-
-    #[test]
-    fn print_lifetime_with_static_bound() {
-        let p = BoundedGenericParams {
-            params: vec![BoundedGenericParam {
-                bounds: Some("'static".into()),
-                param: GenericParamName::Lifetime("a".into()),
-            }],
-        };
-        assert_eq!(p.display_with_bounds().to_string(), "<'a: 'static>");
-        assert_eq!(p.display_without_bounds().to_string(), "<'a>");
-    }
-
-    #[test]
-    fn print_const_with_usize_bound() {
-        let p = BoundedGenericParams {
-            params: vec![BoundedGenericParam {
-                bounds: Some("usize".into()),
-                param: GenericParamName::Const("N".into()),
-            }],
-        };
-        assert_eq!(p.display_with_bounds().to_string(), "<const N: usize>");
-        assert_eq!(p.display_without_bounds().to_string(), "<N>");
+        assert_eq!(render_to_string(p.display_with_bounds()), "");
+        assert_eq!(render_to_string(p.display_without_bounds()), "");
     }
 
     #[test]
@@ -455,170 +353,36 @@ mod tests {
         let p = BoundedGenericParams {
             params: vec![
                 BoundedGenericParam {
-                    bounds: Some("'static".into()),
-                    param: GenericParamName::Lifetime("a".into()),
+                    bounds: Some(quote! { 'static }),
+                    param: GenericParamName::Lifetime(LifetimeName(quote::format_ident!("a"))),
                 },
                 BoundedGenericParam {
-                    bounds: Some("Clone + Debug".into()),
-                    param: GenericParamName::Type("T".into()),
+                    bounds: Some(quote! { Clone + Debug }),
+                    param: GenericParamName::Type(quote! { T }),
                 },
                 BoundedGenericParam {
                     bounds: None,
-                    param: GenericParamName::Type("U".into()),
+                    param: GenericParamName::Type(quote! { U }),
                 },
                 BoundedGenericParam {
-                    bounds: Some("usize".into()),
-                    param: GenericParamName::Const("N".into()),
+                    bounds: Some(quote! { usize }), // Const params bounds are types
+                    param: GenericParamName::Const(quote! { N }),
                 },
             ],
         };
+        // Check display with bounds
+        let expected_with_bounds = quote! { <'a : 'static, T : Clone + Debug, U, const N : usize> };
         assert_eq!(
-            p.display_with_bounds().to_string(),
-            "<'a: 'static, T: Clone + Debug, U, const N: usize>"
+            p.display_with_bounds().to_token_stream().to_string(),
+            expected_with_bounds.to_string()
         );
-        assert_eq!(p.display_without_bounds().to_string(), "<'a, T, U, N>");
-    }
 
-    #[test]
-    fn test_add_lifetime_parameters() {
-        // Starting from empty params
-        let mut params = BoundedGenericParams { params: vec![] };
-
-        // Add a lifetime parameter 'a
-        params = params.with(BoundedGenericParam {
-            bounds: None,
-            param: GenericParamName::Lifetime("a".into()),
-        });
-
-        // Add another lifetime parameter 'b
-        params = params.with(BoundedGenericParam {
-            bounds: None,
-            param: GenericParamName::Lifetime("b".into()),
-        });
-
-        assert_eq!(params.display_without_bounds().to_string(), "<'a, 'b>");
-
-        // Starting from params with existing types and consts
-        let mut params = BoundedGenericParams {
-            params: vec![
-                BoundedGenericParam {
-                    bounds: None,
-                    param: GenericParamName::Type("T".into()),
-                },
-                BoundedGenericParam {
-                    bounds: None,
-                    param: GenericParamName::Const("N".into()),
-                },
-            ],
-        };
-
-        // Add a lifetime parameter - should be placed before types
-        params = params.with(BoundedGenericParam {
-            bounds: None,
-            param: GenericParamName::Lifetime("a".into()),
-        });
-
-        assert_eq!(params.display_without_bounds().to_string(), "<'a, T, N>");
-    }
-
-    #[test]
-    fn test_add_type_parameters() {
-        // Starting from empty params
-        let mut params = BoundedGenericParams { params: vec![] };
-
-        // Add a type parameter T
-        params = params.with(BoundedGenericParam {
-            bounds: None,
-            param: GenericParamName::Type("T".into()),
-        });
-
-        // Add another type parameter U
-        params = params.with(BoundedGenericParam {
-            bounds: None,
-            param: GenericParamName::Type("U".into()),
-        });
-
-        assert_eq!(params.display_without_bounds().to_string(), "<T, U>");
-
-        // Starting from params with existing lifetimes
-        let mut params = BoundedGenericParams {
-            params: vec![BoundedGenericParam {
-                bounds: None,
-                param: GenericParamName::Lifetime("a".into()),
-            }],
-        };
-
-        // Add a type parameter - should be placed after lifetimes
-        params = params.with(BoundedGenericParam {
-            bounds: None,
-            param: GenericParamName::Type("T".into()),
-        });
-
-        assert_eq!(params.display_without_bounds().to_string(), "<'a, T>");
-
-        // Starting from params with existing lifetimes and consts
-        let mut params = BoundedGenericParams {
-            params: vec![
-                BoundedGenericParam {
-                    bounds: None,
-                    param: GenericParamName::Lifetime("a".into()),
-                },
-                BoundedGenericParam {
-                    bounds: None,
-                    param: GenericParamName::Const("N".into()),
-                },
-            ],
-        };
-
-        // Add a type parameter - should be placed between lifetimes and consts
-        params = params.with(BoundedGenericParam {
-            bounds: None,
-            param: GenericParamName::Type("T".into()),
-        });
-
-        assert_eq!(params.display_without_bounds().to_string(), "<'a, T, N>");
-    }
-
-    #[test]
-    fn test_add_const_parameters() {
-        // Starting from empty params
-        let mut params = BoundedGenericParams { params: vec![] };
-
-        // Add a const parameter N
-        params = params.with(BoundedGenericParam {
-            bounds: None,
-            param: GenericParamName::Const("N".into()),
-        });
-
-        // Add another const parameter M
-        params = params.with(BoundedGenericParam {
-            bounds: None,
-            param: GenericParamName::Const("M".into()),
-        });
-
-        assert_eq!(params.display_without_bounds().to_string(), "<N, M>");
-
-        // Starting from params with existing lifetimes and types
-        let mut params = BoundedGenericParams {
-            params: vec![
-                BoundedGenericParam {
-                    bounds: None,
-                    param: GenericParamName::Lifetime("a".into()),
-                },
-                BoundedGenericParam {
-                    bounds: None,
-                    param: GenericParamName::Type("T".into()),
-                },
-            ],
-        };
-
-        // Add a const parameter - should be placed at the end
-        params = params.with(BoundedGenericParam {
-            bounds: None,
-            param: GenericParamName::Const("N".into()),
-        });
-
-        assert_eq!(params.display_without_bounds().to_string(), "<'a, T, N>");
+        // Check display without bounds
+        let expected_without_bounds = quote! { <'a, T, U, N> }; // Note: const param N doesn't show `const` or type here
+        assert_eq!(
+            p.display_without_bounds().to_token_stream().to_string(),
+            expected_without_bounds.to_string()
+        );
     }
 
     #[test]
@@ -629,38 +393,51 @@ mod tests {
         // Add parameters in different order to test sorting
         params = params.with(BoundedGenericParam {
             bounds: None,
-            param: GenericParamName::Type("T".into()),
+            param: GenericParamName::Type(quote! { T }),
+        });
+
+        params = params.with(BoundedGenericParam {
+            bounds: Some(quote! { usize }), // Const bounds are types
+            param: GenericParamName::Const(quote! { N }),
         });
 
         params = params.with(BoundedGenericParam {
             bounds: None,
-            param: GenericParamName::Const("N".into()),
+            param: GenericParamName::Lifetime(LifetimeName(quote::format_ident!("a"))),
         });
 
         params = params.with(BoundedGenericParam {
-            bounds: None,
-            param: GenericParamName::Lifetime("a".into()),
+            bounds: Some(quote! { Clone }),
+            param: GenericParamName::Type(quote! { U }),
         });
 
         params = params.with(BoundedGenericParam {
-            bounds: None,
-            param: GenericParamName::Type("U".into()),
+            bounds: Some(quote! { 'static }),
+            param: GenericParamName::Lifetime(LifetimeName(quote::format_ident!("b"))),
         });
 
         params = params.with(BoundedGenericParam {
-            bounds: None,
-            param: GenericParamName::Lifetime("b".into()),
-        });
-
-        params = params.with(BoundedGenericParam {
-            bounds: None,
-            param: GenericParamName::Const("M".into()),
+            bounds: Some(quote! { u8 }), // Const bounds are types
+            param: GenericParamName::Const(quote! { M }),
         });
 
         // Expected order: lifetimes first, then types, then consts
+        let expected_without_bounds = quote! { <'a, 'b, T, U, N, M> };
+        // Compare string representations for robust assertion
         assert_eq!(
-            params.display_without_bounds().to_string(),
-            "<'a, 'b, T, U, N, M>"
+            params
+                .display_without_bounds()
+                .to_token_stream()
+                .to_string(),
+            expected_without_bounds.to_string()
+        );
+
+        let expected_with_bounds =
+            quote! { <'a, 'b : 'static, T, U : Clone, const N : usize, const M : u8> };
+        // Compare string representations for robust assertion
+        assert_eq!(
+            params.display_with_bounds().to_token_stream().to_string(),
+            expected_with_bounds.to_string()
         );
     }
 
@@ -669,66 +446,70 @@ mod tests {
         // Empty params should have PhantomData with a unit type
         let empty = BoundedGenericParams { params: vec![] };
         assert_eq!(
-            empty.display_as_phantom_data().to_string(),
-            "::core::marker::PhantomData<(())>"
+            render_to_string(empty.display_as_phantom_data()),
+            ":: core :: marker :: PhantomData < (()) >"
         );
 
         // Single lifetime
         let lifetime = BoundedGenericParams {
             params: vec![BoundedGenericParam {
-                param: GenericParamName::Lifetime("a".into()),
+                param: GenericParamName::Lifetime(LifetimeName(quote::format_ident!("a"))),
                 bounds: None,
             }],
         };
         assert_eq!(
-            lifetime.display_as_phantom_data().to_string(),
-            "::core::marker::PhantomData<(*mut &'a ())>"
+            render_to_string(lifetime.display_as_phantom_data()),
+            ":: core :: marker :: PhantomData < (* mut & 'a ()) >"
         );
 
         // Single type
         let type_param = BoundedGenericParams {
             params: vec![BoundedGenericParam {
-                param: GenericParamName::Type("T".into()),
+                param: GenericParamName::Type(quote! { T }),
                 bounds: None,
             }],
         };
         assert_eq!(
-            type_param.display_as_phantom_data().to_string(),
-            "::core::marker::PhantomData<(T)>"
+            render_to_string(type_param.display_as_phantom_data()),
+            ":: core :: marker :: PhantomData < (T) >"
         );
 
         // Single const
         let const_param = BoundedGenericParams {
             params: vec![BoundedGenericParam {
-                param: GenericParamName::Const("N".into()),
-                bounds: None,
+                param: GenericParamName::Const(quote! { N }),
+                bounds: None, // Bounds are irrelevant for PhantomData formatting
             }],
         };
         assert_eq!(
-            const_param.display_as_phantom_data().to_string(),
-            "::core::marker::PhantomData<([u32; N])>"
+            render_to_string(const_param.display_as_phantom_data()),
+            ":: core :: marker :: PhantomData < ([u32 ; N]) >"
         );
 
         // Complex mix of params
         let mixed = BoundedGenericParams {
             params: vec![
                 BoundedGenericParam {
-                    param: GenericParamName::Lifetime("a".into()),
+                    param: GenericParamName::Lifetime(LifetimeName(quote::format_ident!("a"))),
                     bounds: None,
                 },
                 BoundedGenericParam {
-                    param: GenericParamName::Type("T".into()),
-                    bounds: Some("Clone".into()),
+                    param: GenericParamName::Type(quote! { T }),
+                    bounds: Some(quote! { Clone }), // Bounds irrelevant here
                 },
                 BoundedGenericParam {
-                    param: GenericParamName::Const("N".into()),
-                    bounds: Some("usize".into()),
+                    param: GenericParamName::Const(quote! { N }),
+                    bounds: Some(quote! { usize }), // Bounds irrelevant here
                 },
             ],
         };
+        let actual_tokens = mixed.display_as_phantom_data();
+        let expected_tokens = quote! {
+            ::core::marker::PhantomData<(*mut &'a (), T, [u32; N])>
+        };
         assert_eq!(
-            mixed.display_as_phantom_data().to_string(),
-            "::core::marker::PhantomData<(*mut &'a (), T, [u32; N])>"
+            actual_tokens.to_token_stream().to_string(),
+            expected_tokens.to_string()
         );
     }
 }

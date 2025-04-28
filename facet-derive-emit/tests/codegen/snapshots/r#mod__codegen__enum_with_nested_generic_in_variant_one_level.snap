@@ -9,6 +9,7 @@ where
 {
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
         struct __ShadowOneLevelNested_VariantA<'__facet, T>
         where
             T: ::facet::Facet<'__facet>,
@@ -18,6 +19,7 @@ where
             _0: Result<T, String>,
         }
         #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
         struct __ShadowOneLevelNested_VariantB<'__facet, T>
         where
             T: ::facet::Facet<'__facet>,
@@ -48,7 +50,7 @@ where
                     };
                     ::facet::Variant::builder()
                         .name("VariantA")
-                        .discriminant(0)
+                        .discriminant(0i64)
                         .fields(::facet::StructDef::builder().tuple().fields(fields).build())
                         .build()
                 },
@@ -72,13 +74,13 @@ where
                     };
                     ::facet::Variant::builder()
                         .name("VariantB")
-                        .discriminant(1)
+                        .discriminant(1i64)
                         .fields(::facet::StructDef::builder().tuple().fields(fields).build())
                         .build()
                 },
                 ::facet::Variant::builder()
                     .name("Plain")
-                    .discriminant(2)
+                    .discriminant(2i64)
                     .fields(::facet::StructDef::builder().unit().build())
                     .build(),
             ]

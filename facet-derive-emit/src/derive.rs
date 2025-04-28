@@ -2,7 +2,7 @@ use facet_derive_parse::{ToTokens, *};
 use quote::quote;
 use std::borrow::Cow;
 
-use crate::{BoundedGenericParams, RenameRule, process_enum, process_struct};
+use crate::{BoundedGenericParams, LifetimeName, RenameRule, process_enum, process_struct};
 
 /// Removes the `r#` prefix from a raw identifier string, if present.
 pub(crate) fn normalize_ident_str(ident_str: &str) -> &str {
@@ -270,11 +270,17 @@ pub(crate) fn gen_struct_field<'a>(fi: FieldInfo<'a>) -> TokenStream {
 pub(crate) fn build_where_clauses(
     where_clauses: Option<&WhereClauses>,
     generics: Option<&GenericParams>,
-) -> String {
-    let mut where_clauses_s: Vec<String> = vec![];
+) -> TokenStream {
+    let mut where_clause_tokens = TokenStream::new();
+    let mut has_clauses = false;
+
     if let Some(wc) = where_clauses {
         for c in &wc.clauses.0 {
-            where_clauses_s.push(c.value.to_string())
+            if has_clauses {
+                where_clause_tokens.extend(quote! { , });
+            }
+            where_clause_tokens.extend(c.value.to_token_stream());
+            has_clauses = true;
         }
     }
 
@@ -282,28 +288,39 @@ pub(crate) fn build_where_clauses(
         for p in &generics.params.0 {
             match &p.value {
                 GenericParam::Lifetime { name, .. } => {
-                    where_clauses_s.push(format!("{name}: '__facet"));
-                    where_clauses_s.push(format!("'__facet: {name}"));
+                    let facet_lifetime = LifetimeName(quote::format_ident!("{}", "__facet"));
+                    let lifetime = LifetimeName(name.name.clone());
+                    if has_clauses {
+                        where_clause_tokens.extend(quote! { , });
+                    }
+                    where_clause_tokens
+                        .extend(quote! { #lifetime: #facet_lifetime, #facet_lifetime: #lifetime });
+
+                    has_clauses = true;
                 }
                 GenericParam::Const { .. } => {
                     // ignore for now
                 }
                 GenericParam::Type { name, .. } => {
-                    where_clauses_s.push(format!("{name}: ::facet::Facet<'__facet>"));
+                    if has_clauses {
+                        where_clause_tokens.extend(quote! { , });
+                    }
+                    where_clause_tokens.extend(quote! { #name: ::facet::Facet<'__facet> });
+                    has_clauses = true;
                 }
             }
         }
     }
 
-    if where_clauses_s.is_empty() {
-        "".to_string()
+    if !has_clauses {
+        quote! {}
     } else {
-        format!("where {}", where_clauses_s.join(", "))
+        quote! { where #where_clause_tokens }
     }
 }
 
-pub(crate) fn build_type_params(generics: Option<&GenericParams>) -> String {
-    let mut type_params_s: Vec<String> = vec![];
+pub(crate) fn build_type_params(generics: Option<&GenericParams>) -> TokenStream {
+    let mut type_params = Vec::new();
     if let Some(generics) = generics {
         for p in &generics.params.0 {
             match &p.value {
@@ -314,20 +331,22 @@ pub(crate) fn build_type_params(generics: Option<&GenericParams>) -> String {
                     // ignore for now
                 }
                 GenericParam::Type { name, .. } => {
-                    type_params_s.push(format!(
-                        "::facet::TypeParam {{ name: {:?}, shape: || <{name} as ::facet::Facet>::SHAPE }}",
-                        // debug fmt because we want it to be quoted & escaped, but to_string because we don't want the `Ident { .. }`
-                        name.to_string()
-                    ));
+                    let name_str = name.to_string();
+                    type_params.push(quote! {
+                        ::facet::TypeParam {
+                            name: #name_str,
+                            shape: || <#name as ::facet::Facet>::SHAPE
+                        }
+                    });
                 }
             }
         }
     }
 
-    if type_params_s.is_empty() {
-        "".to_string()
+    if type_params.is_empty() {
+        quote! {}
     } else {
-        format!(".type_params(&[{}])", type_params_s.join(", "))
+        quote! { .type_params(&[#(#type_params),*]) }
     }
 }
 

@@ -11,27 +11,27 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for BitFlags {
             [
                 ::facet::Variant::builder()
                     .name("None")
-                    .discriminant(0)
+                    .discriminant(0i64)
                     .fields(::facet::StructDef::builder().unit().build())
                     .build(),
                 ::facet::Variant::builder()
                     .name("Read")
-                    .discriminant(1)
+                    .discriminant(1i64)
                     .fields(::facet::StructDef::builder().unit().build())
                     .build(),
                 ::facet::Variant::builder()
                     .name("Write")
-                    .discriminant(2)
+                    .discriminant(2i64)
                     .fields(::facet::StructDef::builder().unit().build())
                     .build(),
                 ::facet::Variant::builder()
                     .name("Execute")
-                    .discriminant(4)
+                    .discriminant(4i64)
                     .fields(::facet::StructDef::builder().unit().build())
                     .build(),
                 ::facet::Variant::builder()
                     .name("All")
-                    .discriminant(7)
+                    .discriminant(7i64)
                     .fields(::facet::StructDef::builder().unit().build())
                     .build(),
             ]

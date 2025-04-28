@@ -1,6 +1,6 @@
 use super::normalize_ident_str;
 use super::*;
-use quote::quote;
+use quote::{format_ident, quote};
 
 /// Processes a regular struct to implement Facet
 ///
@@ -225,7 +225,10 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         quote! {}
     };
 
-    let bgp_def = ps.container.bgp.with_lifetime("__facet");
+    let bgp_def = ps
+        .container
+        .bgp
+        .with_lifetime(LifetimeName(format_ident!("__facet")));
     let bgp_def = bgp_def.display_with_bounds();
     let bgp_without_bounds = ps.container.bgp.display_without_bounds();
 

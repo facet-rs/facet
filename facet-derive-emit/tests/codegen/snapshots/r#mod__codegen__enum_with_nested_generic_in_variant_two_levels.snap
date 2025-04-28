@@ -9,6 +9,7 @@ where
 {
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
         struct __ShadowDeeplyNested_LevelOne<'__facet, T>
         where
             T: ::facet::Facet<'__facet>,
@@ -18,6 +19,7 @@ where
             _0: Option<Result<Vec<T>, String>>,
         }
         #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
         struct __ShadowDeeplyNested_Simple<'__facet, T>
         where
             T: ::facet::Facet<'__facet>,
@@ -48,7 +50,7 @@ where
                     };
                     ::facet::Variant::builder()
                         .name("LevelOne")
-                        .discriminant(0)
+                        .discriminant(0i64)
                         .fields(::facet::StructDef::builder().tuple().fields(fields).build())
                         .build()
                 },
@@ -72,7 +74,7 @@ where
                     };
                     ::facet::Variant::builder()
                         .name("Simple")
-                        .discriminant(1)
+                        .discriminant(1i64)
                         .fields(::facet::StructDef::builder().tuple().fields(fields).build())
                         .build()
                 },

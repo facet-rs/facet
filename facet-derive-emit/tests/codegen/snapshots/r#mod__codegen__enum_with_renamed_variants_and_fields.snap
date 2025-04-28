@@ -8,12 +8,14 @@ static API_RESPONSE_SHAPE: &'static ::facet::Shape = <ApiResponse as ::facet::Fa
 unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
         struct __ShadowApiResponse_Ok<'__facet> {
             _discriminant: u8,
             _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
             data: String,
         }
         #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
         struct __ShadowApiResponse_Err<'__facet> {
             _discriminant: u8,
             _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
@@ -42,7 +44,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                     ::facet::Variant::builder()
                         .name("Success")
                         .attributes(&[::facet::VariantAttribute::Rename("Success")])
-                        .discriminant(0)
+                        .discriminant(0i64)
                         .fields(
                             ::facet::StructDef::builder()
                                 .struct_()
@@ -91,7 +93,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                     ::facet::Variant::builder()
                         .name("Error")
                         .attributes(&[::facet::VariantAttribute::Rename("Error")])
-                        .discriminant(1)
+                        .discriminant(1i64)
                         .fields(
                             ::facet::StructDef::builder()
                                 .struct_()
