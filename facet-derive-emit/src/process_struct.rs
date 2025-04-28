@@ -11,6 +11,8 @@ use super::*;
 /// }
 /// ```
 pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
+    let _pstruct = PStruct::parse(&parsed);
+
     let is_transparent = parsed.is_transparent();
     let struct_name = parsed.name.to_string();
 

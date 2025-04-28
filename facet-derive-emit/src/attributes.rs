@@ -3,6 +3,7 @@ use crate::RenameRule;
 /// All the supported facet attributes, e.g. `#[facet(sensitive)]` `#[facet(rename_all)]`, etc.
 ///
 /// Stands for `parsed facet attr`
+#[derive(Clone)]
 pub enum PFacetAttr {
     /// Valid in field
     /// `#[facet(sensitive)]` — must be censored in debug outputs
@@ -50,6 +51,64 @@ pub enum PFacetAttr {
     RenameAll { rule: RenameRule },
 }
 
+impl PFacetAttr {
+    /// Parse a `FacetAttr` attribute into a `PFacetAttr`.
+    /// Returns None if the input is not supported.
+    pub fn parse(facet_attr: &facet_derive_parse::FacetAttr) -> Self {
+        use facet_derive_parse::FacetInner;
+
+        match &facet_attr.inner.content {
+            FacetInner::Sensitive(_) => PFacetAttr::Sensitive,
+            FacetInner::Opaque(_) => PFacetAttr::Opaque,
+            FacetInner::Transparent(_) => PFacetAttr::Transparent,
+            FacetInner::Invariants(invariant) => {
+                let fn_name = invariant.value.value().to_string();
+                PFacetAttr::Invariants { fn_name }
+            }
+            FacetInner::DenyUnknownFields(_) => PFacetAttr::DenyUnknownFields,
+            FacetInner::DefaultEquals(default_equals) => {
+                let fn_name = default_equals.value.value().to_string();
+                PFacetAttr::DefaultEquals { fn_name }
+            }
+            FacetInner::Default(_) => PFacetAttr::Default,
+            FacetInner::RenameAll(rename_all) => {
+                let rule_str = rename_all.value.as_str();
+                if let Some(rule) = RenameRule::from_str(rule_str) {
+                    PFacetAttr::RenameAll { rule }
+                } else {
+                    panic!("Unknown #[facet(rename_all = ...)] rule: {}", rule_str);
+                }
+            }
+            FacetInner::Other(tokens) => {
+                // tokens is Vec<TokenTree> -- reconstruct as string for Arbitrary or try to parse rename
+                if tokens.len() >= 3 {
+                    // handle #[facet(rename = "...")]
+                    if let (
+                        Some(facet_derive_parse::TokenTree::Ident(ident)),
+                        Some(facet_derive_parse::TokenTree::Punct(punct)),
+                        Some(facet_derive_parse::TokenTree::Literal(lit)),
+                    ) = (tokens.first(), tokens.get(1), tokens.get(2))
+                    {
+                        if *ident == "rename" && punct.as_char() == '=' {
+                            // Remove quotes from Literal
+                            let lit_str = lit.to_string();
+                            let name = lit_str.trim_matches('"').to_string();
+                            return PFacetAttr::Rename { name };
+                        }
+                    }
+                }
+                // fallback to Arbitrary, stringify tokens
+                let content = tokens
+                    .iter()
+                    .map(|tt| tt.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                PFacetAttr::Arbitrary { content }
+            }
+        }
+    }
+}
+
 /// Parsed attr
 pub enum PAttr {
     /// A single line of doc comments
@@ -58,6 +117,9 @@ pub enum PAttr {
 
     /// A representation attribute
     Repr { repr: PRepr },
+
+    /// A facet attribute
+    Facet { name: String },
 }
 
 /// A parsed name, which includes the raw name and the
@@ -106,17 +168,37 @@ impl PName {
     }
 }
 
-/// Parsed enum (given attributes etc.)
-pub struct PEnum {
-    pub name: String,
-    pub repr: PRepr,
-}
-
 pub enum PRepr {
     Rust,
     Transparent,
     C,
     Primitive(PrimitiveRepr),
+}
+
+impl PRepr {
+    /// Parse a `&str` (for example a value coming from #[repr(...)] attribute)
+    /// into a `PRepr` variant.
+    pub fn parse(s: &str) -> Option<Self> {
+        let s = s.trim();
+        match s {
+            "C" | "c" => Some(PRepr::C),
+            "Rust" | "rust" => Some(PRepr::Rust),
+            "transparent" => Some(PRepr::Transparent),
+            "u8" => Some(PRepr::Primitive(PrimitiveRepr::U8)),
+            "u16" => Some(PRepr::Primitive(PrimitiveRepr::U16)),
+            "u32" => Some(PRepr::Primitive(PrimitiveRepr::U32)),
+            "u64" => Some(PRepr::Primitive(PrimitiveRepr::U64)),
+            "u128" => Some(PRepr::Primitive(PrimitiveRepr::U128)),
+            "i8" => Some(PRepr::Primitive(PrimitiveRepr::I8)),
+            "i16" => Some(PRepr::Primitive(PrimitiveRepr::I16)),
+            "i32" => Some(PRepr::Primitive(PrimitiveRepr::I32)),
+            "i64" => Some(PRepr::Primitive(PrimitiveRepr::I64)),
+            "i128" => Some(PRepr::Primitive(PrimitiveRepr::I128)),
+            "usize" => Some(PRepr::Primitive(PrimitiveRepr::Usize)),
+            "isize" => Some(PRepr::Primitive(PrimitiveRepr::Isize)),
+            _ => None,
+        }
+    }
 }
 
 pub enum PrimitiveRepr {
@@ -153,85 +235,142 @@ impl PrimitiveRepr {
     }
 }
 
-pub fn parse_attributes(attrs: &[facet_derive_parse::Attribute]) -> Vec<PFacetAttr> {
-    let mut result = Vec::new();
+/// Parsed attributes
+pub struct PAttrs {
+    /// An array of doc lines
+    pub doc: Vec<String>,
 
-    for attr in attrs {
-        if let facet_derive_parse::AttributeInner::Facet(facet_attr) = &attr.body.content {
-            match &facet_attr.inner.content {
-                facet_derive_parse::FacetInner::Sensitive(_) => {
-                    result.push(PFacetAttr::Sensitive);
-                }
-                facet_derive_parse::FacetInner::Opaque(_) => {
-                    result.push(PFacetAttr::Opaque);
-                }
-                facet_derive_parse::FacetInner::Transparent(_) => {
-                    result.push(PFacetAttr::Transparent);
-                }
-                facet_derive_parse::FacetInner::Invariants(invariants_inner) => {
-                    // Get the function name as string from the literal
-                    let fn_name = invariants_inner.value.value().trim_matches('"').to_string();
-                    result.push(PFacetAttr::Invariants { fn_name });
-                }
-                facet_derive_parse::FacetInner::DenyUnknownFields(_) => {
-                    result.push(PFacetAttr::DenyUnknownFields);
-                }
-                facet_derive_parse::FacetInner::DefaultEquals(default_eq_inner) => {
-                    let fn_name = default_eq_inner.value.value().trim_matches('"').to_string();
-                    result.push(PFacetAttr::DefaultEquals { fn_name });
-                }
-                facet_derive_parse::FacetInner::Default(_) => {
-                    result.push(PFacetAttr::Default);
-                }
-                facet_derive_parse::FacetInner::RenameAll(rename_all_inner) => {
-                    let rule_str = rename_all_inner.value.value().trim_matches('"');
-                    if let Some(rule) = RenameRule::from_str(rule_str) {
-                        result.push(PFacetAttr::RenameAll { rule });
-                    } else {
-                        panic!(
-                            "Invalid value for rename_all: unrecognized rename rule (got: {rule_str:?})"
-                        );
-                    }
-                }
-                facet_derive_parse::FacetInner::Other(tts) => {
-                    // FIXME: that's bad — we should parse that in `facet-derive-parse`
+    /// Facet attributes specifically
+    pub facet_atts: Vec<PFacetAttr>,
 
-                    // flatten to string and parse for arbitrary attributes
-                    let attr_str = tts.iter().map(|tt| tt.to_string()).collect::<String>();
-                    let attrs = attr_str.split(',').map(|s| s.trim()).collect::<Vec<_>>();
-                    for attr in attrs {
-                        if let Some(equal_pos) = attr.find('=') {
-                            let key = attr[..equal_pos].trim();
-                            let value = attr[equal_pos + 1..].trim().trim_matches('"');
-                            if key == "rename" {
-                                result.push(PFacetAttr::Rename {
-                                    name: value.to_string(),
-                                });
-                            } else if key == "rename_all" {
-                                if let Some(rule) = RenameRule::from_str(value) {
-                                    result.push(PFacetAttr::RenameAll { rule });
-                                } else {
-                                    panic!(
-                                        "Invalid value for rename_all: unrecognized rename rule (got: {value:?})"
-                                    );
-                                }
-                            } else {
-                                result.push(PFacetAttr::Arbitrary {
-                                    content: attr.to_string(),
-                                });
+    /// Representation of the facet
+    pub repr: PRepr,
+
+    /// rename_all rule (if any)
+    pub rename_all: Option<RenameRule>,
+
+    /// rename (if any)
+    pub rename: Option<String>,
+}
+
+impl PAttrs {
+    fn parse(attrs: &[facet_derive_parse::Attribute]) -> Self {
+        let mut doc_lines: Vec<String> = Vec::new();
+        let mut facet_attrs: Vec<PFacetAttr> = Vec::new();
+        let mut repr: Option<PRepr> = None;
+        let mut rename_all: Option<RenameRule> = None;
+        let mut rename: Option<String> = None;
+
+        for attr in attrs {
+            match &attr.body.content {
+                facet_derive_parse::AttributeInner::Doc(doc_attr) => {
+                    // Handle doc comments
+                    doc_lines.push(doc_attr.value.value().to_string());
+                }
+                facet_derive_parse::AttributeInner::Repr(repr_attr) => {
+                    // Parse repr attribute, e.g. #[repr(C)], #[repr(transparent)], #[repr(u8)]
+                    // repr_attr.attr.content is a Vec<Delimited<Ident, Operator<','>>>
+                    // which represents something like ["C"], or ["u8"], or ["transparent"]
+                    //
+                    // We should parse each possible repr kind. But usually there's only one item.
+                    //
+                    // We'll take the first one and parse it, ignoring the rest.
+                    let repr_items = &repr_attr.attr.content;
+                    if let Some(first) = repr_items.0.first() {
+                        let repr_kind = first.value.to_string();
+                        match PRepr::parse(repr_kind.as_str()) {
+                            Some(parsed) => repr = Some(parsed),
+                            None => {
+                                panic!("Unknown #[repr] attribute: {}", repr_kind);
                             }
-                        } else if !attr.is_empty() {
-                            result.push(PFacetAttr::Arbitrary {
-                                content: attr.to_string(),
-                            });
                         }
+                    } else {
+                        // No content: default to Rust
+                        repr = Some(PRepr::Rust);
                     }
+                }
+                facet_derive_parse::AttributeInner::Facet(facet_attr) => {
+                    let attr = PFacetAttr::parse(facet_attr);
+                    facet_attrs.push(attr);
+                }
+                _ => {
+                    // Ignore unknown AttributeInner types
                 }
             }
         }
-    }
 
-    result
+        // Find rename and rename_all rules from facet_attrs list
+        for attr in &facet_attrs {
+            match attr {
+                PFacetAttr::RenameAll { rule } => {
+                    rename_all = Some(*rule);
+                }
+                PFacetAttr::Rename { name } => {
+                    rename = Some(name.clone());
+                }
+                _ => {}
+            }
+        }
+
+        Self {
+            doc: doc_lines,
+            facet_atts: facet_attrs,
+            repr: repr.unwrap_or(PRepr::Rust),
+            rename_all,
+            rename,
+        }
+    }
+}
+
+/// Parsed container
+pub struct PContainer {
+    /// Name of the container (could be a struct, an enum variant, etc.)
+    pub name: String,
+
+    /// Attributes of the container
+    pub attrs: PAttrs,
+}
+
+/// Parse struct
+pub struct PStruct {
+    /// Container information
+    pub container: PContainer,
+}
+
+/// Parsed enum (given attributes etc.)
+pub struct PEnum {
+    /// Container information
+    pub container: PContainer,
+}
+
+/// Parsed field
+pub struct PField {
+    /// The field's name (with rename rules applied)
+    pub name: PName,
+
+    /// The field's type
+    pub ty: String,
+
+    /// The field's offset (can be an expression, like `offset_of!(self, field)`)
+    pub offset: String,
+
+    /// The field's attributes
+    pub attrs: PAttrs,
+}
+
+impl PStruct {
+    pub fn parse(s: &facet_derive_parse::Struct) -> Self {
+        // Parse top-level (container) attributes for the struct.
+        let pattrs = PAttrs::parse(&s.attributes);
+
+        // Build PContainer from struct's name and attributes.
+        let container = PContainer {
+            name: s.name.to_string(),
+            attrs: pattrs,
+        };
+
+        PStruct { container }
+    }
 }
 
 #[cfg(test)]
