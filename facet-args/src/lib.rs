@@ -148,6 +148,17 @@ where
             }
         }
     }
+
+    // If a boolean field is unset the value is set to `false`
+    // This behaviour means `#[facet(default = false)]` does not need to be explicitly set
+    // on each boolean field specified on a Command struct
+    for (field_index, f) in sd.fields.iter().enumerate() {
+        if f.shape().is_type::<bool>() && !wip.is_field_set(field_index).expect("in bounds") {
+            let field = wip.field(field_index).expect("field_index is in bounds");
+            wip = parse_field(field, "false")?;
+        }
+    }
+
     let heap_vale = wip
         .build()
         .map_err(|e| ArgsError::new(ArgsErrorKind::GenericReflect(e)))?;

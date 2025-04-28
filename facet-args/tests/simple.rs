@@ -42,10 +42,7 @@ fn test_arg_parse() -> Result<()> {
 }
 
 #[test]
-#[ignore]
 fn test_missing_bool_is_false() -> Result<()> {
-    // TODO: bool arg if not set should be assumed false
-    //       current code results in an un-init reflect error
     facet_testhelpers::setup();
 
     #[derive(Facet)]
