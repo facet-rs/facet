@@ -16,7 +16,6 @@ unsafe impl Facet<'_> for ConstTypeId {
                 repr: Repr {
                     base: BaseRepr::C,
                     packed: false,
-                    align: None,
                 },
                 subtype: UserSubtype::Struct(StructDef {
                     kind: StructKind::Struct,
@@ -180,10 +179,9 @@ macro_rules! impl_facet_for_integer {
                     .id(ConstTypeId::of::<Self>())
                     .layout(Layout::new::<Self>())
                     .ty(Type::Primitive(PrimitiveType::Numeric(
-                        NumericType::Integer(IntegerType {
+                        NumericType::Integer {
                             signed: (1 as $type).checked_neg().is_some(),
-                            bits: ::core::mem::size_of::<$type>() * 8,
-                        }),
+                        },
                     )))
                     .def(Def::Scalar(
                         ScalarDef::builder().affinity($affinity).build(),
@@ -422,7 +420,6 @@ macro_rules! impl_facet_for_integer {
                         repr: Repr {
                             base: BaseRepr::Transparent,
                             packed: false,
-                            align: None,
                         },
                         subtype: UserSubtype::Struct(StructDef {
                             kind: StructKind::TupleStruct,
@@ -730,9 +727,7 @@ static EPSILON_F64: f64 = f64::EPSILON;
 unsafe impl Facet<'_> for f32 {
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
-            .ty(Type::Primitive(PrimitiveType::Numeric(NumericType::Float(
-                FloatType { bits: 32 },
-            ))))
+            .ty(Type::Primitive(PrimitiveType::Numeric(NumericType::Float)))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(
@@ -789,9 +784,7 @@ unsafe impl Facet<'_> for f32 {
 unsafe impl Facet<'_> for f64 {
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
-            .ty(Type::Primitive(PrimitiveType::Numeric(NumericType::Float(
-                FloatType { bits: 64 },
-            ))))
+            .ty(Type::Primitive(PrimitiveType::Numeric(NumericType::Float)))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(

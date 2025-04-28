@@ -415,7 +415,6 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                         repr: ::facet::Repr {
                             base: ::facet::BaseRepr::C,
                             packed: false,
-                            align: None,
                         },
                         subtype: ::facet::UserSubtype::Struct(::facet::StructDef::builder()
                             .kind(#kind)

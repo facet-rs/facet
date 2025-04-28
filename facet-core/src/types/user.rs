@@ -45,7 +45,6 @@ pub struct Repr {
     /// undefined behavior to interact with unaligned values - first copy the value to aligned
     /// buffer, before interacting with it (but first, make sure it is `Copy`!)
     pub packed: bool,
-    pub align: Option<usize>,
 }
 
 impl Repr {
@@ -56,7 +55,6 @@ impl Repr {
         Self {
             base: BaseRepr::Rust,
             packed: false,
-            align: None,
         }
     }
 }

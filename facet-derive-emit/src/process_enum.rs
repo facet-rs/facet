@@ -558,7 +558,6 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                         repr: ::facet::Repr {
                             base: ::facet::BaseRepr::C,
                             packed: false,
-                            align: None,
                         },
                         subtype: ::facet::UserSubtype::Enum(::facet::EnumDef::builder()
                             // Use variant expressions that just reference the shadow structs

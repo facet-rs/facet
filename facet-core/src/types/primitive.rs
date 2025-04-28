@@ -20,9 +20,16 @@ pub enum PrimitiveType {
 #[repr(C)]
 pub enum NumericType {
     /// Integer (`u16`, `i8`, `usize`, etc.)
-    Integer(IntegerType),
+    ///
+    /// Number of bits can be found by checking the size of the shape's layout.
+    Integer {
+        /// Is this a signed integer (`i`) or unsigned (`u`)?
+        signed: bool,
+    },
     /// Floating-point (`f32`, `f64`)
-    Float(FloatType),
+    ///
+    /// Number of bits can be found by checking the size of the shape's layout.
+    Float,
 }
 
 /// Describes textual types (char/string)
@@ -36,17 +43,4 @@ pub enum TextualType {
     Char,
     /// UTF-8 string (`str`)
     Str,
-}
-
-#[derive(Clone, Copy, Debug)]
-#[repr(C)]
-pub struct IntegerType {
-    pub signed: bool,
-    pub bits: usize,
-}
-
-#[derive(Clone, Copy, Debug)]
-#[repr(C)]
-pub struct FloatType {
-    pub bits: usize,
 }

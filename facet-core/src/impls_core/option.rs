@@ -1,8 +1,10 @@
 use core::mem::MaybeUninit;
 
 use crate::{
-    Def, Facet, OptionDef, OptionVTable, PtrConst, PtrMut, PtrUninit, Shape, TryBorrowInnerError,
-    TryFromError, TryIntoInnerError, Type, TypedPtrUninit, UserType, VTableView, value_vtable,
+    value_vtable, Def, EnumDef, EnumRepr, Facet, Field, FieldFlags, OptionDef, OptionVTable,
+    PtrConst, PtrMut, PtrUninit, Repr, Shape, StructDef, StructKind, TryBorrowInnerError,
+    TryFromError, TryIntoInnerError, Type, TypedPtrUninit, UserSubtype, UserType, VTableView,
+    Variant,
 };
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
     const SHAPE: &'static Shape = &const {
@@ -54,7 +56,50 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
                 name: "T",
                 shape: || T::SHAPE,
             }])
-            .ty(Type::User(UserType::opaque()))
+            .ty(Type::User(
+                // Null-Pointer-Optimization - we verify that this Option variant has no
+                // discriminant.
+                //
+                // See: https://doc.rust-lang.org/std/option/index.html#representation
+                if core::mem::size_of::<T>() == core::mem::size_of::<Option<T>>() {
+                    UserType {
+                        repr: Repr::default(),
+                        subtype: UserSubtype::Enum(EnumDef {
+                            repr: EnumRepr::RustNPO,
+                            variants: &const {
+                                [
+                                    Variant::builder()
+                                        .name("None")
+                                        .discriminant(0)
+                                        .fields(StructDef::builder().kind(StructKind::Unit).build())
+                                        .build(),
+                                    Variant::builder()
+                                        .name("Some")
+                                        .discriminant(0)
+                                        .fields(
+                                            StructDef::builder()
+                                                .kind(StructKind::TupleStruct)
+                                                .fields(
+                                                    &const {
+                                                        [Field::builder()
+                                                            .name("0")
+                                                            .shape(|| T::SHAPE)
+                                                            .offset(0)
+                                                            .flags(FieldFlags::EMPTY)
+                                                            .build()]
+                                                    },
+                                                )
+                                                .build(),
+                                        )
+                                        .build(),
+                                ]
+                            },
+                        }),
+                    }
+                } else {
+                    UserType::opaque()
+                },
+            ))
             .def(Def::Option(
                 OptionDef::builder()
                     .t(|| T::SHAPE)

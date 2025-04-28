@@ -15,7 +15,6 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for core::ptr::NonNull<T> {
                 repr: Repr {
                     base: BaseRepr::Transparent,
                     packed: false,
-                    align: None,
                 },
                 subtype: UserSubtype::Struct(StructDef {
                     kind: StructKind::Struct,

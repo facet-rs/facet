@@ -171,8 +171,10 @@ pub enum VariantAttribute {
 #[repr(C)]
 #[non_exhaustive]
 pub enum EnumRepr {
-    /// Default Rust representation
-    Rust,
+    /// Special-case representation discriminated by zeros under non-nullable pointer
+    ///
+    /// See: https://rust-lang.github.io/unsafe-code-guidelines/layout/enums.html#discriminant-elision-on-option-like-enums
+    RustNPO,
     /// u8 representation (#[repr(u8)])
     U8,
     /// u16 representation (#[repr(u16)])
