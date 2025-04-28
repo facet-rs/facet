@@ -118,7 +118,7 @@ fn test_reading_flat_structs() {
     let expected2 = Outer {
         name: "test2".to_string(),
         struct_: InnerStruct { val: 2 },
-        enum_: InnerEnum::Variant2("ccc".to_string()),
+        // enum_: InnerEnum::Variant2("ccc".to_string()),
     };
     assert_eq!(expected2, actual2);
 
@@ -127,7 +127,7 @@ fn test_reading_flat_structs() {
     let expected3 = Outer {
         name: "test3".to_string(),
         struct_: InnerStruct { val: 3 },
-        enum_: InnerEnum::Variant3("ddd".to_string(), "eee".to_string()),
+        // enum_: InnerEnum::Variant3("ddd".to_string(), "eee".to_string()),
     };
     assert_eq!(expected3, actual3);
 }

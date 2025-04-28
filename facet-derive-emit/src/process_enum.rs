@@ -752,49 +752,47 @@ fn variant_attrs(attributes: &[Attribute]) -> String {
                 None
             }
         })
-        .map(|attr| {
-            match &attr.inner.content {
-                FacetInner::Sensitive(_sensitive) => {
-                    r#"::facet::VariantAttribute::Sensitive"#.to_string()
-                }
-                FacetInner::Invariants(_invariants) => r#"compile_error!(
+        .map(|attr| match &attr.inner.content {
+            FacetInner::Sensitive(_sensitive) => {
+                r#"::facet::VariantAttribute::Sensitive"#.to_string()
+            }
+            FacetInner::Invariants(_invariants) => r#"compile_error!(
                     "`invariants` is not a valid attribute for an enum variant"
                 )"#
-                .to_string(),
-                FacetInner::Opaque(_opaque) => r#"compile_error!(
+            .to_string(),
+            FacetInner::Opaque(_opaque) => r#"compile_error!(
                     "`opaque` is not a valid attribute for an enum variant"
                 )"#
-                .to_string(),
-                FacetInner::DenyUnknownFields(_deny_unknown_fields) => r#"compile_error!(
+            .to_string(),
+            FacetInner::DenyUnknownFields(_deny_unknown_fields) => r#"compile_error!(
                     "`deny_unknown_fields` is not a valid attribute for an enum variant"
                 )"#
-                .to_string(),
-                FacetInner::DefaultEquals(_default_equals) => r#"compile_error!(
+            .to_string(),
+            FacetInner::DefaultEquals(_default_equals) => r#"compile_error!(
                     "`default_equals` is not a valid attribute for an enum variant"
                 )"#
-                .to_string(),
-                FacetInner::Default(_default) => r#"compile_error!(
+            .to_string(),
+            FacetInner::Default(_default) => r#"compile_error!(
                     "`default` is not a valid attribute for an enum variant"
                 )"#
-                .to_string(),
-                FacetInner::Transparent(_transparent) => r#"compile_error!(
+            .to_string(),
+            FacetInner::Transparent(_transparent) => r#"compile_error!(
                     "`transparent` is not a valid attribute for an enum variant"
                 )"#
-                .to_string(),
-                FacetInner::RenameAll(_rename_all) => r#"compile_error!(
+            .to_string(),
+            FacetInner::RenameAll(_rename_all) => r#"compile_error!(
                     "`rename_all` is not a valid attribute for an enum variant"
                 )"#
-                .to_string(),
-                FacetInner::Other(other) => {
-                    format!(
-                        r#"::facet::VariantAttribute::Arbitrary({:?})"#,
-                        other
-                            .iter()
-                            .map(|o| o.to_string())
-                            .collect::<Vec<String>>()
-                            .join(", ")
-                    )
-                }
+            .to_string(),
+            FacetInner::Other(other) => {
+                format!(
+                    r#"::facet::VariantAttribute::Arbitrary({:?})"#,
+                    other
+                        .iter()
+                        .map(|o| o.to_string())
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                )
             }
         })
         .collect::<Vec<String>>()

@@ -1,5 +1,5 @@
 use alloc::string::{String, ToString};
-use alloc::vec;
+use alloc::{vec, vec::Vec};
 use facet_core::{Characteristic, Def, Facet, ScalarAffinity, StructKind};
 use facet_reflect::{HeapValue, ReflectError, Wip};
 use log::trace;
@@ -38,14 +38,8 @@ where
     T: Facet<'facet>,
     'input: 'facet,
 {
-    let wip = Wip::alloc::<T>().map_err(|e| {
-        JsonError::new(
-            JsonErrorKind::ReflectError(e),
-            json,
-            Span::new(0, json.len()),
-            "$".to_string(),
-        )
-    })?;
+    let wip = Wip::alloc::<T>()
+        .map_err(|e| JsonError::new_reflect(e, json, Span::new(0, json.len()), "$".to_string()))?;
     let heap_value = from_slice_wip(wip, json)?;
     Ok(heap_value.materialize::<T>().unwrap())
 }
@@ -89,59 +83,6 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
     let mut last_span = Span::new(0, 0);
     let mut unread_token: Option<Spanned<Token>> = None;
 
-    macro_rules! bail {
-        ($kind:expr) => {
-            return Err(JsonError::new($kind, input, last_span, wip.path()))
-        };
-    }
-
-    macro_rules! read_token {
-        () => {
-            if let Some(token) = unread_token.take() {
-                last_span = token.span;
-                token
-            } else {
-                match tokenizer.next_token() {
-                    Ok(token) => {
-                        last_span = token.span;
-                        token
-                    }
-                    Err(e) => {
-                        last_span = e.span;
-                        bail!(JsonErrorKind::SyntaxError(e.kind));
-                    }
-                }
-            }
-        };
-    }
-
-    macro_rules! put_back_token {
-        ($token:expr) => {
-            assert!(
-                unread_token.is_none(),
-                "Cannot put back more than one token at a time"
-            );
-            unread_token = Some($token);
-        };
-    }
-
-    macro_rules! reflect {
-        ($($tt:tt)*) => {
-            let path = wip.path();
-            wip = match wip.$($tt)* {
-                Ok(wip) => wip,
-                Err(e) => {
-                    return Err(JsonError::new(
-                        JsonErrorKind::ReflectError(e),
-                        input,
-                        last_span,
-                        path,
-                    ));
-                }
-            }
-        };
-    }
-
     loop {
         let frame_count = wip.frames_count();
         debug_assert!(
@@ -161,577 +102,856 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
 
         match insn {
             Instruction::Pop(reason) => {
-                trace!("Popping because {:?}", reason.yellow());
-
-                let container_shape = wip.shape();
-                match container_shape.def {
-                    Def::Struct(sd) => {
-                        let mut has_unset = false;
-
-                        trace!("Let's check all fields are initialized");
-                        for (index, field) in sd.fields.iter().enumerate() {
-                            let is_set = wip.is_field_set(index).map_err(|err| {
-                                trace!("Error checking field set status: {:?}", err);
-                                JsonError::new(
-                                    JsonErrorKind::ReflectError(err),
-                                    input,
-                                    last_span,
-                                    wip.path(),
-                                )
-                            })?;
-                            if !is_set {
-                                if let Some(default_in_place_fn) = field.maybe_default_fn() {
-                                    reflect!(field(index));
-                                    if let Some(default_in_place_fn) = default_in_place_fn {
-                                        reflect!(put_from_fn(default_in_place_fn));
-                                        trace!(
-                                            "Field #{} {:?} was set to default value (via custom fn)",
-                                            index.yellow(),
-                                            field.blue()
-                                        );
-                                    } else {
-                                        if !field.shape().is(Characteristic::Default) {
-                                            return Err(JsonError::new(
-                                                JsonErrorKind::ReflectError(
-                                                    ReflectError::DefaultAttrButNoDefaultImpl {
-                                                        shape: field.shape(),
-                                                    },
-                                                ),
-                                                input,
-                                                last_span,
-                                                wip.path(),
-                                            ));
-                                        }
-                                        reflect!(put_default());
-                                        trace!(
-                                            "Field #{} {:?} was set to default value (via default impl)",
-                                            index.yellow(),
-                                            field.blue()
-                                        );
-                                    }
-                                    reflect!(pop());
-                                } else {
-                                    trace!(
-                                        "Field #{} {:?} is not initialized",
-                                        index.yellow(),
-                                        field.blue()
-                                    );
-                                    has_unset = true;
-                                }
-                            }
-                        }
-
-                        if has_unset && container_shape.has_default_attr() {
-                            // let's allocate and build a default value
-                            let default_val = Wip::<'facet>::alloc_shape(container_shape)
-                                .map_err(|e| {
-                                    JsonError::new(
-                                        JsonErrorKind::ReflectError(e),
-                                        input,
-                                        last_span,
-                                        wip.path(),
-                                    )
-                                })?
-                                .put_default()
-                                .map_err(|e| {
-                                    JsonError::new(
-                                        JsonErrorKind::ReflectError(e),
-                                        input,
-                                        last_span,
-                                        wip.path(),
-                                    )
-                                })?
-                                .build()
-                                .map_err(|e| {
-                                    JsonError::new(
-                                        JsonErrorKind::ReflectError(e),
-                                        input,
-                                        last_span,
-                                        wip.path(),
-                                    )
-                                })?;
-                            let peek = default_val.peek().into_struct().unwrap();
-
-                            for (index, field) in sd.fields.iter().enumerate() {
-                                let is_set = wip.is_field_set(index).map_err(|err| {
-                                    trace!("Error checking field set status: {:?}", err);
-                                    JsonError::new(
-                                        JsonErrorKind::ReflectError(err),
-                                        input,
-                                        last_span,
-                                        wip.path(),
-                                    )
-                                })?;
-                                if !is_set {
-                                    let address_of_field_from_default =
-                                        peek.field(index).unwrap().data();
-                                    reflect!(field(index));
-                                    reflect!(put_shape(
-                                        address_of_field_from_default,
-                                        field.shape()
-                                    ));
-                                    reflect!(pop());
-                                }
-                            }
-                        }
-                    }
-                    Def::Enum(_) => {
-                        trace!(
-                            "TODO: make sure enums are initialized (support container-level and field-level default, etc.)"
-                        );
-                    }
-                    _ => {
-                        trace!("Thing being popped is not a container I guess");
-                    }
-                }
+                wip = pop(wip, reason, input, last_span)?;
 
                 if reason == PopReason::TopLevel {
                     let path = wip.path();
-                    return wip.build().map_err(|e| {
-                        JsonError::new(JsonErrorKind::ReflectError(e), input, last_span, path)
-                    });
+                    return wip
+                        .build()
+                        .map_err(|e| JsonError::new_reflect(e, input, last_span, path));
                 } else {
-                    reflect!(pop());
+                    let path = wip.path();
+                    wip = wip
+                        .pop()
+                        .map_err(|e| JsonError::new_reflect(e, input, last_span, path))?;
                 }
             }
             Instruction::SkipValue => {
-                let token = read_token!();
-                match token.node {
-                    Token::LBrace | Token::LBracket => {
-                        // Skip a compound value by tracking nesting depth
-                        let mut depth = 1;
-                        while depth > 0 {
-                            let token = read_token!();
-                            match token.node {
-                                Token::LBrace | Token::LBracket => {
-                                    depth += 1;
-                                }
-                                Token::RBrace | Token::RBracket => {
-                                    depth -= 1;
-                                }
-                                _ => {
-                                    // primitives, commas, colons, strings, numbers, etc.
-                                }
-                            }
-                        }
-                    }
-                    Token::String(_)
-                    | Token::F64(_)
-                    | Token::I64(_)
-                    | Token::U64(_)
-                    | Token::True
-                    | Token::False
-                    | Token::Null => {
-                        // Primitive value; nothing more to skip
-                    }
-                    other => {
-                        // Unexpected token when skipping a value
-                        bail!(JsonErrorKind::UnexpectedToken {
-                            got: other,
-                            wanted: "value"
-                        });
-                    }
-                }
+                skip_value(
+                    &wip,
+                    &mut unread_token,
+                    &mut tokenizer,
+                    input,
+                    &mut last_span,
+                )?;
             }
             Instruction::Value => {
-                let token = read_token!();
-                match token.node {
-                    Token::Null => {
-                        reflect!(put_default());
-                    }
-                    _ => {
-                        if matches!(wip.shape().def, Def::Option(_)) {
-                            trace!("Starting Some(_) option for {}", wip.shape().blue());
-                            reflect!(push_some());
-                            stack.push(Instruction::Pop(PopReason::Some))
+                wip = value(
+                    wip,
+                    &mut stack,
+                    &mut unread_token,
+                    &mut tokenizer,
+                    input,
+                    &mut last_span,
+                )?;
+            }
+            Instruction::ObjectKeyOrObjectClose => {
+                wip = object_key_or_object_close(
+                    wip,
+                    &mut stack,
+                    &mut unread_token,
+                    &mut tokenizer,
+                    input,
+                    &mut last_span,
+                )?;
+            }
+            Instruction::CommaThenObjectKeyOrObjectClose => {
+                comma_then_object_key_or_object_close(
+                    &wip,
+                    &mut unread_token,
+                    &mut tokenizer,
+                    input,
+                    &mut last_span,
+                    &mut stack,
+                )?;
+            }
+            Instruction::ArrayItemOrArrayClose => {
+                wip = array_item_or_array_close(
+                    wip,
+                    &mut unread_token,
+                    &mut tokenizer,
+                    input,
+                    &mut last_span,
+                    &mut stack,
+                )?;
+            }
+            Instruction::CommaThenArrayItemOrArrayClose => {
+                wip = comma_then_array_item_or_array_close(
+                    wip,
+                    &mut unread_token,
+                    &mut tokenizer,
+                    input,
+                    &mut last_span,
+                    &mut stack,
+                )?;
+            }
+        }
+    }
+}
+
+fn pop<'input, 'facet>(
+    mut wip: Wip<'facet>,
+    reason: PopReason,
+    input: &'input [u8],
+    last_span: Span,
+) -> Result<Wip<'facet>, JsonError<'input>> {
+    trace!("Popping because {:?}", reason.yellow());
+
+    let container_shape = wip.shape();
+    match container_shape.def {
+        Def::Struct(sd) => {
+            let mut has_unset = false;
+
+            trace!("Let's check all fields are initialized");
+            for (index, field) in sd.fields.iter().enumerate() {
+                let is_set = wip.is_field_set(index).map_err(|err| {
+                    trace!("Error checking field set status: {:?}", err);
+                    JsonError::new_reflect(err, input, last_span, wip.path())
+                })?;
+                if !is_set {
+                    if let Some(default_in_place_fn) = field.maybe_default_fn() {
+                        let path = wip.path();
+                        wip = wip
+                            .field(index)
+                            .map_err(|e| JsonError::new_reflect(e, input, last_span, path))?;
+                        if let Some(default_in_place_fn) = default_in_place_fn {
+                            let path = wip.path();
+                            wip = wip
+                                .put_from_fn(default_in_place_fn)
+                                .map_err(|e| JsonError::new_reflect(e, input, last_span, path))?;
+                            trace!(
+                                "Field #{} {:?} was set to default value (via custom fn)",
+                                index.yellow(),
+                                field.blue()
+                            );
+                        } else {
+                            if !field.shape().is(Characteristic::Default) {
+                                return Err(JsonError::new(
+                                    JsonErrorKind::ReflectError(
+                                        ReflectError::DefaultAttrButNoDefaultImpl {
+                                            shape: field.shape(),
+                                        },
+                                    ),
+                                    input,
+                                    last_span,
+                                    wip.path(),
+                                ));
+                            }
+                            let path = wip.path();
+                            wip = wip
+                                .put_default()
+                                .map_err(|e| JsonError::new_reflect(e, input, last_span, path))?;
+                            trace!(
+                                "Field #{} {:?} was set to default value (via default impl)",
+                                index.yellow(),
+                                field.blue()
+                            );
                         }
-
-                        match token.node {
-                            Token::Null => unreachable!(),
-                            Token::LBrace => {
-                                match wip.innermost_shape().def {
-                                    Def::Map(_md) => {
-                                        trace!(
-                                            "Object starting for map value ({})!",
-                                            wip.shape().blue()
-                                        );
-                                        reflect!(put_default());
-                                    }
-                                    Def::Enum(_ed) => {
-                                        trace!(
-                                            "Object starting for enum value ({})!",
-                                            wip.shape().blue()
-                                        );
-                                        // nothing to do here
-                                    }
-                                    Def::Struct(_) => {
-                                        trace!(
-                                            "Object starting for struct value ({})!",
-                                            wip.shape().blue()
-                                        );
-                                        // nothing to do here
-                                    }
-                                    _ => {
-                                        bail!(JsonErrorKind::UnsupportedType {
-                                            got: wip.innermost_shape(),
-                                            wanted: "map, enum, or struct"
-                                        });
-                                    }
-                                }
-
-                                stack.push(Instruction::ObjectKeyOrObjectClose)
-                            }
-                            Token::LBracket => {
-                                match wip.innermost_shape().def {
-                                    Def::Array(_) => {
-                                        trace!(
-                                            "Array starting for array ({})!",
-                                            wip.shape().blue()
-                                        );
-                                    }
-                                    Def::Slice(_) => {
-                                        trace!(
-                                            "Array starting for slice ({})!",
-                                            wip.shape().blue()
-                                        );
-                                    }
-                                    Def::List(_) => {
-                                        trace!("Array starting for list ({})!", wip.shape().blue());
-                                        reflect!(put_default());
-                                    }
-                                    Def::Enum(_) => {
-                                        trace!("Array starting for enum ({})!", wip.shape().blue());
-                                    }
-                                    Def::Struct(s) => {
-                                        if s.kind == StructKind::Tuple {
-                                            trace!(
-                                                "Array starting for tuple ({})!",
-                                                wip.shape().blue()
-                                            );
-                                            // Special handling for unit type ()
-                                            if s.fields.is_empty() {
-                                                // Check if the array is empty by peeking at the next token
-                                                let next_token = read_token!();
-                                                if next_token.node == Token::RBracket {
-                                                    // Empty array means unit type () - we're good
-                                                    reflect!(put_default());
-                                                } else {
-                                                    // Non-empty array is not valid for unit type
-                                                    bail!(JsonErrorKind::UnsupportedType {
-                                                        got: wip.innermost_shape(),
-                                                        wanted: "empty array",
-                                                    });
-                                                }
-                                            } else {
-                                                reflect!(put_default());
-                                            }
-                                        } else {
-                                            bail!(JsonErrorKind::UnsupportedType {
-                                                got: wip.shape(),
-                                                wanted: "array, list, tuple, or slice"
-                                            });
-                                        }
-                                    }
-                                    Def::Scalar(s)
-                                        if matches!(s.affinity, ScalarAffinity::Empty(_)) =>
-                                    {
-                                        trace!(
-                                            "Array starting for tuple ({})!",
-                                            wip.shape().blue()
-                                        );
-                                        // reflect!(put_default());
-                                        // Check if the array is empty by peeking at the next token
-                                        let next_token = read_token!();
-                                        if next_token.node == Token::RBracket {
-                                            // Empty array means unit type () - we're good
-                                        } else {
-                                            // Non-empty array is not valid for unit type
-                                            bail!(JsonErrorKind::UnsupportedType {
-                                                got: wip.innermost_shape(),
-                                                wanted: "empty array",
-                                            });
-                                        }
-                                    }
-                                    _ => {
-                                        bail!(JsonErrorKind::UnsupportedType {
-                                            got: wip.innermost_shape(),
-                                            wanted: "array, list, tuple, or slice"
-                                        });
-                                    }
-                                }
-
-                                trace!("Beginning pushback");
-                                reflect!(begin_pushback());
-                                stack.push(Instruction::ArrayItemOrArrayClose)
-                            }
-                            Token::RBrace | Token::RBracket | Token::Colon | Token::Comma => {
-                                bail!(JsonErrorKind::UnexpectedToken {
-                                    got: token.node,
-                                    wanted: "value"
-                                });
-                            }
-                            Token::String(s) => match wip.innermost_shape().def {
-                                Def::Scalar(_sd) => {
-                                    reflect!(put::<String>(s));
-                                }
-                                Def::Enum(_ed) => {
-                                    if wip.selected_variant().is_some() {
-                                        trace!("Have variant selected arleady, just putting");
-
-                                        // just put, then — if it's a tuple field it'll work
-                                        reflect!(put::<String>(s));
-                                    } else {
-                                        match wip.find_variant(&s) {
-                                            Some((variant_index, _)) => {
-                                                reflect!(variant(variant_index));
-                                            }
-                                            None => {
-                                                bail!(JsonErrorKind::NoSuchVariant {
-                                                    name: s.to_string(),
-                                                    enum_shape: wip.shape()
-                                                });
-                                            }
-                                        }
-                                    }
-                                }
-                                _ => bail!(JsonErrorKind::UnsupportedType {
-                                    got: wip.innermost_shape(),
-                                    wanted: "enum or string"
-                                }),
-                            },
-                            Token::F64(n) => {
-                                if wip.innermost_shape() == <f32 as Facet>::SHAPE {
-                                    reflect!(put(n as f32));
-                                } else {
-                                    reflect!(put(n));
-                                }
-                            }
-                            Token::U64(n) => {
-                                reflect!(put(n));
-                            }
-                            Token::I64(n) => {
-                                reflect!(put(n));
-                            }
-                            Token::True => {
-                                reflect!(put::<bool>(true));
-                            }
-                            Token::False => {
-                                reflect!(put::<bool>(false));
-                            }
-                            Token::EOF => {
-                                bail!(JsonErrorKind::UnexpectedEof("in value"));
-                            }
-                        }
+                        let path = wip.path();
+                        wip = wip
+                            .pop()
+                            .map_err(|e| JsonError::new_reflect(e, input, last_span, path))?;
+                    } else {
+                        trace!(
+                            "Field #{} {:?} is not initialized",
+                            index.yellow(),
+                            field.blue()
+                        );
+                        has_unset = true;
                     }
                 }
             }
-            Instruction::ObjectKeyOrObjectClose => {
-                let token = read_token!();
+
+            if has_unset && container_shape.has_default_attr() {
+                // let's allocate and build a default value
+                let default_val = Wip::<'facet>::alloc_shape(container_shape)
+                    .map_err(|e| JsonError::new_reflect(e, input, last_span, wip.path()))?
+                    .put_default()
+                    .map_err(|e| JsonError::new_reflect(e, input, last_span, wip.path()))?
+                    .build()
+                    .map_err(|e| JsonError::new_reflect(e, input, last_span, wip.path()))?;
+                let peek = default_val.peek().into_struct().unwrap();
+
+                for (index, field) in sd.fields.iter().enumerate() {
+                    let is_set = wip.is_field_set(index).map_err(|err| {
+                        trace!("Error checking field set status: {:?}", err);
+                        JsonError::new(
+                            JsonErrorKind::ReflectError(err),
+                            input,
+                            last_span,
+                            wip.path(),
+                        )
+                    })?;
+                    if !is_set {
+                        let address_of_field_from_default = peek.field(index).unwrap().data();
+                        let path = wip.path();
+                        wip = wip
+                            .field(index)
+                            .map_err(|e| JsonError::new_reflect(e, input, last_span, path))?;
+                        let path = wip.path();
+                        wip = wip
+                            .put_shape(address_of_field_from_default, field.shape())
+                            .map_err(|e| JsonError::new_reflect(e, input, last_span, path))?;
+                        let path = wip.path();
+                        wip = wip
+                            .pop()
+                            .map_err(|e| JsonError::new_reflect(e, input, last_span, path))?;
+                    }
+                }
+            }
+        }
+        Def::Enum(_) => {
+            trace!(
+                "TODO: make sure enums are initialized (support container-level and field-level default, etc.)"
+            );
+        }
+        _ => {
+            trace!("Thing being popped is not a container I guess");
+        }
+    }
+    Ok(wip)
+}
+
+fn skip_value<'input>(
+    wip: &Wip<'_>,
+    unread_token: &mut Option<Spanned<Token>>,
+    tokenizer: &mut Tokenizer<'_>,
+    input: &'input [u8],
+    last_span: &mut Span,
+) -> Result<(), JsonError<'input>> {
+    let token = read_token(wip, unread_token, tokenizer, input, last_span)?;
+    match token.node {
+        Token::LBrace | Token::LBracket => {
+            // Skip a compound value by tracking nesting depth
+            let mut depth = 1;
+            while depth > 0 {
+                let token = read_token(wip, unread_token, tokenizer, input, last_span)?;
                 match token.node {
-                    Token::String(key) => {
-                        trace!("Parsed object key: {}", key);
+                    Token::LBrace | Token::LBracket => {
+                        depth += 1;
+                    }
+                    Token::RBrace | Token::RBracket => {
+                        depth -= 1;
+                    }
+                    _ => {
+                        // primitives, commas, colons, strings, numbers, etc.
+                    }
+                }
+            }
+        }
+        Token::String(_)
+        | Token::F64(_)
+        | Token::I64(_)
+        | Token::U64(_)
+        | Token::True
+        | Token::False
+        | Token::Null => {
+            // Primitive value; nothing more to skip
+        }
+        other => {
+            // Unexpected token when skipping a value
+            return Err(JsonError::new(
+                JsonErrorKind::UnexpectedToken {
+                    got: other,
+                    wanted: "value",
+                },
+                input,
+                *last_span,
+                wip.path(),
+            ));
+        }
+    }
+    Ok(())
+}
 
-                        let mut ignore = false;
-                        let mut needs_pop = true;
-                        let mut handled_by_flatten = false;
+fn value<'input, 'facet>(
+    mut wip: Wip<'facet>,
+    stack: &mut Vec<Instruction>,
+    unread_token: &mut Option<Spanned<Token>>,
+    tokenizer: &mut Tokenizer<'_>,
+    input: &'input [u8],
+    last_span: &mut Span,
+) -> Result<Wip<'facet>, JsonError<'input>> {
+    let token = read_token(&wip, unread_token, tokenizer, input, last_span)?;
+    match token.node {
+        Token::Null => {
+            let path = wip.path();
+            wip.put_default()
+                .map_err(|e| JsonError::new_reflect(e, input, *last_span, path))
+        }
+        _ => {
+            if matches!(wip.shape().def, Def::Option(_)) {
+                trace!("Starting Some(_) option for {}", wip.shape().blue());
+                let path = wip.path();
+                wip = wip
+                    .push_some()
+                    .map_err(|e| JsonError::new_reflect(e, input, *last_span, path))?;
+                stack.push(Instruction::Pop(PopReason::Some))
+            }
 
-                        match wip.shape().def {
-                            Def::Struct(sd) => {
-                                // First try to find a direct field match
-                                if let Some(index) = wip.field_index(&key) {
-                                    trace!("It's a struct field");
-                                    reflect!(field(index));
-                                } else {
-                                    // Check for flattened fields
-                                    let mut found_in_flatten = false;
-                                    for (index, field) in sd.fields.iter().enumerate() {
-                                        if field.has_arbitrary_attr("flatten") {
-                                            trace!("Found flattened field #{}", index);
-                                            // Enter the flattened field
-                                            reflect!(field(index));
+            match token.node {
+                Token::Null => unreachable!(),
+                Token::LBrace => {
+                    match wip.innermost_shape().def {
+                        Def::Map(_md) => {
+                            trace!("Object starting for map value ({})!", wip.shape().blue());
+                            let path = wip.path();
+                            wip = wip
+                                .put_default()
+                                .map_err(|e| JsonError::new_reflect(e, input, *last_span, path))?;
+                        }
+                        Def::Enum(_ed) => {
+                            trace!("Object starting for enum value ({})!", wip.shape().blue());
+                            // nothing to do here
+                        }
+                        Def::Struct(_) => {
+                            trace!("Object starting for struct value ({})!", wip.shape().blue());
+                            // nothing to do here
+                        }
+                        _ => {
+                            let path = wip.path();
+                            return Err(JsonError::new(
+                                JsonErrorKind::UnsupportedType {
+                                    got: wip.innermost_shape(),
+                                    wanted: "map, enum, or struct",
+                                },
+                                input,
+                                *last_span,
+                                path,
+                            ));
+                        }
+                    }
 
-                                            // Check if this flattened field has the requested key
-                                            if let Some(subfield_index) = wip.field_index(&key) {
-                                                trace!("Found key {} in flattened field", key);
-                                                reflect!(field(subfield_index));
-                                                found_in_flatten = true;
-                                                handled_by_flatten = true;
-                                                break;
-                                            } else if let Some((_variant_index, _variant)) =
-                                                wip.find_variant(&key)
-                                            {
-                                                trace!("Found key {} in flattened field", key);
-                                                reflect!(variant_named(&key));
-                                                found_in_flatten = true;
-                                                break;
-                                            } else {
-                                                // Key not in this flattened field, go back up
-                                                reflect!(pop());
-                                            }
-                                        }
-                                    }
-
-                                    if !found_in_flatten {
-                                        if wip.shape().has_deny_unknown_fields_attr() {
-                                            trace!(
-                                                "It's not a struct field AND we're denying unknown fields"
-                                            );
-                                            bail!(JsonErrorKind::UnknownField {
-                                                field_name: key.to_string(),
-                                                shape: wip.shape(),
-                                            })
-                                        } else {
-                                            trace!(
-                                                "It's not a struct field and we're ignoring unknown fields"
-                                            );
-                                            ignore = true;
-                                        }
-                                    }
-                                }
-                            }
-                            Def::Enum(_ed) => match wip.find_variant(&key) {
-                                Some((index, variant)) => {
-                                    trace!("Variant {} selected", variant.name.blue());
-                                    reflect!(variant(index));
-                                    needs_pop = false;
-                                }
-                                None => {
-                                    if let Some(_variant_index) = wip.selected_variant() {
-                                        trace!(
-                                            "Already have a variant selected, treating key as struct field of variant"
-                                        );
-                                        // Try to find the field index of the key within the selected variant
-                                        if let Some(index) = wip.field_index(&key) {
-                                            trace!(
-                                                "Found field {} in selected variant",
-                                                key.blue()
-                                            );
-                                            reflect!(field(index));
-                                        } else if wip.shape().has_deny_unknown_fields_attr() {
-                                            trace!(
-                                                "Unknown field in variant and denying unknown fields"
-                                            );
-                                            bail!(JsonErrorKind::UnknownField {
-                                                field_name: key.to_string(),
-                                                shape: wip.shape(),
-                                            });
-                                        } else {
-                                            trace!("Ignoring unknown field in variant");
-                                            ignore = true;
-                                        }
+                    stack.push(Instruction::ObjectKeyOrObjectClose);
+                    Ok(wip)
+                }
+                Token::LBracket => {
+                    match wip.innermost_shape().def {
+                        Def::Array(_) => {
+                            trace!("Array starting for array ({})!", wip.shape().blue());
+                        }
+                        Def::Slice(_) => {
+                            trace!("Array starting for slice ({})!", wip.shape().blue());
+                        }
+                        Def::List(_) => {
+                            trace!("Array starting for list ({})!", wip.shape().blue());
+                            let path = wip.path();
+                            wip = wip
+                                .put_default()
+                                .map_err(|e| JsonError::new_reflect(e, input, *last_span, path))?;
+                        }
+                        Def::Enum(_) => {
+                            trace!("Array starting for enum ({})!", wip.shape().blue());
+                        }
+                        Def::Struct(s) => {
+                            if s.kind == StructKind::Tuple {
+                                trace!("Array starting for tuple ({})!", wip.shape().blue());
+                                // Special handling for unit type ()
+                                if s.fields.is_empty() {
+                                    // Check if the array is empty by peeking at the next token
+                                    let next_token = read_token(
+                                        &wip,
+                                        unread_token,
+                                        tokenizer,
+                                        input,
+                                        last_span,
+                                    )?;
+                                    if next_token.node == Token::RBracket {
+                                        // Empty array means unit type () - we're good
+                                        let path = wip.path();
+                                        wip = wip.put_default().map_err(|e| {
+                                            JsonError::new_reflect(e, input, *last_span, path)
+                                        })?;
                                     } else {
-                                        bail!(JsonErrorKind::NoSuchVariant {
-                                            name: key.to_string(),
-                                            enum_shape: wip.shape()
-                                        });
+                                        // Non-empty array is not valid for unit type
+                                        return Err(JsonError::new(
+                                            JsonErrorKind::UnsupportedType {
+                                                got: wip.innermost_shape(),
+                                                wanted: "empty array",
+                                            },
+                                            input,
+                                            *last_span,
+                                            wip.path(),
+                                        ));
                                     }
+                                } else {
+                                    let path = wip.path();
+                                    wip = wip.put_default().map_err(|e| {
+                                        JsonError::new_reflect(e, input, *last_span, path)
+                                    })?;
                                 }
-                            },
-                            Def::Map(_) => {
-                                reflect!(push_map_key());
-                                reflect!(put(key));
-                                reflect!(push_map_value());
-                            }
-                            _ => {
-                                bail!(JsonErrorKind::Unimplemented(
-                                    "object key for non-struct/map"
+                            } else {
+                                return Err(JsonError::new(
+                                    JsonErrorKind::UnsupportedType {
+                                        got: wip.shape(),
+                                        wanted: "array, list, tuple, or slice",
+                                    },
+                                    input,
+                                    *last_span,
+                                    wip.path(),
                                 ));
                             }
                         }
-
-                        let colon = read_token!();
-                        if colon.node != Token::Colon {
-                            bail!(JsonErrorKind::UnexpectedToken {
-                                got: colon.node,
-                                wanted: "colon"
-                            });
-                        }
-                        stack.push(Instruction::CommaThenObjectKeyOrObjectClose);
-                        if ignore {
-                            stack.push(Instruction::SkipValue);
-                        } else {
-                            if needs_pop && !handled_by_flatten {
-                                trace!("Pushing Pop insn to stack (ObjectVal)");
-                                stack.push(Instruction::Pop(PopReason::ObjectVal));
-                            } else if handled_by_flatten {
-                                // We need two pops for flattened fields - one for the field itself,
-                                // one for the containing struct
-                                trace!("Pushing Pop insn to stack (ObjectVal) for flattened field");
-                                stack.push(Instruction::Pop(PopReason::ObjectVal));
-                                stack.push(Instruction::Pop(PopReason::ObjectVal));
+                        Def::Scalar(s) if matches!(s.affinity, ScalarAffinity::Empty(_)) => {
+                            trace!("Array starting for tuple ({})!", wip.shape().blue());
+                            // wip = wip.put_default().map_err(|e| JsonError::new_reflect(e, input, *last_span, path))?;
+                            // Check if the array is empty by peeking at the next token
+                            let next_token =
+                                read_token(&wip, unread_token, tokenizer, input, last_span)?;
+                            if next_token.node == Token::RBracket {
+                                // Empty array means unit type () - we're good
+                            } else {
+                                // Non-empty array is not valid for unit type
+                                return Err(JsonError::new(
+                                    JsonErrorKind::UnsupportedType {
+                                        got: wip.innermost_shape(),
+                                        wanted: "empty array",
+                                    },
+                                    input,
+                                    *last_span,
+                                    wip.path(),
+                                ));
                             }
-                            stack.push(Instruction::Value);
+                        }
+                        _ => {
+                            return Err(JsonError::new(
+                                JsonErrorKind::UnsupportedType {
+                                    got: wip.innermost_shape(),
+                                    wanted: "array, list, tuple, or slice",
+                                },
+                                input,
+                                *last_span,
+                                wip.path(),
+                            ));
                         }
                     }
-                    Token::RBrace => {
-                        trace!("Object closing");
-                    }
-                    _ => {
-                        bail!(JsonErrorKind::UnexpectedToken {
-                            got: token.node,
-                            wanted: "object key or closing brace"
-                        });
-                    }
-                }
-            }
-            Instruction::CommaThenObjectKeyOrObjectClose => {
-                let token = read_token!();
-                match token.node {
-                    Token::Comma => {
-                        trace!("Object comma");
-                        stack.push(Instruction::ObjectKeyOrObjectClose);
-                    }
-                    Token::RBrace => {
-                        trace!("Object close");
-                    }
-                    _ => {
-                        bail!(JsonErrorKind::UnexpectedToken {
-                            got: token.node,
-                            wanted: "comma"
-                        });
-                    }
-                }
-            }
-            Instruction::ArrayItemOrArrayClose => {
-                let token = read_token!();
-                match token.node {
-                    Token::RBracket => {
-                        trace!("Array close");
-                    }
-                    _ => {
-                        trace!("Array item");
-                        put_back_token!(token);
-                        reflect!(begin_pushback());
-                        reflect!(push());
 
-                        stack.push(Instruction::CommaThenArrayItemOrArrayClose);
-                        trace!("Pushing Pop insn to stack (arrayitem)");
-                        stack.push(Instruction::Pop(PopReason::ArrayItem));
-                        stack.push(Instruction::Value);
+                    trace!("Beginning pushback");
+                    stack.push(Instruction::ArrayItemOrArrayClose);
+                    let path = wip.path();
+                    wip.begin_pushback()
+                        .map_err(|e| JsonError::new_reflect(e, input, *last_span, path))
+                }
+                Token::RBrace | Token::RBracket | Token::Colon | Token::Comma => {
+                    Err(JsonError::new(
+                        JsonErrorKind::UnexpectedToken {
+                            got: token.node,
+                            wanted: "value",
+                        },
+                        input,
+                        *last_span,
+                        wip.path(),
+                    ))
+                }
+                Token::String(s) => match wip.innermost_shape().def {
+                    Def::Scalar(_sd) => {
+                        let path = wip.path();
+                        wip.put::<String>(s)
+                            .map_err(|e| JsonError::new_reflect(e, input, *last_span, path))
                     }
+                    Def::Enum(_ed) => {
+                        if wip.selected_variant().is_some() {
+                            trace!("Have variant selected arleady, just putting");
+
+                            // just put, then — if it's a tuple field it'll work
+                            let path = wip.path();
+                            wip.put::<String>(s)
+                                .map_err(|e| JsonError::new_reflect(e, input, *last_span, path))
+                        } else {
+                            match wip.find_variant(&s) {
+                                Some((variant_index, _)) => {
+                                    let path = wip.path();
+                                    wip.variant(variant_index).map_err(|e| {
+                                        JsonError::new_reflect(e, input, *last_span, path)
+                                    })
+                                }
+                                None => Err(JsonError::new(
+                                    JsonErrorKind::NoSuchVariant {
+                                        name: s.to_string(),
+                                        enum_shape: wip.shape(),
+                                    },
+                                    input,
+                                    *last_span,
+                                    wip.path(),
+                                )),
+                            }
+                        }
+                    }
+                    _ => Err(JsonError::new(
+                        JsonErrorKind::UnsupportedType {
+                            got: wip.innermost_shape(),
+                            wanted: "enum or string",
+                        },
+                        input,
+                        *last_span,
+                        wip.path(),
+                    )),
+                },
+                Token::F64(n) => {
+                    if wip.innermost_shape() == <f32 as Facet>::SHAPE {
+                        let path = wip.path();
+                        wip.put(n as f32)
+                            .map_err(|e| JsonError::new_reflect(e, input, *last_span, path))
+                    } else {
+                        let path = wip.path();
+                        wip.put(n)
+                            .map_err(|e| JsonError::new_reflect(e, input, *last_span, path))
+                    }
+                }
+                Token::U64(n) => {
+                    let path = wip.path();
+                    wip.put(n)
+                        .map_err(|e| JsonError::new_reflect(e, input, *last_span, path))
+                }
+                Token::I64(n) => {
+                    let path = wip.path();
+                    wip.put(n)
+                        .map_err(|e| JsonError::new_reflect(e, input, *last_span, path))
+                }
+                Token::True => {
+                    let path = wip.path();
+                    wip.put::<bool>(true)
+                        .map_err(|e| JsonError::new_reflect(e, input, *last_span, path))
+                }
+                Token::False => {
+                    let path = wip.path();
+                    wip.put::<bool>(false)
+                        .map_err(|e| JsonError::new_reflect(e, input, *last_span, path))
+                }
+                Token::EOF => Err(JsonError::new(
+                    JsonErrorKind::UnexpectedEof("in value"),
+                    input,
+                    *last_span,
+                    wip.path(),
+                )),
+            }
+        }
+    }
+}
+
+fn object_key_or_object_close<'input, 'facet>(
+    mut wip: Wip<'facet>,
+    stack: &mut Vec<Instruction>,
+    unread_token: &mut Option<Spanned<Token>>,
+    tokenizer: &mut Tokenizer<'_>,
+    input: &'input [u8],
+    last_span: &mut Span,
+) -> Result<Wip<'facet>, JsonError<'input>> {
+    let token = read_token(&wip, unread_token, tokenizer, input, last_span)?;
+    match token.node {
+        Token::String(key) => {
+            trace!("Parsed object key: {}", key);
+
+            let mut ignore = false;
+            let mut needs_pop = true;
+            let mut handled_by_flatten = false;
+
+            match wip.shape().def {
+                Def::Struct(sd) => {
+                    // First try to find a direct field match
+                    if let Some(index) = wip.field_index(&key) {
+                        trace!("It's a struct field");
+                        let path = wip.path();
+                        wip = wip
+                            .field(index)
+                            .map_err(|e| JsonError::new_reflect(e, input, *last_span, path))?;
+                    } else {
+                        // Check for flattened fields
+                        let mut found_in_flatten = false;
+                        for (index, field) in sd.fields.iter().enumerate() {
+                            if field.has_arbitrary_attr("flatten") {
+                                trace!("Found flattened field #{}", index);
+                                // Enter the flattened field
+                                let path = wip.path();
+                                wip = wip.field(index).map_err(|e| {
+                                    JsonError::new_reflect(e, input, *last_span, path)
+                                })?;
+
+                                // Check if this flattened field has the requested key
+                                if let Some(subfield_index) = wip.field_index(&key) {
+                                    trace!("Found key {} in flattened field", key);
+                                    let path = wip.path();
+                                    wip = wip.field(subfield_index).map_err(|e| {
+                                        JsonError::new_reflect(e, input, *last_span, path)
+                                    })?;
+                                    found_in_flatten = true;
+                                    handled_by_flatten = true;
+                                    break;
+                                } else if let Some((_variant_index, _variant)) =
+                                    wip.find_variant(&key)
+                                {
+                                    trace!("Found key {} in flattened field", key);
+                                    let path = wip.path();
+                                    wip = wip.variant_named(&key).map_err(|e| {
+                                        JsonError::new_reflect(e, input, *last_span, path)
+                                    })?;
+                                    found_in_flatten = true;
+                                    break;
+                                } else {
+                                    // Key not in this flattened field, go back up
+                                    let path = wip.path();
+                                    wip = wip.pop().map_err(|e| {
+                                        JsonError::new_reflect(e, input, *last_span, path)
+                                    })?;
+                                }
+                            }
+                        }
+
+                        if !found_in_flatten {
+                            if wip.shape().has_deny_unknown_fields_attr() {
+                                trace!("It's not a struct field AND we're denying unknown fields");
+                                return Err(JsonError::new(
+                                    JsonErrorKind::UnknownField {
+                                        field_name: key.to_string(),
+                                        shape: wip.shape(),
+                                    },
+                                    input,
+                                    *last_span,
+                                    wip.path(),
+                                ));
+                            } else {
+                                trace!("It's not a struct field and we're ignoring unknown fields");
+                                ignore = true;
+                            }
+                        }
+                    }
+                }
+                Def::Enum(_ed) => match wip.find_variant(&key) {
+                    Some((index, variant)) => {
+                        trace!("Variant {} selected", variant.name.blue());
+                        let path = wip.path();
+                        wip = wip
+                            .variant(index)
+                            .map_err(|e| JsonError::new_reflect(e, input, *last_span, path))?;
+                        needs_pop = false;
+                    }
+                    None => {
+                        if let Some(_variant_index) = wip.selected_variant() {
+                            trace!(
+                                "Already have a variant selected, treating key as struct field of variant"
+                            );
+                            // Try to find the field index of the key within the selected variant
+                            if let Some(index) = wip.field_index(&key) {
+                                trace!("Found field {} in selected variant", key.blue());
+                                let path = wip.path();
+                                wip = wip.field(index).map_err(|e| {
+                                    JsonError::new_reflect(e, input, *last_span, path)
+                                })?;
+                            } else if wip.shape().has_deny_unknown_fields_attr() {
+                                trace!("Unknown field in variant and denying unknown fields");
+                                return Err(JsonError::new(
+                                    JsonErrorKind::UnknownField {
+                                        field_name: key.to_string(),
+                                        shape: wip.shape(),
+                                    },
+                                    input,
+                                    *last_span,
+                                    wip.path(),
+                                ));
+                            } else {
+                                trace!("Ignoring unknown field in variant");
+                                ignore = true;
+                            }
+                        } else {
+                            return Err(JsonError::new(
+                                JsonErrorKind::NoSuchVariant {
+                                    name: key.to_string(),
+                                    enum_shape: wip.shape(),
+                                },
+                                input,
+                                *last_span,
+                                wip.path(),
+                            ));
+                        }
+                    }
+                },
+                Def::Map(_) => {
+                    let path = wip.path();
+                    wip = wip
+                        .push_map_key()
+                        .map_err(|e| JsonError::new_reflect(e, input, *last_span, path))?;
+                    let path = wip.path();
+                    wip = wip
+                        .put(key)
+                        .map_err(|e| JsonError::new_reflect(e, input, *last_span, path))?;
+                    let path = wip.path();
+                    wip = wip
+                        .push_map_value()
+                        .map_err(|e| JsonError::new_reflect(e, input, *last_span, path))?;
+                }
+                _ => {
+                    return Err(JsonError::new(
+                        JsonErrorKind::Unimplemented("object key for non-struct/map"),
+                        input,
+                        *last_span,
+                        wip.path(),
+                    ));
                 }
             }
-            Instruction::CommaThenArrayItemOrArrayClose => {
-                let token = read_token!();
-                match token.node {
-                    Token::RBracket => {
-                        trace!("Array close");
-                    }
-                    Token::Comma => {
-                        trace!("Array comma");
-                        reflect!(push());
-                        stack.push(Instruction::CommaThenArrayItemOrArrayClose);
-                        trace!("Pushing Pop insn to stack (arrayitem)");
-                        stack.push(Instruction::Pop(PopReason::ArrayItem));
-                        stack.push(Instruction::Value);
-                    }
-                    _ => {
-                        bail!(JsonErrorKind::UnexpectedToken {
-                            got: token.node,
-                            wanted: "comma or closing bracket"
-                        });
-                    }
+
+            let colon = read_token(&wip, unread_token, tokenizer, input, last_span)?;
+            if colon.node != Token::Colon {
+                return Err(JsonError::new(
+                    JsonErrorKind::UnexpectedToken {
+                        got: colon.node,
+                        wanted: "colon",
+                    },
+                    input,
+                    *last_span,
+                    wip.path(),
+                ));
+            }
+            stack.push(Instruction::CommaThenObjectKeyOrObjectClose);
+            if ignore {
+                stack.push(Instruction::SkipValue);
+            } else {
+                if needs_pop && !handled_by_flatten {
+                    trace!("Pushing Pop insn to stack (ObjectVal)");
+                    stack.push(Instruction::Pop(PopReason::ObjectVal));
+                } else if handled_by_flatten {
+                    // We need two pops for flattened fields - one for the field itself,
+                    // one for the containing struct
+                    trace!("Pushing Pop insn to stack (ObjectVal) for flattened field");
+                    stack.push(Instruction::Pop(PopReason::ObjectVal));
+                    stack.push(Instruction::Pop(PopReason::ObjectVal));
                 }
+                stack.push(Instruction::Value);
+            }
+            Ok(wip)
+        }
+        Token::RBrace => {
+            trace!("Object closing");
+            Ok(wip)
+        }
+        _ => Err(JsonError::new(
+            JsonErrorKind::UnexpectedToken {
+                got: token.node,
+                wanted: "object key or closing brace",
+            },
+            input,
+            *last_span,
+            wip.path(),
+        )),
+    }
+}
+
+fn comma_then_object_key_or_object_close<'input>(
+    wip: &Wip<'_>,
+    unread_token: &mut Option<Spanned<Token>>,
+    tokenizer: &mut Tokenizer<'_>,
+    input: &'input [u8],
+    last_span: &mut Span,
+    stack: &mut Vec<Instruction>,
+) -> Result<(), JsonError<'input>> {
+    let token = read_token(wip, unread_token, tokenizer, input, last_span)?;
+    match token.node {
+        Token::Comma => {
+            trace!("Object comma");
+            stack.push(Instruction::ObjectKeyOrObjectClose);
+            Ok(())
+        }
+        Token::RBrace => {
+            trace!("Object close");
+            Ok(())
+        }
+        _ => Err(JsonError::new(
+            JsonErrorKind::UnexpectedToken {
+                got: token.node,
+                wanted: "comma",
+            },
+            input,
+            *last_span,
+            wip.path(),
+        )),
+    }
+}
+
+fn array_item_or_array_close<'facet, 'input>(
+    mut wip: Wip<'facet>,
+    unread_token: &mut Option<Spanned<Token>>,
+    tokenizer: &mut Tokenizer<'_>,
+    input: &'input [u8],
+    last_span: &mut Span,
+    stack: &mut Vec<Instruction>,
+) -> Result<Wip<'facet>, JsonError<'input>> {
+    let token = read_token(&wip, unread_token, tokenizer, input, last_span)?;
+    match token.node {
+        Token::RBracket => {
+            trace!("Array close");
+            Ok(wip)
+        }
+        _ => {
+            trace!("Array item");
+            assert!(
+                unread_token.is_none(),
+                "Cannot put back more than one token at a time"
+            );
+            *unread_token = Some(token);
+            let path = wip.path();
+            wip = wip
+                .begin_pushback()
+                .map_err(|e| JsonError::new_reflect(e, input, *last_span, path))?;
+            let path = wip.path();
+            wip = wip
+                .push()
+                .map_err(|e| JsonError::new_reflect(e, input, *last_span, path))?;
+
+            stack.push(Instruction::CommaThenArrayItemOrArrayClose);
+            trace!("Pushing Pop insn to stack (arrayitem)");
+            stack.push(Instruction::Pop(PopReason::ArrayItem));
+            stack.push(Instruction::Value);
+            Ok(wip)
+        }
+    }
+}
+
+fn comma_then_array_item_or_array_close<'facet, 'input>(
+    mut wip: Wip<'facet>,
+    unread_token: &mut Option<Spanned<Token>>,
+    tokenizer: &mut Tokenizer<'_>,
+    input: &'input [u8],
+    last_span: &mut Span,
+    stack: &mut Vec<Instruction>,
+) -> Result<Wip<'facet>, JsonError<'input>> {
+    let token = read_token(&wip, unread_token, tokenizer, input, last_span)?;
+    match token.node {
+        Token::RBracket => {
+            trace!("Array close");
+            Ok(wip)
+        }
+        Token::Comma => {
+            trace!("Array comma");
+            let path = wip.path();
+            wip = wip
+                .push()
+                .map_err(|e| JsonError::new_reflect(e, input, *last_span, path))?;
+            stack.push(Instruction::CommaThenArrayItemOrArrayClose);
+            trace!("Pushing Pop insn to stack (arrayitem)");
+            stack.push(Instruction::Pop(PopReason::ArrayItem));
+            stack.push(Instruction::Value);
+            Ok(wip)
+        }
+        _ => Err(JsonError::new(
+            JsonErrorKind::UnexpectedToken {
+                got: token.node,
+                wanted: "comma or closing bracket",
+            },
+            input,
+            *last_span,
+            wip.path(),
+        )),
+    }
+}
+
+fn read_token<'input>(
+    wip: &Wip<'_>,
+    unread_token: &mut Option<Spanned<Token>>,
+    tokenizer: &mut Tokenizer<'_>,
+    input: &'input [u8],
+    last_span: &mut Span,
+) -> Result<Spanned<Token>, JsonError<'input>> {
+    if let Some(token) = unread_token.take() {
+        *last_span = token.span;
+        Ok(token)
+    } else {
+        match tokenizer.next_token() {
+            Ok(token) => {
+                *last_span = token.span;
+                Ok(token)
+            }
+            Err(e) => {
+                *last_span = e.span;
+                Err(JsonError::new_syntax(e.kind, input, *last_span, wip.path()))
             }
         }
     }
