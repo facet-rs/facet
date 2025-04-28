@@ -2,7 +2,6 @@ use facet::Facet;
 use std::sync::Arc;
 
 #[derive(Facet)]
-
 struct Recursive {
     next: Option<Arc<Recursive>>,
 }

@@ -411,6 +411,7 @@ dependencies = [
  "facet-derive-parse",
  "insta",
  "owo-colors 4.2.0",
+ "quote",
  "rust-format",
  "tempfile",
 ]

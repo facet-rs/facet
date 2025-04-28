@@ -1,4 +1,5 @@
 use facet_derive_parse::{GenericParam, GenericParams, ToTokens};
+use quote::quote;
 
 /// The name of a generic parameter
 #[derive(Clone)]
@@ -143,6 +144,46 @@ impl std::fmt::Display for WithoutBounds<'_> {
             }
         }
         write!(f, ">")
+    }
+}
+
+impl quote::ToTokens for WithoutBounds<'_> {
+    fn to_tokens(&self, tokens: &mut facet_derive_parse::TokenStream) {
+        if self.0.params.is_empty() {
+            return;
+        }
+
+        tokens.extend(quote! {
+            <
+        });
+
+        for (i, param) in self.0.params.iter().enumerate() {
+            if i > 0 {
+                tokens.extend(quote! { , });
+            }
+
+            match &param.param {
+                GenericParamName::Lifetime(name) => {
+                    let punct = facet_derive_parse::TokenTree::Punct(
+                        facet_derive_parse::Punct::new('\'', facet_derive_parse::Spacing::Joint),
+                    );
+                    let lifetime_ident = quote::format_ident!("{name}");
+                    tokens.extend(quote! { #punct #lifetime_ident });
+                }
+                GenericParamName::Type(name) => {
+                    let ident = quote::format_ident!("{}", name);
+                    tokens.extend(quote! { #ident });
+                }
+                GenericParamName::Const(name) => {
+                    let ident = quote::format_ident!("{}", name);
+                    tokens.extend(quote! { #ident });
+                }
+            }
+        }
+
+        tokens.extend(quote! {
+            >
+        });
     }
 }
 

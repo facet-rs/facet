@@ -1,4 +1,5 @@
 use super::*;
+use quote::quote;
 
 /// Processes an enum to implement Facet
 pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
@@ -476,10 +477,11 @@ fn process_c_style_enum(params: &EnumParams) -> ProcessedEnumBody {
                     phantom = facet_bgp.display_as_phantom_data(),
                 ));
 
-                let variant_offset = format!(
-                    "::core::mem::offset_of!({shadow_repr_name}{facet_bgp_use}, _fields)",
-                    facet_bgp_use = facet_bgp.display_without_bounds()
-                );
+                let facet_bgp_without_bounds = facet_bgp.display_without_bounds();
+                let shadow_repr_name_ident = quote::format_ident!("{}", shadow_repr_name);
+                let variant_offset = quote! {
+                    ::core::mem::offset_of!(#shadow_repr_name_ident #facet_bgp_without_bounds, _fields)
+                };
 
                 // Build the list of field types with calculated offsets
                 let fields = tuple
@@ -497,9 +499,11 @@ fn process_c_style_enum(params: &EnumParams) -> ProcessedEnumBody {
                             struct_name: &shadow_struct_name,
                             bgp: &facet_bgp,
                             attrs: &field.value.attributes,
-                            base_field_offset: Some(&variant_offset),
+                            base_field_offset: Some(variant_offset.clone()),
                             rename_rule: container_attributes.rename_rule,
                         })
+                        .into_token_stream()
+                        .tokens_to_string()
                     })
                     .collect::<Vec<String>>()
                     .join(", ");
@@ -556,10 +560,11 @@ fn process_c_style_enum(params: &EnumParams) -> ProcessedEnumBody {
                     phantom = facet_bgp.display_as_phantom_data(),
                 ));
 
-                let variant_offset = format!(
-                    "::core::mem::offset_of!({shadow_repr_name}{facet_bgp_use}, _fields)",
-                    facet_bgp_use = facet_bgp.display_without_bounds()
-                );
+                let facet_bgp_without_bounds = facet_bgp.display_without_bounds();
+                let shadow_repr_name_ident = quote::format_ident!("{}", shadow_repr_name);
+                let variant_offset = quote! {
+                    ::core::mem::offset_of!(#shadow_repr_name_ident #facet_bgp_without_bounds, _fields)
+                };
 
                 // Build the list of field types with calculated offsets
                 let fields = struct_var
@@ -579,9 +584,11 @@ fn process_c_style_enum(params: &EnumParams) -> ProcessedEnumBody {
                             struct_name: &shadow_struct_name,
                             bgp: &facet_bgp,
                             attrs: &field.value.attributes,
-                            base_field_offset: Some(&variant_offset),
+                            base_field_offset: Some(variant_offset.clone()),
                             rename_rule: container_attributes.rename_rule,
                         })
+                        .into_token_stream()
+                        .tokens_to_string()
                     })
                     .collect::<Vec<String>>()
                     .join(", ");
@@ -715,6 +722,8 @@ fn process_primitive_enum(params: &EnumParams) -> ProcessedEnumBody {
                             base_field_offset: None,
                             rename_rule: container_attributes.rename_rule,
                         })
+                        .into_token_stream()
+                        .tokens_to_string()
                     })
                     .collect::<Vec<String>>()
                     .join(", ");
@@ -795,6 +804,8 @@ fn process_primitive_enum(params: &EnumParams) -> ProcessedEnumBody {
                             base_field_offset: None,
                             rename_rule: container_attributes.rename_rule,
                         })
+                        .into_token_stream()
+                        .tokens_to_string()
                     })
                     .collect::<Vec<String>>()
                     .join(", ");

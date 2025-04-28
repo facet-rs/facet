@@ -1,5 +1,6 @@
 use super::normalize_ident_str;
 use super::*;
+use quote::quote;
 
 /// Processes a regular struct to implement Facet
 ///
@@ -29,7 +30,11 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 }
                 Some(fields[0].clone())
             }
-            _ => panic!("Transparent structs must be tuple structs with a single field"),
+            _ => {
+                return quote! {
+                    compile_error!("Transparent structs must be tuple structs with a single field");
+                };
+            }
         }
     } else {
         None
@@ -57,6 +62,8 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                         base_field_offset: None,
                         rename_rule: container_attributes.rename_rule,
                     })
+                    .into_token_stream()
+                    .tokens_to_string()
                 })
                 .collect::<Vec<String>>()
         }
@@ -84,6 +91,8 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                         base_field_offset: None,
                         rename_rule: container_attributes.rename_rule,
                     })
+                    .into_token_stream()
+                    .tokens_to_string()
                 })
                 .collect::<Vec<String>>()
         }

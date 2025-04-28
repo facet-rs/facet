@@ -20,6 +20,7 @@ slow-tests = [] # Enable slow tests (compile tests)
 
 [dependencies]
 facet-derive-parse = { version = "0.19.0", path = "../facet-derive-parse" }
+quote = "1.0.40"
 
 [dev-dependencies]
 insta = { git = "https://github.com/mitsuhiko/insta" }

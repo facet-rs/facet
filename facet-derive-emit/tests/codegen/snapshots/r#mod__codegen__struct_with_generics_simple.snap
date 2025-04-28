@@ -15,7 +15,7 @@ where
                     .name("field1")
                     .shape(|| ::facet::shape_of(&|s: &StructWithGenericsSimple<T, U>| &s.field1))
                     .offset(
-                        :: core :: mem :: offset_of ! (StructWithGenericsSimple < T , U >, field1),
+                        :: core :: mem :: offset_of ! (StructWithGenericsSimple < T , U > , field1),
                     )
                     .flags(::facet::FieldFlags::EMPTY)
                     .attributes(&const { [] })
@@ -24,7 +24,7 @@ where
                     .name("field2")
                     .shape(|| ::facet::shape_of(&|s: &StructWithGenericsSimple<T, U>| &s.field2))
                     .offset(
-                        :: core :: mem :: offset_of ! (StructWithGenericsSimple < T , U >, field2),
+                        :: core :: mem :: offset_of ! (StructWithGenericsSimple < T , U > , field2),
                     )
                     .flags(::facet::FieldFlags::EMPTY)
                     .attributes(&const { [] })

@@ -1,6 +1,6 @@
-use std::borrow::Cow;
-
 use facet_derive_parse::*;
+use quote::quote;
+use std::borrow::Cow;
 
 use crate::{BoundedGenericParams, RenameRule, process_enum, process_struct};
 
@@ -41,19 +41,21 @@ pub(crate) fn generate_static_decl(type_name: &str) -> String {
     )
 }
 
-pub(crate) fn build_maybe_doc(attrs: &[Attribute]) -> String {
+pub(crate) fn build_maybe_doc(attrs: &[Attribute]) -> TokenStream {
     let doc_lines: Vec<_> = attrs
         .iter()
         .filter_map(|attr| match &attr.body.content {
-            AttributeInner::Doc(doc_inner) => Some(doc_inner.value.value()),
+            AttributeInner::Doc(doc_inner) => Some(doc_inner.value.to_token_stream()),
             _ => None,
         })
         .collect();
 
     if doc_lines.is_empty() {
-        String::new()
+        quote! {}
     } else {
-        format!(r#".doc(&[{}])"#, doc_lines.join(","))
+        quote! {
+            .doc(&[#(#doc_lines),*])
+        }
     }
 }
 
@@ -78,7 +80,7 @@ pub(crate) struct FieldInfo<'a> {
 
     /// the base field offset — for structs it's always zero, for
     /// enums it depends on the variant/discriminant
-    pub(crate) base_field_offset: Option<&'a str>,
+    pub(crate) base_field_offset: Option<TokenStream>,
 
     /// the rename rule to use for the container
     pub(crate) rename_rule: Option<RenameRule>,
@@ -88,12 +90,12 @@ pub(crate) struct FieldInfo<'a> {
 ///
 /// `base_field_offset` applies a shift to the field offset, which is useful for
 /// generating fields for a struct that is part of a #[repr(C)] enum.
-pub(crate) fn gen_struct_field<'a>(fi: FieldInfo<'a>) -> String {
+pub(crate) fn gen_struct_field<'a>(fi: FieldInfo<'a>) -> TokenStream {
     // Determine field flags
-    let mut flags = "::facet::FieldFlags::EMPTY";
-    let mut attribute_list: Vec<String> = vec![];
-    let mut doc_lines: Vec<&str> = vec![];
-    let mut shape_of = "shape_of";
+    let mut flags = quote! { ::facet::FieldFlags::EMPTY };
+    let mut attribute_list: Vec<TokenStream> = vec![];
+    let mut doc_lines: Vec<TokenStream> = vec![];
+    let mut shape_of = quote! { shape_of };
     // Start with the normalized name, potentially overridden by `rename`
     let mut name_for_metadata: Cow<'a, str> = Cow::Borrowed(fi.normalized_field_name);
     let mut has_explicit_rename = false;
@@ -101,23 +103,21 @@ pub(crate) fn gen_struct_field<'a>(fi: FieldInfo<'a>) -> String {
         match &attr.body.content {
             AttributeInner::Facet(facet_attr) => match &facet_attr.inner.content {
                 FacetInner::Sensitive(_ksensitive) => {
-                    flags = "::facet::FieldFlags::SENSITIVE";
-                    attribute_list.push("::facet::FieldAttribute::Sensitive".to_string());
+                    flags = quote! { ::facet::FieldFlags::SENSITIVE };
+                    attribute_list.push(quote! { ::facet::FieldAttribute::Sensitive });
                 }
                 FacetInner::Default(_) => {
-                    attribute_list.push("::facet::FieldAttribute::Default(None)".to_string());
+                    attribute_list.push(quote! { ::facet::FieldAttribute::Default(None) });
                 }
                 FacetInner::DefaultEquals(inner) => {
-                    attribute_list.push(format!(
-                        r#"::facet::FieldAttribute::Default(Some(|ptr| {{
-                            unsafe {{ ptr.put({}()) }}
-                        }}))"#,
-                        inner
-                            .value
-                            .value()
-                            .trim_start_matches('"')
-                            .trim_end_matches('"') // FIXME: that's pretty bad
-                    ));
+                    let default_expr = inner.value.as_str();
+                    let default_expr_ident = quote::format_ident!("{}", default_expr);
+
+                    attribute_list.push(quote! {
+                        ::facet::FieldAttribute::Default(Some(|ptr| {
+                            unsafe { ptr.put(#default_expr_ident()) }
+                        }))
+                    });
                 }
                 FacetInner::Transparent(_) => {
                     // Not applicable on fields; ignore.
@@ -126,7 +126,7 @@ pub(crate) fn gen_struct_field<'a>(fi: FieldInfo<'a>) -> String {
                     panic!("fields cannot have invariants")
                 }
                 FacetInner::Opaque(_kopaque) => {
-                    shape_of = "shape_of_opaque";
+                    shape_of = quote! { shape_of_opaque };
                 }
                 FacetInner::DenyUnknownFields(_) => {
                     // not applicable on fields
@@ -149,35 +149,44 @@ pub(crate) fn gen_struct_field<'a>(fi: FieldInfo<'a>) -> String {
                                 // Use the renamed value for metadata name
                                 name_for_metadata = Cow::Owned(value.to_string());
                                 // Keep the Rename attribute for reflection
-                                attribute_list.push(format!(
-                                    r#"::facet::FieldAttribute::Rename({:?})"#,
-                                    value
-                                ));
+                                attribute_list.push(quote! {
+                                    ::facet::FieldAttribute::Rename(#value)
+                                });
                             } else if key == "skip_serializing_if" {
                                 let value = attr[equal_pos + 1..].trim();
-                                attribute_list.push(format!(
-                                    r#"::facet::FieldAttribute::SkipSerializingIf(unsafe {{ ::std::mem::transmute({value} as fn(&{field_type}) -> bool) }})"#, field_type = fi.field_type
-                                ));
+                                // Parse the value string as token stream to handle complex expressions
+                                let value_token_stream = value
+                                    .parse::<TokenStream>()
+                                    .expect("Failed to parse skip_serializing_if predicate");
+                                let field_type = format!("&{}", fi.field_type)
+                                    .parse::<TokenStream>()
+                                    .expect("Failed to parse field type");
+                                attribute_list.push(quote! {
+                                    ::facet::FieldAttribute::SkipSerializingIf(unsafe { ::std::mem::transmute(#value_token_stream as fn(#field_type) -> bool) })
+                                });
                             } else {
-                                attribute_list.push(format!(
-                                    r#"::facet::FieldAttribute::Arbitrary({:?})"#,
-                                    attr
-                                ));
+                                attribute_list.push(quote! {
+                                    ::facet::FieldAttribute::Arbitrary(#attr)
+                                });
                             }
                         } else if attr == "skip_serializing" {
-                            attribute_list
-                                .push(r#"::facet::FieldAttribute::SkipSerializing"#.to_string());
+                            attribute_list.push(quote! {
+                                ::facet::FieldAttribute::SkipSerializing
+                            });
                         } else if attr == "sensitive" {
-                            flags = "::facet::FieldFlags::SENSITIVE";
-                            attribute_list.push("::facet::FieldAttribute::Sensitive".to_string());
+                            flags = quote! { ::facet::FieldFlags::SENSITIVE };
+                            attribute_list.push(quote! {
+                                ::facet::FieldAttribute::Sensitive
+                            });
                         } else {
-                            attribute_list
-                                .push(format!(r#"::facet::FieldAttribute::Arbitrary({:?})"#, attr));
+                            attribute_list.push(quote! {
+                                ::facet::FieldAttribute::Arbitrary(#attr)
+                            });
                         }
                     }
                 }
             },
-            AttributeInner::Doc(doc_inner) => doc_lines.push(doc_inner.value.value()),
+            AttributeInner::Doc(doc_inner) => doc_lines.push(doc_inner.value.to_token_stream()),
             AttributeInner::Repr(_) => {
                 // muffin
             }
@@ -186,44 +195,67 @@ pub(crate) fn gen_struct_field<'a>(fi: FieldInfo<'a>) -> String {
             }
         }
     }
-
     // Apply rename_all rule if there's no explicit rename attribute
     if !has_explicit_rename && fi.rename_rule.is_some() {
         // Only apply to named fields (not tuple indices)
         if !fi.normalized_field_name.chars().all(|c| c.is_ascii_digit()) {
             let renamed = fi.rename_rule.unwrap().apply(fi.normalized_field_name);
-            attribute_list.push(format!(r#"::facet::FieldAttribute::Rename({:?})"#, renamed));
+            attribute_list.push(quote! { ::facet::FieldAttribute::Rename(#renamed) });
             name_for_metadata = Cow::Owned(renamed);
         }
     }
-
-    let attributes = attribute_list.join(",");
-
-    let maybe_field_doc = if doc_lines.is_empty() {
-        String::new()
+    let attributes = if attribute_list.is_empty() {
+        quote! {}
     } else {
-        format!(r#".doc(&[{}])"#, doc_lines.join(","))
+        let mut combined = quote! {};
+        for (i, attr) in attribute_list.iter().enumerate() {
+            if i > 0 {
+                combined = quote! { #combined, #attr };
+            } else {
+                combined = quote! { #attr };
+            }
+        }
+        combined
     };
 
-    let maybe_base_field_offset = fi
-        .base_field_offset
-        .map(|offset| format!(" + {offset}"))
-        .unwrap_or_default();
+    let maybe_field_doc = if doc_lines.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            .doc(&[#(#doc_lines),*])
+        }
+    };
+
+    let maybe_base_field_offset = if let Some(offset) = fi.base_field_offset {
+        quote! { + #offset }
+    } else {
+        quote! {}
+    };
+
+    let struct_name = quote::format_ident!("{}", fi.struct_name);
+
+    let raw_field_name = if fi.raw_field_name.chars().all(|c| c.is_numeric()) {
+        let field_index = fi.raw_field_name.parse::<usize>().unwrap();
+        let literal = TokenTree::Literal(Literal::usize_unsuffixed(field_index));
+        quote! { #literal }
+    } else {
+        let ident = quote::format_ident!("{}", fi.raw_field_name);
+        quote! { #ident }
+    };
+
+    let bgp = fi.bgp.display_without_bounds();
 
     // Generate each field definition
-    format!(
-        "::facet::Field::builder()
-            .name(\"{name_for_metadata}\")
-            .shape(|| ::facet::{shape_of}(&|s: &{struct_name}{bgp}| &s.{raw_field_name}))
-            .offset(::core::mem::offset_of!({struct_name}{bgp}, {raw_field_name}){maybe_base_field_offset})
-            .flags({flags})
-            .attributes(&const {{ [{attributes}] }})
-            {maybe_field_doc}
-            .build()",
-        struct_name = fi.struct_name,
-        raw_field_name = fi.raw_field_name,
-        bgp = fi.bgp.display_without_bounds()
-    )
+    quote! {
+        ::facet::Field::builder()
+            .name(#name_for_metadata)
+            .shape(|| ::facet::#shape_of(&|s: &#struct_name #bgp| &s.#raw_field_name))
+            .offset(::core::mem::offset_of!(#struct_name #bgp,#raw_field_name) #maybe_base_field_offset)
+            .flags(#flags)
+            .attributes(&const { [#attributes] })
+            #maybe_field_doc
+            .build()
+    }
 }
 
 pub(crate) fn build_where_clauses(
