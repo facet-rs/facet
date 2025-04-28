@@ -1,4 +1,4 @@
-use crate::RenameRule;
+use crate::{BoundedGenericParams, RenameRule};
 
 /// All the supported facet attributes, e.g. `#[facet(sensitive)]` `#[facet(rename_all)]`, etc.
 ///
@@ -132,6 +132,7 @@ pub enum PAttr {
 ///   raw = "foo_bar", #[facet(rename_all = camelCase)], effective = "fooBar"
 ///   raw = "r#type", no rename rule, effective = "type"
 ///
+#[derive(Clone)]
 pub struct PName {
     pub raw: String,
     pub effective: String,
@@ -168,6 +169,7 @@ impl PName {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PRepr {
     Rust,
     Transparent,
@@ -201,6 +203,7 @@ impl PRepr {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PrimitiveRepr {
     U8,
     U16,
@@ -236,6 +239,7 @@ impl PrimitiveRepr {
 }
 
 /// Parsed attributes
+#[derive(Clone)]
 pub struct PAttrs {
     /// An array of doc lines
     pub doc: Vec<String>,
@@ -329,12 +333,18 @@ pub struct PContainer {
 
     /// Attributes of the container
     pub attrs: PAttrs,
+
+    /// Generic parameters of the container
+    pub bgp: BoundedGenericParams,
 }
 
 /// Parse struct
 pub struct PStruct {
     /// Container information
     pub container: PContainer,
+
+    /// Kind of struct
+    pub kind: PStructKind,
 }
 
 /// Parsed enum (given attributes etc.)
@@ -344,7 +354,8 @@ pub struct PEnum {
 }
 
 /// Parsed field
-pub struct PField {
+#[derive(Clone)]
+pub struct PStructField {
     /// The field's name (with rename rules applied)
     pub name: PName,
 
@@ -358,6 +369,126 @@ pub struct PField {
     pub attrs: PAttrs,
 }
 
+impl PStructField {
+    /// Parse a named struct field (usual struct).
+    fn from_struct_field(f: &facet_derive_parse::StructField) -> Self {
+        Self::parse(
+            &f.attributes,
+            f.name.to_string(),
+            facet_derive_parse::VerbatimDisplay(&f.typ).to_string(),
+        )
+    }
+
+    /// Parse a tuple (unnamed) field for tuple structs or enum tuple variants.
+    /// The index is converted to a string for the field name.
+    fn from_enum_field(
+        attrs: &[facet_derive_parse::Attribute],
+        idx: usize,
+        typ: &facet_derive_parse::VerbatimUntil<facet_derive_parse::Comma>,
+    ) -> Self {
+        let name = idx.to_string();
+        let ty_str = facet_derive_parse::VerbatimDisplay(typ).to_string();
+        Self::parse(attrs, name, ty_str)
+    }
+
+    /// Central parse function used by both `from_struct_field` and `from_enum_field`.
+    fn parse(attrs: &[facet_derive_parse::Attribute], name: String, ty: String) -> Self {
+        // Parse attributes for the field
+        let attrs = PAttrs::parse(attrs);
+
+        // Find container-level and field-level rename rules, if any
+        let container_rename_rule = attrs.rename_all;
+        let field_rename = attrs.rename.clone();
+
+        // Get field-level rename rule as a RenameRule, if applicable
+        let field_rename_rule = None;
+        // There's no field-level RenameRule (as opposed to Rename { name }). Only RenameAll is a RenameRule.
+
+        // Name resolution:
+        // Precedence:
+        //   - If there's a Rename { name }, use that as "effective"
+        //   - Else, if container_rename_all, apply that RenameRule
+        //   - Else, use raw after stripping r#
+        let raw = name.clone();
+
+        let name = if let Some(explicit) = field_rename {
+            PName {
+                raw: raw.clone(),
+                effective: explicit,
+            }
+        } else {
+            PName::new(container_rename_rule, field_rename_rule, raw)
+        };
+
+        // Field type as string (already provided as argument)
+        let ty = ty.clone();
+
+        // Offset string -- we don't know the offset here in generic parsing, so just default to empty string
+        let offset = String::new();
+
+        PStructField {
+            name,
+            ty,
+            offset,
+            attrs,
+        }
+    }
+}
+/// Parsed struct kind, modeled after `StructKind`.
+pub enum PStructKind {
+    /// A regular struct with named fields.
+    Struct { fields: Vec<PStructField> },
+    /// A tuple struct.
+    TupleStruct { fields: Vec<PStructField> },
+    /// A unit struct.
+    UnitStruct,
+}
+
+impl PStructKind {
+    /// Parse a `facet_derive_parse::StructKind` into a `PStructKind`.
+    pub fn parse(kind: &facet_derive_parse::StructKind) -> Self {
+        match kind {
+            facet_derive_parse::StructKind::Struct { clauses: _, fields } => {
+                let parsed_fields = fields
+                    .content
+                    .0
+                    .iter()
+                    .map(|delim| PStructField::from_struct_field(&delim.value))
+                    .collect();
+                PStructKind::Struct {
+                    fields: parsed_fields,
+                }
+            }
+            facet_derive_parse::StructKind::TupleStruct {
+                fields,
+                clauses: _,
+                semi: _,
+            } => {
+                let parsed_fields = fields
+                    .content
+                    .0
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, delim)| {
+                        PStructField::from_enum_field(
+                            &delim.value.attributes,
+                            idx,
+                            &delim.value.typ,
+                        )
+                    })
+                    .collect();
+                PStructKind::TupleStruct {
+                    fields: parsed_fields,
+                }
+            }
+            facet_derive_parse::StructKind::UnitStruct {
+                clauses: _,
+                semi: _,
+            } => PStructKind::UnitStruct,
+        }
+    }
+}
+
 impl PStruct {
     pub fn parse(s: &facet_derive_parse::Struct) -> Self {
         // Parse top-level (container) attributes for the struct.
@@ -367,9 +498,13 @@ impl PStruct {
         let container = PContainer {
             name: s.name.to_string(),
             attrs: pattrs,
+            bgp: BoundedGenericParams::parse(s.generics.as_ref()),
         };
 
-        PStruct { container }
+        // Delegate struct kind parsing to PStructKind::parse
+        let kind = PStructKind::parse(&s.kind);
+
+        PStruct { container, kind }
     }
 }
 
