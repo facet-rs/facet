@@ -44,6 +44,24 @@ impl<'input> JsonError<'input> {
         }
     }
 
+    pub(crate) fn new_reflect(
+        e: ReflectError,
+        input: &'input [u8],
+        span: Span,
+        path: String,
+    ) -> Self {
+        JsonError::new(JsonErrorKind::ReflectError(e), input, span, path)
+    }
+
+    pub(crate) fn new_syntax(
+        e: TokenErrorKind,
+        input: &'input [u8],
+        span: Span,
+        path: String,
+    ) -> Self {
+        JsonError::new(JsonErrorKind::SyntaxError(e), input, span, path)
+    }
+
     /// Returns a wrapper type that displays a human-readable error message for this JSON error.
     pub fn message(&self) -> JsonErrorMessage<'_> {
         JsonErrorMessage(self)
