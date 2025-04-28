@@ -728,7 +728,7 @@ impl PVariant {
         var_like: &facet_derive_parse::EnumVariantLike,
         container_rename_all_rule: Option<RenameRule>,
     ) -> Self {
-        use facet_derive_parse::{EnumVariantData, StructVariant, TupleVariant, UnitVariant};
+        use facet_derive_parse::{EnumVariantData, StructEnumVariant, TupleVariant, UnitVariant};
 
         let (raw_name_ident, attributes) = match &var_like.variant {
             // Fix: Changed var_like.value.variant to var_like.variant
@@ -736,7 +736,7 @@ impl PVariant {
             | EnumVariantData::Tuple(TupleVariant {
                 name, attributes, ..
             })
-            | EnumVariantData::Struct(StructVariant {
+            | EnumVariantData::Struct(StructEnumVariant {
                 name, attributes, ..
             }) => (name, attributes),
         };
@@ -788,7 +788,7 @@ impl PVariant {
                     fields: parsed_fields,
                 }
             }
-            EnumVariantData::Struct(StructVariant { fields, .. }) => {
+            EnumVariantData::Struct(StructEnumVariant { fields, .. }) => {
                 let parsed_fields = fields
                     .content
                     .0

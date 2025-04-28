@@ -1,10 +1,10 @@
 use core::mem::MaybeUninit;
 
 use crate::{
-    value_vtable, Def, EnumDef, EnumRepr, Facet, Field, FieldFlags, OptionDef, OptionVTable,
-    PtrConst, PtrMut, PtrUninit, Repr, Shape, StructDef, StructKind, TryBorrowInnerError,
-    TryFromError, TryIntoInnerError, Type, TypedPtrUninit, UserSubtype, UserType, VTableView,
-    Variant,
+    Def, EnumRepr, EnumType, Facet, Field, FieldFlags, OptionDef, OptionVTable, PtrConst, PtrMut,
+    PtrUninit, Repr, Shape, StructKind, StructType, TryBorrowInnerError, TryFromError,
+    TryIntoInnerError, Type, TypedPtrUninit, UserSubtype, UserType, VTableView, Variant,
+    value_vtable,
 };
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
     const SHAPE: &'static Shape = &const {
@@ -64,26 +64,28 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
                 if core::mem::size_of::<T>() == core::mem::size_of::<Option<T>>() {
                     UserType {
                         repr: Repr::default(),
-                        subtype: UserSubtype::Enum(EnumDef {
+                        subtype: UserSubtype::Enum(EnumType {
                             repr: EnumRepr::RustNPO,
                             variants: &const {
                                 [
                                     Variant::builder()
                                         .name("None")
                                         .discriminant(0)
-                                        .fields(StructDef::builder().kind(StructKind::Unit).build())
+                                        .fields(
+                                            StructType::builder().kind(StructKind::Unit).build(),
+                                        )
                                         .build(),
                                     Variant::builder()
                                         .name("Some")
                                         .discriminant(0)
                                         .fields(
-                                            StructDef::builder()
+                                            StructType::builder()
                                                 .kind(StructKind::TupleStruct)
                                                 .fields(
                                                     &const {
                                                         [Field::builder()
                                                             .name("0")
-                                                            .shape(|| T::SHAPE)
+                                                            .shape(T::SHAPE)
                                                             .offset(0)
                                                             .flags(FieldFlags::EMPTY)
                                                             .build()]
@@ -102,7 +104,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
             ))
             .def(Def::Option(
                 OptionDef::builder()
-                    .t(|| T::SHAPE)
+                    .t(T::SHAPE)
                     .vtable(
                         const {
                             &OptionVTable::builder()

@@ -86,6 +86,7 @@ where
                     builder.build()
                 },
             )
+            .ty(Type::User(UserType::opaque()))
             .def(Def::List(
                 ListDef::builder()
                     .vtable(

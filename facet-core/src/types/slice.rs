@@ -11,7 +11,7 @@ pub struct SliceDef {
     pub vtable: &'static SliceVTable,
 
     /// shape of the items in the slice
-    pub t: fn() -> &'static Shape,
+    pub t: &'static Shape,
 }
 
 impl SliceDef {
@@ -21,15 +21,15 @@ impl SliceDef {
     }
 
     /// Returns the shape of the items in the slice
-    pub fn t(&self) -> &'static Shape {
-        (self.t)()
+    pub const fn t(&self) -> &'static Shape {
+        self.t
     }
 }
 
 /// Builder for SliceDef
 pub struct SliceDefBuilder {
     vtable: Option<&'static SliceVTable>,
-    t: Option<fn() -> &'static Shape>,
+    t: Option<&'static Shape>,
 }
 
 impl SliceDefBuilder {
@@ -49,7 +49,7 @@ impl SliceDefBuilder {
     }
 
     /// Sets the item shape for the SliceDef
-    pub const fn t(mut self, t: fn() -> &'static Shape) -> Self {
+    pub const fn t(mut self, t: &'static Shape) -> Self {
         self.t = Some(t);
         self
     }

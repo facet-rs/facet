@@ -14,7 +14,7 @@ pub struct SmartPointerDef {
     pub vtable: &'static SmartPointerVTable,
 
     /// shape of the inner type of the smart pointer, if not opaque
-    pub pointee: Option<&'static Shape>,
+    pub pointee: Option<fn() -> &'static Shape>,
 
     /// shape of the corresponding weak pointer, if this pointer is strong
     pub weak: Option<fn() -> &'static Shape>,
@@ -48,7 +48,7 @@ impl SmartPointerDef {
 #[derive(Debug)]
 pub struct SmartPointerDefBuilder {
     vtable: Option<&'static SmartPointerVTable>,
-    pointee: Option<&'static Shape>,
+    pointee: Option<fn() -> &'static Shape>,
     flags: Option<SmartPointerFlags>,
     known: Option<KnownSmartPointer>,
     weak: Option<fn() -> &'static Shape>,
@@ -79,7 +79,7 @@ impl SmartPointerDefBuilder {
 
     /// Sets the shape of the inner type of the smart pointer.
     #[must_use]
-    pub const fn pointee(mut self, pointee: &'static Shape) -> Self {
+    pub const fn pointee(mut self, pointee: fn() -> &'static Shape) -> Self {
         self.pointee = Some(pointee);
         self
     }

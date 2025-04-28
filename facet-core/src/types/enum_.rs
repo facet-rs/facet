@@ -1,10 +1,10 @@
-use super::StructDef;
+use super::StructType;
 
 /// Fields for enum types
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
 #[non_exhaustive]
-pub struct EnumDef {
+pub struct EnumType {
     /// representation of the enum (u8, u16, etc.)
     pub repr: EnumRepr,
 
@@ -12,7 +12,7 @@ pub struct EnumDef {
     pub variants: &'static [Variant],
 }
 
-impl EnumDef {
+impl EnumType {
     /// Returns a builder for EnumDef
     pub const fn builder() -> EnumDefBuilder {
         EnumDefBuilder::new()
@@ -48,8 +48,8 @@ impl EnumDefBuilder {
     }
 
     /// Builds the EnumDef
-    pub const fn build(self) -> EnumDef {
-        EnumDef {
+    pub const fn build(self) -> EnumType {
+        EnumType {
             repr: self.repr.unwrap(),
             variants: self.variants.unwrap(),
         }
@@ -73,7 +73,7 @@ pub struct Variant {
     /// Fields for this variant (empty if unit, number-named if tuple).
     /// IMPORTANT: the offset for the fields already takes into account the size & alignment of the
     /// discriminant.
-    pub data: StructDef,
+    pub data: StructType,
 
     /// Doc comment for the variant
     pub doc: &'static [&'static str],
@@ -98,7 +98,7 @@ pub struct VariantBuilder {
     name: Option<&'static str>,
     discriminant: Option<i64>,
     attributes: &'static [VariantAttribute],
-    fields: Option<StructDef>,
+    fields: Option<StructType>,
     doc: &'static [&'static str],
 }
 
@@ -134,7 +134,7 @@ impl VariantBuilder {
     }
 
     /// Sets the fields for the Variant
-    pub const fn fields(mut self, fields: StructDef) -> Self {
+    pub const fn fields(mut self, fields: StructType) -> Self {
         self.fields = Some(fields);
         self
     }

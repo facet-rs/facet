@@ -1,5 +1,5 @@
 use crate::{Def, ScalarAffinity, ScalarDef, value_vtable};
-use crate::{Facet, Shape};
+use crate::{Facet, Shape, Type, UserType};
 
 /// Helper type for opaque members
 #[repr(transparent)]
@@ -8,6 +8,7 @@ pub struct Opaque<T>(T);
 unsafe impl<'a, T: 'a> Facet<'a> for Opaque<T> {
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
+            .ty(Type::User(UserType::opaque()))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::opaque().build())

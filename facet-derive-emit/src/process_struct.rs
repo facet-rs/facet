@@ -107,7 +107,7 @@ pub(crate) fn gen_field_from_pfield(
             // Use the effective name (after rename rules) for metadata
             .name(#field_name_effective)
             // Use the raw field name/index TokenStream for shape_of and offset_of
-            .shape(|| ::facet::#shape_of(&|s: &#struct_name #bgp_without_bounds| &s.#field_name_raw))
+            .shape(::facet::#shape_of(&|s: &#struct_name #bgp_without_bounds| &s.#field_name_raw))
             .offset(#final_offset)
             #maybe_flags
             #maybe_attributes
@@ -416,16 +416,12 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                             base: ::facet::BaseRepr::C,
                             packed: false,
                         },
-                        subtype: ::facet::UserSubtype::Struct(::facet::StructDef::builder()
+                        subtype: ::facet::UserSubtype::Struct(::facet::StructType::builder()
                             .kind(#kind)
                             .fields(fields)
                             .build()
                         )
                     }))
-                    .def(::facet::Def::Struct(::facet::StructDef::builder()
-                        .kind(#kind) // From ps.kind match
-                        .fields(fields)
-                        .build()))
                     #inner_setter // Use transparency flag from PStruct
                     #maybe_container_doc // From ps.container.attrs.doc
                     #container_attributes_tokens // From ps.container.attrs.facet

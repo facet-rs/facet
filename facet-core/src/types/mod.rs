@@ -82,19 +82,15 @@ pub struct Shape {
     /// There are more specific vtables in variants of [`Def`]
     pub vtable: &'static ValueVTable,
 
-    /// Further definition of the value: details for structs, enums, scalars,
-    /// options, smart pointers, arrays, slices, tuples, etc.
-    ///
-    /// This typically lists fields (with shapes and offsets), reprs, variants
-    /// and contains vtables that let you perform other operations, like inserting
-    /// into a map or fetching a value from a list.
-    pub def: Def,
-
     /// Underlying type: primitive, sequence, user, pointer.
     ///
     /// This follows the [`Rust Reference`](https://doc.rust-lang.org/reference/types.html), but
     /// omits function types, and trait types, as they cannot be represented here.
     pub ty: Type,
+
+    /// Functional definition of the value: details for scalars, functions for inserting values into
+    /// a map, or fetching a value from a list.
+    pub def: Def,
 
     /// Generic parameters for the shape
     pub type_params: &'static [TypeParam],
@@ -237,7 +233,7 @@ pub struct ShapeBuilder {
     layout: Option<ShapeLayout>,
     vtable: Option<&'static ValueVTable>,
     def: Def,
-    ty: Type,
+    ty: Option<Type>,
     type_params: &'static [TypeParam],
     doc: &'static [&'static str],
     attributes: &'static [ShapeAttribute],
@@ -252,8 +248,8 @@ impl ShapeBuilder {
             id: None,
             layout: None,
             vtable: None,
-            def: Def::Unimplemented,
-            ty: Type::Unimplemented,
+            def: Def::Undefined,
+            ty: None,
             type_params: &[],
             doc: &[],
             attributes: &[],
@@ -299,7 +295,7 @@ impl ShapeBuilder {
     /// Sets the `ty` field of the `ShapeBuilder`.
     #[inline]
     pub const fn ty(mut self, ty: Type) -> Self {
-        self.ty = ty;
+        self.ty = Some(ty);
         self
     }
 
@@ -350,7 +346,7 @@ impl ShapeBuilder {
             vtable: self.vtable.unwrap(),
             type_params: self.type_params,
             def: self.def,
-            ty: self.ty,
+            ty: self.ty.unwrap(),
             doc: self.doc,
             attributes: self.attributes,
             inner: self.inner,
@@ -474,11 +470,9 @@ pub enum Type {
     User(UserType),
     /// Pointer type (reference, raw, function pointer).
     Pointer(PointerType),
-    // Not implemented: trait objects and function items.
-    Unimplemented,
 }
 
-/// The definition of a shape: is it more like a struct, a map, a list?
+/// The semantic definition of a shape: is it more like a scalar, a map, a list?
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
 #[non_exhaustive]
@@ -486,21 +480,14 @@ pub enum Type {
 // right?
 #[expect(clippy::large_enum_variant)]
 pub enum Def {
+    /// Undefined - you can interact with the type through [`Kind`] and [`ValueVTable`].
+    Undefined,
+
     /// Scalar — those don't have a def, they're not composed of other things.
     /// You can interact with them through [`ValueVTable`].
     ///
     /// e.g. `u32`, `String`, `bool`, `SocketAddr`, etc.
     Scalar(ScalarDef),
-
-    /// Various kinds of structs, see [`StructKind`]
-    ///
-    /// e.g. `struct Struct { field: u32 }`, `struct TupleStruct(u32, u32);`, `(u32, u32)`
-    Struct(StructDef),
-
-    /// Enum with variants
-    ///
-    /// e.g. `enum Enum { Variant1, Variant2 }`
-    Enum(EnumDef),
 
     /// Map — keys are dynamic (and strings, sorry), values are homogeneous
     ///
@@ -512,14 +499,9 @@ pub enum Def {
     /// e.g. `Vec<T>`
     List(ListDef),
 
-    /// Fixed-size array of heterogenous values
+    /// Slice - a reference to a contiguous sequence of elements
     ///
-    /// e.g. `[T; 32]`
-    Array(ArrayDef),
-
-    /// Slice — a reference to a contiguous sequence of elements
-    ///
-    /// e.g. `&[T]`
+    /// e.g. `[T]`
     Slice(SliceDef),
 
     /// Option
@@ -529,11 +511,6 @@ pub enum Def {
 
     /// Smart pointers, like `Arc<T>`, `Rc<T>`, etc.
     SmartPointer(SmartPointerDef),
-
-    /// Function pointers, like `fn(u32) -> String`, `extern "C" fn() -> *const T`, etc.
-    FunctionPointer(FunctionPointerDef),
-
-    Unimplemented,
 }
 
 #[expect(clippy::result_large_err, reason = "See comment of expect above Def")]
@@ -542,20 +519,6 @@ impl Def {
     pub fn into_scalar(self) -> Result<ScalarDef, Self> {
         match self {
             Self::Scalar(def) => Ok(def),
-            _ => Err(self),
-        }
-    }
-    /// Returns the `Struct` wrapped in an `Ok` if this is a [`Def::Struct`].
-    pub fn into_struct(self) -> Result<StructDef, Self> {
-        match self {
-            Self::Struct(def) => Ok(def),
-            _ => Err(self),
-        }
-    }
-    /// Returns the `EnumDef` wrapped in an `Ok` if this is a [`Def::Enum`].
-    pub fn into_enum(self) -> Result<EnumDef, Self> {
-        match self {
-            Self::Enum(def) => Ok(def),
             _ => Err(self),
         }
     }
@@ -573,25 +536,10 @@ impl Def {
             _ => Err(self),
         }
     }
-    /// Returns the `ArrayDef` wrapped in an `Ok` if this is a [`Def::Array`].
-    pub fn into_array(self) -> Result<ArrayDef, Self> {
-        match self {
-            Self::Array(def) => Ok(def),
-            _ => Err(self),
-        }
-    }
     /// Returns the `SliceDef` wrapped in an `Ok` if this is a [`Def::Slice`].
     pub fn into_slice(self) -> Result<SliceDef, Self> {
         match self {
             Self::Slice(def) => Ok(def),
-            _ => Err(self),
-        }
-    }
-    /// Returns the `TupleDef` wrapped in an `Ok` if this is a [`Def::Struct`] whose kind is
-    /// [`StructKind::Tuple`].
-    pub fn into_tuple(self) -> Result<StructDef, Self> {
-        match self {
-            Self::Struct(def) if def.kind == StructKind::Tuple => Ok(def),
             _ => Err(self),
         }
     }

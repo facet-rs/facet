@@ -1,8 +1,8 @@
 use core::{alloc::Layout, cmp::Ordering, fmt, mem};
 
 use crate::{
-    Characteristic, ConstTypeId, Def, Facet, MarkerTraits, SequenceType, Shape, StructDef,
-    TupleType, Type, TypeNameOpts, VTableView, ValueVTable, types::field_in_type,
+    Characteristic, ConstTypeId, Facet, MarkerTraits, SequenceType, Shape, TupleType, Type,
+    TypeNameOpts, VTableView, ValueVTable, types::field_in_type,
 };
 
 #[inline(always)]
@@ -190,16 +190,6 @@ macro_rules! impl_facet_for_tuple {
                             $(field_in_type!(Self, $idx),)+
                         ]}
                     })))
-                    .def(Def::Struct({
-                        StructDef::builder()
-                            .tuple()
-                            .fields(
-                                &const {[
-                                    $(field_in_type!(Self, $idx),)+
-                                ]}
-                            )
-                            .build()
-                    }))
                     .build()
             };
         }

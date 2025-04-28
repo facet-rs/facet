@@ -17,7 +17,7 @@ unsafe impl Facet<'_> for ConstTypeId {
                     base: BaseRepr::C,
                     packed: false,
                 },
-                subtype: UserSubtype::Struct(StructDef {
+                subtype: UserSubtype::Struct(StructType {
                     kind: StructKind::Struct,
                     fields: &const { [field_in_type!(ConstTypeId, type_id_fn)] },
                 }),
@@ -67,7 +67,7 @@ unsafe impl<'a, T: ?Sized + 'a> Facet<'a> for core::marker::PhantomData<T> {
             ))
             .ty(Type::User(UserType {
                 repr: Repr::default(),
-                subtype: UserSubtype::Struct(StructDef {
+                subtype: UserSubtype::Struct(StructType {
                     kind: StructKind::Unit,
                     fields: &[],
                 }),
@@ -112,25 +112,12 @@ unsafe impl Facet<'_> for str {
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_unsized::<Self>()
             .ty(Type::Primitive(PrimitiveType::Textual(TextualType::Str)))
-            .vtable(&const { value_vtable!(&str, |f, _opts| write!(f, "str")) })
-            .build()
-    };
-}
-
-unsafe impl<'a> Facet<'a> for &'a str {
-    const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .ty(Type::Pointer(PointerType::Reference(ValuePointerType {
-                target: || str::SHAPE,
-                mutable: false,
-                wide: true,
-            })))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::string().build())
                     .build(),
             ))
-            .vtable(&const { value_vtable!(&str, |f, _opts| write!(f, "&str")) })
+            .vtable(&const { value_vtable!(&str, |f, _opts| write!(f, "str")) })
             .build()
     };
 }
@@ -421,14 +408,14 @@ macro_rules! impl_facet_for_integer {
                             base: BaseRepr::Transparent,
                             packed: false,
                         },
-                        subtype: UserSubtype::Struct(StructDef {
+                        subtype: UserSubtype::Struct(StructType {
                             kind: StructKind::TupleStruct,
                             fields: &const {
                                 [Field::builder()
                                     .name("0")
                                     // TODO: is it correct to represent $type here, when we, in
                                     // fact, store $type::NonZeroInner.
-                                    .shape(|| <$type>::SHAPE)
+                                    .shape(<$type>::SHAPE)
                                     .offset(0)
                                     .flags(FieldFlags::EMPTY)
                                     .build()]

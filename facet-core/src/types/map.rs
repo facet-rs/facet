@@ -10,9 +10,9 @@ pub struct MapDef {
     /// vtable for interacting with the map
     pub vtable: &'static MapVTable,
     /// shape of the keys in the map
-    pub k: &'static Shape,
+    pub k: fn() -> &'static Shape,
     /// shape of the values in the map
-    pub v: &'static Shape,
+    pub v: fn() -> &'static Shape,
 }
 
 impl MapDef {
@@ -20,13 +20,23 @@ impl MapDef {
     pub const fn builder() -> MapDefBuilder {
         MapDefBuilder::new()
     }
+
+    /// Returns the shape of the keys of the map
+    pub fn k(&self) -> &'static Shape {
+        (self.k)()
+    }
+
+    /// Returns the shape of the values of the map
+    pub fn v(&self) -> &'static Shape {
+        (self.v)()
+    }
 }
 
 /// Builder for MapDef
 pub struct MapDefBuilder {
     vtable: Option<&'static MapVTable>,
-    k: Option<&'static Shape>,
-    v: Option<&'static Shape>,
+    k: Option<fn() -> &'static Shape>,
+    v: Option<fn() -> &'static Shape>,
 }
 
 impl MapDefBuilder {
@@ -47,13 +57,13 @@ impl MapDefBuilder {
     }
 
     /// Sets the key shape for the MapDef
-    pub const fn k(mut self, k: &'static Shape) -> Self {
+    pub const fn k(mut self, k: fn() -> &'static Shape) -> Self {
         self.k = Some(k);
         self
     }
 
     /// Sets the value shape for the MapDef
-    pub const fn v(mut self, v: &'static Shape) -> Self {
+    pub const fn v(mut self, v: fn() -> &'static Shape) -> Self {
         self.v = Some(v);
         self
     }

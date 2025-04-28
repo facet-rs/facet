@@ -1,7 +1,7 @@
 use crate::{
     Def, Facet, KnownSmartPointer, PtrConst, PtrMut, PtrUninit, Shape, SmartPointerDef,
     SmartPointerFlags, SmartPointerVTable, TryBorrowInnerError, TryFromError, TryIntoInnerError,
-    value_vtable,
+    Type, UserType, value_vtable,
 };
 
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::rc::Rc<T> {
@@ -51,9 +51,10 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::rc::Rc<T> {
                 name: "T",
                 shape: || T::SHAPE,
             }])
+            .ty(Type::User(UserType::opaque()))
             .def(Def::SmartPointer(
                 SmartPointerDef::builder()
-                    .pointee(T::SHAPE)
+                    .pointee(|| T::SHAPE)
                     .flags(SmartPointerFlags::EMPTY)
                     .known(KnownSmartPointer::Rc)
                     .weak(|| <alloc::rc::Weak<T> as Facet>::SHAPE)
@@ -113,9 +114,10 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::rc::Weak<T> {
                 name: "T",
                 shape: || T::SHAPE,
             }])
+            .ty(Type::User(UserType::opaque()))
             .def(Def::SmartPointer(
                 SmartPointerDef::builder()
-                    .pointee(T::SHAPE)
+                    .pointee(|| T::SHAPE)
                     .flags(SmartPointerFlags::WEAK)
                     .known(KnownSmartPointer::RcWeak)
                     .strong(|| <alloc::rc::Rc<T> as Facet>::SHAPE)

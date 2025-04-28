@@ -7,12 +7,10 @@ where
 {
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
-            .type_params(&[
-                TypeParam {
-                    name: "T",
-                    shape: || T::SHAPE,
-                }
-            ])
+            .type_params(&[TypeParam {
+                name: "T",
+                shape: || T::SHAPE,
+            }])
             .vtable(
                 &const {
                     let mut builder = ValueVTable::builder::<Self>()
@@ -31,10 +29,7 @@ where
                             write!(f, "[")?;
 
                             for (idx, value) in value.iter().enumerate() {
-                                (<VTableView<T>>::of().display().unwrap())(
-                                    value,
-                                    f,
-                                )?;
+                                (<VTableView<T>>::of().display().unwrap())(value, f)?;
                                 if idx != L - 1 {
                                     write!(f, ", ")?;
                                 }
@@ -47,10 +42,7 @@ where
                             write!(f, "[")?;
 
                             for (idx, value) in value.iter().enumerate() {
-                                (<VTableView<T>>::of().debug().unwrap())(
-                                    value,
-                                    f,
-                                )?;
+                                (<VTableView<T>>::of().debug().unwrap())(value, f)?;
                                 if idx != L - 1 {
                                     write!(f, ", ")?;
                                 }
@@ -60,12 +52,7 @@ where
                     }
                     if T::SHAPE.vtable.eq.is_some() {
                         builder = builder.eq(|a, b| {
-                            zip(a, b).all(|(a, b)| {
-                                (<VTableView<T>>::of().eq().unwrap())(
-                                    a,
-                                    b,
-                                )
-                            })
+                            zip(a, b).all(|(a, b)| (<VTableView<T>>::of().eq().unwrap())(a, b))
                         });
                     }
                     if L == 0 {
@@ -75,7 +62,12 @@ where
                     } else if L <= 32 && T::SHAPE.vtable.default_in_place.is_some() {
                         builder = builder.default_in_place(|mut target| unsafe {
                             let t_dip = <VTableView<T>>::of().default_in_place().unwrap();
-                            let stride = T::SHAPE.layout.sized_layout().unwrap().pad_to_align().size();
+                            let stride = T::SHAPE
+                                .layout
+                                .sized_layout()
+                                .unwrap()
+                                .pad_to_align()
+                                .size();
                             for idx in 0..L {
                                 t_dip(target.field_uninit_at(idx * stride));
                             }
@@ -88,7 +80,12 @@ where
                     if T::SHAPE.vtable.clone_into.is_some() {
                         builder = builder.clone_into(|src, mut dst| unsafe {
                             let t_cip = <VTableView<T>>::of().clone_into().unwrap();
-                            let stride = T::SHAPE.layout.sized_layout().unwrap().pad_to_align().size();
+                            let stride = T::SHAPE
+                                .layout
+                                .sized_layout()
+                                .unwrap()
+                                .pad_to_align()
+                                .size();
                             for (idx, src) in src.iter().enumerate() {
                                 (t_cip)(src, dst.field_uninit_at(idx * stride));
                             }
@@ -98,11 +95,8 @@ where
                     if T::SHAPE.vtable.partial_ord.is_some() {
                         builder = builder.partial_ord(|a, b| {
                             zip(a, b)
-                                .find_map(|(a, b)|  {
-                                    match (<VTableView<T>>::of().partial_ord().unwrap())(
-                                        a,
-                                        b,
-                                    ) {
+                                .find_map(|(a, b)| {
+                                    match (<VTableView<T>>::of().partial_ord().unwrap())(a, b) {
                                         Some(Ordering::Equal) => None,
                                         c => Some(c),
                                     }
@@ -114,10 +108,7 @@ where
                         builder = builder.ord(|a, b| {
                             zip(a, b)
                                 .find_map(|(a, b)| {
-                                    match (<VTableView<T>>::of().ord().unwrap())(
-                                        a,
-                                        b,
-                                    ) {
+                                    match (<VTableView<T>>::of().ord().unwrap())(a, b) {
                                         Ordering::Equal => None,
                                         c => Some(c),
                                     }
@@ -128,11 +119,7 @@ where
                     if T::SHAPE.vtable.hash.is_some() {
                         builder = builder.hash(|value, state, hasher| {
                             for value in value {
-                                (<VTableView<T>>::of().hash().unwrap())(
-                                    value,
-                                    state,
-                                    hasher,
-                                )
+                                (<VTableView<T>>::of().hash().unwrap())(value, state, hasher)
                             }
                         });
                     }
@@ -140,29 +127,9 @@ where
                 },
             )
             .ty(Type::Sequence(SequenceType::Array(ArrayType {
-                ty: T::SHAPE,
-                len: L,
+                t: T::SHAPE,
+                n: L,
             })))
-            .def(Def::Array(
-                ArrayDef::builder()
-                    .vtable(
-                        &const {
-                            ArrayVTable::builder()
-                                .get_item_ptr(|ptr, index| unsafe {
-                                    if index >= L {
-                                        panic!(
-                                            "Index out of bounds: the len is {L} but the index is {index}"
-                                        );
-                                    }
-                                    PtrConst::new(ptr.as_ptr::<[T; L]>())
-                                })
-                                .build()
-                        },
-                    )
-                    .n(L)
-                    .t(|| T::SHAPE)
-                    .build(),
-            ))
             .build()
     };
 }

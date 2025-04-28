@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::{
     ConstTypeId, Def, Facet, ParseError, PtrConst, PtrMut, PtrUninit, ScalarAffinity, ScalarDef,
-    Shape, TryBorrowInnerError, TryFromError, TryIntoInnerError, value_vtable,
+    Shape, TryBorrowInnerError, TryFromError, TryIntoInnerError, Type, UserType, value_vtable,
 };
 
 unsafe impl Facet<'_> for Uuid {
@@ -56,6 +56,7 @@ unsafe impl Facet<'_> for Uuid {
         Shape::builder()
             .id(ConstTypeId::of::<Self>())
             .layout(Layout::new::<Self>())
+            .ty(Type::User(UserType::opaque()))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::uuid().build())

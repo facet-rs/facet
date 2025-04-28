@@ -7,7 +7,7 @@ use crate::ptr::{PtrConst, PtrMut};
 
 use crate::{
     Def, Facet, MapDef, MapIterVTable, MapVTable, MarkerTraits, ScalarAffinity, ScalarDef, Shape,
-    TypeParam, VTableView, ValueVTable, value_vtable,
+    Type, TypeParam, UserType, VTableView, ValueVTable, value_vtable,
 };
 
 struct HashMapIterator<'mem, K> {
@@ -111,10 +111,11 @@ where
                     builder.build()
                 },
             )
+            .ty(Type::User(UserType::opaque()))
             .def(Def::Map(
                 MapDef::builder()
-                    .k(K::SHAPE)
-                    .v(V::SHAPE)
+                    .k(|| K::SHAPE)
+                    .v(|| V::SHAPE)
                     .vtable(
                         &const {
                             MapVTable::builder()
@@ -182,6 +183,7 @@ where
 unsafe impl Facet<'_> for RandomState {
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
+            .ty(Type::User(UserType::opaque()))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::opaque().build())

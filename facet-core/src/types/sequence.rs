@@ -25,9 +25,9 @@ pub struct TupleType {
 #[repr(C)]
 pub struct ArrayType {
     /// Shape of the underlying object stored on array
-    pub ty: &'static Shape,
+    pub t: &'static Shape,
     /// Constatnt length of the array
-    pub len: usize,
+    pub n: usize,
 }
 
 /// Describes a slice (`[T]`)
@@ -35,5 +35,5 @@ pub struct ArrayType {
 #[repr(C)]
 pub struct SliceType {
     /// Shape of the underlying object stored on slice
-    pub ty: &'static Shape,
+    pub t: &'static Shape,
 }

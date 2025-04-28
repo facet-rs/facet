@@ -1,4 +1,4 @@
-use super::{EnumDef, StructDef, UnionType};
+use super::{EnumType, StructType, UnionType};
 
 /// User-defined types (structs, enums, unions)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -22,9 +22,9 @@ impl UserType {
 #[repr(C)]
 pub enum UserSubtype {
     /// Describes a `struct`
-    Struct(StructDef),
+    Struct(StructType),
     /// Describes an `enum`
-    Enum(EnumDef),
+    Enum(EnumType),
     /// Describes a `union`
     Union(UnionType),
     /// Special variant for representing external types with unknown internal representation.

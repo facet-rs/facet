@@ -80,5 +80,4 @@ macro_rules! impl_facet_for_pointer {
 impl_facet_for_pointer!(*const);
 impl_facet_for_pointer!(*mut);
 impl_facet_for_pointer!(&mut);
-// TODO: enable this after removing &[T] impl
-//impl_facet_for_pointer!(&);
+impl_facet_for_pointer!(&);

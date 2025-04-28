@@ -6,8 +6,8 @@ use alloc::{
 };
 
 use crate::{
-    Def, Facet, MapDef, MapIterVTable, MapVTable, MarkerTraits, PtrConst, PtrMut, Shape,
-    VTableView, ValueVTable,
+    Def, Facet, MapDef, MapIterVTable, MapVTable, MarkerTraits, PtrConst, PtrMut, Shape, Type,
+    UserType, VTableView, ValueVTable,
 };
 
 struct BTreeMapIterator<'mem, K> {
@@ -109,10 +109,11 @@ where
                     builder.build()
                 },
             )
+            .ty(Type::User(UserType::opaque()))
             .def(Def::Map(
                 MapDef::builder()
-                    .k(K::SHAPE)
-                    .v(V::SHAPE)
+                    .k(|| K::SHAPE)
+                    .v(|| V::SHAPE)
                     .vtable(
                         &const {
                             MapVTable::builder()

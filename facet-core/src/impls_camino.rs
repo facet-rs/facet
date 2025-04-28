@@ -6,7 +6,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::{
     ConstTypeId, Def, Facet, PtrConst, PtrMut, PtrUninit, ScalarAffinity, ScalarDef, Shape,
-    TryBorrowInnerError, TryFromError, TryIntoInnerError, value_vtable,
+    TryBorrowInnerError, TryFromError, TryIntoInnerError, Type, UserType, value_vtable,
 };
 
 unsafe impl Facet<'_> for Utf8PathBuf {
@@ -50,6 +50,7 @@ unsafe impl Facet<'_> for Utf8PathBuf {
         Shape::builder()
             .id(ConstTypeId::of::<Self>())
             .layout(Layout::new::<Self>())
+            .ty(Type::User(UserType::opaque()))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::path().build())
@@ -94,6 +95,7 @@ unsafe impl<'a> Facet<'a> for &'a Utf8Path {
         Shape::builder()
             .id(ConstTypeId::of::<Self>())
             .layout(Layout::new::<Self>())
+            .ty(Type::User(UserType::opaque()))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::path().build())

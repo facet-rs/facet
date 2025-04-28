@@ -1,6 +1,6 @@
 use crate::{
     BaseRepr, Def, Facet, Field, FieldFlags, KnownSmartPointer, PtrConst, Repr, SmartPointerDef,
-    SmartPointerFlags, SmartPointerVTable, StructDef, StructKind, Type, UserSubtype, UserType,
+    SmartPointerFlags, SmartPointerVTable, StructKind, StructType, Type, UserSubtype, UserType,
     value_vtable,
 };
 
@@ -16,12 +16,12 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for core::ptr::NonNull<T> {
                     base: BaseRepr::Transparent,
                     packed: false,
                 },
-                subtype: UserSubtype::Struct(StructDef {
+                subtype: UserSubtype::Struct(StructType {
                     kind: StructKind::Struct,
                     fields: &const {
                         [Field::builder()
                             .name("pointer")
-                            .shape(|| <*mut T>::SHAPE)
+                            .shape(<*mut T>::SHAPE)
                             .offset(0)
                             .flags(FieldFlags::EMPTY)
                             .build()]
@@ -30,7 +30,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for core::ptr::NonNull<T> {
             }))
             .def(Def::SmartPointer(
                 SmartPointerDef::builder()
-                    .pointee(T::SHAPE)
+                    .pointee(|| T::SHAPE)
                     .flags(SmartPointerFlags::EMPTY)
                     .known(KnownSmartPointer::NonNull)
                     .vtable(
