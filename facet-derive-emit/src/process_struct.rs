@@ -12,7 +12,6 @@ use super::*;
 /// ```
 pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     let ps = PStruct::parse(&parsed);
-    let repr = ps.container.attrs.repr;
 
     let struct_name = parsed.name.to_string();
 
@@ -22,7 +21,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     let container_attributes = build_container_attributes(&parsed.attributes);
 
     // For transparent, extract the inner type
-    let inner_field = if repr == PRepr::Transparent {
+    let inner_field = if ps.container.attrs.is_transparent() {
         match ps.kind {
             PStructKind::TupleStruct { fields } => {
                 if fields.len() != 1 {
@@ -165,9 +164,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 dst: ::facet::PtrUninit<'dst>
             ) -> Result<::facet::PtrMut<'dst>, ::facet::TryFromError> {{
                 match <{inner_field_type} as ::facet::Facet>::SHAPE.vtable.try_from {{
-                    Some(inner_try) => {{
-                        (inner_try)(src_ptr, src_shape, dst)
-                    }},
+                    Some(inner_try) => unsafe {{ (inner_try)(src_ptr, src_shape, dst) }},
                     None => {{
                         if src_shape != <{inner_field_type} as ::facet::Facet>::SHAPE {{
                             return Err(::facet::TryFromError::UnsupportedSourceShape {{
@@ -176,8 +173,8 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                             }});
                         }}
 
-                        let inner: {inner_field_type} = src_ptr.read();
-                        Ok(dst.put(inner))
+                        let inner: {inner_field_type} = unsafe {{ src_ptr.read() }};
+                        Ok(unsafe {{ dst.put(inner) }})
                     }}
                 }}
             }}
@@ -189,10 +186,8 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 src_ptr: ::facet::PtrConst<'src>,
                 dst: ::facet::PtrUninit<'dst>
             ) -> Result<::facet::PtrMut<'dst>, ::facet::TryIntoInnerError> {{
-                // Get the wrapper value we're converting from
-                let wrapper = src_ptr.get::<{struct_name}{bgp_without_bounds}>();
-                // Extract inner value and put it in the destination
-                Ok(dst.put(wrapper.0.clone()))
+                let wrapper = unsafe {{ src_ptr.get::<{struct_name}{bgp_without_bounds}>() }};
+                Ok(unsafe {{ dst.put(wrapper.0.clone()) }})
             }}
 
             vtable.try_into_inner = Some(try_into_inner);
@@ -202,7 +197,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 src_ptr: ::facet::PtrConst<'src>
             ) -> Result<::facet::PtrConst<'src>, ::facet::TryBorrowInnerError> {{
                 // Get the wrapper value
-                let wrapper = src_ptr.get::<{struct_name}{bgp_without_bounds}>();
+                let wrapper = unsafe {{ src_ptr.get::<{struct_name}{bgp_without_bounds}>() }};
                 // Return a pointer to the inner value
                 Ok(::facet::PtrConst::new(&wrapper.0 as *const _ as *const u8))
             }}
@@ -276,7 +271,7 @@ unsafe impl{bgp_def} ::facet::Facet<'__facet> for {struct_name}{bgp_without_boun
             .with_lifetime("__facet")
             .display_with_bounds(),
         bgp_without_bounds = ps.container.bgp.display_without_bounds(),
-        inner_setter = if repr == PRepr::Transparent {
+        inner_setter = if inner_field.is_some() {
             ".inner(inner_shape)"
         } else {
             ""

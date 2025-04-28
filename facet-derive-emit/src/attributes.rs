@@ -245,7 +245,7 @@ pub struct PAttrs {
     pub doc: Vec<String>,
 
     /// Facet attributes specifically
-    pub facet_atts: Vec<PFacetAttr>,
+    pub facet: Vec<PFacetAttr>,
 
     /// Representation of the facet
     pub repr: PRepr,
@@ -318,11 +318,17 @@ impl PAttrs {
 
         Self {
             doc: doc_lines,
-            facet_atts: facet_attrs,
+            facet: facet_attrs,
             repr: repr.unwrap_or(PRepr::Rust),
             rename_all,
             rename,
         }
+    }
+
+    pub(crate) fn is_transparent(&self) -> bool {
+        self.facet
+            .iter()
+            .any(|attr| matches!(attr, PFacetAttr::Transparent))
     }
 }
 

@@ -1046,7 +1046,7 @@ fn struct_facet_transparent() {
     insta::assert_snapshot!(expand(
         r#"
         #[derive(Facet)]
-        #[repr(transparent)]
+        #[facet(transparent)]
         struct Wrapper(u32);
         "#
     ));
