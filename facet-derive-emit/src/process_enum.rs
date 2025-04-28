@@ -53,7 +53,7 @@ fn build_variant_attributes(
                             let key = attr[..equal_pos].trim();
                             if key == "rename" {
                                 has_explicit_rename = true;
-                                let value = attr_str[equal_pos + 1..].trim().trim_matches('"');
+                                let value = attr[equal_pos + 1..].trim().trim_matches('"');
                                 // Keep the Rename attribute for reflection
                                 attribute_list.push(format!(
                                     r#"::facet::VariantAttribute::Rename({:?})"#,
@@ -162,6 +162,29 @@ struct ProcessedEnumBody {
 
 type EnumVariant = Delimited<EnumVariantLike, Comma>;
 
+struct EnumParams<'a> {
+    // Core identification
+    enum_name: &'a str,
+    variants: &'a [EnumVariant],
+
+    // Type information
+    discriminant_type: Option<Discriminant>,
+    bgp: &'a BoundedGenericParams,
+    where_clauses: &'a str,
+
+    // Attributes and customization
+    rename_rule: RenameRule,
+}
+
+impl EnumParams<'_> {
+    fn with_facet_lifetime(&self) -> BoundedGenericParams {
+        self.bgp.with(BoundedGenericParam {
+            bounds: None,
+            param: GenericParamName::Lifetime("__facet".into()),
+        })
+    }
+}
+
 /// Processes an enum to implement Facet
 ///
 /// Example input:
@@ -230,26 +253,21 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         }
     }
 
+    let params = EnumParams {
+        enum_name: &enum_name,
+        variants: &parsed.body.content.0,
+        discriminant_type,
+        bgp: &bgp,
+        where_clauses: &where_clauses,
+        rename_rule: container_attributes.rename_rule,
+    };
+
     let processed_body = match (repr_c, discriminant_type) {
         (true, _) => {
             // C-style enum, no discriminant type
-            process_c_style_enum(
-                &enum_name,
-                &parsed.body.content.0,
-                discriminant_type,
-                &bgp,
-                &where_clauses,
-                container_attributes.rename_rule,
-            )
+            process_c_style_enum(&params)
         }
-        (false, Some(discriminant_type)) => process_primitive_enum(
-            &enum_name,
-            &parsed.body.content.0,
-            discriminant_type,
-            &bgp,
-            &where_clauses,
-            container_attributes.rename_rule,
-        ),
+        (false, Some(_)) => process_primitive_enum(&params),
         _ => {
             return r#"compile_error!("Enums must have an explicit representation (e.g. #[repr(u8)] or #[repr(C)]) to be used with Facet")"#
             .into_token_stream()
@@ -328,26 +346,17 @@ unsafe impl{bgp_def} ::facet::Facet<'__facet> for {enum_name}{bgp_without_bounds
 ///
 /// To calculate the offsets of each variant, we create a shadow struct that mimics this
 /// structure and use the `offset_of!` macro to calculate the offsets of each field.
-fn process_c_style_enum(
-    enum_name: &str,
-    variants: &[EnumVariant],
-    discriminant_type: Option<Discriminant>,
-    bgp: &BoundedGenericParams,
-    where_clauses: &str,
-    rename_rule: RenameRule,
-) -> ProcessedEnumBody {
-    let facet_bgp = bgp.with(BoundedGenericParam {
-        bounds: None,
-        param: GenericParamName::Lifetime("__facet".into()),
-    });
+fn process_c_style_enum(params: &EnumParams) -> ProcessedEnumBody {
+    let facet_bgp = params.with_facet_lifetime();
 
     // Collect shadow struct definitions separately from variant expressions
     let mut shadow_struct_defs = Vec::new();
     let mut variant_expressions = Vec::new();
 
     // first, create an enum to represent the discriminant type
-    let shadow_discriminant_name = format!("__ShadowDiscriminant{enum_name}");
-    let all_variant_names = variants
+    let shadow_discriminant_name = format!("__ShadowDiscriminant{}", params.enum_name);
+    let all_variant_names = params
+        .variants
         .iter()
         .map(|var_like| match &var_like.value.variant {
             EnumVariantData::Unit(unit) => unit.name.to_string(),
@@ -359,13 +368,17 @@ fn process_c_style_enum(
     shadow_struct_defs.push(format!(
         "#[repr({repr})] enum {shadow_discriminant_name} {{ {all_variant_names} }}",
         // repr is either C or the explicit discriminant type
-        repr = discriminant_type.map(|d| d.as_rust_type()).unwrap_or("C")
+        repr = params
+            .discriminant_type
+            .map(|d| d.as_rust_type())
+            .unwrap_or("C")
     ));
 
     // we'll also generate a shadow union for the fields
-    let shadow_union_name = format!("__ShadowFields{enum_name}");
+    let shadow_union_name = format!("__ShadowFields{}", params.enum_name);
 
-    let all_union_fields = variants
+    let all_union_fields = params
+        .variants
         .iter()
         .map(|var_like| match &var_like.value.variant {
             EnumVariantData::Unit(unit) => unit.name.to_string(),
@@ -374,7 +387,8 @@ fn process_c_style_enum(
         })
         .map(|variant_name| {
             format!(
-                "{variant_name}: std::mem::ManuallyDrop<__ShadowField{enum_name}_{variant_name}{bgp}>",
+                "{variant_name}: std::mem::ManuallyDrop<__ShadowField{}_{variant_name}{bgp}>",
+                params.enum_name,
                 bgp = facet_bgp.display_without_bounds()
             )
         })
@@ -382,19 +396,21 @@ fn process_c_style_enum(
         .join(", ");
 
     shadow_struct_defs.push(format!(
-        "#[repr(C)] union {shadow_union_name}{bgp} {where_clauses} {{ {all_union_fields} }}",
+        "#[repr(C)] union {shadow_union_name}{bgp} {} {{ {all_union_fields} }}",
+        params.where_clauses,
         bgp = facet_bgp.display_with_bounds()
     ));
 
     // Create a shadow struct to represent the enum layout
-    let shadow_repr_name = format!("__ShadowRepr{enum_name}");
+    let shadow_repr_name = format!("__ShadowRepr{}", params.enum_name);
 
     shadow_struct_defs.push(format!(
-        "#[repr(C)] struct {shadow_repr_name}{struct_bgp} {where_clauses} {{
+        "#[repr(C)] struct {shadow_repr_name}{struct_bgp} {} {{
             _discriminant: {shadow_discriminant_name},
             _phantom: {phantom},
             _fields: {shadow_union_name}{fields_bgp},
         }}",
+        params.where_clauses,
         struct_bgp = facet_bgp.display_with_bounds(),
         fields_bgp = facet_bgp.display_without_bounds(),
         phantom = facet_bgp.display_as_phantom_data(),
@@ -403,7 +419,7 @@ fn process_c_style_enum(
     // Discriminant values are either manually defined, or incremented from the last one
     // See: <https://doc.rust-lang.org/reference/items/enumerations.html#implicit-discriminants>
     let mut discriminant_value = 0;
-    for var_like in variants.iter() {
+    for var_like in params.variants.iter() {
         if let Some(x) = &var_like.value.discriminant {
             discriminant_value = get_discriminant_value(&x.second);
         }
@@ -412,15 +428,17 @@ fn process_c_style_enum(
             EnumVariantData::Unit(unit) => {
                 let variant_name = unit.name.to_string();
                 let container_attributes =
-                    build_variant_attributes(&variant_name, &unit.attributes, rename_rule);
+                    build_variant_attributes(&variant_name, &unit.attributes, params.rename_rule);
                 let maybe_doc = build_maybe_doc(&unit.attributes);
 
                 // Generate shadow struct for this tuple variant to calculate offsets
-                let shadow_struct_name = format!("__ShadowField{enum_name}_{variant_name}");
+                let shadow_struct_name =
+                    format!("__ShadowField{}_{variant_name}", params.enum_name);
 
                 // Add shadow struct definition
                 shadow_struct_defs.push(format!(
-                    "#[repr(C)] struct {shadow_struct_name}{bgp} {where_clauses} {{ _phantom: {phantom} }}",
+                    "#[repr(C)] struct {shadow_struct_name}{bgp} {} {{ _phantom: {phantom} }}",
+                    params.where_clauses,
                     bgp = facet_bgp.display_with_bounds(),
                     phantom = facet_bgp.display_as_phantom_data(),
                 ));
@@ -439,11 +457,12 @@ fn process_c_style_enum(
             EnumVariantData::Tuple(tuple) => {
                 let variant_name = tuple.name.to_string();
                 let container_attributes =
-                    build_variant_attributes(&variant_name, &tuple.attributes, rename_rule);
+                    build_variant_attributes(&variant_name, &tuple.attributes, params.rename_rule);
                 let maybe_doc = build_maybe_doc(&tuple.attributes);
 
                 // Generate shadow struct for this tuple variant to calculate offsets
-                let shadow_struct_name = format!("__ShadowField{enum_name}_{variant_name}");
+                let shadow_struct_name =
+                    format!("__ShadowField{}_{variant_name}", params.enum_name);
 
                 // Build the list of fields and types for the shadow struct
                 let fields_with_types = tuple
@@ -461,7 +480,8 @@ fn process_c_style_enum(
 
                 // Add shadow struct definition
                 shadow_struct_defs.push(format!(
-                    "#[repr(C)] struct {shadow_struct_name}{bgp} {where_clauses} {{ {fields_with_types}, _phantom: {phantom} }}",
+                    "#[repr(C)] struct {shadow_struct_name}{bgp} {} {{ {fields_with_types}, _phantom: {phantom} }}",
+                    params.where_clauses,
                     bgp = facet_bgp.display_with_bounds(),
                     phantom = facet_bgp.display_as_phantom_data(),
                 ));
@@ -513,12 +533,16 @@ fn process_c_style_enum(
             }
             EnumVariantData::Struct(struct_var) => {
                 let variant_name = struct_var.name.to_string();
-                let container_attributes =
-                    build_variant_attributes(&variant_name, &struct_var.attributes, rename_rule);
+                let container_attributes = build_variant_attributes(
+                    &variant_name,
+                    &struct_var.attributes,
+                    params.rename_rule,
+                );
                 let maybe_doc = build_maybe_doc(&struct_var.attributes);
 
                 // Generate shadow struct for this struct variant to calculate offsets
-                let shadow_struct_name = format!("__ShadowField{enum_name}_{variant_name}");
+                let shadow_struct_name =
+                    format!("__ShadowField{}_{variant_name}", params.enum_name);
 
                 // Build the list of fields and types
                 let fields_with_types = struct_var
@@ -536,7 +560,8 @@ fn process_c_style_enum(
 
                 // Add shadow struct definition
                 shadow_struct_defs.push(format!(
-                    "#[repr(C)] struct {shadow_struct_name}{bgp} {where_clauses} {{ {fields_with_types}, _phantom: {phantom} }}",
+                    "#[repr(C)] struct {shadow_struct_name}{bgp} {} {{ {fields_with_types}, _phantom: {phantom} }}",
+                    params.where_clauses,
                     bgp = facet_bgp.display_with_bounds(),
                     phantom = facet_bgp.display_as_phantom_data(),
                 ));
@@ -595,7 +620,7 @@ fn process_c_style_enum(
     ProcessedEnumBody {
         shadow_struct_defs,
         variant_expressions,
-        repr_type: discriminant_type.map_or_else(
+        repr_type: params.discriminant_type.map_or_else(
             || format!("from_discriminant_size::<{shadow_discriminant_name}>()"),
             |d| d.as_enum_repr().to_string(),
         ),
@@ -609,27 +634,22 @@ fn process_c_style_enum(
 ///
 /// To calculate the offsets of each variant, we create a shadow struct that mimics this
 /// structure and use the `offset_of!` macro to calculate the offsets of each field.
-fn process_primitive_enum(
-    enum_name: &str,
-    variants: &[EnumVariant],
-    discriminant_type: Discriminant,
-    bgp: &BoundedGenericParams,
-    where_clauses: &str,
-    rename_rule: RenameRule,
-) -> ProcessedEnumBody {
-    let facet_bgp = bgp.with(BoundedGenericParam {
-        bounds: None,
-        param: GenericParamName::Lifetime("__facet".into()),
-    });
+fn process_primitive_enum(params: &EnumParams) -> ProcessedEnumBody {
+    let facet_bgp = params.with_facet_lifetime();
 
     // Collect shadow struct definitions separately from variant expressions
     let mut shadow_struct_defs = Vec::new();
     let mut variant_expressions = Vec::new();
 
+    // We can safely unwrap because this function is only called when discriminant_type is Some
+    let discriminant_type = params
+        .discriminant_type
+        .expect("discriminant_type should be Some when process_primitive_enum is called");
+
     // Discriminant values are either manually defined, or incremented from the last one
     // See: <https://doc.rust-lang.org/reference/items/enumerations.html#implicit-discriminants>
     let mut discriminant_value = 0;
-    for var_like in variants.iter() {
+    for var_like in params.variants.iter() {
         if let Some(x) = &var_like.value.discriminant {
             discriminant_value = get_discriminant_value(&x.second);
         }
@@ -637,7 +657,7 @@ fn process_primitive_enum(
             EnumVariantData::Unit(unit) => {
                 let variant_name = unit.name.to_string();
                 let container_attributes =
-                    build_variant_attributes(&variant_name, &unit.attributes, rename_rule);
+                    build_variant_attributes(&variant_name, &unit.attributes, params.rename_rule);
                 let maybe_doc = build_maybe_doc(&unit.attributes);
 
                 variant_expressions.push(format!(
@@ -653,11 +673,11 @@ fn process_primitive_enum(
             EnumVariantData::Tuple(tuple) => {
                 let variant_name = tuple.name.to_string();
                 let container_attributes =
-                    build_variant_attributes(&variant_name, &tuple.attributes, rename_rule);
+                    build_variant_attributes(&variant_name, &tuple.attributes, params.rename_rule);
                 let maybe_doc = build_maybe_doc(&tuple.attributes);
 
                 // Generate shadow struct for this tuple variant to calculate offsets
-                let shadow_struct_name = format!("__Shadow{}_{}", enum_name, variant_name);
+                let shadow_struct_name = format!("__Shadow{}_{}", params.enum_name, variant_name);
 
                 // Build the list of fields and types for the shadow struct
                 let fields_with_types = tuple
@@ -675,11 +695,12 @@ fn process_primitive_enum(
 
                 // Add shadow struct definition
                 shadow_struct_defs.push(format!(
-                    "#[repr(C)] struct {shadow_struct_name}{bgp} {where_clauses}  {{
+                    "#[repr(C)] struct {shadow_struct_name}{bgp} {}  {{
                         _discriminant: {discriminant},
                         _phantom: {phantom},
                         {fields_with_types}
                     }}",
+                    params.where_clauses,
                     bgp = facet_bgp.display_with_bounds(),
                     phantom = facet_bgp.display_as_phantom_data(),
                     discriminant = discriminant_type.as_rust_type(),
@@ -727,12 +748,15 @@ fn process_primitive_enum(
             }
             EnumVariantData::Struct(struct_var) => {
                 let variant_name = struct_var.name.to_string();
-                let container_attributes =
-                    build_variant_attributes(&variant_name, &struct_var.attributes, rename_rule);
+                let container_attributes = build_variant_attributes(
+                    &variant_name,
+                    &struct_var.attributes,
+                    params.rename_rule,
+                );
                 let maybe_doc = build_maybe_doc(&struct_var.attributes);
 
                 // Generate shadow struct for this struct variant to calculate offsets
-                let shadow_struct_name = format!("__Shadow{}_{}", enum_name, variant_name);
+                let shadow_struct_name = format!("__Shadow{}_{}", params.enum_name, variant_name);
 
                 // Build the list of fields and types
                 let fields_with_types = struct_var
@@ -750,11 +774,12 @@ fn process_primitive_enum(
 
                 // Add shadow struct definition
                 shadow_struct_defs.push(format!(
-                    "#[repr(C)] struct {shadow_struct_name}{bgp} {where_clauses} {{
+                    "#[repr(C)] struct {shadow_struct_name}{bgp} {} {{
                         _discriminant: {discriminant},
                         _phantom: {phantom},
                         {fields_with_types}
                     }}",
+                    params.where_clauses,
                     bgp = facet_bgp.display_with_bounds(),
                     phantom = facet_bgp.display_as_phantom_data(),
                     discriminant = discriminant_type.as_rust_type(),
