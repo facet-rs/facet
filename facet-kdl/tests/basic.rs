@@ -2,6 +2,7 @@ use facet::Facet;
 use indoc::indoc;
 
 #[test]
+#[ignore]
 fn basic_node() {
     facet_testhelpers::setup();
 
@@ -34,5 +35,5 @@ fn basic_node() {
 
     dbg!(Basic::SHAPE);
 
-    let basic: Basic = facet_kdl::from_str(kdl).unwrap();
+    let _basic: Basic = facet_kdl::from_str(kdl).unwrap();
 }

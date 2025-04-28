@@ -4,15 +4,13 @@
 // cf. facet-toml/facet-json for examples
 
 use std::{
-    any::type_name,
     error::Error,
     fmt::{self, Display},
-    marker::PhantomData,
 };
 
-use facet_core::{Def, Facet, StructDef};
+use facet_core::{Def, Facet};
 use facet_reflect::{ReflectError, Wip};
-use kdl::{KdlDocument, KdlEntry, KdlError as KdlParseError};
+use kdl::{KdlDocument, KdlError as KdlParseError};
 
 // QUESTION: Any interest in making something a bit like `strum` with `facet`? Always nice to have an easy way to get
 // the names of enum variants as strings!
@@ -27,6 +25,8 @@ use kdl::{KdlDocument, KdlEntry, KdlError as KdlParseError};
 // `facet-json`) or parsing things more incrementally by using `KdlNode::parse()` or `KdlEntry::parse`.
 
 // TODO: Need to actually add some shared information here so it's not just a useless wrapper...
+
+/// Error type for KDL deserialization.
 #[derive(Debug)]
 pub struct KdlError {
     kind: KdlErrorKind,
@@ -82,6 +82,7 @@ impl From<ReflectError> for KdlErrorKind {
 }
 
 // FIXME: I'm not sure what to name this...
+#[allow(dead_code)]
 struct KdlDeserializer<'input> {
     // FIXME: Also no clue what fields it should have, if it should exist at all...
     kdl: &'input str,
@@ -158,7 +159,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
         log::trace!("Entering `deserialize_node` method");
 
         // TODO: Correctly generate that error and write a constructor that gets rid of the `.to_owned()`?
-        let mut node = document
+        let node = document
             .nodes_mut()
             .pop()
             .ok_or_else(|| KdlErrorKind::MissingNodes(vec!["TODO".to_owned()]))?;
@@ -183,6 +184,20 @@ impl<'input, 'facet> KdlDeserializer<'input> {
     }
 }
 
+/// Deserialize a value of type `T` from a KDL string.
+///
+/// Returns a [`KdlError`] if the input KDL is invalid or doesn't match `T`.
+///
+/// # Example
+/// ```ignore
+/// let kdl = r#"
+/// my_struct {
+///     field1 "value"
+///     field2 42
+/// }
+/// "#;
+/// let val: MyStruct = from_str(kdl)?;
+/// ```
 pub fn from_str<'input, 'facet, T>(kdl: &'input str) -> Result<T>
 where
     T: Facet<'facet>,
