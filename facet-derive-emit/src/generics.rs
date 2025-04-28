@@ -126,6 +126,52 @@ impl std::fmt::Display for WithBounds<'_> {
     }
 }
 
+impl quote::ToTokens for WithBounds<'_> {
+    fn to_tokens(&self, tokens: &mut facet_derive_parse::TokenStream) {
+        if self.0.params.is_empty() {
+            return;
+        }
+
+        tokens.extend(quote! {
+            <
+        });
+
+        for (i, param) in self.0.params.iter().enumerate() {
+            if i > 0 {
+                tokens.extend(quote! { , });
+            }
+
+            match &param.param {
+                GenericParamName::Lifetime(name) => {
+                    let punct = facet_derive_parse::TokenTree::Punct(
+                        facet_derive_parse::Punct::new('\'', facet_derive_parse::Spacing::Joint),
+                    );
+                    let lifetime_ident = quote::format_ident!("{name}");
+                    tokens.extend(quote! { #punct #lifetime_ident });
+                }
+                GenericParamName::Type(name) => {
+                    let ident = quote::format_ident!("{}", name);
+                    tokens.extend(quote! { #ident });
+                }
+                GenericParamName::Const(name) => {
+                    let ident = quote::format_ident!("{}", name);
+                    tokens.extend(quote! { const #ident });
+                }
+            }
+
+            // Add bounds if they exist
+            if let Some(bounds) = &param.bounds {
+                let bounds_str = bounds.clone();
+                tokens.extend(quote! { : #bounds_str });
+            }
+        }
+
+        tokens.extend(quote! {
+            >
+        });
+    }
+}
+
 impl std::fmt::Display for WithoutBounds<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.0.params.is_empty() {

@@ -14,7 +14,8 @@ use quote::quote;
 pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     let ps = PStruct::parse(&parsed);
 
-    let struct_name = parsed.name.to_string();
+    let struct_name = &parsed.name;
+    let struct_name_str = struct_name.to_string();
 
     let kind;
     let where_clauses;
@@ -40,9 +41,9 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         None
     };
 
-    let fields = match &parsed.kind {
+    let fields_vec = match &parsed.kind {
         StructKind::Struct { clauses, fields } => {
-            kind = "::facet::StructKind::Struct";
+            kind = quote!(::facet::StructKind::Struct);
             where_clauses = clauses.as_ref();
             fields
                 .content
@@ -56,23 +57,21 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                         raw_field_name: &raw_field_name,
                         normalized_field_name,
                         field_type: &field.value.typ.tokens_to_string(),
-                        struct_name: &struct_name,
+                        struct_name: &struct_name_str,
                         bgp: &ps.container.bgp,
                         attrs: &field.value.attributes,
                         base_field_offset: None,
                         rename_rule: container_attributes.rename_rule,
                     })
-                    .into_token_stream()
-                    .tokens_to_string()
                 })
-                .collect::<Vec<String>>()
+                .collect::<Vec<_>>()
         }
         StructKind::TupleStruct {
             fields,
             clauses,
             semi: _,
         } => {
-            kind = "::facet::StructKind::TupleStruct";
+            kind = quote!(::facet::StructKind::TupleStruct);
             where_clauses = clauses.as_ref();
             fields
                 .content
@@ -85,34 +84,30 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                         raw_field_name: &field_name,
                         normalized_field_name: &field_name,
                         field_type: &field.value.typ.tokens_to_string(),
-                        struct_name: &struct_name,
+                        struct_name: &struct_name_str,
                         bgp: &ps.container.bgp,
                         attrs: &field.value.attributes,
                         base_field_offset: None,
                         rename_rule: container_attributes.rename_rule,
                     })
-                    .into_token_stream()
-                    .tokens_to_string()
                 })
-                .collect::<Vec<String>>()
+                .collect::<Vec<_>>()
         }
         StructKind::UnitStruct { clauses, semi: _ } => {
-            kind = "::facet::StructKind::Unit";
+            kind = quote!(::facet::StructKind::Unit);
             where_clauses = clauses.as_ref();
             vec![]
         }
-    }
-    .join(", ");
+    };
 
     let where_clauses = build_where_clauses(where_clauses, parsed.generics.as_ref());
     let static_decl = if parsed.generics.is_none() {
-        generate_static_decl(&struct_name)
+        generate_static_decl(&struct_name_str)
     } else {
-        String::new()
+        TokenStream::new()
     };
     let maybe_container_doc = build_maybe_doc(&parsed.attributes);
 
-    let mut invariant_maybe = "".to_string();
     let invariant_attrs = parsed
         .attributes
         .iter()
@@ -125,68 +120,62 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         })
         .collect::<Vec<_>>();
 
-    if !invariant_attrs.is_empty() {
-        let tests = invariant_attrs
-            .iter()
-            .map(|invariant| {
-                let invariant_name = invariant.value.as_str();
-                format!(
-                    r#"
-                    if !value.{invariant_name}() {{
-                        return false;
-                    }}
-                    "#
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+    let invariant_maybe = if !invariant_attrs.is_empty() {
+        let tests = invariant_attrs.iter().map(|invariant| {
+            // FIXME: just don't take a string
+            let invariant_name: TokenStream = invariant
+                .value
+                .as_str()
+                .parse()
+                .expect("Invalid invariant name");
+            quote! {
+                if !value.#invariant_name() {
+                    return false;
+                }
+            }
+        });
 
-        let invariant_fn = format!(
-            r#"
-            unsafe fn invariants<'mem>(value: ::facet::PtrConst<'mem>) -> bool {{
-                let value = value.get::<{struct_name}{bgp}>();
-                {tests}
+        let bgp = ps.container.bgp.display_without_bounds();
+        quote! {
+            unsafe fn invariants<'mem>(value: ::facet::PtrConst<'mem>) -> bool {
+                let value = value.get::<#struct_name #bgp>();
+                #(#tests)*
                 true
-            }}
-            "#,
-            bgp = ps.container.bgp.display_without_bounds(),
-        );
-
-        invariant_maybe = format!(
-            r#"
-            {invariant_fn}
+            }
 
             vtable.invariants = Some(invariants);
-            "#
-        );
-    }
+        }
+    } else {
+        quote! {}
+    };
 
     // Add try_from_inner implementation for transparent types
     let try_from_inner_code = if let Some(inner_field) = &inner_field {
         let inner_field_type = &inner_field.ty;
-        format!(
-            r#"
+        let bgp_without_bounds = ps.container.bgp.display_without_bounds();
+
+        quote! {
             // Define the try_from function for the value vtable
             unsafe fn try_from<'src, 'dst>(
                 src_ptr: ::facet::PtrConst<'src>,
                 src_shape: &'static ::facet::Shape,
                 dst: ::facet::PtrUninit<'dst>
-            ) -> Result<::facet::PtrMut<'dst>, ::facet::TryFromError> {{
-                match <{inner_field_type} as ::facet::Facet>::SHAPE.vtable.try_from {{
-                    Some(inner_try) => unsafe {{ (inner_try)(src_ptr, src_shape, dst) }},
-                    None => {{
-                        if src_shape != <{inner_field_type} as ::facet::Facet>::SHAPE {{
-                            return Err(::facet::TryFromError::UnsupportedSourceShape {{
+            ) -> Result<::facet::PtrMut<'dst>, ::facet::TryFromError> {
+                match <#inner_field_type as ::facet::Facet>::SHAPE.vtable.try_from {
+                    Some(inner_try) => unsafe { (inner_try)(src_ptr, src_shape, dst) },
+                    None => {
+                        if src_shape != <#inner_field_type as ::facet::Facet>::SHAPE {
+                            return Err(::facet::TryFromError::UnsupportedSourceShape {
                                 src_shape,
-                                expected: const {{ &[ &<{inner_field_type} as ::facet::Facet>::SHAPE ] }},
-                            }});
-                        }}
+                                expected: const { &[ &<#inner_field_type as ::facet::Facet>::SHAPE ] },
+                            });
+                        }
 
-                        let inner: {inner_field_type} = unsafe {{ src_ptr.read() }};
-                        Ok(unsafe {{ dst.put(inner) }})
-                    }}
-                }}
-            }}
+                        let inner: #inner_field_type = unsafe { src_ptr.read() };
+                        Ok(unsafe { dst.put(inner) })
+                    }
+                }
+            }
 
             vtable.try_from = Some(try_from);
 
@@ -194,102 +183,88 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
             unsafe fn try_into_inner<'src, 'dst>(
                 src_ptr: ::facet::PtrConst<'src>,
                 dst: ::facet::PtrUninit<'dst>
-            ) -> Result<::facet::PtrMut<'dst>, ::facet::TryIntoInnerError> {{
-                let wrapper = unsafe {{ src_ptr.get::<{struct_name}{bgp_without_bounds}>() }};
-                Ok(unsafe {{ dst.put(wrapper.0.clone()) }})
-            }}
+            ) -> Result<::facet::PtrMut<'dst>, ::facet::TryIntoInnerError> {
+                let wrapper = unsafe { src_ptr.get::<#struct_name #bgp_without_bounds>() };
+                Ok(unsafe { dst.put(wrapper.0.clone()) })
+            }
 
             vtable.try_into_inner = Some(try_into_inner);
 
             // Define the try_borrow_inner function for the value vtable
             unsafe fn try_borrow_inner<'src>(
                 src_ptr: ::facet::PtrConst<'src>
-            ) -> Result<::facet::PtrConst<'src>, ::facet::TryBorrowInnerError> {{
+            ) -> Result<::facet::PtrConst<'src>, ::facet::TryBorrowInnerError> {
                 // Get the wrapper value
-                let wrapper = unsafe {{ src_ptr.get::<{struct_name}{bgp_without_bounds}>() }};
+                let wrapper = unsafe { src_ptr.get::<#struct_name #bgp_without_bounds>() };
                 // Return a pointer to the inner value
                 Ok(::facet::PtrConst::new(&wrapper.0 as *const _ as *const u8))
-            }}
+            }
 
             vtable.try_borrow_inner = Some(try_borrow_inner);
-            "#,
-            inner_field_type = inner_field_type,
-            struct_name = struct_name,
-            bgp_without_bounds = ps.container.bgp.display_without_bounds(),
-        )
+        }
     } else {
-        String::new()
+        quote! {}
     };
 
     // Generate the inner shape function for transparent types
     let inner_shape_fn = if let Some(inner_field) = &inner_field {
-        format!(
-            r#"
-        // Function to return inner type's shape
-        fn inner_shape() -> &'static ::facet::Shape {{
-            <{ty} as ::facet::Facet>::SHAPE
-        }}
-            "#,
-            ty = inner_field.ty
-        )
+        let ty = &inner_field.ty;
+        quote! {
+            // Function to return inner type's shape
+            fn inner_shape() -> &'static ::facet::Shape {
+                <#ty as ::facet::Facet>::SHAPE
+            }
+        }
     } else {
-        String::new()
+        quote! {}
     };
 
-    // Generate the impl
-    let output = format!(
-        r#"
-{static_decl}
+    let inner_setter = if inner_field.is_some() {
+        quote! { .inner(inner_shape) }
+    } else {
+        quote! {}
+    };
 
-#[automatically_derived]
-unsafe impl{bgp_def} ::facet::Facet<'__facet> for {struct_name}{bgp_without_bounds} {where_clauses} {{
-    const SHAPE: &'static ::facet::Shape = &const {{
-        let fields: &'static [::facet::Field] = &const {{[{fields}]}};
+    let bgp_def = ps.container.bgp.with_lifetime("__facet");
+    let bgp_def = bgp_def.display_with_bounds();
+    let bgp_without_bounds = ps.container.bgp.display_without_bounds();
 
-        let vtable = &const {{
-            let mut vtable = ::facet::value_vtable!(
-                Self,
-                |f, _opts| ::core::fmt::Write::write_str(f, "{struct_name}")
-            );
-            {invariant_maybe}
-            {try_from_inner_code}
-            vtable
-        }};
+    let result = quote! {
+        #static_decl
 
-{inner_shape_fn}
+        #[automatically_derived]
+        unsafe impl #bgp_def ::facet::Facet<'__facet> for #struct_name #bgp_without_bounds #where_clauses {
+            const SHAPE: &'static ::facet::Shape = &const {
+                let fields: &'static [::facet::Field] = &const {[#(#fields_vec),*]};
 
-        ::facet::Shape::builder()
-            .id(::facet::ConstTypeId::of::<Self>())
-            .layout(::core::alloc::Layout::new::<Self>())
-            {type_params}
-            .vtable(vtable)
-            .def(::facet::Def::Struct(::facet::StructDef::builder()
-                .kind({kind})
-                .fields(fields)
-                .build()))
-            {inner_setter}
-            {maybe_container_doc}
-            {container_attributes}
-            .build()
-    }};
-}}
-        "#,
-        bgp_def = ps
-            .container
-            .bgp
-            .with_lifetime("__facet")
-            .display_with_bounds(),
-        bgp_without_bounds = ps.container.bgp.display_without_bounds(),
-        inner_setter = if inner_field.is_some() {
-            ".inner(inner_shape)"
-        } else {
-            ""
-        },
-        container_attributes = container_attributes.code
-    );
+                let vtable = &const {
+                    let mut vtable = ::facet::value_vtable!(
+                        Self,
+                        |f, _opts| ::core::fmt::Write::write_str(f, #struct_name_str)
+                    );
+                    #invariant_maybe
+                    #try_from_inner_code
+                    vtable
+                };
 
-    // Uncomment to see generated code before lexin
-    // panic!("output =\n{output}");
+                #inner_shape_fn
 
-    output.into_token_stream()
+                ::facet::Shape::builder()
+                    .id(::facet::ConstTypeId::of::<Self>())
+                    .layout(::core::alloc::Layout::new::<Self>())
+                    #type_params
+                    .vtable(vtable)
+                    .def(::facet::Def::Struct(::facet::StructDef::builder()
+                        .kind(#kind)
+                        .fields(fields)
+                        .build()))
+                    #inner_setter
+                    #maybe_container_doc
+                    #container_attributes
+                    .build()
+            };
+        }
+    };
+
+    result
 }

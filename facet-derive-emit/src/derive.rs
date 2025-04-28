@@ -1,4 +1,4 @@
-use facet_derive_parse::*;
+use facet_derive_parse::{ToTokens, *};
 use quote::quote;
 use std::borrow::Cow;
 
@@ -28,17 +28,26 @@ pub fn facet_derive(input: TokenStream) -> TokenStream {
 }
 
 pub(crate) struct ContainerAttributes {
-    pub code: String,
+    pub tokens: TokenStream,
     pub rename_rule: Option<RenameRule>,
 }
 
+impl quote::ToTokens for ContainerAttributes {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        tokens.extend(self.tokens.clone());
+    }
+}
+
 /// Generate a static declaration that exports the crate
-pub(crate) fn generate_static_decl(type_name: &str) -> String {
-    format!(
-        "#[used]\nstatic {}_SHAPE: &'static ::facet::Shape = <{} as ::facet::Facet>::SHAPE;",
-        RenameRule::ScreamingSnakeCase.apply(type_name),
-        type_name
-    )
+pub(crate) fn generate_static_decl(type_name: &str) -> TokenStream {
+    let screaming_snake_name = RenameRule::ScreamingSnakeCase.apply(type_name);
+    let static_name_ident = quote::format_ident!("{}_SHAPE", screaming_snake_name);
+    let type_name_ident = quote::format_ident!("{}", type_name);
+
+    quote! {
+        #[used]
+        static #static_name_ident: &'static ::facet::Shape = <#type_name_ident as ::facet::Facet>::SHAPE;
+    }
 }
 
 pub(crate) fn build_maybe_doc(attrs: &[Attribute]) -> TokenStream {
@@ -323,28 +332,26 @@ pub(crate) fn build_type_params(generics: Option<&GenericParams>) -> String {
 }
 
 pub(crate) fn build_container_attributes(attributes: &[Attribute]) -> ContainerAttributes {
-    let mut items: Vec<Cow<str>> = vec![];
+    let mut items = Vec::new();
     let mut rename_all_rule: Option<RenameRule> = None;
 
     for attr in attributes {
         match &attr.body.content {
             AttributeInner::Facet(facet_attr) => match &facet_attr.inner.content {
                 FacetInner::DenyUnknownFields(_) => {
-                    items.push("::facet::ShapeAttribute::DenyUnknownFields".into());
+                    items.push(quote! { ::facet::ShapeAttribute::DenyUnknownFields });
                 }
                 FacetInner::DefaultEquals(_) | FacetInner::Default(_) => {
-                    items.push("::facet::ShapeAttribute::Default".into());
+                    items.push(quote! { ::facet::ShapeAttribute::Default });
                 }
                 FacetInner::Transparent(_) => {
-                    items.push("::facet::ShapeAttribute::Transparent".into());
+                    items.push(quote! { ::facet::ShapeAttribute::Transparent });
                 }
                 FacetInner::RenameAll(rename_all_inner) => {
                     let rule_str = rename_all_inner.value.value().trim_matches('"');
                     if let Some(rule) = RenameRule::from_str(rule_str) {
                         rename_all_rule = Some(rule);
-                        items.push(
-                            format!(r#"::facet::ShapeAttribute::RenameAll({:?})"#, rule_str).into(),
-                        );
+                        items.push(quote! { ::facet::ShapeAttribute::RenameAll(#rule_str) });
                     } else {
                         panic!("Invalid rename_all value: {:?}", rule_str);
                     }
@@ -366,30 +373,18 @@ pub(crate) fn build_container_attributes(attributes: &[Attribute]) -> ContainerA
                             let value = attr_str[equal_pos + 1..].trim().trim_matches('"');
                             if let Some(rule) = RenameRule::from_str(value) {
                                 rename_all_rule = Some(rule);
-                                items.push(
-                                    format!(r#"::facet::ShapeAttribute::RenameAll({:?})"#, value)
-                                        .into(),
-                                );
+                                items.push(quote! { ::facet::ShapeAttribute::RenameAll(#value) });
                             } else {
                                 panic!("Invalid rename_all value: {:?}", value);
                             }
                         } else {
-                            items.push(
-                                format!(
-                                    r#"::facet::ShapeAttribute::Arbitrary({:?})"#,
-                                    other.tokens_to_string()
-                                )
-                                .into(),
-                            );
+                            let attr_content = other.tokens_to_string();
+                            items
+                                .push(quote! { ::facet::ShapeAttribute::Arbitrary(#attr_content) });
                         }
                     } else {
-                        items.push(
-                            format!(
-                                r#"::facet::ShapeAttribute::Arbitrary({:?})"#,
-                                other.tokens_to_string()
-                            )
-                            .into(),
-                        );
+                        let attr_content = other.tokens_to_string();
+                        items.push(quote! { ::facet::ShapeAttribute::Arbitrary(#attr_content) });
                     }
                 }
             },
@@ -399,14 +394,14 @@ pub(crate) fn build_container_attributes(attributes: &[Attribute]) -> ContainerA
         }
     }
 
-    let attributes_string = if items.is_empty() {
-        "".to_string()
+    let tokens = if items.is_empty() {
+        quote! {}
     } else {
-        format!(".attributes(&[{}])", items.join(", "))
+        quote! { .attributes(&[#(#items),*]) }
     };
 
     ContainerAttributes {
-        code: attributes_string,
+        tokens,
         rename_rule: rename_all_rule,
     }
 }

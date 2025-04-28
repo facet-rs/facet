@@ -92,7 +92,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     let static_decl = if parsed.generics.is_none() {
         generate_static_decl(&enum_name)
     } else {
-        String::new()
+        quote! {}
     };
     let maybe_container_doc = build_maybe_doc(&parsed.attributes);
 
@@ -134,7 +134,7 @@ unsafe impl{bgp_def} ::facet::Facet<'__facet> for {enum_name}{bgp_without_bounds
         "#,
         bgp_def = bgp.with_lifetime("__facet").display_with_bounds(),
         bgp_without_bounds = bgp.display_without_bounds(),
-        container_attributes = container_attributes.code,
+        container_attributes = container_attributes.tokens.tokens_to_string(),
     );
 
     // Uncomment to see generated code before lexin
@@ -152,7 +152,7 @@ fn build_variant_attributes(
 ) -> ContainerAttributes {
     let mut has_explicit_rename = false;
     let mut display_name = variant_name.to_string();
-    let mut attribute_list: Vec<String> = vec![];
+    let mut attribute_list = Vec::new();
     let mut rename_all_rule: Option<RenameRule> = None;
     for attr in attributes {
         if let AttributeInner::Facet(facet_attr) = &attr.body.content {
@@ -179,10 +179,9 @@ fn build_variant_attributes(
                     let rule_str = rename_all_inner.value.value().trim_matches('"');
                     if let Some(rule) = RenameRule::from_str(rule_str) {
                         rename_all_rule = Some(rule);
-                        attribute_list.push(format!(
-                            r#"::facet::VariantAttribute::RenameAll({:?})"#,
-                            rule_str
-                        ));
+                        attribute_list.push(quote! {
+                            ::facet::VariantAttribute::RenameAll(#rule_str)
+                        });
                     } else {
                         panic!("Unknown rename_all rule for enum variant: {:?}", rule_str);
                     }
@@ -200,31 +199,27 @@ fn build_variant_attributes(
                                 has_explicit_rename = true;
                                 let value = attr[equal_pos + 1..].trim().trim_matches('"');
                                 // Keep the Rename attribute for reflection
-                                attribute_list.push(format!(
-                                    r#"::facet::VariantAttribute::Rename({:?})"#,
-                                    value
-                                ));
+                                attribute_list.push(quote! {
+                                    ::facet::VariantAttribute::Rename(#value)
+                                });
                                 display_name = value.to_string();
                             } else if key == "rename_all" {
                                 let rule_str = attr[equal_pos + 1..].trim().trim_matches('"');
                                 if let Some(rule) = RenameRule::from_str(rule_str) {
                                     rename_all_rule = Some(rule);
-                                    attribute_list.push(format!(
-                                        r#"::facet::VariantAttribute::RenameAll({:?})"#,
-                                        rule_str
-                                    ));
+                                    attribute_list.push(quote! {
+                                        ::facet::VariantAttribute::RenameAll(#rule_str)
+                                    });
                                 }
                             } else {
-                                attribute_list.push(format!(
-                                    r#"::facet::VariantAttribute::Arbitrary({:?})"#,
-                                    attr
-                                ));
+                                attribute_list.push(quote! {
+                                    ::facet::VariantAttribute::Arbitrary(#attr)
+                                });
                             }
                         } else {
-                            attribute_list.push(format!(
-                                r#"::facet::VariantAttribute::Arbitrary({:?})"#,
-                                attr
-                            ));
+                            attribute_list.push(quote! {
+                                ::facet::VariantAttribute::Arbitrary(#attr)
+                            });
                         }
                     }
                 }
@@ -236,18 +231,19 @@ fn build_variant_attributes(
         display_name = rename_rule.unwrap().apply(variant_name);
     }
 
-    let attributes_string = if attribute_list.is_empty() {
-        format!(".name({:?})", display_name)
+    let tokens = if attribute_list.is_empty() {
+        quote! {
+            .name(#display_name)
+        }
     } else {
-        format!(
-            ".name({:?}).attributes(&[{}])",
-            display_name,
-            attribute_list.join(", ")
-        )
+        quote! {
+            .name(#display_name)
+            .attributes(&[#(#attribute_list),*])
+        }
     };
 
     ContainerAttributes {
-        code: attributes_string,
+        tokens,
         rename_rule: rename_all_rule,
     }
 }
@@ -442,7 +438,7 @@ fn process_c_style_enum(params: &EnumParams) -> ProcessedEnumBody {
                     .fields(::facet::StructDef::builder().unit().build())
                     {maybe_doc}
                     .build()",
-                    container_attributes = container_attributes.code
+                    container_attributes = container_attributes.tokens.tokens_to_string()
                 ));
             }
             EnumVariantData::Tuple(tuple) => {
@@ -522,7 +518,7 @@ fn process_c_style_enum(params: &EnumParams) -> ProcessedEnumBody {
                             {maybe_doc}
                             .build()
                     }}",
-                    container_attributes = container_attributes.code
+                    container_attributes = container_attributes.tokens.tokens_to_string()
                 ));
             }
             EnumVariantData::Struct(struct_var) => {
@@ -607,7 +603,7 @@ fn process_c_style_enum(params: &EnumParams) -> ProcessedEnumBody {
                             {maybe_doc}
                             .build()
                     }}",
-                    container_attributes = container_attributes.code
+                    container_attributes = container_attributes.tokens.tokens_to_string()
                 ));
             }
         }
@@ -664,7 +660,7 @@ fn process_primitive_enum(params: &EnumParams) -> ProcessedEnumBody {
                     .fields(::facet::StructDef::builder().unit().build())
                     {maybe_doc}
                     .build()",
-                    container_attributes = container_attributes.code
+                    container_attributes = container_attributes.tokens.tokens_to_string()
                 ));
             }
             EnumVariantData::Tuple(tuple) => {
@@ -742,7 +738,7 @@ fn process_primitive_enum(params: &EnumParams) -> ProcessedEnumBody {
                             {maybe_doc}
                             .build()
                     }}",
-                    container_attributes = container_attributes.code
+                    container_attributes = container_attributes.tokens.tokens_to_string()
                 ));
             }
             EnumVariantData::Struct(struct_var) => {
@@ -826,7 +822,7 @@ fn process_primitive_enum(params: &EnumParams) -> ProcessedEnumBody {
                             {maybe_doc}
                             .build()
                     }}",
-                    container_attributes = container_attributes.code
+                    container_attributes = container_attributes.tokens.tokens_to_string()
                 ));
             }
         }
