@@ -1,5 +1,4 @@
 use facet_derive_parse::*;
-use std::borrow::Cow;
 
 mod renamerule;
 pub use renamerule::*;

@@ -825,13 +825,13 @@ fn struct_with_mixed_rename_attributes() {
 }
 
 #[test]
-fn rename_all_lowercase() {
-    // Test lowercase conversion
+fn rename_all_snake_case() {
+    // Test snake_case conversion
     insta::assert_snapshot!(expand(
         r#"
         #[derive(Facet)]
-        #[facet(rename_all = "lowercase")]
-        struct LowerCaseExample {
+        #[facet(rename_all = "snake_case")]
+        struct SnakeCaseExample {
             field_one: String,
             field_two: String,
         }
@@ -840,12 +840,12 @@ fn rename_all_lowercase() {
 }
 
 #[test]
-fn rename_all_uppercase() {
-    // Test UPPERCASE conversion
+fn rename_all_screaming_snake_case() {
+    // Test SCREAMING_SNAKE_CASE conversion
     insta::assert_snapshot!(expand(
         r#"
         #[derive(Facet)]
-        #[facet(rename_all = "UPPERCASE")]
+        #[facet(rename_all = "SCREAMING_SNAKE_CASE")]
         struct UpperCaseExample {
             field_one: String,
             field_two: String,

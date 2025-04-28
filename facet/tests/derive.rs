@@ -481,10 +481,10 @@ fn opaque_arc() {
 }
 
 #[test]
-fn enum_rename_all_lowercase() {
+fn enum_rename_all_snake_case() {
     #[derive(Debug, Facet)]
     #[repr(u8)]
-    #[facet(rename_all = "lowercase")]
+    #[facet(rename_all = "snake_case")]
     #[allow(dead_code)]
     enum MaybeFontStyle {
         Regular,

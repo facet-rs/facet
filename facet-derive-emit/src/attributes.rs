@@ -1,5 +1,3 @@
-use facet_derive_parse::FacetAttr;
-
 use crate::RenameRule;
 
 /// All the supported facet attributes, e.g. `#[facet(sensitive)]` `#[facet(rename_all)]`, etc.
@@ -73,8 +71,8 @@ pub enum PAttr {
 ///   raw = "r#type", no rename rule, effective = "type"
 ///
 pub struct PName {
-    raw: String,
-    effective: String,
+    pub raw: String,
+    pub effective: String,
 }
 
 impl PName {
@@ -106,6 +104,134 @@ impl PName {
 
         Self { raw, effective }
     }
+}
+
+/// Parsed enum (given attributes etc.)
+pub struct PEnum {
+    pub name: String,
+    pub repr: PRepr,
+}
+
+pub enum PRepr {
+    Rust,
+    Transparent,
+    C,
+    Primitive(PrimitiveRepr),
+}
+
+pub enum PrimitiveRepr {
+    U8,
+    U16,
+    U32,
+    U64,
+    U128,
+    I8,
+    I16,
+    I32,
+    I64,
+    I128,
+    Isize,
+    Usize,
+}
+
+impl PrimitiveRepr {
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            PrimitiveRepr::U8 => "u8",
+            PrimitiveRepr::U16 => "u16",
+            PrimitiveRepr::U32 => "u32",
+            PrimitiveRepr::U64 => "u64",
+            PrimitiveRepr::U128 => "u128",
+            PrimitiveRepr::I8 => "i8",
+            PrimitiveRepr::I16 => "i16",
+            PrimitiveRepr::I32 => "i32",
+            PrimitiveRepr::I64 => "i64",
+            PrimitiveRepr::I128 => "i128",
+            PrimitiveRepr::Isize => "isize",
+            PrimitiveRepr::Usize => "usize",
+        }
+    }
+}
+
+pub fn parse_attributes(attrs: &[facet_derive_parse::Attribute]) -> Vec<PFacetAttr> {
+    let mut result = Vec::new();
+
+    for attr in attrs {
+        if let facet_derive_parse::AttributeInner::Facet(facet_attr) = &attr.body.content {
+            match &facet_attr.inner.content {
+                facet_derive_parse::FacetInner::Sensitive(_) => {
+                    result.push(PFacetAttr::Sensitive);
+                }
+                facet_derive_parse::FacetInner::Opaque(_) => {
+                    result.push(PFacetAttr::Opaque);
+                }
+                facet_derive_parse::FacetInner::Transparent(_) => {
+                    result.push(PFacetAttr::Transparent);
+                }
+                facet_derive_parse::FacetInner::Invariants(invariants_inner) => {
+                    // Get the function name as string from the literal
+                    let fn_name = invariants_inner.value.value().trim_matches('"').to_string();
+                    result.push(PFacetAttr::Invariants { fn_name });
+                }
+                facet_derive_parse::FacetInner::DenyUnknownFields(_) => {
+                    result.push(PFacetAttr::DenyUnknownFields);
+                }
+                facet_derive_parse::FacetInner::DefaultEquals(default_eq_inner) => {
+                    let fn_name = default_eq_inner.value.value().trim_matches('"').to_string();
+                    result.push(PFacetAttr::DefaultEquals { fn_name });
+                }
+                facet_derive_parse::FacetInner::Default(_) => {
+                    result.push(PFacetAttr::Default);
+                }
+                facet_derive_parse::FacetInner::RenameAll(rename_all_inner) => {
+                    let rule_str = rename_all_inner.value.value().trim_matches('"');
+                    if let Some(rule) = RenameRule::from_str(rule_str) {
+                        result.push(PFacetAttr::RenameAll { rule });
+                    } else {
+                        panic!(
+                            "Invalid value for rename_all: unrecognized rename rule (got: {rule_str:?})"
+                        );
+                    }
+                }
+                facet_derive_parse::FacetInner::Other(tts) => {
+                    // FIXME: that's bad — we should parse that in `facet-derive-parse`
+
+                    // flatten to string and parse for arbitrary attributes
+                    let attr_str = tts.iter().map(|tt| tt.to_string()).collect::<String>();
+                    let attrs = attr_str.split(',').map(|s| s.trim()).collect::<Vec<_>>();
+                    for attr in attrs {
+                        if let Some(equal_pos) = attr.find('=') {
+                            let key = attr[..equal_pos].trim();
+                            let value = attr[equal_pos + 1..].trim().trim_matches('"');
+                            if key == "rename" {
+                                result.push(PFacetAttr::Rename {
+                                    name: value.to_string(),
+                                });
+                            } else if key == "rename_all" {
+                                if let Some(rule) = RenameRule::from_str(value) {
+                                    result.push(PFacetAttr::RenameAll { rule });
+                                } else {
+                                    panic!(
+                                        "Invalid value for rename_all: unrecognized rename rule (got: {value:?})"
+                                    );
+                                }
+                            } else {
+                                result.push(PFacetAttr::Arbitrary {
+                                    content: attr.to_string(),
+                                });
+                            }
+                        } else if !attr.is_empty() {
+                            result.push(PFacetAttr::Arbitrary {
+                                content: attr.to_string(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    result
 }
 
 #[cfg(test)]
@@ -163,52 +289,5 @@ mod tests {
         let p = PName::new(None, None, "".to_string());
         assert_eq!(p.raw, "");
         assert_eq!(p.effective, "");
-    }
-}
-
-/// Parsed enum (given attributes etc.)
-pub struct PEnum {
-    name: String,
-    repr: PRepr,
-}
-
-enum PRepr {
-    Rust,
-    Transparent,
-    C,
-    Primitive(PrimitiveRepr),
-}
-
-enum PrimitiveRepr {
-    U8,
-    U16,
-    U32,
-    U64,
-    U128,
-    I8,
-    I16,
-    I32,
-    I64,
-    I128,
-    Isize,
-    Usize,
-}
-
-impl PrimitiveRepr {
-    pub fn type_name(&self) -> &'static str {
-        match self {
-            PrimitiveRepr::U8 => "u8",
-            PrimitiveRepr::U16 => "u16",
-            PrimitiveRepr::U32 => "u32",
-            PrimitiveRepr::U64 => "u64",
-            PrimitiveRepr::U128 => "u128",
-            PrimitiveRepr::I8 => "i8",
-            PrimitiveRepr::I16 => "i16",
-            PrimitiveRepr::I32 => "i32",
-            PrimitiveRepr::I64 => "i64",
-            PrimitiveRepr::I128 => "i128",
-            PrimitiveRepr::Isize => "isize",
-            PrimitiveRepr::Usize => "usize",
-        }
     }
 }

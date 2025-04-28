@@ -6,6 +6,8 @@ pub enum RenameRule {
     PascalCase,
     /// Rename to camelCase: `foo_bar` -> `fooBar`
     CamelCase,
+    /// Rename to snake_case: `foo_bar` -> `foo_bar`
+    SnakeCase,
     /// Rename to SCREAMING_SNAKE_CASE: `foo_bar` -> `FOO_BAR`
     ScreamingSnakeCase,
     /// Rename to kebab-case: `foo_bar` -> `foo-bar`
@@ -20,6 +22,7 @@ impl RenameRule {
         match rule {
             "PascalCase" => Some(RenameRule::PascalCase),
             "camelCase" => Some(RenameRule::CamelCase),
+            "snake_case" => Some(RenameRule::SnakeCase),
             "SCREAMING_SNAKE_CASE" => Some(RenameRule::ScreamingSnakeCase),
             "kebab-case" => Some(RenameRule::KebabCase),
             "SCREAMING-KEBAB-CASE" => Some(RenameRule::ScreamingKebabCase),
@@ -32,6 +35,7 @@ impl RenameRule {
         match self {
             RenameRule::PascalCase => to_pascal_case(input),
             RenameRule::CamelCase => to_camel_case(input),
+            RenameRule::SnakeCase => to_snake_case(input),
             RenameRule::ScreamingSnakeCase => to_screaming_snake_case(input),
             RenameRule::KebabCase => to_kebab_case(input),
             RenameRule::ScreamingKebabCase => to_screaming_kebab_case(input),
@@ -127,36 +131,39 @@ fn split_into_words(input: &str) -> Vec<String> {
 
     let mut words = Vec::new();
     let mut current_word = String::new();
-    let mut prev_is_lowercase = false;
-    let mut prev_is_uppercase = false;
+    let mut chars = input.chars().peekable();
 
-    for c in input.chars() {
+    while let Some(c) = chars.next() {
+        // If separator, start new word
         if c == '_' || c == '-' || c.is_whitespace() {
             if !current_word.is_empty() {
                 words.push(std::mem::take(&mut current_word));
             }
-            prev_is_lowercase = false;
-            prev_is_uppercase = false;
-        } else if c.is_uppercase() {
-            let next_char_is_lowercase = input
-                .chars()
-                .skip_while(|&x| x != c)
-                .nth(1)
-                .is_some_and(|next| next.is_lowercase());
+            continue;
+        }
 
-            if !current_word.is_empty()
-                && (prev_is_lowercase || (prev_is_uppercase && next_char_is_lowercase))
-            {
-                words.push(std::mem::take(&mut current_word));
+        // Peek at next character for deciding about word boundaries
+        let next = chars.peek().copied();
+
+        if c.is_uppercase() {
+            if !current_word.is_empty() {
+                let prev = current_word.chars().last().unwrap();
+                // Both cases should take the same action, so fold them together.
+                // Case 1: previous is lowercase or digit, now uppercase (e.g. fooBar, foo1Bar)
+                // Case 2: end of consecutive uppercase group, e.g. "BARBaz"
+                // (prev is uppercase and next char is lowercase)
+                if prev.is_lowercase()
+                    || prev.is_ascii_digit()
+                    || (prev.is_uppercase() && next.map(|n| n.is_lowercase()).unwrap_or(false))
+                {
+                    words.push(std::mem::take(&mut current_word));
+                }
             }
-
             current_word.push(c);
-            prev_is_uppercase = true;
-            prev_is_lowercase = false;
         } else {
+            // Lowercase or digit, just append
+            // If previous is uppercase and next is lowercase, need to split, but handled above
             current_word.push(c);
-            prev_is_lowercase = true;
-            prev_is_uppercase = false;
         }
     }
 
@@ -242,5 +249,32 @@ mod tests {
             split_into_words("fooBar_bazQux"),
             vec!["foo", "Bar", "baz", "Qux"]
         );
+    }
+
+    #[test]
+    fn test_rename_rule_snake_case() {
+        use super::RenameRule;
+        // Snake case input should remain unchanged
+        assert_eq!(RenameRule::SnakeCase.apply("foo_bar_baz"), "foo_bar_baz");
+        // CamelCase input becomes snake_case
+        assert_eq!(RenameRule::SnakeCase.apply("fooBarBaz"), "foo_bar_baz");
+        // PascalCase input becomes snake_case
+        assert_eq!(RenameRule::SnakeCase.apply("FooBarBaz"), "foo_bar_baz");
+        // SCREAMING_SNAKE_CASE input becomes snake_case
+        assert_eq!(RenameRule::SnakeCase.apply("FOO_BAR_BAZ"), "foo_bar_baz");
+        // kebab-case input becomes snake_case
+        assert_eq!(RenameRule::SnakeCase.apply("foo-bar-baz"), "foo_bar_baz");
+        assert_eq!(
+            RenameRule::SnakeCase.apply("Foo_Bar-Baz quux"),
+            "foo_bar_baz_quux"
+        );
+        // Mixed case and separator input
+        assert_eq!(
+            RenameRule::SnakeCase.apply("theHTTPServer"),
+            "the_http_server"
+        );
+        assert_eq!(RenameRule::SnakeCase.apply("FooBARBaz"), "foo_bar_baz");
+        // Empty input keeps empty
+        assert_eq!(RenameRule::SnakeCase.apply(""), "");
     }
 }

@@ -29,7 +29,7 @@ fn json_read_unit_enum_variant_lowercase() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Facet, Debug, PartialEq)]
-    #[facet(rename_all = "lowercase")]
+    #[facet(rename_all = "snake_case")]
     #[repr(u8)]
     enum FontStyle {
         Italic,

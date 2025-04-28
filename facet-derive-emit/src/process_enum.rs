@@ -1,202 +1,6 @@
-use super::normalize_ident_str;
 use super::*;
 
-/// Build a variant name and attributes, applying rename attribute or rename_all rule
-fn build_variant_attributes(
-    variant_name: &str,
-    attributes: &[Attribute],
-    rename_rule: RenameRule,
-) -> ContainerAttributes {
-    let mut has_explicit_rename = false;
-    let mut display_name = variant_name.to_string();
-    let mut attribute_list: Vec<String> = vec![];
-    let mut rename_all_rule: Option<RenameRule> = None;
-    for attr in attributes {
-        if let AttributeInner::Facet(facet_attr) = &attr.body.content {
-            match &facet_attr.inner.content {
-                FacetInner::Sensitive(_) => {
-                    // TODO
-                }
-                FacetInner::Invariants(_) => {
-                    // dealt with elsewhere
-                }
-                FacetInner::Opaque(_) => {
-                    // TODO
-                }
-                FacetInner::DenyUnknownFields(_) => {
-                    // not applicable to variants
-                }
-                FacetInner::DefaultEquals(_) | FacetInner::Default(_) => {
-                    // not applicable to variants
-                }
-                FacetInner::Transparent(_) => {
-                    // not applicable to variants
-                }
-                FacetInner::RenameAll(rename_all_inner) => {
-                    let rule_str = rename_all_inner.value.value().trim_matches('"');
-                    if let Some(rule) = RenameRule::from_str(rule_str) {
-                        rename_all_rule = Some(rule);
-                        attribute_list.push(format!(
-                            r#"::facet::VariantAttribute::RenameAll({:?})"#,
-                            rule_str
-                        ));
-                    }
-                }
-                FacetInner::Other(tt) => {
-                    let attr_str = tt.tokens_to_string();
-
-                    // Split the attributes by commas to handle multiple attributes
-                    let attrs = attr_str.split(',').map(|s| s.trim()).collect::<Vec<_>>();
-
-                    for attr in attrs {
-                        if let Some(equal_pos) = attr.find('=') {
-                            let key = attr[..equal_pos].trim();
-                            if key == "rename" {
-                                has_explicit_rename = true;
-                                let value = attr[equal_pos + 1..].trim().trim_matches('"');
-                                // Keep the Rename attribute for reflection
-                                attribute_list.push(format!(
-                                    r#"::facet::VariantAttribute::Rename({:?})"#,
-                                    value
-                                ));
-                                display_name = value.to_string();
-                            } else if key == "rename_all" {
-                                let rule_str = attr[equal_pos + 1..].trim().trim_matches('"');
-                                if let Some(rule) = RenameRule::from_str(rule_str) {
-                                    rename_all_rule = Some(rule);
-                                    attribute_list.push(format!(
-                                        r#"::facet::VariantAttribute::RenameAll({:?})"#,
-                                        rule_str
-                                    ));
-                                }
-                            } else {
-                                attribute_list.push(format!(
-                                    r#"::facet::VariantAttribute::Arbitrary({:?})"#,
-                                    attr
-                                ));
-                            }
-                        } else {
-                            attribute_list.push(format!(
-                                r#"::facet::VariantAttribute::Arbitrary({:?})"#,
-                                attr
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if !has_explicit_rename && rename_rule != RenameRule::Passthrough {
-        display_name = rename_rule.apply(variant_name);
-    }
-
-    let attributes_string = if attribute_list.is_empty() {
-        format!(".name({:?})", display_name)
-    } else {
-        format!(
-            ".name({:?}).attributes(&[{}])",
-            display_name,
-            attribute_list.join(", ")
-        )
-    };
-
-    ContainerAttributes {
-        code: attributes_string,
-        rename_rule: rename_all_rule.unwrap_or(RenameRule::Passthrough),
-    }
-}
-
-// mirrors facet_core::types::EnumRepr
-#[derive(Clone, Copy)]
-enum Discriminant {
-    U8,
-    U16,
-    U32,
-    U64,
-    USize,
-    I8,
-    I16,
-    I32,
-    I64,
-    ISize,
-}
-
-impl Discriminant {
-    fn as_enum_repr(&self) -> &'static str {
-        match self {
-            Discriminant::U8 => "U8",
-            Discriminant::U16 => "U16",
-            Discriminant::U32 => "U32",
-            Discriminant::U64 => "U64",
-            Discriminant::USize => "USize",
-            Discriminant::I8 => "I8",
-            Discriminant::I16 => "I16",
-            Discriminant::I32 => "I32",
-            Discriminant::I64 => "I64",
-            Discriminant::ISize => "ISize",
-        }
-    }
-
-    fn as_rust_type(&self) -> &'static str {
-        match self {
-            Discriminant::U8 => "u8",
-            Discriminant::U16 => "u16",
-            Discriminant::U32 => "u32",
-            Discriminant::U64 => "u64",
-            Discriminant::USize => "usize",
-            Discriminant::I8 => "i8",
-            Discriminant::I16 => "i16",
-            Discriminant::I32 => "i32",
-            Discriminant::I64 => "i64",
-            Discriminant::ISize => "isize",
-        }
-    }
-}
-
-struct ProcessedEnumBody {
-    shadow_struct_defs: Vec<String>,
-    variant_expressions: Vec<String>,
-    repr_type: String,
-}
-
-type EnumVariant = Delimited<EnumVariantLike, Comma>;
-
-struct EnumParams<'a> {
-    // Core identification
-    enum_name: &'a str,
-    variants: &'a [EnumVariant],
-
-    // Type information
-    discriminant_type: Option<Discriminant>,
-    bgp: &'a BoundedGenericParams,
-    where_clauses: &'a str,
-
-    // Attributes and customization
-    rename_rule: RenameRule,
-}
-
-impl EnumParams<'_> {
-    fn with_facet_lifetime(&self) -> BoundedGenericParams {
-        self.bgp.with(BoundedGenericParam {
-            bounds: None,
-            param: GenericParamName::Lifetime("__facet".into()),
-        })
-    }
-}
-
 /// Processes an enum to implement Facet
-///
-/// Example input:
-/// ```rust
-/// #[repr(u8)]
-/// enum Color {
-///     Red,
-///     Green,
-///     Blue(u8, u8),
-///     Custom { r: u8, g: u8, b: u8 }
-/// }
-/// ```
 pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     let enum_name = parsed.name.to_string();
     let bgp = BoundedGenericParams::parse(parsed.generics.as_ref());
@@ -337,6 +141,192 @@ unsafe impl{bgp_def} ::facet::Facet<'__facet> for {enum_name}{bgp_without_bounds
 
     // Return the generated code
     output.into_token_stream()
+}
+
+/// Build a variant name and attributes, applying rename attribute or rename_all rule
+fn build_variant_attributes(
+    variant_name: &str,
+    attributes: &[Attribute],
+    rename_rule: Option<RenameRule>,
+) -> ContainerAttributes {
+    let mut has_explicit_rename = false;
+    let mut display_name = variant_name.to_string();
+    let mut attribute_list: Vec<String> = vec![];
+    let mut rename_all_rule: Option<RenameRule> = None;
+    for attr in attributes {
+        if let AttributeInner::Facet(facet_attr) = &attr.body.content {
+            match &facet_attr.inner.content {
+                FacetInner::Sensitive(_) => {
+                    // TODO
+                }
+                FacetInner::Invariants(_) => {
+                    // dealt with elsewhere
+                }
+                FacetInner::Opaque(_) => {
+                    // TODO
+                }
+                FacetInner::DenyUnknownFields(_) => {
+                    // not applicable to variants
+                }
+                FacetInner::DefaultEquals(_) | FacetInner::Default(_) => {
+                    // not applicable to variants
+                }
+                FacetInner::Transparent(_) => {
+                    // not applicable to variants
+                }
+                FacetInner::RenameAll(rename_all_inner) => {
+                    let rule_str = rename_all_inner.value.value().trim_matches('"');
+                    if let Some(rule) = RenameRule::from_str(rule_str) {
+                        rename_all_rule = Some(rule);
+                        attribute_list.push(format!(
+                            r#"::facet::VariantAttribute::RenameAll({:?})"#,
+                            rule_str
+                        ));
+                    } else {
+                        panic!("Unknown rename_all rule for enum variant: {:?}", rule_str);
+                    }
+                }
+                FacetInner::Other(tt) => {
+                    let attr_str = tt.tokens_to_string();
+
+                    // Split the attributes by commas to handle multiple attributes
+                    let attrs = attr_str.split(',').map(|s| s.trim()).collect::<Vec<_>>();
+
+                    for attr in attrs {
+                        if let Some(equal_pos) = attr.find('=') {
+                            let key = attr[..equal_pos].trim();
+                            if key == "rename" {
+                                has_explicit_rename = true;
+                                let value = attr[equal_pos + 1..].trim().trim_matches('"');
+                                // Keep the Rename attribute for reflection
+                                attribute_list.push(format!(
+                                    r#"::facet::VariantAttribute::Rename({:?})"#,
+                                    value
+                                ));
+                                display_name = value.to_string();
+                            } else if key == "rename_all" {
+                                let rule_str = attr[equal_pos + 1..].trim().trim_matches('"');
+                                if let Some(rule) = RenameRule::from_str(rule_str) {
+                                    rename_all_rule = Some(rule);
+                                    attribute_list.push(format!(
+                                        r#"::facet::VariantAttribute::RenameAll({:?})"#,
+                                        rule_str
+                                    ));
+                                }
+                            } else {
+                                attribute_list.push(format!(
+                                    r#"::facet::VariantAttribute::Arbitrary({:?})"#,
+                                    attr
+                                ));
+                            }
+                        } else {
+                            attribute_list.push(format!(
+                                r#"::facet::VariantAttribute::Arbitrary({:?})"#,
+                                attr
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if !has_explicit_rename && rename_rule.is_some() {
+        display_name = rename_rule.unwrap().apply(variant_name);
+    }
+
+    let attributes_string = if attribute_list.is_empty() {
+        format!(".name({:?})", display_name)
+    } else {
+        format!(
+            ".name({:?}).attributes(&[{}])",
+            display_name,
+            attribute_list.join(", ")
+        )
+    };
+
+    ContainerAttributes {
+        code: attributes_string,
+        rename_rule: rename_all_rule,
+    }
+}
+
+// mirrors facet_core::types::EnumRepr
+#[derive(Clone, Copy)]
+enum Discriminant {
+    U8,
+    U16,
+    U32,
+    U64,
+    USize,
+    I8,
+    I16,
+    I32,
+    I64,
+    ISize,
+}
+
+impl Discriminant {
+    fn as_enum_repr(&self) -> &'static str {
+        match self {
+            Discriminant::U8 => "U8",
+            Discriminant::U16 => "U16",
+            Discriminant::U32 => "U32",
+            Discriminant::U64 => "U64",
+            Discriminant::USize => "USize",
+            Discriminant::I8 => "I8",
+            Discriminant::I16 => "I16",
+            Discriminant::I32 => "I32",
+            Discriminant::I64 => "I64",
+            Discriminant::ISize => "ISize",
+        }
+    }
+
+    fn as_rust_type(&self) -> &'static str {
+        match self {
+            Discriminant::U8 => "u8",
+            Discriminant::U16 => "u16",
+            Discriminant::U32 => "u32",
+            Discriminant::U64 => "u64",
+            Discriminant::USize => "usize",
+            Discriminant::I8 => "i8",
+            Discriminant::I16 => "i16",
+            Discriminant::I32 => "i32",
+            Discriminant::I64 => "i64",
+            Discriminant::ISize => "isize",
+        }
+    }
+}
+
+struct ProcessedEnumBody {
+    shadow_struct_defs: Vec<String>,
+    variant_expressions: Vec<String>,
+    repr_type: String,
+}
+
+type EnumVariant = Delimited<EnumVariantLike, Comma>;
+
+struct EnumParams<'a> {
+    // Core identification
+    enum_name: &'a str,
+    variants: &'a [EnumVariant],
+
+    // Type information
+    discriminant_type: Option<Discriminant>,
+    bgp: &'a BoundedGenericParams,
+    where_clauses: &'a str,
+
+    // Attributes and customization
+    rename_rule: Option<RenameRule>,
+}
+
+impl EnumParams<'_> {
+    fn with_facet_lifetime(&self) -> BoundedGenericParams {
+        self.bgp.with(BoundedGenericParam {
+            bounds: None,
+            param: GenericParamName::Lifetime("__facet".into()),
+        })
+    }
 }
 
 /// C-style enums (i.e. #[repr(C)], #[repr(C, u*)] and #[repr(C, i*)]) are laid out

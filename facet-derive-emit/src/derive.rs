@@ -1,5 +1,11 @@
+use std::borrow::Cow;
+
+use facet_derive_parse::*;
+
+use crate::{BoundedGenericParams, RenameRule, process_enum, process_struct};
+
 /// Removes the `r#` prefix from a raw identifier string, if present.
-fn normalize_ident_str(ident_str: &str) -> &str {
+pub(crate) fn normalize_ident_str(ident_str: &str) -> &str {
     ident_str.strip_prefix("r#").unwrap_or(ident_str)
 }
 
@@ -23,14 +29,14 @@ pub fn facet_derive(input: TokenStream) -> TokenStream {
 
 pub(crate) struct ContainerAttributes {
     pub code: String,
-    pub rename_rule: RenameRule,
+    pub rename_rule: Option<RenameRule>,
 }
 
 /// Generate a static declaration that exports the crate
 pub(crate) fn generate_static_decl(type_name: &str) -> String {
     format!(
         "#[used]\nstatic {}_SHAPE: &'static ::facet::Shape = <{} as ::facet::Facet>::SHAPE;",
-        to_upper_snake_case(type_name),
+        RenameRule::ScreamingSnakeCase.apply(type_name),
         type_name
     )
 }
@@ -51,31 +57,31 @@ pub(crate) fn build_maybe_doc(attrs: &[Attribute]) -> String {
     }
 }
 
-struct FieldInfo<'a> {
+pub(crate) struct FieldInfo<'a> {
     /// something like `r#type`
-    raw_field_name: &'a str,
+    pub(crate) raw_field_name: &'a str,
 
     /// something like `type`
-    normalized_field_name: &'a str,
+    pub(crate) normalized_field_name: &'a str,
 
     /// something like `String`
-    field_type: &'a str,
+    pub(crate) field_type: &'a str,
 
     /// something like `Person`
-    struct_name: &'a str,
+    pub(crate) struct_name: &'a str,
 
     /// the bounded generic params for the container/struct
-    bgp: &'a BoundedGenericParams,
+    pub(crate) bgp: &'a BoundedGenericParams,
 
     /// the attributes for that field
-    attrs: &'a [Attribute],
+    pub(crate) attrs: &'a [Attribute],
 
     /// the base field offset — for structs it's always zero, for
     /// enums it depends on the variant/discriminant
-    base_field_offset: Option<&'a str>,
+    pub(crate) base_field_offset: Option<&'a str>,
 
     /// the rename rule to use for the container
-    rename_rule: RenameRule,
+    pub(crate) rename_rule: Option<RenameRule>,
 }
 
 /// Generates field definitions for a struct
@@ -182,10 +188,10 @@ pub(crate) fn gen_struct_field<'a>(fi: FieldInfo<'a>) -> String {
     }
 
     // Apply rename_all rule if there's no explicit rename attribute
-    if !has_explicit_rename && fi.rename_rule != RenameRule::Passthrough {
+    if !has_explicit_rename && fi.rename_rule.is_some() {
         // Only apply to named fields (not tuple indices)
         if !fi.normalized_field_name.chars().all(|c| c.is_ascii_digit()) {
-            let renamed = fi.rename_rule.apply(fi.normalized_field_name);
+            let renamed = fi.rename_rule.unwrap().apply(fi.normalized_field_name);
             attribute_list.push(format!(r#"::facet::FieldAttribute::Rename({:?})"#, renamed));
             name_for_metadata = Cow::Owned(renamed);
         }
@@ -220,7 +226,7 @@ pub(crate) fn gen_struct_field<'a>(fi: FieldInfo<'a>) -> String {
     )
 }
 
-fn build_where_clauses(
+pub(crate) fn build_where_clauses(
     where_clauses: Option<&WhereClauses>,
     generics: Option<&GenericParams>,
 ) -> String {
@@ -255,7 +261,7 @@ fn build_where_clauses(
     }
 }
 
-fn build_type_params(generics: Option<&GenericParams>) -> String {
+pub(crate) fn build_type_params(generics: Option<&GenericParams>) -> String {
     let mut type_params_s: Vec<String> = vec![];
     if let Some(generics) = generics {
         for p in &generics.params.0 {
@@ -284,7 +290,7 @@ fn build_type_params(generics: Option<&GenericParams>) -> String {
     }
 }
 
-fn build_container_attributes(attributes: &[Attribute]) -> ContainerAttributes {
+pub(crate) fn build_container_attributes(attributes: &[Attribute]) -> ContainerAttributes {
     let mut items: Vec<Cow<str>> = vec![];
     let mut rename_all_rule: Option<RenameRule> = None;
 
@@ -307,6 +313,8 @@ fn build_container_attributes(attributes: &[Attribute]) -> ContainerAttributes {
                         items.push(
                             format!(r#"::facet::ShapeAttribute::RenameAll({:?})"#, rule_str).into(),
                         );
+                    } else {
+                        panic!("Invalid rename_all value: {:?}", rule_str);
                     }
                 }
                 FacetInner::Sensitive(_) => {
@@ -330,6 +338,8 @@ fn build_container_attributes(attributes: &[Attribute]) -> ContainerAttributes {
                                     format!(r#"::facet::ShapeAttribute::RenameAll({:?})"#, value)
                                         .into(),
                                 );
+                            } else {
+                                panic!("Invalid rename_all value: {:?}", value);
                             }
                         } else {
                             items.push(
@@ -365,11 +375,11 @@ fn build_container_attributes(attributes: &[Attribute]) -> ContainerAttributes {
 
     ContainerAttributes {
         code: attributes_string,
-        rename_rule: rename_all_rule.unwrap_or(RenameRule::Passthrough),
+        rename_rule: rename_all_rule,
     }
 }
 
-fn get_discriminant_value(lit: &Literal) -> i64 {
+pub(crate) fn get_discriminant_value(lit: &Literal) -> i64 {
     let s = lit.to_string();
     get_discriminant_value_from_str(&s)
 }
