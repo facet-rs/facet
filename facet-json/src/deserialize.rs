@@ -1,5 +1,5 @@
 use alloc::string::{String, ToString};
-use alloc::vec;
+use alloc::{vec, vec::Vec};
 use facet_core::{Characteristic, Def, Facet, ScalarAffinity, StructKind};
 use facet_reflect::{HeapValue, ReflectError, Wip};
 use log::trace;
