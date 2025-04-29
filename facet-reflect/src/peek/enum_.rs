@@ -1,4 +1,4 @@
-use facet_core::{EnumDef, EnumRepr, Field, FieldAttribute, Shape, Variant};
+use facet_core::{EnumDef, EnumRepr, Field, FieldAttribute, FieldFlags, Shape, Variant};
 
 use crate::Peek;
 
@@ -180,23 +180,21 @@ impl<'mem, 'facet_lifetime> PeekEnum<'mem, 'facet_lifetime> {
         })
     }
 
-    /// Iterates over thos fields in this struct that should be included when it is serialized.
+    /// Iterates over fields in this struct that should be included when it is serialized.
     #[inline]
     pub fn fields_for_serialize(
         &self,
     ) -> impl Iterator<Item = (&'static Field, Peek<'mem, 'facet_lifetime>)> + '_ {
         self.fields().filter(|(field, peek)| {
+            if field.flags.contains(FieldFlags::SKIP_SERIALIZING) {
+                return false;
+            }
+
             for attr in field.attributes {
-                match attr {
-                    FieldAttribute::SkipSerializingIf(fn_ptr) => {
-                        if unsafe { fn_ptr(peek.data()) } {
-                            return false;
-                        }
-                    }
-                    FieldAttribute::SkipSerializing => {
+                if let FieldAttribute::SkipSerializingIf(fn_ptr) = attr {
+                    if unsafe { fn_ptr(peek.data()) } {
                         return false;
                     }
-                    _ => {}
                 }
             }
             true

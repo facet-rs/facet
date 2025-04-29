@@ -1,6 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
-expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(name = \"MyCoolEnum\", repr = \"u16\")]\n        #[repr(u16)] // Ensure repr matches if specified in facet attribute\n        enum EnumWithAttributes {\n            #[facet(name = \"FirstVariant\", discriminant = 10)]\n            VariantA,\n\n            #[facet(skip)]\n            InternalVariant(i32),\n\n            #[facet(deprecated = \"Use VariantD instead\")]\n            VariantC {\n                #[facet(sensitive)]\n                secret: String\n            },\n\n            VariantD {\n                 #[facet(default = \"forty_two\")]\n                 value: i32\n            },\n        }\n        \"#)"
+expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(name = \"MyCoolEnum\", repr = \"u16\")]\n        #[repr(u16)] // Ensure repr matches if specified in facet attribute\n        enum EnumWithAttributes {\n            #[facet(name = \"FirstVariant\", discriminant = 10)]\n            VariantA,\n\n            #[facet(skip)]\n            InternalVariant(i32),\n\n            #[facet(deprecated = \"Use VariantD instead\")]\n            VariantC {\n                #[facet(sensitive)]\n                secret: String\n            },\n\n            VariantD {\n                 #[facet(default = forty_two())]\n                 value: i32\n            },\n        }\n        \"#)"
 ---
 #[used]
 static ENUM_WITH_ATTRIBUTES_SHAPE: &'static ::facet::Shape =
@@ -55,8 +55,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                                 __ShadowEnumWithAttributes_InternalVariant<'__facet>,
                                 _0
                             ))
-                            .flags(::facet::FieldFlags::EMPTY)
-                            .attributes(&const { [] })
                             .build()]
                     };
                     ::facet::Variant::builder()
@@ -80,7 +78,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                                 secret
                             ))
                             .flags(::facet::FieldFlags::SENSITIVE)
-                            .attributes(&const { [::facet::FieldAttribute::Sensitive] })
                             .build()]
                     };
                     ::facet::Variant::builder()
@@ -110,7 +107,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                                 __ShadowEnumWithAttributes_VariantD<'__facet>,
                                 value
                             ))
-                            .flags(::facet::FieldFlags::EMPTY)
                             .attributes(
                                 &const {
                                     [::facet::FieldAttribute::Default(Some(|ptr| unsafe {

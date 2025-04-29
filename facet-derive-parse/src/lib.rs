@@ -114,7 +114,7 @@ unsynn! {
         /// The keyword for the facet attribute.
         pub _facet: KFacet,
         /// The inner content of the facet attribute.
-        pub inner: ParenthesisGroupContaining<FacetInner>,
+        pub inner: ParenthesisGroupContaining<CommaDelimitedVec<FacetInner>>,
     }
 
     /// Represents the inner content of a facet attribute.
@@ -135,8 +135,28 @@ unsynn! {
         Transparent(KTransparent),
         /// A rename_all attribute that specifies a case conversion for all fields/variants (#[facet(rename_all = "camelCase")])
         RenameAll(RenameAllInner),
+        /// A skip_serializing attribute that specifies whether a field should be skipped during serialization.
+        SkipSerializing(SkipSerializingInner),
+        /// A skip_serializing_if attribute that specifies a condition for skipping serialization.
+        SkipSerializingIf(SkipSerializingIfInner),
         /// Any other attribute represented as a sequence of token trees.
-        Other(Vec<TokenTree>),
+        Arbitrary(Vec<TokenTree>),
+    }
+
+    /// Inner value for #[facet(skip_serializing)]
+    pub struct SkipSerializingInner {
+        /// The "skip_serializing" keyword.
+        pub _kw_skip_serializing: Ident,
+    }
+
+    /// Inner value for #[facet(skip_serializing_if = ...)]
+    pub struct SkipSerializingIfInner {
+        /// The "skip_serializing_if" keyword.
+        pub _kw_skip_serializing_if: Ident,
+        /// The equals sign '='.
+        pub _eq: Eq,
+        /// The conditional expression as verbatim until comma.
+        pub expr: VerbatimUntil<Comma>,
     }
 
     /// Inner value for #[facet(default = ...)]
@@ -146,7 +166,7 @@ unsynn! {
         /// The equals sign '='.
         pub _eq: Eq,
         /// The value assigned, as a literal string.
-        pub value: LiteralString,
+        pub expr: VerbatimUntil<Comma>,
     }
 
     /// Inner value for #[facet(rename_all = ...)]
@@ -165,8 +185,8 @@ unsynn! {
         pub _kw_invariants: KInvariants,
         /// The equality operator.
         pub _eq: Eq,
-        /// The invariant value as a literal string.
-        pub value: LiteralString,
+        /// The invariant value
+        pub expr: VerbatimUntil<Comma>,
     }
 
     /// Represents documentation for an item.
@@ -497,9 +517,11 @@ impl Struct {
         self.attributes
             .iter()
             .filter_map(|attr| match &attr.body.content {
-                AttributeInner::Facet(f) => Some(&f.inner.content),
+                AttributeInner::Facet(f) => Some(&f.inner.content.0),
                 _ => None,
             })
+            .flatten()
+            .map(|d| &d.value)
     }
 
     /// Returns `true` if the struct is marked `#[facet(transparent)]`.

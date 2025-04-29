@@ -13,29 +13,21 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for PersonInfo {
                     .name("firstName")
                     .shape(|| ::facet::shape_of(&|s: &PersonInfo| &s.first_name))
                     .offset(::core::mem::offset_of!(PersonInfo, first_name))
-                    .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&const { [::facet::FieldAttribute::Rename("firstName")] })
                     .build(),
                 ::facet::Field::builder()
                     .name("lastName")
                     .shape(|| ::facet::shape_of(&|s: &PersonInfo| &s.last_name))
                     .offset(::core::mem::offset_of!(PersonInfo, last_name))
-                    .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&const { [::facet::FieldAttribute::Rename("lastName")] })
                     .build(),
                 ::facet::Field::builder()
                     .name("homeAddress")
                     .shape(|| ::facet::shape_of(&|s: &PersonInfo| &s.home_address))
                     .offset(::core::mem::offset_of!(PersonInfo, home_address))
-                    .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&const { [::facet::FieldAttribute::Rename("homeAddress")] })
                     .build(),
                 ::facet::Field::builder()
                     .name("phoneNumber")
                     .shape(|| ::facet::shape_of(&|s: &PersonInfo| &s.phone_number))
                     .offset(::core::mem::offset_of!(PersonInfo, phone_number))
-                    .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&const { [::facet::FieldAttribute::Rename("phoneNumber")] })
                     .build(),
             ]
         };
@@ -56,7 +48,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for PersonInfo {
                     .fields(fields)
                     .build(),
             ))
-            .attributes(&[::facet::ShapeAttribute::RenameAll("camelCase")])
             .build()
     };
 }

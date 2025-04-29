@@ -1,5 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
+assertion_line: 950
 expression: "expand(r#\"\n        #[derive(Facet)]\n        struct Point(\n            #[facet(rename = \"x_coordinate\")]\n            f32,\n            #[facet(rename = \"y_coordinate\")]\n            f32,\n            #[facet(rename = \"z_coordinate\")]\n            f32,\n        );\n        \"#)"
 ---
 #[used]
@@ -10,17 +11,17 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Point {
         let fields: &'static [::facet::Field] = &const {
             [
                 ::facet::Field::builder()
-                    .name("x_coordinate")
+                    .name("0")
                     .shape(|| ::facet::shape_of(&|s: &Point| &s.0))
                     .offset(::core::mem::offset_of!(Point, 0))
                     .build(),
                 ::facet::Field::builder()
-                    .name("y_coordinate")
+                    .name("1")
                     .shape(|| ::facet::shape_of(&|s: &Point| &s.1))
                     .offset(::core::mem::offset_of!(Point, 1))
                     .build(),
                 ::facet::Field::builder()
-                    .name("z_coordinate")
+                    .name("2")
                     .shape(|| ::facet::shape_of(&|s: &Point| &s.2))
                     .offset(::core::mem::offset_of!(Point, 2))
                     .build(),

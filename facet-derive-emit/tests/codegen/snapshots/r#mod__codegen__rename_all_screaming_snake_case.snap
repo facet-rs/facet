@@ -14,15 +14,11 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for UpperCaseExample {
                     .name("FIELD_ONE")
                     .shape(|| ::facet::shape_of(&|s: &UpperCaseExample| &s.field_one))
                     .offset(::core::mem::offset_of!(UpperCaseExample, field_one))
-                    .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&const { [::facet::FieldAttribute::Rename("FIELD_ONE")] })
                     .build(),
                 ::facet::Field::builder()
                     .name("FIELD_TWO")
                     .shape(|| ::facet::shape_of(&|s: &UpperCaseExample| &s.field_two))
                     .offset(::core::mem::offset_of!(UpperCaseExample, field_two))
-                    .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&const { [::facet::FieldAttribute::Rename("FIELD_TWO")] })
                     .build(),
             ]
         };
@@ -43,7 +39,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for UpperCaseExample {
                     .fields(fields)
                     .build(),
             ))
-            .attributes(&[::facet::ShapeAttribute::RenameAll("SCREAMING_SNAKE_CASE")])
             .build()
     };
 }

@@ -38,25 +38,10 @@ impl Field {
         FieldBuilder::new()
     }
 
-    /// See [`FieldAttribute::Sensitive`]
-    pub fn has_sensitive_attr(&'static self) -> bool {
-        self.attributes.contains(&FieldAttribute::Sensitive)
-    }
-
     /// See [`FieldAttribute::Arbitrary`]
     pub fn has_arbitrary_attr(&self, content: &'static str) -> bool {
         self.attributes
             .contains(&FieldAttribute::Arbitrary(content))
-    }
-
-    /// See [`FieldAttribute::Rename`]
-    pub fn get_rename_attr(&'static self) -> Option<&'static str> {
-        for attr in self.attributes {
-            if let FieldAttribute::Rename(name) = attr {
-                return Some(name);
-            }
-        }
-        None
     }
 
     /// See [`FieldAttribute::Default`]
@@ -91,7 +76,7 @@ impl Field {
 
     /// Checks if field is marked as sensitive through attributes or flags
     pub fn is_sensitive(&'static self) -> bool {
-        self.has_sensitive_attr() || self.flags.contains(FieldFlags::SENSITIVE)
+        self.flags.contains(FieldFlags::SENSITIVE)
     }
 }
 
@@ -110,14 +95,8 @@ pub struct FieldBuilder {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
 pub enum FieldAttribute {
-    /// Marks field as containing sensitive information
-    Sensitive,
-    /// Skip serializing this field.
-    SkipSerializing,
     /// Skip serializing this field if the function identified by `.0` evaluates to true.
     SkipSerializingIf(SkipSerializingIfFn),
-    /// Specifies an alternative name for the field (for serialization/deserialization)
-    Rename(&'static str),
     /// Indicates the field has a default value (the value is which fn to call for default, or None for Default::default)
     Default(Option<DefaultInPlaceFn>),
     /// Custom field attribute containing arbitrary text
@@ -203,6 +182,9 @@ bitflags! {
 
         /// Flag indicating this field contains sensitive data that should not be displayed
         const SENSITIVE = 1 << 0;
+
+        /// Flag indicating this field should be skipped during serialization
+        const SKIP_SERIALIZING = 1 << 1;
     }
 }
 

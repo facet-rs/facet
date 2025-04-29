@@ -74,8 +74,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithVariants {
                                     _fields
                                 ),
                             )
-                            .flags(::facet::FieldFlags::EMPTY)
-                            .attributes(&const { [] })
                             .build()]
                     };
                     ::facet::Variant::builder()
@@ -106,8 +104,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithVariants {
                                         _fields
                                     ),
                                 )
-                                .flags(::facet::FieldFlags::EMPTY)
-                                .attributes(&const { [] })
                                 .build(),
                             ::facet::Field::builder()
                                 .name("field2")
@@ -127,8 +123,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithVariants {
                                         _fields
                                     ),
                                 )
-                                .flags(::facet::FieldFlags::EMPTY)
-                                .attributes(&const { [] })
                                 .build(),
                         ]
                     };

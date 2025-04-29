@@ -12,8 +12,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for CubConfig {
                 .name("disk_cache_size")
                 .shape(|| ::facet::shape_of(&|s: &CubConfig| &s.disk_cache_size))
                 .offset(::core::mem::offset_of!(CubConfig, disk_cache_size))
-                .flags(::facet::FieldFlags::EMPTY)
-                .attributes(&const { [] })
                 .doc(&[" size the disk cache is allowed to use"])
                 .build()]
         };

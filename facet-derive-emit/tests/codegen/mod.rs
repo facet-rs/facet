@@ -638,7 +638,7 @@ fn enum_with_facet_attributes() {
             },
 
             VariantD {
-                 #[facet(default = "forty_two")]
+                 #[facet(default = forty_two())]
                  value: i32
             },
         }
@@ -671,7 +671,7 @@ fn struct_with_field_default_facets() {
         struct ForFacetDefaultDemo {
             #[facet(default)]
             field1: u32,
-            #[facet(default = "my_field_default_fn")]
+            #[facet(default = my_field_default_fn())]
             field2: String,
             field3: bool,
         }

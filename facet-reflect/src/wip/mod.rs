@@ -810,9 +810,7 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
     ///   or if the field doesn't exist.
     pub fn field_index(&self, name: &str) -> Option<usize> {
         fn find_field_index(fields: &'static [facet_core::Field], name: &str) -> Option<usize> {
-            fields
-                .iter()
-                .position(|f| f.get_rename_attr().unwrap_or(f.name) == name)
+            fields.iter().position(|f| f.name == name)
         }
 
         let frame = self.frames.last()?;

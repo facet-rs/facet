@@ -35,10 +35,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                                 __ShadowApiResponse_Ok<'__facet>,
                                 data
                             ))
-                            .flags(::facet::FieldFlags::EMPTY)
-                            .attributes(
-                                &const { [::facet::FieldAttribute::Rename("responseData")] },
-                            )
                             .build()]
                     };
                     ::facet::Variant::builder()
@@ -67,10 +63,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                                     __ShadowApiResponse_Err<'__facet>,
                                     code
                                 ))
-                                .flags(::facet::FieldFlags::EMPTY)
-                                .attributes(
-                                    &const { [::facet::FieldAttribute::Rename("errorCode")] },
-                                )
                                 .build(),
                             ::facet::Field::builder()
                                 .name("errorMessage")
@@ -83,10 +75,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                                     __ShadowApiResponse_Err<'__facet>,
                                     message
                                 ))
-                                .flags(::facet::FieldFlags::EMPTY)
-                                .attributes(
-                                    &const { [::facet::FieldAttribute::Rename("errorMessage")] },
-                                )
                                 .build(),
                         ]
                     };

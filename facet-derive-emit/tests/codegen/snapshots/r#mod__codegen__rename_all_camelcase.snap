@@ -14,15 +14,11 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for CamelCaseExample {
                     .name("fieldOne")
                     .shape(|| ::facet::shape_of(&|s: &CamelCaseExample| &s.field_one))
                     .offset(::core::mem::offset_of!(CamelCaseExample, field_one))
-                    .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&const { [::facet::FieldAttribute::Rename("fieldOne")] })
                     .build(),
                 ::facet::Field::builder()
                     .name("fieldTwo")
                     .shape(|| ::facet::shape_of(&|s: &CamelCaseExample| &s.field_two))
                     .offset(::core::mem::offset_of!(CamelCaseExample, field_two))
-                    .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&const { [::facet::FieldAttribute::Rename("fieldTwo")] })
                     .build(),
             ]
         };
@@ -43,7 +39,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for CamelCaseExample {
                     .fields(fields)
                     .build(),
             ))
-            .attributes(&[::facet::ShapeAttribute::RenameAll("camelCase")])
             .build()
     };
 }

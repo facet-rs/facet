@@ -65,8 +65,6 @@ where
                                     __ShadowE_Tuple<'a, '__facet, T, C>,
                                     _0
                                 ))
-                                .flags(::facet::FieldFlags::EMPTY)
-                                .attributes(&const { [] })
                                 .build(),
                             ::facet::Field::builder()
                                 .name("_1")
@@ -79,8 +77,6 @@ where
                                     __ShadowE_Tuple<'a, '__facet, T, C>,
                                     _1
                                 ))
-                                .flags(::facet::FieldFlags::EMPTY)
-                                .attributes(&const { [] })
                                 .build(),
                         ]
                     };
@@ -105,8 +101,6 @@ where
                                         __ShadowE_Record<'a, '__facet, T, C>,
                                         field
                                     ))
-                                    .flags(::facet::FieldFlags::EMPTY)
-                                    .attributes(&const { [] })
                                     .build(),
                                 ::facet::Field::builder()
                                     .name("phantom")
@@ -119,8 +113,6 @@ where
                                         __ShadowE_Record<'a, '__facet, T, C>,
                                         phantom
                                     ))
-                                    .flags(::facet::FieldFlags::EMPTY)
-                                    .attributes(&const { [] })
                                     .build(),
                                 ::facet::Field::builder()
                                     .name("constant_val")
@@ -135,8 +127,6 @@ where
                                         __ShadowE_Record<'a, '__facet, T, C>,
                                         constant_val
                                     ))
-                                    .flags(::facet::FieldFlags::EMPTY)
-                                    .attributes(&const { [] })
                                     .build(),
                             ]
                         };

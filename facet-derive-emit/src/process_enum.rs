@@ -3,8 +3,8 @@ use quote::quote;
 
 /// Processes an enum to implement Facet
 pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
-    let enum_name_ident = parsed.name.clone();
-    let enum_name_str = enum_name_ident.to_string();
+    let enum_name = parsed.name.clone();
+    let enum_name_str = enum_name.to_string();
     let bgp = BoundedGenericParams::parse(parsed.generics.as_ref());
     let where_clauses = build_where_clauses(parsed.clauses.as_ref(), parsed.generics.as_ref());
     let type_params = build_type_params(parsed.generics.as_ref());
@@ -89,7 +89,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     } = processed_body;
 
     let static_decl = if parsed.generics.is_none() {
-        generate_static_decl(&enum_name_str)
+        generate_static_decl(&enum_name)
     } else {
         quote! {}
     };
@@ -107,7 +107,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         #static_decl
 
         #[automatically_derived]
-        unsafe impl #bgp_def ::facet::Facet<'__facet> for #enum_name_ident #bgp_without_bounds #where_clauses {
+        unsafe impl #bgp_def ::facet::Facet<'__facet> for #enum_name #bgp_without_bounds #where_clauses {
             const SHAPE: &'static ::facet::Shape = &const {
                 // Define all shadow structs at the beginning of the const block
                 // to ensure they're in scope for offset_of! macros
@@ -145,89 +145,70 @@ fn build_variant_attributes(
     attributes: &[Attribute],
     rename_rule: Option<RenameRule>,
 ) -> ContainerAttributes {
-    let mut has_explicit_rename = false;
     let mut display_name = variant_name.to_string(); // Keep as string for `.name()`
     let mut attribute_list: Vec<TokenStream> = Vec::new();
     let mut rename_all_rule: Option<RenameRule> = None;
     for attr in attributes {
         if let AttributeInner::Facet(facet_attr) = &attr.body.content {
-            match &facet_attr.inner.content {
-                FacetInner::Sensitive(_) => {
-                    // TODO
-                }
-                FacetInner::Invariants(_) => {
-                    // dealt with elsewhere
-                }
-                FacetInner::Opaque(_) => {
-                    // TODO
-                }
-                FacetInner::DenyUnknownFields(_) => {
-                    // not applicable to variants
-                }
-                FacetInner::DefaultEquals(_) | FacetInner::Default(_) => {
-                    // not applicable to variants
-                }
-                FacetInner::Transparent(_) => {
-                    // not applicable to variants
-                }
-                FacetInner::RenameAll(rename_all_inner) => {
-                    let rule_str = rename_all_inner.value.value().trim_matches('"');
-                    if let Some(rule) = RenameRule::from_str(rule_str) {
-                        rename_all_rule = Some(rule);
-                        attribute_list.push(quote! {
-                            ::facet::VariantAttribute::RenameAll(#rule_str)
-                        });
-                    } else {
-                        panic!("Unknown rename_all rule for enum variant: {:?}", rule_str);
+            // Iterate over the comma-delimited items inside #[facet(...)]
+            for delimited_facet_inner in &facet_attr.inner.content.0 {
+                let facet_inner = &delimited_facet_inner.value; // Get the FacetInner
+                match facet_inner {
+                    FacetInner::Sensitive(_) => {
+                        // TODO
                     }
-                }
-                FacetInner::Other(tt) => {
-                    let attr_str = tt.tokens_to_string();
-
-                    // Split the attributes by commas to handle multiple attributes
-                    let attrs = attr_str.split(',').map(|s| s.trim()).collect::<Vec<_>>();
-
-                    for attr in attrs {
-                        if let Some(equal_pos) = attr.find('=') {
-                            let key = attr[..equal_pos].trim();
-                            let value_str = attr[equal_pos + 1..].trim().trim_matches('"');
-                            if key == "rename" {
-                                has_explicit_rename = true;
-                                // Keep the Rename attribute for reflection
-                                attribute_list.push(quote! {
-                                    ::facet::VariantAttribute::Rename(#value_str)
-                                });
-                                display_name = value_str.to_string();
-                            } else if key == "rename_all" {
-                                if let Some(rule) = RenameRule::from_str(value_str) {
-                                    rename_all_rule = Some(rule);
-                                    attribute_list.push(quote! {
-                                        ::facet::VariantAttribute::RenameAll(#value_str)
-                                    });
-                                } else {
-                                    panic!(
-                                        "Unknown rename_all rule for enum variant: {:?}",
-                                        value_str
-                                    );
-                                }
-                            } else {
-                                attribute_list.push(quote! {
-                                    ::facet::VariantAttribute::Arbitrary(#attr)
-                                });
-                            }
-                        } else {
+                    FacetInner::Invariants(_) => {
+                        // dealt with elsewhere
+                    }
+                    FacetInner::Opaque(_) => {
+                        // TODO
+                    }
+                    FacetInner::DenyUnknownFields(_) => {
+                        // not applicable to variants
+                    }
+                    FacetInner::DefaultEquals(_) | FacetInner::Default(_) => {
+                        // not applicable to variants
+                    }
+                    FacetInner::Transparent(_) => {
+                        // not applicable to variants
+                    }
+                    FacetInner::RenameAll(rename_all_inner) => {
+                        let rule_str = rename_all_inner.value.value().trim_matches('"');
+                        if let Some(rule) = RenameRule::from_str(rule_str) {
+                            rename_all_rule = Some(rule);
                             attribute_list.push(quote! {
-                                ::facet::VariantAttribute::Arbitrary(#attr)
+                                ::facet::VariantAttribute::RenameAll(#rule_str)
                             });
+                        } else {
+                            panic!("Unknown rename_all rule for enum variant: {:?}", rule_str);
                         }
+                    }
+                    FacetInner::Arbitrary(tt) => {
+                        let attr_str = tt.tokens_to_string();
+                        attribute_list.push(quote! {
+                            ::facet::VariantAttribute::Arbitrary(#attr_str)
+                        });
+                    }
+                    FacetInner::SkipSerializing(_) => {
+                        // Not applicable to variants
+                    }
+                    FacetInner::SkipSerializingIf(_) => {
+                        // Not applicable to variants
                     }
                 }
             }
         }
     }
 
-    if !has_explicit_rename && rename_rule.is_some() {
+    // Apply container-level rename_all rule if there's no explicit rename on the variant
+    if rename_rule.is_some() {
         display_name = rename_rule.unwrap().apply(variant_name);
+        // Add the Rename attribute based on the container rule if it changed the name
+        if display_name != variant_name {
+            attribute_list.push(quote! {
+                ::facet::VariantAttribute::Rename(#display_name)
+            });
+        }
     }
 
     let name_token = TokenTree::Literal(Literal::string(&display_name));
@@ -245,7 +226,7 @@ fn build_variant_attributes(
 
     ContainerAttributes {
         tokens,
-        rename_rule: rename_all_rule,
+        rename_rule: rename_all_rule, // Return variant-level rename_all rule for its fields
     }
 }
 
@@ -502,7 +483,7 @@ fn process_c_style_enum(params: &EnumParams) -> ProcessedEnumBody {
                         gen_struct_field(FieldInfo {
                             raw_field_name: &field_name_str,
                             normalized_field_name: &field_name_str,
-                            field_type: &field.value.typ.tokens_to_string(),
+                            field_type: field.value.typ.to_token_stream(),
                             struct_name: &shadow_struct_name_ident.to_string(),
                             bgp: &facet_bgp,
                             attrs: &field.value.attributes,
@@ -576,11 +557,10 @@ fn process_c_style_enum(params: &EnumParams) -> ProcessedEnumBody {
                         // Handle raw identifiers (like r#type) by stripping the 'r#' prefix.
                         let raw_field_name = field.value.name.to_string(); // e.g., "r#type"
                         let normalized_field_name = normalize_ident_str(&raw_field_name); // e.g., "type"
-                        let field_type = field.value.typ.tokens_to_string();
                         gen_struct_field(FieldInfo {
                             raw_field_name: &raw_field_name,
                             normalized_field_name,
-                            field_type: &field_type,
+                            field_type: field.value.typ.to_token_stream(),
                             struct_name: &shadow_struct_name_ident.to_string(),
                             bgp: &facet_bgp,
                             attrs: &field.value.attributes,
@@ -714,7 +694,7 @@ fn process_primitive_enum(params: &EnumParams) -> ProcessedEnumBody {
                         gen_struct_field(FieldInfo {
                             raw_field_name: &field_name_str,
                             normalized_field_name: &field_name_str,
-                            field_type: &field.value.typ.tokens_to_string(),
+                            field_type: field.value.typ.to_token_stream(),
                             struct_name: &shadow_struct_name_ident.to_string(),
                             bgp: &facet_bgp,
                             attrs: &field.value.attributes,
@@ -788,7 +768,7 @@ fn process_primitive_enum(params: &EnumParams) -> ProcessedEnumBody {
                         gen_struct_field(FieldInfo {
                             raw_field_name: &raw_field_name,
                             normalized_field_name,
-                            field_type: &field.value.typ.tokens_to_string(),
+                            field_type: field.value.typ.to_token_stream(),
                             struct_name: &shadow_struct_name_ident.to_string(),
                             bgp: &facet_bgp,
                             attrs: &field.value.attributes,

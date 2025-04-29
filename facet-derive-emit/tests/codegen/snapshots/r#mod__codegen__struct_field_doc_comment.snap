@@ -12,8 +12,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Foo {
                 .name("bar")
                 .shape(|| ::facet::shape_of(&|s: &Foo| &s.bar))
                 .offset(::core::mem::offset_of!(Foo, bar))
-                .flags(::facet::FieldFlags::EMPTY)
-                .attributes(&const { [] })
                 .doc(&[" This field has a doc comment"])
                 .build()]
         };

@@ -15,8 +15,6 @@ where
                 .name("inner")
                 .shape(|| ::facet::shape_of(&|s: &Foo<K, V>| &s.inner))
                 .offset(:: core :: mem :: offset_of ! (Foo < K , V > , inner))
-                .flags(::facet::FieldFlags::EMPTY)
-                .attributes(&const { [] })
                 .build()]
         };
         let vtable = &const {

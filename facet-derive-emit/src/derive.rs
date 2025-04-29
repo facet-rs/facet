@@ -39,14 +39,15 @@ impl quote::ToTokens for ContainerAttributes {
 }
 
 /// Generate a static declaration that exports the crate
-pub(crate) fn generate_static_decl(type_name: &str) -> TokenStream {
-    let screaming_snake_name = RenameRule::ScreamingSnakeCase.apply(type_name);
+pub(crate) fn generate_static_decl(type_name: &Ident) -> TokenStream {
+    let type_name_str = type_name.to_string();
+    let screaming_snake_name = RenameRule::ScreamingSnakeCase.apply(&type_name_str);
+
     let static_name_ident = quote::format_ident!("{}_SHAPE", screaming_snake_name);
-    let type_name_ident = quote::format_ident!("{}", type_name);
 
     quote! {
         #[used]
-        static #static_name_ident: &'static ::facet::Shape = <#type_name_ident as ::facet::Facet>::SHAPE;
+        static #static_name_ident: &'static ::facet::Shape = <#type_name as ::facet::Facet>::SHAPE;
     }
 }
 
@@ -76,7 +77,7 @@ pub(crate) struct FieldInfo<'a> {
     pub(crate) normalized_field_name: &'a str,
 
     /// something like `String`
-    pub(crate) field_type: &'a str,
+    pub(crate) field_type: TokenStream,
 
     /// something like `Person`
     pub(crate) struct_name: &'a str,
@@ -100,101 +101,111 @@ pub(crate) struct FieldInfo<'a> {
 /// `base_field_offset` applies a shift to the field offset, which is useful for
 /// generating fields for a struct that is part of a #[repr(C)] enum.
 pub(crate) fn gen_struct_field<'a>(fi: FieldInfo<'a>) -> TokenStream {
-    // Determine field flags
-    let mut flags = quote! { ::facet::FieldFlags::EMPTY };
+    let mut flags = quote! {};
+    let mut flags_empty = true;
+
     let mut attribute_list: Vec<TokenStream> = vec![];
     let mut doc_lines: Vec<TokenStream> = vec![];
     let mut shape_of = quote! { shape_of };
     // Start with the normalized name, potentially overridden by `rename`
     let mut name_for_metadata: Cow<'a, str> = Cow::Borrowed(fi.normalized_field_name);
     let mut has_explicit_rename = false;
+
     for attr in fi.attrs {
         match &attr.body.content {
-            AttributeInner::Facet(facet_attr) => match &facet_attr.inner.content {
-                FacetInner::Sensitive(_ksensitive) => {
-                    flags = quote! { ::facet::FieldFlags::SENSITIVE };
-                    attribute_list.push(quote! { ::facet::FieldAttribute::Sensitive });
-                }
-                FacetInner::Default(_) => {
-                    attribute_list.push(quote! { ::facet::FieldAttribute::Default(None) });
-                }
-                FacetInner::DefaultEquals(inner) => {
-                    let default_expr = inner.value.as_str();
-                    let default_expr_ident = quote::format_ident!("{}", default_expr);
-
-                    attribute_list.push(quote! {
-                        ::facet::FieldAttribute::Default(Some(|ptr| {
-                            unsafe { ptr.put(#default_expr_ident()) }
-                        }))
-                    });
-                }
-                FacetInner::Transparent(_) => {
-                    // Not applicable on fields; ignore.
-                }
-                FacetInner::Invariants(_invariant_inner) => {
-                    panic!("fields cannot have invariants")
-                }
-                FacetInner::Opaque(_kopaque) => {
-                    shape_of = quote! { shape_of_opaque };
-                }
-                FacetInner::DenyUnknownFields(_) => {
-                    // not applicable on fields
-                }
-                FacetInner::RenameAll(_) => {
-                    // not applicable on fields
-                }
-                FacetInner::Other(tt) => {
-                    let attr_str = tt.tokens_to_string();
-
-                    // Split the attributes by commas to handle multiple attributes
-                    let attrs = attr_str.split(',').map(|s| s.trim()).collect::<Vec<_>>();
-
-                    for attr in attrs {
-                        if let Some(equal_pos) = attr.find('=') {
-                            let key = attr[..equal_pos].trim();
-                            if key == "rename" {
-                                has_explicit_rename = true;
-                                let value = attr[equal_pos + 1..].trim().trim_matches('"');
-                                // Use the renamed value for metadata name
-                                name_for_metadata = Cow::Owned(value.to_string());
-                                // Keep the Rename attribute for reflection
-                                attribute_list.push(quote! {
-                                    ::facet::FieldAttribute::Rename(#value)
-                                });
-                            } else if key == "skip_serializing_if" {
-                                let value = attr[equal_pos + 1..].trim();
-                                // Parse the value string as token stream to handle complex expressions
-                                let value_token_stream = value
-                                    .parse::<TokenStream>()
-                                    .expect("Failed to parse skip_serializing_if predicate");
-                                let field_type = format!("&{}", fi.field_type)
-                                    .parse::<TokenStream>()
-                                    .expect("Failed to parse field type");
-                                attribute_list.push(quote! {
-                                    ::facet::FieldAttribute::SkipSerializingIf(unsafe { ::std::mem::transmute(#value_token_stream as fn(#field_type) -> bool) })
-                                });
+            AttributeInner::Facet(facet_attr) => {
+                // Iterate over the comma-delimited items inside #[facet(...)]
+                for delimited_facet_inner in &facet_attr.inner.content.0 {
+                    let facet_inner = &delimited_facet_inner.value; // Get the FacetInner
+                    match facet_inner {
+                        FacetInner::Sensitive(_ksensitive) => {
+                            if flags_empty {
+                                flags_empty = false;
+                                flags = quote! { ::facet::FieldFlags::SENSITIVE };
                             } else {
-                                attribute_list.push(quote! {
-                                    ::facet::FieldAttribute::Arbitrary(#attr)
-                                });
+                                flags = quote! { #flags.union(::facet::FieldFlags::SENSITIVE) };
                             }
-                        } else if attr == "skip_serializing" {
+                        }
+                        FacetInner::Default(_) => {
+                            attribute_list.push(quote! { ::facet::FieldAttribute::Default(None) });
+                        }
+                        FacetInner::DefaultEquals(inner) => {
+                            let default_expr = inner.expr.to_token_stream();
                             attribute_list.push(quote! {
-                                ::facet::FieldAttribute::SkipSerializing
+                                ::facet::FieldAttribute::Default(Some(|ptr| {
+                                    unsafe { ptr.put(#default_expr) }
+                                }))
                             });
-                        } else if attr == "sensitive" {
-                            flags = quote! { ::facet::FieldFlags::SENSITIVE };
+                        }
+                        FacetInner::Transparent(_) => {
+                            // Not applicable on fields; ignore.
+                        }
+                        FacetInner::Invariants(_invariant_inner) => {
+                            panic!("fields cannot have invariants")
+                        }
+                        FacetInner::Opaque(_kopaque) => {
+                            shape_of = quote! { shape_of_opaque };
+                        }
+                        FacetInner::DenyUnknownFields(_) => {
+                            // not applicable on fields
+                        }
+                        FacetInner::RenameAll(_) => {
+                            // not applicable on fields
+                        }
+                        FacetInner::SkipSerializing(_skip_serializing_inner) => {
+                            if flags_empty {
+                                flags_empty = false;
+                                flags = quote! { ::facet::FieldFlags::SKIP_SERIALIZING };
+                            } else {
+                                flags =
+                                    quote! { #flags.union(::facet::FieldFlags::SKIP_SERIALIZING) };
+                            }
+                        }
+                        FacetInner::SkipSerializingIf(skip_serializing_if_inner) => {
+                            // Assuming FieldInfo.field_type is TokenStream
+                            let predicate = skip_serializing_if_inner.expr.to_token_stream();
+                            let field_type_tokens = &fi.field_type; // Expecting TokenStream here
+                            let field_type_ref = {
+                                let mut tokens = TokenStream::new();
+                                tokens.extend(quote! { & });
+                                tokens.extend(field_type_tokens.clone());
+                                tokens
+                            };
                             attribute_list.push(quote! {
-                                ::facet::FieldAttribute::Sensitive
+                                ::facet::FieldAttribute::SkipSerializingIf(unsafe { ::std::mem::transmute(#predicate as fn(#field_type_ref) -> bool) })
                             });
-                        } else {
+                        }
+                        FacetInner::Arbitrary(tt) => {
+                            // Check for explicit rename first: #[facet(rename = "...")]
+                            if tt.len() >= 3 {
+                                if let (
+                                    Some(TokenTree::Ident(ident)),
+                                    Some(TokenTree::Punct(punct)),
+                                    Some(TokenTree::Literal(lit)),
+                                ) = (tt.first(), tt.get(1), tt.get(2))
+                                {
+                                    if *ident == "rename" && punct.as_char() == '=' {
+                                        let lit_str = lit.to_string();
+                                        let name_str = lit_str.trim_matches('"').to_string();
+                                        has_explicit_rename = true; // Mark explicit rename
+                                        attribute_list.push(quote! {
+                                            ::facet::FieldAttribute::Rename(#name_str)
+                                        });
+                                        name_for_metadata = Cow::Owned(name_str);
+                                        // Skip adding as Arbitrary since it was handled as rename
+                                        continue;
+                                    }
+                                }
+                            }
+                            // Fallback to Arbitrary for other cases
+                            let attr = tt.tokens_to_string();
                             attribute_list.push(quote! {
                                 ::facet::FieldAttribute::Arbitrary(#attr)
                             });
                         }
                     }
                 }
-            },
+            }
             AttributeInner::Doc(doc_inner) => doc_lines.push(doc_inner.value.to_token_stream()),
             AttributeInner::Repr(_) => {
                 // muffin
@@ -204,27 +215,25 @@ pub(crate) fn gen_struct_field<'a>(fi: FieldInfo<'a>) -> TokenStream {
             }
         }
     }
-    // Apply rename_all rule if there's no explicit rename attribute
+
+    // Apply container-level rename_all rule if there's no explicit rename attribute
     if !has_explicit_rename && fi.rename_rule.is_some() {
         // Only apply to named fields (not tuple indices)
         if !fi.normalized_field_name.chars().all(|c| c.is_ascii_digit()) {
             let renamed = fi.rename_rule.unwrap().apply(fi.normalized_field_name);
+            // Don't add Rename attribute again if it was added via Arbitrary(rename=...)
+            // The `has_explicit_rename` flag covers this.
             attribute_list.push(quote! { ::facet::FieldAttribute::Rename(#renamed) });
             name_for_metadata = Cow::Owned(renamed);
         }
     }
-    let attributes = if attribute_list.is_empty() {
+
+    let maybe_attributes = if attribute_list.is_empty() {
         quote! {}
     } else {
-        let mut combined = quote! {};
-        for (i, attr) in attribute_list.iter().enumerate() {
-            if i > 0 {
-                combined = quote! { #combined, #attr };
-            } else {
-                combined = quote! { #attr };
-            }
+        quote! {
+            .attributes(&const { [#(#attribute_list),*] })
         }
-        combined
     };
 
     let maybe_field_doc = if doc_lines.is_empty() {
@@ -239,6 +248,12 @@ pub(crate) fn gen_struct_field<'a>(fi: FieldInfo<'a>) -> TokenStream {
         quote! { + #offset }
     } else {
         quote! {}
+    };
+
+    let maybe_flags = if flags_empty {
+        quote! {}
+    } else {
+        quote! { .flags(#flags) }
     };
 
     let struct_name = quote::format_ident!("{}", fi.struct_name);
@@ -260,8 +275,8 @@ pub(crate) fn gen_struct_field<'a>(fi: FieldInfo<'a>) -> TokenStream {
             .name(#name_for_metadata)
             .shape(|| ::facet::#shape_of(&|s: &#struct_name #bgp| &s.#raw_field_name))
             .offset(::core::mem::offset_of!(#struct_name #bgp,#raw_field_name) #maybe_base_field_offset)
-            .flags(#flags)
-            .attributes(&const { [#attributes] })
+            #maybe_flags
+            #maybe_attributes
             #maybe_field_doc
             .build()
     }
@@ -356,59 +371,59 @@ pub(crate) fn build_container_attributes(attributes: &[Attribute]) -> ContainerA
 
     for attr in attributes {
         match &attr.body.content {
-            AttributeInner::Facet(facet_attr) => match &facet_attr.inner.content {
-                FacetInner::DenyUnknownFields(_) => {
-                    items.push(quote! { ::facet::ShapeAttribute::DenyUnknownFields });
-                }
-                FacetInner::DefaultEquals(_) | FacetInner::Default(_) => {
-                    items.push(quote! { ::facet::ShapeAttribute::Default });
-                }
-                FacetInner::Transparent(_) => {
-                    items.push(quote! { ::facet::ShapeAttribute::Transparent });
-                }
-                FacetInner::RenameAll(rename_all_inner) => {
-                    let rule_str = rename_all_inner.value.value().trim_matches('"');
-                    if let Some(rule) = RenameRule::from_str(rule_str) {
-                        rename_all_rule = Some(rule);
-                        items.push(quote! { ::facet::ShapeAttribute::RenameAll(#rule_str) });
-                    } else {
-                        panic!("Invalid rename_all value: {:?}", rule_str);
-                    }
-                }
-                FacetInner::Sensitive(_) => {
-                    // TODO
-                }
-                FacetInner::Invariants(_) => {
-                    // dealt with elsewhere
-                }
-                FacetInner::Opaque(_) => {
-                    // TODO
-                }
-                FacetInner::Other(other) => {
-                    let attr_str = other.tokens_to_string();
-                    if let Some(equal_pos) = attr_str.find('=') {
-                        let key = attr_str[..equal_pos].trim();
-                        if key == "rename_all" {
-                            let value = attr_str[equal_pos + 1..].trim().trim_matches('"');
-                            if let Some(rule) = RenameRule::from_str(value) {
+            AttributeInner::Facet(facet_attr) => {
+                // Iterate over the comma-delimited items inside #[facet(...)]
+                for delimited_facet_inner in &facet_attr.inner.content.0 {
+                    let facet_inner = &delimited_facet_inner.value; // Get the FacetInner
+                    match facet_inner {
+                        FacetInner::DenyUnknownFields(_) => {
+                            items.push(quote! { ::facet::ShapeAttribute::DenyUnknownFields });
+                        }
+                        FacetInner::DefaultEquals(_) | FacetInner::Default(_) => {
+                            items.push(quote! { ::facet::ShapeAttribute::Default });
+                        }
+                        FacetInner::Transparent(_) => {
+                            items.push(quote! { ::facet::ShapeAttribute::Transparent });
+                        }
+                        FacetInner::RenameAll(rename_all_inner) => {
+                            let rule_str = rename_all_inner.value.value().trim_matches('"');
+                            if let Some(rule) = RenameRule::from_str(rule_str) {
                                 rename_all_rule = Some(rule);
-                                items.push(quote! { ::facet::ShapeAttribute::RenameAll(#value) });
+                                items
+                                    .push(quote! { ::facet::ShapeAttribute::RenameAll(#rule_str) });
                             } else {
-                                panic!("Invalid rename_all value: {:?}", value);
+                                panic!("Invalid rename_all value: {:?}", rule_str);
                             }
-                        } else {
+                        }
+                        FacetInner::Sensitive(_) => {
+                            // Not typically applied at container level, maybe log a warning or ignore?
+                            // TODO
+                        }
+                        FacetInner::Invariants(_) => {
+                            // This is handled separately in process_struct/process_enum
+                        }
+                        FacetInner::Opaque(_) => {
+                            // Not typically applied at container level, maybe log a warning or ignore?
+                            // TODO
+                        }
+                        FacetInner::Arbitrary(other) => {
+                            // Handle arbitrary attributes passed within #[facet(...)]
                             let attr_content = other.tokens_to_string();
                             items
                                 .push(quote! { ::facet::ShapeAttribute::Arbitrary(#attr_content) });
                         }
-                    } else {
-                        let attr_content = other.tokens_to_string();
-                        items.push(quote! { ::facet::ShapeAttribute::Arbitrary(#attr_content) });
+                        // Added missing arms based on FacetInner definition
+                        FacetInner::SkipSerializing(_) => {
+                            // Not applicable at container level
+                        }
+                        FacetInner::SkipSerializingIf(_) => {
+                            // Not applicable at container level
+                        }
                     }
                 }
-            },
+            }
             _ => {
-                // do nothing.
+                // Ignore non-#[facet(...)] attributes like #[repr], #[doc], etc.
             }
         }
     }
@@ -421,7 +436,7 @@ pub(crate) fn build_container_attributes(attributes: &[Attribute]) -> ContainerA
 
     ContainerAttributes {
         tokens,
-        rename_rule: rename_all_rule,
+        rename_rule: rename_all_rule, // Return the found rename_all rule (if any)
     }
 }
 

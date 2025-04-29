@@ -18,15 +18,11 @@ where
                     .name("0")
                     .shape(|| ::facet::shape_of(&|s: &Blah<'a, T, C>| &s.0))
                     .offset(::core::mem::offset_of!(Blah<'a, T, C>, 0))
-                    .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&const { [] })
                     .build(),
                 ::facet::Field::builder()
                     .name("1")
                     .shape(|| ::facet::shape_of(&|s: &Blah<'a, T, C>| &s.1))
                     .offset(::core::mem::offset_of!(Blah<'a, T, C>, 1))
-                    .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&const { [] })
                     .build(),
             ]
         };

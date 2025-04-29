@@ -14,15 +14,11 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for SnakeCaseExample {
                     .name("field_one")
                     .shape(|| ::facet::shape_of(&|s: &SnakeCaseExample| &s.field_one))
                     .offset(::core::mem::offset_of!(SnakeCaseExample, field_one))
-                    .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&const { [::facet::FieldAttribute::Rename("field_one")] })
                     .build(),
                 ::facet::Field::builder()
                     .name("field_two")
                     .shape(|| ::facet::shape_of(&|s: &SnakeCaseExample| &s.field_two))
                     .offset(::core::mem::offset_of!(SnakeCaseExample, field_two))
-                    .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&const { [::facet::FieldAttribute::Rename("field_two")] })
                     .build(),
             ]
         };
@@ -43,7 +39,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for SnakeCaseExample {
                     .fields(fields)
                     .build(),
             ))
-            .attributes(&[::facet::ShapeAttribute::RenameAll("snake_case")])
             .build()
     };
 }

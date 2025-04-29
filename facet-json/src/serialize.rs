@@ -182,18 +182,9 @@ fn serialize<W: Write>(peek: &Peek<'_, '_>, delimit: bool, writer: &mut W) -> io
                 stack.push(SerializeTask::EndStruct { delimit });
 
                 for (first, (field, field_peek)) in fields.into_iter().rev() {
-                    // Check for rename attribute
-                    let field_name = field
-                        .attributes
-                        .iter()
-                        .find_map(|attr| {
-                            if let FieldAttribute::Rename(name) = attr {
-                                Some(*name)
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or(field.name);
+                    let field_name = field.name;
+
+                    // FIXME: flatten is well-known, not arbitrary
                     let should_delimit = !field.has_arbitrary_attr("flatten");
 
                     stack.push(SerializeTask::StructField {

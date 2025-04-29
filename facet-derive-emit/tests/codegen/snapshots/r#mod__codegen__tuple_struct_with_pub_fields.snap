@@ -13,16 +13,12 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Blah {
                     .name("0")
                     .shape(|| ::facet::shape_of(&|s: &Blah| &s.0))
                     .offset(::core::mem::offset_of!(Blah, 0))
-                    .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&const { [] })
                     .doc(&[" and this is a public field"])
                     .build(),
                 ::facet::Field::builder()
                     .name("1")
                     .shape(|| ::facet::shape_of(&|s: &Blah| &s.1))
                     .offset(::core::mem::offset_of!(Blah, 1))
-                    .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&const { [] })
                     .doc(&[" and this is a crate public field"])
                     .build(),
             ]

@@ -13,15 +13,11 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for TupleStruct {
                     .name("0")
                     .shape(|| ::facet::shape_of(&|s: &TupleStruct| &s.0))
                     .offset(::core::mem::offset_of!(TupleStruct, 0))
-                    .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&const { [] })
                     .build(),
                 ::facet::Field::builder()
                     .name("1")
                     .shape(|| ::facet::shape_of(&|s: &TupleStruct| &s.1))
                     .offset(::core::mem::offset_of!(TupleStruct, 1))
-                    .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&const { [] })
                     .build(),
             ]
         };

@@ -1,5 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
+assertion_line: 756
 expression: "expand(r#\"\n        #[derive(Facet)]\n        struct Person {\n            #[facet(rename = \"firstName\")]\n            first_name: String,\n            #[facet(rename = \"lastName\")]\n            last_name: String,\n            age: u32,\n        }\n        \"#)"
 ---
 #[used]
@@ -10,12 +11,12 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Person {
         let fields: &'static [::facet::Field] = &const {
             [
                 ::facet::Field::builder()
-                    .name("firstName")
+                    .name("first_name")
                     .shape(|| ::facet::shape_of(&|s: &Person| &s.first_name))
                     .offset(::core::mem::offset_of!(Person, first_name))
                     .build(),
                 ::facet::Field::builder()
-                    .name("lastName")
+                    .name("last_name")
                     .shape(|| ::facet::shape_of(&|s: &Person| &s.last_name))
                     .offset(::core::mem::offset_of!(Person, last_name))
                     .build(),

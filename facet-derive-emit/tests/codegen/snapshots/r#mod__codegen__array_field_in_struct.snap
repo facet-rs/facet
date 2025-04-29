@@ -13,22 +13,16 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for DataPacket {
                     .name("header")
                     .shape(|| ::facet::shape_of(&|s: &DataPacket| &s.header))
                     .offset(::core::mem::offset_of!(DataPacket, header))
-                    .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&const { [] })
                     .build(),
                 ::facet::Field::builder()
                     .name("payload")
                     .shape(|| ::facet::shape_of(&|s: &DataPacket| &s.payload))
                     .offset(::core::mem::offset_of!(DataPacket, payload))
-                    .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&const { [] })
                     .build(),
                 ::facet::Field::builder()
                     .name("metadata")
                     .shape(|| ::facet::shape_of(&|s: &DataPacket| &s.metadata))
                     .offset(::core::mem::offset_of!(DataPacket, metadata))
-                    .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&const { [] })
                     .build(),
             ]
         };

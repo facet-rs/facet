@@ -41,8 +41,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for CommentedEnum {
                                 __ShadowCommentedEnum_B<'__facet>,
                                 _0
                             ))
-                            .flags(::facet::FieldFlags::EMPTY)
-                            .attributes(&const { [] })
                             .build()]
                     };
                     ::facet::Variant::builder()
@@ -64,8 +62,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for CommentedEnum {
                                     __ShadowCommentedEnum_C<'__facet>,
                                     x
                                 ))
-                                .flags(::facet::FieldFlags::EMPTY)
-                                .attributes(&const { [] })
                                 .doc(&[" This is field x"])
                                 .build(),
                             ::facet::Field::builder()
@@ -77,8 +73,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for CommentedEnum {
                                     __ShadowCommentedEnum_C<'__facet>,
                                     y
                                 ))
-                                .flags(::facet::FieldFlags::EMPTY)
-                                .attributes(&const { [] })
                                 .doc(&[" This is field y"])
                                 .build(),
                         ]

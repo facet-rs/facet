@@ -5,7 +5,7 @@ use core::fmt::Result;
 #[cfg(feature = "alloc")]
 use alloc::string::String;
 
-use facet_core::{Def, Facet, FieldAttribute};
+use facet_core::{Def, Facet};
 use facet_reflect::{Peek, ScalarType};
 use toml_write::TomlWrite;
 
@@ -97,21 +97,7 @@ where
     let struct_peek = peek.into_struct().unwrap();
 
     for (field, field_peek) in struct_peek.fields_for_serialize() {
-        // Check for rename attribute
-        let field_name = field
-            .attributes
-            .iter()
-            .find_map(|attr| {
-                if let FieldAttribute::Rename(name) = attr {
-                    Some(*name)
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(field.name);
-
-        // Write "key" = ..
-        writer.key(field_name)?;
+        writer.key(field.name)?;
         writer.space()?;
         writer.keyval_sep()?;
         writer.space()?;

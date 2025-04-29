@@ -6,7 +6,7 @@ fn build_with_invariants() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Facet, PartialEq, Debug)]
-    #[facet(invariants = "invariants")]
+    #[facet(invariants = MyNonZeroU8::invariants)]
     struct MyNonZeroU8(u8);
 
     impl MyNonZeroU8 {

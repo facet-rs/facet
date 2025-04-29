@@ -14,15 +14,11 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithDefaults {
                     .name("field1")
                     .shape(|| ::facet::shape_of(&|s: &StructWithDefaults| &s.field1))
                     .offset(::core::mem::offset_of!(StructWithDefaults, field1))
-                    .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&const { [] })
                     .build(),
                 ::facet::Field::builder()
                     .name("field2")
                     .shape(|| ::facet::shape_of(&|s: &StructWithDefaults| &s.field2))
                     .offset(::core::mem::offset_of!(StructWithDefaults, field2))
-                    .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&const { [] })
                     .build(),
             ]
         };

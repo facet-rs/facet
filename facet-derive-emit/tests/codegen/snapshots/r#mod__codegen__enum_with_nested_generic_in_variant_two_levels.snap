@@ -44,8 +44,6 @@ where
                                 __ShadowDeeplyNested_LevelOne<'__facet, T>,
                                 _0
                             ))
-                            .flags(::facet::FieldFlags::EMPTY)
-                            .attributes(&const { [] })
                             .build()]
                     };
                     ::facet::Variant::builder()
@@ -68,8 +66,6 @@ where
                                 __ShadowDeeplyNested_Simple<'__facet, T>,
                                 _0
                             ))
-                            .flags(::facet::FieldFlags::EMPTY)
-                            .attributes(&const { [] })
                             .build()]
                     };
                     ::facet::Variant::builder()

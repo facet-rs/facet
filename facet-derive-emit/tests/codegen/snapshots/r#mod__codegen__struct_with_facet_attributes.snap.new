@@ -1,5 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
+assertion_line: 602
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(name = \"MyCoolStruct\", deny_unknown_fields, version = 2)]\n        struct StructWithAttributes {\n            #[facet(name = \"identifier\", default = \"generate_id\", sensitive)]\n            id: String,\n            #[facet(skip, version = 3)]\n            internal_data: Vec<u8>,\n            #[facet(deprecated = \"Use 'new_value' instead\")]\n            old_value: i32,\n            new_value: i32,\n        }\n        \"#)"
 ---
 #[used]
@@ -14,33 +15,16 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithAttributes {
                     .name("id")
                     .shape(|| ::facet::shape_of(&|s: &StructWithAttributes| &s.id))
                     .offset(::core::mem::offset_of!(StructWithAttributes, id))
-                    .attributes(
-                        &const {
-                            [::facet::FieldAttribute::Arbitrary(
-                                "name = \"identifier\" , default = \"generate_id\" , sensitive",
-                            )]
-                        },
-                    )
                     .build(),
                 ::facet::Field::builder()
                     .name("internal_data")
                     .shape(|| ::facet::shape_of(&|s: &StructWithAttributes| &s.internal_data))
                     .offset(::core::mem::offset_of!(StructWithAttributes, internal_data))
-                    .attributes(
-                        &const { [::facet::FieldAttribute::Arbitrary("skip , version = 3")] },
-                    )
                     .build(),
                 ::facet::Field::builder()
                     .name("old_value")
                     .shape(|| ::facet::shape_of(&|s: &StructWithAttributes| &s.old_value))
                     .offset(::core::mem::offset_of!(StructWithAttributes, old_value))
-                    .attributes(
-                        &const {
-                            [::facet::FieldAttribute::Arbitrary(
-                                "deprecated = \"Use 'new_value' instead\"",
-                            )]
-                        },
-                    )
                     .build(),
                 ::facet::Field::builder()
                     .name("new_value")
@@ -66,9 +50,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithAttributes {
                     .fields(fields)
                     .build(),
             ))
-            .attributes(&[::facet::ShapeAttribute::Arbitrary(
-                "name = \"MyCoolStruct\" , deny_unknown_fields , version = 2",
-            )])
             .build()
     };
 }

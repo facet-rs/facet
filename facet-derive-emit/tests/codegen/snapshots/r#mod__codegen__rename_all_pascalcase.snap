@@ -14,15 +14,11 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for PascalCaseExample {
                     .name("FieldOne")
                     .shape(|| ::facet::shape_of(&|s: &PascalCaseExample| &s.field_one))
                     .offset(::core::mem::offset_of!(PascalCaseExample, field_one))
-                    .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&const { [::facet::FieldAttribute::Rename("FieldOne")] })
                     .build(),
                 ::facet::Field::builder()
                     .name("FieldTwo")
                     .shape(|| ::facet::shape_of(&|s: &PascalCaseExample| &s.field_two))
                     .offset(::core::mem::offset_of!(PascalCaseExample, field_two))
-                    .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&const { [::facet::FieldAttribute::Rename("FieldTwo")] })
                     .build(),
             ]
         };
@@ -43,7 +39,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for PascalCaseExample {
                     .fields(fields)
                     .build(),
             ))
-            .attributes(&[::facet::ShapeAttribute::RenameAll("PascalCase")])
             .build()
     };
 }

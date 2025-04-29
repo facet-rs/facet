@@ -6,8 +6,8 @@ pub use renamerule::*;
 mod generics;
 pub use generics::*;
 
-mod attributes;
-pub use attributes::*;
+mod parsed;
+pub use parsed::*;
 
 mod process_enum;
 mod process_struct;

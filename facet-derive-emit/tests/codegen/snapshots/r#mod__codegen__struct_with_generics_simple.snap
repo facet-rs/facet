@@ -17,8 +17,6 @@ where
                     .offset(
                         :: core :: mem :: offset_of ! (StructWithGenericsSimple < T , U > , field1),
                     )
-                    .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&const { [] })
                     .build(),
                 ::facet::Field::builder()
                     .name("field2")
@@ -26,8 +24,6 @@ where
                     .offset(
                         :: core :: mem :: offset_of ! (StructWithGenericsSimple < T , U > , field2),
                     )
-                    .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&const { [] })
                     .build(),
             ]
         };

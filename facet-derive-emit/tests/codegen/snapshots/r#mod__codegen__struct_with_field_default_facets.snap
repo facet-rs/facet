@@ -1,6 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
-expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(default)]\n        struct ForFacetDefaultDemo {\n            #[facet(default)]\n            field1: u32,\n            #[facet(default = \"my_field_default_fn\")]\n            field2: String,\n            field3: bool,\n        }\n        \"#)"
+expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(default)]\n        struct ForFacetDefaultDemo {\n            #[facet(default)]\n            field1: u32,\n            #[facet(default = my_field_default_fn())]\n            field2: String,\n            field3: bool,\n        }\n        \"#)"
 ---
 #[used]
 static FOR_FACET_DEFAULT_DEMO_SHAPE: &'static ::facet::Shape =
@@ -14,14 +14,12 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ForFacetDefaultDemo {
                     .name("field1")
                     .shape(|| ::facet::shape_of(&|s: &ForFacetDefaultDemo| &s.field1))
                     .offset(::core::mem::offset_of!(ForFacetDefaultDemo, field1))
-                    .flags(::facet::FieldFlags::EMPTY)
                     .attributes(&const { [::facet::FieldAttribute::Default(None)] })
                     .build(),
                 ::facet::Field::builder()
                     .name("field2")
                     .shape(|| ::facet::shape_of(&|s: &ForFacetDefaultDemo| &s.field2))
                     .offset(::core::mem::offset_of!(ForFacetDefaultDemo, field2))
-                    .flags(::facet::FieldFlags::EMPTY)
                     .attributes(
                         &const {
                             [::facet::FieldAttribute::Default(Some(|ptr| unsafe {
@@ -34,8 +32,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ForFacetDefaultDemo {
                     .name("field3")
                     .shape(|| ::facet::shape_of(&|s: &ForFacetDefaultDemo| &s.field3))
                     .offset(::core::mem::offset_of!(ForFacetDefaultDemo, field3))
-                    .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&const { [] })
                     .build(),
             ]
         };

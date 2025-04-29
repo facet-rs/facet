@@ -13,15 +13,11 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Blah {
                     .name("foo")
                     .shape(|| ::facet::shape_of(&|s: &Blah| &s.foo))
                     .offset(::core::mem::offset_of!(Blah, foo))
-                    .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&const { [] })
                     .build(),
                 ::facet::Field::builder()
                     .name("bar")
                     .shape(|| ::facet::shape_of(&|s: &Blah| &s.bar))
                     .offset(::core::mem::offset_of!(Blah, bar))
-                    .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&const { [] })
                     .build(),
             ]
         };

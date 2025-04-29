@@ -14,15 +14,11 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for KebabCaseExample {
                     .name("field-one")
                     .shape(|| ::facet::shape_of(&|s: &KebabCaseExample| &s.field_one))
                     .offset(::core::mem::offset_of!(KebabCaseExample, field_one))
-                    .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&const { [::facet::FieldAttribute::Rename("field-one")] })
                     .build(),
                 ::facet::Field::builder()
                     .name("field-two")
                     .shape(|| ::facet::shape_of(&|s: &KebabCaseExample| &s.field_two))
                     .offset(::core::mem::offset_of!(KebabCaseExample, field_two))
-                    .flags(::facet::FieldFlags::EMPTY)
-                    .attributes(&const { [::facet::FieldAttribute::Rename("field-two")] })
                     .build(),
             ]
         };
@@ -43,7 +39,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for KebabCaseExample {
                     .fields(fields)
                     .build(),
             ))
-            .attributes(&[::facet::ShapeAttribute::RenameAll("kebab-case")])
             .build()
     };
 }
