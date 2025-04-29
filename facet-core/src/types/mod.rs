@@ -136,7 +136,7 @@ impl core::error::Error for UnsizedError {}
 /// An attribute that can be applied to a shape
 #[derive(Debug, PartialEq)]
 pub enum ShapeAttribute {
-    /// Specifies an alternative name for the field (for serialization/deserialization)
+    /// Reject deserialization upon encountering an unknown key.
     DenyUnknownFields,
     /// Indicates that, when deserializing, fields from this shape that are
     /// missing in the input should be filled with corresponding field values from

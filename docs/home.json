@@ -4,13 +4,13 @@
     {
       "family": "IosevkaFtl",
       "path": "src/fonts/IosevkaFTLNerdFont-Regular-subset.woff2",
-      "weight": "400",
+      "weight": 400,
       "style": "normal"
     },
     {
       "family": "IosevkaFtl",
       "path": "src/fonts/IosevkaFTLNerdFont-Bold-subset.woff2",
-      "weight": "700",
+      "weight": 700,
       "style": "normal"
     }
   ]
