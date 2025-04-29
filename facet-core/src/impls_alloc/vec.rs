@@ -9,12 +9,10 @@ where
 {
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
-            .type_params(&[
-                TypeParam {
-                    name: "T",
-                    shape: || T::SHAPE,
-                }
-            ])
+            .type_params(&[TypeParam {
+                name: "T",
+                shape: || T::SHAPE,
+            }])
             .vtable(
                 &const {
                     let mut builder = ValueVTable::builder::<Self>()
@@ -28,7 +26,7 @@ where
                             }
                         })
                         .default_in_place(|target| unsafe { target.put(Self::default()) })
-                    // FIXME: THIS IS VERY WRONG
+                        // FIXME: THIS IS VERY WRONG
                         .clone_into(|src, dst| unsafe { dst.put(core::ptr::read(src)) });
 
                     if T::SHAPE.vtable.debug.is_some() {
@@ -38,25 +36,19 @@ where
                                 if i > 0 {
                                     write!(f, ", ")?;
                                 }
-                                (<VTableView<T>>::of().debug().unwrap())(
-                                    item,
-                                    f,
-                                )?;
+                                (<VTableView<T>>::of().debug().unwrap())(item, f)?;
                             }
                             write!(f, "]")
                         });
                     }
 
                     if T::SHAPE.vtable.eq.is_some() {
-                        builder = builder.eq(|a, b|  {
+                        builder = builder.eq(|a, b| {
                             if a.len() != b.len() {
                                 return false;
                             }
                             for (item_a, item_b) in a.iter().zip(b.iter()) {
-                                if !(<VTableView<T>>::of().eq().unwrap())(
-                                    item_a,
-                                    item_b,
-                                ) {
+                                if !(<VTableView<T>>::of().eq().unwrap())(item_a, item_b) {
                                     return false;
                                 }
                             }
