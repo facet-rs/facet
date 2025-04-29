@@ -38,8 +38,14 @@ keyword! {
     pub KDefault = "default";
     /// The "transparent" keyword.
     pub KTransparent = "transparent";
+    /// The "rename" keyword.
+    pub KRename = "rename";
     /// The "rename_all" keyword.
     pub KRenameAll = "rename_all";
+    /// The "skip_serializing" keyword.
+    pub KSkipSerializing = "skip_serializing";
+    /// The "skip_serializing_if" keyword.
+    pub KSkipSerializingIf = "skip_serializing_if";
 }
 
 operator! {
@@ -135,24 +141,26 @@ unsynn! {
         Transparent(KTransparent),
         /// A rename_all attribute that specifies a case conversion for all fields/variants (#[facet(rename_all = "camelCase")])
         RenameAll(RenameAllInner),
+        /// A rename attribute that specifies a custom name for a field/variant (#[facet(rename = "custom_name")])
+        Rename(RenameInner),
         /// A skip_serializing attribute that specifies whether a field should be skipped during serialization.
         SkipSerializing(SkipSerializingInner),
         /// A skip_serializing_if attribute that specifies a condition for skipping serialization.
         SkipSerializingIf(SkipSerializingIfInner),
         /// Any other attribute represented as a sequence of token trees.
-        Arbitrary(Vec<TokenTree>),
+        Arbitrary(VerbatimUntil<Comma>),
     }
 
     /// Inner value for #[facet(skip_serializing)]
     pub struct SkipSerializingInner {
         /// The "skip_serializing" keyword.
-        pub _kw_skip_serializing: Ident,
+        pub _kw_skip_serializing: KSkipSerializing,
     }
 
     /// Inner value for #[facet(skip_serializing_if = ...)]
     pub struct SkipSerializingIfInner {
         /// The "skip_serializing_if" keyword.
-        pub _kw_skip_serializing_if: Ident,
+        pub _kw_skip_serializing_if: KSkipSerializingIf,
         /// The equals sign '='.
         pub _eq: Eq,
         /// The conditional expression as verbatim until comma.
@@ -167,6 +175,16 @@ unsynn! {
         pub _eq: Eq,
         /// The value assigned, as a literal string.
         pub expr: VerbatimUntil<Comma>,
+    }
+
+    /// Inner value for #[facet(rename = ...)]
+    pub struct RenameInner {
+        /// The "rename" keyword.
+        pub _kw_rename: KRename,
+        /// The equals sign '='.
+        pub _eq: Eq,
+        /// The value assigned, as a literal string.
+        pub value: LiteralString,
     }
 
     /// Inner value for #[facet(rename_all = ...)]

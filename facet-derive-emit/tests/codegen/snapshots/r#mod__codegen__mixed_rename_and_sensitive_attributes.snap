@@ -18,6 +18,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for User {
                     .name("userEmail")
                     .shape(|| ::facet::shape_of(&|s: &User| &s.email))
                     .offset(::core::mem::offset_of!(User, email))
+                    .flags(::facet::FieldFlags::SENSITIVE)
                     .build(),
                 ::facet::Field::builder()
                     .name("password")

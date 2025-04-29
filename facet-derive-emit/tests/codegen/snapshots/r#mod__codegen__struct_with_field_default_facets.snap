@@ -23,7 +23,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ForFacetDefaultDemo {
                     .attributes(
                         &const {
                             [::facet::FieldAttribute::Default(Some(|ptr| unsafe {
-                                ptr.put(my_field_default_fn())
+                                ptr.put::<String>(my_field_default_fn())
                             }))]
                         },
                     )

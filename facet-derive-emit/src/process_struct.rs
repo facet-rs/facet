@@ -36,9 +36,11 @@ fn gen_field_from_pfield(
                 attribute_list.push(quote! { ::facet::FieldAttribute::Default(None) });
             }
             PFacetAttr::DefaultEquals { expr } => {
+                let field_ty = field_type;
+                let default_expr = expr;
                 attribute_list.push(quote! {
                     ::facet::FieldAttribute::Default(Some(|ptr| {
-                        unsafe { ptr.put(#expr) }
+                        unsafe { ptr.put::<#field_ty>(#default_expr) }
                     }))
                 });
             }
@@ -46,37 +48,25 @@ fn gen_field_from_pfield(
                 shape_of = quote! { shape_of_opaque };
             }
             PFacetAttr::Arbitrary { content } => {
-                // FIXME: skip_serializing_if is not supposed to be parsed here
-
-                // Handle special arbitrary attributes if needed, otherwise treat as generic Arbitrary
-                if content == "skip_serializing" {
-                    if flags_empty {
-                        flags_empty = false;
-                        flags = quote! { ::facet::FieldFlags::SKIP_SERIALIZING };
-                    } else {
-                        flags = quote! { #flags.union(::facet::FieldFlags::SKIP_SERIALIZING) };
-                    }
-                } else if content.starts_with("skip_serializing_if = ") {
-                    let predicate = content.trim_start_matches("skip_serializing_if = ").trim();
-                    let predicate_ts: TokenStream = predicate
-                        .parse()
-                        .expect("Failed to parse skip_serializing_if predicate");
-                    // Construct the expected function signature type: fn(&FieldType) -> bool
-                    let field_type_ref = {
-                        let mut tokens = TokenStream::new();
-                        tokens.extend(quote! { & });
-                        tokens.extend(field_type.clone());
-                        tokens
-                    };
-                    attribute_list.push(quote! {
-                        ::facet::FieldAttribute::SkipSerializingIf(unsafe { ::std::mem::transmute(#predicate_ts as fn(#field_type_ref) -> bool) })
-                    });
+                attribute_list.push(quote! { ::facet::FieldAttribute::Arbitrary(#content) });
+            }
+            PFacetAttr::SkipSerializing => {
+                if flags_empty {
+                    flags_empty = false;
+                    flags = quote! { ::facet::FieldFlags::SKIP_SERIALIZING };
                 } else {
-                    attribute_list.push(quote! { ::facet::FieldAttribute::Arbitrary(#content) });
+                    flags = quote! { #flags.union(::facet::FieldFlags::SKIP_SERIALIZING) };
                 }
             }
+            PFacetAttr::SkipSerializingIf { expr } => {
+                let predicate = expr;
+                let field_ty = field_type;
+                attribute_list.push(quote! {
+                    ::facet::FieldAttribute::SkipSerializingIf(unsafe { ::std::mem::transmute((#predicate) as fn(&#field_ty) -> bool) })
+                });
+            }
             // These are handled by PName or are container-level, so ignore them for field attributes.
-            PFacetAttr::Rename { .. } | PFacetAttr::RenameAll { .. } => {} // Explicitly ignore rename attributes here
+            PFacetAttr::RenameAll { .. } => {} // Explicitly ignore rename attributes here
             PFacetAttr::Transparent
             | PFacetAttr::Invariants { .. }
             | PFacetAttr::DenyUnknownFields => {}
@@ -202,7 +192,8 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 PFacetAttr::Sensitive
                 | PFacetAttr::Opaque
                 | PFacetAttr::Invariants { .. }
-                | PFacetAttr::Rename { .. } => {}
+                | PFacetAttr::SkipSerializing
+                | PFacetAttr::SkipSerializingIf { .. } => {}
             }
         }
         if items.is_empty() {
@@ -292,7 +283,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                             }
                             // Read the inner value and construct the wrapper.
                             let inner: #inner_field_type = unsafe { src_ptr.read() };
-                            Ok(unsafe { dst.put(#struct_name_ident(inner)) }) // Construct wrapper
+                            Ok(unsafe { dst.put(inner) }) // Construct wrapper
                         }
                     }
                 }

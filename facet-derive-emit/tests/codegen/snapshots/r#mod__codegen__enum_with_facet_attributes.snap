@@ -110,7 +110,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                             .attributes(
                                 &const {
                                     [::facet::FieldAttribute::Default(Some(|ptr| unsafe {
-                                        ptr.put(forty_two())
+                                        ptr.put::<i32>(forty_two())
                                     }))]
                                 },
                             )
@@ -146,9 +146,10 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                     .repr(::facet::EnumRepr::U16)
                     .build(),
             ))
-            .attributes(&[::facet::ShapeAttribute::Arbitrary(
-                "name = \"MyCoolEnum\" , repr = \"u16\"",
-            )])
+            .attributes(&[
+                ::facet::ShapeAttribute::Arbitrary("name = \"MyCoolEnum\""),
+                ::facet::ShapeAttribute::Arbitrary("repr = \"u16\""),
+            ])
             .build()
     };
 }

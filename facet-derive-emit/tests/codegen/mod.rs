@@ -604,7 +604,7 @@ fn struct_with_facet_attributes() {
         #[derive(Facet)]
         #[facet(name = "MyCoolStruct", deny_unknown_fields, version = 2)]
         struct StructWithAttributes {
-            #[facet(name = "identifier", default = "generate_id", sensitive)]
+            #[facet(name = "identifier", default = generate_id, sensitive)]
             id: String,
             #[facet(skip, version = 3)]
             internal_data: Vec<u8>,

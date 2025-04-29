@@ -107,8 +107,7 @@ pub(crate) fn gen_struct_field<'a>(fi: FieldInfo<'a>) -> TokenStream {
     let mut attribute_list: Vec<TokenStream> = vec![];
     let mut doc_lines: Vec<TokenStream> = vec![];
     let mut shape_of = quote! { shape_of };
-    // Start with the normalized name, potentially overridden by `rename`
-    let mut name_for_metadata: Cow<'a, str> = Cow::Borrowed(fi.normalized_field_name);
+    let mut display_name: Cow<'a, str> = Cow::Borrowed(fi.normalized_field_name);
     let mut has_explicit_rename = false;
 
     for attr in fi.attrs {
@@ -130,10 +129,11 @@ pub(crate) fn gen_struct_field<'a>(fi: FieldInfo<'a>) -> TokenStream {
                             attribute_list.push(quote! { ::facet::FieldAttribute::Default(None) });
                         }
                         FacetInner::DefaultEquals(inner) => {
+                            let field_ty = &fi.field_type;
                             let default_expr = inner.expr.to_token_stream();
                             attribute_list.push(quote! {
                                 ::facet::FieldAttribute::Default(Some(|ptr| {
-                                    unsafe { ptr.put(#default_expr) }
+                                    unsafe { ptr.put::<#field_ty>(#default_expr) }
                                 }))
                             });
                         }
@@ -149,6 +149,11 @@ pub(crate) fn gen_struct_field<'a>(fi: FieldInfo<'a>) -> TokenStream {
                         FacetInner::DenyUnknownFields(_) => {
                             // not applicable on fields
                         }
+                        FacetInner::Rename(rename_inner) => {
+                            let name_str = rename_inner.value.as_str().to_string();
+                            has_explicit_rename = true;
+                            display_name = Cow::Owned(name_str);
+                        }
                         FacetInner::RenameAll(_) => {
                             // not applicable on fields
                         }
@@ -162,42 +167,13 @@ pub(crate) fn gen_struct_field<'a>(fi: FieldInfo<'a>) -> TokenStream {
                             }
                         }
                         FacetInner::SkipSerializingIf(skip_serializing_if_inner) => {
-                            // Assuming FieldInfo.field_type is TokenStream
                             let predicate = skip_serializing_if_inner.expr.to_token_stream();
-                            let field_type_tokens = &fi.field_type; // Expecting TokenStream here
-                            let field_type_ref = {
-                                let mut tokens = TokenStream::new();
-                                tokens.extend(quote! { & });
-                                tokens.extend(field_type_tokens.clone());
-                                tokens
-                            };
+                            let field_ty = &fi.field_type;
                             attribute_list.push(quote! {
-                                ::facet::FieldAttribute::SkipSerializingIf(unsafe { ::std::mem::transmute(#predicate as fn(#field_type_ref) -> bool) })
+                                ::facet::FieldAttribute::SkipSerializingIf(unsafe { ::std::mem::transmute((#predicate) as fn(&#field_ty) -> bool) })
                             });
                         }
                         FacetInner::Arbitrary(tt) => {
-                            // Check for explicit rename first: #[facet(rename = "...")]
-                            if tt.len() >= 3 {
-                                if let (
-                                    Some(TokenTree::Ident(ident)),
-                                    Some(TokenTree::Punct(punct)),
-                                    Some(TokenTree::Literal(lit)),
-                                ) = (tt.first(), tt.get(1), tt.get(2))
-                                {
-                                    if *ident == "rename" && punct.as_char() == '=' {
-                                        let lit_str = lit.to_string();
-                                        let name_str = lit_str.trim_matches('"').to_string();
-                                        has_explicit_rename = true; // Mark explicit rename
-                                        attribute_list.push(quote! {
-                                            ::facet::FieldAttribute::Rename(#name_str)
-                                        });
-                                        name_for_metadata = Cow::Owned(name_str);
-                                        // Skip adding as Arbitrary since it was handled as rename
-                                        continue;
-                                    }
-                                }
-                            }
-                            // Fallback to Arbitrary for other cases
                             let attr = tt.tokens_to_string();
                             attribute_list.push(quote! {
                                 ::facet::FieldAttribute::Arbitrary(#attr)
@@ -224,7 +200,7 @@ pub(crate) fn gen_struct_field<'a>(fi: FieldInfo<'a>) -> TokenStream {
             // Don't add Rename attribute again if it was added via Arbitrary(rename=...)
             // The `has_explicit_rename` flag covers this.
             attribute_list.push(quote! { ::facet::FieldAttribute::Rename(#renamed) });
-            name_for_metadata = Cow::Owned(renamed);
+            display_name = Cow::Owned(renamed);
         }
     }
 
@@ -272,7 +248,7 @@ pub(crate) fn gen_struct_field<'a>(fi: FieldInfo<'a>) -> TokenStream {
     // Generate each field definition
     quote! {
         ::facet::Field::builder()
-            .name(#name_for_metadata)
+            .name(#display_name)
             .shape(|| ::facet::#shape_of(&|s: &#struct_name #bgp| &s.#raw_field_name))
             .offset(::core::mem::offset_of!(#struct_name #bgp,#raw_field_name) #maybe_base_field_offset)
             #maybe_flags
@@ -385,8 +361,11 @@ pub(crate) fn build_container_attributes(attributes: &[Attribute]) -> ContainerA
                         FacetInner::Transparent(_) => {
                             items.push(quote! { ::facet::ShapeAttribute::Transparent });
                         }
+                        FacetInner::Rename(_) => {
+                            panic!("Rename not supported at container level")
+                        }
                         FacetInner::RenameAll(rename_all_inner) => {
-                            let rule_str = rename_all_inner.value.value().trim_matches('"');
+                            let rule_str = rename_all_inner.value.as_str();
                             if let Some(rule) = RenameRule::from_str(rule_str) {
                                 rename_all_rule = Some(rule);
                                 items
@@ -406,9 +385,8 @@ pub(crate) fn build_container_attributes(attributes: &[Attribute]) -> ContainerA
                             // Not typically applied at container level, maybe log a warning or ignore?
                             // TODO
                         }
-                        FacetInner::Arbitrary(other) => {
-                            // Handle arbitrary attributes passed within #[facet(...)]
-                            let attr_content = other.tokens_to_string();
+                        FacetInner::Arbitrary(tt) => {
+                            let attr_content = tt.tokens_to_string();
                             items
                                 .push(quote! { ::facet::ShapeAttribute::Arbitrary(#attr_content) });
                         }

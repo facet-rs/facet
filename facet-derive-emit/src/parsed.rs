@@ -64,19 +64,27 @@ pub enum PFacetAttr {
     /// `#[facet(bleh)]`
     Arbitrary { content: String },
 
-    /// Valid in field
-    /// `#[facet(rename = "new_name")]` — rename this field
-    Rename { name: String },
-
     /// Valid in container
     /// `#[facet(rename_all = "rule")]` — rename all fields following a rule
     RenameAll { rule: RenameRule },
+
+    /// Valid in field, enum variant, or container
+    /// `#[facet(skip_serializing)]` — skip serializing this field. Like serde.
+    SkipSerializing,
+
+    /// Valid in field, enum variant, or container
+    /// `#[facet(skip_serializing_if = "func")]` — skip serializing if the function returns true.
+    SkipSerializingIf { expr: TokenStream },
 }
 
 impl PFacetAttr {
     /// Parse a `FacetAttr` attribute into a `PFacetAttr`.
     /// Pushes to `dest` for each parsed attribute.
-    pub fn parse(facet_attr: &facet_derive_parse::FacetAttr, dest: &mut Vec<PFacetAttr>) {
+    pub fn parse(
+        facet_attr: &facet_derive_parse::FacetAttr,
+        display_name: &mut String,
+        dest: &mut Vec<PFacetAttr>,
+    ) {
         use facet_derive_parse::FacetInner;
 
         for attr in facet_attr.inner.content.0.iter().map(|d| &d.value) {
@@ -93,6 +101,9 @@ impl PFacetAttr {
                     expr: default_equals.expr.to_token_stream(),
                 }),
                 FacetInner::Default(_) => dest.push(PFacetAttr::Default),
+                FacetInner::Rename(rename) => {
+                    *display_name = rename.value.as_str().to_string();
+                }
                 FacetInner::RenameAll(rename_all) => {
                     let rule_str = rename_all.value.as_str();
                     if let Some(rule) = RenameRule::from_str(rule_str) {
@@ -101,43 +112,18 @@ impl PFacetAttr {
                         panic!("Unknown #[facet(rename_all = ...)] rule: {}", rule_str);
                     }
                 }
-                FacetInner::Arbitrary(tokens) => {
-                    // tokens is Vec<TokenTree> -- reconstruct as string for Arbitrary or try to parse rename
-                    if tokens.len() >= 3 {
-                        // handle #[facet(rename = "...")]
-                        if let (
-                            Some(facet_derive_parse::TokenTree::Ident(ident)),
-                            Some(facet_derive_parse::TokenTree::Punct(punct)),
-                            Some(facet_derive_parse::TokenTree::Literal(lit)),
-                        ) = (tokens.first(), tokens.get(1), tokens.get(2))
-                        {
-                            if *ident == "rename" && punct.as_char() == '=' {
-                                // Remove quotes from Literal
-                                let lit_str = lit.to_string();
-                                let name = lit_str.trim_matches('"').to_string();
-                                dest.push(PFacetAttr::Rename { name });
-                                continue; // Skip fallback to Arbitrary
-                            }
-                        }
-                    }
-                    // fallback to Arbitrary, stringify tokens
-                    let content = tokens
-                        .iter()
-                        .map(|tt| tt.to_string())
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    dest.push(PFacetAttr::Arbitrary { content });
+                FacetInner::Arbitrary(tt) => {
+                    dest.push(PFacetAttr::Arbitrary {
+                        content: tt.tokens_to_string(),
+                    });
                 }
-                // Added missing arms
                 FacetInner::SkipSerializing(_) => {
-                    // TODO: Handle SkipSerializing - perhaps add a PFacetAttr variant?
-                    // For now, just ignore it or panic if it's an error to encounter it here.
-                    // panic!("PFacetAttr parsing does not yet support SkipSerializing");
+                    dest.push(PFacetAttr::SkipSerializing);
                 }
-                FacetInner::SkipSerializingIf(_) => {
-                    // TODO: Handle SkipSerializingIf - perhaps add a PFacetAttr variant?
-                    // For now, just ignore it or panic if it's an error to encounter it here.
-                    // panic!("PFacetAttr parsing does not yet support SkipSerializingIf");
+                FacetInner::SkipSerializingIf(skip_if) => {
+                    dest.push(PFacetAttr::SkipSerializingIf {
+                        expr: skip_if.expr.to_token_stream(),
+                    });
                 }
             }
         }
@@ -186,11 +172,7 @@ impl PName {
     ///   - If field_rename_rule is Some, use it on raw for effective name
     ///   - Else if container_rename_rule is Some, use it on raw for effective name
     ///   - Else, strip raw ("r#" if present) for effective name
-    pub fn new(
-        container_rename_rule: Option<RenameRule>,
-        field_rename_rule: Option<RenameRule>,
-        raw: IdentOrLiteral,
-    ) -> Self {
+    pub fn new(container_rename_rule: Option<RenameRule>, raw: IdentOrLiteral) -> Self {
         // Remove Rust's raw identifier prefix, e.g. r#type -> type
         let norm_raw_str = match &raw {
             IdentOrLiteral::Ident(ident) => ident
@@ -200,9 +182,7 @@ impl PName {
             IdentOrLiteral::Literal(l) => l.to_string(),
         };
 
-        let effective = if let Some(field_rule) = field_rename_rule {
-            field_rule.apply(&norm_raw_str)
-        } else if let Some(container_rule) = container_rename_rule {
+        let effective = if let Some(container_rule) = container_rename_rule {
             container_rule.apply(&norm_raw_str)
         } else {
             norm_raw_str // Use the normalized string (without r#)
@@ -298,18 +278,14 @@ pub struct PAttrs {
 
     /// rename_all rule (if any)
     pub rename_all: Option<RenameRule>,
-
-    /// rename (if any)
-    pub rename: Option<String>,
 }
 
 impl PAttrs {
-    fn parse(attrs: &[facet_derive_parse::Attribute]) -> Self {
+    fn parse(attrs: &[facet_derive_parse::Attribute], display_name: &mut String) -> Self {
         let mut doc_lines: Vec<TokenStream> = Vec::new();
         let mut facet_attrs: Vec<PFacetAttr> = Vec::new();
         let mut repr: Option<PRepr> = None;
         let mut rename_all: Option<RenameRule> = None;
-        let mut rename: Option<String> = None;
 
         for attr in attrs {
             match &attr.body.content {
@@ -340,7 +316,7 @@ impl PAttrs {
                     }
                 }
                 facet_derive_parse::AttributeInner::Facet(facet_attr) => {
-                    PFacetAttr::parse(facet_attr, &mut facet_attrs);
+                    PFacetAttr::parse(facet_attr, display_name, &mut facet_attrs);
                 }
                 _ => {
                     // Ignore unknown AttributeInner types
@@ -348,16 +324,9 @@ impl PAttrs {
             }
         }
 
-        // Find rename and rename_all rules from facet_attrs list
         for attr in &facet_attrs {
-            match attr {
-                PFacetAttr::RenameAll { rule } => {
-                    rename_all = Some(*rule);
-                }
-                PFacetAttr::Rename { name } => {
-                    rename = Some(name.clone());
-                }
-                _ => {}
+            if let PFacetAttr::RenameAll { rule } = attr {
+                rename_all = Some(*rule);
             }
         }
 
@@ -366,7 +335,6 @@ impl PAttrs {
             facet: facet_attrs,
             repr: repr.unwrap_or(PRepr::Rust),
             rename_all,
-            rename,
         }
     }
 
@@ -456,11 +424,11 @@ impl PStructField {
         ty: TokenStream,
         rename_all_rule: Option<RenameRule>,
     ) -> Self {
-        // Parse attributes for the field
-        let attrs = PAttrs::parse(attrs);
+        let initial_display_name = quote::ToTokens::to_token_stream(&name).tokens_to_string();
+        let mut display_name = initial_display_name.clone();
 
-        // Find field-level rename rule, if any
-        let field_rename = attrs.rename.clone(); // Specific #[facet(rename = "...")] on the field
+        // Parse attributes for the field
+        let attrs = PAttrs::parse(attrs, &mut display_name);
 
         // Name resolution:
         // Precedence:
@@ -469,17 +437,17 @@ impl PStructField {
         //   3. Raw field name (after stripping "r#")
         let raw = name.clone();
 
-        let p_name = if let Some(explicit_name) = field_rename {
+        let p_name = if display_name != initial_display_name {
             // If #[facet(rename = "...")] is present, use it directly as the effective name.
             // Preserve the span of the original identifier.
             PName {
                 raw: raw.clone(),
-                effective: explicit_name,
+                effective: display_name,
             }
         } else {
-            // Use PName::new logic with field_rename_rule = None, but with container_rename_rule as rename_all_rule argument.
-            let field_rename_rule = None;
-            PName::new(rename_all_rule, field_rename_rule, raw)
+            // Use PName::new logic with container_rename_rule as the rename_all_rule argument.
+            // PName::new handles the case where rename_all_rule is None.
+            PName::new(rename_all_rule, raw)
         };
 
         // Field type as TokenStream (already provided as argument)
@@ -558,19 +526,28 @@ impl PStructKind {
 
 impl PStruct {
     pub fn parse(s: &facet_derive_parse::Struct) -> Self {
-        // Parse top-level (container) attributes for the struct.
-        let attrs = PAttrs::parse(&s.attributes);
+        // Create a mutable string to pass to PAttrs::parse.
+        // While #[facet(rename = "...")] isn't typically used directly on the struct
+        // definition itself in the same way as fields, the parse function expects
+        // a mutable string to potentially modify if such an attribute is found.
+        // We initialize it with the struct's name, although its value isn't
+        // directly used for the container's name after parsing attributes.
+        let mut container_display_name = s.name.to_string();
 
+        // Parse top-level (container) attributes for the struct.
+        let attrs = PAttrs::parse(&s.attributes, &mut container_display_name);
+
+        // Extract the rename_all rule *after* parsing all attributes.
         let rename_all_rule = attrs.rename_all;
 
         // Build PContainer from struct's name and attributes.
         let container = PContainer {
             name: s.name.clone(),
-            attrs,
+            attrs, // Use the parsed attributes (which includes rename_all implicitly)
             bgp: BoundedGenericParams::parse(s.generics.as_ref()),
         };
 
-        // Pass the container's rename_all rule as argument to PStructKind::parse
+        // Pass the container's rename_all rule (extracted above) as argument to PStructKind::parse
         let kind = PStructKind::parse(&s.kind, rename_all_rule);
 
         PStruct { container, kind }

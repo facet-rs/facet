@@ -104,7 +104,7 @@ fn json_read_field_level_default_function() -> Result<()> {
 
     #[derive(Facet, Debug, PartialEq)]
     struct FieldDefaultFn {
-        #[facet(default = "default_number")]
+        #[facet(default = default_number())]
         foo: i32,
         bar: String,
     }

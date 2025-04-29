@@ -12,8 +12,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Wrapper {
                 .name("0")
                 .shape(|| ::facet::shape_of(&|s: &Wrapper| &s.0))
                 .offset(::core::mem::offset_of!(Wrapper, 0))
-                .flags(::facet::FieldFlags::EMPTY)
-                .attributes(&const { [] })
                 .build()]
         };
         let vtable = &const {

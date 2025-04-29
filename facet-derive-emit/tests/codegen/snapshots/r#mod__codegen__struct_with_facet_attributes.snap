@@ -1,6 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
-expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(name = \"MyCoolStruct\", deny_unknown_fields, version = 2)]\n        struct StructWithAttributes {\n            #[facet(name = \"identifier\", default = \"generate_id\", sensitive)]\n            id: String,\n            #[facet(skip, version = 3)]\n            internal_data: Vec<u8>,\n            #[facet(deprecated = \"Use 'new_value' instead\")]\n            old_value: i32,\n            new_value: i32,\n        }\n        \"#)"
+expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(name = \"MyCoolStruct\", deny_unknown_fields, version = 2)]\n        struct StructWithAttributes {\n            #[facet(name = \"identifier\", default = generate_id, sensitive)]\n            id: String,\n            #[facet(skip, version = 3)]\n            internal_data: Vec<u8>,\n            #[facet(deprecated = \"Use 'new_value' instead\")]\n            old_value: i32,\n            new_value: i32,\n        }\n        \"#)"
 ---
 #[used]
 static STRUCT_WITH_ATTRIBUTES_SHAPE: &'static ::facet::Shape =
@@ -14,11 +14,15 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithAttributes {
                     .name("id")
                     .shape(|| ::facet::shape_of(&|s: &StructWithAttributes| &s.id))
                     .offset(::core::mem::offset_of!(StructWithAttributes, id))
+                    .flags(::facet::FieldFlags::SENSITIVE)
                     .attributes(
                         &const {
-                            [::facet::FieldAttribute::Arbitrary(
-                                "name = \"identifier\" , default = \"generate_id\" , sensitive",
-                            )]
+                            [
+                                ::facet::FieldAttribute::Arbitrary("name = \"identifier\""),
+                                ::facet::FieldAttribute::Default(Some(|ptr| unsafe {
+                                    ptr.put::<String>(generate_id)
+                                })),
+                            ]
                         },
                     )
                     .build(),
@@ -27,7 +31,12 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithAttributes {
                     .shape(|| ::facet::shape_of(&|s: &StructWithAttributes| &s.internal_data))
                     .offset(::core::mem::offset_of!(StructWithAttributes, internal_data))
                     .attributes(
-                        &const { [::facet::FieldAttribute::Arbitrary("skip , version = 3")] },
+                        &const {
+                            [
+                                ::facet::FieldAttribute::Arbitrary("skip"),
+                                ::facet::FieldAttribute::Arbitrary("version = 3"),
+                            ]
+                        },
                     )
                     .build(),
                 ::facet::Field::builder()
@@ -66,9 +75,11 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithAttributes {
                     .fields(fields)
                     .build(),
             ))
-            .attributes(&[::facet::ShapeAttribute::Arbitrary(
-                "name = \"MyCoolStruct\" , deny_unknown_fields , version = 2",
-            )])
+            .attributes(&[
+                ::facet::ShapeAttribute::Arbitrary("name = \"MyCoolStruct\""),
+                ::facet::ShapeAttribute::DenyUnknownFields,
+                ::facet::ShapeAttribute::Arbitrary("version = 2"),
+            ])
             .build()
     };
 }

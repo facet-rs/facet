@@ -39,7 +39,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                     };
                     ::facet::Variant::builder()
                         .name("Success")
-                        .attributes(&[::facet::VariantAttribute::Rename("Success")])
                         .discriminant(0i64)
                         .fields(
                             ::facet::StructDef::builder()
@@ -80,7 +79,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                     };
                     ::facet::Variant::builder()
                         .name("Error")
-                        .attributes(&[::facet::VariantAttribute::Rename("Error")])
                         .discriminant(1i64)
                         .fields(
                             ::facet::StructDef::builder()

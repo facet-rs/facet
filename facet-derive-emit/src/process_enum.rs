@@ -145,7 +145,9 @@ fn build_variant_attributes(
     attributes: &[Attribute],
     rename_rule: Option<RenameRule>,
 ) -> ContainerAttributes {
-    let mut display_name = variant_name.to_string(); // Keep as string for `.name()`
+    let initial_display_name = variant_name.to_string();
+    let mut display_name = initial_display_name.clone();
+
     let mut attribute_list: Vec<TokenStream> = Vec::new();
     let mut rename_all_rule: Option<RenameRule> = None;
     for attr in attributes {
@@ -172,21 +174,21 @@ fn build_variant_attributes(
                     FacetInner::Transparent(_) => {
                         // not applicable to variants
                     }
+                    FacetInner::Rename(rename_inner) => {
+                        display_name = rename_inner.value.as_str().to_string();
+                    }
                     FacetInner::RenameAll(rename_all_inner) => {
-                        let rule_str = rename_all_inner.value.value().trim_matches('"');
+                        let rule_str = rename_all_inner.value.as_str();
                         if let Some(rule) = RenameRule::from_str(rule_str) {
                             rename_all_rule = Some(rule);
-                            attribute_list.push(quote! {
-                                ::facet::VariantAttribute::RenameAll(#rule_str)
-                            });
                         } else {
                             panic!("Unknown rename_all rule for enum variant: {:?}", rule_str);
                         }
                     }
                     FacetInner::Arbitrary(tt) => {
-                        let attr_str = tt.tokens_to_string();
+                        let tt = tt.tokens_to_string();
                         attribute_list.push(quote! {
-                            ::facet::VariantAttribute::Arbitrary(#attr_str)
+                            ::facet::VariantAttribute::Arbitrary(#tt)
                         });
                     }
                     FacetInner::SkipSerializing(_) => {
@@ -200,17 +202,14 @@ fn build_variant_attributes(
         }
     }
 
-    // Apply container-level rename_all rule if there's no explicit rename on the variant
-    if rename_rule.is_some() {
-        display_name = rename_rule.unwrap().apply(variant_name);
-        // Add the Rename attribute based on the container rule if it changed the name
-        if display_name != variant_name {
-            attribute_list.push(quote! {
-                ::facet::VariantAttribute::Rename(#display_name)
-            });
+    // Apply container-level rename_rule only if no specific variant rename attribute was found
+    if display_name == initial_display_name {
+        if let Some(rule) = rename_rule {
+            // Apply the rule passed down from the container (or variant for its fields)
+            display_name = rule.apply(&initial_display_name);
         }
+        // Otherwise, display_name remains the original variant_name
     }
-
     let name_token = TokenTree::Literal(Literal::string(&display_name));
 
     let tokens = if attribute_list.is_empty() {

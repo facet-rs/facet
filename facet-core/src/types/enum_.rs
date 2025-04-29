@@ -162,10 +162,6 @@ impl VariantBuilder {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
 pub enum VariantAttribute {
-    /// Specifies an alternative name for the variant (for serialization/deserialization)
-    Rename(&'static str),
-    /// Specifies a case conversion for all fields inside the variant
-    RenameAll(&'static str),
     /// Custom field attribute containing arbitrary text
     Arbitrary(&'static str),
 }
