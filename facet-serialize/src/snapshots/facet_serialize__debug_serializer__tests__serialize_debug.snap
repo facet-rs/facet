@@ -1,0 +1,5 @@
+---
+source: facet-serialize/src/debug_serializer.rs
+expression: s
+---
+{"foo":42, "bar":"Hello", "baz":true}

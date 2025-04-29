@@ -1,4 +1,5 @@
 use super::Peek;
+use core::fmt::Debug;
 use facet_core::ListDef;
 
 /// Iterator over a `PeekList`
@@ -42,6 +43,12 @@ impl<'mem, 'facet_lifetime> IntoIterator for &'mem PeekList<'mem, 'facet_lifetim
 pub struct PeekList<'mem, 'facet_lifetime> {
     pub(crate) value: Peek<'mem, 'facet_lifetime>,
     pub(crate) def: ListDef,
+}
+
+impl Debug for PeekList<'_, '_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PeekList").finish_non_exhaustive()
+    }
 }
 
 impl<'mem, 'facet_lifetime> PeekList<'mem, 'facet_lifetime> {

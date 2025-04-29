@@ -47,6 +47,12 @@ pub struct PeekMap<'mem, 'facet_lifetime> {
     pub(crate) def: MapDef,
 }
 
+impl core::fmt::Debug for PeekMap<'_, '_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PeekMap").finish_non_exhaustive()
+    }
+}
+
 impl<'mem, 'facet_lifetime> PeekMap<'mem, 'facet_lifetime> {
     /// Constructor
     pub fn new(value: Peek<'mem, 'facet_lifetime>, def: MapDef) -> Self {

@@ -1,0 +1,5 @@
+---
+source: facet-serialize/src/debug_serializer.rs
+expression: s
+---
+{"foo_bar_baz":{"foo":42, "bar":"Hello", "baz":true}, "other_things":["Variant1", {"Variant2":[123, "TupleVariant"]}, {"Variant3":{"field1":456, "field2":"StructVariant"}}], "maybe_value":42, "definitely_none":null}

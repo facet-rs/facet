@@ -12,6 +12,12 @@ pub struct PeekStruct<'mem, 'facet_lifetime> {
     pub(crate) def: StructDef,
 }
 
+impl core::fmt::Debug for PeekStruct<'_, '_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PeekStruct").finish_non_exhaustive()
+    }
+}
+
 impl<'mem, 'facet_lifetime> PeekStruct<'mem, 'facet_lifetime> {
     /// Returns the struct definition
     #[inline(always)]

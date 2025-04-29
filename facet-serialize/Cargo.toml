@@ -1,0 +1,26 @@
+[package]
+name = "facet-serialize"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Generic serializer for facet"
+keywords = ["facet", "serialization", "deserialization"]
+categories = ["encoding", "development-tools"]
+
+[features]
+default = ["std"]
+std = []
+alloc = []
+
+[dependencies]
+facet-core = { version = "0.19.0", path = "../facet-core" }
+facet-reflect = { version = "0.18.1", path = "../facet-reflect" }
+log = "0.4.27"
+
+[dev-dependencies]
+eyre = "0.6.12"
+facet = { path = "../facet" }
+facet-testhelpers = { path = "../facet-testhelpers" }
+insta = "1.43.0"

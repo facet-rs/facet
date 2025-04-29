@@ -1,0 +1,6 @@
+
+`facet-serialize` provides a common foundation for serializers, especially for self-descriptive
+formats like JSON, MessagePack, etc.
+
+It provides an iterative approach to serialization that should never blow up the
+stack, at the cost of runtime performance (see `cargo criterion` results).
