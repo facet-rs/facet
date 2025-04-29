@@ -160,7 +160,7 @@ pub trait SpezCloneIntoYes {
     /// has sufficient space allocated for type `T`.
     unsafe fn spez_clone_into<'mem>(&self, target: PtrUninit<'mem>) -> PtrMut<'mem>;
 }
-impl<T: Clone> SpezCloneIntoYes for &Spez<T> {
+impl<T: Clone> SpezCloneIntoYes for &Spez<&T> {
     unsafe fn spez_clone_into<'mem>(&self, target: PtrUninit<'mem>) -> PtrMut<'mem> {
         unsafe { target.put(self.0.clone()) }
     }

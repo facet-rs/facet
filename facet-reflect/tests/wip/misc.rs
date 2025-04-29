@@ -1,4 +1,6 @@
-use facet::{Def, EnumDef, Facet, Field, StructDef, Variant};
+use std::mem::MaybeUninit;
+
+use facet::{Def, EnumDef, Facet, Field, PtrConst, PtrUninit, StructDef, Variant};
 use facet_reflect::{ReflectError, Wip};
 
 #[derive(Facet, PartialEq, Eq, Debug)]
@@ -838,5 +840,40 @@ fn gh_354_leak_2() -> Result<(), ReflectError> {
     }
 
     leak2().unwrap_err();
+    Ok(())
+}
+
+#[test]
+fn clone_into() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static CLONES: AtomicU64 = AtomicU64::new(0);
+
+    #[derive(Facet)]
+    struct Foo;
+
+    impl Clone for Foo {
+        fn clone(&self) -> Self {
+            eprintln!("Foo is cloning...");
+            CLONES.fetch_add(1, Ordering::SeqCst);
+            eprintln!("Foo is cloned!");
+            Foo
+        }
+    }
+
+    let f: Foo = Foo;
+    assert_eq!(CLONES.load(Ordering::SeqCst), 0);
+    let _f2 = f.clone();
+    assert_eq!(CLONES.load(Ordering::SeqCst), 1);
+
+    let mut f3: MaybeUninit<Foo> = MaybeUninit::uninit();
+    let clone_into = <Foo as Facet>::SHAPE.vtable.clone_into.unwrap();
+    unsafe {
+        clone_into(PtrConst::new(&f), PtrUninit::from_maybe_uninit(&mut f3));
+    }
+    assert_eq!(CLONES.load(Ordering::SeqCst), 2);
+
     Ok(())
 }
