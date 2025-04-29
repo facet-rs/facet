@@ -504,6 +504,7 @@ dependencies = [
 name = "facet-pretty"
 version = "0.20.0"
 dependencies = [
+ "camino",
  "criterion",
  "facet",
  "facet-core",

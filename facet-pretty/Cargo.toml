@@ -15,12 +15,17 @@ keywords = [
 ]
 categories = ["development-tools", "visualization", "command-line-utilities"]
 
+[features]
+alloc = ["facet-core/alloc", "facet-reflect/alloc"]    # Enables alloc support
+camino = ["alloc", "facet-core/camino"]
+
 [dependencies]
 facet-core = { version = "0.19.0", path = "../facet-core" }
 facet-reflect = { version = "0.18.1", path = "../facet-reflect" }
 yansi = "1.0.1"
 
 [dev-dependencies]
+camino = "1.1.9"
 facet = { path = "../facet" }
 criterion = "0.5.1"
 
