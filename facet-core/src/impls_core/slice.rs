@@ -22,15 +22,9 @@ where
                                     let slice = ptr.get::<&[T]>();
                                     slice.len()
                                 })
-                                .get_item_ptr(|ptr, index| unsafe {
+                                .as_ptr(|ptr| unsafe {
                                     let slice = ptr.get::<&[T]>();
-                                    let len = slice.len();
-                                    if index >= len {
-                                        panic!(
-                                            "Index out of bounds: the len is {len} but the index is {index}"
-                                        );
-                                    }
-                                    PtrConst::new(slice.as_ptr().add(index))
+                                    PtrConst::new(slice.as_ptr())
                                 })
                                 .build()
                         },

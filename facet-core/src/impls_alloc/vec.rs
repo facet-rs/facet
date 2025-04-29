@@ -104,15 +104,9 @@ where
                                     let vec = ptr.get::<Self>();
                                     vec.len()
                                 })
-                                .get_item_ptr(|ptr, index| unsafe {
+                                .as_ptr(|ptr| unsafe {
                                     let vec = ptr.get::<Self>();
-                                    let len = vec.len();
-                                    if index >= len {
-                                        panic!(
-                                            "Index out of bounds: the len is {len} but the index is {index}"
-                                        );
-                                    }
-                                    PtrConst::new(vec.as_ptr().add(index))
+                                    PtrConst::new(vec.as_ptr())
                                 })
                                 .build()
                         },

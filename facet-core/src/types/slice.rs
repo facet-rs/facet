@@ -70,12 +70,12 @@ impl SliceDefBuilder {
 /// The `slice` parameter must point to aligned, initialized memory of the correct type.
 pub type SliceLenFn = unsafe fn(slice: PtrConst) -> usize;
 
-/// Get pointer to the item at the given index. Panics if out of bounds.
+/// Get pointer to the data buffer of the slice
 ///
 /// # Safety
 ///
 /// The `slice` parameter must point to aligned, initialized memory of the correct type.
-pub type SliceGetItemPtrFn = unsafe fn(slice: PtrConst, index: usize) -> PtrConst;
+pub type SliceAsPtrFn = unsafe fn(slice: PtrConst) -> PtrConst;
 
 /// Virtual table for a slice-like type (like `Vec<T>`,
 /// but also `HashSet<T>`, etc.)
@@ -85,8 +85,8 @@ pub type SliceGetItemPtrFn = unsafe fn(slice: PtrConst, index: usize) -> PtrCons
 pub struct SliceVTable {
     /// Number of items in the slice
     pub len: SliceLenFn,
-    /// Get pointer to the item at the given index. Panics if out of bounds.
-    pub get_item_ptr: SliceGetItemPtrFn,
+    /// Get pointer to the data buffer of the slice.
+    pub as_ptr: SliceAsPtrFn,
 }
 
 impl SliceVTable {
@@ -98,7 +98,7 @@ impl SliceVTable {
 
 /// Builds a [`SliceVTable`]
 pub struct SliceVTableBuilder {
-    get_item_ptr: Option<SliceGetItemPtrFn>,
+    as_ptr: Option<SliceAsPtrFn>,
     len: Option<SliceLenFn>,
 }
 
@@ -108,7 +108,7 @@ impl SliceVTableBuilder {
     pub const fn new() -> Self {
         Self {
             len: None,
-            get_item_ptr: None,
+            as_ptr: None,
         }
     }
 
@@ -118,9 +118,9 @@ impl SliceVTableBuilder {
         self
     }
 
-    /// Sets the get_item_ptr field
-    pub const fn get_item_ptr(mut self, f: SliceGetItemPtrFn) -> Self {
-        self.get_item_ptr = Some(f);
+    /// Sets the as_ptr field
+    pub const fn as_ptr(mut self, f: SliceAsPtrFn) -> Self {
+        self.as_ptr = Some(f);
         self
     }
 
@@ -132,7 +132,7 @@ impl SliceVTableBuilder {
     pub const fn build(self) -> SliceVTable {
         SliceVTable {
             len: self.len.unwrap(),
-            get_item_ptr: self.get_item_ptr.unwrap(),
+            as_ptr: self.as_ptr.unwrap(),
         }
     }
 }
