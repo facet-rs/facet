@@ -5,18 +5,19 @@ expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n       
 #[used]
 static API_RESPONSE_SHAPE: &'static ::facet::Shape = <ApiResponse as ::facet::Facet>::SHAPE;
 #[automatically_derived]
+#[allow(non_camel_case_types)]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
         #[allow(non_snake_case, dead_code)]
-        struct __ShadowApiResponse_Ok<'__facet> {
+        struct __Shadow_RustRepr_Struct_for_ApiResponse_Ok<'__facet> {
             _discriminant: u8,
             _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
             data: String,
         }
         #[repr(C)]
         #[allow(non_snake_case, dead_code)]
-        struct __ShadowApiResponse_Err<'__facet> {
+        struct __Shadow_RustRepr_Struct_for_ApiResponse_Err<'__facet> {
             _discriminant: u8,
             _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
             code: u32,
@@ -29,10 +30,14 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                         [::facet::Field::builder()
                             .name("responseData")
                             .shape(|| {
-                                ::facet::shape_of(&|s: &__ShadowApiResponse_Ok<'__facet>| &s.data)
+                                ::facet::shape_of(
+                                    &|s: &__Shadow_RustRepr_Struct_for_ApiResponse_Ok<'__facet>| {
+                                        &s.data
+                                    },
+                                )
                             })
                             .offset(::core::mem::offset_of!(
-                                __ShadowApiResponse_Ok<'__facet>,
+                                __Shadow_RustRepr_Struct_for_ApiResponse_Ok<'__facet>,
                                 data
                             ))
                             .build()]
@@ -54,24 +59,28 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                             ::facet::Field::builder()
                                 .name("errorCode")
                                 .shape(|| {
-                                    ::facet::shape_of(&|s: &__ShadowApiResponse_Err<'__facet>| {
-                                        &s.code
-                                    })
+                                    ::facet::shape_of(
+                                        &|s: &__Shadow_RustRepr_Struct_for_ApiResponse_Err<
+                                            '__facet,
+                                        >| &s.code,
+                                    )
                                 })
                                 .offset(::core::mem::offset_of!(
-                                    __ShadowApiResponse_Err<'__facet>,
+                                    __Shadow_RustRepr_Struct_for_ApiResponse_Err<'__facet>,
                                     code
                                 ))
                                 .build(),
                             ::facet::Field::builder()
                                 .name("errorMessage")
                                 .shape(|| {
-                                    ::facet::shape_of(&|s: &__ShadowApiResponse_Err<'__facet>| {
-                                        &s.message
-                                    })
+                                    ::facet::shape_of(
+                                        &|s: &__Shadow_RustRepr_Struct_for_ApiResponse_Err<
+                                            '__facet,
+                                        >| &s.message,
+                                    )
                                 })
                                 .offset(::core::mem::offset_of!(
-                                    __ShadowApiResponse_Err<'__facet>,
+                                    __Shadow_RustRepr_Struct_for_ApiResponse_Err<'__facet>,
                                     message
                                 ))
                                 .build(),

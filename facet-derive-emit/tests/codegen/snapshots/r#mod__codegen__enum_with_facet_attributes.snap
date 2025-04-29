@@ -6,25 +6,26 @@ expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(name = \"MyC
 static ENUM_WITH_ATTRIBUTES_SHAPE: &'static ::facet::Shape =
     <EnumWithAttributes as ::facet::Facet>::SHAPE;
 #[automatically_derived]
+#[allow(non_camel_case_types)]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
         #[allow(non_snake_case, dead_code)]
-        struct __ShadowEnumWithAttributes_InternalVariant<'__facet> {
+        struct __Shadow_RustRepr_Tuple_for_EnumWithAttributes_InternalVariant<'__facet> {
             _discriminant: u16,
             _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
             _0: i32,
         }
         #[repr(C)]
         #[allow(non_snake_case, dead_code)]
-        struct __ShadowEnumWithAttributes_VariantC<'__facet> {
+        struct __Shadow_RustRepr_Struct_for_EnumWithAttributes_VariantC<'__facet> {
             _discriminant: u16,
             _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
             secret: String,
         }
         #[repr(C)]
         #[allow(non_snake_case, dead_code)]
-        struct __ShadowEnumWithAttributes_VariantD<'__facet> {
+        struct __Shadow_RustRepr_Struct_for_EnumWithAttributes_VariantD<'__facet> {
             _discriminant: u16,
             _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
             value: i32,
@@ -42,20 +43,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                     .build(),
                 {
                     let fields: &'static [::facet::Field] = &const {
-                        [::facet::Field::builder()
-                            .name("_0")
-                            .shape(|| {
-                                ::facet::shape_of(
-                                    &|s: &__ShadowEnumWithAttributes_InternalVariant<'__facet>| {
-                                        &s._0
-                                    },
-                                )
-                            })
-                            .offset(::core::mem::offset_of!(
-                                __ShadowEnumWithAttributes_InternalVariant<'__facet>,
-                                _0
-                            ))
-                            .build()]
+                        [:: facet :: Field :: builder () . name ("0") . shape (|| :: facet :: shape_of (& | s : & __Shadow_RustRepr_Tuple_for_EnumWithAttributes_InternalVariant < '__facet > | & s . _0)) . offset (:: core :: mem :: offset_of ! (__Shadow_RustRepr_Tuple_for_EnumWithAttributes_InternalVariant < '__facet > , _0)) . build ()]
                     };
                     ::facet::Variant::builder()
                         .name("InternalVariant")
@@ -66,19 +54,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                 },
                 {
                     let fields: &'static [::facet::Field] = &const {
-                        [::facet::Field::builder()
-                            .name("secret")
-                            .shape(|| {
-                                ::facet::shape_of(&|s: &__ShadowEnumWithAttributes_VariantC<
-                                    '__facet,
-                                >| &s.secret)
-                            })
-                            .offset(::core::mem::offset_of!(
-                                __ShadowEnumWithAttributes_VariantC<'__facet>,
-                                secret
-                            ))
-                            .flags(::facet::FieldFlags::SENSITIVE)
-                            .build()]
+                        [:: facet :: Field :: builder () . name ("secret") . shape (|| :: facet :: shape_of (& | s : & __Shadow_RustRepr_Struct_for_EnumWithAttributes_VariantC < '__facet > | & s . secret)) . offset (:: core :: mem :: offset_of ! (__Shadow_RustRepr_Struct_for_EnumWithAttributes_VariantC < '__facet > , secret)) . flags (:: facet :: FieldFlags :: SENSITIVE) . build ()]
                     };
                     ::facet::Variant::builder()
                         .name("VariantC")
@@ -96,25 +72,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                 },
                 {
                     let fields: &'static [::facet::Field] = &const {
-                        [::facet::Field::builder()
-                            .name("value")
-                            .shape(|| {
-                                ::facet::shape_of(&|s: &__ShadowEnumWithAttributes_VariantD<
-                                    '__facet,
-                                >| &s.value)
-                            })
-                            .offset(::core::mem::offset_of!(
-                                __ShadowEnumWithAttributes_VariantD<'__facet>,
-                                value
-                            ))
-                            .attributes(
-                                &const {
-                                    [::facet::FieldAttribute::Default(Some(|ptr| unsafe {
-                                        ptr.put::<i32>(forty_two())
-                                    }))]
-                                },
-                            )
-                            .build()]
+                        [:: facet :: Field :: builder () . name ("value") . shape (|| :: facet :: shape_of (& | s : & __Shadow_RustRepr_Struct_for_EnumWithAttributes_VariantD < '__facet > | & s . value)) . offset (:: core :: mem :: offset_of ! (__Shadow_RustRepr_Struct_for_EnumWithAttributes_VariantD < '__facet > , value)) . attributes (& const { [:: facet :: FieldAttribute :: Default (Some (| ptr | { unsafe { ptr . put :: < i32 > (forty_two ()) } }))] }) . build ()]
                     };
                     ::facet::Variant::builder()
                         .name("VariantD")
@@ -146,10 +104,14 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                     .repr(::facet::EnumRepr::U16)
                     .build(),
             ))
-            .attributes(&[
-                ::facet::ShapeAttribute::Arbitrary("name = \"MyCoolEnum\""),
-                ::facet::ShapeAttribute::Arbitrary("repr = \"u16\""),
-            ])
+            .attributes(
+                &const {
+                    [
+                        ::facet::ShapeAttribute::Arbitrary("name = \"MyCoolEnum\""),
+                        ::facet::ShapeAttribute::Arbitrary("repr = \"u16\""),
+                    ]
+                },
+            )
             .build()
     };
 }

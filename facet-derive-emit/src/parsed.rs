@@ -1,5 +1,5 @@
 use crate::{BoundedGenericParams, RenameRule};
-use facet_derive_parse::{Ident, ToTokens, TokenStream};
+use facet_derive_parse::{Ident, ReprInner, ToTokens, TokenStream};
 use quote::quote;
 
 /// For struct fields, they can either be identifiers (`my_struct.foo`)
@@ -197,34 +197,119 @@ impl PName {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PRepr {
-    Rust,
     Transparent,
-    C,
-    Primitive(PrimitiveRepr),
+    Rust(Option<PrimitiveRepr>),
+    C(Option<PrimitiveRepr>),
 }
 
 impl PRepr {
     /// Parse a `&str` (for example a value coming from #[repr(...)] attribute)
     /// into a `PRepr` variant.
-    pub fn parse(s: &str) -> Option<Self> {
-        let s = s.trim();
-        match s {
-            "C" | "c" => Some(PRepr::C),
-            "Rust" | "rust" => Some(PRepr::Rust),
-            "transparent" => Some(PRepr::Transparent),
-            "u8" => Some(PRepr::Primitive(PrimitiveRepr::U8)),
-            "u16" => Some(PRepr::Primitive(PrimitiveRepr::U16)),
-            "u32" => Some(PRepr::Primitive(PrimitiveRepr::U32)),
-            "u64" => Some(PRepr::Primitive(PrimitiveRepr::U64)),
-            "u128" => Some(PRepr::Primitive(PrimitiveRepr::U128)),
-            "i8" => Some(PRepr::Primitive(PrimitiveRepr::I8)),
-            "i16" => Some(PRepr::Primitive(PrimitiveRepr::I16)),
-            "i32" => Some(PRepr::Primitive(PrimitiveRepr::I32)),
-            "i64" => Some(PRepr::Primitive(PrimitiveRepr::I64)),
-            "i128" => Some(PRepr::Primitive(PrimitiveRepr::I128)),
-            "usize" => Some(PRepr::Primitive(PrimitiveRepr::Usize)),
-            "isize" => Some(PRepr::Primitive(PrimitiveRepr::Isize)),
-            _ => None,
+    pub fn parse(s: &ReprInner) -> Option<Self> {
+        enum ReprKind {
+            Rust,
+            C,
+        }
+
+        let items = s.attr.content.0.as_slice();
+        let mut repr_kind: Option<ReprKind> = None;
+        let mut primitive_repr: Option<PrimitiveRepr> = None;
+        let mut is_transparent = false;
+
+        for token_delimited in items {
+            let token_str = token_delimited.value.to_string();
+            match token_str.as_str() {
+                "C" | "c" => {
+                    if repr_kind.is_some() && !matches!(repr_kind, Some(ReprKind::C)) {
+                        panic!(
+                            "Conflicting repr kinds found in #[repr(...)]. Cannot mix C/c and Rust/rust."
+                        );
+                    }
+                    if is_transparent {
+                        panic!(
+                            "Conflicting repr kinds found in #[repr(...)]. Cannot mix C/c and transparent."
+                        );
+                    }
+                    // If primitive is already set, and kind is not already C, ensure kind becomes C.
+                    // Example: #[repr(u8, C)] is valid.
+                    repr_kind = Some(ReprKind::C);
+                }
+                "Rust" | "rust" => {
+                    if repr_kind.is_some() && !matches!(repr_kind, Some(ReprKind::Rust)) {
+                        panic!(
+                            "Conflicting repr kinds found in #[repr(...)]. Cannot mix Rust/rust and C/c."
+                        );
+                    }
+                    if is_transparent {
+                        panic!(
+                            "Conflicting repr kinds found in #[repr(...)]. Cannot mix Rust/rust and transparent."
+                        );
+                    }
+                    // If primitive is already set, and kind is not already Rust, ensure kind becomes Rust.
+                    // Example: #[repr(i32, Rust)] is valid.
+                    repr_kind = Some(ReprKind::Rust);
+                }
+                "transparent" => {
+                    if repr_kind.is_some() || primitive_repr.is_some() {
+                        panic!(
+                            "Conflicting repr kinds found in #[repr(...)]. Cannot mix transparent with C/c, Rust/rust, or primitive types."
+                        );
+                    }
+                    // Allow duplicate "transparent", although weird.
+                    is_transparent = true;
+                }
+                prim_str @ ("u8" | "u16" | "u32" | "u64" | "u128" | "i8" | "i16" | "i32"
+                | "i64" | "i128" | "usize" | "isize") => {
+                    let current_prim = match prim_str {
+                        "u8" => PrimitiveRepr::U8,
+                        "u16" => PrimitiveRepr::U16,
+                        "u32" => PrimitiveRepr::U32,
+                        "u64" => PrimitiveRepr::U64,
+                        "u128" => PrimitiveRepr::U128,
+                        "i8" => PrimitiveRepr::I8,
+                        "i16" => PrimitiveRepr::I16,
+                        "i32" => PrimitiveRepr::I32,
+                        "i64" => PrimitiveRepr::I64,
+                        "i128" => PrimitiveRepr::I128,
+                        "usize" => PrimitiveRepr::Usize,
+                        "isize" => PrimitiveRepr::Isize,
+                        _ => unreachable!(), // Already matched by outer pattern
+                    };
+                    if is_transparent {
+                        panic!(
+                            "Conflicting repr kinds found in #[repr(...)]. Cannot mix primitive types and transparent."
+                        );
+                    }
+                    if primitive_repr.is_some() {
+                        panic!("Multiple primitive types specified in #[repr(...)].");
+                    }
+                    primitive_repr = Some(current_prim);
+                }
+                unknown => {
+                    // Standard #[repr] only allows specific identifiers.
+                    panic!(
+                        "Unknown token '{}' in #[repr(...)]. Only C, Rust, transparent, or primitive integer types allowed.",
+                        unknown
+                    );
+                }
+            }
+        }
+
+        // Final construction
+        if is_transparent {
+            if repr_kind.is_some() || primitive_repr.is_some() {
+                // This check should be redundant due to checks inside the loop, but added for safety.
+                panic!("Internal error: transparent repr mixed with other kinds after parsing.");
+            }
+            Some(PRepr::Transparent)
+        } else {
+            // Default to Rust if only a primitive type is provided (e.g., #[repr(u8)]) or if nothing is specified.
+            // If C/c or Rust/rust was specified, use that.
+            let final_kind = repr_kind.unwrap_or(ReprKind::Rust);
+            match final_kind {
+                ReprKind::Rust => Some(PRepr::Rust(primitive_repr)),
+                ReprKind::C => Some(PRepr::C(primitive_repr)),
+            }
         }
     }
 }
@@ -294,6 +379,10 @@ impl PAttrs {
                     doc_lines.push(doc_attr.value.to_token_stream());
                 }
                 facet_derive_parse::AttributeInner::Repr(repr_attr) => {
+                    if repr.is_some() {
+                        panic!("Multiple #[repr] attributes found");
+                    }
+
                     // Parse repr attribute, e.g. #[repr(C)], #[repr(transparent)], #[repr(u8)]
                     // repr_attr.attr.content is a Vec<Delimited<Ident, Operator<','>>>
                     // which represents something like ["C"], or ["u8"], or ["transparent"]
@@ -301,19 +390,15 @@ impl PAttrs {
                     // We should parse each possible repr kind. But usually there's only one item.
                     //
                     // We'll take the first one and parse it, ignoring the rest.
-                    let repr_items = &repr_attr.attr.content;
-                    if let Some(first) = repr_items.0.first() {
-                        let repr_kind = first.value.to_string();
-                        match PRepr::parse(repr_kind.as_str()) {
-                            Some(parsed) => repr = Some(parsed),
-                            None => {
-                                panic!("Unknown #[repr] attribute: {}", repr_kind);
-                            }
+                    repr = match PRepr::parse(repr_attr) {
+                        Some(parsed) => Some(parsed),
+                        None => {
+                            panic!(
+                                "Unknown #[repr] attribute: {}",
+                                repr_attr.tokens_to_string()
+                            );
                         }
-                    } else {
-                        // No content: default to Rust
-                        repr = Some(PRepr::Rust);
-                    }
+                    };
                 }
                 facet_derive_parse::AttributeInner::Facet(facet_attr) => {
                     PFacetAttr::parse(facet_attr, display_name, &mut facet_attrs);
@@ -333,7 +418,7 @@ impl PAttrs {
         Self {
             doc: doc_lines,
             facet: facet_attrs,
-            repr: repr.unwrap_or(PRepr::Rust),
+            repr: repr.unwrap_or(PRepr::Rust(None)),
             rename_all,
         }
     }
@@ -370,6 +455,63 @@ pub struct PStruct {
 pub struct PEnum {
     /// Container information
     pub container: PContainer,
+    /// The variants of the enum, in parsed form
+    pub variants: Vec<PVariant>,
+    /// The representation (repr) for the enum (e.g., C, u8, etc.)
+    pub repr: PRepr,
+}
+
+impl PEnum {
+    /// Parse a `facet_derive_parse::Enum` into a `PEnum`.
+    pub fn parse(e: &facet_derive_parse::Enum) -> Self {
+        let mut container_display_name = e.name.to_string();
+
+        // Parse container-level attributes
+        let attrs = PAttrs::parse(&e.attributes, &mut container_display_name);
+
+        // Get the container-level rename_all rule
+        let container_rename_all_rule = attrs.rename_all;
+
+        // Build PContainer
+        let container = PContainer {
+            name: e.name.clone(),
+            attrs,
+            bgp: BoundedGenericParams::parse(e.generics.as_ref()),
+        };
+
+        // Parse variants, passing the container's rename_all rule
+        let variants = e
+            .body
+            .content
+            .0
+            .iter()
+            .map(|delim| PVariant::parse(&delim.value, container_rename_all_rule))
+            .collect();
+
+        // Get the repr attribute if present, or default to Rust(None)
+        let mut repr = None;
+        for attr in &e.attributes {
+            if let facet_derive_parse::AttributeInner::Repr(repr_attr) = &attr.body.content {
+                // Parse repr attribute, will panic if invalid, just like struct repr parser
+                repr = match PRepr::parse(repr_attr) {
+                    Some(parsed) => Some(parsed),
+                    None => panic!(
+                        "Unknown #[repr] attribute: {}",
+                        repr_attr.tokens_to_string()
+                    ),
+                };
+                break; // Only use the first #[repr] attribute
+            }
+        }
+        // Default to Rust(None) if not present, to match previous behavior, but enums will typically require repr(C) or a primitive in process_enum
+        let repr = repr.unwrap_or(PRepr::Rust(None));
+
+        PEnum {
+            container,
+            variants,
+            repr,
+        }
+    }
 }
 
 /// Parsed field
@@ -390,7 +532,7 @@ pub struct PStructField {
 
 impl PStructField {
     /// Parse a named struct field (usual struct).
-    fn from_struct_field(
+    pub(crate) fn from_struct_field(
         f: &facet_derive_parse::StructField,
         rename_all_rule: Option<RenameRule>,
     ) -> Self {
@@ -405,7 +547,7 @@ impl PStructField {
 
     /// Parse a tuple (unnamed) field for tuple structs or enum tuple variants.
     /// The index is converted to an identifier like `_0`, `_1`, etc.
-    fn from_enum_field(
+    pub(crate) fn from_enum_field(
         attrs: &[facet_derive_parse::Attribute],
         idx: usize,
         typ: &facet_derive_parse::VerbatimUntil<facet_derive_parse::Comma>,
@@ -551,5 +693,127 @@ impl PStruct {
         let kind = PStructKind::parse(&s.kind, rename_all_rule);
 
         PStruct { container, kind }
+    }
+}
+
+/// Parsed enum variant kind
+pub enum PVariantKind {
+    /// Unit variant, e.g., `Variant`.
+    Unit,
+    /// Tuple variant, e.g., `Variant(u32, String)`.
+    Tuple { fields: Vec<PStructField> },
+    /// Struct variant, e.g., `Variant { field1: u32, field2: String }`.
+    Struct { fields: Vec<PStructField> },
+}
+
+/// Parsed enum variant
+pub struct PVariant {
+    /// Name of the variant (with rename rules applied)
+    pub name: PName,
+    /// Attributes of the variant
+    pub attrs: PAttrs,
+    /// Kind of the variant (unit, tuple, or struct)
+    pub kind: PVariantKind,
+    /// Optional explicit discriminant (`= literal`)
+    pub discriminant: Option<facet_derive_parse::Literal>,
+}
+
+impl PVariant {
+    /// Parses an `EnumVariantLike` from `facet_derive_parse` into a `PVariant`.
+    ///
+    /// Requires the container-level `rename_all` rule to correctly determine the
+    /// effective name of the variant itself. The variant's own `rename_all` rule
+    /// (if present) will be stored in `attrs.rename_all` and used for its fields.
+    fn parse(
+        var_like: &facet_derive_parse::EnumVariantLike,
+        container_rename_all_rule: Option<RenameRule>,
+    ) -> Self {
+        use facet_derive_parse::{EnumVariantData, StructVariant, TupleVariant, UnitVariant};
+
+        let (raw_name_ident, attributes) = match &var_like.variant {
+            // Fix: Changed var_like.value.variant to var_like.variant
+            EnumVariantData::Unit(UnitVariant { name, attributes })
+            | EnumVariantData::Tuple(TupleVariant {
+                name, attributes, ..
+            })
+            | EnumVariantData::Struct(StructVariant {
+                name, attributes, ..
+            }) => (name, attributes),
+        };
+
+        let initial_display_name = raw_name_ident.to_string();
+        let mut display_name = initial_display_name.clone();
+
+        // Parse variant attributes, potentially modifying display_name if #[facet(rename=...)] is found
+        let attrs = PAttrs::parse(attributes.as_slice(), &mut display_name); // Fix: Pass attributes as a slice
+
+        // Determine the variant's effective name
+        let name = if display_name != initial_display_name {
+            // #[facet(rename=...)] was present on the variant
+            PName {
+                raw: IdentOrLiteral::Ident(raw_name_ident.clone()),
+                effective: display_name,
+            }
+        } else {
+            // Use container's rename_all rule if no variant-specific rename found
+            PName::new(
+                container_rename_all_rule,
+                IdentOrLiteral::Ident(raw_name_ident.clone()),
+            )
+        };
+
+        // Extract the variant's own rename_all rule to apply to its fields
+        let variant_field_rename_rule = attrs.rename_all;
+
+        // Parse the variant kind and its fields
+        let kind = match &var_like.variant {
+            // Fix: Changed var_like.value.variant to var_like.variant
+            EnumVariantData::Unit(_) => PVariantKind::Unit,
+            EnumVariantData::Tuple(TupleVariant { fields, .. }) => {
+                let parsed_fields = fields
+                    .content
+                    .0
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, delim)| {
+                        PStructField::from_enum_field(
+                            &delim.value.attributes,
+                            idx,
+                            &delim.value.typ,
+                            variant_field_rename_rule, // Use variant's rule for its fields
+                        )
+                    })
+                    .collect();
+                PVariantKind::Tuple {
+                    fields: parsed_fields,
+                }
+            }
+            EnumVariantData::Struct(StructVariant { fields, .. }) => {
+                let parsed_fields = fields
+                    .content
+                    .0
+                    .iter()
+                    .map(|delim| {
+                        PStructField::from_struct_field(
+                            &delim.value,
+                            variant_field_rename_rule, // Use variant's rule for its fields
+                        )
+                    })
+                    .collect();
+                PVariantKind::Struct {
+                    fields: parsed_fields,
+                }
+            }
+        };
+
+        // Extract the discriminant literal if present
+        let discriminant = var_like.discriminant.as_ref().map(|d| d.second.clone());
+
+        PVariant {
+            name,
+            attrs,
+            kind,
+            discriminant,
+        }
     }
 }

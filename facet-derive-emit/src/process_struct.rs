@@ -2,10 +2,11 @@ use super::*;
 use quote::{format_ident, quote};
 
 /// Generates the `::facet::Field` definition `TokenStream` from a `PStructField`.
-fn gen_field_from_pfield(
+pub(crate) fn gen_field_from_pfield(
     field: &PStructField,
     struct_name: &Ident,
     bgp: &BoundedGenericParams,
+    base_offset: Option<TokenStream>,
 ) -> TokenStream {
     let field_name_effective = &field.name.effective;
     let field_name_raw = &field.name.raw;
@@ -91,13 +92,23 @@ fn gen_field_from_pfield(
         quote! { .flags(#flags) }
     };
 
+    // Calculate the final offset, incorporating the base_offset if present
+    let final_offset = match base_offset {
+        Some(base) => {
+            quote! { #base + ::core::mem::offset_of!(#struct_name #bgp_without_bounds, #field_name_raw) }
+        }
+        None => {
+            quote! { ::core::mem::offset_of!(#struct_name #bgp_without_bounds, #field_name_raw) }
+        }
+    };
+
     quote! {
         ::facet::Field::builder()
             // Use the effective name (after rename rules) for metadata
             .name(#field_name_effective)
             // Use the raw field name/index TokenStream for shape_of and offset_of
             .shape(|| ::facet::#shape_of(&|s: &#struct_name #bgp_without_bounds| &s.#field_name_raw))
-            .offset(::core::mem::offset_of!(#struct_name #bgp_without_bounds, #field_name_raw))
+            .offset(#final_offset)
             #maybe_flags
             #maybe_attributes
             #maybe_field_doc
@@ -127,7 +138,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
             let kind = quote!(::facet::StructKind::Struct);
             let fields_vec = fields
                 .iter()
-                .map(|field| gen_field_from_pfield(field, struct_name, &ps.container.bgp))
+                .map(|field| gen_field_from_pfield(field, struct_name, &ps.container.bgp, None))
                 .collect::<Vec<_>>();
             (kind, fields_vec)
         }
@@ -135,7 +146,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
             let kind = quote!(::facet::StructKind::TupleStruct);
             let fields_vec = fields
                 .iter()
-                .map(|field| gen_field_from_pfield(field, struct_name, &ps.container.bgp))
+                .map(|field| gen_field_from_pfield(field, struct_name, &ps.container.bgp, None))
                 .collect::<Vec<_>>();
             (kind, fields_vec)
         }

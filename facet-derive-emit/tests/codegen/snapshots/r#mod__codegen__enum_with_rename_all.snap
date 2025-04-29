@@ -5,18 +5,19 @@ expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n       
 #[used]
 static API_RESPONSE_SHAPE: &'static ::facet::Shape = <ApiResponse as ::facet::Facet>::SHAPE;
 #[automatically_derived]
+#[allow(non_camel_case_types)]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
         #[allow(non_snake_case, dead_code)]
-        struct __ShadowApiResponse_OkResponse<'__facet> {
+        struct __Shadow_RustRepr_Struct_for_ApiResponse_OkResponse<'__facet> {
             _discriminant: u8,
             _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
             data: String,
         }
         #[repr(C)]
         #[allow(non_snake_case, dead_code)]
-        struct __ShadowApiResponse_ErrorResponse<'__facet> {
+        struct __Shadow_RustRepr_Struct_for_ApiResponse_ErrorResponse<'__facet> {
             _discriminant: u8,
             _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
             code: u32,
@@ -29,12 +30,14 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                         [::facet::Field::builder()
                             .name("responseData")
                             .shape(|| {
-                                ::facet::shape_of(&|s: &__ShadowApiResponse_OkResponse<
-                                    '__facet,
-                                >| &s.data)
+                                ::facet::shape_of(
+                                    &|s: &__Shadow_RustRepr_Struct_for_ApiResponse_OkResponse<
+                                        '__facet,
+                                    >| &s.data,
+                                )
                             })
                             .offset(::core::mem::offset_of!(
-                                __ShadowApiResponse_OkResponse<'__facet>,
+                                __Shadow_RustRepr_Struct_for_ApiResponse_OkResponse<'__facet>,
                                 data
                             ))
                             .build()]
@@ -52,36 +55,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                 },
                 {
                     let fields: &'static [::facet::Field] = &const {
-                        [
-                            ::facet::Field::builder()
-                                .name("code")
-                                .shape(|| {
-                                    ::facet::shape_of(&|s: &__ShadowApiResponse_ErrorResponse<
-                                        '__facet,
-                                    >| {
-                                        &s.code
-                                    })
-                                })
-                                .offset(::core::mem::offset_of!(
-                                    __ShadowApiResponse_ErrorResponse<'__facet>,
-                                    code
-                                ))
-                                .build(),
-                            ::facet::Field::builder()
-                                .name("message")
-                                .shape(|| {
-                                    ::facet::shape_of(&|s: &__ShadowApiResponse_ErrorResponse<
-                                        '__facet,
-                                    >| {
-                                        &s.message
-                                    })
-                                })
-                                .offset(::core::mem::offset_of!(
-                                    __ShadowApiResponse_ErrorResponse<'__facet>,
-                                    message
-                                ))
-                                .build(),
-                        ]
+                        [:: facet :: Field :: builder () . name ("code") . shape (|| :: facet :: shape_of (& | s : & __Shadow_RustRepr_Struct_for_ApiResponse_ErrorResponse < '__facet > | & s . code)) . offset (:: core :: mem :: offset_of ! (__Shadow_RustRepr_Struct_for_ApiResponse_ErrorResponse < '__facet > , code)) . build () , :: facet :: Field :: builder () . name ("message") . shape (|| :: facet :: shape_of (& | s : & __Shadow_RustRepr_Struct_for_ApiResponse_ErrorResponse < '__facet > | & s . message)) . offset (:: core :: mem :: offset_of ! (__Shadow_RustRepr_Struct_for_ApiResponse_ErrorResponse < '__facet > , message)) . build ()]
                     };
                     ::facet::Variant::builder()
                         .name("error_response")
@@ -113,7 +87,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                     .repr(::facet::EnumRepr::U8)
                     .build(),
             ))
-            .attributes(&[::facet::ShapeAttribute::RenameAll("snake_case")])
+            .attributes(&const { [::facet::ShapeAttribute::RenameAll("")] })
             .build()
     };
 }

@@ -5,18 +5,19 @@ expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n       
 #[used]
 static CONFIG_VALUE_SHAPE: &'static ::facet::Shape = <ConfigValue as ::facet::Facet>::SHAPE;
 #[automatically_derived]
+#[allow(non_camel_case_types)]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
         #[allow(non_snake_case, dead_code)]
-        struct __ShadowConfigValue_Text<'__facet> {
+        struct __Shadow_RustRepr_Tuple_for_ConfigValue_Text<'__facet> {
             _discriminant: u8,
             _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
             _0: String,
         }
         #[repr(C)]
         #[allow(non_snake_case, dead_code)]
-        struct __ShadowConfigValue_Number<'__facet> {
+        struct __Shadow_RustRepr_Struct_for_ConfigValue_Number<'__facet> {
             _discriminant: u8,
             _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
             value: f64,
@@ -24,7 +25,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
         }
         #[repr(C)]
         #[allow(non_snake_case, dead_code)]
-        struct __ShadowConfigValue_Boolean<'__facet> {
+        struct __Shadow_RustRepr_Tuple_for_ConfigValue_Boolean<'__facet> {
             _discriminant: u8,
             _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
             _0: bool,
@@ -34,12 +35,16 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
                 {
                     let fields: &'static [::facet::Field] = &const {
                         [::facet::Field::builder()
-                            .name("_0")
+                            .name("0")
                             .shape(|| {
-                                ::facet::shape_of(&|s: &__ShadowConfigValue_Text<'__facet>| &s._0)
+                                ::facet::shape_of(
+                                    &|s: &__Shadow_RustRepr_Tuple_for_ConfigValue_Text<
+                                        '__facet,
+                                    >| &s._0,
+                                )
                             })
                             .offset(::core::mem::offset_of!(
-                                __ShadowConfigValue_Text<'__facet>,
+                                __Shadow_RustRepr_Tuple_for_ConfigValue_Text<'__facet>,
                                 _0
                             ))
                             .build()]
@@ -51,36 +56,39 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
                         .build()
                 },
                 {
-                    let fields: &'static [::facet::Field] =
-                        &const {
-                            [
-                                ::facet::Field::builder()
-                                    .name("numValue")
-                                    .shape(|| {
-                                        ::facet::shape_of(
-                                            &|s: &__ShadowConfigValue_Number<'__facet>| &s.value,
-                                        )
-                                    })
-                                    .offset(::core::mem::offset_of!(
-                                        __ShadowConfigValue_Number<'__facet>,
-                                        value
-                                    ))
-                                    .build(),
-                                ::facet::Field::builder()
-                                    .name("unitName")
-                                    .shape(|| {
-                                        ::facet::shape_of(
-                                            &|s: &__ShadowConfigValue_Number<'__facet>| &s.unit,
-                                        )
-                                    })
-                                    .offset(::core::mem::offset_of!(
-                                        __ShadowConfigValue_Number<'__facet>,
-                                        unit
-                                    ))
-                                    .flags(::facet::FieldFlags::SENSITIVE)
-                                    .build(),
-                            ]
-                        };
+                    let fields: &'static [::facet::Field] = &const {
+                        [
+                            ::facet::Field::builder()
+                                .name("numValue")
+                                .shape(|| {
+                                    ::facet::shape_of(
+                                        &|s: &__Shadow_RustRepr_Struct_for_ConfigValue_Number<
+                                            '__facet,
+                                        >| &s.value,
+                                    )
+                                })
+                                .offset(::core::mem::offset_of!(
+                                    __Shadow_RustRepr_Struct_for_ConfigValue_Number<'__facet>,
+                                    value
+                                ))
+                                .build(),
+                            ::facet::Field::builder()
+                                .name("unitName")
+                                .shape(|| {
+                                    ::facet::shape_of(
+                                        &|s: &__Shadow_RustRepr_Struct_for_ConfigValue_Number<
+                                            '__facet,
+                                        >| &s.unit,
+                                    )
+                                })
+                                .offset(::core::mem::offset_of!(
+                                    __Shadow_RustRepr_Struct_for_ConfigValue_Number<'__facet>,
+                                    unit
+                                ))
+                                .flags(::facet::FieldFlags::SENSITIVE)
+                                .build(),
+                        ]
+                    };
                     ::facet::Variant::builder()
                         .name("NumberValue")
                         .discriminant(1i64)
@@ -95,14 +103,16 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
                 {
                     let fields: &'static [::facet::Field] = &const {
                         [::facet::Field::builder()
-                            .name("_0")
+                            .name("0")
                             .shape(|| {
-                                ::facet::shape_of(&|s: &__ShadowConfigValue_Boolean<'__facet>| {
-                                    &s._0
-                                })
+                                ::facet::shape_of(
+                                    &|s: &__Shadow_RustRepr_Tuple_for_ConfigValue_Boolean<
+                                        '__facet,
+                                    >| &s._0,
+                                )
                             })
                             .offset(::core::mem::offset_of!(
-                                __ShadowConfigValue_Boolean<'__facet>,
+                                __Shadow_RustRepr_Tuple_for_ConfigValue_Boolean<'__facet>,
                                 _0
                             ))
                             .build()]

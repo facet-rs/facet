@@ -5,6 +5,7 @@ expression: "expand(r#\"\n        #[repr(u8)]\n        #[derive(Facet)]\n       
 #[used]
 static TEST_SHAPE: &'static ::facet::Shape = <Test as ::facet::Facet>::SHAPE;
 #[automatically_derived]
+#[allow(non_camel_case_types)]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for Test {
     const SHAPE: &'static ::facet::Shape = &const {
         let __facet_variants: &'static [::facet::Variant] = &const {

@@ -5,6 +5,7 @@ expression: "expand(r#\"\n        /// This is an enum\n        #[derive(Facet)]\
 #[used]
 static MY_ENUM_SHAPE: &'static ::facet::Shape = <MyEnum as ::facet::Facet>::SHAPE;
 #[automatically_derived]
+#[allow(non_camel_case_types)]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for MyEnum {
     const SHAPE: &'static ::facet::Shape = &const {
         let __facet_variants: &'static [::facet::Variant] = &const {
