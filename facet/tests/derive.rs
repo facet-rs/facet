@@ -1,7 +1,5 @@
 use core::{fmt::Debug, mem::offset_of};
-use facet::{
-    Facet, FieldFlags, SequenceType, Shape, StructKind, StructType, Type, UserSubtype, UserType,
-};
+use facet::{Facet, FieldFlags, SequenceType, Shape, StructKind, StructType, Type, UserType};
 
 #[test]
 fn unit_struct() {
@@ -17,11 +15,7 @@ fn unit_struct() {
     assert_eq!(layout.size(), 0);
     assert_eq!(layout.align(), 1);
 
-    if let Type::User(UserType {
-        subtype: UserSubtype::Struct(StructType { kind, fields, .. }),
-        ..
-    }) = shape.ty
-    {
+    if let Type::User(UserType::Struct(StructType { kind, fields, .. })) = shape.ty {
         assert_eq!(kind, StructKind::Unit);
         assert_eq!(fields.len(), 0);
     } else {
@@ -48,11 +42,7 @@ fn simple_struct() {
         assert_eq!(layout.size(), 32);
         assert_eq!(layout.align(), 8);
 
-        if let Type::User(UserType {
-            subtype: UserSubtype::Struct(StructType { kind, fields, .. }),
-            ..
-        }) = shape.ty
-        {
+        if let Type::User(UserType::Struct(StructType { kind, fields, .. })) = shape.ty {
             assert_eq!(kind, StructKind::Struct);
             assert_eq!(fields.len(), 2);
 
@@ -89,18 +79,11 @@ fn struct_with_sensitive_field() {
     if !cfg!(miri) {
         let shape = Blah::SHAPE;
 
-        if let Type::User(UserType {
-            subtype: UserSubtype::Struct(StructType { fields, .. }),
-            ..
-        }) = shape.ty
-        {
+        if let Type::User(UserType::Struct(StructType { fields, .. })) = shape.ty {
             let bar_field = &fields[1];
             assert_eq!(bar_field.name, "bar");
             match shape.ty {
-                Type::User(UserType {
-                    subtype: UserSubtype::Struct(struct_kind),
-                    ..
-                }) => {
+                Type::User(UserType::Struct(struct_kind)) => {
                     assert!(!struct_kind.fields[0].flags.contains(FieldFlags::SENSITIVE));
                     assert!(struct_kind.fields[1].flags.contains(FieldFlags::SENSITIVE));
                 }
@@ -168,11 +151,7 @@ fn struct_field_doc_comment() {
         bar: u32,
     }
 
-    if let Type::User(UserType {
-        subtype: UserSubtype::Struct(StructType { fields, .. }),
-        ..
-    }) = Foo::SHAPE.ty
-    {
+    if let Type::User(UserType::Struct(StructType { fields, .. })) = Foo::SHAPE.ty {
         assert_eq!(fields[0].doc, &[" This field has a doc comment"]);
     } else {
         panic!("Expected Struct innards");
@@ -191,11 +170,7 @@ fn tuple_struct_field_doc_comment_test() {
 
     let shape = MyTupleStruct::SHAPE;
 
-    if let Type::User(UserType {
-        subtype: UserSubtype::Struct(StructType { fields, kind, .. }),
-        ..
-    }) = shape.ty
-    {
+    if let Type::User(UserType::Struct(StructType { fields, kind, .. })) = shape.ty {
         assert_eq!(kind, StructKind::TupleStruct);
         assert_eq!(fields[0].doc, &[" This is a documented field"]);
         assert_eq!(fields[1].doc, &[" This is another documented field"]);
@@ -229,11 +204,7 @@ fn enum_variants_with_comments() {
 
     let shape = CommentedEnum::SHAPE;
 
-    if let Type::User(UserType {
-        subtype: UserSubtype::Enum(enum_kind),
-        ..
-    }) = shape.ty
-    {
+    if let Type::User(UserType::Enum(enum_kind)) = shape.ty {
         assert_eq!(enum_kind.variants.len(), 3);
 
         // Check variant A
@@ -403,10 +374,7 @@ fn struct_with_std_string() {
 fn macroed_type() {
     fn validate_shape(shape: &Shape) {
         match shape.ty {
-            Type::User(UserType {
-                subtype: UserSubtype::Struct(sk),
-                ..
-            }) => {
+            Type::User(UserType::Struct(sk)) => {
                 assert_eq!(sk.fields.len(), 1);
                 let field = sk.fields[0];
                 let shape_name = format!("{}", field.shape());
@@ -451,10 +419,7 @@ fn array_field() {
 
     let shape = Packet::SHAPE;
     match shape.ty {
-        Type::User(UserType {
-            subtype: UserSubtype::Enum(e),
-            ..
-        }) => {
+        Type::User(UserType::Enum(e)) => {
             let variant = &e.variants[0];
             let fields = &variant.data.fields;
             let field = &fields[0];
@@ -504,10 +469,7 @@ fn opaque_arc() {
 
     let shape = Handle::SHAPE;
     match shape.ty {
-        Type::User(UserType {
-            subtype: UserSubtype::Struct(sk),
-            ..
-        }) => {
+        Type::User(UserType::Struct(sk)) => {
             assert_eq!(sk.fields.len(), 1);
             let field = sk.fields[0];
             let shape_name = format!("{}", field.shape());
@@ -534,11 +496,7 @@ fn enum_rename_all_snake_case() {
 
     assert_eq!(format!("{}", shape), "MaybeFontStyle");
 
-    if let Type::User(UserType {
-        subtype: UserSubtype::Enum(enum_kind),
-        ..
-    }) = shape.ty
-    {
+    if let Type::User(UserType::Enum(enum_kind)) = shape.ty {
         assert_eq!(enum_kind.variants.len(), 3);
 
         assert_eq!(enum_kind.variants[0].name, "regular");

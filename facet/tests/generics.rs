@@ -1,4 +1,4 @@
-use facet::{Facet, Type, UserSubtype, UserType};
+use facet::{Facet, Type, UserType};
 
 #[test]
 fn vec_wrapper() {
@@ -9,10 +9,7 @@ fn vec_wrapper() {
 
     let shape = VecWrapper::<u32>::SHAPE;
     match shape.ty {
-        Type::User(UserType {
-            subtype: UserSubtype::Struct(sd),
-            ..
-        }) => {
+        Type::User(UserType::Struct(sd)) => {
             assert_eq!(sd.fields.len(), 1);
             let field = sd.fields[0];
             let shape_name = format!("{}", field.shape());
@@ -44,10 +41,7 @@ fn hash_map_wrapper() {
 
     let shape = HashMapWrapper::<u16, String>::SHAPE;
     match shape.ty {
-        Type::User(UserType {
-            subtype: UserSubtype::Struct(sd),
-            ..
-        }) => {
+        Type::User(UserType::Struct(sd)) => {
             assert_eq!(sd.fields.len(), 1);
             let field = sd.fields[0];
             let shape_name = format!("{}", field.shape());
@@ -73,10 +67,7 @@ fn tuple_struct_vec_wrapper() {
 
     let shape = TupleVecWrapper::<u32>::SHAPE;
     match shape.ty {
-        Type::User(UserType {
-            subtype: UserSubtype::Struct(sd),
-            ..
-        }) => {
+        Type::User(UserType::Struct(sd)) => {
             assert_eq!(sd.fields.len(), 1);
             let field = sd.fields[0];
             let shape_name = format!("{}", field.shape());
@@ -104,10 +95,7 @@ fn enum_vec_variant_wrapper() {
 
     let shape = EnumVecWrapper::<u32>::SHAPE;
     match shape.ty {
-        Type::User(UserType {
-            subtype: UserSubtype::Enum(ed),
-            ..
-        }) => {
+        Type::User(UserType::Enum(ed)) => {
             // Should have two variants: VecVariant, None
             assert_eq!(ed.variants.len(), 2);
 

@@ -3,8 +3,7 @@ use core::mem::MaybeUninit;
 use crate::{
     Def, EnumRepr, EnumType, Facet, Field, FieldFlags, OptionDef, OptionVTable, PtrConst, PtrMut,
     PtrUninit, Repr, Shape, StructKind, StructType, TryBorrowInnerError, TryFromError,
-    TryIntoInnerError, Type, TypedPtrUninit, UserSubtype, UserType, VTableView, Variant,
-    value_vtable,
+    TryIntoInnerError, Type, TypedPtrUninit, UserType, VTableView, Variant, value_vtable,
 };
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
     const SHAPE: &'static Shape = &const {
@@ -62,44 +61,46 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
                 //
                 // See: https://doc.rust-lang.org/std/option/index.html#representation
                 if core::mem::size_of::<T>() == core::mem::size_of::<Option<T>>() {
-                    UserType {
+                    UserType::Enum(EnumType {
                         repr: Repr::default(),
-                        subtype: UserSubtype::Enum(EnumType {
-                            repr: EnumRepr::RustNPO,
-                            variants: &const {
-                                [
-                                    Variant::builder()
-                                        .name("None")
-                                        .discriminant(0)
-                                        .fields(
-                                            StructType::builder().kind(StructKind::Unit).build(),
-                                        )
-                                        .build(),
-                                    Variant::builder()
-                                        .name("Some")
-                                        .discriminant(0)
-                                        .fields(
-                                            StructType::builder()
-                                                .kind(StructKind::TupleStruct)
-                                                .fields(
-                                                    &const {
-                                                        [Field::builder()
-                                                            .name("0")
-                                                            .shape(T::SHAPE)
-                                                            .offset(0)
-                                                            .flags(FieldFlags::EMPTY)
-                                                            .build()]
-                                                    },
-                                                )
-                                                .build(),
-                                        )
-                                        .build(),
-                                ]
-                            },
-                        }),
-                    }
+                        enum_repr: EnumRepr::RustNPO,
+                        variants: &const {
+                            [
+                                Variant::builder()
+                                    .name("None")
+                                    .discriminant(0)
+                                    .fields(
+                                        StructType::builder()
+                                            .repr(Repr::default())
+                                            .kind(StructKind::Unit)
+                                            .build(),
+                                    )
+                                    .build(),
+                                Variant::builder()
+                                    .name("Some")
+                                    .discriminant(0)
+                                    .fields(
+                                        StructType::builder()
+                                            .repr(Repr::default())
+                                            .kind(StructKind::TupleStruct)
+                                            .fields(
+                                                &const {
+                                                    [Field::builder()
+                                                        .name("0")
+                                                        .shape(T::SHAPE)
+                                                        .offset(0)
+                                                        .flags(FieldFlags::EMPTY)
+                                                        .build()]
+                                                },
+                                            )
+                                            .build(),
+                                    )
+                                    .build(),
+                            ]
+                        },
+                    })
                 } else {
-                    UserType::opaque()
+                    UserType::Opaque
                 },
             ))
             .def(Def::Option(

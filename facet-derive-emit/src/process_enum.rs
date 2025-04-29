@@ -70,7 +70,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     // --- Processing code for shadow struct/fields/variant_expressions ---
     // A. C-style enums have shadow-discriminant, shadow-union, shadow-struct
     // B. Primitive enums have simpler layout.
-    let (shadow_struct_defs, variant_expressions, repr_type_tokenstream) = match valid_repr {
+    let (shadow_struct_defs, variant_expressions, enum_repr_type_tokenstream) = match valid_repr {
         PRepr::C(prim_opt) => {
             // Shadow discriminant
             let shadow_discriminant_name =
@@ -212,7 +212,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                             ::facet::Variant::builder()
                                 #variant_attrs_tokens
                                 .discriminant(#discriminant_literal)
-                                .fields(::facet::StructType::builder().unit().build())
+                                .fields(::facet::StructType::builder().repr(::facet::Repr::c()).unit().build())
                                 #maybe_doc
                                 .build()
                         });
@@ -258,7 +258,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                             ::facet::Variant::builder()
                                 #variant_attrs_tokens
                                 .discriminant(#discriminant_literal)
-                                .fields(::facet::StructType::builder().tuple().fields(fields).build())
+                                .fields(::facet::StructType::builder().repr(::facet::Repr::c()).tuple().fields(fields).build())
                                 #maybe_doc
                                 .build()
                         }});
@@ -305,7 +305,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                             ::facet::Variant::builder()
                                 #variant_attrs_tokens
                                 .discriminant(#discriminant_literal)
-                                .fields(::facet::StructType::builder().struct_().fields(fields).build())
+                                .fields(::facet::StructType::builder().repr(::facet::Repr::c()).struct_().fields(fields).build())
                                 #maybe_doc
                                 .build()
                         }});
@@ -384,7 +384,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                             ::facet::Variant::builder()
                                 #variant_attrs_tokens
                                 .discriminant(#discriminant_literal)
-                                .fields(::facet::StructType::builder().unit().build())
+                                .fields(::facet::StructType::builder().repr(::facet::Repr::c()).unit().build())
                                 #maybe_doc
                                 .build()
                         });
@@ -439,7 +439,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                             ::facet::Variant::builder()
                                 #variant_attrs_tokens
                                 .discriminant(#discriminant_literal)
-                                .fields(::facet::StructType::builder().tuple().fields(fields).build())
+                                .fields(::facet::StructType::builder().repr(::facet::Repr::c()).tuple().fields(fields).build())
                                 #maybe_doc
                                 .build()
                         }});
@@ -496,7 +496,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                             ::facet::Variant::builder()
                                 #variant_attrs_tokens
                                 .discriminant(#discriminant_literal)
-                                .fields(::facet::StructType::builder().struct_().fields(fields).build())
+                                .fields(::facet::StructType::builder().repr(::facet::Repr::c()).struct_().fields(fields).build())
                                 #maybe_doc
                                 .build()
                         }});
@@ -554,18 +554,14 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                         Self,
                         |f, _opts| ::core::fmt::Write::write_str(f, #enum_name_str)
                     )})
-                    .ty(::facet::Type::User(::facet::UserType {
-                        repr: ::facet::Repr {
-                            base: ::facet::BaseRepr::C,
-                            packed: false,
-                        },
-                        subtype: ::facet::UserSubtype::Enum(::facet::EnumType::builder()
+                    .ty(::facet::Type::User(::facet::UserType::Enum(::facet::EnumType::builder()
                             // Use variant expressions that just reference the shadow structs
                             // which are now defined above
                             .variants(__facet_variants)
-                            .repr(#repr_type_tokenstream)
+                            .repr(::facet::Repr::c())
+                            .enum_repr(#enum_repr_type_tokenstream)
                             .build())
-                    }))
+                    ))
                     #maybe_container_doc
                     #container_attributes_tokens
                     .build()

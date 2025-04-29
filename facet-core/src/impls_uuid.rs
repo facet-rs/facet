@@ -56,7 +56,7 @@ unsafe impl Facet<'_> for Uuid {
         Shape::builder()
             .id(ConstTypeId::of::<Self>())
             .layout(Layout::new::<Self>())
-            .ty(Type::User(UserType::opaque()))
+            .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::uuid().build())

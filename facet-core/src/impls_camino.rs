@@ -50,7 +50,7 @@ unsafe impl Facet<'_> for Utf8PathBuf {
         Shape::builder()
             .id(ConstTypeId::of::<Self>())
             .layout(Layout::new::<Self>())
-            .ty(Type::User(UserType::opaque()))
+            .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::path().build())
@@ -95,7 +95,7 @@ unsafe impl<'a> Facet<'a> for &'a Utf8Path {
         Shape::builder()
             .id(ConstTypeId::of::<Self>())
             .layout(Layout::new::<Self>())
-            .ty(Type::User(UserType::opaque()))
+            .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::path().build())

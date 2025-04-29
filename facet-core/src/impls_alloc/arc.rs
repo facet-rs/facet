@@ -51,7 +51,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
                 name: "T",
                 shape: || T::SHAPE,
             }])
-            .ty(Type::User(UserType::opaque()))
+            .ty(Type::User(UserType::Opaque))
             .def(Def::SmartPointer(
                 SmartPointerDef::builder()
                     .pointee(|| T::SHAPE)
@@ -114,7 +114,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Weak<T> {
                 name: "T",
                 shape: || T::SHAPE,
             }])
-            .ty(Type::User(UserType::opaque()))
+            .ty(Type::User(UserType::Opaque))
             .def(Def::SmartPointer(
                 SmartPointerDef::builder()
                     .pointee(|| T::SHAPE)

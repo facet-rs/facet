@@ -411,17 +411,12 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                     .layout(::core::alloc::Layout::new::<Self>())
                     #type_params // Still from parsed.generics
                     .vtable(vtable)
-                    .ty(::facet::Type::User(::facet::UserType {
-                        repr: ::facet::Repr {
-                            base: ::facet::BaseRepr::C,
-                            packed: false,
-                        },
-                        subtype: ::facet::UserSubtype::Struct(::facet::StructType::builder()
-                            .kind(#kind)
-                            .fields(fields)
-                            .build()
-                        )
-                    }))
+                    .ty(::facet::Type::User(::facet::UserType::Struct(::facet::StructType::builder()
+                        .repr(::facet::Repr::c())
+                        .kind(#kind)
+                        .fields(fields)
+                        .build()
+                    )))
                     #inner_setter // Use transparency flag from PStruct
                     #maybe_container_doc // From ps.container.attrs.doc
                     #container_attributes_tokens // From ps.container.attrs.facet

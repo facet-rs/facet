@@ -1,7 +1,7 @@
 use crate::{
     Characteristic, ConstTypeId, Def, Facet, PtrConst, PtrMut, PtrUninit, Repr, ScalarAffinity,
     ScalarDef, Shape, StructType, TryBorrowInnerError, TryFromError, TryIntoInnerError, Type,
-    UserSubtype, UserType, field_in_type, value_vtable,
+    UserType, field_in_type, value_vtable,
 };
 use core::alloc::Layout;
 use ordered_float::{NotNan, OrderedFloat};
@@ -49,14 +49,12 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for OrderedFloat<T> {
         Shape::builder()
             .id(ConstTypeId::of::<Self>())
             .layout(Layout::new::<Self>())
-            .ty(Type::User(UserType {
-                repr: Repr::default(),
-                subtype: UserSubtype::Struct(
-                    StructType::builder()
-                        .fields(&const { [field_in_type!(Self, 0)] })
-                        .build(),
-                ),
-            }))
+            .ty(Type::User(UserType::Struct(
+                StructType::builder()
+                    .repr(Repr::transparent())
+                    .fields(&const { [field_in_type!(Self, 0)] })
+                    .build(),
+            )))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     // Affinity: use number affinity as inner's

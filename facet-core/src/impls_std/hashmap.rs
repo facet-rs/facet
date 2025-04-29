@@ -111,7 +111,7 @@ where
                     builder.build()
                 },
             )
-            .ty(Type::User(UserType::opaque()))
+            .ty(Type::User(UserType::Opaque))
             .def(Def::Map(
                 MapDef::builder()
                     .k(|| K::SHAPE)
@@ -183,7 +183,7 @@ where
 unsafe impl Facet<'_> for RandomState {
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
-            .ty(Type::User(UserType::opaque()))
+            .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::opaque().build())

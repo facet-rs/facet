@@ -1,10 +1,13 @@
-use super::Field;
+use super::{Field, Repr};
 
 /// Common fields for struct-like types
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
 #[non_exhaustive]
 pub struct StructType {
+    /// Representation of the struct's data
+    pub repr: Repr,
+
     /// the kind of struct (e.g. struct, tuple struct, tuple)
     pub kind: StructKind,
 
@@ -21,6 +24,7 @@ impl StructType {
 
 /// Builder for StructDef
 pub struct StructBuilder {
+    repr: Option<Repr>,
     kind: Option<StructKind>,
     fields: &'static [Field],
 }
@@ -30,6 +34,7 @@ impl StructBuilder {
     #[allow(clippy::new_without_default)]
     pub const fn new() -> Self {
         Self {
+            repr: None,
             kind: None,
             fields: &[],
         }
@@ -52,6 +57,12 @@ impl StructBuilder {
         self
     }
 
+    /// Sets the repr for the StructType
+    pub const fn repr(mut self, repr: Repr) -> Self {
+        self.repr = Some(repr);
+        self
+    }
+
     /// Sets the kind for the StructType
     pub const fn kind(mut self, kind: StructKind) -> Self {
         self.kind = Some(kind);
@@ -67,6 +78,7 @@ impl StructBuilder {
     /// Builds the StructDef
     pub const fn build(self) -> StructType {
         StructType {
+            repr: self.repr.unwrap(),
             kind: self.kind.unwrap(),
             fields: self.fields,
         }

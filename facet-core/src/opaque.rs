@@ -8,7 +8,7 @@ pub struct Opaque<T>(T);
 unsafe impl<'a, T: 'a> Facet<'a> for Opaque<T> {
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
-            .ty(Type::User(UserType::opaque()))
+            .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::opaque().build())
