@@ -238,7 +238,7 @@ We still haven't figured everything facet can do. Come do research with us:
 
 #### deny_unknown_fields
 
-Produce an error when an unknown field is encoutered during deserialization. The default behaviour
+Produce an error when an unknown field is encountered during deserialization. The default behaviour
 is to ignore field that are not known.
 
 <table>
@@ -274,7 +274,7 @@ struct MyStruct {
 </tr>
 </table>
 
-#### Default
+#### default
 
 Only allowed for `struct`s, not for `enum`s. During deserialization, any fields that are missing
 from the input will be taken from the `Default::default` implementation of the struct. This is not
@@ -469,8 +469,9 @@ fn is_even(n: i32) -> bool {
 
 #### default
 
-Use a specified function to provide a default value when deserializing if the field is missing from input.
-You can either use `default` alone to use `Default::default()` for the field, or provide a function path.
+Use a specified function to provide a default value when deserializing if the field is missing from
+input. You can either use `default` alone to use `Default::default()` for the field, or provide an
+expression producing the default value.
 
 <table>
 <tr>
