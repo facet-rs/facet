@@ -1,6 +1,9 @@
 use crate::*;
 
 unsafe impl Facet<'_> for std::path::PathBuf {
+    const VTABLE: &'static ValueVTable =
+        &const { value_vtable!((), |f, _opts| write!(f, "PathBuf")) };
+
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .ty(Type::User(UserType::Opaque))
@@ -9,12 +12,13 @@ unsafe impl Facet<'_> for std::path::PathBuf {
                     .affinity(ScalarAffinity::path().build())
                     .build(),
             ))
-            .vtable(&const { value_vtable!((), |f, _opts| write!(f, "PathBuf")) })
             .build()
     };
 }
 
 unsafe impl Facet<'_> for std::path::Path {
+    const VTABLE: &'static ValueVTable = &const { value_vtable!((), |f, _opts| write!(f, "Path")) };
+
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_unsized::<Self>()
             .ty(Type::User(UserType::Opaque))
@@ -23,7 +27,6 @@ unsafe impl Facet<'_> for std::path::Path {
                     .affinity(ScalarAffinity::path().build())
                     .build(),
             ))
-            .vtable(&const { value_vtable!((), |f, _opts| write!(f, "Path")) })
             .build()
     };
 }

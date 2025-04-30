@@ -539,6 +539,11 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         #[automatically_derived]
         #[allow(non_camel_case_types)]
         unsafe impl #bgp_def ::facet::Facet<'__facet> for #enum_name #bgp_without_bounds #where_clauses_tokens {
+            const VTABLE: &'static ::facet::ValueVTable = &const { ::facet::value_vtable!(
+                Self,
+                |f, _opts| ::core::fmt::Write::write_str(f, #enum_name_str)
+            )};
+
             const SHAPE: &'static ::facet::Shape = &const {
                 #(#shadow_struct_defs)*
 
@@ -546,14 +551,8 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                     #(#variant_expressions),*
                 ]};
 
-                ::facet::Shape::builder()
-                    .id(::facet::ConstTypeId::of::<Self>())
-                    .layout(::core::alloc::Layout::new::<Self>())
+                ::facet::Shape::builder_for_sized::<Self>()
                     #type_params
-                    .vtable(&const { ::facet::value_vtable!(
-                        Self,
-                        |f, _opts| ::core::fmt::Write::write_str(f, #enum_name_str)
-                    )})
                     .ty(::facet::Type::User(::facet::UserType::Enum(::facet::EnumType::builder()
                             // Use variant expressions that just reference the shadow structs
                             // which are now defined above

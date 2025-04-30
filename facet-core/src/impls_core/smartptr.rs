@@ -1,9 +1,13 @@
 use crate::{
     Def, Facet, Field, FieldFlags, KnownSmartPointer, PtrConst, Repr, SmartPointerDef,
-    SmartPointerFlags, SmartPointerVTable, StructKind, StructType, Type, UserType, value_vtable,
+    SmartPointerFlags, SmartPointerVTable, StructKind, StructType, Type, UserType, ValueVTable,
+    value_vtable,
 };
 
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for core::ptr::NonNull<T> {
+    const VTABLE: &'static ValueVTable =
+        &const { value_vtable!(core::ptr::NonNull<T>, |f, _opts| write!(f, "NonNull")) };
+
     const SHAPE: &'static crate::Shape = &const {
         crate::Shape::builder_for_sized::<Self>()
             .type_params(&[crate::TypeParam {
@@ -45,9 +49,6 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for core::ptr::NonNull<T> {
                     )
                     .build(),
             ))
-            .vtable(
-                &const { value_vtable!(core::ptr::NonNull<T>, |f, _opts| write!(f, "NonNull")) },
-            )
             .build()
     };
 }

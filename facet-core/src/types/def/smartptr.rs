@@ -16,10 +16,10 @@ pub struct SmartPointerDef {
     /// shape of the inner type of the smart pointer, if not opaque
     pub pointee: Option<fn() -> &'static Shape>,
 
-    /// shape of the corresponding weak pointer, if this pointer is strong
+    /// shape of the corresponding strong pointer, if this pointer is weak
     pub weak: Option<fn() -> &'static Shape>,
 
-    /// shape of the corresponding strong pointer, if this pointer is weak
+    /// shape of the corresponding weak pointer, if this pointer is strong
     pub strong: Option<fn() -> &'static Shape>,
 
     /// Flags representing various characteristics of the smart pointer
@@ -41,6 +41,21 @@ impl SmartPointerDef {
             weak: None,
             strong: None,
         }
+    }
+
+    /// Returns shape of the inner type of the smart pointer, if not opaque
+    pub fn pointee(&self) -> Option<&'static Shape> {
+        self.pointee.map(|v| v())
+    }
+
+    /// Returns shape of the corresponding strong pointer, if this pointer is weak
+    pub fn weak(&self) -> Option<&'static Shape> {
+        self.weak.map(|v| v())
+    }
+
+    /// Returns shape of the corresponding weak pointer, if this pointer is strong
+    pub fn strong(&self) -> Option<&'static Shape> {
+        self.strong.map(|v| v())
     }
 }
 

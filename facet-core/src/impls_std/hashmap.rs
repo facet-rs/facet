@@ -21,6 +21,77 @@ where
     V: Facet<'a>,
     S: Facet<'a> + Default + BuildHasher,
 {
+    const VTABLE: &'static ValueVTable = &const {
+        let mut builder = ValueVTable::builder::<Self>()
+            .marker_traits({
+                let arg_dependent_traits = MarkerTraits::SEND
+                    .union(MarkerTraits::SYNC)
+                    .union(MarkerTraits::EQ)
+                    .union(MarkerTraits::UNPIN);
+                arg_dependent_traits
+                    .intersection(V::SHAPE.vtable.marker_traits)
+                    .intersection(K::SHAPE.vtable.marker_traits)
+            })
+            .type_name(|f, opts| {
+                if let Some(opts) = opts.for_children() {
+                    write!(f, "HashMap<")?;
+                    (K::SHAPE.vtable.type_name)(f, opts)?;
+                    write!(f, ", ")?;
+                    (V::SHAPE.vtable.type_name)(f, opts)?;
+                    write!(f, ">")
+                } else {
+                    write!(f, "HashMap<⋯>")
+                }
+            });
+
+        if K::SHAPE.vtable.debug.is_some() && V::SHAPE.vtable.debug.is_some() {
+            builder = builder.debug(|value, f| {
+                let k_debug = <VTableView<K>>::of().debug().unwrap();
+                let v_debug = <VTableView<V>>::of().debug().unwrap();
+                write!(f, "{{")?;
+                for (i, (key, val)) in value.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    (k_debug)(key, f)?;
+                    write!(f, ": ")?;
+                    (v_debug)(val, f)?;
+                }
+                write!(f, "}}")
+            });
+        }
+
+        builder = builder.default_in_place(|target| unsafe { target.put(Self::default()) });
+
+        // FIXME: THIS IS VERY WRONG
+        builder = builder.clone_into(|src, dst| unsafe { dst.put(core::ptr::read(src)) });
+
+        if V::SHAPE.vtable.eq.is_some() {
+            builder = builder.eq(|a, b| {
+                let v_eq = <VTableView<V>>::of().eq().unwrap();
+                a.len() == b.len()
+                    && a.iter().all(|(key_a, val_a)| {
+                        b.get(key_a).is_some_and(|val_b| (v_eq)(val_a, val_b))
+                    })
+            });
+        }
+
+        if V::SHAPE.vtable.hash.is_some() {
+            builder = builder.hash(|map, hasher_this, hasher_write_fn| unsafe {
+                use crate::HasherProxy;
+                let v_hash = <VTableView<V>>::of().hash().unwrap();
+                let mut hasher = HasherProxy::new(hasher_this, hasher_write_fn);
+                map.len().hash(&mut hasher);
+                for (k, v) in map {
+                    k.hash(&mut hasher);
+                    (v_hash)(v, hasher_this, hasher_write_fn);
+                }
+            });
+        }
+
+        builder.build()
+    };
+
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_params(&[
@@ -37,80 +108,6 @@ where
                     shape: || S::SHAPE,
                 },
             ])
-            .vtable(
-                &const {
-                    let mut builder = ValueVTable::builder::<Self>()
-                        .marker_traits({
-                            let arg_dependent_traits = MarkerTraits::SEND
-                                .union(MarkerTraits::SYNC)
-                                .union(MarkerTraits::EQ)
-                                .union(MarkerTraits::UNPIN);
-                            arg_dependent_traits
-                                .intersection(V::SHAPE.vtable.marker_traits)
-                                .intersection(K::SHAPE.vtable.marker_traits)
-                        })
-                        .type_name(|f, opts| {
-                            if let Some(opts) = opts.for_children() {
-                                write!(f, "HashMap<")?;
-                                (K::SHAPE.vtable.type_name)(f, opts)?;
-                                write!(f, ", ")?;
-                                (V::SHAPE.vtable.type_name)(f, opts)?;
-                                write!(f, ">")
-                            } else {
-                                write!(f, "HashMap<⋯>")
-                            }
-                        });
-
-                    if K::SHAPE.vtable.debug.is_some() && V::SHAPE.vtable.debug.is_some() {
-                        builder = builder.debug(|value, f| {
-                            let k_debug = <VTableView<K>>::of().debug().unwrap();
-                            let v_debug = <VTableView<V>>::of().debug().unwrap();
-                            write!(f, "{{")?;
-                            for (i, (key, val)) in value.iter().enumerate() {
-                                if i > 0 {
-                                    write!(f, ", ")?;
-                                }
-                                (k_debug)(key, f)?;
-                                write!(f, ": ")?;
-                                (v_debug)(val, f)?;
-                            }
-                            write!(f, "}}")
-                        });
-                    }
-
-                    builder =
-                        builder.default_in_place(|target| unsafe { target.put(Self::default()) });
-
-                    // FIXME: THIS IS VERY WRONG
-                    builder =
-                        builder.clone_into(|src, dst| unsafe { dst.put(core::ptr::read(src)) });
-
-                    if V::SHAPE.vtable.eq.is_some() {
-                        builder = builder.eq(|a, b| {
-                            let v_eq = <VTableView<V>>::of().eq().unwrap();
-                            a.len() == b.len()
-                                && a.iter().all(|(key_a, val_a)| {
-                                    b.get(key_a).is_some_and(|val_b| (v_eq)(val_a, val_b))
-                                })
-                        });
-                    }
-
-                    if V::SHAPE.vtable.hash.is_some() {
-                        builder = builder.hash(|map, hasher_this, hasher_write_fn| unsafe {
-                            use crate::HasherProxy;
-                            let v_hash = <VTableView<V>>::of().hash().unwrap();
-                            let mut hasher = HasherProxy::new(hasher_this, hasher_write_fn);
-                            map.len().hash(&mut hasher);
-                            for (k, v) in map {
-                                k.hash(&mut hasher);
-                                (v_hash)(v, hasher_this, hasher_write_fn);
-                            }
-                        });
-                    }
-
-                    builder.build()
-                },
-            )
             .ty(Type::User(UserType::Opaque))
             .def(Def::Map(
                 MapDef::builder()
@@ -181,6 +178,9 @@ where
 }
 
 unsafe impl Facet<'_> for RandomState {
+    const VTABLE: &'static ValueVTable =
+        &const { value_vtable!((), |f, _opts| write!(f, "RandomState")) };
+
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .ty(Type::User(UserType::Opaque))
@@ -189,7 +189,6 @@ unsafe impl Facet<'_> for RandomState {
                     .affinity(ScalarAffinity::opaque().build())
                     .build(),
             ))
-            .vtable(&const { value_vtable!((), |f, _opts| write!(f, "RandomState")) })
             .build()
     };
 }

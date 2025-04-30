@@ -391,26 +391,23 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
 
         #[automatically_derived]
         unsafe impl #bgp_def ::facet::Facet<'__facet> for #struct_name_ident #bgp_without_bounds #where_clauses {
+            const VTABLE: &'static ::facet::ValueVTable = &const {
+                let mut vtable = ::facet::value_vtable!(
+                    Self,
+                    |f, _opts| ::core::fmt::Write::write_str(f, #struct_name_str)
+                );
+                #invariant_maybe
+                #try_from_inner_code // Use the generated code for transparent types
+                vtable
+            };
+
             const SHAPE: &'static ::facet::Shape = &const {
                 let fields: &'static [::facet::Field] = &const {[#(#fields_vec),*]};
 
-                let vtable = &const {
-                    let mut vtable = ::facet::value_vtable!(
-                        Self,
-                        |f, _opts| ::core::fmt::Write::write_str(f, #struct_name_str)
-                    );
-                    #invariant_maybe
-                    #try_from_inner_code // Use the generated code for transparent types
-                    vtable
-                };
-
                 #inner_shape_fn // Include inner_shape function if needed
 
-                ::facet::Shape::builder()
-                    .id(::facet::ConstTypeId::of::<Self>())
-                    .layout(::core::alloc::Layout::new::<Self>())
+                ::facet::Shape::builder_for_sized::<Self>()
                     #type_params // Still from parsed.generics
-                    .vtable(vtable)
                     .ty(::facet::Type::User(::facet::UserType::Struct(::facet::StructType::builder()
                         .repr(::facet::Repr::c())
                         .kind(#kind)
