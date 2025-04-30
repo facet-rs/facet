@@ -3,7 +3,7 @@ use facet_msgpack::to_vec;
 
 #[test]
 fn test_integers() {
-    facet_testhelpers::setup();
+    facet_testhelpers::setup(); // Revert to direct call
 
     #[derive(Debug, PartialEq, Clone, Facet)]
     struct IntegerTest {
@@ -92,7 +92,7 @@ fn test_integers() {
 
 #[test]
 fn test_struct() {
-    facet_testhelpers::setup();
+    facet_testhelpers::setup(); // Revert to direct call
 
     #[derive(Debug, PartialEq, Clone, Facet)]
     struct TestStruct {

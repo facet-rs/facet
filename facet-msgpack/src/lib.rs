@@ -8,8 +8,8 @@ pub use errors::Error as DecodeError;
 mod constants;
 pub use constants::*;
 
-mod from_msgpack;
-pub use from_msgpack::*;
+mod deserialize;
+pub use deserialize::*;
 
-mod to_msgpack;
-pub use to_msgpack::*;
+mod serialize;
+pub use serialize::*;

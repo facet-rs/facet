@@ -1,1 +1,27 @@
-Provides MessagePack serialization and deserialization for Facet types.
+Provides MessagePack serialization and deserialization for [facet](https://crates.io/crates/facet) types.
+
+## Usage
+
+```rust
+use facet::Facet;
+use facet_msgpack::to_vec;
+
+#[derive(Facet)]
+struct MyStruct {
+    field1: u32,
+    field2: String,
+}
+
+let my_instance = MyStruct {
+    field1: 42,
+    field2: "hello".to_string(),
+};
+
+// Serialize to MessagePack bytes
+let bytes = to_vec(&my_instance);
+
+println!("Serialized MessagePack: {:?}", bytes);
+// Output: Serialized MessagePack: [130, 166, 102, 105, 101, 108, 100, 49, 42, 166, 102, 105, 101, 108, 100, 50, 165, 104, 101, 108, 108, 111]
+
+// Deserialization would use from_bytes (not shown here)
+```

@@ -201,8 +201,12 @@ where
 
                 match cpeek.shape().def {
                     Def::Scalar(_) => {
+                        // Handle the unit type explicitly first if it's classified as Scalar
+                        if cpeek.shape().is_type::<()>() {
+                            serializer.serialize_unit()?
+                        }
                         // Dispatch to appropriate scalar serialization method based on type
-                        if cpeek.shape().is_type::<bool>() {
+                        else if cpeek.shape().is_type::<bool>() {
                             let value = cpeek.get::<bool>().unwrap();
                             serializer.serialize_bool(*value)?
                         } else if cpeek.shape().is_type::<String>() {
@@ -267,6 +271,10 @@ where
                     Def::Struct(sd) => {
                         debug!("cpeek.shape(): {:#?}", cpeek.shape());
                         match sd.kind {
+                            StructKind::Unit => {
+                                // Correctly handle unit struct type when encountered as a value
+                                serializer.serialize_unit()?;
+                            }
                             StructKind::Tuple | StructKind::TupleStruct => {
                                 let peek_struct = cpeek.into_struct().unwrap();
                                 let fields = peek_struct.fields().count();
@@ -281,11 +289,15 @@ where
                                 stack.push(SerializeTask::EndObject);
                                 stack.push(SerializeTask::ObjectFields(peek_struct));
                             }
-                            StructKind::Unit => {
-                                serializer.serialize_unit()?;
-                            }
+                            // Re-add wildcard for non-exhaustive enum
                             _ => {
-                                panic!("Unexpected struct kind: {:?}", sd.kind)
+                                // This case should ideally not be hit with current StructKind variants
+                                // but is required for exhaustiveness.
+                                // Consider logging a warning or returning an error if this path is taken.
+                                panic!(
+                                    "Unhandled non-exhaustive StructKind variant: {:?}",
+                                    sd.kind
+                                );
                             }
                         }
                     }
