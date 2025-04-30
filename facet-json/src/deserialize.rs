@@ -388,46 +388,12 @@ impl<'a> StackRunner<'a> {
                                 trace!("Array starting for enum ({})!", wip.shape().blue());
                             }
                             Def::Struct(s) => {
+                                let path = wip.path();
                                 if s.kind == StructKind::Tuple {
                                     trace!("Array starting for tuple ({})!", wip.shape().blue());
-                                    // Special handling for unit type ()
-                                    if s.fields.is_empty() {
-                                        // Check if the array is empty by peeking at the next token
-                                        let next_token = self.read_token(&wip)?;
-                                        if next_token.node == Token::RBracket {
-                                            // Empty array means unit type () - we're good
-                                            let path = wip.path();
-                                            wip = wip.put_default().map_err(|e| {
-                                                JsonError::new_reflect(
-                                                    e,
-                                                    self.input,
-                                                    self.last_span,
-                                                    path,
-                                                )
-                                            })?;
-                                        } else {
-                                            // Non-empty array is not valid for unit type
-                                            return Err(JsonError::new(
-                                                JsonErrorKind::UnsupportedType {
-                                                    got: wip.innermost_shape(),
-                                                    wanted: "empty array",
-                                                },
-                                                self.input,
-                                                self.last_span,
-                                                wip.path(),
-                                            ));
-                                        }
-                                    } else {
-                                        let path = wip.path();
-                                        wip = wip.put_default().map_err(|e| {
-                                            JsonError::new_reflect(
-                                                e,
-                                                self.input,
-                                                self.last_span,
-                                                path,
-                                            )
-                                        })?;
-                                    }
+                                    wip = wip.put_default().map_err(|e| {
+                                        JsonError::new_reflect(e, self.input, self.last_span, path)
+                                    })?;
                                 } else {
                                     return Err(JsonError::new(
                                         JsonErrorKind::UnsupportedType {
@@ -436,17 +402,22 @@ impl<'a> StackRunner<'a> {
                                         },
                                         self.input,
                                         self.last_span,
-                                        wip.path(),
+                                        path,
                                     ));
                                 }
                             }
                             Def::Scalar(s) if matches!(s.affinity, ScalarAffinity::Empty(_)) => {
-                                trace!("Array starting for tuple ({})!", wip.shape().blue());
-                                // wip = wip.put_default().map_err(|e| JsonError::new_reflect(e, self.input, self.last_span, path))?;
+                                trace!("Array starting for unit type ({})!", wip.shape().blue());
+
                                 // Check if the array is empty by peeking at the next token
                                 let next_token = self.read_token(&wip)?;
                                 if next_token.node == Token::RBracket {
                                     // Empty array means unit type () - we're good
+                                    let path = wip.path();
+                                    wip = wip.put_default().map_err(|e| {
+                                        JsonError::new_reflect(e, self.input, self.last_span, path)
+                                    })?;
+                                    return Ok(wip); // Return immediately - no need to push anything
                                 } else {
                                     // Non-empty array is not valid for unit type
                                     return Err(JsonError::new(

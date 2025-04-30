@@ -1444,6 +1444,7 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
 
         let is_list = matches!(frame.shape.def, Def::List(_));
         let is_tuple_struct_or_variant = match frame.shape.def {
+            Def::Scalar(sd) => matches!(sd.affinity, ScalarAffinity::Empty(_)),
             Def::Struct(sd) => sd.kind == facet_core::StructKind::Tuple,
             Def::Enum(_) => {
                 // Check if a variant is selected and if that variant is a tuple-like struct
@@ -1617,6 +1618,14 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
                     variant.data.fields[field_index].shape(),
                     "tuple enum variant",
                 )
+            }
+
+            Def::Scalar(sd) if matches!(sd.affinity, ScalarAffinity::Empty(_)) => {
+                // Handle empty tuple a.k.a. unit type () - cannot push elements
+                return Err(ReflectError::OperationFailed {
+                    shape: seq_shape,
+                    operation: "cannot push elements to unit type ()",
+                });
             }
 
             _ => {
