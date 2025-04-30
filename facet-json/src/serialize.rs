@@ -1,23 +1,23 @@
 use core::num::NonZero;
 use facet_core::{Def, Facet, FieldAttribute, StructKind};
 use facet_reflect::Peek;
-use std::io::{self, Write};
+use std::io::{self, BufWriter, Write};
 
 use crate::First;
 
 /// Serializes a value to JSON
 pub fn to_string<'a, T: Facet<'a>>(value: &T) -> String {
     let peek = Peek::new(value);
-    let mut output = Vec::new();
+    let mut output = BufWriter::new(Vec::new());
     serialize(&peek, true, &mut output).unwrap();
-    String::from_utf8(output).unwrap()
+    String::from_utf8(output.into_inner().unwrap()).unwrap()
 }
 
 /// Serializes a Peek instance to JSON
 pub fn peek_to_string(peek: &Peek<'_, '_>) -> String {
-    let mut output = Vec::new();
+    let mut output = BufWriter::new(Vec::new());
     serialize(peek, true, &mut output).unwrap();
-    String::from_utf8(output).unwrap()
+    String::from_utf8(output.into_inner().unwrap()).unwrap()
 }
 
 /// Serializes a value to a writer in JSON format
@@ -174,14 +174,11 @@ fn serialize<W: Write>(peek: &Peek<'_, '_>, delimit: bool, writer: &mut W) -> io
                 }
 
                 // Process fields in reverse order for the stack
-                let fields = struct_peek
-                    .fields_for_serialize()
-                    .with_first()
-                    .collect::<Vec<_>>();
+                let fields = struct_peek.fields_for_serialize().with_first();
 
                 stack.push(SerializeTask::EndStruct { delimit });
 
-                for (first, (field, field_peek)) in fields.into_iter().rev() {
+                for (first, (field, field_peek)) in fields.rev() {
                     let field_name = field.name;
 
                     // FIXME: flatten is well-known, not arbitrary
@@ -231,10 +228,9 @@ fn serialize<W: Write>(peek: &Peek<'_, '_>, delimit: bool, writer: &mut W) -> io
                 write!(writer, "[")?;
 
                 // Process items in reverse order for the stack
-                let items = list_peek.iter().with_first().collect::<Vec<_>>();
                 stack.push(SerializeTask::EndList);
 
-                for (first, item_peek) in items.into_iter().rev() {
+                for (first, item_peek) in list_peek.iter().with_first().rev() {
                     stack.push(SerializeTask::ListItem {
                         item_peek,
                         is_first: first,
@@ -265,14 +261,11 @@ fn serialize<W: Write>(peek: &Peek<'_, '_>, delimit: bool, writer: &mut W) -> io
                 write!(writer, "[")?;
 
                 // Process fields in reverse order for the stack
-                let fields = struct_peek
-                    .fields_for_serialize()
-                    .with_first()
-                    .collect::<Vec<_>>();
+                let fields = struct_peek.fields_for_serialize().with_first();
 
                 stack.push(SerializeTask::EndTuple);
 
-                for (first, (_, item_peek)) in fields.into_iter().rev() {
+                for (first, (_, item_peek)) in fields.rev() {
                     stack.push(SerializeTask::TupleItem {
                         item_peek,
                         is_first: first,
@@ -390,12 +383,9 @@ fn serialize<W: Write>(peek: &Peek<'_, '_>, delimit: bool, writer: &mut W) -> io
                         write!(writer, "{{")?;
 
                         // Process fields in reverse order for the stack
-                        let fields = enum_peek
-                            .fields_for_serialize()
-                            .with_first()
-                            .collect::<Vec<_>>();
+                        let fields = enum_peek.fields_for_serialize().with_first();
 
-                        for (first, (field, field_peek)) in fields.into_iter().rev() {
+                        for (first, (field, field_peek)) in fields.rev() {
                             stack.push(SerializeTask::EnumStructField {
                                 field,
                                 field_peek,
@@ -421,12 +411,9 @@ fn serialize<W: Write>(peek: &Peek<'_, '_>, delimit: bool, writer: &mut W) -> io
                         write!(writer, "[")?;
 
                         // Process fields in reverse order for the stack
-                        let fields = enum_peek
-                            .fields_for_serialize()
-                            .with_first()
-                            .collect::<Vec<_>>();
+                        let fields = enum_peek.fields_for_serialize().with_first();
 
-                        for (first, (field, field_peek)) in fields.into_iter().rev() {
+                        for (first, (field, field_peek)) in fields.rev() {
                             stack.push(SerializeTask::EnumTupleField {
                                 field,
                                 field_peek,

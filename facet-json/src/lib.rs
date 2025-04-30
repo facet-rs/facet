@@ -12,6 +12,8 @@ extern crate alloc;
 compile_error!("feature `alloc` is required");
 
 mod deserialize;
+use core::iter::Peekable;
+
 pub use deserialize::*;
 
 #[cfg(feature = "std")]
@@ -25,16 +27,56 @@ fn variant_is_transparent(variant: &facet_core::Variant) -> bool {
 }
 
 #[cfg(feature = "std")]
-trait First<T> {
-    fn with_first(self) -> impl Iterator<Item = (bool, T)>;
+trait First<T>: Iterator + Sized {
+    fn with_first(self) -> WithFirstIter<Self>;
 }
 
 #[cfg(feature = "std")]
-impl<Iter, T> First<T> for Iter
+impl<Iter: Iterator<Item = T>, T> First<T> for Iter {
+    fn with_first(self) -> WithFirstIter<Iter> {
+        WithFirstIter {
+            iter: self.peekable(),
+            first: true,
+        }
+    }
+}
+
+struct WithFirstIter<Iter: Iterator> {
+    iter: Peekable<Iter>,
+    first: bool,
+}
+
+impl<Iter> Iterator for WithFirstIter<Iter>
 where
-    Iter: Iterator<Item = T>,
+    Iter: Iterator,
 {
-    fn with_first(self) -> impl Iterator<Item = (bool, T)> {
-        self.enumerate().map(|(idx, elem)| (idx == 0, elem))
+    type Item = (bool, Iter::Item);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.iter.next().map(|item| {
+            let result = (self.first, item);
+            self.first = false;
+            result
+        })
+    }
+}
+
+impl<Iter> DoubleEndedIterator for WithFirstIter<Iter>
+where
+    Iter: DoubleEndedIterator,
+{
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.iter.next_back().map(|item| {
+            if self.first {
+                if self.iter.peek().is_none() {
+                    self.first = false;
+                    (true, item)
+                } else {
+                    (false, item)
+                }
+            } else {
+                (false, item)
+            }
+        })
     }
 }

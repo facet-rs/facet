@@ -6,28 +6,39 @@ use facet_core::ListDef;
 pub struct PeekListIter<'mem, 'facet_lifetime> {
     list: PeekList<'mem, 'facet_lifetime>,
     index: usize,
-    len: usize,
+    index_back: usize,
 }
 
 impl<'mem, 'facet_lifetime> Iterator for PeekListIter<'mem, 'facet_lifetime> {
     type Item = Peek<'mem, 'facet_lifetime>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.index >= self.len {
+        if self.index >= self.index_back {
             return None;
         }
-        let item = self.list.get(self.index);
+        let item = self.list.get(self.index)?;
         self.index += 1;
-        item
+        Some(item)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = self.len.saturating_sub(self.index);
+        let remaining = self.index_back.saturating_sub(self.index);
         (remaining, Some(remaining))
     }
 }
 
 impl ExactSizeIterator for PeekListIter<'_, '_> {}
+
+impl DoubleEndedIterator for PeekListIter<'_, '_> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        if self.index >= self.index_back {
+            return None;
+        }
+        let item = self.list.get(self.index_back - 1)?;
+        self.index_back -= 1;
+        Some(item)
+    }
+}
 
 impl<'mem, 'facet_lifetime> IntoIterator for &'mem PeekList<'mem, 'facet_lifetime> {
     type Item = Peek<'mem, 'facet_lifetime>;
@@ -85,7 +96,7 @@ impl<'mem, 'facet_lifetime> PeekList<'mem, 'facet_lifetime> {
         PeekListIter {
             list: self,
             index: 0,
-            len: self.len(),
+            index_back: self.len(),
         }
     }
 

@@ -168,7 +168,9 @@ impl<'mem, 'facet_lifetime> PeekEnum<'mem, 'facet_lifetime> {
 
     /// Iterates over all fields in this enum variant, providing both field metadata and value
     #[inline]
-    pub fn fields(self) -> impl Iterator<Item = (&'static Field, Peek<'mem, 'facet_lifetime>)> {
+    pub fn fields(
+        self,
+    ) -> impl DoubleEndedIterator<Item = (&'static Field, Peek<'mem, 'facet_lifetime>)> {
         let variant = self.active_variant();
         let fields = &variant.data.fields;
 
@@ -184,7 +186,7 @@ impl<'mem, 'facet_lifetime> PeekEnum<'mem, 'facet_lifetime> {
     #[inline]
     pub fn fields_for_serialize(
         &self,
-    ) -> impl Iterator<Item = (&'static Field, Peek<'mem, 'facet_lifetime>)> + '_ {
+    ) -> impl DoubleEndedIterator<Item = (&'static Field, Peek<'mem, 'facet_lifetime>)> + '_ {
         self.fields().filter(|(field, peek)| {
             if field.flags.contains(FieldFlags::SKIP_SERIALIZING) {
                 return false;

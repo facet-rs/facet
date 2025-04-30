@@ -59,7 +59,7 @@ impl<'mem, 'facet_lifetime> PeekStruct<'mem, 'facet_lifetime> {
     #[inline]
     pub fn fields(
         &self,
-    ) -> impl Iterator<Item = (&'static Field, Peek<'mem, 'facet_lifetime>)> + '_ {
+    ) -> impl DoubleEndedIterator<Item = (&'static Field, Peek<'mem, 'facet_lifetime>)> + '_ {
         (0..self.field_count()).filter_map(|i| {
             let field = self.def.fields.get(i)?;
             let value = self.field(i).ok()?;
@@ -71,7 +71,7 @@ impl<'mem, 'facet_lifetime> PeekStruct<'mem, 'facet_lifetime> {
     #[inline]
     pub fn fields_for_serialize(
         &self,
-    ) -> impl Iterator<Item = (&'static Field, Peek<'mem, 'facet_lifetime>)> + '_ {
+    ) -> impl DoubleEndedIterator<Item = (&'static Field, Peek<'mem, 'facet_lifetime>)> + '_ {
         self.fields().filter(|(field, peek)| {
             if field.flags.contains(FieldFlags::SKIP_SERIALIZING) {
                 return false;
