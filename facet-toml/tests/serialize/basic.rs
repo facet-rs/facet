@@ -1,4 +1,6 @@
+use eyre::Result;
 use facet::Facet;
+use facet_serialize::Serialize;
 
 #[derive(Debug, Facet, PartialEq)]
 struct Person {
@@ -6,8 +8,11 @@ struct Person {
     age: u64,
 }
 
+#[cfg(feature = "alloc")]
 #[test]
-fn test_serialize_person() {
+fn test_serialize_person() -> Result<()> {
+    use facet_toml::TomlSerializer;
+
     facet_testhelpers::setup();
 
     let person = Person {
@@ -15,7 +20,11 @@ fn test_serialize_person() {
         age: 30,
     };
 
-    let toml = facet_toml::to_string(&person);
+    let mut toml = String::new();
+    let mut serializer = TomlSerializer::new(&mut toml);
+    person.serialize(&mut serializer)?;
 
     assert_eq!(toml, "name = \"Alice\"\nage = 30\n");
+
+    Ok(())
 }

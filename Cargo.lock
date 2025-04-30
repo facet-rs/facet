@@ -558,6 +558,7 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-reflect",
+ "facet-serialize",
  "facet-testhelpers",
  "log",
  "num-traits",

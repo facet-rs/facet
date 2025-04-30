@@ -1,109 +1,169 @@
 //! Create and/or write TOML strings from Rust values.
 
-use core::fmt::Result;
+use core::fmt::{Display, Error, Write};
 
-#[cfg(feature = "alloc")]
-use alloc::string::String;
-
-use facet_core::{Def, Facet};
-use facet_reflect::{Peek, ScalarType};
+use facet_serialize::Serializer;
 use toml_write::TomlWrite;
 
-/// Implement writing TOML values to types that allow being written to.
-pub trait TomlSerialize: TomlWrite {
-    /// Serialize and write the TOML representation of the type referenced.
-    fn toml<'a, T: Facet<'a>>(&mut self, value: &T) -> Result {
-        let peek = Peek::new(value);
-        self.toml_peek(&peek)
+/// Serializer for TOML values.
+pub struct TomlSerializer<'a, W: Write> {
+    /// Where to write the output to.
+    writer: &'a mut W,
+    /// What we are writing right now.
+    writing: Writing,
+}
+
+impl<'a, W: TomlWrite> TomlSerializer<'a, W> {
+    /// Create a new serialzer.
+    pub fn new(writer: &'a mut W) -> Self {
+        let writing = Writing::Root;
+
+        Self { writer, writing }
     }
 
-    /// Serialize and write the TOML representation of the type held by the [`facet_reflect::Peek`] instance.
-    fn toml_peek(&mut self, peek: &Peek<'_, '_>) -> Result {
-        serialize(peek, self)
-    }
-}
+    /// Write a value depending on the context.
+    fn write_value(&mut self, value: impl Display) -> Result<(), Error> {
+        write!(self.writer, "{value}")?;
 
-impl<W> TomlSerialize for W where W: TomlWrite {}
-
-/// Serializes a value to TOML.
-#[cfg(feature = "alloc")]
-pub fn to_string<'a, T: Facet<'a>>(value: &T) -> String {
-    let mut output = String::new();
-
-    output.toml(value).unwrap();
-
-    output
-}
-
-/// Serializes a [`facet_reflect::Peek`] instance to TOML.
-#[cfg(feature = "alloc")]
-pub fn peek_to_string(peek: &Peek<'_, '_>) -> String {
-    let mut output = String::new();
-
-    output.toml_peek(peek).unwrap();
-
-    output
-}
-
-/// Core serialization, can be called recursively.
-fn serialize<W>(peek: &Peek<'_, '_>, writer: &mut W) -> Result
-where
-    W: TomlWrite + ?Sized,
-{
-    match peek.shape().def {
-        Def::Scalar(_) => serialize_scalar(peek, writer),
-        Def::Struct(_) => serialize_struct(peek, writer),
-        Def::Enum(_) => todo!(),
-        Def::Map(_) => todo!(),
-        Def::List(_) => todo!(),
-        Def::Array(_) => todo!(),
-        Def::Slice(_) => todo!(),
-        Def::Option(_) => todo!(),
-        Def::SmartPointer(_) => todo!(),
-        Def::FunctionPointer(_) => todo!(),
-        _ => todo!(),
-    }
-}
-
-/// Serialize a single scalar value.
-fn serialize_scalar<W>(peek: &Peek<'_, '_>, writer: &mut W) -> Result
-where
-    W: TomlWrite + ?Sized,
-{
-    match peek.scalar_type() {
-        Some(ScalarType::Bool) => {
-            let value = peek.get::<bool>().unwrap();
-            write!(writer, "{}", if *value { "true" } else { "false" })
+        match self.writing {
+            Writing::Root | Writing::Table => self.writer.newline(),
         }
-        #[cfg(feature = "alloc")]
-        Some(ScalarType::String) => {
-            let value = peek.get::<String>().unwrap();
-            write!(writer, "\"{}\"", value)
-        }
-        Some(ScalarType::U64) => {
-            let value = peek.get::<u64>().unwrap();
-            write!(writer, "{}", value)
-        }
-        Some(other) => todo!("Unimplemented scalar type {other:?}"),
-        None => unreachable!(),
     }
 }
 
-/// Serialize a Rust struct.
-fn serialize_struct<W>(peek: &Peek<'_, '_>, writer: &mut W) -> Result
-where
-    W: TomlWrite + ?Sized,
-{
-    let struct_peek = peek.into_struct().unwrap();
+impl<W: TomlWrite> Serializer for TomlSerializer<'_, W> {
+    type Error = Error;
 
-    for (field, field_peek) in struct_peek.fields_for_serialize() {
-        writer.key(field.name)?;
-        writer.space()?;
-        writer.keyval_sep()?;
-        writer.space()?;
-        serialize(&field_peek, writer)?;
-        writer.newline()?;
+    fn serialize_u8(&mut self, value: u8) -> Result<(), Self::Error> {
+        self.write_value(value)
     }
 
-    Ok(())
+    fn serialize_u16(&mut self, value: u16) -> Result<(), Self::Error> {
+        self.write_value(value)
+    }
+
+    fn serialize_u32(&mut self, value: u32) -> Result<(), Self::Error> {
+        self.write_value(value)
+    }
+
+    fn serialize_u64(&mut self, value: u64) -> Result<(), Self::Error> {
+        self.write_value(value)
+    }
+
+    fn serialize_u128(&mut self, value: u128) -> Result<(), Self::Error> {
+        self.write_value(value)
+    }
+
+    fn serialize_usize(&mut self, value: usize) -> Result<(), Self::Error> {
+        self.write_value(value)
+    }
+
+    fn serialize_i8(&mut self, value: i8) -> Result<(), Self::Error> {
+        self.write_value(value)
+    }
+
+    fn serialize_i16(&mut self, value: i16) -> Result<(), Self::Error> {
+        self.write_value(value)
+    }
+
+    fn serialize_i32(&mut self, value: i32) -> Result<(), Self::Error> {
+        self.write_value(value)
+    }
+
+    fn serialize_i64(&mut self, value: i64) -> Result<(), Self::Error> {
+        self.write_value(value)
+    }
+
+    fn serialize_i128(&mut self, value: i128) -> Result<(), Self::Error> {
+        self.write_value(value)
+    }
+
+    fn serialize_isize(&mut self, value: isize) -> Result<(), Self::Error> {
+        self.write_value(value)
+    }
+
+    fn serialize_f32(&mut self, value: f32) -> Result<(), Self::Error> {
+        self.write_value(value)
+    }
+
+    fn serialize_f64(&mut self, value: f64) -> Result<(), Self::Error> {
+        self.write_value(value)
+    }
+
+    fn serialize_bool(&mut self, value: bool) -> Result<(), Self::Error> {
+        self.write_value(if value { "true" } else { "false" })
+    }
+
+    fn serialize_char(&mut self, value: char) -> Result<(), Self::Error> {
+        // TODO: improve performance of this
+        self.write_value(format!("\"{value}\""))
+    }
+
+    fn serialize_str(&mut self, value: &str) -> Result<(), Self::Error> {
+        // TODO: improve performance of this
+        self.write_value(format!("\"{value}\""))
+    }
+
+    fn serialize_bytes(&mut self, _value: &[u8]) -> Result<(), Self::Error> {
+        todo!()
+    }
+
+    fn serialize_none(&mut self) -> Result<(), Self::Error> {
+        todo!()
+    }
+
+    fn serialize_unit(&mut self) -> Result<(), Self::Error> {
+        todo!()
+    }
+
+    fn serialize_unit_variant(
+        &mut self,
+        _variant_index: usize,
+        _variant_name: &'static str,
+    ) -> Result<(), Self::Error> {
+        todo!()
+    }
+
+    fn start_object(&mut self, _len: Option<usize>) -> Result<(), Self::Error> {
+        // TODO: define this based on something, attributes?
+        self.writing = Writing::Table;
+
+        Ok(())
+    }
+
+    fn end_object(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn start_array(&mut self, _len: Option<usize>) -> Result<(), Self::Error> {
+        todo!()
+    }
+
+    fn end_array(&mut self) -> Result<(), Self::Error> {
+        todo!()
+    }
+
+    fn start_map(&mut self, _len: Option<usize>) -> Result<(), Self::Error> {
+        todo!()
+    }
+
+    fn end_map(&mut self) -> Result<(), Self::Error> {
+        todo!()
+    }
+
+    fn serialize_field_name(&mut self, name: &'static str) -> Result<(), Self::Error> {
+        self.writer.key(name)?;
+        self.writer.space()?;
+        self.writer.keyval_sep()?;
+        self.writer.space()
+    }
+}
+
+/// What we are writing right now.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Writing {
+    /// Root of the document.
+    Root,
+    /// Regular table.
+    Table,
 }

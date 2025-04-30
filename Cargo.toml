@@ -11,6 +11,7 @@ members = [
 
     # reflection
     "facet-reflect",
+    "facet-serialize",
 
     # dev helpers
     "facet-dev",
@@ -27,7 +28,7 @@ members = [
     "facet-kdl",
     "facet-urlencoded",
     "facet-yaml",
-    "facet-jsonschema", "facet-serialize",
+    "facet-jsonschema",
 ]
 exclude = ["outside-workspace"]
 resolver = "3"
