@@ -504,6 +504,7 @@ dependencies = [
  "facet-reflect",
  "facet-serialize",
  "facet-testhelpers",
+ "insta",
  "log",
  "rmp-serde",
  "serde",

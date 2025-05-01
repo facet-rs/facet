@@ -1,8 +1,9 @@
 use eyre::Result;
 use facet::Facet;
+use facet_msgpack::from_slice;
 
 #[test]
-fn it_works() -> Result<()> {
+fn msgpack_read_struct_two_fields() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, PartialEq, Facet)]
@@ -23,7 +24,7 @@ fn it_works() -> Result<()> {
         0x00, 0x00, 0x00, 0x1e, // 30
     ];
 
-    let result: TestStruct = facet_msgpack::from_slice(&data)?;
+    let result: TestStruct = from_slice(&data)?;
     assert_eq!(
         result,
         TestStruct {

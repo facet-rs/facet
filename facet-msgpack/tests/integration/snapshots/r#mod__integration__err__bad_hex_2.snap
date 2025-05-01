@@ -1,0 +1,5 @@
+---
+source: facet-msgpack/tests/integration/err.rs
+expression: err
+---
+Unexpected MessagePack type

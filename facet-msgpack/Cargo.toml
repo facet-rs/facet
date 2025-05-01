@@ -25,5 +25,6 @@ facet-serialize = { version = "0.20.0", path = "../facet-serialize" }
 eyre = "0.6.12"
 facet = { path = "../facet" }
 facet-testhelpers = { path = "../facet-testhelpers" }
+insta = "1.43.1"
 rmp-serde = "1.1"
 serde = { version = "1.0", features = ["derive"] }
