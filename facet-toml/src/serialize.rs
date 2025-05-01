@@ -1,8 +1,12 @@
 //! Create and/or write TOML strings from Rust values.
 
 use alloc::format;
+#[cfg(feature = "alloc")]
+use alloc::string::String;
 use core::fmt::{Display, Error, Write};
 
+#[cfg(feature = "alloc")]
+use facet_serialize::Serialize;
 use facet_serialize::Serializer;
 use toml_write::TomlWrite;
 
@@ -167,4 +171,15 @@ enum Writing {
     Root,
     /// Regular table.
     Table,
+}
+
+/// Serialize any [`facet::Facet`] type to a TOML string.
+#[cfg(feature = "alloc")]
+pub fn to_string<'a, T: facet_core::Facet<'a>>(value: &'a T) -> Result<String, Error> {
+    let mut output = String::new();
+
+    let mut serializer = TomlSerializer::new(&mut output);
+    value.serialize(&mut serializer)?;
+
+    Ok(output)
 }
