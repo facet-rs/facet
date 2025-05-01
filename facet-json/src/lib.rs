@@ -15,26 +15,12 @@ mod deserialize;
 pub use deserialize::*;
 
 #[cfg(feature = "std")]
+mod json_serializer;
+
+#[cfg(feature = "std")]
 mod serialize;
 #[cfg(feature = "std")]
 pub use serialize::*;
 
 #[cfg(feature = "std")]
-fn variant_is_transparent(variant: &facet_core::Variant) -> bool {
-    variant.data.kind == facet_core::StructKind::Tuple && variant.data.fields.len() == 1
-}
-
-#[cfg(feature = "std")]
-trait First<T> {
-    fn with_first(self) -> impl Iterator<Item = (bool, T)>;
-}
-
-#[cfg(feature = "std")]
-impl<Iter, T> First<T> for Iter
-where
-    Iter: Iterator<Item = T>,
-{
-    fn with_first(self) -> impl Iterator<Item = (bool, T)> {
-        self.enumerate().map(|(idx, elem)| (idx == 0, elem))
-    }
-}
+pub use json_serializer::JsonSerializer;

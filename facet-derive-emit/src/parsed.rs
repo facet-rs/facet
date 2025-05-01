@@ -41,6 +41,15 @@ pub enum PFacetAttr {
     /// etc. — when you're doing the newtype pattern. `de/ser` is forwarded.
     Transparent,
 
+    /// Valid in field
+    /// `#[facet(flatten)]` — flattens a field's contents
+    /// into the parent structure.
+    Flatten,
+
+    /// Valid in field
+    /// `#[facet(child)]` — marks a field as child node in a hierarchy
+    Child,
+
     /// Valid in container
     /// `#[facet(invariants = "Self::invariants_func")]` — returns a bool, is called
     /// when doing `Wip::build`
@@ -91,7 +100,10 @@ impl PFacetAttr {
             match attr {
                 FacetInner::Sensitive(_) => dest.push(PFacetAttr::Sensitive),
                 FacetInner::Opaque(_) => dest.push(PFacetAttr::Opaque),
+                FacetInner::Flatten(_) => dest.push(PFacetAttr::Flatten),
+                FacetInner::Child(_) => dest.push(PFacetAttr::Child),
                 FacetInner::Transparent(_) => dest.push(PFacetAttr::Transparent),
+
                 FacetInner::Invariants(invariant) => {
                     let expr = invariant.expr.to_token_stream();
                     dest.push(PFacetAttr::Invariants { expr });

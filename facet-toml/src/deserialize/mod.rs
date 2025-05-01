@@ -11,7 +11,7 @@ use alloc::{
     string::{String, ToString},
 };
 pub use error::{TomlError, TomlErrorKind};
-use facet_core::{Characteristic, Def, Facet, StructDef, StructKind};
+use facet_core::{Characteristic, Def, Facet, FieldFlags, StructDef, StructKind};
 use facet_reflect::{ReflectError, ScalarType, Wip};
 use log::trace;
 use toml_edit::{ImDocument, Item, TomlError as TomlEditError};
@@ -158,9 +158,9 @@ fn deserialize_as_struct<'input, 'a>(
                 if let Def::Option(..) = field.shape().def {
                     // Default of `Option<T>` is `None`
                     reflect!(wip, toml, item.span(), put_default());
-                } else if let Some(default_in_place_fn) = field.maybe_default_fn() {
+                } else if field.flags.contains(FieldFlags::DEFAULT) {
                     // Handle the default function
-                    if let Some(default_in_place_fn) = default_in_place_fn {
+                    if let Some(default_in_place_fn) = field.vtable.default_fn {
                         reflect!(wip, toml, item.span(), put_from_fn(default_in_place_fn));
                     } else if field.shape().is(Characteristic::Default) {
                         reflect!(wip, toml, item.span(), put_default());

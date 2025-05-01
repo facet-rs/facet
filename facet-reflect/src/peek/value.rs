@@ -259,6 +259,31 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
             })
         }
     }
+
+    /// Tries to return the innermost value — useful for serialization. For example, we serialize a `NonZero<u8>` the same
+    /// as a `u8`. Similarly, we serialize a `Utf8PathBuf` the same as a `String.
+    ///
+    /// Returns a `Peek` to the innermost value, unwrapping transparent wrappers recursively.
+    /// For example, this will peel through newtype wrappers or smart pointers that have an `inner`.
+    pub fn innermost_peek(self) -> Self {
+        let mut current_peek = self;
+        while let (Some(try_borrow_inner_fn), Some(inner_shape)) = (
+            current_peek.shape.vtable.try_borrow_inner,
+            current_peek.shape.inner,
+        ) {
+            unsafe {
+                let inner_data = try_borrow_inner_fn(current_peek.data)
+                    .expect("innermost_peek: try_borrow_inner returned an error");
+
+                current_peek = Peek {
+                    data: inner_data,
+                    shape: inner_shape(),
+                    invariant: PhantomData,
+                };
+            }
+        }
+        current_peek
+    }
 }
 
 impl core::fmt::Display for Peek<'_, '_> {

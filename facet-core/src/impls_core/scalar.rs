@@ -44,21 +44,6 @@ unsafe impl<'a, T: ?Sized + 'a> Facet<'a> for core::marker::PhantomData<T> {
     };
 }
 
-#[cfg(feature = "alloc")]
-unsafe impl Facet<'_> for alloc::string::String {
-    const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .def(Def::Scalar(
-                ScalarDef::builder()
-                    // `String` is always on the heap
-                    .affinity(ScalarAffinity::string().max_inline_length(0).build())
-                    .build(),
-            ))
-            .vtable(&const { value_vtable!(alloc::string::String, |f, _opts| write!(f, "String")) })
-            .build()
-    };
-}
-
 unsafe impl Facet<'_> for char {
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
@@ -81,27 +66,6 @@ unsafe impl<'a> Facet<'a> for &'a str {
                     .build(),
             ))
             .vtable(&const { value_vtable!(&str, |f, _opts| write!(f, "&str")) })
-            .build()
-    };
-}
-
-#[cfg(feature = "alloc")]
-unsafe impl<'a> Facet<'a> for alloc::borrow::Cow<'a, str> {
-    const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .def(Def::Scalar(
-                ScalarDef::builder()
-                    .affinity(ScalarAffinity::string().build())
-                    .build(),
-            ))
-            .vtable(
-                &const {
-                    value_vtable!(alloc::borrow::Cow<'_, str>, |f, _opts| write!(
-                        f,
-                        "Cow<'_, str>"
-                    ))
-                },
-            )
             .build()
     };
 }

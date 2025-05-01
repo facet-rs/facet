@@ -25,7 +25,47 @@ pub struct Field {
 
     /// doc comments
     pub doc: &'static [&'static str],
+
+    /// vtable for fields
+    pub vtable: &'static FieldVTable,
+
+    /// true if returned from `fields_for_serialize` and it was flattened - which
+    /// means, if it's an enum, the outer variant shouldn't be written.
+    pub flattened: bool,
 }
+
+impl Field {
+    /// Returns true if the field has the skip-serializing unconditionally flag or if it has the
+    /// skip-serializing-if function in its vtable and it returns true on the given data.
+    ///
+    /// # Safety
+    /// The peek should correspond to a value of the same type as this field
+    pub unsafe fn should_skip_serializing(&self, ptr: PtrConst<'_>) -> bool {
+        if self.flags.contains(FieldFlags::SKIP_SERIALIZING) {
+            return true;
+        }
+        if let Some(skip_serializing_if) = self.vtable.skip_serializing_if {
+            return unsafe { skip_serializing_if(ptr) };
+        }
+        false
+    }
+}
+
+/// Vtable for field-specific operations
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[repr(C)]
+#[non_exhaustive]
+pub struct FieldVTable {
+    /// Function to determine if serialization should be skipped for this field
+    pub skip_serializing_if: Option<SkipSerializingIfFn>,
+
+    /// Function to get the default value for this field
+    pub default_fn: Option<DefaultInPlaceFn>,
+}
+
+/// A function that, if present, determines whether field should be included in the serialization
+/// step.
+pub type SkipSerializingIfFn = for<'mem> unsafe fn(value: PtrConst<'mem>) -> bool;
 
 impl Field {
     /// Returns the shape of the inner type
@@ -38,45 +78,62 @@ impl Field {
         FieldBuilder::new()
     }
 
-    /// See [`FieldAttribute::Arbitrary`]
-    pub fn has_arbitrary_attr(&self, content: &'static str) -> bool {
-        self.attributes
-            .contains(&FieldAttribute::Arbitrary(content))
-    }
-
-    /// See [`FieldAttribute::Default`]
-    pub fn get_default_attr(&'static self) -> Option<Option<DefaultInPlaceFn>> {
-        for attr in self.attributes {
-            if let FieldAttribute::Default(default_fn) = attr {
-                return Some(*default_fn);
-            }
-        }
-        None
-    }
-
-    /// Returns the default attribute if present
-    pub fn maybe_default_fn(&'static self) -> Option<Option<DefaultInPlaceFn>> {
-        for attr in self.attributes {
-            if let FieldAttribute::Default(default_fn) = attr {
-                return Some(*default_fn);
-            }
-        }
-        None
-    }
-
-    /// See [`FieldAttribute::Arbitrary`]
-    pub fn get_arbitrary_attr(&'static self) -> Option<&'static str> {
-        for attr in self.attributes {
-            if let FieldAttribute::Arbitrary(value) = attr {
-                return Some(value);
-            }
-        }
-        None
-    }
-
     /// Checks if field is marked as sensitive through attributes or flags
     pub fn is_sensitive(&'static self) -> bool {
         self.flags.contains(FieldFlags::SENSITIVE)
+    }
+}
+
+/// An attribute that can be set on a field
+#[non_exhaustive]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[repr(C)]
+pub enum FieldAttribute {
+    /// Custom field attribute containing arbitrary text
+    Arbitrary(&'static str),
+}
+
+/// Builder for FieldVTable
+pub struct FieldVTableBuilder {
+    skip_serializing_if: Option<SkipSerializingIfFn>,
+    default_fn: Option<DefaultInPlaceFn>,
+}
+
+impl FieldVTableBuilder {
+    /// Creates a new FieldVTableBuilder
+    #[allow(clippy::new_without_default)]
+    pub const fn new() -> Self {
+        Self {
+            skip_serializing_if: None,
+            default_fn: None,
+        }
+    }
+
+    /// Sets the skip_serializing_if function for the FieldVTable
+    pub const fn skip_serializing_if(mut self, func: SkipSerializingIfFn) -> Self {
+        self.skip_serializing_if = Some(func);
+        self
+    }
+
+    /// Sets the default_fn function for the FieldVTable
+    pub const fn default_fn(mut self, func: DefaultInPlaceFn) -> Self {
+        self.default_fn = Some(func);
+        self
+    }
+
+    /// Builds the FieldVTable
+    pub const fn build(self) -> FieldVTable {
+        FieldVTable {
+            skip_serializing_if: self.skip_serializing_if,
+            default_fn: self.default_fn,
+        }
+    }
+}
+
+impl FieldVTable {
+    /// Returns a builder for FieldVTable
+    pub const fn builder() -> FieldVTableBuilder {
+        FieldVTableBuilder::new()
     }
 }
 
@@ -88,24 +145,8 @@ pub struct FieldBuilder {
     flags: Option<FieldFlags>,
     attributes: &'static [FieldAttribute],
     doc: &'static [&'static str],
+    vtable: &'static FieldVTable,
 }
-
-/// An attribute that can be set on a field
-#[non_exhaustive]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-#[repr(C)]
-pub enum FieldAttribute {
-    /// Skip serializing this field if the function identified by `.0` evaluates to true.
-    SkipSerializingIf(SkipSerializingIfFn),
-    /// Indicates the field has a default value (the value is which fn to call for default, or None for Default::default)
-    Default(Option<DefaultInPlaceFn>),
-    /// Custom field attribute containing arbitrary text
-    Arbitrary(&'static str),
-}
-
-/// A function that, if present, determines whether field should be included in the serialization
-/// step.
-pub type SkipSerializingIfFn = for<'mem> unsafe fn(value: PtrConst<'mem>) -> bool;
 
 impl FieldBuilder {
     /// Creates a new FieldBuilder
@@ -118,6 +159,12 @@ impl FieldBuilder {
             flags: None,
             attributes: &[],
             doc: &[],
+            vtable: &const {
+                FieldVTable {
+                    skip_serializing_if: None,
+                    default_fn: None,
+                }
+            },
         }
     }
 
@@ -157,6 +204,12 @@ impl FieldBuilder {
         self
     }
 
+    /// Sets the vtable for the Field
+    pub const fn vtable(mut self, vtable: &'static FieldVTable) -> Self {
+        self.vtable = vtable;
+        self
+    }
+
     /// Builds the Field
     pub const fn build(self) -> Field {
         Field {
@@ -169,6 +222,8 @@ impl FieldBuilder {
             },
             attributes: self.attributes,
             doc: self.doc,
+            vtable: self.vtable,
+            flattened: false,
         }
     }
 }
@@ -185,6 +240,17 @@ bitflags! {
 
         /// Flag indicating this field should be skipped during serialization
         const SKIP_SERIALIZING = 1 << 1;
+
+        /// Flag indicating that this field should be flattened: if it's a struct, all its
+        /// fields should be apparent on the parent structure, etc.
+        const FLATTEN = 1 << 2;
+
+        /// For KDL/XML formats, indicates that this field is a child, not an attribute
+        const CHILD = 1 << 3;
+
+        /// When deserializing, if this field is missing, use its default value. If
+        /// `FieldVTable::default_fn` is set, use that.
+        const DEFAULT = 1 << 4;
     }
 }
 

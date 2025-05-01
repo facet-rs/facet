@@ -456,6 +456,7 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-reflect",
+ "facet-serialize",
  "facet-testhelpers",
  "insta",
  "log",

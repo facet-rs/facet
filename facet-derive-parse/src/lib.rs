@@ -42,6 +42,10 @@ keyword! {
     pub KRename = "rename";
     /// The "rename_all" keyword.
     pub KRenameAll = "rename_all";
+    /// The "flatten" keyword
+    pub KFlatten = "flatten";
+    /// The "child" keyword
+    pub KChild = "child";
     /// The "skip_serializing" keyword.
     pub KSkipSerializing = "skip_serializing";
     /// The "skip_serializing_if" keyword.
@@ -143,12 +147,28 @@ unsynn! {
         RenameAll(RenameAllInner),
         /// A rename attribute that specifies a custom name for a field/variant (#[facet(rename = "custom_name")])
         Rename(RenameInner),
+        /// A flatten attribute that marks a field to be flattened into the parent structure
+        Flatten(FlattenInner),
+        /// A child attribute that marks a field as a child node
+        Child(ChildInner),
         /// A skip_serializing attribute that specifies whether a field should be skipped during serialization.
         SkipSerializing(SkipSerializingInner),
         /// A skip_serializing_if attribute that specifies a condition for skipping serialization.
         SkipSerializingIf(SkipSerializingIfInner),
         /// Any other attribute represented as a sequence of token trees.
         Arbitrary(VerbatimUntil<Comma>),
+    }
+
+    /// Inner value for #[facet(flatten)]
+    pub struct FlattenInner {
+        /// The "flatten" keyword.
+        pub _kw_flatten: KFlatten,
+    }
+
+    /// Inner value for #[facet(child)]
+    pub struct ChildInner {
+        /// The "child" keyword.
+        pub _kw_child: KChild,
     }
 
     /// Inner value for #[facet(skip_serializing)]

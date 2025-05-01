@@ -8,7 +8,7 @@ use std::{
     fmt::{self, Display},
 };
 
-use facet_core::{Def, Facet};
+use facet_core::{Def, Facet, FieldFlags};
 use facet_reflect::{ReflectError, Wip};
 use kdl::{KdlDocument, KdlError as KdlParseError};
 
@@ -129,11 +129,10 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 // QUESTION: Would be be possible, once we allow custom types, to make all attributes arbitrary? With
                 // the sort of general tool that `facet` is, I think it might actually be best if we didn't try to
                 // "bake-in" anything like sensitive, default, skip, etc...
-                let is_valid_toplevel = struct_def.fields.iter().all(|field| {
-                    field
-                        .get_arbitrary_attr()
-                        .is_some_and(|attribute| attribute == "child")
-                });
+                let is_valid_toplevel = struct_def
+                    .fields
+                    .iter()
+                    .all(|field| field.flags.contains(FieldFlags::CHILD));
                 log::trace!("WIP represents a valid top-level: {is_valid_toplevel}");
 
                 if is_valid_toplevel {

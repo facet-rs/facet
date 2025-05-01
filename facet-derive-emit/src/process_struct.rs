@@ -18,6 +18,7 @@ pub(crate) fn gen_field_from_pfield(
     let mut flags = quote! {};
     let mut flags_empty = true;
 
+    let mut vtable_items: Vec<TokenStream> = vec![];
     let mut attribute_list: Vec<TokenStream> = vec![];
     let doc_lines: Vec<TokenStream> = field.attrs.doc.iter().map(|doc| quote!(#doc)).collect();
     let mut shape_of = quote! { shape_of };
@@ -34,16 +35,42 @@ pub(crate) fn gen_field_from_pfield(
                 }
             }
             PFacetAttr::Default => {
-                attribute_list.push(quote! { ::facet::FieldAttribute::Default(None) });
+                if flags_empty {
+                    flags_empty = false;
+                    flags = quote! { ::facet::FieldFlags::DEFAULT };
+                } else {
+                    flags = quote! { #flags.union(::facet::FieldFlags::DEFAULT) };
+                }
             }
             PFacetAttr::DefaultEquals { expr } => {
-                let field_ty = field_type;
-                let default_expr = expr;
-                attribute_list.push(quote! {
-                    ::facet::FieldAttribute::Default(Some(|ptr| {
-                        unsafe { ptr.put::<#field_ty>(#default_expr) }
-                    }))
+                if flags_empty {
+                    flags_empty = false;
+                    flags = quote! { ::facet::FieldFlags::DEFAULT };
+                } else {
+                    flags = quote! { #flags.union(::facet::FieldFlags::DEFAULT) };
+                }
+
+                vtable_items.push(quote! {
+                    .default_fn(|ptr| {
+                        unsafe { ptr.put::<#field_type>(#expr) }
+                    })
                 });
+            }
+            PFacetAttr::Child => {
+                if flags_empty {
+                    flags_empty = false;
+                    flags = quote! { ::facet::FieldFlags::CHILD };
+                } else {
+                    flags = quote! { #flags.union(::facet::FieldFlags::CHILD) };
+                }
+            }
+            PFacetAttr::Flatten => {
+                if flags_empty {
+                    flags_empty = false;
+                    flags = quote! { ::facet::FieldFlags::FLATTEN };
+                } else {
+                    flags = quote! { #flags.union(::facet::FieldFlags::FLATTEN) };
+                }
             }
             PFacetAttr::Opaque => {
                 shape_of = quote! { shape_of_opaque };
@@ -62,8 +89,8 @@ pub(crate) fn gen_field_from_pfield(
             PFacetAttr::SkipSerializingIf { expr } => {
                 let predicate = expr;
                 let field_ty = field_type;
-                attribute_list.push(quote! {
-                    ::facet::FieldAttribute::SkipSerializingIf(unsafe { ::std::mem::transmute((#predicate) as fn(&#field_ty) -> bool) })
+                vtable_items.push(quote! {
+                    .skip_serializing_if(unsafe { ::std::mem::transmute((#predicate) as fn(&#field_ty) -> bool) })
                 });
             }
             // These are handled by PName or are container-level, so ignore them for field attributes.
@@ -84,6 +111,18 @@ pub(crate) fn gen_field_from_pfield(
         quote! {}
     } else {
         quote! { .doc(&[#(#doc_lines),*]) }
+    };
+
+    let maybe_vtable = if vtable_items.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            .vtable(&const {
+                ::facet::FieldVTable::builder()
+                    #(#vtable_items)*
+                    .build()
+            })
+        }
     };
 
     let maybe_flags = if flags_empty {
@@ -112,6 +151,7 @@ pub(crate) fn gen_field_from_pfield(
             #maybe_flags
             #maybe_attributes
             #maybe_field_doc
+            #maybe_vtable
             .build()
     }
 }
@@ -204,7 +244,9 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 | PFacetAttr::Opaque
                 | PFacetAttr::Invariants { .. }
                 | PFacetAttr::SkipSerializing
-                | PFacetAttr::SkipSerializingIf { .. } => {}
+                | PFacetAttr::SkipSerializingIf { .. }
+                | PFacetAttr::Flatten
+                | PFacetAttr::Child => {}
             }
         }
         if items.is_empty() {

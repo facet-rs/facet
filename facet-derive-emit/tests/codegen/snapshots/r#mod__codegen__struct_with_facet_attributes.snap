@@ -14,15 +14,15 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithAttributes {
                     .name("id")
                     .shape(|| ::facet::shape_of(&|s: &StructWithAttributes| &s.id))
                     .offset(::core::mem::offset_of!(StructWithAttributes, id))
-                    .flags(::facet::FieldFlags::SENSITIVE)
+                    .flags(::facet::FieldFlags::DEFAULT.union(::facet::FieldFlags::SENSITIVE))
                     .attributes(
+                        &const { [::facet::FieldAttribute::Arbitrary("name = \"identifier\"")] },
+                    )
+                    .vtable(
                         &const {
-                            [
-                                ::facet::FieldAttribute::Arbitrary("name = \"identifier\""),
-                                ::facet::FieldAttribute::Default(Some(|ptr| unsafe {
-                                    ptr.put::<String>(generate_id)
-                                })),
-                            ]
+                            ::facet::FieldVTable::builder()
+                                .default_fn(|ptr| unsafe { ptr.put::<String>(generate_id) })
+                                .build()
                         },
                     )
                     .build(),

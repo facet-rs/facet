@@ -1,6 +1,6 @@
 use alloc::string::{String, ToString};
 use alloc::{vec, vec::Vec};
-use facet_core::{Characteristic, Def, Facet, ScalarAffinity, StructKind};
+use facet_core::{Characteristic, Def, Facet, FieldFlags, ScalarAffinity, StructKind};
 use facet_reflect::{HeapValue, ReflectError, Wip};
 use log::trace;
 use owo_colors::OwoColorize;
@@ -161,12 +161,12 @@ impl<'a> StackRunner<'a> {
                         JsonError::new_reflect(err, self.input, self.last_span, wip.path())
                     })?;
                     if !is_set {
-                        if let Some(default_in_place_fn) = field.maybe_default_fn() {
+                        if field.flags.contains(FieldFlags::DEFAULT) {
                             let path = wip.path();
                             wip = wip.field(index).map_err(|e| {
                                 JsonError::new_reflect(e, self.input, self.last_span, path)
                             })?;
-                            if let Some(default_in_place_fn) = default_in_place_fn {
+                            if let Some(default_in_place_fn) = field.vtable.default_fn {
                                 let path = wip.path();
                                 wip = wip.put_from_fn(default_in_place_fn).map_err(|e| {
                                     JsonError::new_reflect(e, self.input, self.last_span, path)
@@ -587,7 +587,7 @@ impl<'a> StackRunner<'a> {
                             // Check for flattened fields
                             let mut found_in_flatten = false;
                             for (index, field) in sd.fields.iter().enumerate() {
-                                if field.has_arbitrary_attr("flatten") {
+                                if field.flags.contains(FieldFlags::FLATTEN) {
                                     trace!("Found flattened field #{}", index);
                                     // Enter the flattened field
                                     let path = wip.path();

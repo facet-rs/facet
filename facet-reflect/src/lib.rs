@@ -4,7 +4,6 @@
 #![warn(clippy::std_instead_of_alloc)]
 #![doc = include_str!("../README.md")]
 
-#[cfg(feature = "alloc")]
 extern crate alloc;
 
 mod error;

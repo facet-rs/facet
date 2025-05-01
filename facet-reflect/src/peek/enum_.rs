@@ -1,6 +1,8 @@
-use facet_core::{EnumDef, EnumRepr, Field, FieldAttribute, FieldFlags, Shape, Variant};
+use facet_core::{EnumDef, EnumRepr, Field, Shape, Variant};
 
 use crate::Peek;
+
+use super::HasFields;
 
 /// Lets you read from an enum (implements read-only enum operations)
 #[derive(Clone, Copy)]
@@ -165,39 +167,22 @@ impl<'mem, 'facet_lifetime> PeekEnum<'mem, 'facet_lifetime> {
         let index = self.field_index(field_name)?;
         self.field(index)
     }
+}
 
-    /// Iterates over all fields in this enum variant, providing both field metadata and value
-    #[inline]
-    pub fn fields(self) -> impl Iterator<Item = (&'static Field, Peek<'mem, 'facet_lifetime>)> {
+impl<'mem, 'facet_lifetime> HasFields<'mem, 'facet_lifetime> for PeekEnum<'mem, 'facet_lifetime> {
+    fn fields(&self) -> impl DoubleEndedIterator<Item = (Field, Peek<'mem, 'facet_lifetime>)> {
+        // Get the active variant and its fields
         let variant = self.active_variant();
         let fields = &variant.data.fields;
 
-        // Create an iterator that maps each field to a (Field, PeekValue) pair
-        fields.iter().map(move |field| {
-            let field_data = unsafe { self.value.data().field(field.offset) };
-            let peek = unsafe { Peek::unchecked_new(field_data, field.shape()) };
-            (field, peek)
-        })
-    }
-
-    /// Iterates over fields in this struct that should be included when it is serialized.
-    #[inline]
-    pub fn fields_for_serialize(
-        &self,
-    ) -> impl Iterator<Item = (&'static Field, Peek<'mem, 'facet_lifetime>)> + '_ {
-        self.fields().filter(|(field, peek)| {
-            if field.flags.contains(FieldFlags::SKIP_SERIALIZING) {
-                return false;
-            }
-
-            for attr in field.attributes {
-                if let FieldAttribute::SkipSerializingIf(fn_ptr) = attr {
-                    if unsafe { fn_ptr(peek.data()) } {
-                        return false;
-                    }
-                }
-            }
-            true
+        // Create an iterator that yields the field definition and field value
+        (0..fields.len()).filter_map(move |i| {
+            // Get the field definition
+            let field = fields[i];
+            // Get the field value
+            let field_value = self.field(i)?;
+            // Return the field definition and value
+            Some((field, field_value))
         })
     }
 }

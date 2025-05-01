@@ -1,6 +1,7 @@
-use facet_core::{Field, FieldAttribute, FieldError, FieldFlags, StructDef};
+use facet_core::{Field, FieldError, FieldFlags, StructDef};
 
 use crate::Peek;
+use alloc::{vec, vec::Vec};
 
 /// Lets you read from a struct (implements read-only struct operations)
 #[derive(Clone, Copy)]
@@ -54,37 +55,63 @@ impl<'mem, 'facet_lifetime> PeekStruct<'mem, 'facet_lifetime> {
         }
         Err(FieldError::NoSuchField)
     }
+}
 
-    /// Iterates over all fields in this struct, providing both name and value
-    #[inline]
-    pub fn fields(
-        &self,
-    ) -> impl Iterator<Item = (&'static Field, Peek<'mem, 'facet_lifetime>)> + '_ {
-        (0..self.field_count()).filter_map(|i| {
-            let field = self.def.fields.get(i)?;
-            let value = self.field(i).ok()?;
-            Some((field, value))
-        })
+impl<'mem, 'facet_lifetime> HasFields<'mem, 'facet_lifetime> for PeekStruct<'mem, 'facet_lifetime> {
+    fn fields(&self) -> impl DoubleEndedIterator<Item = (Field, Peek<'mem, 'facet_lifetime>)> {
+        (0..self.def.fields.len())
+            .filter_map(move |i| self.field(i).ok().map(|value| (self.def.fields[i], value)))
     }
+}
 
-    /// Iterates over fields in this struct that should be included when it is serialized.
-    #[inline]
-    pub fn fields_for_serialize(
+/// Trait for types that have field methods
+///
+/// This trait allows code to be written generically over both structs and enums
+/// that provide field access and iteration capabilities.
+pub trait HasFields<'mem, 'facet_lifetime> {
+    /// Iterates over all fields in this type, providing both field metadata and value
+    fn fields(&self) -> impl DoubleEndedIterator<Item = (Field, Peek<'mem, 'facet_lifetime>)>;
+
+    /// Iterates over fields in this type that should be included when it is serialized
+    fn fields_for_serialize(
         &self,
-    ) -> impl Iterator<Item = (&'static Field, Peek<'mem, 'facet_lifetime>)> + '_ {
-        self.fields().filter(|(field, peek)| {
-            if field.flags.contains(FieldFlags::SKIP_SERIALIZING) {
-                return false;
-            }
-
-            for attr in field.attributes {
-                if let FieldAttribute::SkipSerializingIf(fn_ptr) = attr {
-                    if unsafe { fn_ptr(peek.data()) } {
-                        return false;
+    ) -> impl DoubleEndedIterator<Item = (Field, Peek<'mem, 'facet_lifetime>)> {
+        // This is a default implementation that filters out fields with `skip_serializing`
+        // attribute and handles field flattening.
+        self.fields()
+            .filter(|(field, peek)| !unsafe { field.should_skip_serializing(peek.data()) })
+            .flat_map(|(mut field, peek)| {
+                if field.flags.contains(FieldFlags::FLATTEN) {
+                    let mut flattened = Vec::new();
+                    if let Ok(struct_peek) = peek.into_struct() {
+                        struct_peek
+                            .fields_for_serialize()
+                            .for_each(|item| flattened.push(item));
+                    } else if let Ok(enum_peek) = peek.into_enum() {
+                        // normally we'd serialize to something like:
+                        //
+                        //   {
+                        //     "field_on_struct": {
+                        //       "VariantName": { "field_on_variant": "foo" }
+                        //     }
+                        //   }
+                        //
+                        // But since `field_on_struct` is flattened, instead we do:
+                        //
+                        //   {
+                        //     "VariantName": { "field_on_variant": "foo" }
+                        //   }
+                        field.name = enum_peek.active_variant().name;
+                        field.flattened = true;
+                        flattened.push((field, peek));
+                    } else {
+                        // TODO: fail more gracefully
+                        panic!("cannot flatten a {}", field.shape())
                     }
+                    flattened.into_iter()
+                } else {
+                    vec![(field, peek)].into_iter()
                 }
-            }
-            true
-        })
+            })
     }
 }
