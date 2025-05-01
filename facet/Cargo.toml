@@ -14,7 +14,7 @@ features = ["std", "reflect", "camino"]
 
 [features]
 default = ["std"]
-#reflect = ["dep:facet-reflect"] # Enables reflection via Peek and Poke types
+reflect = ["dep:facet-reflect"] # Enables reflection via Peek and Poke types
 testfeat = [] # Does nothing, only used for tests
 std = ["facet-core/std", "alloc"] # Uses libstd and alloc
 alloc = ["facet-core/alloc"] # Enables alloc support
@@ -26,11 +26,11 @@ uuid = ["facet-core/uuid"] # Implements Facet for Uuid
 [dependencies]
 facet-core = { path = "../facet-core", version = "0.19.0", default-features = false }
 facet-derive = { path = "../facet-derive", version = "0.18.3" }
-#facet-reflect = { path = "../facet-reflect", version = "0.18.1", optional = true }
+facet-reflect = { path = "../facet-reflect", version = "0.18.1", optional = true }
 
 [dev-dependencies]
 cargo-husky = { version = "1.5.0", default-features = false, features = [
     "user-hooks",
 ] }
 eyre = { version = "0.6.12", default-features = false }
-#facet-reflect = { path = "../facet-reflect" }
+facet-reflect = { path = "../facet-reflect" }

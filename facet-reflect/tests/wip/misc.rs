@@ -1,6 +1,6 @@
 use std::mem::MaybeUninit;
 
-use facet::{Def, EnumDef, Facet, Field, PtrConst, PtrUninit, StructDef, Variant};
+use facet::{EnumType, Facet, Field, PtrConst, PtrUninit, StructType, Type, UserType, Variant};
 use facet_reflect::{ReflectError, Wip};
 
 #[derive(Facet, PartialEq, Eq, Debug)]
@@ -338,13 +338,13 @@ fn wip_enum_with_data_repr_c_i16() -> eyre::Result<()> {
 #[test]
 fn test_enum_reprs() -> eyre::Result<()> {
     const fn field_offsets<T: Facet<'static>>() -> [usize; 2] {
-        match T::SHAPE.def {
-            Def::Enum(EnumDef {
+        match T::SHAPE.ty {
+            Type::User(UserType::Enum(EnumType {
                 variants:
                     &[
                         Variant {
                             data:
-                                StructDef {
+                                StructType {
                                     fields:
                                         &[
                                             Field {
@@ -360,7 +360,7 @@ fn test_enum_reprs() -> eyre::Result<()> {
                         },
                     ],
                 ..
-            }) => [offset1, offset2],
+            })) => [offset1, offset2],
             _ => unreachable!(),
         }
     }

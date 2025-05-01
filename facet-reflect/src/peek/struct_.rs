@@ -1,4 +1,4 @@
-use facet_core::{Field, FieldAttribute, FieldError, FieldFlags, StructDef};
+use facet_core::{Field, FieldAttribute, FieldError, FieldFlags, StructType};
 
 use crate::Peek;
 
@@ -9,7 +9,7 @@ pub struct PeekStruct<'mem, 'facet_lifetime> {
     pub(crate) value: Peek<'mem, 'facet_lifetime>,
 
     /// the definition of the struct!
-    pub(crate) def: StructDef,
+    pub(crate) ty: StructType,
 }
 
 impl core::fmt::Debug for PeekStruct<'_, '_> {
@@ -21,20 +21,20 @@ impl core::fmt::Debug for PeekStruct<'_, '_> {
 impl<'mem, 'facet_lifetime> PeekStruct<'mem, 'facet_lifetime> {
     /// Returns the struct definition
     #[inline(always)]
-    pub fn def(&self) -> &StructDef {
-        &self.def
+    pub fn ty(&self) -> &StructType {
+        &self.ty
     }
 
     /// Returns the number of fields in this struct
     #[inline(always)]
     pub fn field_count(&self) -> usize {
-        self.def.fields.len()
+        self.ty.fields.len()
     }
 
     /// Returns the value of the field at the given index
     #[inline(always)]
     pub fn field(&self, index: usize) -> Result<Peek<'mem, 'facet_lifetime>, FieldError> {
-        self.def
+        self.ty
             .fields
             .get(index)
             .map(|field| unsafe {
@@ -47,7 +47,7 @@ impl<'mem, 'facet_lifetime> PeekStruct<'mem, 'facet_lifetime> {
     /// Gets the value of the field with the given name
     #[inline]
     pub fn field_by_name(&self, name: &str) -> Result<Peek<'mem, 'facet_lifetime>, FieldError> {
-        for (i, field) in self.def.fields.iter().enumerate() {
+        for (i, field) in self.ty.fields.iter().enumerate() {
             if field.name == name {
                 return self.field(i);
             }
@@ -61,7 +61,7 @@ impl<'mem, 'facet_lifetime> PeekStruct<'mem, 'facet_lifetime> {
         &self,
     ) -> impl Iterator<Item = (&'static Field, Peek<'mem, 'facet_lifetime>)> + '_ {
         (0..self.field_count()).filter_map(|i| {
-            let field = self.def.fields.get(i)?;
+            let field = self.ty.fields.get(i)?;
             let value = self.field(i).ok()?;
             Some((field, value))
         })

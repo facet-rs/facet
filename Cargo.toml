@@ -10,7 +10,7 @@ members = [
     "facet-derive",
 
     # reflection
-    # "facet-reflect",
+    "facet-reflect",
     # "facet-serialize",
 
     # dev helpers

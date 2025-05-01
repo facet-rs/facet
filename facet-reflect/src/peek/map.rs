@@ -16,8 +16,8 @@ impl<'mem, 'facet_lifetime> Iterator for PeekMapIter<'mem, 'facet_lifetime> {
             let next = (self.map.def.vtable.iter_vtable.next)(self.iter);
             next.map(|(key_ptr, value_ptr)| {
                 (
-                    Peek::unchecked_new(key_ptr, self.map.def.k),
-                    Peek::unchecked_new(value_ptr, self.map.def.v),
+                    Peek::unchecked_new(key_ptr, self.map.def.k()),
+                    Peek::unchecked_new(value_ptr, self.map.def.v()),
                 )
             })
         }
@@ -85,7 +85,7 @@ impl<'mem, 'facet_lifetime> PeekMap<'mem, 'facet_lifetime> {
         unsafe {
             let key_ptr = PtrConst::new(key);
             let value_ptr = (self.def.vtable.get_value_ptr_fn)(self.value.data(), key_ptr)?;
-            Some(Peek::unchecked_new(value_ptr, self.def.v))
+            Some(Peek::unchecked_new(value_ptr, self.def.v()))
         }
     }
 

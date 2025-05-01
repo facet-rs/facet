@@ -1,5 +1,5 @@
 use core::{cmp::Ordering, marker::PhantomData};
-use facet_core::{Def, Facet, PtrConst, PtrMut, Shape, TypeNameOpts, ValueVTable};
+use facet_core::{Def, Facet, PtrConst, PtrMut, Shape, Type, TypeNameOpts, UserType, ValueVTable};
 
 use crate::{ReflectError, ScalarType};
 
@@ -188,8 +188,8 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
 
     /// Tries to identify this value as a struct
     pub fn into_struct(self) -> Result<PeekStruct<'mem, 'facet_lifetime>, ReflectError> {
-        if let Def::Struct(def) = self.shape.def {
-            Ok(PeekStruct { value: self, def })
+        if let Type::User(UserType::Struct(ty)) = self.shape.ty {
+            Ok(PeekStruct { value: self, ty })
         } else {
             Err(ReflectError::WasNotA {
                 expected: "struct",
@@ -200,8 +200,8 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
 
     /// Tries to identify this value as an enum
     pub fn into_enum(self) -> Result<PeekEnum<'mem, 'facet_lifetime>, ReflectError> {
-        if let Def::Enum(def) = self.shape.def {
-            Ok(PeekEnum { value: self, def })
+        if let Type::User(UserType::Enum(ty)) = self.shape.ty {
+            Ok(PeekEnum { value: self, ty })
         } else {
             Err(ReflectError::WasNotA {
                 expected: "enum",
