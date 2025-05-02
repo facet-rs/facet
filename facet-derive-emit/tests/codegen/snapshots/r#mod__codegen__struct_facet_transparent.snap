@@ -8,11 +8,13 @@ static WRAPPER_SHAPE: &'static ::facet::Shape = <Wrapper as ::facet::Facet>::SHA
 unsafe impl<'__facet> ::facet::Facet<'__facet> for Wrapper {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
-            [::facet::Field::builder()
-                .name("0")
-                .shape(|| ::facet::shape_of(&|s: &Wrapper| &s.0))
-                .offset(::core::mem::offset_of!(Wrapper, 0))
-                .build()]
+            [{
+                ::facet::Field::builder()
+                    .name("0")
+                    .shape(|| ::facet::shape_of(&|s: &Wrapper| &s.0))
+                    .offset(::core::mem::offset_of!(Wrapper, 0))
+                    .build()
+            }]
         };
         let vtable = &const {
             let mut vtable = ::facet::value_vtable!(

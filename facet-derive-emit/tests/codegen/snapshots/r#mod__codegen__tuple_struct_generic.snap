@@ -14,16 +14,20 @@ where
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [
-                ::facet::Field::builder()
-                    .name("0")
-                    .shape(|| ::facet::shape_of(&|s: &Blah<'a, T, C>| &s.0))
-                    .offset(::core::mem::offset_of!(Blah<'a, T, C>, 0))
-                    .build(),
-                ::facet::Field::builder()
-                    .name("1")
-                    .shape(|| ::facet::shape_of(&|s: &Blah<'a, T, C>| &s.1))
-                    .offset(::core::mem::offset_of!(Blah<'a, T, C>, 1))
-                    .build(),
+                {
+                    ::facet::Field::builder()
+                        .name("0")
+                        .shape(|| ::facet::shape_of(&|s: &Blah<'a, T, C>| &s.0))
+                        .offset(::core::mem::offset_of!(Blah<'a, T, C>, 0))
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("1")
+                        .shape(|| ::facet::shape_of(&|s: &Blah<'a, T, C>| &s.1))
+                        .offset(::core::mem::offset_of!(Blah<'a, T, C>, 1))
+                        .build()
+                },
             ]
         };
         let vtable = &const {

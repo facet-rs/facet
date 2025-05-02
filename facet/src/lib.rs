@@ -19,3 +19,5 @@ pub use facet_derive::*;
 pub use facet_reflect::*;
 
 pub mod hacking;
+
+pub use static_assertions;

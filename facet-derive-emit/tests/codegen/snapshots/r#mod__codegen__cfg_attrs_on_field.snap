@@ -8,12 +8,14 @@ static CUB_CONFIG_SHAPE: &'static ::facet::Shape = <CubConfig as ::facet::Facet>
 unsafe impl<'__facet> ::facet::Facet<'__facet> for CubConfig {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
-            [::facet::Field::builder()
-                .name("disk_cache_size")
-                .shape(|| ::facet::shape_of(&|s: &CubConfig| &s.disk_cache_size))
-                .offset(::core::mem::offset_of!(CubConfig, disk_cache_size))
-                .doc(&[" size the disk cache is allowed to use"])
-                .build()]
+            [{
+                ::facet::Field::builder()
+                    .name("disk_cache_size")
+                    .shape(|| ::facet::shape_of(&|s: &CubConfig| &s.disk_cache_size))
+                    .offset(::core::mem::offset_of!(CubConfig, disk_cache_size))
+                    .doc(&[" size the disk cache is allowed to use"])
+                    .build()
+            }]
         };
         let vtable = &const {
             let mut vtable = ::facet::value_vtable!(

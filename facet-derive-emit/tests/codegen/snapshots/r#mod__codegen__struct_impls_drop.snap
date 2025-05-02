@@ -9,16 +9,20 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for BarFoo {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [
-                ::facet::Field::builder()
-                    .name("bar")
-                    .shape(|| ::facet::shape_of(&|s: &BarFoo| &s.bar))
-                    .offset(::core::mem::offset_of!(BarFoo, bar))
-                    .build(),
-                ::facet::Field::builder()
-                    .name("foo")
-                    .shape(|| ::facet::shape_of(&|s: &BarFoo| &s.foo))
-                    .offset(::core::mem::offset_of!(BarFoo, foo))
-                    .build(),
+                {
+                    ::facet::Field::builder()
+                        .name("bar")
+                        .shape(|| ::facet::shape_of(&|s: &BarFoo| &s.bar))
+                        .offset(::core::mem::offset_of!(BarFoo, bar))
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("foo")
+                        .shape(|| ::facet::shape_of(&|s: &BarFoo| &s.foo))
+                        .offset(::core::mem::offset_of!(BarFoo, foo))
+                        .build()
+                },
             ]
         };
         let vtable = &const {

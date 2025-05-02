@@ -9,21 +9,27 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for DataPacket {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [
-                ::facet::Field::builder()
-                    .name("header")
-                    .shape(|| ::facet::shape_of(&|s: &DataPacket| &s.header))
-                    .offset(::core::mem::offset_of!(DataPacket, header))
-                    .build(),
-                ::facet::Field::builder()
-                    .name("payload")
-                    .shape(|| ::facet::shape_of(&|s: &DataPacket| &s.payload))
-                    .offset(::core::mem::offset_of!(DataPacket, payload))
-                    .build(),
-                ::facet::Field::builder()
-                    .name("metadata")
-                    .shape(|| ::facet::shape_of(&|s: &DataPacket| &s.metadata))
-                    .offset(::core::mem::offset_of!(DataPacket, metadata))
-                    .build(),
+                {
+                    ::facet::Field::builder()
+                        .name("header")
+                        .shape(|| ::facet::shape_of(&|s: &DataPacket| &s.header))
+                        .offset(::core::mem::offset_of!(DataPacket, header))
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("payload")
+                        .shape(|| ::facet::shape_of(&|s: &DataPacket| &s.payload))
+                        .offset(::core::mem::offset_of!(DataPacket, payload))
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("metadata")
+                        .shape(|| ::facet::shape_of(&|s: &DataPacket| &s.metadata))
+                        .offset(::core::mem::offset_of!(DataPacket, metadata))
+                        .build()
+                },
             ]
         };
         let vtable = &const {

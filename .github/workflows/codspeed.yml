@@ -12,7 +12,7 @@ on:
 jobs:
   benchmarks:
     name: Run benchmarks
-    runs-on: codspeed-macro
+    runs-on: depot-ubuntu-24.04-32
     steps:
       - uses: actions/checkout@v4
 

@@ -22,6 +22,7 @@ pub(crate) fn gen_field_from_pfield(
     let mut attribute_list: Vec<TokenStream> = vec![];
     let doc_lines: Vec<TokenStream> = field.attrs.doc.iter().map(|doc| quote!(#doc)).collect();
     let mut shape_of = quote! { shape_of };
+    let mut asserts: Vec<TokenStream> = vec![];
 
     // Process attributes other than rename rules, which are handled by PName
     for attr in &field.attrs.facet {
@@ -41,6 +42,9 @@ pub(crate) fn gen_field_from_pfield(
                 } else {
                     flags = quote! { #flags.union(::facet::FieldFlags::DEFAULT) };
                 }
+                asserts.push(quote! {
+                    ::facet::static_assertions::assert_impl_all!(#field_type: ::core::default::Default);
+                })
             }
             PFacetAttr::DefaultEquals { expr } => {
                 if flags_empty {
@@ -142,17 +146,21 @@ pub(crate) fn gen_field_from_pfield(
     };
 
     quote! {
-        ::facet::Field::builder()
-            // Use the effective name (after rename rules) for metadata
-            .name(#field_name_effective)
-            // Use the raw field name/index TokenStream for shape_of and offset_of
-            .shape(|| ::facet::#shape_of(&|s: &#struct_name #bgp_without_bounds| &s.#field_name_raw))
-            .offset(#final_offset)
-            #maybe_flags
-            #maybe_attributes
-            #maybe_field_doc
-            #maybe_vtable
-            .build()
+        {
+            #(#asserts)*;
+
+            ::facet::Field::builder()
+                // Use the effective name (after rename rules) for metadata
+                .name(#field_name_effective)
+                // Use the raw field name/index TokenStream for shape_of and offset_of
+                .shape(|| ::facet::#shape_of(&|s: &#struct_name #bgp_without_bounds| &s.#field_name_raw))
+                .offset(#final_offset)
+                #maybe_flags
+                #maybe_attributes
+                #maybe_field_doc
+                #maybe_vtable
+                .build()
+        }
     }
 }
 

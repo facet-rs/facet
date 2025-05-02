@@ -9,18 +9,22 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for MyTupleStruct {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [
-                ::facet::Field::builder()
-                    .name("0")
-                    .shape(|| ::facet::shape_of(&|s: &MyTupleStruct| &s.0))
-                    .offset(::core::mem::offset_of!(MyTupleStruct, 0))
-                    .doc(&[" This is a documented field"])
-                    .build(),
-                ::facet::Field::builder()
-                    .name("1")
-                    .shape(|| ::facet::shape_of(&|s: &MyTupleStruct| &s.1))
-                    .offset(::core::mem::offset_of!(MyTupleStruct, 1))
-                    .doc(&[" This is another documented field"])
-                    .build(),
+                {
+                    ::facet::Field::builder()
+                        .name("0")
+                        .shape(|| ::facet::shape_of(&|s: &MyTupleStruct| &s.0))
+                        .offset(::core::mem::offset_of!(MyTupleStruct, 0))
+                        .doc(&[" This is a documented field"])
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("1")
+                        .shape(|| ::facet::shape_of(&|s: &MyTupleStruct| &s.1))
+                        .offset(::core::mem::offset_of!(MyTupleStruct, 1))
+                        .doc(&[" This is another documented field"])
+                        .build()
+                },
             ]
         };
         let vtable = &const {

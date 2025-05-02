@@ -65,36 +65,44 @@ where
                 {
                     let fields: &'static [::facet::Field] = &const {
                         [
-                            ::facet::Field::builder()
-                                .name("0")
-                                .shape(|| {
-                                    ::facet::shape_of(&|s: &__Shadow_RustRepr_Tuple_for_E_Tuple<
-                                        'a,
-                                        '__facet,
-                                        T,
-                                        C,
-                                    >| &s._0)
-                                })
-                                .offset(::core::mem::offset_of!(
-                                    __Shadow_RustRepr_Tuple_for_E_Tuple<'a, '__facet, T, C>,
-                                    _0
-                                ))
-                                .build(),
-                            ::facet::Field::builder()
-                                .name("1")
-                                .shape(|| {
-                                    ::facet::shape_of(&|s: &__Shadow_RustRepr_Tuple_for_E_Tuple<
-                                        'a,
-                                        '__facet,
-                                        T,
-                                        C,
-                                    >| &s._1)
-                                })
-                                .offset(::core::mem::offset_of!(
-                                    __Shadow_RustRepr_Tuple_for_E_Tuple<'a, '__facet, T, C>,
-                                    _1
-                                ))
-                                .build(),
+                            {
+                                ::facet::Field::builder()
+                                    .name("0")
+                                    .shape(|| {
+                                        ::facet::shape_of(
+                                            &|s: &__Shadow_RustRepr_Tuple_for_E_Tuple<
+                                                'a,
+                                                '__facet,
+                                                T,
+                                                C,
+                                            >| &s._0,
+                                        )
+                                    })
+                                    .offset(::core::mem::offset_of!(
+                                        __Shadow_RustRepr_Tuple_for_E_Tuple<'a, '__facet, T, C>,
+                                        _0
+                                    ))
+                                    .build()
+                            },
+                            {
+                                ::facet::Field::builder()
+                                    .name("1")
+                                    .shape(|| {
+                                        ::facet::shape_of(
+                                            &|s: &__Shadow_RustRepr_Tuple_for_E_Tuple<
+                                                'a,
+                                                '__facet,
+                                                T,
+                                                C,
+                                            >| &s._1,
+                                        )
+                                    })
+                                    .offset(::core::mem::offset_of!(
+                                        __Shadow_RustRepr_Tuple_for_E_Tuple<'a, '__facet, T, C>,
+                                        _1
+                                    ))
+                                    .build()
+                            },
                         ]
                     };
                     ::facet::Variant::builder()
@@ -106,57 +114,69 @@ where
                 {
                     let fields: &'static [::facet::Field] = &const {
                         [
-                            ::facet::Field::builder()
-                                .name("field")
-                                .shape(|| {
-                                    ::facet::shape_of(
-                                        &|s: &__Shadow_RustRepr_Struct_for_E_Record<
-                                            'a,
-                                            '__facet,
-                                            T,
-                                            C,
-                                        >| &s.field,
-                                    )
-                                })
-                                .offset(::core::mem::offset_of!(
-                                    __Shadow_RustRepr_Struct_for_E_Record<'a, '__facet, T, C>,
-                                    field
-                                ))
-                                .build(),
-                            ::facet::Field::builder()
-                                .name("phantom")
-                                .shape(|| {
-                                    ::facet::shape_of(
-                                        &|s: &__Shadow_RustRepr_Struct_for_E_Record<
-                                            'a,
-                                            '__facet,
-                                            T,
-                                            C,
-                                        >| &s.phantom,
-                                    )
-                                })
-                                .offset(::core::mem::offset_of!(
-                                    __Shadow_RustRepr_Struct_for_E_Record<'a, '__facet, T, C>,
-                                    phantom
-                                ))
-                                .build(),
-                            ::facet::Field::builder()
-                                .name("constant_val")
-                                .shape(|| {
-                                    ::facet::shape_of(
-                                        &|s: &__Shadow_RustRepr_Struct_for_E_Record<
-                                            'a,
-                                            '__facet,
-                                            T,
-                                            C,
-                                        >| &s.constant_val,
-                                    )
-                                })
-                                .offset(::core::mem::offset_of!(
-                                    __Shadow_RustRepr_Struct_for_E_Record<'a, '__facet, T, C>,
-                                    constant_val
-                                ))
-                                .build(),
+                            {
+                                ::facet::Field::builder()
+                                    .name("field")
+                                    .shape(|| {
+                                        ::facet::shape_of(
+                                            &|s: &__Shadow_RustRepr_Struct_for_E_Record<
+                                                'a,
+                                                '__facet,
+                                                T,
+                                                C,
+                                            >| {
+                                                &s.field
+                                            },
+                                        )
+                                    })
+                                    .offset(::core::mem::offset_of!(
+                                        __Shadow_RustRepr_Struct_for_E_Record<'a, '__facet, T, C>,
+                                        field
+                                    ))
+                                    .build()
+                            },
+                            {
+                                ::facet::Field::builder()
+                                    .name("phantom")
+                                    .shape(|| {
+                                        ::facet::shape_of(
+                                            &|s: &__Shadow_RustRepr_Struct_for_E_Record<
+                                                'a,
+                                                '__facet,
+                                                T,
+                                                C,
+                                            >| {
+                                                &s.phantom
+                                            },
+                                        )
+                                    })
+                                    .offset(::core::mem::offset_of!(
+                                        __Shadow_RustRepr_Struct_for_E_Record<'a, '__facet, T, C>,
+                                        phantom
+                                    ))
+                                    .build()
+                            },
+                            {
+                                ::facet::Field::builder()
+                                    .name("constant_val")
+                                    .shape(|| {
+                                        ::facet::shape_of(
+                                            &|s: &__Shadow_RustRepr_Struct_for_E_Record<
+                                                'a,
+                                                '__facet,
+                                                T,
+                                                C,
+                                            >| {
+                                                &s.constant_val
+                                            },
+                                        )
+                                    })
+                                    .offset(::core::mem::offset_of!(
+                                        __Shadow_RustRepr_Struct_for_E_Record<'a, '__facet, T, C>,
+                                        constant_val
+                                    ))
+                                    .build()
+                            },
                         ]
                     };
                     ::facet::Variant::builder()

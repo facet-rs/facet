@@ -33,20 +33,22 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for CommentedEnum {
                     .build(),
                 {
                     let fields: &'static [::facet::Field] = &const {
-                        [::facet::Field::builder()
-                            .name("0")
-                            .shape(|| {
-                                ::facet::shape_of(
-                                    &|s: &__Shadow_RustRepr_Tuple_for_CommentedEnum_B<'__facet>| {
-                                        &s._0
-                                    },
-                                )
-                            })
-                            .offset(::core::mem::offset_of!(
-                                __Shadow_RustRepr_Tuple_for_CommentedEnum_B<'__facet>,
-                                _0
-                            ))
-                            .build()]
+                        [{
+                            ::facet::Field::builder()
+                                .name("0")
+                                .shape(|| {
+                                    ::facet::shape_of(
+                                        &|s: &__Shadow_RustRepr_Tuple_for_CommentedEnum_B<
+                                            '__facet,
+                                        >| &s._0,
+                                    )
+                                })
+                                .offset(::core::mem::offset_of!(
+                                    __Shadow_RustRepr_Tuple_for_CommentedEnum_B<'__facet>,
+                                    _0
+                                ))
+                                .build()
+                        }]
                     };
                     ::facet::Variant::builder()
                         .name("B")
@@ -58,36 +60,40 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for CommentedEnum {
                 {
                     let fields: &'static [::facet::Field] = &const {
                         [
-                            ::facet::Field::builder()
-                                .name("x")
-                                .shape(|| {
-                                    ::facet::shape_of(
-                                        &|s: &__Shadow_RustRepr_Struct_for_CommentedEnum_C<
-                                            '__facet,
-                                        >| &s.x,
-                                    )
-                                })
-                                .offset(::core::mem::offset_of!(
-                                    __Shadow_RustRepr_Struct_for_CommentedEnum_C<'__facet>,
-                                    x
-                                ))
-                                .doc(&[" This is field x"])
-                                .build(),
-                            ::facet::Field::builder()
-                                .name("y")
-                                .shape(|| {
-                                    ::facet::shape_of(
-                                        &|s: &__Shadow_RustRepr_Struct_for_CommentedEnum_C<
-                                            '__facet,
-                                        >| &s.y,
-                                    )
-                                })
-                                .offset(::core::mem::offset_of!(
-                                    __Shadow_RustRepr_Struct_for_CommentedEnum_C<'__facet>,
-                                    y
-                                ))
-                                .doc(&[" This is field y"])
-                                .build(),
+                            {
+                                ::facet::Field::builder()
+                                    .name("x")
+                                    .shape(|| {
+                                        ::facet::shape_of(
+                                            &|s: &__Shadow_RustRepr_Struct_for_CommentedEnum_C<
+                                                '__facet,
+                                            >| &s.x,
+                                        )
+                                    })
+                                    .offset(::core::mem::offset_of!(
+                                        __Shadow_RustRepr_Struct_for_CommentedEnum_C<'__facet>,
+                                        x
+                                    ))
+                                    .doc(&[" This is field x"])
+                                    .build()
+                            },
+                            {
+                                ::facet::Field::builder()
+                                    .name("y")
+                                    .shape(|| {
+                                        ::facet::shape_of(
+                                            &|s: &__Shadow_RustRepr_Struct_for_CommentedEnum_C<
+                                                '__facet,
+                                            >| &s.y,
+                                        )
+                                    })
+                                    .offset(::core::mem::offset_of!(
+                                        __Shadow_RustRepr_Struct_for_CommentedEnum_C<'__facet>,
+                                        y
+                                    ))
+                                    .doc(&[" This is field y"])
+                                    .build()
+                            },
                         ]
                     };
                     ::facet::Variant::builder()

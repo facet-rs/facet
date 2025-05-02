@@ -10,11 +10,13 @@ where
 {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
-            [::facet::Field::builder()
-                .name("inner")
-                .shape(|| ::facet::shape_of(&|s: &Foo<T>| &s.inner))
-                .offset(::core::mem::offset_of!(Foo<T>, inner))
-                .build()]
+            [{
+                ::facet::Field::builder()
+                    .name("inner")
+                    .shape(|| ::facet::shape_of(&|s: &Foo<T>| &s.inner))
+                    .offset(::core::mem::offset_of!(Foo<T>, inner))
+                    .build()
+            }]
         };
         let vtable = &const {
             let mut vtable =

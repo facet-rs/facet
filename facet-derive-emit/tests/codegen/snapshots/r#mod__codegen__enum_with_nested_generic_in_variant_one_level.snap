@@ -33,21 +33,9 @@ where
             [
                 {
                     let fields: &'static [::facet::Field] = &const {
-                        [::facet::Field::builder()
-                            .name("0")
-                            .shape(|| {
-                                ::facet::shape_of(
-                                    &|s: &__Shadow_RustRepr_Tuple_for_OneLevelNested_VariantA<
-                                        '__facet,
-                                        T,
-                                    >| &s._0,
-                                )
-                            })
-                            .offset(::core::mem::offset_of!(
-                                __Shadow_RustRepr_Tuple_for_OneLevelNested_VariantA<'__facet, T>,
-                                _0
-                            ))
-                            .build()]
+                        [{
+                            :: facet :: Field :: builder () . name ("0") . shape (|| :: facet :: shape_of (& | s : & __Shadow_RustRepr_Tuple_for_OneLevelNested_VariantA < '__facet , T > | & s . _0)) . offset (:: core :: mem :: offset_of ! (__Shadow_RustRepr_Tuple_for_OneLevelNested_VariantA < '__facet , T > , _0)) . build ()
+                        }]
                     };
                     ::facet::Variant::builder()
                         .name("VariantA")
@@ -57,21 +45,9 @@ where
                 },
                 {
                     let fields: &'static [::facet::Field] = &const {
-                        [::facet::Field::builder()
-                            .name("0")
-                            .shape(|| {
-                                ::facet::shape_of(
-                                    &|s: &__Shadow_RustRepr_Tuple_for_OneLevelNested_VariantB<
-                                        '__facet,
-                                        T,
-                                    >| &s._0,
-                                )
-                            })
-                            .offset(::core::mem::offset_of!(
-                                __Shadow_RustRepr_Tuple_for_OneLevelNested_VariantB<'__facet, T>,
-                                _0
-                            ))
-                            .build()]
+                        [{
+                            :: facet :: Field :: builder () . name ("0") . shape (|| :: facet :: shape_of (& | s : & __Shadow_RustRepr_Tuple_for_OneLevelNested_VariantB < '__facet , T > | & s . _0)) . offset (:: core :: mem :: offset_of ! (__Shadow_RustRepr_Tuple_for_OneLevelNested_VariantB < '__facet , T > , _0)) . build ()
+                        }]
                     };
                     ::facet::Variant::builder()
                         .name("VariantB")

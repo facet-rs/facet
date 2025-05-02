@@ -4,7 +4,6 @@ use std::net::Ipv6Addr;
 
 use eyre::Result;
 use facet::Facet;
-use facet_reflect::ReflectError;
 use facet_toml::TomlErrorKind;
 
 #[test]
@@ -311,27 +310,6 @@ fn test_default_struct_fields() -> Result<()> {
             c: "hi".to_owned()
         },
     );
-
-    Ok(())
-}
-
-#[test]
-fn test_struct_with_default_attribute_without_implementation() -> Result<()> {
-    facet_testhelpers::setup();
-
-    #[derive(Debug, Facet, PartialEq)]
-    struct Root {
-        #[facet(default)]
-        no_default: NoDefault,
-    }
-
-    #[derive(Debug, Facet, PartialEq)]
-    struct NoDefault(i32);
-
-    assert!(matches!(
-        facet_toml::from_str::<Root>("").unwrap_err().kind,
-        TomlErrorKind::GenericReflect(ReflectError::DefaultAttrButNoDefaultImpl { shape: _ })
-    ));
 
     Ok(())
 }

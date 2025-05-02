@@ -9,21 +9,27 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Point {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [
-                ::facet::Field::builder()
-                    .name("x_coordinate")
-                    .shape(|| ::facet::shape_of(&|s: &Point| &s.0))
-                    .offset(::core::mem::offset_of!(Point, 0))
-                    .build(),
-                ::facet::Field::builder()
-                    .name("y_coordinate")
-                    .shape(|| ::facet::shape_of(&|s: &Point| &s.1))
-                    .offset(::core::mem::offset_of!(Point, 1))
-                    .build(),
-                ::facet::Field::builder()
-                    .name("z_coordinate")
-                    .shape(|| ::facet::shape_of(&|s: &Point| &s.2))
-                    .offset(::core::mem::offset_of!(Point, 2))
-                    .build(),
+                {
+                    ::facet::Field::builder()
+                        .name("x_coordinate")
+                        .shape(|| ::facet::shape_of(&|s: &Point| &s.0))
+                        .offset(::core::mem::offset_of!(Point, 0))
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("y_coordinate")
+                        .shape(|| ::facet::shape_of(&|s: &Point| &s.1))
+                        .offset(::core::mem::offset_of!(Point, 1))
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("z_coordinate")
+                        .shape(|| ::facet::shape_of(&|s: &Point| &s.2))
+                        .offset(::core::mem::offset_of!(Point, 2))
+                        .build()
+                },
             ]
         };
         let vtable = &const {

@@ -174,3 +174,19 @@ fn test_skip_serializing_type_mismatch_wont_compile() {
     // Run the test
     run_compilation_test(&test);
 }
+
+#[test]
+#[cfg(not(miri))]
+fn test_default_but_no_default() {
+    // Define the test case
+    let test = CompilationTest {
+        name: "default_but_no_default",
+        source: include_str!("./default_but_no_default.rs"),
+        expected_errors: &[
+            "error[E0277]: the trait bound `NoDefault: std::default::Default` is not satisfied",
+        ],
+    };
+
+    // Run the test
+    run_compilation_test(&test);
+}

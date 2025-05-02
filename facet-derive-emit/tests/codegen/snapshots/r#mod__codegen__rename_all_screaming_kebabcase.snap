@@ -10,22 +10,26 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ScreamingKebabCaseExample {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [
-                ::facet::Field::builder()
-                    .name("FIELD-ONE")
-                    .shape(|| ::facet::shape_of(&|s: &ScreamingKebabCaseExample| &s.field_one))
-                    .offset(::core::mem::offset_of!(
-                        ScreamingKebabCaseExample,
-                        field_one
-                    ))
-                    .build(),
-                ::facet::Field::builder()
-                    .name("FIELD-TWO")
-                    .shape(|| ::facet::shape_of(&|s: &ScreamingKebabCaseExample| &s.field_two))
-                    .offset(::core::mem::offset_of!(
-                        ScreamingKebabCaseExample,
-                        field_two
-                    ))
-                    .build(),
+                {
+                    ::facet::Field::builder()
+                        .name("FIELD-ONE")
+                        .shape(|| ::facet::shape_of(&|s: &ScreamingKebabCaseExample| &s.field_one))
+                        .offset(::core::mem::offset_of!(
+                            ScreamingKebabCaseExample,
+                            field_one
+                        ))
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("FIELD-TWO")
+                        .shape(|| ::facet::shape_of(&|s: &ScreamingKebabCaseExample| &s.field_two))
+                        .offset(::core::mem::offset_of!(
+                            ScreamingKebabCaseExample,
+                            field_two
+                        ))
+                        .build()
+                },
             ]
         };
         let vtable = &const {

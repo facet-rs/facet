@@ -10,52 +10,45 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithAttributes {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [
-                ::facet::Field::builder()
-                    .name("id")
-                    .shape(|| ::facet::shape_of(&|s: &StructWithAttributes| &s.id))
-                    .offset(::core::mem::offset_of!(StructWithAttributes, id))
-                    .flags(::facet::FieldFlags::DEFAULT.union(::facet::FieldFlags::SENSITIVE))
-                    .attributes(
-                        &const { [::facet::FieldAttribute::Arbitrary("name = \"identifier\"")] },
-                    )
-                    .vtable(
-                        &const {
-                            ::facet::FieldVTable::builder()
-                                .default_fn(|ptr| unsafe { ptr.put::<String>(generate_id) })
-                                .build()
-                        },
-                    )
-                    .build(),
-                ::facet::Field::builder()
-                    .name("internal_data")
-                    .shape(|| ::facet::shape_of(&|s: &StructWithAttributes| &s.internal_data))
-                    .offset(::core::mem::offset_of!(StructWithAttributes, internal_data))
-                    .attributes(
-                        &const {
-                            [
-                                ::facet::FieldAttribute::Arbitrary("skip"),
-                                ::facet::FieldAttribute::Arbitrary("version = 3"),
-                            ]
-                        },
-                    )
-                    .build(),
-                ::facet::Field::builder()
-                    .name("old_value")
-                    .shape(|| ::facet::shape_of(&|s: &StructWithAttributes| &s.old_value))
-                    .offset(::core::mem::offset_of!(StructWithAttributes, old_value))
-                    .attributes(
-                        &const {
-                            [::facet::FieldAttribute::Arbitrary(
-                                "deprecated = \"Use 'new_value' instead\"",
-                            )]
-                        },
-                    )
-                    .build(),
-                ::facet::Field::builder()
-                    .name("new_value")
-                    .shape(|| ::facet::shape_of(&|s: &StructWithAttributes| &s.new_value))
-                    .offset(::core::mem::offset_of!(StructWithAttributes, new_value))
-                    .build(),
+                {
+                    :: facet :: Field :: builder () . name ("id") . shape (|| :: facet :: shape_of (& | s : & StructWithAttributes | & s . id)) . offset (:: core :: mem :: offset_of ! (StructWithAttributes , id)) . flags (:: facet :: FieldFlags :: DEFAULT . union (:: facet :: FieldFlags :: SENSITIVE)) . attributes (& const { [:: facet :: FieldAttribute :: Arbitrary ("name = \"identifier\"")] }) . vtable (& const { :: facet :: FieldVTable :: builder () . default_fn (| ptr | { unsafe { ptr . put :: < String > (generate_id) } }) . build () }) . build ()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("internal_data")
+                        .shape(|| ::facet::shape_of(&|s: &StructWithAttributes| &s.internal_data))
+                        .offset(::core::mem::offset_of!(StructWithAttributes, internal_data))
+                        .attributes(
+                            &const {
+                                [
+                                    ::facet::FieldAttribute::Arbitrary("skip"),
+                                    ::facet::FieldAttribute::Arbitrary("version = 3"),
+                                ]
+                            },
+                        )
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("old_value")
+                        .shape(|| ::facet::shape_of(&|s: &StructWithAttributes| &s.old_value))
+                        .offset(::core::mem::offset_of!(StructWithAttributes, old_value))
+                        .attributes(
+                            &const {
+                                [::facet::FieldAttribute::Arbitrary(
+                                    "deprecated = \"Use 'new_value' instead\"",
+                                )]
+                            },
+                        )
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("new_value")
+                        .shape(|| ::facet::shape_of(&|s: &StructWithAttributes| &s.new_value))
+                        .offset(::core::mem::offset_of!(StructWithAttributes, new_value))
+                        .build()
+                },
             ]
         };
         let vtable = &const {

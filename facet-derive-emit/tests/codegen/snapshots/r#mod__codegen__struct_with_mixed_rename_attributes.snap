@@ -9,26 +9,34 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigSettings {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [
-                ::facet::Field::builder()
-                    .name("server_url")
-                    .shape(|| ::facet::shape_of(&|s: &ConfigSettings| &s.server_url))
-                    .offset(::core::mem::offset_of!(ConfigSettings, server_url))
-                    .build(),
-                ::facet::Field::builder()
-                    .name("apiKey")
-                    .shape(|| ::facet::shape_of(&|s: &ConfigSettings| &s.api_key))
-                    .offset(::core::mem::offset_of!(ConfigSettings, api_key))
-                    .build(),
-                ::facet::Field::builder()
-                    .name("timeout_secs")
-                    .shape(|| ::facet::shape_of(&|s: &ConfigSettings| &s.timeout_secs))
-                    .offset(::core::mem::offset_of!(ConfigSettings, timeout_secs))
-                    .build(),
-                ::facet::Field::builder()
-                    .name("max_retry_count")
-                    .shape(|| ::facet::shape_of(&|s: &ConfigSettings| &s.max_retry_count))
-                    .offset(::core::mem::offset_of!(ConfigSettings, max_retry_count))
-                    .build(),
+                {
+                    ::facet::Field::builder()
+                        .name("server_url")
+                        .shape(|| ::facet::shape_of(&|s: &ConfigSettings| &s.server_url))
+                        .offset(::core::mem::offset_of!(ConfigSettings, server_url))
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("apiKey")
+                        .shape(|| ::facet::shape_of(&|s: &ConfigSettings| &s.api_key))
+                        .offset(::core::mem::offset_of!(ConfigSettings, api_key))
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("timeout_secs")
+                        .shape(|| ::facet::shape_of(&|s: &ConfigSettings| &s.timeout_secs))
+                        .offset(::core::mem::offset_of!(ConfigSettings, timeout_secs))
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("max_retry_count")
+                        .shape(|| ::facet::shape_of(&|s: &ConfigSettings| &s.max_retry_count))
+                        .offset(::core::mem::offset_of!(ConfigSettings, max_retry_count))
+                        .build()
+                },
             ]
         };
         let vtable = &const {

@@ -26,20 +26,22 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Packet {
             [
                 {
                     let fields: &'static [::facet::Field] = &const {
-                        [::facet::Field::builder()
-                            .name("0")
-                            .shape(|| {
-                                ::facet::shape_of(
-                                    &|s: &__Shadow_RustRepr_Tuple_for_Packet_Header<'__facet>| {
-                                        &s._0
-                                    },
-                                )
-                            })
-                            .offset(::core::mem::offset_of!(
-                                __Shadow_RustRepr_Tuple_for_Packet_Header<'__facet>,
-                                _0
-                            ))
-                            .build()]
+                        [{
+                            ::facet::Field::builder()
+                                .name("0")
+                                .shape(|| {
+                                    ::facet::shape_of(
+                                        &|s: &__Shadow_RustRepr_Tuple_for_Packet_Header<
+                                            '__facet,
+                                        >| &s._0,
+                                    )
+                                })
+                                .offset(::core::mem::offset_of!(
+                                    __Shadow_RustRepr_Tuple_for_Packet_Header<'__facet>,
+                                    _0
+                                ))
+                                .build()
+                        }]
                     };
                     ::facet::Variant::builder()
                         .name("Header")
@@ -50,20 +52,22 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Packet {
                 },
                 {
                     let fields: &'static [::facet::Field] = &const {
-                        [::facet::Field::builder()
-                            .name("0")
-                            .shape(|| {
-                                ::facet::shape_of(
-                                    &|s: &__Shadow_RustRepr_Tuple_for_Packet_Payload<'__facet>| {
-                                        &s._0
-                                    },
-                                )
-                            })
-                            .offset(::core::mem::offset_of!(
-                                __Shadow_RustRepr_Tuple_for_Packet_Payload<'__facet>,
-                                _0
-                            ))
-                            .build()]
+                        [{
+                            ::facet::Field::builder()
+                                .name("0")
+                                .shape(|| {
+                                    ::facet::shape_of(
+                                        &|s: &__Shadow_RustRepr_Tuple_for_Packet_Payload<
+                                            '__facet,
+                                        >| &s._0,
+                                    )
+                                })
+                                .offset(::core::mem::offset_of!(
+                                    __Shadow_RustRepr_Tuple_for_Packet_Payload<'__facet>,
+                                    _0
+                                ))
+                                .build()
+                        }]
                     };
                     ::facet::Variant::builder()
                         .name("Payload")

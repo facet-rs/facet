@@ -8,12 +8,14 @@ static FOO_SHAPE: &'static ::facet::Shape = <Foo as ::facet::Facet>::SHAPE;
 unsafe impl<'__facet> ::facet::Facet<'__facet> for Foo {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
-            [::facet::Field::builder()
-                .name("bar")
-                .shape(|| ::facet::shape_of(&|s: &Foo| &s.bar))
-                .offset(::core::mem::offset_of!(Foo, bar))
-                .doc(&[" This field has a doc comment"])
-                .build()]
+            [{
+                ::facet::Field::builder()
+                    .name("bar")
+                    .shape(|| ::facet::shape_of(&|s: &Foo| &s.bar))
+                    .offset(::core::mem::offset_of!(Foo, bar))
+                    .doc(&[" This field has a doc comment"])
+                    .build()
+            }]
         };
         let vtable = &const {
             let mut vtable =
