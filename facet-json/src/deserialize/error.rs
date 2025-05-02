@@ -1,5 +1,3 @@
-#[cfg(feature = "rich-diagnostics")]
-use alloc::format;
 #[cfg(feature = "alloc")]
 use alloc::string::String;
 
@@ -20,9 +18,6 @@ pub struct JsonError<'input> {
     /// Where the error occured
     pub span: Span,
 
-    /// Where we were in the struct when the error occured
-    pub path: String,
-
     /// The specific error that occurred while parsing the JSON.
     pub kind: JsonErrorKind,
 }
@@ -35,31 +30,20 @@ impl<'input> JsonError<'input> {
     /// * `kind` - The kind of JSON error encountered.
     /// * `input` - The original input being parsed.
     /// * `pos` - The position in the input where the error occurred.
-    pub fn new(kind: JsonErrorKind, input: &'input [u8], span: Span, path: String) -> Self {
+    pub fn new(kind: JsonErrorKind, input: &'input [u8], span: Span) -> Self {
         Self {
             input: alloc::borrow::Cow::Borrowed(input),
             span,
             kind,
-            path,
         }
     }
 
-    pub(crate) fn new_reflect(
-        e: ReflectError,
-        input: &'input [u8],
-        span: Span,
-        path: String,
-    ) -> Self {
-        JsonError::new(JsonErrorKind::ReflectError(e), input, span, path)
+    pub(crate) fn new_reflect(e: ReflectError, input: &'input [u8], span: Span) -> Self {
+        JsonError::new(JsonErrorKind::ReflectError(e), input, span)
     }
 
-    pub(crate) fn new_syntax(
-        e: TokenErrorKind,
-        input: &'input [u8],
-        span: Span,
-        path: String,
-    ) -> Self {
-        JsonError::new(JsonErrorKind::SyntaxError(e), input, span, path)
+    pub(crate) fn new_syntax(e: TokenErrorKind, input: &'input [u8], span: Span) -> Self {
+        JsonError::new(JsonErrorKind::SyntaxError(e), input, span)
     }
 
     /// Returns a wrapper type that displays a human-readable error message for this JSON error.
@@ -206,13 +190,7 @@ impl From<ReflectError> for JsonErrorKind {
 #[cfg(not(feature = "rich-diagnostics"))]
 impl core::fmt::Display for JsonError<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "{} at byte {} in path {}",
-            self.message(),
-            self.span.start(),
-            self.path
-        )
+        write!(f, "{} at byte {}", self.message(), self.span.start(),)
     }
 }
 
@@ -228,7 +206,6 @@ impl core::fmt::Display for JsonError<'_> {
         let span_end = self.span.end();
 
         let mut report = Report::build(ReportKind::Error, (source_id, span_start..span_end))
-            .with_message(format!("Error at {}", self.path.yellow()))
             .with_config(Config::new().with_index_type(IndexType::Byte));
 
         let label = Label::new((source_id, span_start..span_end))

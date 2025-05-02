@@ -2,7 +2,7 @@
 source: facet-json/tests/integration/err.rs
 expression: err
 ---
-[31mError:[0m Error at [33m$[39m
+[31mError:[0m 
    [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m json:2:1 [38;5;246m][0m
    [38;5;246m│[0m
  [38;5;246m2 │[0m [31m}[0m

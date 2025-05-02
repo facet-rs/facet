@@ -38,8 +38,8 @@ where
     T: Facet<'facet>,
     'input: 'facet,
 {
-    let wip = Wip::alloc::<T>()
-        .map_err(|e| JsonError::new_reflect(e, json, Span::new(0, json.len()), "$".to_string()))?;
+    let wip =
+        Wip::alloc::<T>().map_err(|e| JsonError::new_reflect(e, json, Span::new(0, json.len())))?;
     let heap_value = from_slice_wip(wip, json)?;
     Ok(heap_value.materialize::<T>().unwrap())
 }
@@ -110,15 +110,13 @@ pub fn from_slice_wip<'input: 'facet, 'facet>(
                 wip = runner.pop(wip, reason)?;
 
                 if reason == PopReason::TopLevel {
-                    let path = wip.path();
                     return wip
                         .build()
-                        .map_err(|e| JsonError::new_reflect(e, input, runner.last_span, path));
+                        .map_err(|e| JsonError::new_reflect(e, input, runner.last_span));
                 } else {
-                    let path = wip.path();
                     wip = wip
                         .pop()
-                        .map_err(|e| JsonError::new_reflect(e, input, runner.last_span, path))?;
+                        .map_err(|e| JsonError::new_reflect(e, input, runner.last_span))?;
                 }
             }
             Instruction::SkipValue => runner.skip_value(&wip)?,
@@ -158,18 +156,16 @@ impl<'a> StackRunner<'a> {
                 for (index, field) in sd.fields.iter().enumerate() {
                     let is_set = wip.is_field_set(index).map_err(|err| {
                         trace!("Error checking field set status: {:?}", err);
-                        JsonError::new_reflect(err, self.input, self.last_span, wip.path())
+                        JsonError::new_reflect(err, self.input, self.last_span)
                     })?;
                     if !is_set {
                         if field.flags.contains(FieldFlags::DEFAULT) {
-                            let path = wip.path();
                             wip = wip.field(index).map_err(|e| {
-                                JsonError::new_reflect(e, self.input, self.last_span, path)
+                                JsonError::new_reflect(e, self.input, self.last_span)
                             })?;
                             if let Some(default_in_place_fn) = field.vtable.default_fn {
-                                let path = wip.path();
                                 wip = wip.put_from_fn(default_in_place_fn).map_err(|e| {
-                                    JsonError::new_reflect(e, self.input, self.last_span, path)
+                                    JsonError::new_reflect(e, self.input, self.last_span)
                                 })?;
                                 trace!(
                                     "Field #{} {:?} was set to default value (via custom fn)",
@@ -184,12 +180,10 @@ impl<'a> StackRunner<'a> {
                                         },
                                         self.input,
                                         self.last_span,
-                                        wip.path(),
                                     ));
                                 }
-                                let path = wip.path();
                                 wip = wip.put_default().map_err(|e| {
-                                    JsonError::new_reflect(e, self.input, self.last_span, path)
+                                    JsonError::new_reflect(e, self.input, self.last_span)
                                 })?;
                                 trace!(
                                     "Field #{} {:?} was set to default value (via default impl)",
@@ -197,9 +191,8 @@ impl<'a> StackRunner<'a> {
                                     field.blue()
                                 );
                             }
-                            let path = wip.path();
                             wip = wip.pop().map_err(|e| {
-                                JsonError::new_reflect(e, self.input, self.last_span, path)
+                                JsonError::new_reflect(e, self.input, self.last_span)
                             })?;
                         } else {
                             trace!(
@@ -215,39 +208,30 @@ impl<'a> StackRunner<'a> {
                 if has_unset && container_shape.has_default_attr() {
                     // let's allocate and build a default value
                     let default_val = Wip::alloc_shape(container_shape)
-                        .map_err(|e| {
-                            JsonError::new_reflect(e, self.input, self.last_span, wip.path())
-                        })?
+                        .map_err(|e| JsonError::new_reflect(e, self.input, self.last_span))?
                         .put_default()
-                        .map_err(|e| {
-                            JsonError::new_reflect(e, self.input, self.last_span, wip.path())
-                        })?
+                        .map_err(|e| JsonError::new_reflect(e, self.input, self.last_span))?
                         .build()
-                        .map_err(|e| {
-                            JsonError::new_reflect(e, self.input, self.last_span, wip.path())
-                        })?;
+                        .map_err(|e| JsonError::new_reflect(e, self.input, self.last_span))?;
                     let peek = default_val.peek().into_struct().unwrap();
 
                     for (index, field) in sd.fields.iter().enumerate() {
                         let is_set = wip.is_field_set(index).map_err(|err| {
                             trace!("Error checking field set status: {:?}", err);
-                            JsonError::new_reflect(err, self.input, self.last_span, wip.path())
+                            JsonError::new_reflect(err, self.input, self.last_span)
                         })?;
                         if !is_set {
                             let address_of_field_from_default = peek.field(index).unwrap().data();
-                            let path = wip.path();
                             wip = wip.field(index).map_err(|e| {
-                                JsonError::new_reflect(e, self.input, self.last_span, path)
+                                JsonError::new_reflect(e, self.input, self.last_span)
                             })?;
-                            let path = wip.path();
                             wip = wip
                                 .put_shape(address_of_field_from_default, field.shape())
                                 .map_err(|e| {
-                                    JsonError::new_reflect(e, self.input, self.last_span, path)
+                                    JsonError::new_reflect(e, self.input, self.last_span)
                                 })?;
-                            let path = wip.path();
                             wip = wip.pop().map_err(|e| {
-                                JsonError::new_reflect(e, self.input, self.last_span, path)
+                                JsonError::new_reflect(e, self.input, self.last_span)
                             })?;
                         }
                     }
@@ -306,7 +290,6 @@ impl<'a> StackRunner<'a> {
                     },
                     self.input,
                     self.last_span,
-                    wip.path(),
                 ))
             }
         }
@@ -315,18 +298,15 @@ impl<'a> StackRunner<'a> {
     fn value<'facet>(&mut self, mut wip: Wip<'facet>) -> Result<Wip<'facet>, JsonError<'a>> {
         let token = self.read_token(&wip)?;
         match token.node {
-            Token::Null => {
-                let path = wip.path();
-                wip.put_default()
-                    .map_err(|e| JsonError::new_reflect(e, self.input, self.last_span, path))
-            }
+            Token::Null => wip
+                .put_default()
+                .map_err(|e| JsonError::new_reflect(e, self.input, self.last_span)),
             _ => {
                 if matches!(wip.shape().def, Def::Option(_)) {
                     trace!("Starting Some(_) option for {}", wip.shape().blue());
-                    let path = wip.path();
                     wip = wip
                         .push_some()
-                        .map_err(|e| JsonError::new_reflect(e, self.input, self.last_span, path))?;
+                        .map_err(|e| JsonError::new_reflect(e, self.input, self.last_span))?;
                     self.stack.push(Instruction::Pop(PopReason::Some))
                 }
 
@@ -336,9 +316,8 @@ impl<'a> StackRunner<'a> {
                         match wip.innermost_shape().def {
                             Def::Map(_md) => {
                                 trace!("Object starting for map value ({})!", wip.shape().blue());
-                                let path = wip.path();
                                 wip = wip.put_default().map_err(|e| {
-                                    JsonError::new_reflect(e, self.input, self.last_span, path)
+                                    JsonError::new_reflect(e, self.input, self.last_span)
                                 })?;
                             }
                             Def::Enum(_ed) => {
@@ -353,7 +332,6 @@ impl<'a> StackRunner<'a> {
                                 // nothing to do here
                             }
                             _ => {
-                                let path = wip.path();
                                 return Err(JsonError::new(
                                     JsonErrorKind::UnsupportedType {
                                         got: wip.innermost_shape(),
@@ -361,7 +339,6 @@ impl<'a> StackRunner<'a> {
                                     },
                                     self.input,
                                     self.last_span,
-                                    path,
                                 ));
                             }
                         }
@@ -379,20 +356,18 @@ impl<'a> StackRunner<'a> {
                             }
                             Def::List(_) => {
                                 trace!("Array starting for list ({})!", wip.shape().blue());
-                                let path = wip.path();
                                 wip = wip.put_default().map_err(|e| {
-                                    JsonError::new_reflect(e, self.input, self.last_span, path)
+                                    JsonError::new_reflect(e, self.input, self.last_span)
                                 })?;
                             }
                             Def::Enum(_) => {
                                 trace!("Array starting for enum ({})!", wip.shape().blue());
                             }
                             Def::Struct(s) => {
-                                let path = wip.path();
                                 if s.kind == StructKind::Tuple {
                                     trace!("Array starting for tuple ({})!", wip.shape().blue());
                                     wip = wip.put_default().map_err(|e| {
-                                        JsonError::new_reflect(e, self.input, self.last_span, path)
+                                        JsonError::new_reflect(e, self.input, self.last_span)
                                     })?;
                                 } else {
                                     return Err(JsonError::new(
@@ -402,7 +377,6 @@ impl<'a> StackRunner<'a> {
                                         },
                                         self.input,
                                         self.last_span,
-                                        path,
                                     ));
                                 }
                             }
@@ -413,9 +387,8 @@ impl<'a> StackRunner<'a> {
                                 let next_token = self.read_token(&wip)?;
                                 if next_token.node == Token::RBracket {
                                     // Empty array means unit type () - we're good
-                                    let path = wip.path();
                                     wip = wip.put_default().map_err(|e| {
-                                        JsonError::new_reflect(e, self.input, self.last_span, path)
+                                        JsonError::new_reflect(e, self.input, self.last_span)
                                     })?;
                                     return Ok(wip); // Return immediately - no need to push anything
                                 } else {
@@ -427,7 +400,6 @@ impl<'a> StackRunner<'a> {
                                         },
                                         self.input,
                                         self.last_span,
-                                        wip.path(),
                                     ));
                                 }
                             }
@@ -439,17 +411,14 @@ impl<'a> StackRunner<'a> {
                                     },
                                     self.input,
                                     self.last_span,
-                                    wip.path(),
                                 ));
                             }
                         }
 
                         trace!("Beginning pushback");
                         self.stack.push(Instruction::ArrayItemOrArrayClose);
-                        let path = wip.path();
-                        wip.begin_pushback().map_err(|e| {
-                            JsonError::new_reflect(e, self.input, self.last_span, path)
-                        })
+                        wip.begin_pushback()
+                            .map_err(|e| JsonError::new_reflect(e, self.input, self.last_span))
                     }
                     Token::RBrace | Token::RBracket | Token::Colon | Token::Comma => {
                         Err(JsonError::new(
@@ -459,36 +428,25 @@ impl<'a> StackRunner<'a> {
                             },
                             self.input,
                             self.last_span,
-                            wip.path(),
                         ))
                     }
                     Token::String(s) => match wip.innermost_shape().def {
-                        Def::Scalar(_sd) => {
-                            let path = wip.path();
-                            wip.put::<String>(s).map_err(|e| {
-                                JsonError::new_reflect(e, self.input, self.last_span, path)
-                            })
-                        }
+                        Def::Scalar(_sd) => wip
+                            .put::<String>(s)
+                            .map_err(|e| JsonError::new_reflect(e, self.input, self.last_span)),
                         Def::Enum(_ed) => {
                             if wip.selected_variant().is_some() {
                                 trace!("Have variant selected arleady, just putting");
 
                                 // just put, then — if it's a tuple field it'll work
-                                let path = wip.path();
                                 wip.put::<String>(s).map_err(|e| {
-                                    JsonError::new_reflect(e, self.input, self.last_span, path)
+                                    JsonError::new_reflect(e, self.input, self.last_span)
                                 })
                             } else {
                                 match wip.find_variant(&s) {
                                     Some((variant_index, _)) => {
-                                        let path = wip.path();
                                         wip.variant(variant_index).map_err(|e| {
-                                            JsonError::new_reflect(
-                                                e,
-                                                self.input,
-                                                self.last_span,
-                                                path,
-                                            )
+                                            JsonError::new_reflect(e, self.input, self.last_span)
                                         })
                                     }
                                     None => Err(JsonError::new(
@@ -498,7 +456,6 @@ impl<'a> StackRunner<'a> {
                                         },
                                         self.input,
                                         self.last_span,
-                                        wip.path(),
                                     )),
                                 }
                             }
@@ -510,51 +467,33 @@ impl<'a> StackRunner<'a> {
                             },
                             self.input,
                             self.last_span,
-                            wip.path(),
                         )),
                     },
                     Token::F64(n) => {
                         if wip.innermost_shape() == <f32 as Facet>::SHAPE {
-                            let path = wip.path();
-                            wip.put(n as f32).map_err(|e| {
-                                JsonError::new_reflect(e, self.input, self.last_span, path)
-                            })
+                            wip.put(n as f32)
+                                .map_err(|e| JsonError::new_reflect(e, self.input, self.last_span))
                         } else {
-                            let path = wip.path();
-                            wip.put(n).map_err(|e| {
-                                JsonError::new_reflect(e, self.input, self.last_span, path)
-                            })
+                            wip.put(n)
+                                .map_err(|e| JsonError::new_reflect(e, self.input, self.last_span))
                         }
                     }
-                    Token::U64(n) => {
-                        let path = wip.path();
-                        wip.put(n).map_err(|e| {
-                            JsonError::new_reflect(e, self.input, self.last_span, path)
-                        })
-                    }
-                    Token::I64(n) => {
-                        let path = wip.path();
-                        wip.put(n).map_err(|e| {
-                            JsonError::new_reflect(e, self.input, self.last_span, path)
-                        })
-                    }
-                    Token::True => {
-                        let path = wip.path();
-                        wip.put::<bool>(true).map_err(|e| {
-                            JsonError::new_reflect(e, self.input, self.last_span, path)
-                        })
-                    }
-                    Token::False => {
-                        let path = wip.path();
-                        wip.put::<bool>(false).map_err(|e| {
-                            JsonError::new_reflect(e, self.input, self.last_span, path)
-                        })
-                    }
+                    Token::U64(n) => wip
+                        .put(n)
+                        .map_err(|e| JsonError::new_reflect(e, self.input, self.last_span)),
+                    Token::I64(n) => wip
+                        .put(n)
+                        .map_err(|e| JsonError::new_reflect(e, self.input, self.last_span)),
+                    Token::True => wip
+                        .put::<bool>(true)
+                        .map_err(|e| JsonError::new_reflect(e, self.input, self.last_span)),
+                    Token::False => wip
+                        .put::<bool>(false)
+                        .map_err(|e| JsonError::new_reflect(e, self.input, self.last_span)),
                     Token::EOF => Err(JsonError::new(
                         JsonErrorKind::UnexpectedEof("in value"),
                         self.input,
                         self.last_span,
-                        wip.path(),
                     )),
                 }
             }
@@ -579,9 +518,8 @@ impl<'a> StackRunner<'a> {
                         // First try to find a direct field match
                         if let Some(index) = wip.field_index(&key) {
                             trace!("It's a struct field");
-                            let path = wip.path();
                             wip = wip.field(index).map_err(|e| {
-                                JsonError::new_reflect(e, self.input, self.last_span, path)
+                                JsonError::new_reflect(e, self.input, self.last_span)
                             })?;
                         } else {
                             // Check for flattened fields
@@ -590,22 +528,15 @@ impl<'a> StackRunner<'a> {
                                 if field.flags.contains(FieldFlags::FLATTEN) {
                                     trace!("Found flattened field #{}", index);
                                     // Enter the flattened field
-                                    let path = wip.path();
                                     wip = wip.field(index).map_err(|e| {
-                                        JsonError::new_reflect(e, self.input, self.last_span, path)
+                                        JsonError::new_reflect(e, self.input, self.last_span)
                                     })?;
 
                                     // Check if this flattened field has the requested key
                                     if let Some(subfield_index) = wip.field_index(&key) {
                                         trace!("Found key {} in flattened field", key);
-                                        let path = wip.path();
                                         wip = wip.field(subfield_index).map_err(|e| {
-                                            JsonError::new_reflect(
-                                                e,
-                                                self.input,
-                                                self.last_span,
-                                                path,
-                                            )
+                                            JsonError::new_reflect(e, self.input, self.last_span)
                                         })?;
                                         found_in_flatten = true;
                                         handled_by_flatten = true;
@@ -614,27 +545,15 @@ impl<'a> StackRunner<'a> {
                                         wip.find_variant(&key)
                                     {
                                         trace!("Found key {} in flattened field", key);
-                                        let path = wip.path();
                                         wip = wip.variant_named(&key).map_err(|e| {
-                                            JsonError::new_reflect(
-                                                e,
-                                                self.input,
-                                                self.last_span,
-                                                path,
-                                            )
+                                            JsonError::new_reflect(e, self.input, self.last_span)
                                         })?;
                                         found_in_flatten = true;
                                         break;
                                     } else {
                                         // Key not in this flattened field, go back up
-                                        let path = wip.path();
                                         wip = wip.pop().map_err(|e| {
-                                            JsonError::new_reflect(
-                                                e,
-                                                self.input,
-                                                self.last_span,
-                                                path,
-                                            )
+                                            JsonError::new_reflect(e, self.input, self.last_span)
                                         })?;
                                     }
                                 }
@@ -652,7 +571,6 @@ impl<'a> StackRunner<'a> {
                                         },
                                         self.input,
                                         self.last_span,
-                                        wip.path(),
                                     ));
                                 } else {
                                     trace!(
@@ -666,9 +584,8 @@ impl<'a> StackRunner<'a> {
                     Def::Enum(_ed) => match wip.find_variant(&key) {
                         Some((index, variant)) => {
                             trace!("Variant {} selected", variant.name.blue());
-                            let path = wip.path();
                             wip = wip.variant(index).map_err(|e| {
-                                JsonError::new_reflect(e, self.input, self.last_span, path)
+                                JsonError::new_reflect(e, self.input, self.last_span)
                             })?;
                             needs_pop = false;
                         }
@@ -680,9 +597,8 @@ impl<'a> StackRunner<'a> {
                                 // Try to find the field index of the key within the selected variant
                                 if let Some(index) = wip.field_index(&key) {
                                     trace!("Found field {} in selected variant", key.blue());
-                                    let path = wip.path();
                                     wip = wip.field(index).map_err(|e| {
-                                        JsonError::new_reflect(e, self.input, self.last_span, path)
+                                        JsonError::new_reflect(e, self.input, self.last_span)
                                     })?;
                                 } else if wip.shape().has_deny_unknown_fields_attr() {
                                     trace!("Unknown field in variant and denying unknown fields");
@@ -693,7 +609,6 @@ impl<'a> StackRunner<'a> {
                                         },
                                         self.input,
                                         self.last_span,
-                                        wip.path(),
                                     ));
                                 } else {
                                     trace!("Ignoring unknown field in variant");
@@ -707,31 +622,26 @@ impl<'a> StackRunner<'a> {
                                     },
                                     self.input,
                                     self.last_span,
-                                    wip.path(),
                                 ));
                             }
                         }
                     },
                     Def::Map(_) => {
-                        let path = wip.path();
-                        wip = wip.push_map_key().map_err(|e| {
-                            JsonError::new_reflect(e, self.input, self.last_span, path)
-                        })?;
-                        let path = wip.path();
-                        wip = wip.put(key).map_err(|e| {
-                            JsonError::new_reflect(e, self.input, self.last_span, path)
-                        })?;
-                        let path = wip.path();
-                        wip = wip.push_map_value().map_err(|e| {
-                            JsonError::new_reflect(e, self.input, self.last_span, path)
-                        })?;
+                        wip = wip
+                            .push_map_key()
+                            .map_err(|e| JsonError::new_reflect(e, self.input, self.last_span))?;
+                        wip = wip
+                            .put(key)
+                            .map_err(|e| JsonError::new_reflect(e, self.input, self.last_span))?;
+                        wip = wip
+                            .push_map_value()
+                            .map_err(|e| JsonError::new_reflect(e, self.input, self.last_span))?;
                     }
                     _ => {
                         return Err(JsonError::new(
                             JsonErrorKind::Unimplemented("object key for non-struct/map"),
                             self.input,
                             self.last_span,
-                            wip.path(),
                         ));
                     }
                 }
@@ -745,7 +655,6 @@ impl<'a> StackRunner<'a> {
                         },
                         self.input,
                         self.last_span,
-                        wip.path(),
                     ));
                 }
                 self.stack
@@ -778,7 +687,6 @@ impl<'a> StackRunner<'a> {
                 },
                 self.input,
                 self.last_span,
-                wip.path(),
             )),
         }
     }
@@ -805,7 +713,6 @@ impl<'a> StackRunner<'a> {
                 },
                 self.input,
                 self.last_span,
-                wip.path(),
             )),
         }
     }
@@ -827,14 +734,12 @@ impl<'a> StackRunner<'a> {
                     "Cannot put back more than one token at a time"
                 );
                 self.unread_token = Some(token);
-                let path = wip.path();
                 wip = wip
                     .begin_pushback()
-                    .map_err(|e| JsonError::new_reflect(e, self.input, self.last_span, path))?;
-                let path = wip.path();
+                    .map_err(|e| JsonError::new_reflect(e, self.input, self.last_span))?;
                 wip = wip
                     .push()
-                    .map_err(|e| JsonError::new_reflect(e, self.input, self.last_span, path))?;
+                    .map_err(|e| JsonError::new_reflect(e, self.input, self.last_span))?;
 
                 self.stack.push(Instruction::CommaThenArrayItemOrArrayClose);
                 trace!("Pushing Pop insn to stack (arrayitem)");
@@ -857,10 +762,9 @@ impl<'a> StackRunner<'a> {
             }
             Token::Comma => {
                 trace!("Array comma");
-                let path = wip.path();
                 wip = wip
                     .push()
-                    .map_err(|e| JsonError::new_reflect(e, self.input, self.last_span, path))?;
+                    .map_err(|e| JsonError::new_reflect(e, self.input, self.last_span))?;
                 self.stack.push(Instruction::CommaThenArrayItemOrArrayClose);
                 trace!("Pushing Pop insn to stack (arrayitem)");
                 self.stack.push(Instruction::Pop(PopReason::ArrayItem));
@@ -874,12 +778,11 @@ impl<'a> StackRunner<'a> {
                 },
                 self.input,
                 self.last_span,
-                wip.path(),
             )),
         }
     }
 
-    fn read_token(&mut self, wip: &Wip<'_>) -> Result<Spanned<Token>, JsonError<'a>> {
+    fn read_token(&mut self, _wip: &Wip<'_>) -> Result<Spanned<Token>, JsonError<'a>> {
         if let Some(token) = self.unread_token.take() {
             self.last_span = token.span;
             Ok(token)
@@ -891,12 +794,7 @@ impl<'a> StackRunner<'a> {
                 }
                 Err(e) => {
                     self.last_span = e.span;
-                    Err(JsonError::new_syntax(
-                        e.kind,
-                        self.input,
-                        self.last_span,
-                        wip.path(),
-                    ))
+                    Err(JsonError::new_syntax(e.kind, self.input, self.last_span))
                 }
             }
         }
