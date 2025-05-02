@@ -328,7 +328,7 @@ dependencies = [
  "facet-core",
  "facet-pretty",
  "facet-reflect",
- "facet-testhelpers",
+ "facet-testhelpers 0.17.0",
  "log",
 ]
 
@@ -339,7 +339,7 @@ dependencies = [
  "bitflags",
  "camino",
  "eyre",
- "facet-testhelpers",
+ "facet-testhelpers 0.17.0",
  "impls",
  "ordered-float",
  "ulid",
@@ -374,11 +374,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-deserialize-eventbased"
+version = "0.21.0"
+dependencies = [
+ "ariadne",
+ "eyre",
+ "facet",
+ "facet-core",
+ "facet-reflect",
+ "facet-testhelpers 0.17.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "log",
+ "owo-colors 4.2.0",
+]
+
+[[package]]
 name = "facet-dev"
 version = "0.1.1"
 dependencies = [
  "ctrlc",
- "facet-testhelpers",
+ "facet-testhelpers 0.17.0",
  "fs-err",
  "indicatif",
  "log",
@@ -399,7 +413,7 @@ dependencies = [
  "facet-core",
  "facet-reflect",
  "facet-serialize",
- "facet-testhelpers",
+ "facet-testhelpers 0.17.0",
  "insta",
  "log",
  "ordered-float",
@@ -427,7 +441,7 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-reflect",
- "facet-testhelpers",
+ "facet-testhelpers 0.17.0",
  "indoc",
  "kdl",
  "log",
@@ -442,7 +456,7 @@ dependencies = [
  "facet-core",
  "facet-reflect",
  "facet-serialize",
- "facet-testhelpers",
+ "facet-testhelpers 0.17.0",
  "insta",
  "log",
  "rmp-serde",
@@ -470,7 +484,7 @@ dependencies = [
  "eyre",
  "facet",
  "facet-core",
- "facet-testhelpers",
+ "facet-testhelpers 0.17.0",
  "log",
  "owo-colors",
  "tempfile",
@@ -486,7 +500,7 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-reflect",
- "facet-testhelpers",
+ "facet-testhelpers 0.17.0",
  "insta",
  "log",
 ]
@@ -494,6 +508,18 @@ dependencies = [
 [[package]]
 name = "facet-testhelpers"
 version = "0.17.0"
+dependencies = [
+ "color-backtrace",
+ "color-eyre",
+ "log",
+ "yansi",
+]
+
+[[package]]
+name = "facet-testhelpers"
+version = "0.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5cc312781826f60caf571c47e068968940616a0bd79ea2de94f5c5bb0f3f4953"
 dependencies = [
  "color-backtrace",
  "color-eyre",
@@ -512,7 +538,7 @@ dependencies = [
  "facet-core",
  "facet-reflect",
  "facet-serialize",
- "facet-testhelpers",
+ "facet-testhelpers 0.17.0",
  "log",
  "num-traits",
  "serde",
@@ -529,7 +555,7 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-reflect",
- "facet-testhelpers",
+ "facet-testhelpers 0.17.0",
  "form_urlencoded",
  "log",
 ]

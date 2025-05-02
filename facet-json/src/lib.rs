@@ -5,7 +5,6 @@
 #![deny(unsafe_code)]
 #![doc = include_str!("../README.md")]
 
-#[cfg(feature = "alloc")]
 extern crate alloc;
 
 #[cfg(not(feature = "alloc"))]
