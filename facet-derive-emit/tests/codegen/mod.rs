@@ -146,6 +146,32 @@ fn repr_c_enum() {
 }
 
 #[test]
+fn repr_c_enum_empty_struct_variant() {
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        #[repr(C)]
+        enum EnumWithEmptyStructVariant {
+            Variant1 { },
+        }
+        "#
+    ));
+}
+
+#[test]
+fn repr_c_enum_lifetime_field() {
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        #[repr(C)]
+        enum EnumWithLifetimeField {
+            Variant1 { field1: &'static str },
+        }
+        "#
+    ));
+}
+
+#[test]
 fn struct_with_generics_simple() {
     insta::assert_snapshot!(expand(
         r#"
