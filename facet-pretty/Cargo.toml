@@ -27,7 +27,7 @@ yansi = "1.0.1"
 [dev-dependencies]
 camino = "1.1.9"
 facet = { path = "../facet" }
-criterion = "0.5.1"
+divan = { version = "2.10.1", package = "codspeed-divan-compat" }
 
 [[bench]]
 path = "benches/compare_derive_more.rs"

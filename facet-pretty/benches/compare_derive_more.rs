@@ -1,6 +1,6 @@
 #![allow(clippy::approx_constant)]
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use divan::{Bencher, black_box};
 use facet::Facet;
 use facet_pretty::PrettyPrinter;
 
@@ -55,33 +55,33 @@ struct ComplexOuter {
     level: u32,
 }
 
-// --- Benchmark Functions ---
+// --- Simple Struct Benchmarks ---
 
-fn bench_simple_struct(c: &mut Criterion) {
+#[divan::bench(name = "Simple Struct - facet-pretty")]
+fn bench_simple_struct_facet(bencher: Bencher) {
     let facet_val = Simple {
         a: 123,
         b: "hello world".to_string(),
     };
     let facet_printer = PrettyPrinter::new().with_colors(false);
 
-    let mut group = c.benchmark_group("Simple Struct Formatting");
-
-    group.bench_function("facet-pretty", |b| {
-        b.iter(|| {
-            black_box(facet_printer.format(black_box(&facet_val)));
-        })
-    });
-
-    group.bench_function("derive(Debug) + pretty {:#?}", |b| {
-        b.iter(|| {
-            black_box(format!("{:#?}", black_box(&facet_val)));
-        })
-    });
-
-    group.finish();
+    bencher.bench(|| black_box(facet_printer.format(black_box(&facet_val))));
 }
 
-fn bench_nested_struct(c: &mut Criterion) {
+#[divan::bench(name = "Simple Struct - derive(Debug) + pretty {:#?}")]
+fn bench_simple_struct_debug(bencher: Bencher) {
+    let facet_val = Simple {
+        a: 123,
+        b: "hello world".to_string(),
+    };
+
+    bencher.bench(|| black_box(format!("{:#?}", black_box(&facet_val))));
+}
+
+// --- Nested Struct Benchmarks ---
+
+#[divan::bench(name = "Nested Struct - facet-pretty")]
+fn bench_nested_struct_facet(bencher: Bencher) {
     let facet_val = Outer {
         inner: Inner { x: 3.14159 },
         name: "outer".to_string(),
@@ -89,72 +89,77 @@ fn bench_nested_struct(c: &mut Criterion) {
     };
     let facet_printer = PrettyPrinter::new().with_colors(false);
 
-    let mut group = c.benchmark_group("Nested Struct Formatting");
-
-    group.bench_function("facet-pretty", |b| {
-        b.iter(|| {
-            black_box(facet_printer.format(black_box(&facet_val)));
-        })
-    });
-
-    group.bench_function("derive(Debug) + pretty {:#?}", |b| {
-        b.iter(|| {
-            black_box(format!("{:#?}", black_box(&facet_val)));
-        })
-    });
-
-    group.finish();
+    bencher.bench(|| black_box(facet_printer.format(black_box(&facet_val))));
 }
 
-fn bench_enum(c: &mut Criterion) {
+#[divan::bench(name = "Nested Struct - derive(Debug) + pretty {:#?}")]
+fn bench_nested_struct_debug(bencher: Bencher) {
+    let facet_val = Outer {
+        inner: Inner { x: 3.14159 },
+        name: "outer".to_string(),
+        count: 42,
+    };
+
+    bencher.bench(|| black_box(format!("{:#?}", black_box(&facet_val))));
+}
+
+// --- Enum Benchmarks ---
+
+#[divan::bench(name = "Enum (Unit) - facet-pretty")]
+fn bench_enum_unit_facet(bencher: Bencher) {
     let facet_unit = Enum::Unit;
+    let facet_printer = PrettyPrinter::new().with_colors(false);
+
+    bencher.bench(|| black_box(facet_printer.format(black_box(&facet_unit))));
+}
+
+#[divan::bench(name = "Enum (Unit) - derive(Debug) + pretty {:#?}")]
+fn bench_enum_unit_debug(bencher: Bencher) {
+    let facet_unit = Enum::Unit;
+
+    bencher.bench(|| black_box(format!("{:#?}", black_box(&facet_unit))));
+}
+
+#[divan::bench(name = "Enum (Tuple) - facet-pretty")]
+fn bench_enum_tuple_facet(bencher: Bencher) {
     let facet_tuple = Enum::Tuple(10, true);
+    let facet_printer = PrettyPrinter::new().with_colors(false);
+
+    bencher.bench(|| black_box(facet_printer.format(black_box(&facet_tuple))));
+}
+
+#[divan::bench(name = "Enum (Tuple) - derive(Debug) + pretty {:#?}")]
+fn bench_enum_tuple_debug(bencher: Bencher) {
+    let facet_tuple = Enum::Tuple(10, true);
+
+    bencher.bench(|| black_box(format!("{:#?}", black_box(&facet_tuple))));
+}
+
+#[divan::bench(name = "Enum (Struct) - facet-pretty")]
+fn bench_enum_struct_facet(bencher: Bencher) {
+    let facet_struct = Enum::Struct {
+        a: 5,
+        b: "enum struct".to_string(),
+    };
+    let facet_printer = PrettyPrinter::new().with_colors(false);
+
+    bencher.bench(|| black_box(facet_printer.format(black_box(&facet_struct))));
+}
+
+#[divan::bench(name = "Enum (Struct) - derive(Debug) + pretty {:#?}")]
+fn bench_enum_struct_debug(bencher: Bencher) {
     let facet_struct = Enum::Struct {
         a: 5,
         b: "enum struct".to_string(),
     };
 
-    let facet_printer = PrettyPrinter::new().with_colors(false);
-
-    let mut group = c.benchmark_group("Enum Formatting");
-
-    group.bench_function("facet-pretty (Unit)", |b| {
-        b.iter(|| {
-            black_box(facet_printer.format(black_box(&facet_unit)));
-        })
-    });
-    group.bench_function("derive(Debug) + pretty {:#?} (Unit)", |b| {
-        b.iter(|| {
-            black_box(format!("{:#?}", black_box(&facet_unit)));
-        })
-    });
-
-    group.bench_function("facet-pretty (Tuple)", |b| {
-        b.iter(|| {
-            black_box(facet_printer.format(black_box(&facet_tuple)));
-        })
-    });
-    group.bench_function("derive(Debug) + pretty {:#?} (Tuple)", |b| {
-        b.iter(|| {
-            black_box(format!("{:#?}", black_box(&facet_tuple)));
-        })
-    });
-
-    group.bench_function("facet-pretty (Struct)", |b| {
-        b.iter(|| {
-            black_box(facet_printer.format(black_box(&facet_struct)));
-        })
-    });
-    group.bench_function("derive(Debug) + pretty {:#?} (Struct)", |b| {
-        b.iter(|| {
-            black_box(format!("{:#?}", black_box(&facet_struct)));
-        })
-    });
-
-    group.finish();
+    bencher.bench(|| black_box(format!("{:#?}", black_box(&facet_struct))));
 }
 
-fn bench_complex_struct(c: &mut Criterion) {
+// --- Complex Struct Benchmarks ---
+
+#[divan::bench(name = "Complex Struct - facet-pretty")]
+fn bench_complex_struct_facet(bencher: Bencher) {
     let facet_val = ComplexOuter {
         name: "complex data structure".to_string(),
         items: vec![
@@ -173,29 +178,31 @@ fn bench_complex_struct(c: &mut Criterion) {
     };
     let facet_printer = PrettyPrinter::new().with_colors(false);
 
-    let mut group = c.benchmark_group("Complex Struct Formatting");
-
-    group.bench_function("facet-pretty", |b| {
-        b.iter(|| {
-            black_box(facet_printer.format(black_box(&facet_val)));
-        })
-    });
-
-    group.bench_function("derive(Debug) + pretty {:#?}", |b| {
-        b.iter(|| {
-            black_box(format!("{:#?}", black_box(&facet_val)));
-        })
-    });
-
-    group.finish();
+    bencher.bench(|| black_box(facet_printer.format(black_box(&facet_val))));
 }
 
-// --- Criterion Setup ---
-criterion_group!(
-    benches,
-    bench_simple_struct,
-    bench_nested_struct,
-    bench_enum,
-    bench_complex_struct,
-);
-criterion_main!(benches);
+#[divan::bench(name = "Complex Struct - derive(Debug) + pretty {:#?}")]
+fn bench_complex_struct_debug(bencher: Bencher) {
+    let facet_val = ComplexOuter {
+        name: "complex data structure".to_string(),
+        items: vec![
+            ComplexInner {
+                id: 1,
+                flag: Some(true),
+            },
+            ComplexInner { id: 2, flag: None },
+            ComplexInner {
+                id: 3,
+                flag: Some(false),
+            },
+        ],
+        maybe_value: Some(-1_000_000_000_000_000),
+        level: 5,
+    };
+
+    bencher.bench(|| black_box(format!("{:#?}", black_box(&facet_val))));
+}
+
+fn main() {
+    divan::main();
+}
