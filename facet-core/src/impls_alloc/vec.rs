@@ -27,9 +27,29 @@ where
                                 write!(f, "Vec<⋯>")
                             }
                         })
-                        .default_in_place(|target| unsafe { target.put(Self::default()) })
-                    // FIXME: THIS IS VERY WRONG
-                        .clone_into(|src, dst| unsafe { dst.put(core::ptr::read(src)) });
+                        .default_in_place(|target| unsafe { target.put(Self::default()) });
+
+                        if T::SHAPE.vtable.clone_into.is_some() {
+                            builder = builder.clone_into(|src, dst| unsafe {
+                                let mut new_vec = Vec::with_capacity(src.len());
+
+                                let t_clone_into = <VTableView<T>>::of().clone_into().unwrap();
+
+                                for item in src {
+                                    use crate::TypedPtrUninit;
+                                    use core::mem::MaybeUninit;
+
+                                    let mut new_item = MaybeUninit::<T>::uninit();
+                                    let uninit_item = TypedPtrUninit::new(new_item.as_mut_ptr());
+
+                                    (t_clone_into)(item, uninit_item);
+
+                                    new_vec.push(new_item.assume_init());
+                                }
+
+                                dst.put(new_vec)
+                            });
+                        }
 
                     if T::SHAPE.vtable.debug.is_some() {
                         builder = builder.debug(|value, f| {

@@ -76,9 +76,34 @@ where
 
                     builder =
                         builder.default_in_place(|target| unsafe { target.put(Self::default()) });
-                    // FIXME: VERY MUCH INCORRECt
-                    builder =
-                        builder.clone_into(|src, dst| unsafe { dst.put(core::ptr::read(src)) });
+
+                    if V::SHAPE.vtable.clone_into.is_some() && K::SHAPE.vtable.clone_into.is_some()
+                    {
+                        builder = builder.clone_into(|src, dst| unsafe {
+                            let mut new_map = BTreeMap::new();
+
+                            let k_clone_into = <VTableView<K>>::of().clone_into().unwrap();
+                            let v_clone_into = <VTableView<V>>::of().clone_into().unwrap();
+
+                            for (k, v) in src {
+                                use crate::TypedPtrUninit;
+                                use core::mem::MaybeUninit;
+
+                                let mut new_k = MaybeUninit::<K>::uninit();
+                                let mut new_v = MaybeUninit::<V>::uninit();
+
+                                let uninit_k = TypedPtrUninit::new(new_k.as_mut_ptr());
+                                let uninit_v = TypedPtrUninit::new(new_v.as_mut_ptr());
+
+                                (k_clone_into)(k, uninit_k);
+                                (v_clone_into)(v, uninit_v);
+
+                                new_map.insert(new_k.assume_init(), new_v.assume_init());
+                            }
+
+                            dst.put(new_map)
+                        });
+                    }
 
                     if V::SHAPE.vtable.eq.is_some() {
                         builder = builder.eq(|a, b| {

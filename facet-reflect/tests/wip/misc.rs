@@ -877,3 +877,82 @@ fn clone_into() -> eyre::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn clone_into_vec() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    type Type = Vec<String>;
+    let mut vec: Type = vec!["hello".to_owned()];
+    let mut vec_clone: MaybeUninit<Type> = MaybeUninit::uninit();
+    let clone_into = <Type as Facet>::SHAPE.vtable.clone_into.unwrap();
+    let clone_vec = unsafe {
+        clone_into(
+            PtrConst::new(&vec),
+            PtrUninit::from_maybe_uninit(&mut vec_clone),
+        );
+        vec_clone.assume_init()
+    };
+    vec[0].push_str(" world");
+    assert_eq!(clone_vec[0], "hello");
+
+    Ok(())
+}
+
+#[test]
+fn clone_into_hash_map() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    use std::collections::HashMap;
+
+    type Type = HashMap<String, i32>;
+    let mut map: Type = HashMap::new();
+    map.insert("key".to_owned(), 42);
+
+    let mut map_clone: MaybeUninit<Type> = MaybeUninit::uninit();
+    let clone_into = <Type as Facet>::SHAPE.vtable.clone_into.unwrap();
+    let clone_map = unsafe {
+        clone_into(
+            PtrConst::new(&map),
+            PtrUninit::from_maybe_uninit(&mut map_clone),
+        );
+        map_clone.assume_init()
+    };
+
+    map.insert("key".to_owned(), 99);
+    map.insert("new_key".to_owned(), 100);
+
+    assert_eq!(clone_map.get("key"), Some(&42));
+    assert_eq!(clone_map.get("new_key"), None);
+
+    Ok(())
+}
+
+#[test]
+fn clone_into_btree_map() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    use std::collections::BTreeMap;
+
+    type Type = BTreeMap<String, i32>;
+    let mut map: Type = BTreeMap::new();
+    map.insert("key".to_owned(), 42);
+
+    let mut map_clone: MaybeUninit<Type> = MaybeUninit::uninit();
+    let clone_into = <Type as Facet>::SHAPE.vtable.clone_into.unwrap();
+    let clone_map = unsafe {
+        clone_into(
+            PtrConst::new(&map),
+            PtrUninit::from_maybe_uninit(&mut map_clone),
+        );
+        map_clone.assume_init()
+    };
+
+    map.insert("key".to_owned(), 99);
+    map.insert("new_key".to_owned(), 100);
+
+    assert_eq!(clone_map.get("key"), Some(&42));
+    assert_eq!(clone_map.get("new_key"), None);
+
+    Ok(())
+}
