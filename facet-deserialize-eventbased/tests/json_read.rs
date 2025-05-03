@@ -1,9 +1,13 @@
 use facet::Facet;
 use facet_deserialize_eventbased::Json;
-use facet_reflect::Wip;
+
+fn from_str<'input: 'facet, 'facet, T: Facet<'facet>>(input: &'input str) -> eyre::Result<T> {
+    let input = input.as_bytes();
+    Ok(facet_deserialize_eventbased::deserialize::<T, Json>(input).map_err(|e| e.into_owned())?)
+}
 
 #[test]
-fn test_json_read() -> eyre::Result<()> {
+fn json_simple_object() -> eyre::Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Facet)]
@@ -12,9 +16,33 @@ fn test_json_read() -> eyre::Result<()> {
         bar: String,
     }
 
-    let wip = Wip::alloc_shape(FooBar::SHAPE)?;
-    let input = r#"{ "foo": 123456, "bar": "Hello, World!" }"#.as_bytes();
-    let _wip = facet_deserialize_eventbased::deserialize_wip::<Json>(wip, input)?;
+    let fb: FooBar = from_str(r#"{ "foo": 123456, "bar": "Hello, World!" }"#)?;
+    assert_eq!(fb.foo, 123456);
+    assert_eq!(fb.bar, "Hello, World!");
+
+    Ok(())
+}
+
+#[test]
+fn test_one_empty_one_nonempty_vec() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Clone, Default)]
+    pub struct RevisionConfig {
+        pub one: Vec<String>,
+        pub two: Vec<String>,
+    }
+
+    let markup = r#"
+    {
+      "one": [],
+      "two": ["a", "b", "c"]
+    }
+    "#;
+
+    let config: RevisionConfig = from_str(markup)?;
+    assert!(config.one.is_empty());
+    assert_eq!(config.two, vec!["a", "b", "c"]);
 
     Ok(())
 }

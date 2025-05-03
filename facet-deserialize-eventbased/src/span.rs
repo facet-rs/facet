@@ -10,9 +10,9 @@ pub type Pos = usize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
     /// Starting position of the span in bytes
-    start: Pos,
+    pub start: Pos,
     /// Length of the span in bytes
-    len: usize,
+    pub len: usize,
 }
 
 impl Span {

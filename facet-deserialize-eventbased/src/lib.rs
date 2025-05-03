@@ -14,7 +14,7 @@ use std::borrow::Cow;
 pub use error::*;
 
 mod span;
-use facet_core::{Characteristic, Def, FieldFlags};
+use facet_core::{Characteristic, Def, Facet, FieldFlags};
 use owo_colors::OwoColorize;
 pub use span::*;
 
@@ -29,6 +29,13 @@ enum Scalar<'input> {
     U64(u64),
     I64(i64),
     F64(f64),
+}
+
+#[derive(PartialEq, Debug, Clone)]
+enum Expectation {
+    Any,
+    ObjectKeyOrObjectClose,
+    ObjectValue,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -71,6 +78,7 @@ pub type NextResult<'input, 'facet, T, E> = (NextData<'input, 'facet>, Result<T,
 trait Format {
     fn next<'input, 'facet>(
         nd: NextData<'input, 'facet>,
+        expection: Expectation,
     ) -> NextResult<'input, 'facet, Outcome<'input>, DeserError<'input>>;
 }
 
@@ -80,105 +88,155 @@ pub struct Json;
 impl Format for Json {
     fn next<'input, 'facet>(
         mut nd: NextData<'input, 'facet>,
+        mut expectation: Expectation,
     ) -> NextResult<'input, 'facet, Outcome<'input>, DeserError<'input>> {
-        // Skip whitespace
-        let mut n = 0;
-        while let Some(&ch) = nd.runner.input.get(n) {
-            if ch == b' ' {
-                n += 1;
-            } else {
-                break;
+        loop {
+            // Skip whitespace
+            let mut n = 0;
+            while let Some(&ch) = nd.runner.input.get(n) {
+                if ch == b' ' {
+                    n += 1;
+                } else {
+                    break;
+                }
             }
-        }
 
-        // Update input to skip whitespace
-        nd.runner.input = &nd.runner.input[n..];
+            // Update input to skip whitespace
+            nd.runner.input = &nd.runner.input[n..];
 
-        // Check if we've reached the end after skipping whitespace
-        if nd.runner.input.is_empty() {
-            let err = DeserError::new(
-                DeserErrorKind::UnexpectedEof("unexpected end of input after whitespace"),
-                nd.runner.input,
-                nd.runner.last_span,
-            );
-            return (nd, Err(err));
-        }
+            // Check if we've reached the end after skipping whitespace
+            if nd.runner.input.is_empty() {
+                let err = DeserError::new(
+                    DeserErrorKind::UnexpectedEof("unexpected end of input after whitespace"),
+                    nd.runner.input,
+                    nd.runner.last_span,
+                );
+                return (nd, Err(err));
+            }
 
-        // Update 'next' with the new first character
-        let next = nd.runner.input[0];
-        let mut n = 0;
-        let res = match next {
-            b'0'..=b'9' => {
-                debug!("Found number");
-                while let Some(next) = nd.runner.input.get(n) {
-                    if *next >= b'0' && *next <= b'9' {
+            // Update 'next' with the new first character
+            let next = nd.runner.input[0];
+            let mut n = 0;
+            let res = match next {
+                b'0'..=b'9' => {
+                    debug!("Found number");
+                    while let Some(next) = nd.runner.input.get(n) {
+                        if *next >= b'0' && *next <= b'9' {
+                            n += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    let num_slice = &nd.runner.input[0..n];
+                    let num_str = std::str::from_utf8(num_slice).unwrap();
+                    let number = num_str.parse::<u64>().unwrap();
+                    nd.runner.input = &nd.runner.input[n..];
+                    Ok(Outcome::GotScalar(Scalar::U64(number)))
+                }
+                b'"' => {
+                    trace!("Found string");
+                    n += 1; // Skip the opening quote
+                    let start = n;
+
+                    // Parse until closing quote
+                    let mut escaped = false;
+                    while let Some(&next) = nd.runner.input.get(n) {
+                        if escaped {
+                            escaped = false;
+                        } else if next == b'\\' {
+                            escaped = true;
+                        } else if next == b'"' {
+                            break;
+                        }
                         n += 1;
+                    }
+
+                    // Skip the closing quote if found
+                    if nd.runner.input.get(n) == Some(&b'"') {
+                        n += 1;
+                    }
+
+                    let string_slice = &nd.runner.input[start..n - 1];
+                    let string_content = std::str::from_utf8(string_slice).unwrap();
+                    trace!("String content: {:?}", string_content);
+
+                    nd.runner.input = &nd.runner.input[n..];
+                    Ok(Outcome::GotScalar(Scalar::String(Cow::Borrowed(
+                        string_content,
+                    ))))
+                }
+                b'{' => {
+                    nd.runner.input = &nd.runner.input[1..];
+                    Ok(Outcome::ObjectStarted)
+                }
+                b':' => {
+                    if expectation == Expectation::ObjectValue {
+                        // makes sense, let's skip it and try again
+                        nd.runner.input = &nd.runner.input[1..];
+                        expectation = Expectation::Any;
+
+                        continue;
                     } else {
-                        break;
+                        trace!("Did not expect ObjectValue, expected {:?}", expectation);
+
+                        Err(DeserError {
+                            input: nd.runner.input.into(),
+                            span: nd.runner.last_span,
+                            kind: DeserErrorKind::Unimplemented("unexpected colon"),
+                        })
                     }
                 }
-                let num_slice = &nd.runner.input[0..n];
-                let num_str = std::str::from_utf8(num_slice).unwrap();
-                let number = num_str.parse::<u64>().unwrap();
-                nd.runner.input = &nd.runner.input[n..];
-                Ok(Outcome::GotScalar(Scalar::U64(number)))
-            }
-            b'"' => {
-                trace!("Found string");
-                n += 1; // Skip the opening quote
-                let start = n;
-
-                // Parse until closing quote
-                let mut escaped = false;
-                while let Some(&next) = nd.runner.input.get(n) {
-                    if escaped {
-                        escaped = false;
-                    } else if next == b'\\' {
-                        escaped = true;
-                    } else if next == b'"' {
-                        break;
+                b',' => {
+                    if expectation == Expectation::ObjectKeyOrObjectClose {
+                        // Let's skip the comma and try again
+                        nd.runner.input = &nd.runner.input[1..];
+                        continue;
+                    } else {
+                        trace!("Did not expect comma, expected {:?}", expectation);
+                        Err(DeserError {
+                            input: nd.runner.input.into(),
+                            span: nd.runner.last_span,
+                            kind: DeserErrorKind::Unimplemented("unexpected comma"),
+                        })
                     }
-                    n += 1;
                 }
-
-                // Skip the closing quote if found
-                if nd.runner.input.get(n) == Some(&b'"') {
-                    n += 1;
+                b'}' => {
+                    if expectation == Expectation::ObjectKeyOrObjectClose {
+                        nd.runner.input = &nd.runner.input[1..];
+                        Ok(Outcome::ObjectEnded)
+                    } else {
+                        Err(DeserError {
+                            input: nd.runner.input.into(),
+                            span: nd.runner.last_span,
+                            kind: DeserErrorKind::Unimplemented("unexpected closing brace"),
+                        })
+                    }
                 }
-
-                let string_slice = &nd.runner.input[start..n - 1];
-                let string_content = std::str::from_utf8(string_slice).unwrap();
-                trace!("String content: {:?}", string_content);
-
-                nd.runner.input = &nd.runner.input[n..];
-                Ok(Outcome::GotScalar(Scalar::String(Cow::Borrowed(
-                    string_content,
-                ))))
-            }
-            b'{' => {
-                nd.runner.input = &nd.runner.input[1..];
-                Ok(Outcome::ObjectStarted)
-            }
-            c => Err(DeserError {
-                input: nd.runner.input.into(),
-                span: nd.runner.last_span,
-                kind: DeserErrorKind::Unimplemented("unexpected character"),
-            }),
-        };
-        (nd, res)
+                c => Err(DeserError {
+                    input: nd.runner.input.into(),
+                    span: nd.runner.last_span,
+                    kind: DeserErrorKind::Unimplemented("unexpected character"),
+                }),
+            };
+            return (nd, res);
+        }
     }
 }
 
 /// Represents the next expected token or structure while parsing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Instruction {
-    Value,
+    Value(ValueReason),
     SkipValue,
     Pop(PopReason),
     ObjectKeyOrObjectClose,
-    CommaThenObjectKeyOrObjectClose,
     ArrayItemOrArrayClose,
-    CommaThenArrayItemOrArrayClose,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ValueReason {
+    TopLevel,
+    ObjectVal,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -189,13 +247,37 @@ enum PopReason {
     Some,
 }
 
-pub fn deserialize_wip<'input: 'facet, 'facet, F: Format>(
+pub fn deserialize<'input, 'facet, T: Facet<'facet>, F: Format>(
+    input: &'input [u8],
+) -> Result<T, DeserError<'input>>
+where
+    T: Facet<'facet>,
+    'input: 'facet,
+{
+    let wip = Wip::alloc_shape(T::SHAPE).map_err(|e| DeserError {
+        input: input.into(),
+        span: Span { start: 0, len: 0 },
+        kind: DeserErrorKind::ReflectError(e),
+    })?;
+    Ok(deserialize_wip::<F>(wip, input)?
+        .materialize()
+        .map_err(|e| DeserError::new_reflect(e, input, Span { start: 0, len: 0 }))?)
+}
+
+pub fn deserialize_wip<'input: 'facet, 'facet, F>(
     mut wip: Wip<'facet>,
     input: &'input [u8],
-) -> Result<HeapValue<'facet>, DeserError<'input>> {
+) -> Result<HeapValue<'facet>, DeserError<'input>>
+where
+    F: Format,
+    'input: 'facet,
+{
     // This struct is just a bundle of the state that we need to pass around all the time.
     let mut runner = StackRunner {
-        stack: vec![Instruction::Pop(PopReason::TopLevel), Instruction::Value],
+        stack: vec![
+            Instruction::Pop(PopReason::TopLevel),
+            Instruction::Value(ValueReason::TopLevel),
+        ],
         input,
         last_span: Span::new(0, 0),
     };
@@ -232,22 +314,26 @@ pub fn deserialize_wip<'input: 'facet, 'facet, F: Format>(
                         .map_err(|e| DeserError::new_reflect(e, input, runner.last_span))?;
                 }
             }
-            Instruction::Value => {
+            Instruction::Value(_why) => {
                 let nd = NextData { runner, wip };
-                let (nd, res) = F::next(nd);
+                let expectation = match _why {
+                    ValueReason::TopLevel => Expectation::Any,
+                    ValueReason::ObjectVal => Expectation::ObjectValue,
+                };
+                let (nd, res) = F::next(nd, expectation);
                 runner = nd.runner;
                 wip = nd.wip;
                 let outcome = res?;
-                trace!("Got outcome {outcome:?}");
+                trace!("Got outcome {:?}", outcome.blue());
                 wip = runner.value(wip, outcome)?
             }
             Instruction::ObjectKeyOrObjectClose => {
                 let nd = NextData { runner, wip };
-                let (nd, res) = F::next(nd);
+                let (nd, res) = F::next(nd, Expectation::ObjectKeyOrObjectClose);
                 runner = nd.runner;
                 wip = nd.wip;
                 let outcome = res?;
-                trace!("Got outcome {outcome:?}");
+                trace!("Got outcome {:?}", outcome.blue());
                 wip = runner.object_key_or_object_close(wip, outcome)?;
             }
             _ => {
@@ -369,7 +455,10 @@ impl<'input> StackRunner<'input> {
                 );
             }
             _ => {
-                trace!("Thing being popped is not a container I guess");
+                trace!(
+                    "Thing being popped is not a container I guess (it's a {})",
+                    wip.shape()
+                );
             }
         }
         Ok(wip)
@@ -382,7 +471,28 @@ impl<'input> StackRunner<'input> {
         outcome: Outcome<'input>,
     ) -> Result<Wip<'facet>, DeserError<'input>> {
         match outcome {
-            Outcome::GotScalar(s) => {}
+            Outcome::GotScalar(s) => match s {
+                Scalar::String(cow) => {
+                    wip = wip
+                        .put(cow.to_string())
+                        .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
+                }
+                Scalar::U64(value) => {
+                    wip = wip
+                        .put(value)
+                        .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
+                }
+                Scalar::I64(value) => {
+                    wip = wip
+                        .put(value)
+                        .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
+                }
+                Scalar::F64(value) => {
+                    wip = wip
+                        .put(value)
+                        .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
+                }
+            },
             Outcome::ListStarted => todo!(),
             Outcome::ListEnded => todo!(),
             Outcome::ObjectStarted => {
@@ -569,8 +679,7 @@ impl<'input> StackRunner<'input> {
                     }
                 }
 
-                self.stack
-                    .push(Instruction::CommaThenObjectKeyOrObjectClose);
+                self.stack.push(Instruction::ObjectKeyOrObjectClose);
                 if ignore {
                     self.stack.push(Instruction::SkipValue);
                 } else {
@@ -584,7 +693,7 @@ impl<'input> StackRunner<'input> {
                         self.stack.push(Instruction::Pop(PopReason::ObjectVal));
                         self.stack.push(Instruction::Pop(PopReason::ObjectVal));
                     }
-                    self.stack.push(Instruction::Value);
+                    self.stack.push(Instruction::Value(ValueReason::ObjectVal));
                 }
                 Ok(wip)
             }

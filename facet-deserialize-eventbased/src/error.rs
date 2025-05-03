@@ -20,6 +20,16 @@ pub struct DeserError<'input> {
     pub kind: DeserErrorKind,
 }
 
+impl<'a> DeserError<'a> {
+    pub fn into_owned(self) -> DeserError<'static> {
+        DeserError {
+            input: self.input.into_owned().into(),
+            span: self.span,
+            kind: self.kind,
+        }
+    }
+}
+
 /// An error kind for JSON parsing.
 #[derive(Debug, PartialEq, Clone)]
 pub enum DeserErrorKind {
