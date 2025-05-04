@@ -1,7 +1,5 @@
 //! Tests for TOML table values.
 
-use std::net::Ipv6Addr;
-
 use eyre::Result;
 use facet::Facet;
 
@@ -92,7 +90,7 @@ fn test_root_struct_multiple_fields() -> Result<()> {
     struct Root {
         a: i32,
         b: bool,
-        c: Ipv6Addr,
+        c: String,
     }
 
     assert_serialize!(
@@ -100,7 +98,7 @@ fn test_root_struct_multiple_fields() -> Result<()> {
         Root {
             a: 1,
             b: true,
-            c: "::1".parse().unwrap()
+            c: "'' \"test ".to_string()
         },
     );
 
@@ -120,7 +118,7 @@ fn test_nested_struct_multiple_fields() -> Result<()> {
     struct Nested {
         a: i32,
         b: bool,
-        c: Ipv6Addr,
+        c: String,
     }
 
     assert_serialize!(
@@ -129,7 +127,7 @@ fn test_nested_struct_multiple_fields() -> Result<()> {
             nested: Nested {
                 a: 1,
                 b: true,
-                c: "::1".parse().unwrap()
+                c: "test".to_string()
             }
         },
     );

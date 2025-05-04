@@ -7,23 +7,19 @@ struct Person {
     age: u64,
 }
 
+#[cfg(feature = "alloc")]
 #[test]
-fn test_deserialize_person() -> Result<()> {
+fn test_serialize_person() -> Result<()> {
     facet_testhelpers::setup();
 
-    let toml = r#"
-            name = "Alice"
-            age = 30
-        "#;
+    let person = Person {
+        name: "Alice".to_string(),
+        age: 30,
+    };
 
-    let person: Person = facet_toml::from_str(toml)?;
-    assert_eq!(
-        person,
-        Person {
-            name: "Alice".to_string(),
-            age: 30
-        }
-    );
+    let toml = facet_toml::to_string(&person);
+
+    assert_eq!(toml, "name = \"Alice\"\nage = 30\n");
 
     Ok(())
 }
