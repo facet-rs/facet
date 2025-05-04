@@ -134,6 +134,30 @@ pub trait Serializer {
     /// Signal the end of serializing a map/dictionary-like value.
     fn end_map(&mut self) -> Result<(), Self::Error>;
 
+    /// Begin serializing a map key value.
+    #[inline(always)]
+    fn begin_map_key(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    /// Signal the end of serializing a map key value.
+    #[inline(always)]
+    fn end_map_key(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    /// Begin serializing a map value.
+    #[inline(always)]
+    fn begin_map_value(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    /// Signal the end of serializing a map value.
+    #[inline(always)]
+    fn end_map_value(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
     // For objects/maps
 
     /// Serialize a field name (for objects and maps).
@@ -142,6 +166,12 @@ pub trait Serializer {
     ///
     /// * `name` - The field or key name to serialize.
     fn serialize_field_name(&mut self, name: &'static str) -> Result<(), Self::Error>;
+
+    /// Signal the end of serializing a field.
+    #[inline(always)]
+    fn end_field(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
 }
 
 // --- Iterative Serialization Logic ---
@@ -154,6 +184,9 @@ enum SerializeTask<'mem, 'facet> {
     EndObject,
     EndArray,
     EndMap,
+    EndMapKey,
+    EndMapValue,
+    EndField,
     // Tasks to push sub-elements onto the stack
     ObjectFields(PeekStruct<'mem, 'facet>),
     ArrayItems(PeekList<'mem, 'facet>),
@@ -343,6 +376,7 @@ where
 
                                 // Push fields in reverse order for struct variant
                                 for (field, field_peek) in peek_enum.fields_for_serialize().rev() {
+                                    stack.push(SerializeTask::EndField);
                                     stack.push(SerializeTask::Value(field_peek, Some(field)));
                                     stack.push(SerializeTask::SerializeFieldName(field.name));
                                 }
@@ -390,6 +424,7 @@ where
             SerializeTask::ObjectFields(peek_struct) => {
                 // Push fields in reverse order for stack processing
                 for (field, field_peek) in peek_struct.fields_for_serialize().rev() {
+                    stack.push(SerializeTask::EndField);
                     stack.push(SerializeTask::Value(field_peek, Some(field)));
                     stack.push(SerializeTask::SerializeFieldName(field.name));
                 }
@@ -421,10 +456,14 @@ where
                 serializer.serialize_field_name(name)?;
             }
             SerializeTask::SerializeMapKey(key_peek) => {
+                stack.push(SerializeTask::EndMapKey);
                 stack.push(SerializeTask::Value(key_peek, None));
+                serializer.begin_map_key()?;
             }
             SerializeTask::SerializeMapValue(value_peek) => {
+                stack.push(SerializeTask::EndMapValue);
                 stack.push(SerializeTask::Value(value_peek, None));
+                serializer.begin_map_value()?;
             }
 
             // --- End composite type tasks ---
@@ -436,6 +475,15 @@ where
             }
             SerializeTask::EndMap => {
                 serializer.end_map()?;
+            }
+            SerializeTask::EndMapKey => {
+                serializer.end_map_key()?;
+            }
+            SerializeTask::EndMapValue => {
+                serializer.end_map_value()?;
+            }
+            SerializeTask::EndField => {
+                serializer.end_field()?;
             }
         }
     }

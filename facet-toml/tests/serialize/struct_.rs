@@ -1,0 +1,218 @@
+//! Tests for TOML table values.
+
+use std::net::Ipv6Addr;
+
+use eyre::Result;
+use facet::Facet;
+
+use crate::assert_serialize;
+
+#[test]
+fn test_table_to_struct() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Root {
+        value: i32,
+        table: Table,
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Table {
+        value: i32,
+    }
+
+    assert_serialize!(
+        Root,
+        Root {
+            value: 1,
+            table: Table { value: 2 },
+        },
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_unit_struct() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Root {
+        value: i32,
+        unit: Unit,
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Unit(i32);
+
+    assert_serialize!(
+        Root,
+        Root {
+            value: 1,
+            unit: Unit(2),
+        },
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_nested_unit_struct() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Root {
+        value: i32,
+        unit: NestedUnit,
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct NestedUnit(Unit);
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Unit(i32);
+
+    assert_serialize!(
+        Root,
+        Root {
+            value: 1,
+            unit: NestedUnit(Unit(2)),
+        },
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_root_struct_multiple_fields() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Root {
+        a: i32,
+        b: bool,
+        c: Ipv6Addr,
+    }
+
+    assert_serialize!(
+        Root,
+        Root {
+            a: 1,
+            b: true,
+            c: "::1".parse().unwrap()
+        },
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_nested_struct_multiple_fields() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Root {
+        nested: Nested,
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Nested {
+        a: i32,
+        b: bool,
+        c: Ipv6Addr,
+    }
+
+    assert_serialize!(
+        Root,
+        Root {
+            nested: Nested {
+                a: 1,
+                b: true,
+                c: "::1".parse().unwrap()
+            }
+        },
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_rename_single_struct_fields() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Root {
+        #[facet(rename = "1")]
+        a: i32,
+        #[facet(rename = "with spaces")]
+        b: bool,
+        #[facet(rename = "'quoted'")]
+        c: String,
+        #[facet(rename = "")]
+        d: usize,
+    }
+
+    assert_serialize!(
+        Root,
+        Root {
+            a: 1,
+            b: true,
+            c: "quoted".parse().unwrap(),
+            d: 2
+        },
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_rename_all_struct_fields() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, Facet, PartialEq)]
+    #[facet(rename_all = "kebab-case")]
+    struct Root {
+        a_number: i32,
+        another_bool: bool,
+        #[facet(rename = "Overwrite")]
+        shouldnt_matter: f32,
+    }
+
+    assert_serialize!(
+        Root,
+        Root {
+            a_number: 1,
+            another_bool: true,
+            shouldnt_matter: 1.0
+        },
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_default_struct_fields() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Root {
+        #[facet(default)]
+        a: i32,
+        #[facet(default)]
+        b: bool,
+        #[facet(default)]
+        c: String,
+    }
+
+    assert_serialize!(
+        Root,
+        Root {
+            a: i32::default(),
+            b: bool::default(),
+            c: "hi".to_owned()
+        },
+    );
+
+    Ok(())
+}
