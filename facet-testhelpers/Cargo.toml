@@ -13,6 +13,6 @@ description = "A collection of testing helpers and utilities for Facet projects"
 color-backtrace = { version = "0.7.0", default-features = false, features = [
     "use-btparse-crate",
 ] }
-color-eyre = "0.6.3"
+color-eyre = { version = "0.6.4", default-features = false, features = [] }
 log = { version = "0.4.27", features = ["std"] }
 yansi = "1.0.1"
