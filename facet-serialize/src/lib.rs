@@ -28,44 +28,17 @@ pub trait Serializer {
     /// The error type returned by serialization methods
     type Error;
 
-    /// Serialize an unsigned 8-bit integer.
-    fn serialize_u8(&mut self, value: u8) -> Result<(), Self::Error>;
-
-    /// Serialize an unsigned 16-bit integer.
-    fn serialize_u16(&mut self, value: u16) -> Result<(), Self::Error>;
-
-    /// Serialize an unsigned 32-bit integer.
-    fn serialize_u32(&mut self, value: u32) -> Result<(), Self::Error>;
-
     /// Serialize an unsigned 64-bit integer.
     fn serialize_u64(&mut self, value: u64) -> Result<(), Self::Error>;
 
     /// Serialize an unsigned 128-bit integer.
     fn serialize_u128(&mut self, value: u128) -> Result<(), Self::Error>;
 
-    /// Serialize a `usize` integer.
-    fn serialize_usize(&mut self, value: usize) -> Result<(), Self::Error>;
-
-    /// Serialize a signed 8-bit integer.
-    fn serialize_i8(&mut self, value: i8) -> Result<(), Self::Error>;
-
-    /// Serialize a signed 16-bit integer.
-    fn serialize_i16(&mut self, value: i16) -> Result<(), Self::Error>;
-
-    /// Serialize a signed 32-bit integer.
-    fn serialize_i32(&mut self, value: i32) -> Result<(), Self::Error>;
-
     /// Serialize a signed 64-bit integer.
     fn serialize_i64(&mut self, value: i64) -> Result<(), Self::Error>;
 
     /// Serialize a signed 128-bit integer.
     fn serialize_i128(&mut self, value: i128) -> Result<(), Self::Error>;
-
-    /// Serialize an `isize` integer.
-    fn serialize_isize(&mut self, value: isize) -> Result<(), Self::Error>;
-
-    /// Serialize a single-precision floating-point value.
-    fn serialize_f32(&mut self, value: f32) -> Result<(), Self::Error>;
 
     /// Serialize a double-precision floating-point value.
     fn serialize_f64(&mut self, value: f64) -> Result<(), Self::Error>;
@@ -133,6 +106,62 @@ pub trait Serializer {
 
     /// Signal the end of serializing a map/dictionary-like value.
     fn end_map(&mut self) -> Result<(), Self::Error>;
+
+    /// Serialize an unsigned 8-bit integer.
+    #[inline(always)]
+    fn serialize_u8(&mut self, value: u8) -> Result<(), Self::Error> {
+        self.serialize_u64(value as u64)
+    }
+
+    /// Serialize an unsigned 16-bit integer.
+    #[inline(always)]
+    fn serialize_u16(&mut self, value: u16) -> Result<(), Self::Error> {
+        self.serialize_u64(value as u64)
+    }
+
+    /// Serialize an unsigned 32-bit integer.
+    #[inline(always)]
+    fn serialize_u32(&mut self, value: u32) -> Result<(), Self::Error> {
+        self.serialize_u64(value as u64)
+    }
+
+    /// Serialize a `usize` integer.
+    #[inline(always)]
+    fn serialize_usize(&mut self, value: usize) -> Result<(), Self::Error> {
+        // We assume `usize` will never be >64 bits
+        self.serialize_u64(value as u64)
+    }
+
+    /// Serialize a signed 8-bit integer.
+    #[inline(always)]
+    fn serialize_i8(&mut self, value: i8) -> Result<(), Self::Error> {
+        self.serialize_i64(value as i64)
+    }
+
+    /// Serialize a signed 16-bit integer.
+    #[inline(always)]
+    fn serialize_i16(&mut self, value: i16) -> Result<(), Self::Error> {
+        self.serialize_i64(value as i64)
+    }
+
+    /// Serialize a signed 32-bit integer.
+    #[inline(always)]
+    fn serialize_i32(&mut self, value: i32) -> Result<(), Self::Error> {
+        self.serialize_i64(value as i64)
+    }
+
+    /// Serialize an `isize` integer.
+    #[inline(always)]
+    fn serialize_isize(&mut self, value: isize) -> Result<(), Self::Error> {
+        // We assume `isize` will never be >64 bits
+        self.serialize_i64(value as i64)
+    }
+
+    /// Serialize a single-precision floating-point value.
+    #[inline(always)]
+    fn serialize_f32(&mut self, value: f32) -> Result<(), Self::Error> {
+        self.serialize_f64(value as f64)
+    }
 
     /// Begin serializing a map key value.
     #[inline(always)]

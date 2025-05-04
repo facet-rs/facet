@@ -144,18 +144,6 @@ impl Default for TomlSerializer {
 impl Serializer for TomlSerializer {
     type Error = Infallible;
 
-    fn serialize_u8(&mut self, value: u8) -> Result<(), Self::Error> {
-        self.write_value(value as i64)
-    }
-
-    fn serialize_u16(&mut self, value: u16) -> Result<(), Self::Error> {
-        self.write_value(value as i64)
-    }
-
-    fn serialize_u32(&mut self, value: u32) -> Result<(), Self::Error> {
-        self.write_value(value as i64)
-    }
-
     fn serialize_u64(&mut self, value: u64) -> Result<(), Self::Error> {
         // TODO: handle casting
         self.write_value(value as i64)
@@ -163,23 +151,6 @@ impl Serializer for TomlSerializer {
 
     fn serialize_u128(&mut self, value: u128) -> Result<(), Self::Error> {
         // TODO: handle casting
-        self.write_value(value as i64)
-    }
-
-    fn serialize_usize(&mut self, value: usize) -> Result<(), Self::Error> {
-        // TODO: handle casting
-        self.write_value(value as i64)
-    }
-
-    fn serialize_i8(&mut self, value: i8) -> Result<(), Self::Error> {
-        self.write_value(value as i64)
-    }
-
-    fn serialize_i16(&mut self, value: i16) -> Result<(), Self::Error> {
-        self.write_value(value as i64)
-    }
-
-    fn serialize_i32(&mut self, value: i32) -> Result<(), Self::Error> {
         self.write_value(value as i64)
     }
 
@@ -194,10 +165,6 @@ impl Serializer for TomlSerializer {
 
     fn serialize_isize(&mut self, value: isize) -> Result<(), Self::Error> {
         self.write_value(value as i64)
-    }
-
-    fn serialize_f32(&mut self, value: f32) -> Result<(), Self::Error> {
-        self.write_value(value as f64)
     }
 
     fn serialize_f64(&mut self, value: f64) -> Result<(), Self::Error> {
