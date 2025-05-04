@@ -28,7 +28,7 @@ members = [
     "facet-kdl",
     "facet-urlencoded",
     "facet-yaml",
-    "facet-jsonschema", "facet-deserialize-eventbased",
+    "facet-jsonschema", "facet-deserialize-eventbased", "facet-json2",
 ]
 exclude = ["outside-workspace"]
 resolver = "3"

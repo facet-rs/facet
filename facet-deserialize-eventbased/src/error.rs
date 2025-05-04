@@ -20,7 +20,8 @@ pub struct DeserError<'input> {
     pub kind: DeserErrorKind,
 }
 
-impl<'a> DeserError<'a> {
+impl DeserError<'_> {
+    /// Converts the error into an owned error.
     pub fn into_owned(self) -> DeserError<'static> {
         DeserError {
             input: self.input.into_owned().into(),
@@ -33,6 +34,10 @@ impl<'a> DeserError<'a> {
 /// An error kind for JSON parsing.
 #[derive(Debug, PartialEq, Clone)]
 pub enum DeserErrorKind {
+    /// An unexpected byte was encountered in the input
+    UnexpectedByte(u8),
+    /// An unexpected character was encountered in the input.
+    UnexpectedChar(char),
     /// An unexpected outcome was encountered in the input.
     UnexpectedOutcome(Outcome<'static>),
     /// The input ended unexpectedly while parsing JSON.
@@ -75,6 +80,7 @@ pub enum DeserErrorKind {
 }
 
 impl<'input> DeserError<'input> {
+    /// Creates a new deser error, preserving input and location context for accurate reporting.
     pub fn new(kind: DeserErrorKind, input: &'input [u8], span: Span) -> Self {
         Self {
             input: alloc::borrow::Cow::Borrowed(input),
@@ -83,11 +89,12 @@ impl<'input> DeserError<'input> {
         }
     }
 
+    /// Constructs a reflection-related deser error, keeping contextual information intact.
     pub(crate) fn new_reflect(e: ReflectError, input: &'input [u8], span: Span) -> Self {
         DeserError::new(DeserErrorKind::ReflectError(e), input, span)
     }
 
-    /// Returns a wrapper type that displays a human-readable error message for this deser error.
+    /// Provides a human-friendly message wrapper to improve error readability.
     pub fn message(&self) -> DeserErrorMessage<'_> {
         DeserErrorMessage(self)
     }
@@ -99,6 +106,8 @@ pub struct DeserErrorMessage<'a>(&'a DeserError<'a>);
 impl core::fmt::Display for DeserErrorMessage<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match &self.0.kind {
+            DeserErrorKind::UnexpectedByte(b) => write!(f, "Unexpected byte: 0x{:02X}", b),
+            DeserErrorKind::UnexpectedChar(c) => write!(f, "Unexpected character: '{}'", c),
             DeserErrorKind::UnexpectedOutcome(outcome) => {
                 write!(f, "Unexpected outcome: {:?}", outcome.red())
             }
@@ -210,4 +219,4 @@ impl core::fmt::Display for DeserError<'_> {
     }
 }
 
-impl std::error::Error for DeserError<'_> {}
+impl core::error::Error for DeserError<'_> {}

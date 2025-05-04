@@ -1,8 +1,3 @@
-use alloc::string::String;
-use alloc::string::ToString;
-use alloc::vec::Vec;
-use core::str;
-
 /// Position in the input (byte index)
 pub type Pos = usize;
 

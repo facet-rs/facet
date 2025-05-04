@@ -4,12 +4,11 @@
 #![warn(clippy::std_instead_of_alloc)]
 #![deny(unsafe_code)]
 #![doc = include_str!("../README.md")]
-//
-// FIXME: don't! they were just distracting when running tests.
-#![expect(warnings)]
+
+extern crate alloc;
 
 mod error;
-use std::borrow::Cow;
+use alloc::borrow::Cow;
 
 pub use error::*;
 
@@ -19,36 +18,54 @@ use owo_colors::OwoColorize;
 pub use span::*;
 
 use facet_reflect::{HeapValue, ReflectError, Wip};
-use log::{debug, trace};
-
-extern crate alloc;
+use log::trace;
 
 #[derive(PartialEq, Debug, Clone)]
-enum Scalar<'input> {
+/// A scalar value used during deserialization.
+/// `u64` and `i64` are separated because `i64` doesn't fit in `u64`,
+/// but having `u64` is a fast path for 64-bit architectures — no need to
+/// go through `u128` / `i128` for everything
+pub enum Scalar<'input> {
+    /// Owned or borrowed string data.
     String(Cow<'input, str>),
+    /// Unsigned 64-bit integer scalar.
     U64(u64),
+    /// Signed 64-bit integer scalar.
     I64(i64),
+    /// 64-bit floating-point scalar.
     F64(f64),
 }
 
 #[derive(PartialEq, Debug, Clone)]
-enum Expectation {
+/// Expected next input token or structure during deserialization.
+pub enum Expectation {
+    /// Accept any token.
     Any,
+    /// Expect an object key or the end of an object.
     ObjectKeyOrObjectClose,
-    ObjectValue,
+    /// Expect a value inside an object.
+    ObjectVal,
+    /// Expect a list item or the end of a list.
+    ListItemOrListClose,
 }
 
 #[derive(PartialEq, Debug, Clone)]
-enum Outcome<'input> {
+/// Outcome of parsing the next input element.
+pub enum Outcome<'input> {
+    /// Parsed a scalar value.
     GotScalar(Scalar<'input>),
+    /// Starting a list/array.
     ListStarted,
+    /// Ending a list/array.
     ListEnded,
+    /// Starting an object/map.
     ObjectStarted,
+    /// Ending an object/map.
     ObjectEnded,
 }
 
-impl<'input> Outcome<'input> {
-    fn to_owned(self) -> Outcome<'static> {
+impl Outcome<'_> {
+    fn into_owned(self) -> Outcome<'static> {
         match self {
             Outcome::GotScalar(scalar) => {
                 let owned_scalar = match scalar {
@@ -67,191 +84,69 @@ impl<'input> Outcome<'input> {
     }
 }
 
+/// Carries the current parsing state and the in-progress value during deserialization.
+/// This bundles the mutable context that must be threaded through parsing steps.
 pub struct NextData<'input: 'facet, 'facet> {
-    runner: StackRunner<'input>,
-    wip: Wip<'facet>,
+    /// Controls the parsing flow and stack state.
+    pub runner: StackRunner<'input>,
+    /// Holds the intermediate representation of the value being built.
+    pub wip: Wip<'facet>,
 }
 
+/// The result of advancing the parser: updated state and parse outcome or error.
 pub type NextResult<'input, 'facet, T, E> = (NextData<'input, 'facet>, Result<T, E>);
 
-/// A format, like JSON, msgpack, etc.
-trait Format {
+/// Trait defining a deserialization format.
+/// Provides the next parsing step based on current state and expected input.
+pub trait Format {
+    /// Advance the parser with current state and expectation, producing the next outcome or error.
     fn next<'input, 'facet>(
         nd: NextData<'input, 'facet>,
-        expection: Expectation,
+        expectation: Expectation,
     ) -> NextResult<'input, 'facet, Outcome<'input>, DeserError<'input>>;
 }
 
-/// The JSON format
-pub struct Json;
-
-impl Format for Json {
-    fn next<'input, 'facet>(
-        mut nd: NextData<'input, 'facet>,
-        mut expectation: Expectation,
-    ) -> NextResult<'input, 'facet, Outcome<'input>, DeserError<'input>> {
-        loop {
-            // Skip whitespace
-            let mut n = 0;
-            while let Some(&ch) = nd.runner.input.get(n) {
-                if ch == b' ' {
-                    n += 1;
-                } else {
-                    break;
-                }
-            }
-
-            // Update input to skip whitespace
-            nd.runner.input = &nd.runner.input[n..];
-
-            // Check if we've reached the end after skipping whitespace
-            if nd.runner.input.is_empty() {
-                let err = DeserError::new(
-                    DeserErrorKind::UnexpectedEof("unexpected end of input after whitespace"),
-                    nd.runner.input,
-                    nd.runner.last_span,
-                );
-                return (nd, Err(err));
-            }
-
-            // Update 'next' with the new first character
-            let next = nd.runner.input[0];
-            let mut n = 0;
-            let res = match next {
-                b'0'..=b'9' => {
-                    debug!("Found number");
-                    while let Some(next) = nd.runner.input.get(n) {
-                        if *next >= b'0' && *next <= b'9' {
-                            n += 1;
-                        } else {
-                            break;
-                        }
-                    }
-                    let num_slice = &nd.runner.input[0..n];
-                    let num_str = std::str::from_utf8(num_slice).unwrap();
-                    let number = num_str.parse::<u64>().unwrap();
-                    nd.runner.input = &nd.runner.input[n..];
-                    Ok(Outcome::GotScalar(Scalar::U64(number)))
-                }
-                b'"' => {
-                    trace!("Found string");
-                    n += 1; // Skip the opening quote
-                    let start = n;
-
-                    // Parse until closing quote
-                    let mut escaped = false;
-                    while let Some(&next) = nd.runner.input.get(n) {
-                        if escaped {
-                            escaped = false;
-                        } else if next == b'\\' {
-                            escaped = true;
-                        } else if next == b'"' {
-                            break;
-                        }
-                        n += 1;
-                    }
-
-                    // Skip the closing quote if found
-                    if nd.runner.input.get(n) == Some(&b'"') {
-                        n += 1;
-                    }
-
-                    let string_slice = &nd.runner.input[start..n - 1];
-                    let string_content = std::str::from_utf8(string_slice).unwrap();
-                    trace!("String content: {:?}", string_content);
-
-                    nd.runner.input = &nd.runner.input[n..];
-                    Ok(Outcome::GotScalar(Scalar::String(Cow::Borrowed(
-                        string_content,
-                    ))))
-                }
-                b'{' => {
-                    nd.runner.input = &nd.runner.input[1..];
-                    Ok(Outcome::ObjectStarted)
-                }
-                b':' => {
-                    if expectation == Expectation::ObjectValue {
-                        // makes sense, let's skip it and try again
-                        nd.runner.input = &nd.runner.input[1..];
-                        expectation = Expectation::Any;
-
-                        continue;
-                    } else {
-                        trace!("Did not expect ObjectValue, expected {:?}", expectation);
-
-                        Err(DeserError {
-                            input: nd.runner.input.into(),
-                            span: nd.runner.last_span,
-                            kind: DeserErrorKind::Unimplemented("unexpected colon"),
-                        })
-                    }
-                }
-                b',' => {
-                    if expectation == Expectation::ObjectKeyOrObjectClose {
-                        // Let's skip the comma and try again
-                        nd.runner.input = &nd.runner.input[1..];
-                        continue;
-                    } else {
-                        trace!("Did not expect comma, expected {:?}", expectation);
-                        Err(DeserError {
-                            input: nd.runner.input.into(),
-                            span: nd.runner.last_span,
-                            kind: DeserErrorKind::Unimplemented("unexpected comma"),
-                        })
-                    }
-                }
-                b'}' => {
-                    if expectation == Expectation::ObjectKeyOrObjectClose {
-                        nd.runner.input = &nd.runner.input[1..];
-                        Ok(Outcome::ObjectEnded)
-                    } else {
-                        Err(DeserError {
-                            input: nd.runner.input.into(),
-                            span: nd.runner.last_span,
-                            kind: DeserErrorKind::Unimplemented("unexpected closing brace"),
-                        })
-                    }
-                }
-                c => Err(DeserError {
-                    input: nd.runner.input.into(),
-                    span: nd.runner.last_span,
-                    kind: DeserErrorKind::Unimplemented("unexpected character"),
-                }),
-            };
-            return (nd, res);
-        }
-    }
-}
-
-/// Represents the next expected token or structure while parsing.
+/// Instructions guiding the parsing flow, indicating the next expected action or token.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Instruction {
+pub enum Instruction {
+    /// Expect a value, specifying the context or reason.
     Value(ValueReason),
+    /// Skip the next value; used to ignore an input.
     SkipValue,
+    /// Indicate completion of a structure or value; triggers popping from stack.
     Pop(PopReason),
+    /// Expect an object key or the end of an object.
     ObjectKeyOrObjectClose,
-    ArrayItemOrArrayClose,
+    /// Expect a list item or the end of a list.
+    ListItemOrListClose,
 }
 
+/// Reasons for expecting a value, reflecting the current parse context.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ValueReason {
+pub enum ValueReason {
+    /// Parsing at the root level.
     TopLevel,
+    /// Parsing a value inside an object.
     ObjectVal,
 }
 
+/// Reasons for popping a state from the stack, indicating why a scope is ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PopReason {
+pub enum PopReason {
+    /// Ending the top-level parsing scope.
     TopLevel,
+    /// Ending a value within an object.
     ObjectVal,
-    ArrayItem,
-    Some,
 }
 
-pub fn deserialize<'input, 'facet, T: Facet<'facet>, F: Format>(
-    input: &'input [u8],
-) -> Result<T, DeserError<'input>>
+/// Deserialize a value of type `T` from raw input bytes using format `F`.
+///
+/// This function sets up the initial working state and drives the deserialization process,
+/// ensuring that the resulting value is fully materialized and valid.
+pub fn deserialize<'input, 'facet, T, F>(input: &'input [u8]) -> Result<T, DeserError<'input>>
 where
     T: Facet<'facet>,
+    F: Format,
     'input: 'facet,
 {
     let wip = Wip::alloc_shape(T::SHAPE).map_err(|e| DeserError {
@@ -259,12 +154,14 @@ where
         span: Span { start: 0, len: 0 },
         kind: DeserErrorKind::ReflectError(e),
     })?;
-    Ok(deserialize_wip::<F>(wip, input)?
+    deserialize_wip::<F>(wip, input)?
         .materialize()
-        .map_err(|e| DeserError::new_reflect(e, input, Span { start: 0, len: 0 }))?)
+        .map_err(|e| DeserError::new_reflect(e, input, Span { start: 0, len: 0 }))
 }
 
-pub fn deserialize_wip<'input: 'facet, 'facet, F>(
+/// Deserializes a working-in-progress value into a fully materialized heap value.
+/// This function drives the parsing loop until the entire input is consumed and the value is complete.
+pub fn deserialize_wip<'input, 'facet, F>(
     mut wip: Wip<'facet>,
     input: &'input [u8],
 ) -> Result<HeapValue<'facet>, DeserError<'input>>
@@ -318,7 +215,7 @@ where
                 let nd = NextData { runner, wip };
                 let expectation = match _why {
                     ValueReason::TopLevel => Expectation::Any,
-                    ValueReason::ObjectVal => Expectation::ObjectValue,
+                    ValueReason::ObjectVal => Expectation::ObjectVal,
                 };
                 let (nd, res) = F::next(nd, expectation);
                 runner = nd.runner;
@@ -336,6 +233,15 @@ where
                 trace!("Got outcome {:?}", outcome.blue());
                 wip = runner.object_key_or_object_close(wip, outcome)?;
             }
+            Instruction::ListItemOrListClose => {
+                let nd = NextData { runner, wip };
+                let (nd, res) = F::next(nd, Expectation::ListItemOrListClose);
+                runner = nd.runner;
+                wip = nd.wip;
+                let outcome = res?;
+                trace!("Got outcome {:?}", outcome.blue());
+                wip = runner.list_item_or_list_close(wip, outcome)?;
+            }
             _ => {
                 todo!("Support instruction {:?}", insn)
             }
@@ -343,12 +249,18 @@ where
     }
 }
 
-/// It runs along the stack!
-struct StackRunner<'input> {
-    /// Look! A stack!
-    stack: Vec<Instruction>,
-    input: &'input [u8],
-    last_span: Span,
+#[doc(hidden)]
+/// Maintains the parsing state and context necessary to drive deserialization.
+///
+/// This struct tracks what the parser expects next, manages input position,
+/// and remembers the span of the last processed token to provide accurate error reporting.
+pub struct StackRunner<'input> {
+    /// Stack of parsing instructions guiding the control flow.
+    pub stack: Vec<Instruction>,
+    /// The raw input data being deserialized.
+    pub input: &'input [u8],
+    /// Span of the last token or value processed.
+    pub last_span: Span,
 }
 
 impl<'input> StackRunner<'input> {
@@ -493,8 +405,53 @@ impl<'input> StackRunner<'input> {
                         .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
                 }
             },
-            Outcome::ListStarted => todo!(),
-            Outcome::ListEnded => todo!(),
+            Outcome::ListStarted => {
+                match wip.innermost_shape().def {
+                    Def::Array(_) => {
+                        trace!("Array starting for array ({})!", wip.shape().blue());
+                    }
+                    Def::Slice(_) => {
+                        trace!("Array starting for slice ({})!", wip.shape().blue());
+                    }
+                    Def::List(_) => {
+                        trace!("Array starting for list ({})!", wip.shape().blue());
+                        wip = wip
+                            .put_default()
+                            .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
+                    }
+                    Def::Enum(_) => {
+                        trace!("Array starting for enum ({})!", wip.shape().blue());
+                    }
+                    Def::Struct(_) => {
+                        trace!("Array starting for tuple ({})!", wip.shape().blue());
+                        wip = wip
+                            .put_default()
+                            .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
+                    }
+                    _ => {
+                        return Err(DeserError::new(
+                            DeserErrorKind::UnsupportedType {
+                                got: wip.innermost_shape(),
+                                wanted: "array, list, tuple, or slice",
+                            },
+                            self.input,
+                            self.last_span,
+                        ));
+                    }
+                }
+
+                trace!("Beginning pushback");
+                self.stack.push(Instruction::ListItemOrListClose);
+                wip = wip
+                    .begin_pushback()
+                    .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
+            }
+            Outcome::ListEnded => {
+                trace!("List closing");
+                wip = wip
+                    .pop()
+                    .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
+            }
             Outcome::ObjectStarted => {
                 match wip.innermost_shape().def {
                     Def::Map(_md) => {
@@ -702,7 +659,63 @@ impl<'input> StackRunner<'input> {
                 Ok(wip)
             }
             _ => Err(DeserError::new(
-                DeserErrorKind::UnexpectedOutcome(outcome.to_owned()),
+                DeserErrorKind::UnexpectedOutcome(outcome.into_owned()),
+                self.input,
+                self.last_span,
+            )),
+        }
+    }
+
+    fn list_item_or_list_close<'facet>(
+        &mut self,
+        mut wip: Wip<'facet>,
+        outcome: Outcome<'input>,
+    ) -> Result<Wip<'facet>, DeserError<'input>>
+    where
+        'input: 'facet,
+    {
+        match outcome {
+            Outcome::ListEnded => {
+                trace!("List close");
+                Ok(wip)
+            }
+            Outcome::GotScalar(scalar) => {
+                trace!("In list_item_or_item_list_close, got ");
+                wip = wip
+                    .push()
+                    .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
+                match scalar {
+                    Scalar::String(cow) => {
+                        wip = wip
+                            .put(cow.to_string())
+                            .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
+                    }
+                    Scalar::U64(value) => {
+                        wip = wip
+                            .put(value)
+                            .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
+                    }
+                    Scalar::I64(value) => {
+                        wip = wip
+                            .put(value)
+                            .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
+                    }
+                    Scalar::F64(value) => {
+                        wip = wip
+                            .put(value)
+                            .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
+                    }
+                }
+                wip = wip
+                    .pop()
+                    .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
+
+                self.stack.push(Instruction::ListItemOrListClose);
+
+                Ok(wip)
+            }
+            _ => Err(DeserError::new(
+                DeserErrorKind::UnexpectedOutcome(outcome.into_owned()),
                 self.input,
                 self.last_span,
             )),
