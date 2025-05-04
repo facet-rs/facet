@@ -213,17 +213,9 @@ impl Serializer for TomlSerializer {
         Ok(())
     }
 
-    fn end_object(&mut self) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
     fn start_array(&mut self, _len: Option<usize>) -> Result<(), Self::Error> {
         self.set_current_item(toml_edit::array());
 
-        Ok(())
-    }
-
-    fn end_array(&mut self) -> Result<(), Self::Error> {
         Ok(())
     }
 
@@ -234,10 +226,6 @@ impl Serializer for TomlSerializer {
 
         self.set_current_item(table);
 
-        Ok(())
-    }
-
-    fn end_map(&mut self) -> Result<(), Self::Error> {
         Ok(())
     }
 

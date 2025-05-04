@@ -84,8 +84,12 @@ pub trait Serializer {
     /// * `len` - The number of fields, if known.
     fn start_object(&mut self, len: Option<usize>) -> Result<(), Self::Error>;
 
-    /// Signal the end of serializing an object/map-like value.
-    fn end_object(&mut self) -> Result<(), Self::Error>;
+    /// Serialize a field name (for objects and maps).
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The field or key name to serialize.
+    fn serialize_field_name(&mut self, name: &'static str) -> Result<(), Self::Error>;
 
     /// Begin serializing an array/sequence-like value.
     ///
@@ -94,18 +98,12 @@ pub trait Serializer {
     /// * `len` - The number of elements, if known.
     fn start_array(&mut self, len: Option<usize>) -> Result<(), Self::Error>;
 
-    /// Signal the end of serializing an array/sequence-like value.
-    fn end_array(&mut self) -> Result<(), Self::Error>;
-
     /// Begin serializing a map/dictionary-like value.
     ///
     /// # Arguments
     ///
     /// * `len` - The number of entries, if known.
     fn start_map(&mut self, len: Option<usize>) -> Result<(), Self::Error>;
-
-    /// Signal the end of serializing a map/dictionary-like value.
-    fn end_map(&mut self) -> Result<(), Self::Error>;
 
     /// Serialize an unsigned 8-bit integer.
     #[inline(always)]
@@ -187,14 +185,23 @@ pub trait Serializer {
         Ok(())
     }
 
-    // For objects/maps
+    /// Signal the end of serializing an object/map-like value.
+    #[inline(always)]
+    fn end_object(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
 
-    /// Serialize a field name (for objects and maps).
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - The field or key name to serialize.
-    fn serialize_field_name(&mut self, name: &'static str) -> Result<(), Self::Error>;
+    /// Signal the end of serializing an array/sequence-like value.
+    #[inline(always)]
+    fn end_array(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    /// Signal the end of serializing a map/dictionary-like value.
+    #[inline(always)]
+    fn end_map(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
 
     /// Signal the end of serializing a field.
     #[inline(always)]
