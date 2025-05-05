@@ -1,0 +1,11 @@
+---
+source: facet-json2/tests/integration/read/diagnostics.rs
+expression: display_str
+---
+[31mError:[0m 
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m json:1:1 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m1 │[0m [31mx[0m
+ [38;5;240m  │[0m [31m┬[0m  
+ [38;5;240m  │[0m [31m╰[0m[31m─[0m[31m─[0m Unexpected character: got '[31mx[39m', wanted [33mvalid JSON character[39m
+[38;5;246m───╯[0m

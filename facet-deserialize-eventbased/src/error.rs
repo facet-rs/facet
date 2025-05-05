@@ -1,6 +1,8 @@
 #[cfg(feature = "rich-diagnostics")]
 use ariadne::{Color, Config, IndexType, Label, Report, ReportKind, Source};
 
+use alloc::string::String;
+
 use facet_core::{Def, Shape};
 use facet_reflect::ReflectError;
 use owo_colors::OwoColorize;

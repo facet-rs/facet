@@ -1,6 +1,4 @@
-extern crate alloc;
-
-use alloc::borrow::Cow;
+use alloc::{borrow::Cow, format};
 
 use facet_core::Facet;
 use facet_deserialize_eventbased::{
@@ -46,279 +44,130 @@ impl Format for Json {
         nd: NextData<'input, 'facet>,
         mut expectation: Expectation,
     ) -> NextResult<'input, 'facet, Spanned<Outcome<'input>>, Spanned<DeserErrorKind>> {
-        let input = nd.input();
-        let mut n = nd.start();
+        trace!("Starting next at offset {}", nd.start());
+        let input = &nd.input()[nd.start()..];
+        let mut tokenizer = Tokenizer::new(input);
 
-        'loopy: loop {
-            // SKip whitespace
-            while let Some(&ch) = input.get(n) {
-                if ch.is_ascii_whitespace() {
-                    n += 1;
-                } else {
-                    break;
+        loop {
+            let token = match tokenizer.next_token() {
+                Ok(token) => {
+                    trace!("Token for next: {:?}", token.node);
+                    token
                 }
-            }
-
-            // Check if we've reached the end after skipping whitespace
-            if input[n..].is_empty() {
-                return (
-                    nd,
-                    Err(DeserErrorKind::UnexpectedEof {
-                        wanted: "any value (got EOF after whitespace)",
-                    }
-                    .with_span(Span::new(n, 0))),
-                );
-            }
-
-            // Track span start at the original offset before parsing value
-            let token_start = n;
-
-            // Update 'next' with the new first character
-            let next = input[n];
-
-            let res = 'body: {
-                match next {
-                    b'0'..=b'9' | b'-' | b'.' => {
-                        trace!("Found number");
-                        let mut has_decimal = next == b'.';
-                        let is_negative = next == b'-';
-
-                        n += 1; // Move past the first character
-
-                        // Parse the rest of the number
-                        while let Some(next) = nd.input().get(n) {
-                            if *next >= b'0' && *next <= b'9' {
-                                n += 1;
-                            } else if *next == b'.' && !has_decimal {
-                                has_decimal = true;
-                                n += 1;
-                            } else {
-                                break;
-                            }
-                        }
-
-                        let num_slice = &nd.input()[token_start..n];
-                        match core::str::from_utf8(num_slice) {
-                            Ok(num_str) => {
-                                if has_decimal {
-                                    // Parse as f64 for decimal numbers
-                                    match num_str.parse::<f64>() {
-                                        Ok(number) => Ok(Outcome::from(Scalar::F64(number))
-                                            .with_span(Span::new(token_start, n - token_start))),
-                                        Err(_) => Err(DeserErrorKind::NumberOutOfRange(f64::NAN)
-                                            .with_span(Span::new(token_start, n - token_start))),
-                                    }
-                                } else if is_negative {
-                                    // Parse as i64 for negative integers
-                                    match num_str.parse::<i64>() {
-                                        Ok(number) => Ok(Outcome::from(Scalar::I64(number))
-                                            .with_span(Span::new(token_start, n - token_start))),
-                                        Err(_) => Err(DeserErrorKind::NumberOutOfRange(
-                                            num_str.parse::<f64>().unwrap_or(f64::NAN),
-                                        )
-                                        .with_span(Span::new(token_start, n - token_start))),
-                                    }
-                                } else {
-                                    // Parse as u64 for positive integers
-                                    match num_str.parse::<u64>() {
-                                        Ok(number) => Ok(Outcome::from(Scalar::U64(number))
-                                            .with_span(Span::new(token_start, n - token_start))),
-                                        Err(_) => Err(DeserErrorKind::NumberOutOfRange(
-                                            num_str.parse::<f64>().unwrap_or(f64::NAN),
-                                        )
-                                        .with_span(Span::new(token_start, n - token_start))),
-                                    }
-                                }
-                            }
-                            Err(e) => Err(DeserErrorKind::InvalidUtf8(e.to_string())
-                                .with_span(Span::new(token_start, n - token_start))),
-                        }
-                    }
-                    b'"' => {
-                        trace!("Found string");
-                        n += 1; // Skip opening quote
-                        let start = n;
-                        let len = input.len();
-                        let mut escaped = false;
-                        let mut i = n;
-
-                        // Walk the input to find the closing quote
-                        while i < len {
-                            let b = input[i];
-                            if escaped {
-                                escaped = false;
-                            } else if b == b'\\' {
-                                escaped = true;
-                            } else if b == b'"' {
-                                break;
-                            }
-                            i += 1;
-                        }
-
-                        if i >= len || input[i] != b'"' {
-                            // Unterminated string
-                            break 'body Err(DeserErrorKind::UnexpectedEof {
-                                wanted: "closing '\"' of string",
-                            }
-                            .with_span(Span::new(token_start, i)));
-                        }
-                        // Extract slice inside the string quotes, i points at closing quote
-                        let string_slice = &input[start..i];
-
-                        // Validate utf8, else emit proper error like error.rs does
-                        let string_content = match core::str::from_utf8(string_slice) {
-                            Ok(s) => s,
-                            Err(e) => {
-                                break 'body Err(DeserErrorKind::InvalidUtf8(e.to_string())
-                                    .with_span(Span::new(token_start, i)));
-                            }
-                        };
-                        trace!("String content: {:?}", string_content);
-
-                        let span = facet_deserialize_eventbased::Spanned {
-                            node: Outcome::Scalar(Scalar::String(Cow::Borrowed(string_content))),
-                            span: Span::new(token_start, (i + 1) - token_start),
-                        };
-                        Ok(span)
-                    }
-                    b't' => {
-                        // Try to match "true"
-                        let input = nd.input();
-                        if input.len() >= token_start + 4
-                            && &input[token_start..token_start + 4] == b"true"
-                        {
-                            let span = facet_deserialize_eventbased::Spanned {
-                                node: Outcome::Scalar(Scalar::Bool(true)),
-                                span: Span::new(token_start, 4),
-                            };
-                            Ok(span)
-                        } else {
-                            Err(DeserErrorKind::UnexpectedChar {
-                                got: 't',
-                                wanted: "\"true\"",
-                            }
-                            .with_span(Span::new(token_start, 1)))
-                        }
-                    }
-                    b'f' => {
-                        // Try to match "false"
-                        let input = nd.input();
-                        if input.len() >= token_start + 5
-                            && &input[token_start..token_start + 5] == b"false"
-                        {
-                            let span = facet_deserialize_eventbased::Spanned {
-                                node: Outcome::Scalar(Scalar::Bool(false)),
-                                span: Span::new(token_start, 5),
-                            };
-                            Ok(span)
-                        } else {
-                            Err(DeserErrorKind::UnexpectedChar {
-                                got: 'f',
-                                wanted: "\"false\"",
-                            }
-                            .with_span(Span::new(token_start, 1)))
-                        }
-                    }
-                    b'n' => {
-                        // Try to match "null"
-                        let input = nd.input();
-                        if input.len() >= token_start + 4
-                            && &input[token_start..token_start + 4] == b"null"
-                        {
-                            let span = facet_deserialize_eventbased::Spanned {
-                                node: Outcome::Scalar(Scalar::Null),
-                                span: Span::new(token_start, 4),
-                            };
-                            Ok(span)
-                        } else {
-                            Err(DeserErrorKind::UnexpectedChar {
-                                got: 'n',
-                                wanted: "\"null\"",
-                            }
-                            .with_span(Span::new(token_start, 1)))
-                        }
-                    }
-                    b':' => {
-                        if expectation == Expectation::ObjectVal {
-                            n += 1;
-                            expectation = Expectation::Value;
-                            continue 'loopy;
-                        } else {
-                            trace!("Did not expect ObjectValue, expected {:?}", expectation);
-                            Err(DeserErrorKind::UnexpectedChar {
-                                got: ':',
-                                wanted: "a value, not a colon",
-                            }
-                            .with_span(Span::new(token_start, 1)))
-                        }
-                    }
-                    b',' => match expectation {
-                        Expectation::ListItemOrListClose | Expectation::ObjectKeyOrObjectClose => {
-                            n += 1;
-                            expectation = Expectation::Value;
-                            continue 'loopy;
-                        }
-                        other => {
-                            trace!("Did not expect comma, expected {:?}", other);
-                            Err(DeserErrorKind::UnexpectedChar {
-                                got: ',',
-                                wanted: "<value or key>",
-                            }
-                            .with_span(Span::new(token_start, 1)))
-                        }
-                    },
-                    b'{' => {
-                        let span = facet_deserialize_eventbased::Spanned {
-                            node: Outcome::ObjectStarted,
-                            span: Span::new(token_start, 1),
-                        };
-                        Ok(span)
-                    }
-                    b'}' => {
-                        if expectation == Expectation::ObjectKeyOrObjectClose {
-                            let span = facet_deserialize_eventbased::Spanned {
-                                node: Outcome::ObjectEnded,
-                                span: Span::new(token_start, 1),
-                            };
-                            Ok(span)
-                        } else {
-                            trace!("Did not expect closing brace, expected {:?}", expectation);
-                            Err(DeserErrorKind::UnexpectedChar {
-                                got: '}',
-                                wanted: "a value",
-                            }
-                            .with_span(Span::new(token_start, 1)))
-                        }
-                    }
-                    b'[' => {
-                        let span = facet_deserialize_eventbased::Spanned {
-                            node: Outcome::ListStarted,
-                            span: Span::new(token_start, 1),
-                        };
-                        Ok(span)
-                    }
-                    b']' => {
-                        if expectation == Expectation::ListItemOrListClose {
-                            let span = facet_deserialize_eventbased::Spanned {
-                                node: Outcome::ListEnded,
-                                span: Span::new(token_start, 1),
-                            };
-                            Ok(span)
-                        } else {
-                            Err(DeserErrorKind::UnexpectedChar {
-                                got: ']',
-                                wanted: "a value",
-                            }
-                            .with_span(Span::new(token_start, 1)))
-                        }
-                    }
-                    c => Err(DeserErrorKind::UnexpectedChar {
-                        got: c as char,
-                        wanted: "value",
-                    }
-                    .with_span(Span::new(token_start, 1))),
+                Err(err) => {
+                    trace!("Tokenizer error in next: {:?}", err.kind);
+                    return (nd, Err(convert_token_error(err)));
                 }
             };
+
+            // Adjust token span to be relative to the beginning of the overall input
+            let token_offset = nd.start();
+            let span = Span::new(token.span.start() + token_offset, token.span.len());
+
+            let res = match token.node {
+                Token::String(s) => Ok(Spanned {
+                    node: Outcome::Scalar(Scalar::String(Cow::Owned(s))),
+                    span,
+                }),
+                Token::F64(n) => Ok(Spanned {
+                    node: Outcome::Scalar(Scalar::F64(n)),
+                    span,
+                }),
+                Token::I64(n) => Ok(Spanned {
+                    node: Outcome::Scalar(Scalar::I64(n)),
+                    span,
+                }),
+                Token::U64(n) => Ok(Spanned {
+                    node: Outcome::Scalar(Scalar::U64(n)),
+                    span,
+                }),
+                Token::True => Ok(Spanned {
+                    node: Outcome::Scalar(Scalar::Bool(true)),
+                    span,
+                }),
+                Token::False => Ok(Spanned {
+                    node: Outcome::Scalar(Scalar::Bool(false)),
+                    span,
+                }),
+                Token::Null => Ok(Spanned {
+                    node: Outcome::Scalar(Scalar::Null),
+                    span,
+                }),
+                Token::LBrace => Ok(Spanned {
+                    node: Outcome::ObjectStarted,
+                    span,
+                }),
+                Token::RBrace => {
+                    if expectation == Expectation::ObjectKeyOrObjectClose {
+                        Ok(Spanned {
+                            node: Outcome::ObjectEnded,
+                            span,
+                        })
+                    } else {
+                        trace!("Did not expect closing brace, expected {:?}", expectation);
+                        Err(DeserErrorKind::UnexpectedChar {
+                            got: '}',
+                            wanted: "a value",
+                        }
+                        .with_span(span))
+                    }
+                }
+                Token::LBracket => Ok(Spanned {
+                    node: Outcome::ListStarted,
+                    span,
+                }),
+                Token::RBracket => {
+                    if expectation == Expectation::ListItemOrListClose {
+                        Ok(Spanned {
+                            node: Outcome::ListEnded,
+                            span,
+                        })
+                    } else {
+                        Err(DeserErrorKind::UnexpectedChar {
+                            got: ']',
+                            wanted: "a value",
+                        }
+                        .with_span(span))
+                    }
+                }
+                Token::Colon => {
+                    if expectation == Expectation::ObjectVal {
+                        expectation = Expectation::Value;
+                        continue;
+                    } else {
+                        trace!("Did not expect ObjectValue, expected {:?}", expectation);
+                        Err(DeserErrorKind::UnexpectedChar {
+                            got: ':',
+                            wanted: "a value, not a colon",
+                        }
+                        .with_span(span))
+                    }
+                }
+                Token::Comma => match expectation {
+                    Expectation::ListItemOrListClose | Expectation::ObjectKeyOrObjectClose => {
+                        expectation = Expectation::Value;
+                        continue;
+                    }
+                    other => {
+                        trace!("Did not expect comma, expected {:?}", other);
+                        Err(DeserErrorKind::UnexpectedChar {
+                            got: ',',
+                            wanted: "<value or key>",
+                        }
+                        .with_span(span))
+                    }
+                },
+                Token::Eof => {
+                    return (
+                        nd,
+                        Err(DeserErrorKind::UnexpectedEof {
+                            wanted: "any value (got EOF)",
+                        }
+                        .with_span(span)),
+                    );
+                }
+            };
+
             return (nd, res);
         }
     }

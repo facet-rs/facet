@@ -7,6 +7,9 @@
 
 extern crate alloc;
 
+use alloc::string::ToString;
+use alloc::{vec, vec::Vec};
+
 mod error;
 use alloc::borrow::Cow;
 

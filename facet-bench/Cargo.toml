@@ -1,0 +1,22 @@
+[package]
+name = "facet-bench"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+facet = { path = "../facet" }
+facet-testhelpers = { path = "../facet-testhelpers" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+divan = { version = "2.10.1", package = "codspeed-divan-compat" }
+facet-json = { path = "../facet-json" }
+facet-json2 = { path = "../facet-json2" }
+
+[[bench]]
+name = "json"
+harness = false
