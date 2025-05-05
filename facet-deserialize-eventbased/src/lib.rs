@@ -161,6 +161,11 @@ pub trait Format {
         nd: NextData<'input, 'facet>,
         expectation: Expectation,
     ) -> NextResult<'input, 'facet, Spanned<Outcome<'input>>, Spanned<DeserErrorKind>>;
+
+    /// Skip the next value; used to ignore an input.
+    fn skip<'input, 'facet>(
+        nd: NextData<'input, 'facet>,
+    ) -> NextResult<'input, 'facet, Span, Spanned<DeserErrorKind>>;
 }
 
 /// Instructions guiding the parsing flow, indicating the next expected action or token.
@@ -312,8 +317,23 @@ where
                     list_item_or_list_close
                 );
             }
-            _ => {
-                todo!("Support instruction {:?}", insn)
+            Instruction::SkipValue => {
+                // Call F::skip to skip over the next value in the input
+                let nd = NextData {
+                    start: runner.last_span.end(),
+                    runner,
+                    wip,
+                };
+                let (nd, res) = F::skip(nd);
+                runner = nd.runner;
+                wip = nd.wip;
+                // Only propagate error, don't modify wip, since skip just advances input
+                let span = res.map_err(|span_kind| {
+                    runner.last_span = span_kind.span;
+                    runner.err(span_kind.node)
+                })?;
+                // do the actual skip
+                runner.last_span = span;
             }
         }
     }
@@ -452,15 +472,35 @@ impl<'input> StackRunner<'input> {
         wip: Wip<'facet>,
         scalar: Scalar<'input>,
     ) -> Result<Wip<'facet>, DeserError<'input>> {
-        let result = match scalar {
-            Scalar::String(cow) => wip.put(cow.to_string()),
-            Scalar::U64(value) => wip.put(value),
-            Scalar::I64(value) => wip.put(value),
-            Scalar::F64(value) => wip.put(value),
-            Scalar::Bool(value) => wip.put(value),
-            Scalar::Null => wip.put_default(),
-        };
-        result.map_err(|e| self.reflect_err(e))
+        match scalar {
+            Scalar::String(cow) => {
+                match wip.innermost_shape().def {
+                    Def::Enum(_) => {
+                        if wip.selected_variant().is_some() {
+                            // If we already have a variant selected, just put the string
+                            wip.put(cow.to_string()).map_err(|e| self.reflect_err(e))
+                        } else {
+                            // Try to select the variant
+                            match wip.find_variant(&cow) {
+                                Some((variant_index, _)) => {
+                                    wip.variant(variant_index).map_err(|e| self.reflect_err(e))
+                                }
+                                None => Err(self.err(DeserErrorKind::NoSuchVariant {
+                                    name: cow.to_string(),
+                                    enum_shape: wip.innermost_shape(),
+                                })),
+                            }
+                        }
+                    }
+                    _ => wip.put(cow.to_string()).map_err(|e| self.reflect_err(e)),
+                }
+            }
+            Scalar::U64(value) => wip.put(value).map_err(|e| self.reflect_err(e)),
+            Scalar::I64(value) => wip.put(value).map_err(|e| self.reflect_err(e)),
+            Scalar::F64(value) => wip.put(value).map_err(|e| self.reflect_err(e)),
+            Scalar::Bool(value) => wip.put(value).map_err(|e| self.reflect_err(e)),
+            Scalar::Null => wip.put_default().map_err(|e| self.reflect_err(e)),
+        }
     }
 
     /// Handle value parsing

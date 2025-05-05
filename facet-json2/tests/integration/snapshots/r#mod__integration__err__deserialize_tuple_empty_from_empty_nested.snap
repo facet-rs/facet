@@ -7,5 +7,5 @@ expression: err
    [38;5;246m│[0m
  [38;5;246m1 │[0m [38;5;249m[[0m[31m[[0m[38;5;249m][0m[38;5;249m][0m
  [38;5;240m  │[0m  [31m┬[0m  
- [38;5;240m  │[0m  [31m╰[0m[31m─[0m[31m─[0m Unexpected outcome: got [31mlist start[39m, wanted [33mscalar or list close[39m
+ [38;5;240m  │[0m  [31m╰[0m[31m─[0m[31m─[0m Operation failed on shape [34m()[39m: cannot push elements to unit type ()
 [38;5;246m───╯[0m

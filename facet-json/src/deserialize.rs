@@ -436,7 +436,7 @@ impl<'a> StackRunner<'a> {
                             .map_err(|e| JsonError::new_reflect(e, self.input, self.last_span)),
                         Def::Enum(_ed) => {
                             if wip.selected_variant().is_some() {
-                                trace!("Have variant selected arleady, just putting");
+                                trace!("Have variant selected already, just putting");
 
                                 // just put, then — if it's a tuple field it'll work
                                 wip.put::<String>(s).map_err(|e| {
