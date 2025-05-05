@@ -42,7 +42,10 @@ impl<'mem, 'facet_lifetime> PeekStruct<'mem, 'facet_lifetime> {
                 let field_data = self.value.data().field(field.offset);
                 Peek::unchecked_new(field_data, field.shape())
             })
-            .ok_or(FieldError::IndexOutOfBounds)
+            .ok_or(FieldError::IndexOutOfBounds {
+                index,
+                bound: self.def.fields.len(),
+            })
     }
 
     /// Gets the value of the field with the given name

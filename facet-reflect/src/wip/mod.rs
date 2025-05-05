@@ -723,7 +723,10 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
                 if index >= def.fields.len() {
                     return Err(ReflectError::FieldError {
                         shape,
-                        field_error: FieldError::NoSuchField,
+                        field_error: FieldError::IndexOutOfBounds {
+                            index,
+                            bound: def.fields.len(),
+                        },
                     });
                 }
                 let field = &def.fields[index];
@@ -740,7 +743,10 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
                 if index >= variant.data.fields.len() {
                     return Err(ReflectError::FieldError {
                         shape,
-                        field_error: FieldError::NoSuchField,
+                        field_error: FieldError::IndexOutOfBounds {
+                            index,
+                            bound: variant.data.fields.len(),
+                        },
                     });
                 }
 
@@ -1574,7 +1580,10 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
                 if field_index >= sd.fields.len() {
                     return Err(ReflectError::FieldError {
                         shape: seq_shape,
-                        field_error: FieldError::NoSuchField, // Or maybe SequenceError::OutOfBounds?
+                        field_error: FieldError::IndexOutOfBounds {
+                            index: field_index,
+                            bound: sd.fields.len(),
+                        },
                     });
                 }
                 // Get the shape of the field at the calculated index
@@ -1610,7 +1619,10 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
                 if field_index >= variant.data.fields.len() {
                     return Err(ReflectError::FieldError {
                         shape: seq_shape, // Could provide variant name here
-                        field_error: FieldError::NoSuchField,
+                        field_error: FieldError::IndexOutOfBounds {
+                            index: field_index,
+                            bound: variant.data.fields.len(),
+                        },
                     });
                 }
                 // Get the shape of the field at the calculated index within the variant
@@ -2413,7 +2425,10 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
                 if index >= sd.fields.len() {
                     return Err(ReflectError::FieldError {
                         shape: frame.shape,
-                        field_error: FieldError::NoSuchField,
+                        field_error: FieldError::IndexOutOfBounds {
+                            index,
+                            bound: sd.fields.len(),
+                        },
                     });
                 }
                 Ok(frame.istate.fields.has(index))
@@ -2428,7 +2443,10 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
                 if index >= variant.data.fields.len() {
                     return Err(ReflectError::FieldError {
                         shape: frame.shape,
-                        field_error: FieldError::NoSuchField,
+                        field_error: FieldError::IndexOutOfBounds {
+                            index,
+                            bound: variant.data.fields.len(),
+                        },
                     });
                 }
                 Ok(frame.istate.fields.has(index))

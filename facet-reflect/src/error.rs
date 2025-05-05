@@ -130,13 +130,13 @@ impl core::fmt::Display for ReflectError {
                 write!(
                     f,
                     "Value partially initialized: field {} was not set",
-                    field.name
+                    field.name.yellow()
                 )
             }
             ReflectError::NoSuchVariant { enum_def } => {
                 write!(f, "No such variant in enum. Known variants: ")?;
                 for v in enum_def.variants {
-                    write!(f, ", {}", v.name)?;
+                    write!(f, ", {}", v.name.cyan())?;
                 }
                 write!(f, ", that's it.")
             }
@@ -167,17 +167,19 @@ impl core::fmt::Display for ReflectError {
                 write!(
                     f,
                     "Field '{}::{}' in variant '{}' was not initialized",
-                    shape, field_name, variant_name
+                    shape.blue(),
+                    field_name.yellow(),
+                    variant_name.red()
                 )
             }
             ReflectError::NoVariantSelected { shape } => {
-                write!(f, "Enum '{}' had no variant selected", shape)
+                write!(f, "Enum '{}' had no variant selected", shape.blue())
             }
             ReflectError::UninitializedValue { shape } => {
-                write!(f, "Value '{}' was not initialized", shape)
+                write!(f, "Value '{}' was not initialized", shape.blue())
             }
             ReflectError::InvariantViolation { invariant } => {
-                write!(f, "Invariant violation: {}", invariant)
+                write!(f, "Invariant violation: {}", invariant.red())
             }
             ReflectError::MissingCharacteristic {
                 shape,
@@ -187,10 +189,15 @@ impl core::fmt::Display for ReflectError {
                 "{shape} does not implement characteristic {characteristic:?}",
             ),
             ReflectError::OperationFailed { shape, operation } => {
-                write!(f, "Operation failed on shape {}: {}", shape, operation)
+                write!(
+                    f,
+                    "Operation failed on shape {}: {}",
+                    shape.blue(),
+                    operation
+                )
             }
             ReflectError::FieldError { shape, field_error } => {
-                write!(f, "Field error for shape {}: {}", shape, field_error)
+                write!(f, "Field error for shape {}: {}", shape.red(), field_error)
             }
             ReflectError::Unknown => write!(f, "Unknown error"),
             ReflectError::TryFromError {
@@ -209,9 +216,9 @@ impl core::fmt::Display for ReflectError {
             ReflectError::DefaultAttrButNoDefaultImpl { shape } => write!(
                 f,
                 "Shape '{}' has a `default` attribute but no default implementation",
-                shape
+                shape.red()
             ),
-            ReflectError::Unsized { shape } => write!(f, "Shape '{}' is unsized", shape),
+            ReflectError::Unsized { shape } => write!(f, "Shape '{}' is unsized", shape.red()),
         }
     }
 }

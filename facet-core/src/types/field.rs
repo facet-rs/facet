@@ -301,7 +301,13 @@ pub enum FieldError {
 
     /// `field_by_index` was called on a fixed-size collection (like a tuple,
     /// a struct, or a fixed-size array) and the index was out of bounds.
-    IndexOutOfBounds,
+    IndexOutOfBounds {
+        /// the index we asked for
+        index: usize,
+
+        /// the upper bound of the index
+        bound: usize,
+    },
 
     /// `set` or `set_by_name` was called with an mismatched type
     TypeMismatch {
@@ -318,10 +324,12 @@ impl core::error::Error for FieldError {}
 impl core::fmt::Display for FieldError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            FieldError::NoSuchField => write!(f, "No such static field"),
-            FieldError::IndexOutOfBounds => write!(f, "Index out of bounds"),
+            FieldError::NoSuchField => write!(f, "No such field"),
+            FieldError::IndexOutOfBounds { index, bound } => {
+                write!(f, "tried to access field {} of {}", index, bound)
+            }
             FieldError::TypeMismatch { expected, actual } => {
-                write!(f, "Type mismatch: expected {}, got {}", expected, actual)
+                write!(f, "expected type {}, got {}", expected, actual)
             }
         }
     }

@@ -36,6 +36,8 @@ pub enum Scalar<'input> {
     F64(f64),
     /// Boolean scalar.
     Bool(bool),
+    /// Null scalar (e.g. for formats supporting explicit null).
+    Null,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -55,7 +57,7 @@ pub enum Expectation {
 /// Outcome of parsing the next input element.
 pub enum Outcome<'input> {
     /// Parsed a scalar value.
-    GotScalar(Scalar<'input>),
+    Scalar(Scalar<'input>),
     /// Starting a list/array.
     ListStarted,
     /// Ending a list/array.
@@ -66,13 +68,19 @@ pub enum Outcome<'input> {
     ObjectEnded,
 }
 
+impl<'input> From<Scalar<'input>> for Outcome<'input> {
+    fn from(scalar: Scalar<'input>) -> Self {
+        Outcome::Scalar(scalar)
+    }
+}
+
 use core::fmt;
 
 /// Display implementation for `Outcome`, focusing on user-friendly descriptions.
 impl fmt::Display for Outcome<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Outcome::GotScalar(scalar) => write!(f, "scalar {}", scalar),
+            Outcome::Scalar(scalar) => write!(f, "scalar {}", scalar),
             Outcome::ListStarted => write!(f, "list start"),
             Outcome::ListEnded => write!(f, "list end"),
             Outcome::ObjectStarted => write!(f, "object start"),
@@ -90,6 +98,7 @@ impl fmt::Display for Scalar<'_> {
             Scalar::I64(val) => write!(f, "i64 {}", val),
             Scalar::F64(val) => write!(f, "f64 {}", val),
             Scalar::Bool(val) => write!(f, "bool {}", val),
+            Scalar::Null => write!(f, "null"),
         }
     }
 }
@@ -97,15 +106,16 @@ impl fmt::Display for Scalar<'_> {
 impl Outcome<'_> {
     fn into_owned(self) -> Outcome<'static> {
         match self {
-            Outcome::GotScalar(scalar) => {
+            Outcome::Scalar(scalar) => {
                 let owned_scalar = match scalar {
                     Scalar::String(cow) => Scalar::String(Cow::Owned(cow.into_owned())),
                     Scalar::U64(val) => Scalar::U64(val),
                     Scalar::I64(val) => Scalar::I64(val),
                     Scalar::F64(val) => Scalar::F64(val),
                     Scalar::Bool(val) => Scalar::Bool(val),
+                    Scalar::Null => Scalar::Null,
                 };
-                Outcome::GotScalar(owned_scalar)
+                Outcome::Scalar(owned_scalar)
             }
             Outcome::ListStarted => Outcome::ListStarted,
             Outcome::ListEnded => Outcome::ListEnded,
@@ -118,10 +128,26 @@ impl Outcome<'_> {
 /// Carries the current parsing state and the in-progress value during deserialization.
 /// This bundles the mutable context that must be threaded through parsing steps.
 pub struct NextData<'input: 'facet, 'facet> {
+    /// The offset we're supposed to start parsing from
+    start: usize,
+
     /// Controls the parsing flow and stack state.
-    pub runner: StackRunner<'input>,
+    runner: StackRunner<'input>,
+
     /// Holds the intermediate representation of the value being built.
     pub wip: Wip<'facet>,
+}
+
+impl<'input: 'facet, 'facet> NextData<'input, 'facet> {
+    /// Returns the input (from the start! not from the current position)
+    pub fn input(&self) -> &'input [u8] {
+        self.runner.input
+    }
+
+    /// Returns the parsing start offset.
+    pub fn start(&self) -> usize {
+        self.start
+    }
 }
 
 /// The result of advancing the parser: updated state and parse outcome or error.
@@ -134,7 +160,7 @@ pub trait Format {
     fn next<'input, 'facet>(
         nd: NextData<'input, 'facet>,
         expectation: Expectation,
-    ) -> NextResult<'input, 'facet, Spanned<Outcome<'input>>, DeserError<'input>>;
+    ) -> NextResult<'input, 'facet, Spanned<Outcome<'input>>, Spanned<DeserErrorKind>>;
 }
 
 /// Instructions guiding the parsing flow, indicating the next expected action or token.
@@ -168,6 +194,8 @@ pub enum PopReason {
     TopLevel,
     /// Ending a value within an object.
     ObjectVal,
+    /// Ending a `Some()` in an option
+    Some,
 }
 
 /// Deserialize a value of type `T` from raw input bytes using format `F`.
@@ -202,12 +230,34 @@ where
 {
     // This struct is just a bundle of the state that we need to pass around all the time.
     let mut runner = StackRunner {
+        original_input: input,
+        input,
         stack: vec![
             Instruction::Pop(PopReason::TopLevel),
             Instruction::Value(ValueReason::TopLevel),
         ],
-        input,
+        last_span: Span::new(0, 0),
     };
+
+    macro_rules! next {
+        ($runner:ident, $wip:ident, $expectation:expr, $method:ident) => {{
+            let nd = NextData {
+                start: $runner.last_span.end(), // or supply the appropriate start value if available
+                runner: $runner,
+                wip: $wip,
+            };
+            let (nd, res) = F::next(nd, $expectation);
+            $runner = nd.runner;
+            $wip = nd.wip;
+            let outcome = res.map_err(|span_kind| {
+                $runner.last_span = span_kind.span;
+                $runner.err(span_kind.node)
+            })?;
+            $runner.last_span = outcome.span;
+            trace!("Got outcome {}", outcome.blue());
+            $wip = $runner.$method($wip, outcome)?;
+        }};
+    }
 
     loop {
         let frame_count = wip.frames_count();
@@ -232,46 +282,33 @@ where
                 wip = runner.pop(wip, reason)?;
 
                 if reason == PopReason::TopLevel {
-                    return wip
-                        .build()
-                        .map_err(|e| DeserError::new_reflect(e, input, runner.last_span));
+                    return wip.build().map_err(|e| runner.reflect_err(e));
                 } else {
-                    wip = wip
-                        .pop()
-                        .map_err(|e| DeserError::new_reflect(e, input, runner.last_span))?;
+                    wip = wip.pop().map_err(|e| runner.reflect_err(e))?;
                 }
             }
             Instruction::Value(_why) => {
-                let nd = NextData { runner, wip };
                 let expectation = match _why {
                     ValueReason::TopLevel => Expectation::Value,
                     ValueReason::ObjectVal => Expectation::ObjectVal,
                 };
-                let (nd, res) = F::next(nd, expectation);
-                runner = nd.runner;
-                wip = nd.wip;
-
-                let outcome = res?;
-                trace!("Got outcome {:?}", outcome.blue());
-                wip = runner.value(wip, outcome)?
+                next!(runner, wip, expectation, value);
             }
             Instruction::ObjectKeyOrObjectClose => {
-                let nd = NextData { runner, wip };
-                let (nd, res) = F::next(nd, Expectation::ObjectKeyOrObjectClose);
-                runner = nd.runner;
-                wip = nd.wip;
-                let outcome = res?;
-                trace!("Got outcome {:?}", outcome.blue());
-                wip = runner.object_key_or_object_close(wip, outcome)?;
+                next!(
+                    runner,
+                    wip,
+                    Expectation::ObjectKeyOrObjectClose,
+                    object_key_or_object_close
+                );
             }
             Instruction::ListItemOrListClose => {
-                let nd = NextData { runner, wip };
-                let (nd, res) = F::next(nd, Expectation::ListItemOrListClose);
-                runner = nd.runner;
-                wip = nd.wip;
-                let outcome = res?;
-                trace!("Got outcome {:?}", outcome.blue());
-                wip = runner.list_item_or_list_close(wip, outcome)?;
+                next!(
+                    runner,
+                    wip,
+                    Expectation::ListItemOrListClose,
+                    list_item_or_list_close
+                );
             }
             _ => {
                 todo!("Support instruction {:?}", insn)
@@ -286,13 +323,29 @@ where
 /// This struct tracks what the parser expects next, manages input position,
 /// and remembers the span of the last processed token to provide accurate error reporting.
 pub struct StackRunner<'input> {
-    /// Stack of parsing instructions guiding the control flow.
-    pub stack: Vec<Instruction>,
+    /// A version of the input that doesn't advance as we parse.
+    original_input: &'input [u8],
     /// The raw input data being deserialized.
     pub input: &'input [u8],
+
+    /// Stack of parsing instructions guiding the control flow.
+    pub stack: Vec<Instruction>,
+    /// Span of the last processed token, for accurate error reporting.
+    pub last_span: Span,
 }
 
 impl<'input> StackRunner<'input> {
+    /// Convenience function to create a DeserError using the original input and last_span.
+    fn err(&self, kind: DeserErrorKind) -> DeserError<'input> {
+        DeserError::new(kind, self.original_input, self.last_span)
+    }
+
+    /// Convenience function to create a DeserError from a ReflectError,
+    /// using the original input and last_span for context.
+    fn reflect_err(&self, err: ReflectError) -> DeserError<'input> {
+        DeserError::new_reflect(err, self.original_input, self.last_span)
+    }
+
     fn pop<'facet>(
         &mut self,
         mut wip: Wip<'facet>,
@@ -309,17 +362,15 @@ impl<'input> StackRunner<'input> {
                 for (index, field) in sd.fields.iter().enumerate() {
                     let is_set = wip.is_field_set(index).map_err(|err| {
                         trace!("Error checking field set status: {:?}", err);
-                        DeserError::new_reflect(err, self.input, self.last_span)
+                        self.reflect_err(err)
                     })?;
                     if !is_set {
                         if field.flags.contains(FieldFlags::DEFAULT) {
-                            wip = wip.field(index).map_err(|e| {
-                                DeserError::new_reflect(e, self.input, self.last_span)
-                            })?;
+                            wip = wip.field(index).map_err(|e| self.reflect_err(e))?;
                             if let Some(default_in_place_fn) = field.vtable.default_fn {
-                                wip = wip.put_from_fn(default_in_place_fn).map_err(|e| {
-                                    DeserError::new_reflect(e, self.input, self.last_span)
-                                })?;
+                                wip = wip
+                                    .put_from_fn(default_in_place_fn)
+                                    .map_err(|e| self.reflect_err(e))?;
                                 trace!(
                                     "Field #{} {:?} was set to default value (via custom fn)",
                                     index.yellow(),
@@ -327,26 +378,20 @@ impl<'input> StackRunner<'input> {
                                 );
                             } else {
                                 if !field.shape().is(Characteristic::Default) {
-                                    return Err(DeserError::new_reflect(
+                                    return Err(self.reflect_err(
                                         ReflectError::DefaultAttrButNoDefaultImpl {
                                             shape: field.shape(),
                                         },
-                                        self.input,
-                                        self.last_span,
                                     ));
                                 }
-                                wip = wip.put_default().map_err(|e| {
-                                    DeserError::new_reflect(e, self.input, self.last_span)
-                                })?;
+                                wip = wip.put_default().map_err(|e| self.reflect_err(e))?;
                                 trace!(
                                     "Field #{} {:?} was set to default value (via default impl)",
                                     index.yellow(),
                                     field.blue()
                                 );
                             }
-                            wip = wip.pop().map_err(|e| {
-                                DeserError::new_reflect(e, self.input, self.last_span)
-                            })?;
+                            wip = wip.pop().map_err(|e| self.reflect_err(e))?;
                         } else {
                             trace!(
                                 "Field #{} {:?} is not initialized",
@@ -361,31 +406,25 @@ impl<'input> StackRunner<'input> {
                 if has_unset && container_shape.has_default_attr() {
                     // let's allocate and build a default value
                     let default_val = Wip::alloc_shape(container_shape)
-                        .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?
+                        .map_err(|e| self.reflect_err(e))?
                         .put_default()
-                        .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?
+                        .map_err(|e| self.reflect_err(e))?
                         .build()
-                        .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
+                        .map_err(|e| self.reflect_err(e))?;
                     let peek = default_val.peek().into_struct().unwrap();
 
                     for (index, field) in sd.fields.iter().enumerate() {
                         let is_set = wip.is_field_set(index).map_err(|err| {
                             trace!("Error checking field set status: {:?}", err);
-                            DeserError::new_reflect(err, self.input, self.last_span)
+                            self.reflect_err(err)
                         })?;
                         if !is_set {
                             let address_of_field_from_default = peek.field(index).unwrap().data();
-                            wip = wip.field(index).map_err(|e| {
-                                DeserError::new_reflect(e, self.input, self.last_span)
-                            })?;
+                            wip = wip.field(index).map_err(|e| self.reflect_err(e))?;
                             wip = wip
                                 .put_shape(address_of_field_from_default, field.shape())
-                                .map_err(|e| {
-                                    DeserError::new_reflect(e, self.input, self.last_span)
-                                })?;
-                            wip = wip.pop().map_err(|e| {
-                                DeserError::new_reflect(e, self.input, self.last_span)
-                            })?;
+                                .map_err(|e| self.reflect_err(e))?;
+                            wip = wip.pop().map_err(|e| self.reflect_err(e))?;
                         }
                     }
                 }
@@ -408,38 +447,18 @@ impl<'input> StackRunner<'input> {
     /// Internal common handler for GotScalar outcome, to deduplicate code.
     fn handle_scalar<'facet>(
         &self,
-        mut wip: Wip<'facet>,
+        wip: Wip<'facet>,
         scalar: Scalar<'input>,
-        span: Span,
     ) -> Result<Wip<'facet>, DeserError<'input>> {
-        match scalar {
-            Scalar::String(cow) => {
-                wip = wip
-                    .put(cow.to_string())
-                    .map_err(|e| DeserError::new_reflect(e, self.input, span))?;
-            }
-            Scalar::U64(value) => {
-                wip = wip
-                    .put(value)
-                    .map_err(|e| DeserError::new_reflect(e, self.input, span))?;
-            }
-            Scalar::I64(value) => {
-                wip = wip
-                    .put(value)
-                    .map_err(|e| DeserError::new_reflect(e, self.input, span))?;
-            }
-            Scalar::F64(value) => {
-                wip = wip
-                    .put(value)
-                    .map_err(|e| DeserError::new_reflect(e, self.input, span))?;
-            }
-            Scalar::Bool(value) => {
-                wip = wip
-                    .put(value)
-                    .map_err(|e| DeserError::new_reflect(e, self.input, span))?;
-            }
-        }
-        Ok(wip)
+        let result = match scalar {
+            Scalar::String(cow) => wip.put(cow.to_string()),
+            Scalar::U64(value) => wip.put(value),
+            Scalar::I64(value) => wip.put(value),
+            Scalar::F64(value) => wip.put(value),
+            Scalar::Bool(value) => wip.put(value),
+            Scalar::Null => wip.put_default(),
+        };
+        result.map_err(|e| self.reflect_err(e))
     }
 
     /// Handle value parsing
@@ -449,98 +468,89 @@ impl<'input> StackRunner<'input> {
         outcome: Spanned<Outcome<'input>>,
     ) -> Result<Wip<'facet>, DeserError<'input>> {
         match outcome.node {
-            Outcome::GotScalar(s) => {
-                wip = self.handle_scalar(wip, s, outcome.span)?;
+            Outcome::Scalar(Scalar::Null) => {
+                return wip.put_default().map_err(|e| self.reflect_err(e));
+            }
+            _ => {
+                if matches!(wip.shape().def, Def::Option(_)) {
+                    trace!("Starting Some(_) option for {}", wip.shape().blue());
+                    wip = wip.push_some().map_err(|e| self.reflect_err(e))?;
+                    self.stack.push(Instruction::Pop(PopReason::Some));
+                }
+            }
+        }
+
+        match outcome.node {
+            Outcome::Scalar(s) => {
+                wip = self.handle_scalar(wip, s)?;
             }
             Outcome::ListStarted => {
-                match wip.innermost_shape().def {
+                let shape = wip.innermost_shape();
+                match shape.def {
                     Def::Array(_) => {
-                        trace!("Array starting for array ({})!", wip.shape().blue());
+                        trace!("Array starting for array ({})!", shape.blue());
                     }
                     Def::Slice(_) => {
-                        trace!("Array starting for slice ({})!", wip.shape().blue());
+                        trace!("Array starting for slice ({})!", shape.blue());
                     }
                     Def::List(_) => {
-                        trace!("Array starting for list ({})!", wip.shape().blue());
-                        wip = wip
-                            .put_default()
-                            .map_err(|e| DeserError::new_reflect(e, self.input, outcome.span))?;
+                        trace!("Array starting for list ({})!", shape.blue());
+                        wip = wip.put_default().map_err(|e| self.reflect_err(e))?;
                     }
                     Def::Enum(_) => {
-                        trace!("Array starting for enum ({})!", wip.shape().blue());
+                        trace!("Array starting for enum ({})!", shape.blue());
                     }
                     Def::Struct(_) => {
-                        trace!("Array starting for tuple ({})!", wip.shape().blue());
-                        wip = wip
-                            .put_default()
-                            .map_err(|e| DeserError::new_reflect(e, self.input, outcome.span))?;
+                        trace!("Array starting for tuple ({})!", shape.blue());
+                        wip = wip.put_default().map_err(|e| self.reflect_err(e))?;
                     }
                     Def::Scalar(sd) => {
                         if matches!(sd.affinity, ScalarAffinity::Empty(_)) {
                             trace!("Empty tuple/scalar, nice");
-                            wip = wip.put_default().map_err(|e| {
-                                DeserError::new_reflect(e, self.input, outcome.span)
-                            })?;
+                            wip = wip.put_default().map_err(|e| self.reflect_err(e))?;
                         } else {
-                            return Err(DeserError::new(
-                                DeserErrorKind::UnsupportedType {
-                                    got: wip.innermost_shape(),
-                                    wanted: "array, list, tuple, or slice",
-                                },
-                                self.input,
-                                outcome.span,
-                            ));
+                            return Err(self.err(DeserErrorKind::UnsupportedType {
+                                got: shape,
+                                wanted: "array, list, tuple, or slice",
+                            }));
                         }
                     }
                     _ => {
-                        return Err(DeserError::new(
-                            DeserErrorKind::UnsupportedType {
-                                got: wip.innermost_shape(),
-                                wanted: "array, list, tuple, or slice",
-                            },
-                            self.input,
-                            outcome.span,
-                        ));
+                        return Err(self.err(DeserErrorKind::UnsupportedType {
+                            got: shape,
+                            wanted: "array, list, tuple, or slice",
+                        }));
                     }
                 }
 
                 trace!("Beginning pushback");
                 self.stack.push(Instruction::ListItemOrListClose);
-                wip = wip
-                    .begin_pushback()
-                    .map_err(|e| DeserError::new_reflect(e, self.input, outcome.span))?;
+                wip = wip.begin_pushback().map_err(|e| self.reflect_err(e))?;
             }
             Outcome::ListEnded => {
                 trace!("List closing");
-                wip = wip
-                    .pop()
-                    .map_err(|e| DeserError::new_reflect(e, self.input, outcome.span))?;
+                wip = wip.pop().map_err(|e| self.reflect_err(e))?;
             }
             Outcome::ObjectStarted => {
-                match wip.innermost_shape().def {
+                let shape = wip.innermost_shape();
+                match shape.def {
                     Def::Map(_md) => {
-                        trace!("Object starting for map value ({})!", wip.shape().blue());
-                        wip = wip
-                            .put_default()
-                            .map_err(|e| DeserError::new_reflect(e, self.input, outcome.span))?;
+                        trace!("Object starting for map value ({})!", shape.blue());
+                        wip = wip.put_default().map_err(|e| self.reflect_err(e))?;
                     }
                     Def::Enum(_ed) => {
-                        trace!("Object starting for enum value ({})!", wip.shape().blue());
+                        trace!("Object starting for enum value ({})!", shape.blue());
                         // nothing to do here
                     }
                     Def::Struct(_) => {
-                        trace!("Object starting for struct value ({})!", wip.shape().blue());
+                        trace!("Object starting for struct value ({})!", shape.blue());
                         // nothing to do here
                     }
                     _ => {
-                        return Err(DeserError {
-                            input: self.input.into(),
-                            span: outcome.span,
-                            kind: DeserErrorKind::UnsupportedType {
-                                got: wip.innermost_shape(),
-                                wanted: "map, enum, or struct",
-                            },
-                        });
+                        return Err(self.err(DeserErrorKind::UnsupportedType {
+                            got: shape,
+                            wanted: "map, enum, or struct",
+                        }));
                     }
                 }
 
@@ -559,23 +569,20 @@ impl<'input> StackRunner<'input> {
     where
         'input: 'facet,
     {
-        let span = outcome.span;
         match outcome.node {
-            Outcome::GotScalar(Scalar::String(key)) => {
+            Outcome::Scalar(Scalar::String(key)) => {
                 trace!("Parsed object key: {}", key);
 
                 let mut ignore = false;
                 let mut needs_pop = true;
                 let mut handled_by_flatten = false;
 
-                match wip.shape().def {
+                match wip.innermost_shape().def {
                     Def::Struct(sd) => {
                         // First try to find a direct field match
                         if let Some(index) = wip.field_index(&key) {
                             trace!("It's a struct field");
-                            wip = wip
-                                .field(index)
-                                .map_err(|e| DeserError::new_reflect(e, self.input, span))?;
+                            wip = wip.field(index).map_err(|e| self.reflect_err(e))?;
                         } else {
                             // Check for flattened fields
                             let mut found_in_flatten = false;
@@ -583,16 +590,14 @@ impl<'input> StackRunner<'input> {
                                 if field.flags.contains(FieldFlags::FLATTEN) {
                                     trace!("Found flattened field #{}", index);
                                     // Enter the flattened field
-                                    wip = wip.field(index).map_err(|e| {
-                                        DeserError::new_reflect(e, self.input, span)
-                                    })?;
+                                    wip = wip.field(index).map_err(|e| self.reflect_err(e))?;
 
                                     // Check if this flattened field has the requested key
                                     if let Some(subfield_index) = wip.field_index(&key) {
                                         trace!("Found key {} in flattened field", key);
-                                        wip = wip.field(subfield_index).map_err(|e| {
-                                            DeserError::new_reflect(e, self.input, span)
-                                        })?;
+                                        wip = wip
+                                            .field(subfield_index)
+                                            .map_err(|e| self.reflect_err(e))?;
                                         found_in_flatten = true;
                                         handled_by_flatten = true;
                                         break;
@@ -600,16 +605,14 @@ impl<'input> StackRunner<'input> {
                                         wip.find_variant(&key)
                                     {
                                         trace!("Found key {} in flattened field", key);
-                                        wip = wip.variant_named(&key).map_err(|e| {
-                                            DeserError::new_reflect(e, self.input, span)
-                                        })?;
+                                        wip = wip
+                                            .variant_named(&key)
+                                            .map_err(|e| self.reflect_err(e))?;
                                         found_in_flatten = true;
                                         break;
                                     } else {
                                         // Key not in this flattened field, go back up
-                                        wip = wip.pop().map_err(|e| {
-                                            DeserError::new_reflect(e, self.input, span)
-                                        })?;
+                                        wip = wip.pop().map_err(|e| self.reflect_err(e))?;
                                     }
                                 }
                             }
@@ -619,14 +622,10 @@ impl<'input> StackRunner<'input> {
                                     trace!(
                                         "It's not a struct field AND we're denying unknown fields"
                                     );
-                                    return Err(DeserError::new(
-                                        DeserErrorKind::UnknownField {
-                                            field_name: key.to_string(),
-                                            shape: wip.shape(),
-                                        },
-                                        self.input,
-                                        span,
-                                    ));
+                                    return Err(self.err(DeserErrorKind::UnknownField {
+                                        field_name: key.to_string(),
+                                        shape: wip.shape(),
+                                    }));
                                 } else {
                                     trace!(
                                         "It's not a struct field and we're ignoring unknown fields"
@@ -639,9 +638,7 @@ impl<'input> StackRunner<'input> {
                     Def::Enum(_ed) => match wip.find_variant(&key) {
                         Some((index, variant)) => {
                             trace!("Variant {} selected", variant.name.blue());
-                            wip = wip
-                                .variant(index)
-                                .map_err(|e| DeserError::new_reflect(e, self.input, span))?;
+                            wip = wip.variant(index).map_err(|e| self.reflect_err(e))?;
                             needs_pop = false;
                         }
                         None => {
@@ -652,52 +649,34 @@ impl<'input> StackRunner<'input> {
                                 // Try to find the field index of the key within the selected variant
                                 if let Some(index) = wip.field_index(&key) {
                                     trace!("Found field {} in selected variant", key.blue());
-                                    wip = wip.field(index).map_err(|e| {
-                                        DeserError::new_reflect(e, self.input, span)
-                                    })?;
+                                    wip = wip.field(index).map_err(|e| self.reflect_err(e))?;
                                 } else if wip.shape().has_deny_unknown_fields_attr() {
                                     trace!("Unknown field in variant and denying unknown fields");
-                                    return Err(DeserError::new(
-                                        DeserErrorKind::UnknownField {
-                                            field_name: key.to_string(),
-                                            shape: wip.shape(),
-                                        },
-                                        self.input,
-                                        span,
-                                    ));
+                                    return Err(self.err(DeserErrorKind::UnknownField {
+                                        field_name: key.to_string(),
+                                        shape: wip.shape(),
+                                    }));
                                 } else {
                                     trace!("Ignoring unknown field in variant");
                                     ignore = true;
                                 }
                             } else {
-                                return Err(DeserError::new(
-                                    DeserErrorKind::NoSuchVariant {
-                                        name: key.to_string(),
-                                        enum_shape: wip.shape(),
-                                    },
-                                    self.input,
-                                    span,
-                                ));
+                                return Err(self.err(DeserErrorKind::NoSuchVariant {
+                                    name: key.to_string(),
+                                    enum_shape: wip.shape(),
+                                }));
                             }
                         }
                     },
                     Def::Map(_) => {
-                        wip = wip
-                            .push_map_key()
-                            .map_err(|e| DeserError::new_reflect(e, self.input, span))?;
-                        wip = wip
-                            .put(key.to_string())
-                            .map_err(|e| DeserError::new_reflect(e, self.input, span))?;
-                        wip = wip
-                            .push_map_value()
-                            .map_err(|e| DeserError::new_reflect(e, self.input, span))?;
+                        wip = wip.push_map_key().map_err(|e| self.reflect_err(e))?;
+                        wip = wip.put(key.to_string()).map_err(|e| self.reflect_err(e))?;
+                        wip = wip.push_map_value().map_err(|e| self.reflect_err(e))?;
                     }
                     _ => {
-                        return Err(DeserError::new(
-                            DeserErrorKind::Unimplemented("object key for non-struct/map"),
-                            self.input,
-                            span,
-                        ));
+                        return Err(self.err(DeserErrorKind::Unimplemented(
+                            "object key for non-struct/map",
+                        )));
                     }
                 }
 
@@ -723,14 +702,10 @@ impl<'input> StackRunner<'input> {
                 trace!("Object closing");
                 Ok(wip)
             }
-            _ => Err(DeserError::new(
-                DeserErrorKind::UnexpectedOutcome {
-                    got: outcome.node.into_owned(),
-                    wanted: "scalar or object close",
-                },
-                self.input,
-                span,
-            )),
+            _ => Err(self.err(DeserErrorKind::UnexpectedOutcome {
+                got: outcome.node.into_owned(),
+                wanted: "scalar or object close",
+            })),
         }
     }
 
@@ -747,28 +722,22 @@ impl<'input> StackRunner<'input> {
                 trace!("List close");
                 Ok(wip)
             }
-            Outcome::GotScalar(scalar) => {
+            Outcome::Scalar(scalar) => {
                 trace!("In list_item_or_item_list_close, got ");
-                wip = wip
-                    .push()
-                    .map_err(|e| DeserError::new_reflect(e, self.input, outcome.span))?;
-                wip = self.handle_scalar(wip, scalar, outcome.span)?;
-                wip = wip
-                    .pop()
-                    .map_err(|e| DeserError::new_reflect(e, self.input, outcome.span))?;
+                wip = wip.push().map_err(|e| self.reflect_err(e))?;
+                wip = self.handle_scalar(wip, scalar)?;
+                wip = wip.pop().map_err(|e| self.reflect_err(e))?;
 
                 self.stack.push(Instruction::ListItemOrListClose);
 
                 Ok(wip)
             }
-            _ => Err(DeserError::new(
-                DeserErrorKind::UnexpectedOutcome {
+            _ => Err(self
+                .err(DeserErrorKind::UnexpectedOutcome {
                     got: outcome.node.into_owned(),
                     wanted: "scalar or list close",
-                },
-                self.input,
-                outcome.span,
-            )),
+                })
+                .with_span(outcome.span)),
         }
     }
 }

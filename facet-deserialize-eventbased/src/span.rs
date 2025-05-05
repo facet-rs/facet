@@ -1,3 +1,5 @@
+use core::fmt;
+
 /// Position in the input (byte index)
 pub type Pos = usize;
 
@@ -8,6 +10,18 @@ pub struct Span {
     pub start: Pos,
     /// Length of the span in bytes
     pub len: usize,
+}
+
+/// Trait for types that can be annotated with a Span.
+pub trait Spannable: Sized {
+    /// Annotate this value with a span, wrapping it in `Spanned<Self>`
+    fn with_span(self, span: Span) -> Spanned<Self>;
+}
+
+impl<T> Spannable for T {
+    fn with_span(self, span: Span) -> Spanned<Self> {
+        Spanned { node: self, span }
+    }
 }
 
 impl Span {
@@ -40,4 +54,16 @@ pub struct Spanned<T> {
     pub node: T,
     /// The span information indicating the position and length in the source
     pub span: Span,
+}
+
+impl<T: fmt::Display> fmt::Display for Spanned<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} at {}-{}",
+            self.node,
+            self.span.start(),
+            self.span.end()
+        )
+    }
 }

@@ -4,7 +4,8 @@ use alloc::borrow::Cow;
 
 use facet_core::Facet;
 use facet_deserialize_eventbased::{
-    DeserError, DeserErrorKind, Expectation, Format, NextData, NextResult, Outcome, Scalar,
+    DeserError, DeserErrorKind, Expectation, Format, NextData, NextResult, Outcome, Scalar, Span,
+    Spannable, Spanned,
 };
 use log::trace;
 
@@ -39,13 +40,15 @@ pub struct Json;
 
 impl Format for Json {
     fn next<'input, 'facet>(
-        mut nd: NextData<'input, 'facet>,
+        nd: NextData<'input, 'facet>,
         mut expectation: Expectation,
-    ) -> NextResult<'input, 'facet, Outcome<'input>, DeserError<'input>> {
-        loop {
-            // Skip whitespace
-            let mut n = 0;
-            while let Some(&ch) = nd.runner.input.get(n) {
+    ) -> NextResult<'input, 'facet, Spanned<Outcome<'input>>, Spanned<DeserErrorKind>> {
+        let input = nd.input();
+        let mut n = nd.start();
+
+        'loopy: loop {
+            // SKip whitespace
+            while let Some(&ch) = input.get(n) {
                 if ch.is_ascii_whitespace() {
                     n += 1;
                 } else {
@@ -53,194 +56,233 @@ impl Format for Json {
                 }
             }
 
-            // Update input to skip whitespace
-            nd.runner.input = &nd.runner.input[n..];
-
             // Check if we've reached the end after skipping whitespace
-            if nd.runner.input.is_empty() {
-                let err = DeserError::new(
-                    DeserErrorKind::UnexpectedEof {
+            if input[n..].is_empty() {
+                return (
+                    nd,
+                    Err(DeserErrorKind::UnexpectedEof {
                         wanted: "any value (got EOF after whitespace)",
-                    },
-                    nd.runner.input,
-                    nd.runner.last_span,
+                    }
+                    .with_span(Span::new(n, 0))),
                 );
-                return (nd, Err(err));
             }
 
+            // Track span start at the original offset before parsing value
+            let token_start = n;
+
             // Update 'next' with the new first character
-            let next = nd.runner.input[0];
-            let mut n = 0;
-            let res = match next {
-                b'0'..=b'9' => {
-                    trace!("Found number");
-                    while let Some(next) = nd.runner.input.get(n) {
-                        if *next >= b'0' && *next <= b'9' {
-                            n += 1;
+            let next = input[n];
+
+            let res = 'body: {
+                match next {
+                    b'0'..=b'9' => {
+                        trace!("Found number");
+                        while let Some(next) = nd.input().get(n) {
+                            if *next >= b'0' && *next <= b'9' {
+                                n += 1;
+                            } else {
+                                break;
+                            }
+                        }
+                        let num_slice = &nd.input()[token_start..n];
+                        match core::str::from_utf8(num_slice) {
+                            Ok(num_str) => match num_str.parse::<u64>() {
+                                Ok(number) => Ok(Outcome::from(Scalar::U64(number))
+                                    .with_span(Span::new(token_start, n - token_start))),
+                                Err(_) => Err(DeserErrorKind::NumberOutOfRange(
+                                    // As a fallback, try parsing as f64 just for a better message
+                                    num_str.parse::<f64>().unwrap_or(f64::NAN),
+                                )
+                                .with_span(Span::new(token_start, n - token_start))),
+                            },
+                            Err(e) => Err(DeserErrorKind::InvalidUtf8(e.to_string())
+                                .with_span(Span::new(token_start, n - token_start))),
+                        }
+                    }
+                    b'"' => {
+                        trace!("Found string");
+                        n += 1; // Skip opening quote
+                        let start = n;
+                        let len = input.len();
+                        let mut escaped = false;
+                        let mut i = n;
+
+                        // Walk the input to find the closing quote
+                        while i < len {
+                            let b = input[i];
+                            if escaped {
+                                escaped = false;
+                            } else if b == b'\\' {
+                                escaped = true;
+                            } else if b == b'"' {
+                                break;
+                            }
+                            i += 1;
+                        }
+
+                        if i >= len || input[i] != b'"' {
+                            // Unterminated string
+                            break 'body Err(DeserErrorKind::UnexpectedEof {
+                                wanted: "closing '\"' of string",
+                            }
+                            .with_span(Span::new(token_start, i)));
+                        }
+                        // Extract slice inside the string quotes, i points at closing quote
+                        let string_slice = &input[start..i];
+
+                        // Validate utf8, else emit proper error like error.rs does
+                        let string_content = match core::str::from_utf8(string_slice) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                break 'body Err(DeserErrorKind::InvalidUtf8(e.to_string())
+                                    .with_span(Span::new(token_start, i)));
+                            }
+                        };
+                        trace!("String content: {:?}", string_content);
+
+                        let span = facet_deserialize_eventbased::Spanned {
+                            node: Outcome::Scalar(Scalar::String(Cow::Borrowed(string_content))),
+                            span: Span::new(token_start, (i + 1) - token_start),
+                        };
+                        Ok(span)
+                    }
+                    b't' => {
+                        // Try to match "true"
+                        let input = nd.input();
+                        if input.len() >= token_start + 4
+                            && &input[token_start..token_start + 4] == b"true"
+                        {
+                            let span = facet_deserialize_eventbased::Spanned {
+                                node: Outcome::Scalar(Scalar::Bool(true)),
+                                span: Span::new(token_start, 4),
+                            };
+                            Ok(span)
                         } else {
-                            break;
-                        }
-                    }
-                    let num_slice = &nd.runner.input[0..n];
-                    let num_str = core::str::from_utf8(num_slice).unwrap();
-                    let number = num_str.parse::<u64>().unwrap();
-                    nd.runner.input = &nd.runner.input[n..];
-                    Ok(Outcome::GotScalar(Scalar::U64(number)))
-                }
-                b'"' => {
-                    trace!("Found string");
-                    n += 1; // Skip the opening quote
-                    let start = n;
-
-                    // Parse until closing quote
-                    let mut escaped = false;
-                    while let Some(&next) = nd.runner.input.get(n) {
-                        if escaped {
-                            escaped = false;
-                        } else if next == b'\\' {
-                            escaped = true;
-                        } else if next == b'"' {
-                            break;
-                        }
-                        n += 1;
-                    }
-
-                    // Skip the closing quote if found
-                    if nd.runner.input.get(n) == Some(&b'"') {
-                        n += 1;
-                    }
-
-                    let string_slice = &nd.runner.input[start..n - 1];
-                    let string_content = core::str::from_utf8(string_slice).unwrap();
-                    trace!("String content: {:?}", string_content);
-
-                    nd.runner.input = &nd.runner.input[n..];
-                    Ok(Outcome::GotScalar(Scalar::String(Cow::Borrowed(
-                        string_content,
-                    ))))
-                }
-                b't' => {
-                    // Try to match "true"
-                    let candidate = nd.runner.input.get(0..4);
-                    if candidate == Some(b"true".as_ref()) {
-                        nd.runner.input = &nd.runner.input[4..];
-                        Ok(Outcome::GotScalar(Scalar::Bool(true)))
-                    } else {
-                        Err(DeserError {
-                            input: nd.runner.input.into(),
-                            span: nd.runner.last_span,
-                            kind: DeserErrorKind::UnexpectedChar {
+                            Err(DeserErrorKind::UnexpectedChar {
                                 got: 't',
-                                wanted: "a value, thought it was gonna be true, ngl",
-                            },
-                        })
+                                wanted: "\"true\"",
+                            }
+                            .with_span(Span::new(token_start, 1)))
+                        }
                     }
-                }
-                b'f' => {
-                    // Try to match "false"
-                    let candidate = nd.runner.input.get(0..5);
-                    if candidate == Some(b"false".as_ref()) {
-                        nd.runner.input = &nd.runner.input[5..];
-                        Ok(Outcome::GotScalar(Scalar::Bool(false)))
-                    } else {
-                        Err(DeserError {
-                            input: nd.runner.input.into(),
-                            span: nd.runner.last_span,
-                            kind: DeserErrorKind::UnexpectedChar {
+                    b'f' => {
+                        // Try to match "false"
+                        let input = nd.input();
+                        if input.len() >= token_start + 5
+                            && &input[token_start..token_start + 5] == b"false"
+                        {
+                            let span = facet_deserialize_eventbased::Spanned {
+                                node: Outcome::Scalar(Scalar::Bool(false)),
+                                span: Span::new(token_start, 5),
+                            };
+                            Ok(span)
+                        } else {
+                            Err(DeserErrorKind::UnexpectedChar {
                                 got: 'f',
-                                wanted: "a value, thought it was gonna be false, ngl",
-                            },
-                        })
+                                wanted: "\"false\"",
+                            }
+                            .with_span(Span::new(token_start, 1)))
+                        }
                     }
-                }
-                b':' => {
-                    if expectation == Expectation::ObjectVal {
-                        // makes sense, let's skip it and try again
-                        nd.runner.input = &nd.runner.input[1..];
-                        expectation = Expectation::Value;
-
-                        continue;
-                    } else {
-                        trace!("Did not expect ObjectValue, expected {:?}", expectation);
-
-                        Err(DeserError {
-                            input: nd.runner.input.into(),
-                            span: nd.runner.last_span,
-                            kind: DeserErrorKind::UnexpectedChar {
-                                got: ':',
-                                wanted: "a value",
-                            },
-                        })
+                    b'n' => {
+                        // Try to match "null"
+                        let input = nd.input();
+                        if input.len() >= token_start + 4
+                            && &input[token_start..token_start + 4] == b"null"
+                        {
+                            let span = facet_deserialize_eventbased::Spanned {
+                                node: Outcome::Scalar(Scalar::Null),
+                                span: Span::new(token_start, 4),
+                            };
+                            Ok(span)
+                        } else {
+                            Err(DeserErrorKind::UnexpectedChar {
+                                got: 'n',
+                                wanted: "\"null\"",
+                            }
+                            .with_span(Span::new(token_start, 1)))
+                        }
                     }
-                }
-                b',' => {
-                    match expectation {
-                        Expectation::ListItemOrListClose | Expectation::ObjectKeyOrObjectClose => {
-                            // Let's skip the comma and try again
-                            nd.runner.input = &nd.runner.input[1..];
+                    b':' => {
+                        if expectation == Expectation::ObjectVal {
+                            n += 1;
                             expectation = Expectation::Value;
-                            continue;
+                            continue 'loopy;
+                        } else {
+                            trace!("Did not expect ObjectValue, expected {:?}", expectation);
+                            Err(DeserErrorKind::UnexpectedChar {
+                                got: ':',
+                                wanted: "a value, not a colon",
+                            }
+                            .with_span(Span::new(token_start, 1)))
+                        }
+                    }
+                    b',' => match expectation {
+                        Expectation::ListItemOrListClose | Expectation::ObjectKeyOrObjectClose => {
+                            n += 1;
+                            expectation = Expectation::Value;
+                            continue 'loopy;
                         }
                         other => {
                             trace!("Did not expect comma, expected {:?}", other);
-                            Err(DeserError {
-                                input: nd.runner.input.into(),
-                                span: nd.runner.last_span,
-                                kind: DeserErrorKind::UnexpectedChar {
-                                    got: ',',
-                                    wanted: "a value",
-                                },
-                            })
+                            Err(DeserErrorKind::UnexpectedChar {
+                                got: ',',
+                                wanted: "<value or key>",
+                            }
+                            .with_span(Span::new(token_start, 1)))
                         }
+                    },
+                    b'{' => {
+                        let span = facet_deserialize_eventbased::Spanned {
+                            node: Outcome::ObjectStarted,
+                            span: Span::new(token_start, 1),
+                        };
+                        Ok(span)
                     }
-                }
-                b'{' => {
-                    nd.runner.input = &nd.runner.input[1..];
-                    Ok(Outcome::ObjectStarted)
-                }
-                b'}' => {
-                    if expectation == Expectation::ObjectKeyOrObjectClose {
-                        nd.runner.input = &nd.runner.input[1..];
-                        Ok(Outcome::ObjectEnded)
-                    } else {
-                        trace!("Did not expect closing brace, expected {:?}", expectation);
-                        Err(DeserError {
-                            input: nd.runner.input.into(),
-                            span: nd.runner.last_span,
-                            kind: DeserErrorKind::UnexpectedChar {
+                    b'}' => {
+                        if expectation == Expectation::ObjectKeyOrObjectClose {
+                            let span = facet_deserialize_eventbased::Spanned {
+                                node: Outcome::ObjectEnded,
+                                span: Span::new(token_start, 1),
+                            };
+                            Ok(span)
+                        } else {
+                            trace!("Did not expect closing brace, expected {:?}", expectation);
+                            Err(DeserErrorKind::UnexpectedChar {
                                 got: '}',
                                 wanted: "a value",
-                            },
-                        })
+                            }
+                            .with_span(Span::new(token_start, 1)))
+                        }
                     }
-                }
-                b'[' => {
-                    nd.runner.input = &nd.runner.input[1..];
-                    Ok(Outcome::ListStarted)
-                }
-                b']' => {
-                    if expectation == Expectation::ListItemOrListClose {
-                        nd.runner.input = &nd.runner.input[1..];
-                        Ok(Outcome::ListEnded)
-                    } else {
-                        Err(DeserError {
-                            input: nd.runner.input.into(),
-                            span: nd.runner.last_span,
-                            kind: DeserErrorKind::UnexpectedChar {
+                    b'[' => {
+                        let span = facet_deserialize_eventbased::Spanned {
+                            node: Outcome::ListStarted,
+                            span: Span::new(token_start, 1),
+                        };
+                        Ok(span)
+                    }
+                    b']' => {
+                        if expectation == Expectation::ListItemOrListClose {
+                            let span = facet_deserialize_eventbased::Spanned {
+                                node: Outcome::ListEnded,
+                                span: Span::new(token_start, 1),
+                            };
+                            Ok(span)
+                        } else {
+                            Err(DeserErrorKind::UnexpectedChar {
                                 got: ']',
                                 wanted: "a value",
-                            },
-                        })
+                            }
+                            .with_span(Span::new(token_start, 1)))
+                        }
                     }
-                }
-                c => Err(DeserError {
-                    input: nd.runner.input.into(),
-                    span: nd.runner.last_span,
-                    kind: DeserErrorKind::UnexpectedChar {
+                    c => Err(DeserErrorKind::UnexpectedChar {
                         got: c as char,
-                        wanted: "a value",
-                    },
-                }),
+                        wanted: "value",
+                    }
+                    .with_span(Span::new(token_start, 1))),
+                }
             };
             return (nd, res);
         }

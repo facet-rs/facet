@@ -29,6 +29,12 @@ impl DeserError<'_> {
             kind: self.kind,
         }
     }
+
+    /// Sets the span of this error
+    pub fn with_span(mut self, span: Span) -> Self {
+        self.span = span;
+        self
+    }
 }
 
 /// An error kind for JSON parsing.
@@ -127,22 +133,17 @@ impl core::fmt::Display for DeserErrorMessage<'_> {
             DeserErrorKind::UnexpectedByte { got, wanted } => write!(
                 f,
                 "Unexpected byte: got 0x{:02X}, wanted {}",
-                got,
-                wanted.red()
+                got.red(),
+                wanted.yellow()
             ),
             DeserErrorKind::UnexpectedChar { got, wanted } => write!(
                 f,
                 "Unexpected character: got '{}', wanted {}",
-                got,
-                wanted.red()
+                got.red(),
+                wanted.yellow()
             ),
             DeserErrorKind::UnexpectedOutcome { got, wanted } => {
-                write!(
-                    f,
-                    "Unexpected outcome: got {}, wanted {}",
-                    got.red(),
-                    wanted.red()
-                )
+                write!(f, "Unexpected {}, wanted {}", got.red(), wanted.yellow())
             }
             DeserErrorKind::UnexpectedEof { wanted } => {
                 write!(f, "Unexpected end of file: wanted {}", wanted.red())
@@ -237,18 +238,60 @@ impl core::fmt::Display for DeserError<'_> {
 
         let source = Source::from(input_str);
 
-        let mut writer = Vec::new();
+        struct FmtWriter<'a, 'b: 'a> {
+            f: &'a mut core::fmt::Formatter<'b>,
+            error: Option<core::fmt::Error>,
+        }
+
+        impl core::fmt::Write for FmtWriter<'_, '_> {
+            fn write_str(&mut self, s: &str) -> core::fmt::Result {
+                if self.error.is_some() {
+                    // Already failed, do nothing
+                    return Err(core::fmt::Error);
+                }
+                if let Err(e) = self.f.write_str(s) {
+                    self.error = Some(e);
+                    Err(core::fmt::Error)
+                } else {
+                    Ok(())
+                }
+            }
+        }
+
+        struct IoWriter<'a, 'b: 'a> {
+            inner: FmtWriter<'a, 'b>,
+        }
+
+        impl std::io::Write for IoWriter<'_, '_> {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                match core::str::from_utf8(buf) {
+                    Ok(s) => match core::fmt::Write::write_str(&mut self.inner, s) {
+                        Ok(()) => Ok(buf.len()),
+                        Err(_) => Err(std::io::ErrorKind::Other.into()),
+                    },
+                    Err(_) => Err(std::io::ErrorKind::InvalidData.into()),
+                }
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
         let cache = (source_id, &source);
 
-        if report.finish().write(cache, &mut writer).is_err() {
+        let fmt_writer = FmtWriter { f, error: None };
+        let mut io_writer = IoWriter { inner: fmt_writer };
+
+        if report.finish().write(cache, &mut io_writer).is_err() {
             return write!(f, "Error formatting with ariadne");
         }
 
-        if let Ok(output) = String::from_utf8(writer) {
-            write!(f, "{}", output)
-        } else {
-            write!(f, "Error converting ariadne output to string")
+        // Check if our adapter ran into a formatting error
+        if io_writer.inner.error.is_some() {
+            return write!(f, "Error writing ariadne output to fmt::Formatter");
         }
+
+        Ok(())
     }
 }
 

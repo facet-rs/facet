@@ -29,7 +29,10 @@ impl Wip<'_> {
         if index >= def.variants.len() {
             return Err(ReflectError::FieldError {
                 shape,
-                field_error: FieldError::IndexOutOfBounds,
+                field_error: FieldError::IndexOutOfBounds {
+                    index,
+                    bound: def.variants.len(),
+                },
             });
         }
 
