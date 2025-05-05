@@ -75,26 +75,58 @@ impl Format for Json {
 
             let res = 'body: {
                 match next {
-                    b'0'..=b'9' => {
+                    b'0'..=b'9' | b'-' | b'.' => {
                         trace!("Found number");
+                        let mut has_decimal = next == b'.';
+                        let is_negative = next == b'-';
+
+                        n += 1; // Move past the first character
+
+                        // Parse the rest of the number
                         while let Some(next) = nd.input().get(n) {
                             if *next >= b'0' && *next <= b'9' {
+                                n += 1;
+                            } else if *next == b'.' && !has_decimal {
+                                has_decimal = true;
                                 n += 1;
                             } else {
                                 break;
                             }
                         }
+
                         let num_slice = &nd.input()[token_start..n];
                         match core::str::from_utf8(num_slice) {
-                            Ok(num_str) => match num_str.parse::<u64>() {
-                                Ok(number) => Ok(Outcome::from(Scalar::U64(number))
-                                    .with_span(Span::new(token_start, n - token_start))),
-                                Err(_) => Err(DeserErrorKind::NumberOutOfRange(
-                                    // As a fallback, try parsing as f64 just for a better message
-                                    num_str.parse::<f64>().unwrap_or(f64::NAN),
-                                )
-                                .with_span(Span::new(token_start, n - token_start))),
-                            },
+                            Ok(num_str) => {
+                                if has_decimal {
+                                    // Parse as f64 for decimal numbers
+                                    match num_str.parse::<f64>() {
+                                        Ok(number) => Ok(Outcome::from(Scalar::F64(number))
+                                            .with_span(Span::new(token_start, n - token_start))),
+                                        Err(_) => Err(DeserErrorKind::NumberOutOfRange(f64::NAN)
+                                            .with_span(Span::new(token_start, n - token_start))),
+                                    }
+                                } else if is_negative {
+                                    // Parse as i64 for negative integers
+                                    match num_str.parse::<i64>() {
+                                        Ok(number) => Ok(Outcome::from(Scalar::I64(number))
+                                            .with_span(Span::new(token_start, n - token_start))),
+                                        Err(_) => Err(DeserErrorKind::NumberOutOfRange(
+                                            num_str.parse::<f64>().unwrap_or(f64::NAN),
+                                        )
+                                        .with_span(Span::new(token_start, n - token_start))),
+                                    }
+                                } else {
+                                    // Parse as u64 for positive integers
+                                    match num_str.parse::<u64>() {
+                                        Ok(number) => Ok(Outcome::from(Scalar::U64(number))
+                                            .with_span(Span::new(token_start, n - token_start))),
+                                        Err(_) => Err(DeserErrorKind::NumberOutOfRange(
+                                            num_str.parse::<f64>().unwrap_or(f64::NAN),
+                                        )
+                                        .with_span(Span::new(token_start, n - token_start))),
+                                    }
+                                }
+                            }
                             Err(e) => Err(DeserErrorKind::InvalidUtf8(e.to_string())
                                 .with_span(Span::new(token_start, n - token_start))),
                         }

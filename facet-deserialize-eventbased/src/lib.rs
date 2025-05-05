@@ -194,6 +194,8 @@ pub enum PopReason {
     TopLevel,
     /// Ending a value within an object.
     ObjectVal,
+    /// Ending value within a list
+    ListVal,
     /// Ending a `Some()` in an option
     Some,
 }
@@ -467,6 +469,12 @@ impl<'input> StackRunner<'input> {
         mut wip: Wip<'facet>,
         outcome: Spanned<Outcome<'input>>,
     ) -> Result<Wip<'facet>, DeserError<'input>> {
+        trace!(
+            "Handling value at wip shape {} (wip innermost shape {})",
+            wip.shape().blue(),
+            wip.innermost_shape().yellow()
+        );
+
         match outcome.node {
             Outcome::Scalar(Scalar::Null) => {
                 return wip.put_default().map_err(|e| self.reflect_err(e));
@@ -722,22 +730,20 @@ impl<'input> StackRunner<'input> {
                 trace!("List close");
                 Ok(wip)
             }
-            Outcome::Scalar(scalar) => {
-                trace!("In list_item_or_item_list_close, got ");
-                wip = wip.push().map_err(|e| self.reflect_err(e))?;
-                wip = self.handle_scalar(wip, scalar)?;
-                wip = wip.pop().map_err(|e| self.reflect_err(e))?;
-
+            _ => {
                 self.stack.push(Instruction::ListItemOrListClose);
+                self.stack.push(Instruction::Pop(PopReason::ListVal));
 
+                trace!(
+                    "Expecting list item, doing a little push before doing value with outcome {}",
+                    outcome.magenta()
+                );
+                trace!("Before push, wip.shape is {}", wip.shape().blue());
+                wip = wip.push().map_err(|e| self.reflect_err(e))?;
+                trace!(" After push, wip.shape is {}", wip.shape().cyan());
+                wip = self.value(wip, outcome)?;
                 Ok(wip)
             }
-            _ => Err(self
-                .err(DeserErrorKind::UnexpectedOutcome {
-                    got: outcome.node.into_owned(),
-                    wanted: "scalar or list close",
-                })
-                .with_span(outcome.span)),
         }
     }
 }
