@@ -150,7 +150,9 @@ impl<'a> JsonDeserializer<'a> {
             }
             None => {
                 trace!("Peek requires reading a token...");
+                let correct_span = self.last_span;
                 let token = self.read_token()?;
+                self.last_span = correct_span;
                 self.unread_token = Some(token.clone());
                 Ok(token)
             }
@@ -610,7 +612,7 @@ impl<'a> facet_deserialize_externally_driven::Deserializer for JsonDeserializer<
         let token = self.peek_token()?;
         let is_none = token.node == Token::Null;
         if is_none {
-            self.clear_unread_token();
+            self.read_token()?;
         }
         trace!("Checking if Option is None: {is_none}");
         Ok(is_none)
@@ -663,7 +665,7 @@ impl<'a> facet_deserialize_externally_driven::Deserializer for JsonDeserializer<
             Token::String(variant_name) => {
                 // This is a unit variant represented as a string
                 trace!("Found string variant: {variant_name:?}");
-                self.clear_unread_token(); // Consume the token
+                self.read_token()?; // Consume the token
                 // Return the variant name as a &'static str - the Facet deserializer
                 // will handle looking up the correct variant index
                 Ok(variant_name)
@@ -711,7 +713,7 @@ impl<'a> facet_deserialize_externally_driven::Deserializer for JsonDeserializer<
         match token.node {
             Token::LBrace => {
                 trace!("Found opening brace for object");
-                self.clear_unread_token();
+                self.read_token()?;
                 Ok(None) // Size unknown in JSON
             }
             _ => {
@@ -803,10 +805,10 @@ impl<'a> facet_deserialize_externally_driven::Deserializer for JsonDeserializer<
         match token.node {
             Token::String(field_name) => {
                 trace!("Found field name: {field_name:?}");
-                self.clear_unread_token(); // Consume the string token
+                self.read_token()?; // Consume the string token
 
                 // Look for the colon
-                let colon = self.read_token()?;
+                let colon = self.peek_token()?;
                 if colon.node != Token::Colon {
                     trace!("Expected : after field name, got: {:?}", colon.node);
                     return Err(JsonError::new_unexpected(
@@ -816,7 +818,7 @@ impl<'a> facet_deserialize_externally_driven::Deserializer for JsonDeserializer<
                         self.last_span,
                     ));
                 }
-
+                self.clear_unread_token(); // Consume the colon
                 self.current_field_name = Some(field_name.clone());
                 Ok(Some(field_name))
             }
@@ -850,7 +852,7 @@ impl<'a> facet_deserialize_externally_driven::Deserializer for JsonDeserializer<
             }
             Token::Comma => {
                 trace!("Found comma, more items available");
-                self.clear_unread_token(); // Consume the comma
+                self.clear_unread_token(); // Consume the comma TODO THIS IS BAD
                 Ok(true)
             }
             // First element doesn't have a comma
@@ -859,8 +861,8 @@ impl<'a> facet_deserialize_externally_driven::Deserializer for JsonDeserializer<
                 Ok(true)
             }
             _ => {
-                // trace!("Expected comma or end of collection, got: {:?}", token.node);
-                // Err(JsonError::new_unexpected_token(
+                trace!("Expected comma or end of collection, got: {:?}", token.node);
+                // Err(JsonError::new_unexpected(
                 //     token.node,
                 //     ", or end of collection",
                 //     self.input,

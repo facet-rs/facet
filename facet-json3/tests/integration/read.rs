@@ -1,3 +1,4 @@
+mod benches;
 mod bool;
 mod deny_unknown_and_default;
 mod diagnostics;

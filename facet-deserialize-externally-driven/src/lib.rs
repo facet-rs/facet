@@ -341,6 +341,7 @@ impl<'f, D: Deserializer> Runner<'_, 'f, D> {
                 trace!("Optional value is Some, entering Some variant");
                 // It's Some, continue with the inner value
                 self.wip = self.wip.push_some()?;
+                self.stack.push(DeserializeOp::Pop);
             }
         }
 
@@ -517,9 +518,9 @@ impl<'f, D: Deserializer> Runner<'_, 'f, D> {
                     .iter()
                     .position(|v| v.name == variant_name)
                     .unwrap();
-                let def = dbg!(self.wip.shape()).def.into_enum().unwrap().variants[def_idx].data;
+                let def = self.wip.shape().def.into_enum().unwrap().variants[def_idx].data;
 
-                match dbg!(def) {
+                match def {
                     facet_core::StructDef {
                         kind: StructKind::Unit,
                         ..
@@ -556,19 +557,6 @@ impl<'f, D: Deserializer> Runner<'_, 'f, D> {
                         self.wip = self.wip.begin_pushback()?;
                         self.stack.push(DeserializeOp::End(EndContext::Array));
                         self.stack.push(DeserializeOp::ArrayItem);
-                        // self.stack.push(DeserializeOp::)
-
-                        // // Process fields in reverse order to get them right on the stack
-                        // for index in 0..def.fields.len() {
-                        //     self.stack.push(DeserializeOp::ArrayComma);
-                        //     self.stack.push(DeserializeOp::Pop);
-                        //     self.stack.push(DeserializeOp::Value);
-                        //     self.wip = self.wip.field(index).map_err(|e| {
-                        //         DeserializeError::Custom(format!(
-                        //             "Failed to get variant field {index}: {e}"
-                        //         ))
-                        //     })?;
-                        // }
                     }
                     facet_core::StructDef {
                         kind: StructKind::Struct,
@@ -662,11 +650,10 @@ impl<'f, D: Deserializer> Runner<'_, 'f, D> {
             // Push next operations to handle the field value
             self.stack.push(DeserializeOp::ObjectComma);
             self.stack.push(DeserializeOp::Pop);
+            self.stack.push(DeserializeOp::Value);
 
             // We'll process the next value and then return to the struct
             self.wip = self.wip.field(field_index)?;
-
-            self.stack.push(DeserializeOp::Value);
         } else {
             if self.wip.shape().has_deny_unknown_fields_attr() {
                 return Err(DeserializeError::UnknownField {
@@ -684,7 +671,6 @@ impl<'f, D: Deserializer> Runner<'_, 'f, D> {
 
     fn handle_object_comma(mut self) -> DeserializeResult<Self, D::Error> {
         trace!("Handling object comma");
-        // Pop back to parent struct after field is processed
 
         if self
             .deserializer
