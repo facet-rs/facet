@@ -13,7 +13,7 @@ use alloc::borrow::Cow;
 pub use error::*;
 
 mod span;
-use facet_core::{Characteristic, Def, Facet, FieldFlags};
+use facet_core::{Characteristic, Def, Facet, FieldFlags, ScalarAffinity};
 use owo_colors::OwoColorize;
 pub use span::*;
 
@@ -34,13 +34,15 @@ pub enum Scalar<'input> {
     I64(i64),
     /// 64-bit floating-point scalar.
     F64(f64),
+    /// Boolean scalar.
+    Bool(bool),
 }
 
 #[derive(PartialEq, Debug, Clone)]
 /// Expected next input token or structure during deserialization.
 pub enum Expectation {
-    /// Accept any token.
-    Any,
+    /// Accept a value.
+    Value,
     /// Expect an object key or the end of an object.
     ObjectKeyOrObjectClose,
     /// Expect a value inside an object.
@@ -73,6 +75,7 @@ impl Outcome<'_> {
                     Scalar::U64(val) => Scalar::U64(val),
                     Scalar::I64(val) => Scalar::I64(val),
                     Scalar::F64(val) => Scalar::F64(val),
+                    Scalar::Bool(val) => Scalar::Bool(val),
                 };
                 Outcome::GotScalar(owned_scalar)
             }
@@ -214,7 +217,7 @@ where
             Instruction::Value(_why) => {
                 let nd = NextData { runner, wip };
                 let expectation = match _why {
-                    ValueReason::TopLevel => Expectation::Any,
+                    ValueReason::TopLevel => Expectation::Value,
                     ValueReason::ObjectVal => Expectation::ObjectVal,
                 };
                 let (nd, res) = F::next(nd, expectation);
@@ -376,6 +379,42 @@ impl<'input> StackRunner<'input> {
         Ok(wip)
     }
 
+    /// Internal common handler for GotScalar outcome, to deduplicate code.
+    fn handle_scalar<'facet>(
+        &self,
+        mut wip: Wip<'facet>,
+        scalar: Scalar<'input>,
+    ) -> Result<Wip<'facet>, DeserError<'input>> {
+        match scalar {
+            Scalar::String(cow) => {
+                wip = wip
+                    .put(cow.to_string())
+                    .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
+            }
+            Scalar::U64(value) => {
+                wip = wip
+                    .put(value)
+                    .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
+            }
+            Scalar::I64(value) => {
+                wip = wip
+                    .put(value)
+                    .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
+            }
+            Scalar::F64(value) => {
+                wip = wip
+                    .put(value)
+                    .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
+            }
+            Scalar::Bool(value) => {
+                wip = wip
+                    .put(value)
+                    .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
+            }
+        }
+        Ok(wip)
+    }
+
     /// Handle value parsing
     fn value<'facet>(
         &mut self,
@@ -383,28 +422,9 @@ impl<'input> StackRunner<'input> {
         outcome: Outcome<'input>,
     ) -> Result<Wip<'facet>, DeserError<'input>> {
         match outcome {
-            Outcome::GotScalar(s) => match s {
-                Scalar::String(cow) => {
-                    wip = wip
-                        .put(cow.to_string())
-                        .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
-                }
-                Scalar::U64(value) => {
-                    wip = wip
-                        .put(value)
-                        .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
-                }
-                Scalar::I64(value) => {
-                    wip = wip
-                        .put(value)
-                        .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
-                }
-                Scalar::F64(value) => {
-                    wip = wip
-                        .put(value)
-                        .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
-                }
-            },
+            Outcome::GotScalar(s) => {
+                wip = self.handle_scalar(wip, s)?;
+            }
             Outcome::ListStarted => {
                 match wip.innermost_shape().def {
                     Def::Array(_) => {
@@ -427,6 +447,23 @@ impl<'input> StackRunner<'input> {
                         wip = wip
                             .put_default()
                             .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
+                    }
+                    Def::Scalar(sd) => {
+                        if matches!(sd.affinity, ScalarAffinity::Empty(_)) {
+                            trace!("Empty tuple/scalar, nice");
+                            wip = wip.put_default().map_err(|e| {
+                                DeserError::new_reflect(e, self.input, self.last_span)
+                            })?;
+                        } else {
+                            return Err(DeserError::new(
+                                DeserErrorKind::UnsupportedType {
+                                    got: wip.innermost_shape(),
+                                    wanted: "array, list, tuple, or slice",
+                                },
+                                self.input,
+                                self.last_span,
+                            ));
+                        }
                     }
                     _ => {
                         return Err(DeserError::new(
@@ -659,13 +696,15 @@ impl<'input> StackRunner<'input> {
                 Ok(wip)
             }
             _ => Err(DeserError::new(
-                DeserErrorKind::UnexpectedOutcome(outcome.into_owned()),
+                DeserErrorKind::UnexpectedOutcome {
+                    got: outcome.into_owned(),
+                    wanted: "scalar or object close",
+                },
                 self.input,
                 self.last_span,
             )),
         }
     }
-
     fn list_item_or_list_close<'facet>(
         &mut self,
         mut wip: Wip<'facet>,
@@ -684,28 +723,7 @@ impl<'input> StackRunner<'input> {
                 wip = wip
                     .push()
                     .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
-                match scalar {
-                    Scalar::String(cow) => {
-                        wip = wip
-                            .put(cow.to_string())
-                            .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
-                    }
-                    Scalar::U64(value) => {
-                        wip = wip
-                            .put(value)
-                            .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
-                    }
-                    Scalar::I64(value) => {
-                        wip = wip
-                            .put(value)
-                            .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
-                    }
-                    Scalar::F64(value) => {
-                        wip = wip
-                            .put(value)
-                            .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
-                    }
-                }
+                wip = self.handle_scalar(wip, scalar)?;
                 wip = wip
                     .pop()
                     .map_err(|e| DeserError::new_reflect(e, self.input, self.last_span))?;
@@ -715,7 +733,10 @@ impl<'input> StackRunner<'input> {
                 Ok(wip)
             }
             _ => Err(DeserError::new(
-                DeserErrorKind::UnexpectedOutcome(outcome.into_owned()),
+                DeserErrorKind::UnexpectedOutcome {
+                    got: outcome.into_owned(),
+                    wanted: "scalar or list close",
+                },
                 self.input,
                 self.last_span,
             )),

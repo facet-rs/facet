@@ -446,6 +446,8 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-deserialize-eventbased",
+ "facet-reflect",
+ "facet-serialize",
  "facet-testhelpers 0.17.0",
  "insta",
  "log",

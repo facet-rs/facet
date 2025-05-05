@@ -13,7 +13,7 @@ fn test_eof_errors() {
     let err = result.unwrap_err();
     assert!(matches!(
         err.kind,
-        DeserErrorKind::UnexpectedEof("in value")
+        DeserErrorKind::UnexpectedEof { wanted, .. } if wanted.contains("any value")
     ));
 
     // Test partial input for various types
@@ -21,21 +21,15 @@ fn test_eof_errors() {
     let err = result.unwrap_err();
     assert!(matches!(
         err.kind,
-        DeserErrorKind::UnexpectedEof("in string literal")
+        DeserErrorKind::UnexpectedEof { wanted, .. } if wanted.contains("string")
     ));
     let result = from_str::<Vec<i32>>("[1, 2,");
     let err = result.unwrap_err();
-    assert!(matches!(
-        err.kind,
-        DeserErrorKind::UnexpectedEof("in value")
-    ));
+    assert!(matches!(err.kind, DeserErrorKind::UnexpectedEof { .. }));
 
     let result = from_str::<Vec<i32>>("[");
     let err = result.unwrap_err();
-    assert!(matches!(
-        err.kind,
-        DeserErrorKind::UnexpectedEof("in value")
-    ));
+    assert!(matches!(err.kind, DeserErrorKind::UnexpectedEof { .. }));
 
     // Test object with EOF after opening {
     #[derive(Facet, Debug)]
@@ -45,33 +39,24 @@ fn test_eof_errors() {
 
     let result = from_str::<SimpleObject>("{");
     let err = result.unwrap_err();
-    assert!(matches!(
-        err.kind,
-        DeserErrorKind::UnexpectedEof("in value")
-    ));
+    assert!(matches!(err.kind, DeserErrorKind::UnexpectedEof { .. }));
 
     // Test object with EOF after key
     let result = from_str::<SimpleObject>("{\"key\"");
     let err = result.unwrap_err();
-    assert!(matches!(
-        err.kind,
-        DeserErrorKind::UnexpectedEof("in value")
-    ));
+    assert!(matches!(err.kind, DeserErrorKind::UnexpectedEof { .. }));
 
     // Test object with EOF after colon
     let result = from_str::<SimpleObject>("{\"key\":");
     let err = result.unwrap_err();
-    assert!(matches!(
-        err.kind,
-        DeserErrorKind::UnexpectedEof("in value")
-    ));
+    assert!(matches!(err.kind, DeserErrorKind::UnexpectedEof { .. }));
 
     // Test string with escape followed by EOF
     let result = from_str::<String>("\"hello\\");
     let err = result.unwrap_err();
     assert!(matches!(
         err.kind,
-        DeserErrorKind::UnexpectedEof("in string escape")
+        DeserErrorKind::UnexpectedEof { wanted, .. } if wanted.contains("escape")
     ));
 }
 
@@ -95,7 +80,10 @@ fn test_null_handling() -> Result<()> {
     // Test with invalid null value
     let result = from_str::<Option<i32>>("nul");
     let err = result.unwrap_err();
-    assert!(matches!(err.kind, DeserErrorKind::UnexpectedChar('n')));
+    assert!(matches!(
+        err.kind,
+        DeserErrorKind::UnexpectedChar { got: 'n', .. }
+    ));
 
     // Test with correct null handling
     #[derive(Facet, Debug)]

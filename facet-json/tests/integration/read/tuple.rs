@@ -121,7 +121,7 @@ fn test_deserialize_tuple_mixed_i32_f32() -> Result<()> {
 }
 
 #[test]
-fn test_deserialize_tuple_empty() -> Result<()> {
+fn test_deserialize_tuple_empty_simple() -> Result<()> {
     let _ok: () = from_str(r#"[]"#)?;
 
     Ok(())

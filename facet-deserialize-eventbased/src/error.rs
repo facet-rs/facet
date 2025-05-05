@@ -34,14 +34,32 @@ impl DeserError<'_> {
 /// An error kind for JSON parsing.
 #[derive(Debug, PartialEq, Clone)]
 pub enum DeserErrorKind {
-    /// An unexpected byte was encountered in the input
-    UnexpectedByte(u8),
+    /// An unexpected byte was encountered in the input.
+    UnexpectedByte {
+        /// The byte that was found.
+        got: u8,
+        /// The expected value as a string description.
+        wanted: &'static str,
+    },
     /// An unexpected character was encountered in the input.
-    UnexpectedChar(char),
+    UnexpectedChar {
+        /// The character that was found.
+        got: char,
+        /// The expected value as a string description.
+        wanted: &'static str,
+    },
     /// An unexpected outcome was encountered in the input.
-    UnexpectedOutcome(Outcome<'static>),
+    UnexpectedOutcome {
+        /// The outcome that was found.
+        got: Outcome<'static>,
+        /// The expected value as a string description.
+        wanted: &'static str,
+    },
     /// The input ended unexpectedly while parsing JSON.
-    UnexpectedEof(&'static str),
+    UnexpectedEof {
+        /// The expected value as a string description.
+        wanted: &'static str,
+    },
     /// A required struct field was missing at the end of JSON input.
     MissingField(&'static str),
     /// A number is out of range.
@@ -106,13 +124,28 @@ pub struct DeserErrorMessage<'a>(&'a DeserError<'a>);
 impl core::fmt::Display for DeserErrorMessage<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match &self.0.kind {
-            DeserErrorKind::UnexpectedByte(b) => write!(f, "Unexpected byte: 0x{:02X}", b),
-            DeserErrorKind::UnexpectedChar(c) => write!(f, "Unexpected character: '{}'", c),
-            DeserErrorKind::UnexpectedOutcome(outcome) => {
-                write!(f, "Unexpected outcome: {:?}", outcome.red())
+            DeserErrorKind::UnexpectedByte { got, wanted } => write!(
+                f,
+                "Unexpected byte: got 0x{:02X}, wanted {}",
+                got,
+                wanted.red()
+            ),
+            DeserErrorKind::UnexpectedChar { got, wanted } => write!(
+                f,
+                "Unexpected character: got '{}', wanted {}",
+                got,
+                wanted.red()
+            ),
+            DeserErrorKind::UnexpectedOutcome { got, wanted } => {
+                write!(
+                    f,
+                    "Unexpected outcome: got {:?}, wanted {}",
+                    got.red(),
+                    wanted.red()
+                )
             }
-            DeserErrorKind::UnexpectedEof(msg) => {
-                write!(f, "Unexpected end of file: {}", msg.red())
+            DeserErrorKind::UnexpectedEof { wanted } => {
+                write!(f, "Unexpected end of file: wanted {}", wanted.red())
             }
             DeserErrorKind::MissingField(fld) => write!(f, "Missing required field: {}", fld.red()),
             DeserErrorKind::NumberOutOfRange(n) => {

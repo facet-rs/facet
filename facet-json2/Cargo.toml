@@ -15,6 +15,8 @@ default = ["std", "rich-diagnostics"]
 [dependencies]
 facet-core = { version = "0.20.0", path = "../facet-core" }
 facet-deserialize-eventbased = { version = "0.21.0", path = "../facet-deserialize-eventbased" }
+facet-reflect = { version = "0.18.2", path = "../facet-reflect" }
+facet-serialize = { version = "0.21.0", path = "../facet-serialize" }
 log = "0.4.27"
 
 [dev-dependencies]
