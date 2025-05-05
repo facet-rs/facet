@@ -579,11 +579,13 @@ fn deserialize_as_scalar<'input, 'a>(
         ScalarType::U16 => to_scalar::put_number::<u16>(toml, wip, item)?,
         ScalarType::U32 => to_scalar::put_number::<u32>(toml, wip, item)?,
         ScalarType::U64 => to_scalar::put_number::<u64>(toml, wip, item)?,
+        ScalarType::U128 => to_scalar::put_number::<u128>(toml, wip, item)?,
         ScalarType::USize => to_scalar::put_number::<usize>(toml, wip, item)?,
         ScalarType::I8 => to_scalar::put_number::<i8>(toml, wip, item)?,
         ScalarType::I16 => to_scalar::put_number::<i16>(toml, wip, item)?,
         ScalarType::I32 => to_scalar::put_number::<i32>(toml, wip, item)?,
         ScalarType::I64 => to_scalar::put_number::<i64>(toml, wip, item)?,
+        ScalarType::I128 => to_scalar::put_number::<i128>(toml, wip, item)?,
         ScalarType::ISize => to_scalar::put_number::<isize>(toml, wip, item)?,
 
         // Use the from_str method if available
