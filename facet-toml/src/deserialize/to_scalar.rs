@@ -91,9 +91,10 @@ pub(crate) fn put_boolean<'input, 'a>(
         )
     })?;
 
-    let value = match v {
-        Value::Boolean(boolean) => Ok(*boolean.value()),
-        _ => Err(TomlDeError::new(
+    let value = if let Value::Boolean(boolean) = v {
+        *boolean.value()
+    } else {
+        return Err(TomlDeError::new(
             toml,
             TomlDeErrorKind::ExpectedType {
                 expected: "boolean",
@@ -101,8 +102,59 @@ pub(crate) fn put_boolean<'input, 'a>(
             },
             v.span(),
             wip.path(),
-        )),
-    }?;
+        ));
+    };
+
+    // TODO: only generate if actually error
+    let path = wip.path();
+    wip.put(value)
+        .map_err(|e| TomlDeError::new(toml, TomlDeErrorKind::GenericReflect(e), item.span(), path))
+}
+
+/// Try to convert a TOML char to a Rust char.
+pub(crate) fn put_char<'input, 'a>(
+    toml: &'input str,
+    wip: Wip<'a>,
+    item: &Item,
+) -> Result<Wip<'a>, TomlDeError<'input>> {
+    let v = item.as_value().ok_or_else(|| {
+        TomlDeError::new(
+            toml,
+            TomlDeErrorKind::ExpectedType {
+                expected: "value",
+                got: item.type_name(),
+            },
+            item.span(),
+            wip.path(),
+        )
+    })?;
+
+    let value = if let Value::String(string) = v {
+        let value = string.value();
+        if value.len() > 1 || value.is_empty() {
+            return Err(TomlDeError::new(
+                toml,
+                TomlDeErrorKind::ExpectedType {
+                    expected: "char",
+                    got: v.type_name(),
+                },
+                v.span(),
+                wip.path(),
+            ));
+        }
+
+        value.chars().next().unwrap()
+    } else {
+        return Err(TomlDeError::new(
+            toml,
+            TomlDeErrorKind::ExpectedType {
+                expected: "string",
+                got: v.type_name(),
+            },
+            v.span(),
+            wip.path(),
+        ));
+    };
 
     // TODO: only generate if actually error
     let path = wip.path();

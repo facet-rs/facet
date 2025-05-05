@@ -104,6 +104,32 @@ fn test_bool() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn test_char() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Root {
+        value: char,
+    }
+
+    assert_eq!(
+        facet_toml::from_str::<Root>("value = 'c'")?,
+        Root { value: 'c' },
+    );
+    assert_eq!(
+        facet_toml::from_str::<Root>("value = 'long'")
+            .unwrap_err()
+            .kind,
+        TomlDeErrorKind::ExpectedType {
+            expected: "char",
+            got: "string"
+        }
+    );
+
+    Ok(())
+}
+
 #[cfg(feature = "std")]
 #[test]
 fn test_socket_addr() -> Result<()> {

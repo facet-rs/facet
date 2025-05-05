@@ -568,6 +568,7 @@ fn deserialize_as_scalar<'input, 'a>(
         ScalarType::Unit => wip,
 
         ScalarType::Bool => to_scalar::put_boolean(toml, wip, item)?,
+        ScalarType::Char => to_scalar::put_char(toml, wip, item)?,
 
         // Regular String and &str are handled by from_str
         #[cfg(feature = "alloc")]
