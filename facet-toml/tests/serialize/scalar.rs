@@ -315,3 +315,38 @@ fn test_i8() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_optional_scalar() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Root {
+        value: Option<i8>,
+    }
+
+    assert_serialize!(Root, Root { value: None });
+    assert_serialize!(Root, Root { value: Some(1) });
+
+    Ok(())
+}
+
+#[test]
+fn test_nested_optional_scalar() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Root {
+        value: Option<Option<Option<i8>>>,
+    }
+
+    assert_serialize!(
+        Root,
+        Root {
+            value: Some(Some(Some(1)))
+        }
+    );
+    assert_serialize!(Root, Root { value: None });
+
+    Ok(())
+}

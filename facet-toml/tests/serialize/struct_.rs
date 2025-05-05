@@ -89,7 +89,7 @@ fn test_root_struct_multiple_fields() -> Result<()> {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         a: i32,
-        b: bool,
+        b: Option<bool>,
         c: String,
     }
 
@@ -97,7 +97,7 @@ fn test_root_struct_multiple_fields() -> Result<()> {
         Root,
         Root {
             a: 1,
-            b: true,
+            b: Some(true),
             c: "'' \"test ".to_string()
         },
     );
@@ -208,7 +208,33 @@ fn test_default_struct_fields() -> Result<()> {
         Root {
             a: i32::default(),
             b: bool::default(),
-            c: "hi".to_owned()
+            c: "hi".to_string()
+        },
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_optional_default_struct_fields() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Root {
+        #[facet(default)]
+        a: Option<i32>,
+        #[facet(default)]
+        b: Option<bool>,
+        #[facet(default = Some("hi".to_owned()))]
+        c: Option<String>,
+    }
+
+    assert_serialize!(
+        Root,
+        Root {
+            a: None,
+            b: Some(bool::default()),
+            c: Some("hi".to_string())
         },
     );
 

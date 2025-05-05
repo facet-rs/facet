@@ -188,7 +188,7 @@ impl Serializer for TomlSerializer {
     }
 
     fn serialize_none(&mut self) -> Result<(), Self::Error> {
-        todo!()
+        Ok(())
     }
 
     fn serialize_unit(&mut self) -> Result<(), Self::Error> {

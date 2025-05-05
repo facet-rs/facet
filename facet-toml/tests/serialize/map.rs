@@ -34,6 +34,34 @@ fn test_scalar_map() -> Result<()> {
 }
 
 #[test]
+fn test_optional_scalar_map() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Root {
+        values: Option<HashMap<String, i32>>,
+    }
+
+    assert_serialize!(Root, Root { values: None },);
+
+    assert_serialize!(
+        Root,
+        Root {
+            values: Some(HashMap::new())
+        },
+    );
+
+    assert_serialize!(
+        Root,
+        Root {
+            values: Some([("a".to_string(), 0), ("b".to_string(), -1)].into())
+        },
+    );
+
+    Ok(())
+}
+
+#[test]
 fn test_scalar_map_with_other_fields() -> Result<()> {
     facet_testhelpers::setup();
 
@@ -126,6 +154,54 @@ fn test_struct_map() -> Result<()> {
                     Dependency {
                         version: "0.0.1".to_string(),
                         optional: true,
+                    }
+                )
+            ]
+            .into()
+        },
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_optional_struct_map() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Root {
+        dependencies: HashMap<String, Dependency>,
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Dependency {
+        version: Option<String>,
+        optional: Option<bool>,
+    }
+
+    assert_serialize!(
+        Root,
+        Root {
+            dependencies: [
+                (
+                    "syn".to_string(),
+                    Dependency {
+                        version: Some("1".to_string()),
+                        optional: None,
+                    }
+                ),
+                (
+                    "paste".to_string(),
+                    Dependency {
+                        version: None,
+                        optional: Some(true),
+                    }
+                ),
+                (
+                    "serde".to_string(),
+                    Dependency {
+                        version: None,
+                        optional: None,
                     }
                 )
             ]
