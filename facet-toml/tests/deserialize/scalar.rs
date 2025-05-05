@@ -3,7 +3,7 @@
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use eyre::Result;
-use facet::Facet;
+use facet::{ConstTypeId, Facet};
 use facet_toml::TomlDeErrorKind;
 
 #[cfg(feature = "std")]
@@ -532,11 +532,27 @@ fn test_i8() -> Result<()> {
 }
 
 #[test]
+fn test_unit() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Root {
+        value: (),
+    }
+
+    assert_eq!(facet_toml::from_str::<Root>("")?, Root { value: () });
+
+    Ok(())
+}
+
+#[test]
 fn test_unparsable_scalar() {
     facet_testhelpers::setup();
 
     assert_eq!(
-        facet_toml::from_str::<()>("value = 1").unwrap_err().kind,
-        TomlDeErrorKind::UnrecognizedScalar(<()>::SHAPE)
+        facet_toml::from_str::<ConstTypeId>("value = 1")
+            .unwrap_err()
+            .kind,
+        TomlDeErrorKind::UnrecognizedScalar(<ConstTypeId>::SHAPE)
     );
 }

@@ -12,6 +12,8 @@ pub enum TomlSerError {
         /// Type of the TOML value that's trying to be converted to a key.
         toml_type: &'static str,
     },
+    /// TOML doesn't support byte arrays.
+    UnsupportedByteArray,
 }
 
 impl core::fmt::Display for TomlSerError {
@@ -22,6 +24,9 @@ impl core::fmt::Display for TomlSerError {
             }
             Self::InvalidKeyConversion { toml_type } => {
                 write!(f, "Error converting type {toml_type} to TOML key")
+            }
+            Self::UnsupportedByteArray => {
+                write!(f, "TOML doesn't support byte arrays")
             }
         }
     }

@@ -195,7 +195,7 @@ impl Serializer for TomlSerializer {
     }
 
     fn serialize_bytes(&mut self, _value: &[u8]) -> Result<(), Self::Error> {
-        todo!()
+        Err(TomlSerError::UnsupportedByteArray)
     }
 
     fn serialize_none(&mut self) -> Result<(), Self::Error> {
@@ -203,7 +203,7 @@ impl Serializer for TomlSerializer {
     }
 
     fn serialize_unit(&mut self) -> Result<(), Self::Error> {
-        todo!()
+        Ok(())
     }
 
     fn serialize_unit_variant(

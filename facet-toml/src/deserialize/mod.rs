@@ -177,6 +177,9 @@ fn deserialize_as_struct<'input, 'a>(
                             wip.path(),
                         ));
                     }
+                } else if field.shape().is_type::<()>() {
+                    // Default of `()` is `()`
+                    reflect!(wip, toml, item.span(), put_default());
                 } else {
                     return Err(TomlDeError::new(
                         toml,
@@ -562,6 +565,8 @@ fn deserialize_as_scalar<'input, 'a>(
             wip.path(),
         )
     })? {
+        ScalarType::Unit => wip,
+
         ScalarType::Bool => to_scalar::put_boolean(toml, wip, item)?,
 
         // Regular String and &str are handled by from_str

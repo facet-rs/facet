@@ -353,6 +353,34 @@ fn test_nested_optional_scalar() -> Result<()> {
 }
 
 #[test]
+fn test_unit() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Root {
+        unit: (),
+    }
+
+    assert_serialize!(Root, Root { unit: () });
+
+    Ok(())
+}
+
+#[test]
+fn test_unit_option() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Root {
+        unit: Option<()>,
+    }
+
+    assert_serialize!(Root, Root { unit: None });
+
+    Ok(())
+}
+
+#[test]
 fn test_u64_out_of_range() -> Result<()> {
     facet_testhelpers::setup();
 
@@ -363,6 +391,40 @@ fn test_u64_out_of_range() -> Result<()> {
 
     assert!(matches!(
         facet_toml::to_string(&Root { value: u64::MAX }).unwrap_err(),
+        TomlSerError::InvalidNumberToI64Conversion { .. }
+    ));
+
+    Ok(())
+}
+
+#[test]
+fn test_u128_out_of_range() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Root {
+        value: u128,
+    }
+
+    assert!(matches!(
+        facet_toml::to_string(&Root { value: u128::MAX }).unwrap_err(),
+        TomlSerError::InvalidNumberToI64Conversion { .. }
+    ));
+
+    Ok(())
+}
+
+#[test]
+fn test_i128_out_of_range() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Root {
+        value: i128,
+    }
+
+    assert!(matches!(
+        facet_toml::to_string(&Root { value: i128::MAX }).unwrap_err(),
         TomlSerError::InvalidNumberToI64Conversion { .. }
     ));
 
