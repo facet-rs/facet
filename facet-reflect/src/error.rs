@@ -187,7 +187,7 @@ impl core::fmt::Display for ReflectError {
                 "{shape} does not implement characteristic {characteristic:?}",
             ),
             ReflectError::OperationFailed { shape, operation } => {
-                write!(f, "Operation '{}' failed for shape {}", operation, shape)
+                write!(f, "Operation failed on shape {}: {}", shape, operation)
             }
             ReflectError::FieldError { shape, field_error } => {
                 write!(f, "Field error for shape {}: {}", shape, field_error)

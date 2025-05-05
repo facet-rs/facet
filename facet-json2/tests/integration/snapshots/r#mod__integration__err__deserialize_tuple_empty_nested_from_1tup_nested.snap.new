@@ -1,0 +1,21 @@
+---
+source: facet-json2/tests/integration/err.rs
+assertion_line: 188
+expression: err
+---
+DeserError {
+    input: [
+        49,
+        48,
+        93,
+        93,
+    ],
+    span: Span {
+        start: 0,
+        len: 0,
+    },
+    kind: UnexpectedOutcome {
+        got: ListStarted,
+        wanted: "scalar or list close",
+    },
+}

@@ -185,6 +185,7 @@ fn test_deserialize_tuple_empty_nested_from_1tup() -> eyre::Result<()> {
 fn test_deserialize_tuple_empty_nested_from_1tup_nested() -> eyre::Result<()> {
     let result: Result<((),), _> = from_str("[[10]]");
     let err = result.unwrap_err();
+    insta::assert_debug_snapshot!(err);
     insta::assert_snapshot!(err);
 
     Ok(())

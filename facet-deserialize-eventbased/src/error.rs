@@ -139,7 +139,7 @@ impl core::fmt::Display for DeserErrorMessage<'_> {
             DeserErrorKind::UnexpectedOutcome { got, wanted } => {
                 write!(
                     f,
-                    "Unexpected outcome: got {:?}, wanted {}",
+                    "Unexpected outcome: got {}, wanted {}",
                     got.red(),
                     wanted.red()
                 )
