@@ -12,18 +12,14 @@ keywords = ["kdl", "serialization", "deserialization", "reflection", "facet"]
 categories = ["encoding", "parsing", "data-structures"]
 
 [features]
-std = ["alloc", "facet-core/std", "facet-reflect/std", "num-traits/std"]
+std = ["alloc", "facet-core/std", "facet-reflect/std"]
 alloc = ["facet-core/alloc", "facet-reflect/alloc"]
-rich-diagnostics = ["dep:ariadne", "std"]
-default = ["std", "rich-diagnostics"]
+default = ["std"]
 
 [dependencies]
-ariadne = { version = "=0.5.1", optional = true }
 log = "0.4.27"
-num-traits = { version = "0.2.19", default-features = false }
 facet-core = { version = "0.20.0", path = "../facet-core", default-features = false }
 facet-reflect = { version = "0.18.2", path = "../facet-reflect", default-features = false }
-owo-colors = "4.2.0"
 kdl = { git = "https://github.com/TheLostLambda/kdl-rs.git", branch = "free-of-syn" }
 
 [dev-dependencies]

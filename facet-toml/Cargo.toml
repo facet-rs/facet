@@ -24,7 +24,6 @@ num-traits = { version = "0.2.19", default-features = false }
 toml_edit = { version = "0.22.26", default-features = false, features = [
     "parse",
 ], optional = true }
-toml_write = { version = "0.1.1", default-features = false, optional = true }
 facet-core = { version = "0.20.0", path = "../facet-core", default-features = false }
 facet-reflect = { version = "0.18.2", path = "../facet-reflect", default-features = false }
 facet-serialize = { version = "0.21.0", path = "../facet-serialize", default-features = false, optional = true }

@@ -18,7 +18,7 @@ categories = ["development-tools", "encoding"]
 [dependencies]
 facet-core = { version = "0.20.0", path = "../facet-core" }
 facet-derive = { version = "0.18.4", path = "../facet-derive" }
-facet-reflect = { version = "0.18.2", path = "../facet-reflect" }
+
 [dev-dependencies]
 insta = "1.43.1"
 facet = { path = "../facet" }
