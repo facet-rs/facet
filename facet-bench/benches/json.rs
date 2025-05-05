@@ -132,14 +132,14 @@ struct Wide {
     field26: bool,
     field27: Option<String>,
     field28: Vec<u32>,
-    field29: HashMap<String, i32>,
+    // field29: HashMap<String, i32>,
     field30: Nested0,
 }
 
 fn create_wide() -> Wide {
-    let mut map = HashMap::new();
-    map.insert("a".to_string(), 1);
-    map.insert("b".to_string(), 2);
+    // let mut map = HashMap::new();
+    // map.insert("a".to_string(), 1);
+    // map.insert("b".to_string(), 2);
 
     Wide {
         field01: "value 01".to_string(),
@@ -170,7 +170,7 @@ fn create_wide() -> Wide {
         field26: false,
         field27: None,
         field28: vec![],
-        field29: map,
+        // field29: map,
         field30: Nested0 {
             id: 0,
             name: "Base Nested".to_string(),
