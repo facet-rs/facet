@@ -6,25 +6,27 @@ compile_error!("feature `alloc` is required");
 mod error;
 
 use alloc::{
+    borrow::Cow,
     format,
     string::{String, ToString},
     vec::Vec,
 };
+use core::borrow::Borrow as _;
 
 pub use error::TomlSerError;
 use facet_serialize::{Serialize, Serializer};
 use log::trace;
 use toml_edit::{DocumentMut, Item, Table, Value};
-use yansi::{Paint as _, Painted};
+use yansi::Paint as _;
 
 /// Serializer for TOML values.
 pub struct TomlSerializer {
     /// The TOML document.
     document: DocumentMut,
     /// Current stack of where we are in the tree.
-    key_stack: Vec<Key>,
+    key_stack: Vec<Cow<'static, str>>,
     /// What type the current item is.
-    current: CurrentType,
+    current: KeyOrValue,
 }
 
 impl TomlSerializer {
@@ -33,7 +35,7 @@ impl TomlSerializer {
         Self {
             document: DocumentMut::new(),
             key_stack: Vec::new(),
-            current: CurrentType::Regular,
+            current: KeyOrValue::Value,
         }
     }
 
@@ -52,12 +54,12 @@ impl TomlSerializer {
         let value = value.into();
 
         match self.current {
-            CurrentType::Regular | CurrentType::MapValue => {
-                // Write the value
+            // Write the value
+            KeyOrValue::Value => {
                 self.set_current_item(value);
             }
             // Push the value as a new item
-            CurrentType::MapKey => {
+            KeyOrValue::Key => {
                 let map_key = value
                     .clone()
                     .as_str()
@@ -65,7 +67,7 @@ impl TomlSerializer {
                         toml_type: value.type_name(),
                     })?
                     .to_string();
-                self.push_key(Key::MapValue(map_key), "map key");
+                self.push_key(Cow::Owned(map_key), "map key");
             }
         }
 
@@ -88,7 +90,8 @@ impl TomlSerializer {
     fn item_mut(&'_ mut self) -> &'_ mut Item {
         let mut item = self.document.as_item_mut();
         for key in &self.key_stack {
-            item = &mut item[key.key()];
+            let key: &str = key.borrow();
+            item = &mut item[key];
         }
 
         item
@@ -96,12 +99,12 @@ impl TomlSerializer {
 
     /// Create a new empty item at the key.
     #[track_caller]
-    fn push_key(&mut self, key: Key, type_name: &'static str) {
+    fn push_key(&mut self, key: Cow<'static, str>, type_name: &'static str) {
         // Push empty item
         self.item_mut()
             .as_table_mut()
             .unwrap()
-            .insert(key.key(), Item::None);
+            .insert(key.borrow(), Item::None);
 
         // Push the key on the stack
         self.key_stack.push(key);
@@ -130,7 +133,7 @@ impl TomlSerializer {
             output = format!(
                 "{output}{}{}",
                 if first { "" } else { "." },
-                stack_item.colored_key()
+                stack_item.cyan()
             );
             first = false;
         }
@@ -154,8 +157,11 @@ impl Serializer for TomlSerializer {
     }
 
     fn serialize_u128(&mut self, value: u128) -> Result<(), Self::Error> {
-        let toml_number = TryInto::<i64>::try_into(value)
-            .map_err(|_| TomlSerError::InvalidNumberToI64Conversion { source_type: "u64" })?;
+        let toml_number = TryInto::<i64>::try_into(value).map_err(|_| {
+            TomlSerError::InvalidNumberToI64Conversion {
+                source_type: "u128",
+            }
+        })?;
         self.write_value(toml_number)
     }
 
@@ -164,8 +170,11 @@ impl Serializer for TomlSerializer {
     }
 
     fn serialize_i128(&mut self, value: i128) -> Result<(), Self::Error> {
-        let toml_number = TryInto::<i64>::try_into(value)
-            .map_err(|_| TomlSerError::InvalidNumberToI64Conversion { source_type: "u64" })?;
+        let toml_number = TryInto::<i64>::try_into(value).map_err(|_| {
+            TomlSerError::InvalidNumberToI64Conversion {
+                source_type: "i128",
+            }
+        })?;
         self.write_value(toml_number)
     }
 
@@ -232,33 +241,25 @@ impl Serializer for TomlSerializer {
     }
 
     fn serialize_field_name(&mut self, name: &'static str) -> Result<(), Self::Error> {
-        self.push_key(Key::Key(name), "field");
+        self.push_key(Cow::Borrowed(name), "field");
 
         Ok(())
     }
 
     fn begin_map_key(&mut self) -> Result<(), Self::Error> {
-        self.current = CurrentType::MapKey;
+        self.current = KeyOrValue::Key;
 
         Ok(())
     }
 
     fn end_map_key(&mut self) -> Result<(), Self::Error> {
-        self.current = CurrentType::Regular;
-
-        Ok(())
-    }
-
-    fn begin_map_value(&mut self) -> Result<(), Self::Error> {
-        self.current = CurrentType::MapValue;
+        self.current = KeyOrValue::Value;
 
         Ok(())
     }
 
     fn end_map_value(&mut self) -> Result<(), Self::Error> {
         self.pop_key("map item");
-
-        self.current = CurrentType::Regular;
 
         Ok(())
     }
@@ -272,40 +273,11 @@ impl Serializer for TomlSerializer {
 
 /// What type the current item is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CurrentType {
-    /// A regular value, can be a field, array item, etc.
-    Regular,
+enum KeyOrValue {
     /// First part of a map item.
-    MapKey,
-    /// Second part of a map item.
-    MapValue,
-}
-
-/// Current key part in the tree.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Key {
-    /// Regular table, used for most operations.
-    Key(&'static str),
-    /// Map item.
-    MapValue(String),
-}
-
-impl Key {
-    /// Get the key.
-    pub fn key(&'_ self) -> &'_ str {
-        match self {
-            Self::Key(key) => key,
-            Self::MapValue(key) => key.as_str(),
-        }
-    }
-
-    /// Get the with colors.
-    pub fn colored_key(&'_ self) -> Painted<&'_ str> {
-        match self {
-            Self::Key(key) => (*key).blue(),
-            Self::MapValue(key) => key.as_str().green(),
-        }
-    }
+    Key,
+    /// A regular value, can be a field, array item, etc.
+    Value,
 }
 
 /// Serialize any `Facet` type to a TOML string.
