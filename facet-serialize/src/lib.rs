@@ -11,7 +11,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use facet_core::{Def, Facet, Field, ShapeAttribute, StructKind};
-use facet_reflect::{HasFields, Peek, PeekList, PeekMap, PeekStruct};
+use facet_reflect::{HasFields, Peek, PeekList, PeekMap, PeekStruct, ScalarType};
 use log::debug;
 
 mod debug_serializer;
@@ -253,7 +253,7 @@ where
                     .shape()
                     .attributes
                     .iter()
-                    .any(|attr| matches!(attr, ShapeAttribute::Transparent))
+                    .any(|attr| *attr == ShapeAttribute::Transparent)
                 {
                     let old_shape = cpeek.shape();
 
@@ -271,74 +271,74 @@ where
                     Def::Scalar(_) => {
                         let cpeek = cpeek.innermost_peek();
 
-                        // Handle the unit type explicitly first if it's classified as Scalar
-                        if cpeek.shape().is_type::<()>() {
-                            serializer.serialize_unit()?
-                        }
                         // Dispatch to appropriate scalar serialization method based on type
-                        else if cpeek.shape().is_type::<bool>() {
-                            let value = cpeek.get::<bool>().unwrap();
-                            serializer.serialize_bool(*value)?
-                        } else if cpeek.shape().is_type::<String>() {
-                            let value = cpeek.get::<String>().unwrap();
-                            serializer.serialize_str(value)?
-                        } else if cpeek.shape().is_type::<alloc::borrow::Cow<'_, str>>() {
-                            let value = cpeek.get::<alloc::borrow::Cow<'_, str>>().unwrap();
-                            serializer.serialize_str(value.as_ref())?
-                        } else if cpeek.shape().is_type::<&str>() {
-                            let value = cpeek.get::<&str>().unwrap();
-                            serializer.serialize_str(value)?
-                        } else if cpeek.shape().is_type::<char>() {
-                            let value = cpeek.get::<char>().unwrap();
-                            serializer.serialize_char(*value)?
-                        }
-                        // Integer types
-                        else if cpeek.shape().is_type::<u8>() {
-                            let value = cpeek.get::<u8>().unwrap();
-                            serializer.serialize_u8(*value)?
-                        } else if cpeek.shape().is_type::<u16>() {
-                            let value = cpeek.get::<u16>().unwrap();
-                            serializer.serialize_u16(*value)?
-                        } else if cpeek.shape().is_type::<u32>() {
-                            let value = cpeek.get::<u32>().unwrap();
-                            serializer.serialize_u32(*value)?
-                        } else if cpeek.shape().is_type::<u64>() {
-                            let value = cpeek.get::<u64>().unwrap();
-                            serializer.serialize_u64(*value)?
-                        } else if cpeek.shape().is_type::<u128>() {
-                            let value = cpeek.get::<u128>().unwrap();
-                            serializer.serialize_u128(*value)?
-                        } else if cpeek.shape().is_type::<usize>() {
-                            let value = cpeek.get::<usize>().unwrap();
-                            serializer.serialize_usize(*value)?
-                        } else if cpeek.shape().is_type::<i8>() {
-                            let value = cpeek.get::<i8>().unwrap();
-                            serializer.serialize_i8(*value)?
-                        } else if cpeek.shape().is_type::<i16>() {
-                            let value = cpeek.get::<i16>().unwrap();
-                            serializer.serialize_i16(*value)?
-                        } else if cpeek.shape().is_type::<i32>() {
-                            let value = cpeek.get::<i32>().unwrap();
-                            serializer.serialize_i32(*value)?
-                        } else if cpeek.shape().is_type::<i64>() {
-                            let value = cpeek.get::<i64>().unwrap();
-                            serializer.serialize_i64(*value)?
-                        } else if cpeek.shape().is_type::<i128>() {
-                            let value = cpeek.get::<i128>().unwrap();
-                            serializer.serialize_i128(*value)?
-                        } else if cpeek.shape().is_type::<isize>() {
-                            let value = cpeek.get::<isize>().unwrap();
-                            serializer.serialize_isize(*value)?
-                        }
-                        // Float types
-                        else if cpeek.shape().is_type::<f32>() {
-                            let value = cpeek.get::<f32>().unwrap();
-                            serializer.serialize_f32(*value)?
-                        } else if cpeek.shape().is_type::<f64>() {
-                            let value = cpeek.get::<f64>().unwrap();
-                            serializer.serialize_f64(*value)?
-                        } else {
-                            panic!("Unsupported shape: {}", cpeek.shape());
+                        match cpeek.scalar_type() {
+                            Some(ScalarType::Unit) => serializer.serialize_unit()?,
+                            Some(ScalarType::Bool) => {
+                                serializer.serialize_bool(*cpeek.get::<bool>().unwrap())?
+                            }
+                            Some(ScalarType::Char) => {
+                                serializer.serialize_char(*cpeek.get::<char>().unwrap())?
+                            }
+
+                            // String types
+                            Some(ScalarType::Str) => {
+                                serializer.serialize_str(cpeek.get::<&str>().unwrap())?
+                            }
+                            Some(ScalarType::String) => {
+                                serializer.serialize_str(cpeek.get::<String>().unwrap())?
+                            }
+                            Some(ScalarType::CowStr) => serializer.serialize_str(
+                                cpeek.get::<alloc::borrow::Cow<'_, str>>().unwrap().as_ref(),
+                            )?,
+
+                            // Float types
+                            Some(ScalarType::F32) => {
+                                serializer.serialize_f32(*cpeek.get::<f32>().unwrap())?
+                            }
+                            Some(ScalarType::F64) => {
+                                serializer.serialize_f64(*cpeek.get::<f64>().unwrap())?
+                            }
+
+                            // Integer types
+                            Some(ScalarType::U8) => {
+                                serializer.serialize_u8(*cpeek.get::<u8>().unwrap())?
+                            }
+                            Some(ScalarType::U16) => {
+                                serializer.serialize_u16(*cpeek.get::<u16>().unwrap())?
+                            }
+                            Some(ScalarType::U32) => {
+                                serializer.serialize_u32(*cpeek.get::<u32>().unwrap())?
+                            }
+                            Some(ScalarType::U64) => {
+                                serializer.serialize_u64(*cpeek.get::<u64>().unwrap())?
+                            }
+                            Some(ScalarType::U128) => {
+                                serializer.serialize_u128(*cpeek.get::<u128>().unwrap())?
+                            }
+                            Some(ScalarType::USize) => {
+                                serializer.serialize_usize(*cpeek.get::<usize>().unwrap())?
+                            }
+                            Some(ScalarType::I8) => {
+                                serializer.serialize_i8(*cpeek.get::<i8>().unwrap())?
+                            }
+                            Some(ScalarType::I16) => {
+                                serializer.serialize_i16(*cpeek.get::<i16>().unwrap())?
+                            }
+                            Some(ScalarType::I32) => {
+                                serializer.serialize_i32(*cpeek.get::<i32>().unwrap())?
+                            }
+                            Some(ScalarType::I64) => {
+                                serializer.serialize_i64(*cpeek.get::<i64>().unwrap())?
+                            }
+                            Some(ScalarType::I128) => {
+                                serializer.serialize_i128(*cpeek.get::<i128>().unwrap())?
+                            }
+                            Some(ScalarType::ISize) => {
+                                serializer.serialize_isize(*cpeek.get::<isize>().unwrap())?
+                            }
+                            Some(unsupported) => panic!("Unsupported scalar type: {unsupported:?}"),
+                            None => panic!("Unsupported shape: {}", cpeek.shape()),
                         }
                     }
                     Def::Struct(sd) => {

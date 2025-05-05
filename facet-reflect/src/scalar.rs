@@ -10,6 +10,8 @@ pub enum ScalarType {
     Unit,
     /// Primitive type `bool`.
     Bool,
+    /// Primitive type `char`.
+    Char,
     /// Primitive type `str`.
     Str,
     /// `std::string::String`.
@@ -30,6 +32,8 @@ pub enum ScalarType {
     U32,
     /// Primitive type `u64`.
     U64,
+    /// Primitive type `u128`.
+    U128,
     /// Primitive type `usize`.
     USize,
     /// Primitive type `i8`.
@@ -40,6 +44,8 @@ pub enum ScalarType {
     I32,
     /// Primitive type `i64`.
     I64,
+    /// Primitive type `i128`.
+    I128,
     /// Primitive type `isize`.
     ISize,
     /// `core::net::SocketAddr`.
@@ -71,6 +77,8 @@ impl ScalarType {
             Some(Self::Unit)
         } else if shape.id == ConstTypeId::of::<bool>() {
             Some(ScalarType::Bool)
+        } else if shape.id == ConstTypeId::of::<char>() {
+            Some(ScalarType::Char)
         } else if shape.id == ConstTypeId::of::<&str>() {
             Some(ScalarType::Str)
         } else if shape.id == ConstTypeId::of::<f32>() {
@@ -85,6 +93,8 @@ impl ScalarType {
             Some(ScalarType::U32)
         } else if shape.id == ConstTypeId::of::<u64>() {
             Some(ScalarType::U64)
+        } else if shape.id == ConstTypeId::of::<u128>() {
+            Some(ScalarType::U128)
         } else if shape.id == ConstTypeId::of::<usize>() {
             Some(ScalarType::USize)
         } else if shape.id == ConstTypeId::of::<i8>() {
@@ -95,6 +105,8 @@ impl ScalarType {
             Some(ScalarType::I32)
         } else if shape.id == ConstTypeId::of::<i64>() {
             Some(ScalarType::I64)
+        } else if shape.id == ConstTypeId::of::<i128>() {
+            Some(ScalarType::I128)
         } else if shape.id == ConstTypeId::of::<isize>() {
             Some(ScalarType::ISize)
         } else if shape.id == ConstTypeId::of::<IpAddr>() {
