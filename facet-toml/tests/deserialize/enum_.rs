@@ -2,7 +2,7 @@
 
 use eyre::Result;
 use facet::Facet;
-use facet_toml::TomlErrorKind;
+use facet_toml::TomlDeErrorKind;
 
 #[test]
 fn test_unit_only_enum() -> Result<()> {
@@ -37,7 +37,7 @@ fn test_unit_only_enum() -> Result<()> {
         facet_toml::from_str::<Root>("values = true")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedFieldWithName("value")
+        TomlDeErrorKind::ExpectedFieldWithName("value")
     );
 
     Ok(())

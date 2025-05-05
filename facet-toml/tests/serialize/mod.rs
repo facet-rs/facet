@@ -13,7 +13,7 @@ macro_rules! assert_serialize {
         use eyre::WrapErr as _;
 
         let value = $val;
-        let serialized = facet_toml::to_string(&value);
+        let serialized = facet_toml::to_string(&value)?;
         let deserialized: $type = facet_toml::from_str(&serialized)
             // Unfortunately we can't use the error as-is because it has a lifetime bound
             .map_err(|err| eyre::eyre!("{err}"))

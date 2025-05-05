@@ -6,7 +6,7 @@ use facet_reflect::{ReflectError, Wip};
 use num_traits::cast::NumCast;
 use toml_edit::{Item, Value};
 
-use super::error::{TomlError, TomlErrorKind};
+use super::error::{TomlDeError, TomlDeErrorKind};
 
 /// Try to convert a TOML integer or float to a Rust number.
 ///
@@ -15,14 +15,14 @@ pub(crate) fn put_number<'input, 'a, T>(
     toml: &'input str,
     wip: Wip<'a>,
     item: &Item,
-) -> Result<Wip<'a>, TomlError<'input>>
+) -> Result<Wip<'a>, TomlDeError<'input>>
 where
     T: Facet<'a> + NumCast + 'a,
 {
     let v = item.as_value().ok_or_else(|| {
-        TomlError::new(
+        TomlDeError::new(
             toml,
-            TomlErrorKind::ExpectedType {
+            TomlDeErrorKind::ExpectedType {
                 expected: "value",
                 got: item.type_name(),
             },
@@ -33,9 +33,9 @@ where
 
     let value = match v {
         Value::Float(r) => Ok(T::from(*r.value()).ok_or_else(|| {
-            TomlError::new(
+            TomlDeError::new(
                 toml,
-                TomlErrorKind::FailedTypeConversion {
+                TomlDeErrorKind::FailedTypeConversion {
                     toml_type_name: "float",
                     rust_type: T::SHAPE,
                     reason: None,
@@ -45,9 +45,9 @@ where
             )
         })?),
         Value::Integer(i) => Ok(T::from(*i.value()).ok_or_else(|| {
-            TomlError::new(
+            TomlDeError::new(
                 toml,
-                TomlErrorKind::FailedTypeConversion {
+                TomlDeErrorKind::FailedTypeConversion {
                     toml_type_name: "integer",
                     rust_type: T::SHAPE,
                     reason: None,
@@ -56,9 +56,9 @@ where
                 wip.path(),
             )
         })?),
-        other => Err(TomlError::new(
+        other => Err(TomlDeError::new(
             toml,
-            TomlErrorKind::ExpectedType {
+            TomlDeErrorKind::ExpectedType {
                 expected: "number",
                 got: other.type_name(),
             },
@@ -70,7 +70,7 @@ where
     // TODO: only generate if actually error
     let path = wip.path();
     wip.put(value)
-        .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span(), path))
+        .map_err(|e| TomlDeError::new(toml, TomlDeErrorKind::GenericReflect(e), item.span(), path))
 }
 
 /// Try to convert a TOML boolean to a Rust boolean.
@@ -78,11 +78,11 @@ pub(crate) fn put_boolean<'input, 'a>(
     toml: &'input str,
     wip: Wip<'a>,
     item: &Item,
-) -> Result<Wip<'a>, TomlError<'input>> {
+) -> Result<Wip<'a>, TomlDeError<'input>> {
     let v = item.as_value().ok_or_else(|| {
-        TomlError::new(
+        TomlDeError::new(
             toml,
-            TomlErrorKind::ExpectedType {
+            TomlDeErrorKind::ExpectedType {
                 expected: "value",
                 got: item.type_name(),
             },
@@ -93,9 +93,9 @@ pub(crate) fn put_boolean<'input, 'a>(
 
     let value = match v {
         Value::Boolean(boolean) => Ok(*boolean.value()),
-        _ => Err(TomlError::new(
+        _ => Err(TomlDeError::new(
             toml,
-            TomlErrorKind::ExpectedType {
+            TomlDeErrorKind::ExpectedType {
                 expected: "boolean",
                 got: v.type_name(),
             },
@@ -107,7 +107,7 @@ pub(crate) fn put_boolean<'input, 'a>(
     // TODO: only generate if actually error
     let path = wip.path();
     wip.put(value)
-        .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span(), path))
+        .map_err(|e| TomlDeError::new(toml, TomlDeErrorKind::GenericReflect(e), item.span(), path))
 }
 
 /// Try to convert a TOML string to a Rust string.
@@ -115,16 +115,16 @@ pub(crate) fn put_string<'input, 'a, T>(
     toml: &'input str,
     wip: Wip<'a>,
     item: &Item,
-) -> Result<Wip<'a>, TomlError<'input>>
+) -> Result<Wip<'a>, TomlDeError<'input>>
 where
     T: From<String> + Facet<'a> + 'a,
 {
     let value: T = item
         .as_str()
         .ok_or_else(|| {
-            TomlError::new(
+            TomlDeError::new(
                 toml,
-                TomlErrorKind::ExpectedType {
+                TomlDeErrorKind::ExpectedType {
                     expected: "string",
                     got: item.type_name(),
                 },
@@ -139,7 +139,7 @@ where
     // TODO: only generate if actually error
     let path = wip.path();
     wip.put(value)
-        .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span(), path))
+        .map_err(|e| TomlDeError::new(toml, TomlDeErrorKind::GenericReflect(e), item.span(), path))
 }
 
 /// Try to convert a TOML string to a Rust type that implements `FromStr`.
@@ -147,11 +147,11 @@ pub(crate) fn put_from_str<'input, 'a>(
     toml: &'input str,
     wip: Wip<'a>,
     item: &Item,
-) -> Result<Wip<'a>, TomlError<'input>> {
+) -> Result<Wip<'a>, TomlDeError<'input>> {
     let string = item.as_str().ok_or_else(|| {
-        TomlError::new(
+        TomlDeError::new(
             toml,
-            TomlErrorKind::ExpectedType {
+            TomlDeErrorKind::ExpectedType {
                 expected: "string",
                 got: item.type_name(),
             },
@@ -167,9 +167,9 @@ pub(crate) fn put_from_str<'input, 'a>(
         ReflectError::OperationFailed {
             operation: "parsing",
             shape,
-        } => TomlError::new(
+        } => TomlDeError::new(
             toml,
-            TomlErrorKind::FailedTypeConversion {
+            TomlDeErrorKind::FailedTypeConversion {
                 toml_type_name: item.type_name(),
                 rust_type: shape,
                 // TODO: use the from_str reason for failing here
@@ -178,6 +178,6 @@ pub(crate) fn put_from_str<'input, 'a>(
             item.span(),
             path,
         ),
-        e => TomlError::new(toml, TomlErrorKind::GenericReflect(e), item.span(), path),
+        e => TomlDeError::new(toml, TomlDeErrorKind::GenericReflect(e), item.span(), path),
     })
 }

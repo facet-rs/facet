@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use eyre::Result;
 use facet::Facet;
-use facet_toml::TomlErrorKind;
+use facet_toml::TomlDeErrorKind;
 
 #[test]
 fn test_scalar_map() -> Result<()> {
@@ -39,7 +39,7 @@ fn test_scalar_map() -> Result<()> {
         facet_toml::from_str::<Root>("values = true")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "table like structure",
             got: "boolean"
         }
@@ -48,14 +48,14 @@ fn test_scalar_map() -> Result<()> {
         facet_toml::from_str::<Root>("values.a = true")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "number",
             got: "boolean"
         }
     );
     assert_eq!(
         facet_toml::from_str::<Root>("[values.a]").unwrap_err().kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "value",
             got: "table"
         }
@@ -106,7 +106,7 @@ fn test_scalar_map_with_other_fields() -> Result<()> {
         facet_toml::from_str::<Root>("values = true")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "table like structure",
             got: "boolean"
         }
@@ -115,14 +115,14 @@ fn test_scalar_map_with_other_fields() -> Result<()> {
         facet_toml::from_str::<Root>("values.a = true")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "number",
             got: "boolean"
         }
     );
     assert_eq!(
         facet_toml::from_str::<Root>("[values.a]").unwrap_err().kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "value",
             got: "table"
         }
@@ -170,7 +170,7 @@ fn test_unit_struct_map() -> Result<()> {
         facet_toml::from_str::<Root>("values = true")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "table like structure",
             got: "boolean"
         }
@@ -179,7 +179,7 @@ fn test_unit_struct_map() -> Result<()> {
         facet_toml::from_str::<Root>("values.a = 10")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "boolean",
             got: "integer"
         }

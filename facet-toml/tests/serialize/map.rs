@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use eyre::Result;
 use facet::Facet;
+use facet_toml::TomlSerError;
 
 use crate::assert_serialize;
 
@@ -208,6 +209,26 @@ fn test_optional_struct_map() -> Result<()> {
             .into()
         },
     );
+
+    Ok(())
+}
+
+#[test]
+fn test_invalid_map_key() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Root {
+        value: HashMap<bool, i32>,
+    }
+
+    assert!(matches!(
+        facet_toml::to_string(&Root {
+            value: [(true, 0)].into()
+        })
+        .unwrap_err(),
+        TomlSerError::InvalidKeyConversion { .. }
+    ));
 
     Ok(())
 }

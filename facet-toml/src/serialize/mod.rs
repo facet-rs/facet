@@ -3,17 +3,18 @@
 #[cfg(not(feature = "alloc"))]
 compile_error!("feature `alloc` is required");
 
-use core::convert::Infallible;
+mod error;
 
 use alloc::{
     format,
     string::{String, ToString},
     vec::Vec,
 };
+
+pub use error::TomlSerError;
+use facet_serialize::{Serialize, Serializer};
 use log::trace;
 use toml_edit::{DocumentMut, Item, Table, Value};
-
-use facet_serialize::{Serialize, Serializer};
 use yansi::{Paint as _, Painted};
 
 /// Serializer for TOML values.
@@ -47,7 +48,7 @@ impl TomlSerializer {
     }
 
     /// Write a value depending on the context.
-    fn write_value(&mut self, value: impl Into<Value>) -> Result<(), Infallible> {
+    fn write_value(&mut self, value: impl Into<Value>) -> Result<(), TomlSerError> {
         let value = value.into();
 
         match self.current {
@@ -60,7 +61,9 @@ impl TomlSerializer {
                 let map_key = value
                     .clone()
                     .as_str()
-                    .expect("Map key cannot be converted to string")
+                    .ok_or_else(|| TomlSerError::InvalidKeyConversion {
+                        toml_type: value.type_name(),
+                    })?
                     .to_string();
                 self.push_key(Key::MapValue(map_key), "map key");
             }
@@ -142,16 +145,18 @@ impl Default for TomlSerializer {
 }
 
 impl Serializer for TomlSerializer {
-    type Error = Infallible;
+    type Error = TomlSerError;
 
     fn serialize_u64(&mut self, value: u64) -> Result<(), Self::Error> {
-        // TODO: handle casting
-        self.write_value(value as i64)
+        let toml_number = TryInto::<i64>::try_into(value)
+            .map_err(|_| TomlSerError::InvalidNumberToI64Conversion { source_type: "u64" })?;
+        self.write_value(toml_number)
     }
 
     fn serialize_u128(&mut self, value: u128) -> Result<(), Self::Error> {
-        // TODO: handle casting
-        self.write_value(value as i64)
+        let toml_number = TryInto::<i64>::try_into(value)
+            .map_err(|_| TomlSerError::InvalidNumberToI64Conversion { source_type: "u64" })?;
+        self.write_value(toml_number)
     }
 
     fn serialize_i64(&mut self, value: i64) -> Result<(), Self::Error> {
@@ -159,12 +164,9 @@ impl Serializer for TomlSerializer {
     }
 
     fn serialize_i128(&mut self, value: i128) -> Result<(), Self::Error> {
-        // TODO: handle casting
-        self.write_value(value as i64)
-    }
-
-    fn serialize_isize(&mut self, value: isize) -> Result<(), Self::Error> {
-        self.write_value(value as i64)
+        let toml_number = TryInto::<i64>::try_into(value)
+            .map_err(|_| TomlSerError::InvalidNumberToI64Conversion { source_type: "u64" })?;
+        self.write_value(toml_number)
     }
 
     fn serialize_f64(&mut self, value: f64) -> Result<(), Self::Error> {
@@ -308,9 +310,9 @@ impl Key {
 
 /// Serialize any `Facet` type to a TOML string.
 #[cfg(feature = "alloc")]
-pub fn to_string<'a, T: facet_core::Facet<'a>>(value: &'a T) -> String {
+pub fn to_string<'a, T: facet_core::Facet<'a>>(value: &'a T) -> Result<String, TomlSerError> {
     let mut serializer = TomlSerializer::new();
-    value.serialize(&mut serializer).unwrap();
+    value.serialize(&mut serializer)?;
 
-    serializer.into_string()
+    Ok(serializer.into_string())
 }

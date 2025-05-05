@@ -14,9 +14,9 @@ use facet_reflect::ReflectError;
 use yansi::Paint as _;
 
 /// Any error from deserializing TOML.
-pub struct TomlError<'input> {
+pub struct TomlDeError<'input> {
     /// Type of error.
-    pub kind: TomlErrorKind,
+    pub kind: TomlDeErrorKind,
     /// Reference to the TOML source.
     #[cfg_attr(not(feature = "rich-diagnostics"), allow(dead_code))]
     toml: &'input str,
@@ -27,11 +27,11 @@ pub struct TomlError<'input> {
     path: String,
 }
 
-impl<'input> TomlError<'input> {
+impl<'input> TomlDeError<'input> {
     /// Create a new error.
     pub fn new(
         toml: &'input str,
-        kind: TomlErrorKind,
+        kind: TomlDeErrorKind,
         span: Option<Range<usize>>,
         path: String,
     ) -> Self {
@@ -46,11 +46,11 @@ impl<'input> TomlError<'input> {
     /// Message for this specific error.
     pub fn message(&self) -> String {
         match &self.kind {
-            TomlErrorKind::GenericReflect(reflect_error) => {
+            TomlDeErrorKind::GenericReflect(reflect_error) => {
                 format!("Error while reflecting type: {reflect_error}")
             }
-            TomlErrorKind::GenericTomlError(message) => format!("TOML error: {message}"),
-            TomlErrorKind::FailedTypeConversion {
+            TomlDeErrorKind::GenericTomlError(message) => format!("TOML error: {message}"),
+            TomlDeErrorKind::FailedTypeConversion {
                 toml_type_name,
                 rust_type,
                 reason,
@@ -61,26 +61,26 @@ impl<'input> TomlError<'input> {
                     format!("Can't parse type '{rust_type}' from '{toml_type_name}'")
                 }
             }
-            TomlErrorKind::ExpectedType { expected, got } => {
+            TomlDeErrorKind::ExpectedType { expected, got } => {
                 format!("Expected type '{expected}', got type '{got}'")
             }
-            TomlErrorKind::UnrecognizedType(r#type) => format!("Unrecognized type '{type}'"),
-            TomlErrorKind::UnrecognizedScalar(scalar_type) => {
+            TomlDeErrorKind::UnrecognizedType(r#type) => format!("Unrecognized type '{type}'"),
+            TomlDeErrorKind::UnrecognizedScalar(scalar_type) => {
                 format!("Unrecognized Rust scalar type '{scalar_type}'",)
             }
-            TomlErrorKind::InvalidKey(field) => {
+            TomlDeErrorKind::InvalidKey(field) => {
                 format!("Invalid Rust key '{field}'")
             }
-            TomlErrorKind::ExpectedFieldWithName(name) => {
+            TomlDeErrorKind::ExpectedFieldWithName(name) => {
                 format!("Expected field with name '{name}'")
             }
-            TomlErrorKind::ExpectedAtLeastOneField => {
+            TomlDeErrorKind::ExpectedAtLeastOneField => {
                 "Expected at least one field, got zero".to_string()
             }
-            TomlErrorKind::ExpectedExactlyOneField => {
+            TomlDeErrorKind::ExpectedExactlyOneField => {
                 "Expected exactly one field, got multiple".to_string()
             }
-            TomlErrorKind::ParseSingleValueAsMultipleFieldStruct => {
+            TomlDeErrorKind::ParseSingleValueAsMultipleFieldStruct => {
                 "Can't parse a single value as a struct with multiple fields".to_string()
             }
         }
@@ -88,14 +88,14 @@ impl<'input> TomlError<'input> {
 }
 
 #[cfg(not(feature = "rich-diagnostics"))]
-impl core::fmt::Display for TomlError<'_> {
+impl core::fmt::Display for TomlDeError<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{} in path {}", self.message(), self.path)
     }
 }
 
 #[cfg(feature = "rich-diagnostics")]
-impl core::fmt::Display for TomlError<'_> {
+impl core::fmt::Display for TomlDeError<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // Don't print the TOML source if no span is set
         let Some(span) = &self.span else {
@@ -132,10 +132,9 @@ impl core::fmt::Display for TomlError<'_> {
     }
 }
 
-#[cfg(feature = "rich-diagnostics")]
-impl core::error::Error for TomlError<'_> {}
+impl core::error::Error for TomlDeError<'_> {}
 
-impl core::fmt::Debug for TomlError<'_> {
+impl core::fmt::Debug for TomlDeError<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         core::fmt::Display::fmt(self, f)
     }
@@ -143,7 +142,7 @@ impl core::fmt::Debug for TomlError<'_> {
 
 /// Type of error.
 #[derive(Debug, PartialEq)]
-pub enum TomlErrorKind {
+pub enum TomlDeErrorKind {
     /// Any error from facet.
     GenericReflect(ReflectError),
     /// Parsing TOML document error.

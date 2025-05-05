@@ -2,7 +2,7 @@
 
 use eyre::Result;
 use facet::Facet;
-use facet_toml::TomlErrorKind;
+use facet_toml::TomlDeErrorKind;
 
 #[test]
 fn test_scalar_list() -> Result<()> {
@@ -34,7 +34,7 @@ fn test_scalar_list() -> Result<()> {
         facet_toml::from_str::<Root>("values = true")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "array",
             got: "boolean"
         }
@@ -78,7 +78,7 @@ fn test_unit_struct_list() -> Result<()> {
         facet_toml::from_str::<Root>("values = true")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "array",
             got: "boolean"
         }
@@ -87,7 +87,7 @@ fn test_unit_struct_list() -> Result<()> {
         facet_toml::from_str::<Root>("values = [true]")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "number",
             got: "boolean"
         }
@@ -96,7 +96,7 @@ fn test_unit_struct_list() -> Result<()> {
         facet_toml::from_str::<Root>("values = [1, true]")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "number",
             got: "boolean"
         }
@@ -143,7 +143,7 @@ fn test_nested_lists() -> Result<()> {
         facet_toml::from_str::<Root>("values = true")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "array",
             got: "boolean"
         }
@@ -152,7 +152,7 @@ fn test_nested_lists() -> Result<()> {
         facet_toml::from_str::<Root>("values = [true]")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "array",
             got: "boolean"
         }
@@ -161,7 +161,7 @@ fn test_nested_lists() -> Result<()> {
         facet_toml::from_str::<Root>("values = [[1], true]")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "array",
             got: "boolean"
         }

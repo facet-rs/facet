@@ -4,7 +4,7 @@ use std::net::Ipv6Addr;
 
 use eyre::Result;
 use facet::Facet;
-use facet_toml::TomlErrorKind;
+use facet_toml::TomlDeErrorKind;
 
 #[test]
 fn test_table_to_struct() -> Result<()> {
@@ -43,7 +43,7 @@ fn test_table_to_struct() -> Result<()> {
         )
         .unwrap_err()
         .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "value",
             got: "table"
         }
@@ -87,7 +87,7 @@ fn test_unit_struct() -> Result<()> {
         )
         .unwrap_err()
         .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "number",
             got: "boolean"
         }
@@ -163,7 +163,7 @@ fn test_root_struct_multiple_fields() -> Result<()> {
         )
         .unwrap_err()
         .kind,
-        TomlErrorKind::ExpectedFieldWithName("a")
+        TomlDeErrorKind::ExpectedFieldWithName("a")
     );
 
     Ok(())
@@ -205,13 +205,13 @@ fn test_nested_struct_multiple_fields() -> Result<()> {
 
     assert_eq!(
         facet_toml::from_str::<Root>("a = 1").unwrap_err().kind,
-        TomlErrorKind::ExpectedFieldWithName("nested")
+        TomlDeErrorKind::ExpectedFieldWithName("nested")
     );
     assert_eq!(
         facet_toml::from_str::<Root>("nested = true")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ParseSingleValueAsMultipleFieldStruct
+        TomlDeErrorKind::ParseSingleValueAsMultipleFieldStruct
     );
 
     Ok(())

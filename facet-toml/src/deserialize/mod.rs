@@ -10,11 +10,11 @@ use alloc::{
     borrow::Cow,
     string::{String, ToString},
 };
-pub use error::{TomlError, TomlErrorKind};
+pub use error::{TomlDeError, TomlDeErrorKind};
 use facet_core::{Characteristic, Def, Facet, FieldFlags, StructDef, StructKind};
 use facet_reflect::{ReflectError, ScalarType, Wip};
 use log::trace;
-use toml_edit::{ImDocument, Item, TomlError as TomlEditError};
+use toml_edit::{ImDocument, Item, TomlError};
 use yansi::Paint as _;
 
 macro_rules! reflect {
@@ -23,9 +23,9 @@ macro_rules! reflect {
         $wip = match $wip.$($tt)* {
             Ok(wip) => wip,
             Err(e) => {
-                return Err(TomlError::new(
+                return Err(TomlDeError::new(
                     $toml,
-                    TomlErrorKind::GenericReflect(e),
+                    TomlDeErrorKind::GenericReflect(e),
                     $span,
                     path
                 ));
@@ -37,24 +37,24 @@ macro_rules! reflect {
 /// Deserializes a TOML string into a value of type `T` that implements `Facet`.
 pub fn from_str<'input, 'facet, T: Facet<'facet>>(
     toml: &'input str,
-) -> Result<T, TomlError<'input>> {
+) -> Result<T, TomlDeError<'input>> {
     trace!("Parsing TOML");
 
     // Allocate the type
     let wip = Wip::alloc::<T>().map_err(|e| {
-        TomlError::new(
+        TomlDeError::new(
             toml,
-            TomlErrorKind::GenericReflect(e),
+            TomlDeErrorKind::GenericReflect(e),
             None,
             "$".to_string(),
         )
     })?;
 
     // Parse the TOML document
-    let docs: ImDocument<String> = toml.parse().map_err(|e: TomlEditError| {
-        TomlError::new(
+    let docs: ImDocument<String> = toml.parse().map_err(|e: TomlError| {
+        TomlDeError::new(
             toml,
-            TomlErrorKind::GenericTomlError(e.message().to_string()),
+            TomlDeErrorKind::GenericTomlError(e.message().to_string()),
             e.span(),
             wip.path(),
         )
@@ -69,12 +69,12 @@ pub fn from_str<'input, 'facet, T: Facet<'facet>>(
     let path = wip.path();
 
     // Build the result
-    let heap_value = wip
-        .build()
-        .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), None, path.clone()))?;
+    let heap_value = wip.build().map_err(|e| {
+        TomlDeError::new(toml, TomlDeErrorKind::GenericReflect(e), None, path.clone())
+    })?;
     let result = heap_value
         .materialize::<T>()
-        .map_err(|e| TomlError::new(toml, TomlErrorKind::GenericReflect(e), None, path))?;
+        .map_err(|e| TomlDeError::new(toml, TomlDeErrorKind::GenericReflect(e), None, path))?;
 
     trace!("Finished deserialization");
 
@@ -85,7 +85,7 @@ fn deserialize_item<'input, 'facet>(
     toml: &'input str,
     wip: Wip<'facet>,
     item: &Item,
-) -> Result<Wip<'facet>, TomlError<'input>> {
+) -> Result<Wip<'facet>, TomlDeError<'input>> {
     match wip.shape().def {
         Def::Scalar(_) => deserialize_as_scalar(toml, wip, item),
         Def::List(_) => deserialize_as_list(toml, wip, item),
@@ -103,7 +103,7 @@ fn deserialize_as_struct<'input, 'a>(
     mut wip: Wip<'a>,
     def: StructDef,
     item: &Item,
-) -> Result<Wip<'a>, TomlError<'input>> {
+) -> Result<Wip<'a>, TomlDeError<'input>> {
     trace!(
         "Deserializing {} as {}",
         item.type_name().cyan(),
@@ -116,9 +116,9 @@ fn deserialize_as_struct<'input, 'a>(
         let shape = wip.shape();
         if let Def::Struct(def) = shape.def {
             if def.fields.len() > 1 {
-                return Err(TomlError::new(
+                return Err(TomlDeError::new(
                     toml,
-                    TomlErrorKind::ParseSingleValueAsMultipleFieldStruct,
+                    TomlDeErrorKind::ParseSingleValueAsMultipleFieldStruct,
                     item.span(),
                     wip.path(),
                 ));
@@ -136,9 +136,9 @@ fn deserialize_as_struct<'input, 'a>(
 
     // Otherwise we expect a table
     let table = item.as_table_like().ok_or_else(|| {
-        TomlError::new(
+        TomlDeError::new(
             toml,
-            TomlErrorKind::ExpectedType {
+            TomlDeErrorKind::ExpectedType {
                 expected: "table like structure",
                 got: item.type_name(),
             },
@@ -166,9 +166,9 @@ fn deserialize_as_struct<'input, 'a>(
                         reflect!(wip, toml, item.span(), put_default());
                     } else {
                         // Throw an error when there's a "default" attribute but no implementation for the type
-                        return Err(TomlError::new(
+                        return Err(TomlDeError::new(
                             toml,
-                            TomlErrorKind::GenericReflect(
+                            TomlDeErrorKind::GenericReflect(
                                 ReflectError::DefaultAttrButNoDefaultImpl {
                                     shape: field.shape(),
                                 },
@@ -178,9 +178,9 @@ fn deserialize_as_struct<'input, 'a>(
                         ));
                     }
                 } else {
-                    return Err(TomlError::new(
+                    return Err(TomlDeError::new(
                         toml,
-                        TomlErrorKind::ExpectedFieldWithName(field.name),
+                        TomlDeErrorKind::ExpectedFieldWithName(field.name),
                         item.span(),
                         wip.path(),
                     ));
@@ -200,7 +200,7 @@ fn deserialize_as_enum<'input, 'a>(
     toml: &'input str,
     wip: Wip<'a>,
     item: &Item,
-) -> Result<Wip<'a>, TomlError<'input>> {
+) -> Result<Wip<'a>, TomlDeError<'input>> {
     trace!(
         "Deserializing {} as {}",
         item.type_name().cyan(),
@@ -223,9 +223,9 @@ fn deserialize_as_enum<'input, 'a>(
                     );
 
                     if inline_table.len() > 1 {
-                        return Err(TomlError::new(
+                        return Err(TomlDeError::new(
                             toml,
-                            TomlErrorKind::ExpectedExactlyOneField,
+                            TomlDeErrorKind::ExpectedExactlyOneField,
                             inline_table.span(),
                             wip.path(),
                         ));
@@ -239,9 +239,9 @@ fn deserialize_as_enum<'input, 'a>(
                         );
                     }
                 } else {
-                    return Err(TomlError::new(
+                    return Err(TomlDeError::new(
                         toml,
-                        TomlErrorKind::ExpectedAtLeastOneField,
+                        TomlDeErrorKind::ExpectedAtLeastOneField,
                         inline_table.span(),
                         wip.path(),
                     ));
@@ -249,9 +249,9 @@ fn deserialize_as_enum<'input, 'a>(
             }
 
             let variant_name = value.as_str().ok_or_else(|| {
-                TomlError::new(
+                TomlDeError::new(
                     toml,
-                    TomlErrorKind::ExpectedType {
+                    TomlDeErrorKind::ExpectedType {
                         expected: "string",
                         got: value.type_name(),
                     },
@@ -268,9 +268,9 @@ fn deserialize_as_enum<'input, 'a>(
                 trace!("Entering {} with key {}", "table".cyan(), key.cyan().bold());
 
                 if table.len() > 1 {
-                    return Err(TomlError::new(
+                    return Err(TomlDeError::new(
                         toml,
-                        TomlErrorKind::ExpectedExactlyOneField,
+                        TomlDeErrorKind::ExpectedExactlyOneField,
                         table.span(),
                         wip.path(),
                     ));
@@ -278,9 +278,9 @@ fn deserialize_as_enum<'input, 'a>(
                     build_enum_from_variant_name(toml, wip, key, field)?
                 }
             } else {
-                return Err(TomlError::new(
+                return Err(TomlDeError::new(
                     toml,
-                    TomlErrorKind::ExpectedAtLeastOneField,
+                    TomlDeErrorKind::ExpectedAtLeastOneField,
                     table.span(),
                     wip.path(),
                 ));
@@ -300,7 +300,7 @@ fn build_enum_from_variant_name<'input, 'a>(
     mut wip: Wip<'a>,
     variant_name: &str,
     item: &Item,
-) -> Result<Wip<'a>, TomlError<'input>> {
+) -> Result<Wip<'a>, TomlDeError<'input>> {
     // Select the variant
     reflect!(wip, toml, item.span(), variant_named(variant_name));
 
@@ -342,9 +342,9 @@ fn build_enum_from_variant_name<'input, 'a>(
                     reflect!(wip, toml, item.span(), put_default());
                 }
                 None => {
-                    return Err(TomlError::new(
+                    return Err(TomlDeError::new(
                         toml,
-                        TomlErrorKind::ExpectedFieldWithName(field.name),
+                        TomlDeErrorKind::ExpectedFieldWithName(field.name),
                         item.span(),
                         wip.path(),
                     ));
@@ -353,9 +353,9 @@ fn build_enum_from_variant_name<'input, 'a>(
         } else if item.is_value() {
             wip = deserialize_item(toml, wip, item)?;
         } else {
-            return Err(TomlError::new(
+            return Err(TomlDeError::new(
                 toml,
-                TomlErrorKind::UnrecognizedType(item.type_name()),
+                TomlDeErrorKind::UnrecognizedType(item.type_name()),
                 item.span(),
                 wip.path(),
             ));
@@ -371,7 +371,7 @@ fn deserialize_as_list<'input, 'a>(
     toml: &'input str,
     mut wip: Wip<'a>,
     item: &Item,
-) -> Result<Wip<'a>, TomlError<'input>> {
+) -> Result<Wip<'a>, TomlDeError<'input>> {
     trace!(
         "Deserializing {} as {}",
         item.type_name().cyan(),
@@ -380,9 +380,9 @@ fn deserialize_as_list<'input, 'a>(
 
     // Get the TOML item as an array
     let Some(item) = item.as_array() else {
-        return Err(TomlError::new(
+        return Err(TomlDeError::new(
             toml,
-            TomlErrorKind::ExpectedType {
+            TomlDeErrorKind::ExpectedType {
                 expected: "array",
                 got: item.type_name(),
             },
@@ -426,7 +426,7 @@ fn deserialize_as_map<'input, 'a>(
     toml: &'input str,
     mut wip: Wip<'a>,
     item: &Item,
-) -> Result<Wip<'a>, TomlError<'input>> {
+) -> Result<Wip<'a>, TomlDeError<'input>> {
     trace!(
         "Deserializing {} as {}",
         item.type_name().cyan(),
@@ -435,9 +435,9 @@ fn deserialize_as_map<'input, 'a>(
 
     // We expect a table to fill a map
     let table = item.as_table_like().ok_or_else(|| {
-        TomlError::new(
+        TomlDeError::new(
             toml,
-            TomlErrorKind::ExpectedType {
+            TomlDeErrorKind::ExpectedType {
                 expected: "table like structure",
                 got: item.type_name(),
             },
@@ -465,9 +465,9 @@ fn deserialize_as_map<'input, 'a>(
 
         // Deserialize the key
         match ScalarType::try_from_shape(wip.shape()).ok_or_else(|| {
-            TomlError::new(
+            TomlDeError::new(
                 toml,
-                TomlErrorKind::UnrecognizedScalar(wip.shape()),
+                TomlDeErrorKind::UnrecognizedScalar(wip.shape()),
                 item.span(),
                 wip.path(),
             )
@@ -479,9 +479,9 @@ fn deserialize_as_map<'input, 'a>(
                 reflect!(wip, toml, item.span(), put(Cow::Owned(k.to_string())));
             }
             _ => {
-                return Err(TomlError::new(
+                return Err(TomlDeError::new(
                     toml,
-                    TomlErrorKind::InvalidKey(wip.shape()),
+                    TomlDeErrorKind::InvalidKey(wip.shape()),
                     item.span(),
                     wip.path(),
                 ));
@@ -509,7 +509,7 @@ fn deserialize_as_option<'input, 'a>(
     toml: &'input str,
     mut wip: Wip<'a>,
     item: &Item,
-) -> Result<Wip<'a>, TomlError<'input>> {
+) -> Result<Wip<'a>, TomlDeError<'input>> {
     trace!(
         "Deserializing {} as {}",
         item.type_name().cyan(),
@@ -531,7 +531,7 @@ fn deserialize_as_smartpointer<'input, 'a>(
     _toml: &'input str,
     mut _wip: Wip<'a>,
     item: &Item,
-) -> Result<Wip<'a>, TomlError<'input>> {
+) -> Result<Wip<'a>, TomlDeError<'input>> {
     trace!(
         "Deserializing {} as {}",
         item.type_name().cyan(),
@@ -547,7 +547,7 @@ fn deserialize_as_scalar<'input, 'a>(
     toml: &'input str,
     mut wip: Wip<'a>,
     item: &Item,
-) -> Result<Wip<'a>, TomlError<'input>> {
+) -> Result<Wip<'a>, TomlDeError<'input>> {
     trace!(
         "Deserializing {} as {}",
         item.type_name().cyan(),
@@ -555,9 +555,9 @@ fn deserialize_as_scalar<'input, 'a>(
     );
 
     wip = match ScalarType::try_from_shape(wip.shape()).ok_or_else(|| {
-        TomlError::new(
+        TomlDeError::new(
             toml,
-            TomlErrorKind::UnrecognizedScalar(wip.shape()),
+            TomlDeErrorKind::UnrecognizedScalar(wip.shape()),
             item.span(),
             wip.path(),
         )
@@ -588,9 +588,9 @@ fn deserialize_as_scalar<'input, 'a>(
         }
 
         _ => {
-            return Err(TomlError::new(
+            return Err(TomlDeError::new(
                 toml,
-                TomlErrorKind::UnrecognizedScalar(wip.shape()),
+                TomlDeErrorKind::UnrecognizedScalar(wip.shape()),
                 item.span(),
                 wip.path(),
             ));

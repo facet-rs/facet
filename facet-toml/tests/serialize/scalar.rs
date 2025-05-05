@@ -2,6 +2,7 @@
 
 use alloc::borrow::Cow;
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use facet_toml::TomlSerError;
 
 use eyre::Result;
 use facet::Facet;
@@ -347,6 +348,23 @@ fn test_nested_optional_scalar() -> Result<()> {
         }
     );
     assert_serialize!(Root, Root { value: None });
+
+    Ok(())
+}
+
+#[test]
+fn test_u64_out_of_range() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Root {
+        value: u64,
+    }
+
+    assert!(matches!(
+        facet_toml::to_string(&Root { value: u64::MAX }).unwrap_err(),
+        TomlSerError::InvalidNumberToI64Conversion { .. }
+    ));
 
     Ok(())
 }

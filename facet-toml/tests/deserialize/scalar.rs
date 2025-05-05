@@ -4,7 +4,7 @@ use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use eyre::Result;
 use facet::Facet;
-use facet_toml::TomlErrorKind;
+use facet_toml::TomlDeErrorKind;
 
 #[cfg(feature = "std")]
 #[test]
@@ -24,7 +24,7 @@ fn test_string() -> Result<()> {
     );
     assert_eq!(
         facet_toml::from_str::<Root>("value = 1").unwrap_err().kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "string",
             got: "integer"
         }
@@ -51,7 +51,7 @@ fn test_cow_string() -> Result<()> {
     );
     assert_eq!(
         facet_toml::from_str::<Root>("value = 1").unwrap_err().kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "string",
             got: "integer"
         }
@@ -79,7 +79,7 @@ fn test_bool() -> Result<()> {
     );
     assert_eq!(
         facet_toml::from_str::<Root>("value = 1").unwrap_err().kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "boolean",
             got: "integer"
         }
@@ -88,14 +88,14 @@ fn test_bool() -> Result<()> {
         facet_toml::from_str::<Root>("value = {a = 1}")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "boolean",
             got: "inline table"
         }
     );
     assert_eq!(
         facet_toml::from_str::<Root>("[value]").unwrap_err().kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "value",
             got: "table"
         }
@@ -147,7 +147,7 @@ fn test_ip_addr() -> Result<()> {
     );
     assert_eq!(
         dbg!(facet_toml::from_str::<Root>("value = '127.0.0.1:8000'").unwrap_err()).kind,
-        TomlErrorKind::FailedTypeConversion {
+        TomlDeErrorKind::FailedTypeConversion {
             toml_type_name: "string",
             rust_type: core::net::IpAddr::SHAPE,
             reason: None
@@ -157,7 +157,7 @@ fn test_ip_addr() -> Result<()> {
         facet_toml::from_str::<Root>("value = true")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "string",
             got: "boolean"
         }
@@ -221,7 +221,7 @@ fn test_f64() -> Result<()> {
         facet_toml::from_str::<Root>("value = true")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "number",
             got: "boolean"
         }
@@ -247,7 +247,7 @@ fn test_f32() -> Result<()> {
         facet_toml::from_str::<Root>("value = true")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "number",
             got: "boolean"
         }
@@ -274,7 +274,7 @@ fn test_usize() -> Result<()> {
         facet_toml::from_str::<Root>("value = true")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "number",
             got: "boolean"
         }
@@ -301,7 +301,7 @@ fn test_u64() -> Result<()> {
         facet_toml::from_str::<Root>("value = true")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "number",
             got: "boolean"
         }
@@ -328,7 +328,7 @@ fn test_u32() -> Result<()> {
         facet_toml::from_str::<Root>("value = true")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "number",
             got: "boolean"
         }
@@ -355,7 +355,7 @@ fn test_u16() -> Result<()> {
         facet_toml::from_str::<Root>("value = true")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "number",
             got: "boolean"
         }
@@ -382,7 +382,7 @@ fn test_u8() -> Result<()> {
         facet_toml::from_str::<Root>("value = true")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "number",
             got: "boolean"
         }
@@ -408,7 +408,7 @@ fn test_isize() -> Result<()> {
         facet_toml::from_str::<Root>("value = true")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "number",
             got: "boolean"
         }
@@ -434,7 +434,7 @@ fn test_i64() -> Result<()> {
         facet_toml::from_str::<Root>("value = true")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "number",
             got: "boolean"
         }
@@ -460,7 +460,7 @@ fn test_i32() -> Result<()> {
         facet_toml::from_str::<Root>("value = true")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "number",
             got: "boolean"
         }
@@ -486,7 +486,7 @@ fn test_i16() -> Result<()> {
         facet_toml::from_str::<Root>("value = true")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "number",
             got: "boolean"
         }
@@ -512,7 +512,7 @@ fn test_i8() -> Result<()> {
         facet_toml::from_str::<Root>("value = 300.0")
             .unwrap_err()
             .kind,
-        TomlErrorKind::FailedTypeConversion {
+        TomlDeErrorKind::FailedTypeConversion {
             toml_type_name: "float",
             rust_type: i8::SHAPE,
             reason: None
@@ -522,7 +522,7 @@ fn test_i8() -> Result<()> {
         facet_toml::from_str::<Root>("value = true")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "number",
             got: "boolean"
         }
@@ -537,6 +537,6 @@ fn test_unparsable_scalar() {
 
     assert_eq!(
         facet_toml::from_str::<()>("value = 1").unwrap_err().kind,
-        TomlErrorKind::UnrecognizedScalar(<()>::SHAPE)
+        TomlDeErrorKind::UnrecognizedScalar(<()>::SHAPE)
     );
 }

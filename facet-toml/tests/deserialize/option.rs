@@ -2,7 +2,7 @@
 
 use eyre::Result;
 use facet::Facet;
-use facet_toml::TomlErrorKind;
+use facet_toml::TomlDeErrorKind;
 
 #[test]
 fn test_option_scalar() -> Result<()> {
@@ -23,7 +23,7 @@ fn test_option_scalar() -> Result<()> {
         facet_toml::from_str::<Root>("value = false")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "number",
             got: "boolean"
         }
@@ -53,7 +53,7 @@ fn test_nested_option() -> Result<()> {
         facet_toml::from_str::<Root>("value = false")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "number",
             got: "boolean"
         }
@@ -88,7 +88,7 @@ fn test_option_struct() -> Result<()> {
         facet_toml::from_str::<Root>("value.wrong-key = 2")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedFieldWithName("value")
+        TomlDeErrorKind::ExpectedFieldWithName("value")
     );
 
     Ok(())
@@ -120,7 +120,7 @@ fn test_option_struct_with_option() -> Result<()> {
         facet_toml::from_str::<Root>("value.sub = false")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "number",
             got: "boolean"
         }
@@ -163,7 +163,7 @@ fn test_option_enum() -> Result<()> {
         facet_toml::from_str::<Root>("value.non-existing = false")
             .unwrap_err()
             .kind,
-        TomlErrorKind::GenericReflect(_)
+        TomlDeErrorKind::GenericReflect(_)
     ));
 
     Ok(())
@@ -213,7 +213,7 @@ fn test_option_enum_option_scalar() -> Result<()> {
 
     assert_eq!(
         facet_toml::from_str::<Root>("A = false").unwrap_err().kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "string",
             got: "boolean"
         }
@@ -222,7 +222,7 @@ fn test_option_enum_option_scalar() -> Result<()> {
         facet_toml::from_str::<Root>("B.b1 = false")
             .unwrap_err()
             .kind,
-        TomlErrorKind::ExpectedType {
+        TomlDeErrorKind::ExpectedType {
             expected: "number",
             got: "boolean"
         }
