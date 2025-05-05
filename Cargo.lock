@@ -466,6 +466,7 @@ name = "facet-reflect"
 version = "0.18.2"
 dependencies = [
  "bitflags",
+ "camino",
  "eyre",
  "facet",
  "facet-core",
@@ -473,6 +474,8 @@ dependencies = [
  "log",
  "owo-colors",
  "tempfile",
+ "ulid",
+ "uuid",
 ]
 
 [[package]]
