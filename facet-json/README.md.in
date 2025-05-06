@@ -1,7 +1,3 @@
-JSON serialization and deserialization for [facet](https://crates.io/crates/facet).
+# facet-json
 
-## Usage
-
-Don't use it! Duh.
-
-(No but for real it's being rewritten)
+A JSON deserialize based on facet-deserialize-eventbased

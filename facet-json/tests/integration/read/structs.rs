@@ -98,7 +98,6 @@ fn test_reading_flat_structs() {
         Variant2(String),
         Variant3(String, String),
     }
-
     let actual1: Outer = facet_json::from_str(
         r#"{"name":"test1","val":1,"Variant1":{"field1":"aaa","field2":"bbb"}}"#,
     )

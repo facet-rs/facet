@@ -1,51 +1,7 @@
-use alloc::string::String;
-use alloc::string::ToString;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+
 use core::str;
-
-/// Position in the input (byte index)
-pub type Pos = usize;
-
-/// A span in the input, with a start position and length
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Span {
-    /// Starting position of the span in bytes
-    pub start: Pos,
-    /// Length of the span in bytes
-    pub len: usize,
-}
-
-impl Span {
-    /// Creates a new span with the given start position and length
-    pub fn new(start: Pos, len: usize) -> Self {
-        Span { start, len }
-    }
-    /// Start position of the span
-    pub fn start(&self) -> Pos {
-        self.start
-    }
-    /// Length of the span
-    pub fn len(&self) -> usize {
-        self.len
-    }
-    /// Returns `true` if this span has zero length
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-    /// End position (start + length)
-    pub fn end(&self) -> Pos {
-        self.start + self.len
-    }
-}
-
-/// A value of type `T` annotated with its `Span`
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Spanned<T> {
-    /// The actual data/value being wrapped
-    pub node: T,
-    /// The span information indicating the position and length in the source
-    pub span: Span,
-}
 
 /// Error encountered during tokenization
 #[derive(Debug, Clone, PartialEq)]
@@ -68,6 +24,10 @@ pub enum TokenErrorKind {
     /// Number is out of range
     NumberOutOfRange(f64),
 }
+
+use core::fmt::{self, Display, Formatter};
+
+use facet_deserialize_eventbased::{Pos, Span, Spanned};
 
 impl Display for TokenErrorKind {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -114,10 +74,8 @@ pub enum Token {
     /// The JSON null value
     Null,
     /// End of file marker
-    EOF,
+    Eof,
 }
-
-use core::fmt::{self, Display, Formatter};
 
 impl Display for Token {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -135,7 +93,7 @@ impl Display for Token {
             Token::True => write!(f, "true"),
             Token::False => write!(f, "false"),
             Token::Null => write!(f, "null"),
-            Token::EOF => write!(f, "EOF"),
+            Token::Eof => write!(f, "EOF"),
         }
     }
 }
@@ -152,11 +110,6 @@ impl<'input> Tokenizer<'input> {
         Tokenizer { input, pos: 0 }
     }
 
-    /// Current cursor position in the input
-    pub fn position(&self) -> Pos {
-        self.pos
-    }
-
     /// Return the next spanned token or a TokenizeError
     pub fn next_token(&mut self) -> TokenizeResult {
         self.skip_whitespace();
@@ -167,7 +120,7 @@ impl<'input> Tokenizer<'input> {
                 // EOF at this position
                 let span = Span::new(self.pos, 0);
                 return Ok(Spanned {
-                    node: Token::EOF,
+                    node: Token::Eof,
                     span,
                 });
             }

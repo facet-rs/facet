@@ -22,7 +22,6 @@ members = [
     # formats / ecosystem
     "facet-args",
     "facet-json",
-    "facet-json3",
     "facet-msgpack",
     "facet-pretty",
     "facet-toml",
@@ -31,7 +30,7 @@ members = [
     "facet-yaml",
     "facet-jsonschema",
     "facet-deserialize-eventbased",
-    "facet-json2",
+    "facet-json",
     "facet-bench",
     "facet-deserialize-externally-driven",
 ]

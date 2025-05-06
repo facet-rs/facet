@@ -1,6 +1,7 @@
 ---
 source: facet-json/tests/integration/err.rs
 expression: err
+snapshot_kind: text
 ---
 [31mError:[0m 
    [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m json:1:2 [38;5;246m][0m

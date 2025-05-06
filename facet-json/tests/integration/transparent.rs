@@ -28,22 +28,6 @@ fn transparent_tuple_struct() -> eyre::Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "camino")]
-#[test]
-fn transparent_utf8_path_buf() -> eyre::Result<()> {
-    use camino::Utf8PathBuf;
-
-    let markup = r#"
-        "/some/test/path"
-    "#;
-
-    // Test direct deserialization of Utf8PathBuf
-    let path: Utf8PathBuf = from_str(markup)?;
-    assert_eq!(path, Utf8PathBuf::from("/some/test/path"));
-
-    Ok(())
-}
-
 #[test]
 fn transparent_non_zero_u64_with_42_value() -> eyre::Result<()> {
     use std::num::NonZeroU64;
@@ -138,91 +122,6 @@ fn transparent_option_non_zero_u16() -> eyre::Result<()> {
     "#;
     let opt_none: Option<NonZeroU16> = from_str(markup)?;
     assert_eq!(opt_none, None);
-
-    Ok(())
-}
-
-#[cfg(feature = "ordered-float")]
-#[test]
-fn transparent_ordered_float_f64() -> eyre::Result<()> {
-    use ordered_float::OrderedFloat;
-
-    let markup = r#"
-        98.4148
-    "#;
-
-    // Test deserializing directly into OrderedFloat<f64>
-    let float: OrderedFloat<f64> = from_str(markup)?;
-    assert_eq!(float, OrderedFloat(98.4148));
-
-    Ok(())
-}
-
-#[cfg(feature = "ordered-float")]
-#[test]
-fn transparent_not_nan_f32() -> eyre::Result<()> {
-    use ordered_float::NotNan;
-
-    let markup = r#"
-        53.208
-    "#;
-
-    // Test deserializing directly into NotNan<f32>
-    let not_nan: NotNan<f32> = from_str(markup)?;
-    assert_eq!(not_nan, NotNan::new(53.208).unwrap());
-
-    // Test that deserializing a NaN fails
-    let markup_nan = r#"
-        NaN
-    "#;
-    let result: Result<NotNan<f32>, _> = from_str(markup_nan);
-    assert!(result.is_err());
-
-    Ok(())
-}
-
-#[cfg(feature = "uuid")]
-#[test]
-fn transparent_uuid() -> eyre::Result<()> {
-    use uuid::Uuid;
-
-    let markup = r#"
-        "f47ac10b-58cc-4372-a567-0e02b2c3d479"
-    "#;
-
-    // Test deserializing into Uuid
-    let uuid: Uuid = from_str(markup)?;
-    assert_eq!(
-        uuid,
-        Uuid::parse_str("f47ac10b-58cc-4372-a567-0e02b2c3d479")?
-    );
-
-    // Test direct usage of Uuid
-    let direct_uuid = Uuid::parse_str("123e4567-e89b-12d3-a456-426614174000")?;
-    assert_eq!(
-        direct_uuid.to_string(),
-        "123e4567-e89b-12d3-a456-426614174000"
-    );
-
-    Ok(())
-}
-
-#[cfg(feature = "ulid")]
-#[test]
-fn transparent_ulid() -> eyre::Result<()> {
-    use ulid::Ulid;
-
-    let markup = r#"
-        "01F8MECHREJA5K66K6902DN5B3"
-    "#;
-
-    // Test deserializing into Ulid
-    let ulid: Ulid = from_str(markup)?;
-    assert_eq!(ulid, Ulid::from_string("01F8MECHREJA5K66K6902DN5B3")?);
-
-    // Test direct usage of Ulid
-    let direct_ulid = Ulid::from_string("01BX5ZZKBKACTAV9WEVGEMMVS0")?;
-    assert_eq!(direct_ulid.to_string(), "01BX5ZZKBKACTAV9WEVGEMMVS0");
 
     Ok(())
 }

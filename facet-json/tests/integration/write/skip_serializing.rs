@@ -1,6 +1,7 @@
 #![cfg(feature = "std")]
 
 use facet::Facet;
+use facet_json::to_string;
 
 #[test]
 fn test_skip_serializing() {
@@ -16,13 +17,13 @@ fn test_skip_serializing() {
         hello: "monde",
         goodbye: "world",
     };
-    let json = facet_json::to_string(&test_struct1);
+    let json = to_string(&test_struct1);
     assert_eq!(json, r#"{"hello":"monde"}"#);
 
     #[derive(Debug, PartialEq, Clone, Facet)]
     struct Salutations(&'static str, #[facet(skip_serializing)] &'static str);
     let test_struct2 = Salutations("groetjes", "wereld");
-    let json = facet_json::to_string(&test_struct2);
+    let json = to_string(&test_struct2);
     assert_eq!(json, r#"["groetjes"]"#);
 
     #[derive(Debug, PartialEq, Clone, Facet)]
@@ -38,7 +39,7 @@ fn test_skip_serializing() {
         auf_wiedersehen: 1,
         bis_spaeter: 2,
     };
-    let json = facet_json::to_string(&test_struct3);
+    let json = to_string(&test_struct3);
     assert_eq!(json, r#"{"Tschuess":{"auf_wiedersehen":1}}"#);
 }
 
@@ -56,7 +57,7 @@ fn test_skip_serializing_if() {
         hello: "monde",
         goodbye: Some("world"),
     };
-    let json = facet_json::to_string(&test_struct1);
+    let json = to_string(&test_struct1);
     assert_eq!(json, r#"{"hello":"monde"}"#);
 
     #[derive(Debug, PartialEq, Clone, Facet)]
@@ -65,6 +66,6 @@ fn test_skip_serializing_if() {
         #[facet(skip_serializing_if = String::is_empty)] String,
     );
     let test_struct2 = Salutations("groetjes", "".to_string());
-    let json = facet_json::to_string(&test_struct2);
+    let json = to_string(&test_struct2);
     assert_eq!(json, r#"["groetjes"]"#);
 }

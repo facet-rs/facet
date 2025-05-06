@@ -3,6 +3,7 @@
 use std::num::NonZero;
 
 use facet::Facet;
+use facet_json::to_string;
 
 #[test]
 fn test_nonzero() {
@@ -17,6 +18,6 @@ fn test_nonzero() {
         foo: const { NonZero::new(1).unwrap() },
     };
 
-    let json = facet_json::to_string(&test_struct);
+    let json = to_string(&test_struct);
     assert_eq!(json, r#"{"foo":1}"#);
 }

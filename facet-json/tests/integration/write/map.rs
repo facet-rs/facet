@@ -1,6 +1,6 @@
 #![cfg(feature = "std")]
 
-use facet_json::to_string;
+use facet_json::{peek_to_string, peek_to_writer, to_string};
 use facet_reflect::Peek;
 
 #[test]
@@ -45,12 +45,12 @@ fn test_hashmap_to_json() {
 
     // Using peek_to_string
     let peek = Peek::new(&json_data);
-    let json = facet_json::peek_to_string(&peek);
+    let json = peek_to_string(&peek);
     assert_eq!(json, expected_json);
 
     // Using peek_to_writer
     let mut buffer = Vec::new();
-    facet_json::peek_to_writer(&peek, &mut buffer).unwrap();
+    peek_to_writer(&peek, &mut buffer).unwrap();
     let json = String::from_utf8(buffer).unwrap();
     assert_eq!(json, expected_json);
 }

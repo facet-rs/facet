@@ -2,6 +2,7 @@
 
 use eyre::Result;
 use facet::Facet;
+use facet_json::{to_string, to_writer};
 
 #[test]
 fn test_to_json() -> Result<()> {
@@ -23,12 +24,12 @@ fn test_to_json() -> Result<()> {
     let expected_json = r#"{"variable":"x","slope":-3.5,"intercept":-5}"#;
 
     // Test without indentation (using to_string)
-    let json = facet_json::to_string(&test_struct);
+    let json = to_string(&test_struct);
     assert_eq!(json, expected_json);
 
     // Test with indentation (using to_writer directly with a custom writer)
     let mut buffer = Vec::new();
-    facet_json::to_writer(&test_struct, &mut buffer)?;
+    to_writer(&test_struct, &mut buffer)?;
     let json = String::from_utf8(buffer)?;
     assert_eq!(json, expected_json);
 

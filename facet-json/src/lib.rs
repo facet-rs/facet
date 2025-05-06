@@ -7,19 +7,10 @@
 
 extern crate alloc;
 
-#[cfg(not(feature = "alloc"))]
-compile_error!("feature `alloc` is required");
-
-mod deserialize;
-pub use deserialize::*;
-
-#[cfg(feature = "std")]
-mod json_serializer;
-
 #[cfg(feature = "std")]
 mod serialize;
 #[cfg(feature = "std")]
 pub use serialize::*;
 
-#[cfg(feature = "std")]
-pub use json_serializer::JsonSerializer;
+mod deserialize;
+pub use deserialize::*;

@@ -1,6 +1,7 @@
 #![cfg(feature = "std")]
 
 use facet::Facet;
+use facet_json::to_string;
 
 #[test]
 fn test_strings() {
@@ -13,7 +14,7 @@ fn test_strings() {
 
     let test_struct = StaticFoo { foo: "foo" };
 
-    let json = facet_json::to_string(&test_struct);
+    let json = to_string(&test_struct);
     assert_eq!(json, r#"{"foo":"foo"}"#);
 
     #[derive(Debug, PartialEq, Clone, Facet)]
@@ -23,12 +24,12 @@ fn test_strings() {
 
     let test_struct = OptStaticFoo { foo: None };
 
-    let json = facet_json::to_string(&test_struct);
+    let json = to_string(&test_struct);
     assert_eq!(json, r#"{"foo":null}"#);
 
     let test_struct = OptStaticFoo { foo: Some("foo") };
 
-    let json = facet_json::to_string(&test_struct);
+    let json = to_string(&test_struct);
     assert_eq!(json, r#"{"foo":"foo"}"#);
 
     #[derive(Debug, PartialEq, Clone, Facet)]
@@ -40,6 +41,6 @@ fn test_strings() {
         foo: std::borrow::Cow::from("foo"),
     };
 
-    let json = facet_json::to_string(&test_struct);
+    let json = to_string(&test_struct);
     assert_eq!(json, r#"{"foo":"foo"}"#);
 }

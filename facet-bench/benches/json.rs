@@ -132,14 +132,14 @@ struct Wide {
     field26: bool,
     field27: Option<String>,
     field28: Vec<u32>,
-    // field29: HashMap<String, i32>,
+    field29: HashMap<String, i32>,
     field30: Nested0,
 }
 
 fn create_wide() -> Wide {
-    // let mut map = HashMap::new();
-    // map.insert("a".to_string(), 1);
-    // map.insert("b".to_string(), 2);
+    let mut map = HashMap::new();
+    map.insert("a".to_string(), 1);
+    map.insert("b".to_string(), 2);
 
     Wide {
         field01: "value 01".to_string(),
@@ -170,7 +170,7 @@ fn create_wide() -> Wide {
         field26: false,
         field27: None,
         field28: vec![],
-        // field29: map,
+        field29: map,
         field30: Nested0 {
             id: 0,
             name: "Base Nested".to_string(),
@@ -249,20 +249,6 @@ fn create_nested_data() -> Vec<Nested15> {
 //
 // Nested benchmark functions
 
-#[divan::bench(name = "Serialize - Nested (depth=15) - facet_json3")]
-fn bench_nested_facet_json3_serialize(bencher: Bencher) {
-    let data = create_nested_data();
-
-    bencher.bench(|| black_box(facet_json3::to_string(black_box(&data))));
-}
-
-#[divan::bench(name = "Serialize - Nested (depth=15) - facet_json2")]
-fn bench_nested_facet_json2_serialize(bencher: Bencher) {
-    let data = create_nested_data();
-
-    bencher.bench(|| black_box(facet_json2::to_string(black_box(&data))));
-}
-
 #[divan::bench(name = "Serialize - Nested (depth=15) - facet_json")]
 fn bench_nested_facet_json_serialize(bencher: Bencher) {
     let data = create_nested_data();
@@ -275,30 +261,6 @@ fn bench_nested_serde_serialize(bencher: Bencher) {
     let data = create_nested_data();
 
     bencher.bench(|| black_box(serde_json::to_string(black_box(&data))));
-}
-
-#[divan::bench(name = "Deserialize - Nested (depth=15) - facet_json3")]
-fn bench_nested_facet_json3_deserialize(bencher: Bencher) {
-    let data = create_nested_data();
-    let json_string =
-        serde_json::to_string(&data).expect("Failed to create nested JSON for depth 15");
-
-    bencher.bench(|| {
-        let res: Vec<Nested15> = black_box(facet_json3::from_str(black_box(&json_string))).unwrap();
-        black_box(res)
-    });
-}
-
-#[divan::bench(name = "Deserialize - Nested (depth=15) - facet_json2")]
-fn bench_nested_facet_json2_deserialize(bencher: Bencher) {
-    let data = create_nested_data();
-    let json_string =
-        serde_json::to_string(&data).expect("Failed to create nested JSON for depth 15");
-
-    bencher.bench(|| {
-        let res: Vec<Nested15> = black_box(facet_json2::from_str(black_box(&json_string))).unwrap();
-        black_box(res)
-    });
 }
 
 #[divan::bench(name = "Deserialize - Nested (depth=15) - facet_json")]
@@ -327,26 +289,6 @@ fn bench_nested_serde_deserialize(bencher: Bencher) {
 
 // Wide benchmark functions
 
-#[divan::bench(name = "Serialize - Wide - facet_json3")]
-fn bench_wide_facet_json3_serialize(bencher: Bencher) {
-    let data = create_wide();
-    let json_string = serde_json::to_string(&data).expect("Failed to create wide JSON");
-    let num_fields: serde_json::Value = serde_json::from_str(&json_string).unwrap();
-    let _num_fields = num_fields.as_object().unwrap().len();
-
-    bencher.bench(|| black_box(facet_json3::to_string(black_box(&data))));
-}
-
-#[divan::bench(name = "Serialize - Wide - facet_json2")]
-fn bench_wide_facet_json2_serialize(bencher: Bencher) {
-    let data = create_wide();
-    let json_string = serde_json::to_string(&data).expect("Failed to create wide JSON");
-    let num_fields: serde_json::Value = serde_json::from_str(&json_string).unwrap();
-    let _num_fields = num_fields.as_object().unwrap().len();
-
-    bencher.bench(|| black_box(facet_json2::to_string(black_box(&data))));
-}
-
 #[divan::bench(name = "Serialize - Wide - facet_json")]
 fn bench_wide_facet_json_serialize(bencher: Bencher) {
     let data = create_wide();
@@ -362,28 +304,6 @@ fn bench_wide_serde_serialize(bencher: Bencher) {
     let data = create_wide();
 
     bencher.bench(|| black_box(serde_json::to_string(black_box(&data))));
-}
-
-#[divan::bench(name = "Deserialize - Wide - facet_json3")]
-fn bench_wide_facet_json3_deserialize(bencher: Bencher) {
-    let data = create_wide();
-    let json_string = serde_json::to_string(&data).expect("Failed to create wide JSON");
-
-    bencher.bench(|| {
-        let res: Wide = black_box(facet_json3::from_str(black_box(&json_string))).unwrap();
-        black_box(res)
-    });
-}
-
-#[divan::bench(name = "Deserialize - Wide - facet_json2")]
-fn bench_wide_facet_json2_deserialize(bencher: Bencher) {
-    let data = create_wide();
-    let json_string = serde_json::to_string(&data).expect("Failed to create wide JSON");
-
-    bencher.bench(|| {
-        let res: Wide = black_box(facet_json2::from_str(black_box(&json_string))).unwrap();
-        black_box(res)
-    });
 }
 
 #[divan::bench(name = "Deserialize - Wide - facet_json")]

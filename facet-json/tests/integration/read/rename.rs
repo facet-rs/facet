@@ -1,6 +1,7 @@
 use eyre::Result;
 use facet::Facet;
-use facet_json::from_str;
+use facet_deserialize_eventbased::DeserErrorKind;
+use facet_json::{from_str, to_string};
 use insta::assert_snapshot;
 
 /// Basic deserialization with renamed fields
@@ -43,7 +44,7 @@ fn test_field_rename_roundtrip() {
         hello: "monde".to_string(),
     };
 
-    let json = facet_json::to_string(&original);
+    let json = to_string(&original);
     assert_eq!(json, r#"{"bonjour":"monde"}"#);
 
     let roundtrip: Greetings = from_str(&json).unwrap();
@@ -93,10 +94,10 @@ fn test_field_rename_with_symbol_chars_name() {
         special_chars: "special value".to_string(),
     };
 
-    let json = facet_json::to_string(&test_struct);
+    let json = to_string(&test_struct);
     assert_eq!(json, r#"{"@#$%^&":"special value"}"#);
 
-    let roundtrip: SpecialCharsName = facet_json::from_str(&json).unwrap();
+    let roundtrip: SpecialCharsName = from_str(&json).unwrap();
     assert_eq!(test_struct, roundtrip);
 }
 
@@ -116,10 +117,10 @@ fn test_field_rename_with_unicode_name_emoji() {
         ball: "🏆".to_string(),
     };
 
-    let json = facet_json::to_string(&test_struct);
+    let json = to_string(&test_struct);
     assert_eq!(json, r#"{"🏀":"🏆"}"#);
 
-    let roundtrip: EmojiCharsName = facet_json::from_str(&json).unwrap();
+    let roundtrip: EmojiCharsName = from_str(&json).unwrap();
     assert_eq!(test_struct, roundtrip);
 }
 
@@ -145,11 +146,11 @@ fn test_raw_identifier_fields_roundtrip() {
     };
 
     // Serialization should use the renamed keys
-    let json = facet_json::to_string(&original);
+    let json = to_string(&original);
     assert_eq!(json, r#"{"type":"keyword_value","match":false}"#);
 
     // Deserialization should correctly map back to raw identifiers
-    let roundtrip: RawIdentifiers = facet_json::from_str(&json).unwrap();
+    let roundtrip: RawIdentifiers = from_str(&json).unwrap();
     assert_eq!(original, roundtrip);
 }
 
@@ -169,10 +170,10 @@ fn test_field_rename_with_unicode_name_special_signs() {
         special_chars: "...".to_string(),
     };
 
-    let json = facet_json::to_string(&test_struct);
+    let json = to_string(&test_struct);
     assert_eq!(json, r#"{"€℮↑→↓↔↕":"..."}"#);
 
-    let roundtrip: EmojiCharsName = facet_json::from_str(&json).unwrap();
+    let roundtrip: EmojiCharsName = from_str(&json).unwrap();
     assert_eq!(test_struct, roundtrip);
 }
 
@@ -190,10 +191,10 @@ fn test_field_rename_with_numeric_name() {
 
     let test_struct = NumericName { numeric_name: 42 };
 
-    let json = facet_json::to_string(&test_struct);
+    let json = to_string(&test_struct);
     assert_eq!(json, r#"{"123":42}"#);
 
-    let roundtrip: NumericName = facet_json::from_str(&json).unwrap();
+    let roundtrip: NumericName = from_str(&json).unwrap();
     assert_eq!(test_struct, roundtrip);
 }
 
@@ -211,10 +212,10 @@ fn test_field_rename_with_empty_name() {
 
     let test_struct = EmptyName { empty_name: true };
 
-    let json = facet_json::to_string(&test_struct);
+    let json = to_string(&test_struct);
     assert_eq!(json, r#"{"":true}"#);
 
-    let roundtrip: EmptyName = facet_json::from_str(&json).unwrap();
+    let roundtrip: EmptyName = from_str(&json).unwrap();
     assert_eq!(test_struct, roundtrip);
 }
 
@@ -237,16 +238,16 @@ fn test_enum_variant_rename() {
 
     // Test unit variant with rename
     let green = Color::Green;
-    let json = facet_json::to_string(&green);
+    let json = to_string(&green);
     assert_eq!(json, r#""lime""#);
-    let roundtrip: Color = facet_json::from_str(&json).unwrap();
+    let roundtrip: Color = from_str(&json).unwrap();
     assert_eq!(green, roundtrip);
 
     // Test tuple variant with rename
     let blue = Color::Blue(255);
-    let json = facet_json::to_string(&blue);
+    let json = to_string(&blue);
     assert_eq!(json, r#"{"cyan":255}"#);
-    let roundtrip: Color = facet_json::from_str(&json).unwrap();
+    let roundtrip: Color = from_str(&json).unwrap();
     assert_eq!(blue, roundtrip);
 }
 
@@ -285,13 +286,13 @@ fn test_enum_struct_variant_field_rename() {
         status_code: 200,
     };
 
-    let json = facet_json::to_string(&success);
+    let json = to_string(&success);
     assert_eq!(
         json,
         r#"{"success":{"message":"Operation completed","code":200}}"#
     );
 
-    let roundtrip: Message = facet_json::from_str(&json).unwrap();
+    let roundtrip: Message = from_str(&json).unwrap();
     assert_eq!(success, roundtrip);
 
     // Test error variant
@@ -300,13 +301,13 @@ fn test_enum_struct_variant_field_rename() {
         code: 404,
     };
 
-    let json = facet_json::to_string(&error);
+    let json = to_string(&error);
     assert_eq!(
         json,
         r#"{"error":{"errorMessage":"Not found","errorCode":404}}"#
     );
 
-    let roundtrip: Message = facet_json::from_str(&json).unwrap();
+    let roundtrip: Message = from_str(&json).unwrap();
     assert_eq!(error, roundtrip);
 }
 
@@ -364,11 +365,11 @@ fn test_field_rename_nested_structures() {
         ],
     };
 
-    let json = facet_json::to_string(&person);
+    let json = to_string(&person);
     let expected = r#"{"fullName":"John Doe","homeAddress":{"streetName":"Main St","zipCode":"12345"},"contactInfo":[{"type":"email","value":"john@example.com"},{"type":"phone","value":"555-1234"}]}"#;
     assert_eq!(json, expected);
 
-    let roundtrip: Person = facet_json::from_str(&json).unwrap();
+    let roundtrip: Person = from_str(&json).unwrap();
     assert_eq!(person, roundtrip);
 }
 
@@ -397,13 +398,13 @@ fn test_field_rename_optional_values() {
         maybe_number: Some(42),
     };
 
-    let json = facet_json::to_string(&full);
+    let json = to_string(&full);
     assert_eq!(
         json,
         r#"{"requiredField":"always here","optionalString":"optional value","optionalNumber":42}"#
     );
 
-    let roundtrip: OptionalFields = facet_json::from_str(&json).unwrap();
+    let roundtrip: OptionalFields = from_str(&json).unwrap();
     assert_eq!(full, roundtrip);
 
     // Test with None fields
@@ -413,13 +414,13 @@ fn test_field_rename_optional_values() {
         maybe_number: None,
     };
 
-    let json = facet_json::to_string(&partial);
+    let json = to_string(&partial);
     assert_eq!(
         json,
         r#"{"requiredField":"always here","optionalString":null,"optionalNumber":null}"#
     );
 
-    let roundtrip: OptionalFields = facet_json::from_str(&json).unwrap();
+    let roundtrip: OptionalFields = from_str(&json).unwrap();
     assert_eq!(partial, roundtrip);
 }
 
@@ -466,7 +467,7 @@ fn test_field_rename_serialization_priority() {
         items: vec!["one".to_string(), "two".to_string()],
     };
 
-    let json = facet_json::to_string(&model);
+    let json = to_string(&model);
     assert_eq!(json, r#"{"data":["one","two"]}"#);
 }
 
@@ -490,7 +491,7 @@ fn test_field_rename_missing_required_error() {
     let e = result.unwrap_err();
     assert!(matches!(
         e.kind,
-        facet_json::JsonErrorKind::MissingField(f) if f == "original_field"
+        DeserErrorKind::MissingField(f) if f == "original_field"
     ));
     #[cfg(not(miri))]
     assert_snapshot!(e.to_string());

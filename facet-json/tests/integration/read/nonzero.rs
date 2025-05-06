@@ -4,7 +4,6 @@ use eyre::Result;
 use facet::Facet;
 use facet_json::from_str;
 use insta::assert_snapshot;
-
 #[test]
 fn json_read_nonzero_one() -> Result<()> {
     facet_testhelpers::setup();

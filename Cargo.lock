@@ -353,8 +353,6 @@ dependencies = [
  "codspeed-divan-compat",
  "facet",
  "facet-json",
- "facet-json2",
- "facet-json3",
  "facet-testhelpers 0.17.0",
  "serde",
  "serde_json",
@@ -444,29 +442,6 @@ dependencies = [
 
 [[package]]
 name = "facet-json"
-version = "0.20.0"
-dependencies = [
- "ariadne",
- "camino",
- "codspeed-divan-compat",
- "eyre",
- "facet",
- "facet-core",
- "facet-reflect",
- "facet-serialize",
- "facet-testhelpers 0.17.0",
- "insta",
- "log",
- "ordered-float",
- "owo-colors",
- "serde",
- "serde_json",
- "ulid",
- "uuid",
-]
-
-[[package]]
-name = "facet-json2"
 version = "0.21.0"
 dependencies = [
  "eyre",
@@ -478,28 +453,6 @@ dependencies = [
  "facet-testhelpers 0.17.0",
  "insta",
  "log",
-]
-
-[[package]]
-name = "facet-json3"
-version = "0.20.0"
-dependencies = [
- "ariadne",
- "camino",
- "codspeed-divan-compat",
- "eyre",
- "facet",
- "facet-core",
- "facet-deserialize-externally-driven",
- "facet-reflect",
- "facet-serialize",
- "facet-testhelpers 0.17.0",
- "insta",
- "log",
- "ordered-float",
- "owo-colors",
- "ulid",
- "uuid",
 ]
 
 [[package]]

@@ -17,7 +17,7 @@ fn test_struct_with_missing_field() -> Result<()> {
     let result: Result<ThreeField, _> = from_str(json_data);
     let err = result.expect_err("Expected an error, but deserialization succeeded");
     #[cfg(not(miri))]
-    insta::assert_debug_snapshot!(err);
+    insta::assert_snapshot!(err);
     Ok(())
 }
 
@@ -42,7 +42,7 @@ fn test_deny_unknown_fields() -> Result<()> {
     let err =
         result_extra.expect_err("Expected error for json_extra, but deserialization succeeded");
     #[cfg(not(miri))]
-    insta::assert_debug_snapshot!(err);
+    insta::assert_snapshot!(err);
     Ok(())
 }
 

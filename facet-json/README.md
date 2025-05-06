@@ -44,13 +44,9 @@ Thanks to all individual and corporate sponsors, without whom this work could no
 </picture>
 </a> </p>
 
-JSON serialization and deserialization for [facet](https://crates.io/crates/facet).
+# facet-json
 
-## Usage
-
-Don't use it! Duh.
-
-(No but for real it's being rewritten)
+A JSON deserialize based on facet-deserialize-eventbased
 
 ## License
 

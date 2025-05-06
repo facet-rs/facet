@@ -1,6 +1,7 @@
 ---
-source: facet-json2/tests/integration/read/diagnostics.rs
+source: facet-json/tests/integration/read/diagnostics.rs
 expression: display_str
+snapshot_kind: text
 ---
 [31mError:[0m 
    [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m json:1:1 [38;5;246m][0m

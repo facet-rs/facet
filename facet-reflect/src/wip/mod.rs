@@ -1,6 +1,5 @@
 use crate::{ReflectError, ValueId};
 use crate::{debug, trace};
-#[cfg(feature = "log")]
 use alloc::string::ToString;
 #[cfg(feature = "log")]
 use owo_colors::OwoColorize;

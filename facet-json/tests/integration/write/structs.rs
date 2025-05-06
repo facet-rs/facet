@@ -15,7 +15,6 @@ fn test_writing_flat_structs() {
     struct InnerStruct {
         val: u64,
     }
-
     #[derive(facet::Facet)]
     #[allow(dead_code)]
     #[repr(C)]
@@ -24,7 +23,6 @@ fn test_writing_flat_structs() {
         Variant2(String),
         Variant3(String, String),
     }
-
     let expected1 = r#"{"name":"test1","val":1,"Variant1":{"field1":"aaa","field2":"bbb"}}"#;
     let actual1 = facet_json::to_string(&Outer {
         name: "test1",

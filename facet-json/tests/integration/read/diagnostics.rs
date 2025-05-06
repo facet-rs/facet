@@ -21,5 +21,6 @@ fn test_with_rich_diagnostics() {
     // This should trigger the rich diagnostics display code
     let display_str = format!("{}", err);
 
-    assert!(display_str.contains("unexpected character"));
+    #[cfg(not(miri))]
+    insta::assert_snapshot!(display_str);
 }

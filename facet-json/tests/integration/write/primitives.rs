@@ -1,5 +1,4 @@
 #![cfg(feature = "std")]
-
 use facet::Facet;
 use facet_json::to_string;
 use std::f64::consts::PI;

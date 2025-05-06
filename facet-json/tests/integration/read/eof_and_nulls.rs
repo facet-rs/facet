@@ -1,6 +1,7 @@
 use eyre::Result;
 use facet::Facet;
-use facet_json::{JsonErrorKind, Token, TokenErrorKind, from_slice, from_str};
+use facet_deserialize_eventbased::DeserErrorKind;
+use facet_json::{from_slice, from_str};
 use std::fmt::Debug;
 
 #[test]
@@ -10,23 +11,25 @@ fn test_eof_errors() {
     // Test empty input
     let result = from_str::<String>("");
     let err = result.unwrap_err();
-    assert!(matches!(err.kind, JsonErrorKind::UnexpectedEof("in value")));
+    assert!(matches!(
+        err.kind,
+        DeserErrorKind::UnexpectedEof { wanted, .. } if wanted.contains("any value")
+    ));
 
     // Test partial input for various types
     let result = from_str::<String>("\"hello");
     let err = result.unwrap_err();
     assert!(matches!(
         err.kind,
-        JsonErrorKind::SyntaxError(TokenErrorKind::UnexpectedEof("in string literal"))
+        DeserErrorKind::UnexpectedEof { wanted, .. } if wanted.contains("string")
     ));
-
     let result = from_str::<Vec<i32>>("[1, 2,");
     let err = result.unwrap_err();
-    assert!(matches!(err.kind, JsonErrorKind::UnexpectedEof("in value")));
+    assert!(matches!(err.kind, DeserErrorKind::UnexpectedEof { .. }));
 
     let result = from_str::<Vec<i32>>("[");
     let err = result.unwrap_err();
-    assert!(matches!(err.kind, JsonErrorKind::UnexpectedEof("in value")));
+    assert!(matches!(err.kind, DeserErrorKind::UnexpectedEof { .. }));
 
     // Test object with EOF after opening {
     #[derive(Facet, Debug)]
@@ -36,36 +39,24 @@ fn test_eof_errors() {
 
     let result = from_str::<SimpleObject>("{");
     let err = result.unwrap_err();
-    assert!(matches!(
-        err.kind,
-        JsonErrorKind::UnexpectedToken {
-            got: Token::EOF,
-            wanted: "object key or closing brace"
-        }
-    ));
+    assert!(matches!(err.kind, DeserErrorKind::UnexpectedEof { .. }));
 
     // Test object with EOF after key
     let result = from_str::<SimpleObject>("{\"key\"");
     let err = result.unwrap_err();
-    assert!(matches!(
-        err.kind,
-        JsonErrorKind::UnexpectedToken {
-            got: Token::EOF,
-            wanted: "colon"
-        }
-    ));
+    assert!(matches!(err.kind, DeserErrorKind::UnexpectedEof { .. }));
 
     // Test object with EOF after colon
     let result = from_str::<SimpleObject>("{\"key\":");
     let err = result.unwrap_err();
-    assert!(matches!(err.kind, JsonErrorKind::UnexpectedEof("in value")));
+    assert!(matches!(err.kind, DeserErrorKind::UnexpectedEof { .. }));
 
     // Test string with escape followed by EOF
     let result = from_str::<String>("\"hello\\");
     let err = result.unwrap_err();
     assert!(matches!(
         err.kind,
-        JsonErrorKind::SyntaxError(TokenErrorKind::UnexpectedEof("in string escape"))
+        DeserErrorKind::UnexpectedEof { wanted, .. } if wanted.contains("escape")
     ));
 }
 
@@ -91,7 +82,7 @@ fn test_null_handling() -> Result<()> {
     let err = result.unwrap_err();
     assert!(matches!(
         err.kind,
-        JsonErrorKind::SyntaxError(TokenErrorKind::UnexpectedCharacter('n'))
+        DeserErrorKind::UnexpectedChar { got: 'n', .. }
     ));
 
     // Test with correct null handling
