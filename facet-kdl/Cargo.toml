@@ -20,7 +20,7 @@ default = ["std"]
 log = "0.4.27"
 facet-core = { version = "0.20.0", path = "../facet-core", default-features = false }
 facet-reflect = { version = "0.18.2", path = "../facet-reflect", default-features = false }
-kdl = { git = "https://github.com/TheLostLambda/kdl-rs.git", branch = "free-of-syn" }
+kdl = { git = "https://github.com/kdl-org/kdl-rs.git" }
 
 [dev-dependencies]
 facet = { path = "../facet" }

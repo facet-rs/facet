@@ -796,7 +796,7 @@ dependencies = [
 [[package]]
 name = "kdl"
 version = "6.3.3"
-source = "git+https://github.com/TheLostLambda/kdl-rs.git?branch=free-of-syn#963eb2571a734a800e88ea0548c2da738893e7a6"
+source = "git+https://github.com/kdl-org/kdl-rs.git#439aa63bfc595432e6dc6b0fdd708c364628ab18"
 dependencies = [
  "miette",
  "num",
