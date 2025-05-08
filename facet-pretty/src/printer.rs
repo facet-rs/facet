@@ -212,7 +212,7 @@ impl PrettyPrinter {
                             }
                         }
                         // Handle struct types
-                        (_, Type::User(user_type)) if matches!(user_type, UserType::Struct(_)) => {
+                        (_, Type::User(UserType::Struct(_))) => {
                             let struct_ = item.value.into_struct().unwrap();
 
                             // Get struct doc comments from the shape
@@ -283,7 +283,7 @@ impl PrettyPrinter {
                             item.type_depth += 1; // Always increment type_depth for map operations
                             stack.push_back(item);
                         }
-                        (_, Type::User(user_type)) if matches!(user_type, UserType::Enum(_)) => {
+                        (_, Type::User(UserType::Enum(_))) => {
                             // When recursing into an enum, increment format_depth
                             // Only increment type_depth if we're moving to a different address
                             let enum_peek = item.value.into_enum().unwrap();
