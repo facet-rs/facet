@@ -11,7 +11,6 @@ members = [
 
     # reflection
     "facet-reflect",
-    # "facet-serialize",
 
     # dev helpers
     "facet-dev",
@@ -23,6 +22,7 @@ members = [
     # "facet-args",
     # "facet-json",
     # "facet-msgpack",
+    "facet-serialize",
     "facet-pretty",
     # "facet-toml",
     # "facet-kdl",

@@ -373,6 +373,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-serialize"
+version = "0.23.0"
+dependencies = [
+ "eyre",
+ "facet",
+ "facet-core",
+ "facet-reflect",
+ "facet-testhelpers",
+ "insta",
+ "log",
+]
+
+[[package]]
 name = "facet-testhelpers"
 version = "0.17.1"
 dependencies = [

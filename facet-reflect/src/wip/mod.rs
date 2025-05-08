@@ -2314,7 +2314,6 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
                                     "Marking parent frame as fully initialized — its shape is {}",
                                     parent_frame.shape
                                 );
-                                trace!("And it's type is {:?}", parent_frame.shape.ty);
                                 let variant = match parent_frame.shape.ty {
                                     Type::User(UserType::Enum(EnumType { variants, .. })) => {
                                         variants[1]
@@ -2685,6 +2684,14 @@ impl Drop for Wip<'_> {
                                         field.name.bright_blue(),
                                         variant.name.yellow()
                                     );
+                                    // that means it's fully initialized and we need to drop it
+                                    unsafe {
+                                        if let Some(drop_in_place) =
+                                            field_shape.vtable.drop_in_place
+                                        {
+                                            drop_in_place(field_ptr);
+                                        }
+                                    }
                                 }
                             } else {
                                 trace!(

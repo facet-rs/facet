@@ -296,6 +296,7 @@ mod tests {
             need_comma: vec![false],
         };
         serialize_iterative(peek, &mut serializer)?;
+        #[cfg(not(miri))]
         insta::assert_snapshot!(s);
 
         Ok(())
@@ -345,6 +346,7 @@ mod tests {
             need_comma: vec![false],
         };
         serialize_iterative(peek, &mut serializer).unwrap();
+        #[cfg(not(miri))]
         insta::assert_snapshot!(s);
     }
 
@@ -364,6 +366,7 @@ mod tests {
             need_comma: vec![false],
         };
         serialize_iterative(peek, &mut serializer).unwrap();
+        #[cfg(not(miri))]
         insta::assert_snapshot!(s);
     }
 }

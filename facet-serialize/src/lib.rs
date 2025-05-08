@@ -10,7 +10,7 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use facet_core::{Def, Facet, Field, ShapeAttribute, StructKind};
+use facet_core::{Def, Facet, Field, PointerType, ShapeAttribute, StructKind, Type, UserType};
 use facet_reflect::{HasFields, Peek, PeekListLike, PeekMap, PeekStruct, ScalarType};
 use log::debug;
 
@@ -267,8 +267,8 @@ where
                     );
                 }
 
-                match cpeek.shape().def {
-                    Def::Scalar(_) => {
+                match (cpeek.shape().def, cpeek.shape().ty) {
+                    (Def::Scalar(_), _) => {
                         let cpeek = cpeek.innermost_peek();
 
                         // Dispatch to appropriate scalar serialization method based on type
@@ -341,7 +341,7 @@ where
                             None => panic!("Unsupported shape: {}", cpeek.shape()),
                         }
                     }
-                    Def::Struct(sd) => {
+                    (_, Type::User(UserType::Struct(sd))) => {
                         debug!("cpeek.shape(): {}", cpeek.shape());
                         match sd.kind {
                             StructKind::Unit => {
@@ -367,7 +367,7 @@ where
                             }
                         }
                     }
-                    Def::Enum(_) => {
+                    (_, Type::User(UserType::Enum(_))) => {
                         let peek_enum = cpeek.into_enum().unwrap();
                         let variant = peek_enum.active_variant();
                         let variant_index = peek_enum.variant_index();
@@ -419,21 +419,21 @@ where
                             }
                         }
                     }
-                    Def::List(_) | Def::Array(_) | Def::Slice(_) => {
+                    (Def::List(_), _) | (Def::Array(_), _) | (Def::Slice(_), _) => {
                         let peek_list = cpeek.into_list_like().unwrap();
                         let len = peek_list.len();
                         serializer.start_array(Some(len))?;
                         stack.push(SerializeTask::EndArray);
                         stack.push(SerializeTask::ArrayItems(peek_list));
                     }
-                    Def::Map(_) => {
+                    (Def::Map(_), _) => {
                         let peek_map = cpeek.into_map().unwrap();
                         let len = peek_map.len();
                         serializer.start_map(Some(len))?;
                         stack.push(SerializeTask::EndMap);
                         stack.push(SerializeTask::MapEntries(peek_map));
                     }
-                    Def::Option(_) => {
+                    (Def::Option(_), _) => {
                         let opt = cpeek.into_option().unwrap();
                         if let Some(inner_peek) = opt.value() {
                             stack.push(SerializeTask::Value(inner_peek, None));
@@ -441,11 +441,11 @@ where
                             serializer.serialize_none()?;
                         }
                     }
-                    Def::SmartPointer(_) => {
+                    (Def::SmartPointer(_), _) => {
                         let _sp = cpeek.into_smart_pointer().unwrap();
                         panic!("TODO: Implement serialization for smart pointers");
                     }
-                    Def::FunctionPointer(_) => {
+                    (_, Type::Pointer(PointerType::Function(_))) => {
                         // Serialize function pointers as units or some special representation
                         serializer.serialize_unit()?;
                     }
