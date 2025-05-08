@@ -161,12 +161,14 @@ pub type NextResult<'input, 'facet, T, E> = (NextData<'input, 'facet>, Result<T,
 pub trait Format {
     /// Advance the parser with current state and expectation, producing the next outcome or error.
     fn next<'input, 'facet>(
+        &mut self,
         nd: NextData<'input, 'facet>,
         expectation: Expectation,
     ) -> NextResult<'input, 'facet, Spanned<Outcome<'input>>, Spanned<DeserErrorKind>>;
 
     /// Skip the next value; used to ignore an input.
     fn skip<'input, 'facet>(
+        &mut self,
         nd: NextData<'input, 'facet>,
     ) -> NextResult<'input, 'facet, Span, Spanned<DeserErrorKind>>;
 }
@@ -212,7 +214,10 @@ pub enum PopReason {
 ///
 /// This function sets up the initial working state and drives the deserialization process,
 /// ensuring that the resulting value is fully materialized and valid.
-pub fn deserialize<'input, 'facet, T, F>(input: &'input [u8]) -> Result<T, DeserError<'input>>
+pub fn deserialize<'input, 'facet, T, F>(
+    input: &'input [u8],
+    format: F,
+) -> Result<T, DeserError<'input>>
 where
     T: Facet<'facet>,
     F: Format,
@@ -223,7 +228,7 @@ where
         span: Span { start: 0, len: 0 },
         kind: DeserErrorKind::ReflectError(e),
     })?;
-    deserialize_wip::<F>(wip, input)?
+    deserialize_wip(wip, input, format)?
         .materialize()
         .map_err(|e| DeserError::new_reflect(e, input, Span { start: 0, len: 0 }))
 }
@@ -233,6 +238,7 @@ where
 pub fn deserialize_wip<'input, 'facet, F>(
     mut wip: Wip<'facet>,
     input: &'input [u8],
+    mut format: F,
 ) -> Result<HeapValue<'facet>, DeserError<'input>>
 where
     F: Format,
@@ -256,7 +262,7 @@ where
                 runner: $runner,
                 wip: $wip,
             };
-            let (nd, res) = F::next(nd, $expectation);
+            let (nd, res) = format.next(nd, $expectation);
             $runner = nd.runner;
             $wip = nd.wip;
             let outcome = res.map_err(|span_kind| {
@@ -327,7 +333,7 @@ where
                     runner,
                     wip,
                 };
-                let (nd, res) = F::skip(nd);
+                let (nd, res) = format.skip(nd);
                 runner = nd.runner;
                 wip = nd.wip;
                 // Only propagate error, don't modify wip, since skip just advances input

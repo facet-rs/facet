@@ -14,7 +14,7 @@ use tokenizer::{Token, TokenError, TokenErrorKind, Tokenizer};
 pub fn from_slice<'input: 'facet, 'facet, T: Facet<'facet>>(
     input: &'input [u8],
 ) -> Result<T, DeserError<'input>> {
-    facet_deserialize::deserialize::<T, Json>(input)
+    facet_deserialize::deserialize(input, Json)
 }
 
 /// Deserialize JSON from a given string
@@ -22,7 +22,7 @@ pub fn from_str<'input: 'facet, 'facet, T: Facet<'facet>>(
     input: &'input str,
 ) -> Result<T, DeserError<'input>> {
     let input = input.as_bytes();
-    facet_deserialize::deserialize::<T, Json>(input)
+    facet_deserialize::deserialize(input, Json)
 }
 
 /// Deserialize JSON from a given string, converting any dynamic error into a static one.
@@ -33,7 +33,7 @@ pub fn from_str_static_error<'input: 'facet, 'facet, T: Facet<'facet>>(
     input: &'input str,
 ) -> Result<T, DeserError<'input>> {
     let input = input.as_bytes();
-    facet_deserialize::deserialize::<T, Json>(input).map_err(|e| e.into_owned())
+    facet_deserialize::deserialize(input, Json).map_err(|e| e.into_owned())
 }
 
 /// The JSON format
@@ -41,6 +41,7 @@ pub struct Json;
 
 impl Format for Json {
     fn next<'input, 'facet>(
+        &mut self,
         nd: NextData<'input, 'facet>,
         mut expectation: Expectation,
     ) -> NextResult<'input, 'facet, Spanned<Outcome<'input>>, Spanned<DeserErrorKind>> {
@@ -173,6 +174,7 @@ impl Format for Json {
     }
 
     fn skip<'input, 'facet>(
+        &mut self,
         nd: NextData<'input, 'facet>,
     ) -> NextResult<'input, 'facet, Span, Spanned<DeserErrorKind>> {
         trace!("Starting skip at offset {}", nd.start());
