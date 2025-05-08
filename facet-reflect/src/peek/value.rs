@@ -3,7 +3,7 @@ use facet_core::{Def, Facet, PtrConst, PtrMut, Shape, TypeNameOpts, ValueVTable}
 
 use crate::{ReflectError, ScalarType};
 
-use super::{PeekEnum, PeekList, PeekMap, PeekSmartPointer, PeekStruct};
+use super::{ListLikeDef, PeekEnum, PeekList, PeekListLike, PeekMap, PeekSmartPointer, PeekStruct};
 
 /// A unique identifier for a peek value
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -231,6 +231,19 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
                 expected: "list",
                 actual: self.shape,
             })
+        }
+    }
+
+    /// Tries to identify this value as a list, array or slice
+    pub fn into_list_like(self) -> Result<PeekListLike<'mem, 'facet_lifetime>, ReflectError> {
+        match self.shape.def {
+            Def::List(def) => Ok(PeekListLike::new(self, ListLikeDef::List(def))),
+            Def::Array(def) => Ok(PeekListLike::new(self, ListLikeDef::Array(def))),
+            Def::Slice(def) => Ok(PeekListLike::new(self, ListLikeDef::Slice(def))),
+            _ => Err(ReflectError::WasNotA {
+                expected: "list, array or slice",
+                actual: self.shape,
+            }),
         }
     }
 
