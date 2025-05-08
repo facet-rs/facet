@@ -9,7 +9,7 @@ use core::{
 use std::{collections::HashMap, hash::DefaultHasher};
 use yansi::Paint as _;
 
-use facet_core::{Def, Facet, FieldFlags, StructKind, TypeNameOpts};
+use facet_core::{Def, Facet, FieldFlags, PointerType, StructKind, Type, TypeNameOpts, UserType};
 use facet_reflect::{Peek, ValueId};
 
 use crate::color::ColorGenerator;
@@ -167,12 +167,14 @@ impl PrettyPrinter {
                         visited.insert(item.value.id(), item.type_depth);
                     }
 
-                    // Process based on the peek variant
-                    match item.value.shape().def {
-                        Def::Scalar(_def) => {
+                    // Process based on the peek variant and type
+                    match (item.value.shape().def, item.value.shape().ty) {
+                        // Handle scalar values
+                        (Def::Scalar(_def), _) => {
                             self.format_scalar(item.value, f)?;
                         }
-                        Def::Option(_def) => {
+                        // Handle option types
+                        (Def::Option(_def), _) => {
                             let option = item.value.into_option().unwrap();
 
                             // Print the Option name
@@ -209,7 +211,8 @@ impl PrettyPrinter {
                                 self.write_punctuation(f, "::None")?;
                             }
                         }
-                        Def::Struct(_def) => {
+                        // Handle struct types
+                        (_, Type::User(user_type)) if matches!(user_type, UserType::Struct(_)) => {
                             let struct_ = item.value.into_struct().unwrap();
 
                             // Get struct doc comments from the shape
@@ -237,7 +240,7 @@ impl PrettyPrinter {
                             item.format_depth += 1;
                             stack.push_back(item);
                         }
-                        Def::List(_) => {
+                        (Def::List(_), _) => {
                             let list = item.value.into_list().unwrap();
                             // When recursing into a list, always increment format_depth
                             // Only increment type_depth if we're moving to a different address
@@ -266,7 +269,7 @@ impl PrettyPrinter {
                             item.type_depth = new_type_depth;
                             stack.push_back(item);
                         }
-                        Def::Map(_) => {
+                        (Def::Map(_), _) => {
                             let _map = item.value.into_map().unwrap();
                             // Print the map name
                             self.write_type_name(f, &item.value)?;
@@ -280,7 +283,7 @@ impl PrettyPrinter {
                             item.type_depth += 1; // Always increment type_depth for map operations
                             stack.push_back(item);
                         }
-                        Def::Enum(_enum) => {
+                        (_, Type::User(user_type)) if matches!(user_type, UserType::Enum(_)) => {
                             // When recursing into an enum, increment format_depth
                             // Only increment type_depth if we're moving to a different address
                             let enum_peek = item.value.into_enum().unwrap();
@@ -366,8 +369,10 @@ impl PrettyPrinter {
                                 }
                             }
                         }
-                        Def::FunctionPointer(_) => {
+                        (_, Type::Pointer(PointerType::Function(_))) => {
+                            // Just print the type name for function pointers
                             self.write_type_name(f, &item.value)?;
+                            write!(f, " /* function pointer (not yet supported) */")?;
                         }
                         _ => {
                             write!(f, "unsupported peek variant: {:?}", item.value)?;
@@ -376,7 +381,7 @@ impl PrettyPrinter {
                 }
                 StackState::ProcessStructField { field_index } => {
                     // Handle both struct and enum fields
-                    if let Def::Struct(struct_) = item.value.shape().def {
+                    if let Type::User(UserType::Struct(struct_)) = item.value.shape().ty {
                         let peek_struct = item.value.into_struct().unwrap();
                         if field_index >= struct_.fields.len() {
                             // All fields processed, write closing brace
@@ -458,7 +463,7 @@ impl PrettyPrinter {
                             stack.push_back(finish_item);
                             stack.push_back(start_item);
                         }
-                    } else if let Def::Enum(_def) = item.value.shape().def {
+                    } else if let Type::User(UserType::Enum(_def)) = item.value.shape().ty {
                         let enum_val = item.value.into_enum().unwrap();
 
                         let variant = enum_val.active_variant();
