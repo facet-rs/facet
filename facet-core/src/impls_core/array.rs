@@ -150,7 +150,8 @@ where
                                             "Index out of bounds: the len is {L} but the index is {index}"
                                         );
                                     }
-                                    PtrConst::new(ptr.as_ptr::<[T; L]>())
+                                    let array = ptr.get::<[T; L]>();
+                                    PtrConst::new(array.as_ptr().add(index))
                                 })
                                 .build()
                         },
