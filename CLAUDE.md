@@ -11,6 +11,21 @@ them by editing the corresponding `README.md.in`, not `README.md`.
 All crates have their own readme template, except for the `facet/` crate, which
 has it in the top-level `README.md.in`
 
+### Pre-commit Hooks
+
+When committing changes, facet-dev will run to check for code generation and formatting changes.
+This presents an interactive menu that requires user input which can be problematic for bots and
+automated processes.
+
+To bypass the interactive menu and automatically apply all fixes, you can set the 
+`FACET_PRECOMMIT_ACCEPT_ALL=1` environment variable when running git commit:
+
+```bash
+FACET_PRECOMMIT_ACCEPT_ALL=1 git commit -m "Your commit message"
+```
+
+This is particularly useful for automated systems and bots that cannot provide interactive input.
+
 ### Tuple implementations
 
 The file `tuples_impls.rs` in facet-core is generated from `gen_tuples_impls.rs`
