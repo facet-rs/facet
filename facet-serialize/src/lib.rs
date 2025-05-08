@@ -11,7 +11,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use facet_core::{Def, Facet, Field, ShapeAttribute, StructKind};
-use facet_reflect::{HasFields, Peek, PeekList, PeekMap, PeekStruct, ScalarType};
+use facet_reflect::{HasFields, Peek, PeekListLike, PeekMap, PeekStruct, ScalarType};
 use log::debug;
 
 mod debug_serializer;
@@ -225,7 +225,7 @@ enum SerializeTask<'mem, 'facet> {
     EndField,
     // Tasks to push sub-elements onto the stack
     ObjectFields(PeekStruct<'mem, 'facet>),
-    ArrayItems(PeekList<'mem, 'facet>),
+    ArrayItems(PeekListLike<'mem, 'facet>),
     TupleStructFields(PeekStruct<'mem, 'facet>),
     MapEntries(PeekMap<'mem, 'facet>),
     // Field-related tasks
@@ -420,7 +420,7 @@ where
                         }
                     }
                     Def::List(_) | Def::Array(_) | Def::Slice(_) => {
-                        let peek_list = cpeek.into_list().unwrap();
+                        let peek_list = cpeek.into_list_like().unwrap();
                         let len = peek_list.len();
                         serializer.start_array(Some(len))?;
                         stack.push(SerializeTask::EndArray);
