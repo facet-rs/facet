@@ -10,12 +10,17 @@ keywords = ["yaml", "serialization", "deserialization", "reflection", "facet"]
 categories = ["encoding", "parsing", "data-structures"]
 
 [features]
+deserialize = ["alloc"]
+serialize = ["alloc"]
+std = ["alloc", "facet-core/std", "facet-reflect/std"]
+alloc = ["facet-core/alloc", "facet-reflect/alloc"]
+default = ["serialize", "deserialize", "std"]
 ulid = ["facet-core/ulid"]
 
 [dependencies]
 yaml-rust2 = "0.10.1"
-facet-core = { version = "0.21.0", path = "../facet-core" }
-facet-reflect = { version = "0.19.0", path = "../facet-reflect" }
+facet-core = { version = "0.21.0", path = "../facet-core", default-features = false }
+facet-reflect = { version = "0.19.0", path = "../facet-reflect", default-features = false }
 
 [dev-dependencies]
 facet = { path = "../facet" }
