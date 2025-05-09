@@ -10,7 +10,7 @@ use alloc::borrow::Cow;
 mod error;
 
 use error::{ArgsError, ArgsErrorKind};
-use facet_core::{Def, Facet, FieldAttribute};
+use facet_core::{Def, Facet, FieldAttribute, StructKind};
 use facet_reflect::{ReflectError, Wip};
 
 fn parse_field<'facet>(wip: Wip<'facet>, value: &'facet str) -> Result<Wip<'facet>, ArgsError> {
@@ -27,6 +27,24 @@ fn parse_field<'facet>(wip: Wip<'facet>, value: &'facet str) -> Result<Wip<'face
             } else {
                 wip.parse(value)
             }
+        }
+        Def::Enum(_) => {
+            log::trace!("Deserializing {} as {}", value, "enum");
+            let value = &kebab_to_pascal_case(value);
+            let wip = wip.variant_named(value).map_err(|e| ArgsError {
+                kind: ArgsErrorKind::GenericReflect(e),
+            })?;
+            let variant = wip.selected_variant().unwrap();
+            if variant.data.kind == StructKind::Unit {
+                let wip = wip.pop().map_err(|e| ArgsError {
+                    kind: ArgsErrorKind::GenericReflect(e),
+                })?;
+                return Ok(wip);
+            }
+            todo!("Only unit-like enums supported")
+            // Need to re-work the parsing of args input so that fields present in a enum are grouped
+            // Or see if struct enum be iteratively built assuming the input will eventually have all
+            // the needed fields
         }
         _def => {
             return Err(ArgsError::new(ArgsErrorKind::GenericReflect(
@@ -51,6 +69,24 @@ fn kebab_to_snake(input: &str) -> Cow<str> {
         return Cow::Borrowed(input);
     }
     Cow::Owned(input.replace('-', "_"))
+}
+
+fn kebab_to_pascal_case(input: &str) -> String {
+    // TODO: See if we can leverage `renamerule.rs` without requiring user
+    //       to set rename rules on every field in Args defintion
+    input
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            let mut chars = s.chars();
+            chars
+                .next()
+                .map(|c| c.to_ascii_uppercase())
+                .into_iter()
+                .chain(chars)
+                .collect::<String>()
+        })
+        .collect()
 }
 
 /// Parses command-line arguments
@@ -91,7 +127,6 @@ where
                 .expect("field_index should be a valid field bound");
 
             if field.shape().is_type::<bool>() {
-                // TODO: absence i.e "false" case is not handled
                 wip = parse_field(field, "true")?;
             } else {
                 let value = s
