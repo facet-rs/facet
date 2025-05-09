@@ -15,26 +15,30 @@ use facet_reflect::{ReflectError, Wip};
 
 fn parse_field<'facet>(wip: Wip<'facet>, value: &'facet str) -> Result<Wip<'facet>, ArgsError> {
     let shape = wip.shape();
-    match shape.def {
-        Def::Scalar(_) => {
-            if shape.is_type::<String>() {
-                wip.put(value.to_string())
-            } else if shape.is_type::<&str>() {
-                wip.put(value)
-            } else if shape.is_type::<bool>() {
-                log::trace!("Boolean field detected, setting to true");
-                wip.put(value.to_lowercase() == "true")
-            } else {
+
+    if shape.is_type::<String>() {
+        log::trace!("shape is String");
+        wip.put(value.to_string())
+    } else if shape.is_type::<&str>() {
+        log::trace!("shape is &str");
+        wip.put(value)
+    } else if shape.is_type::<bool>() {
+        log::trace!("shape is bool, setting to true");
+        wip.put(value.to_lowercase() == "true")
+    } else {
+        match shape.def {
+            Def::Scalar(_) => {
+                log::trace!("shape is nothing known, falling back to parse: {}", shape);
                 wip.parse(value)
             }
-        }
-        _def => {
-            return Err(ArgsError::new(ArgsErrorKind::GenericReflect(
-                ReflectError::OperationFailed {
-                    shape,
-                    operation: "parsing field",
-                },
-            )));
+            _def => {
+                return Err(ArgsError::new(ArgsErrorKind::GenericReflect(
+                    ReflectError::OperationFailed {
+                        shape,
+                        operation: "parsing field",
+                    },
+                )));
+            }
         }
     }
     .map_err(|e| ArgsError::new(ArgsErrorKind::GenericReflect(e)))?
