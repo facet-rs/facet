@@ -24,7 +24,7 @@ members = [
     # "facet-msgpack",
     "facet-serialize",
     "facet-pretty",
-    # "facet-toml",
+    "facet-toml",
     # "facet-kdl",
     # "facet-urlencoded",
     # "facet-yaml",
