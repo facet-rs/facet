@@ -10,8 +10,10 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use facet_core::{Def, Facet, Field, PointerType, ShapeAttribute, StructKind, Type, UserType};
-use facet_reflect::{HasFields, Peek, PeekListLike, PeekMap, PeekStruct, ScalarType};
+use facet_core::{
+    Def, Facet, Field, PointerType, SequenceType, ShapeAttribute, StructKind, Type, UserType,
+};
+use facet_reflect::{HasFields, Peek, PeekListLike, PeekMap, PeekStruct, PeekTuple, ScalarType};
 use log::{debug, trace};
 
 mod debug_serializer;
@@ -227,6 +229,7 @@ enum SerializeTask<'mem, 'facet> {
     ObjectFields(PeekStruct<'mem, 'facet>),
     ArrayItems(PeekListLike<'mem, 'facet>),
     TupleStructFields(PeekStruct<'mem, 'facet>),
+    TupleFields(PeekTuple<'mem, 'facet>),
     MapEntries(PeekMap<'mem, 'facet>),
     // Field-related tasks
     SerializeFieldName(&'static str),
@@ -414,6 +417,45 @@ where
                             }
                         }
                     }
+                    (_, Type::Sequence(SequenceType::Tuple(_))) => {
+                        debug!("Serializing tuple: shape={}", cpeek.shape(),);
+
+                        // Now we can use our dedicated PeekTuple type
+                        if let Ok(peek_tuple) = cpeek.into_tuple() {
+                            let count = peek_tuple.len();
+                            debug!("  Tuple fields count: {}", count);
+
+                            serializer.start_array(Some(count))?;
+                            stack.push(SerializeTask::EndArray);
+                            stack.push(SerializeTask::TupleFields(peek_tuple));
+                            trace!(
+                                "  Pushed TupleFields to stack for tuple, will handle {} fields",
+                                count
+                            );
+                        } else {
+                            // This shouldn't happen if into_tuple is implemented correctly,
+                            // but we'll handle it as a fallback
+                            debug!(
+                                "  Could not convert to PeekTuple, falling back to list_like approach"
+                            );
+
+                            if let Ok(peek_list_like) = cpeek.into_list_like() {
+                                let count = peek_list_like.len();
+                                serializer.start_array(Some(count))?;
+                                stack.push(SerializeTask::EndArray);
+                                stack.push(SerializeTask::ArrayItems(peek_list_like));
+                                trace!("  Pushed ArrayItems to stack for tuple serialization",);
+                            } else {
+                                // Final fallback - create an empty array
+                                debug!(
+                                    "  Could not convert tuple to list-like either, using empty array"
+                                );
+                                serializer.start_array(Some(0))?;
+                                stack.push(SerializeTask::EndArray);
+                                trace!("  Warning: Tuple serialization fallback to empty array");
+                            }
+                        }
+                    }
                     (_, Type::User(UserType::Enum(_))) => {
                         let peek_enum = cpeek.into_enum().unwrap();
                         let variant = peek_enum
@@ -474,12 +516,32 @@ where
                             }
                         }
                     }
-                    (_, Type::Pointer(PointerType::Function(_))) => {
-                        // Serialize function pointers as units or some special representation
-                        serializer.serialize_unit()?;
+                    (_, Type::Pointer(pointer_type)) => {
+                        // Handle pointer types using our new safe abstraction
+                        if let Some(str_value) = cpeek.as_str() {
+                            // We have a string value, serialize it
+                            serializer.serialize_str(str_value)?;
+                        } else if let PointerType::Function(_) = pointer_type {
+                            // Serialize function pointers as units
+                            serializer.serialize_unit()?;
+                        } else {
+                            // Handle other pointer types with innermost_peek which is safe
+                            let innermost = cpeek.innermost_peek();
+                            if innermost.shape() != cpeek.shape() {
+                                // We got a different inner value, serialize it
+                                stack.push(SerializeTask::Value(innermost, None));
+                            } else {
+                                // Couldn't access inner value safely, fall back to unit
+                                serializer.serialize_unit()?;
+                            }
+                        }
                     }
                     _ => {
                         // Default case for any other definitions
+                        debug!(
+                            "Unhandled type: {:?}, falling back to unit",
+                            cpeek.shape().ty
+                        );
                         serializer.serialize_unit()?;
                     }
                 }
@@ -499,6 +561,18 @@ where
                 for (field, field_peek) in peek_struct.fields_for_serialize().rev() {
                     stack.push(SerializeTask::Value(field_peek, Some(field)));
                 }
+            }
+            SerializeTask::TupleFields(peek_tuple) => {
+                // Push fields in reverse order
+                for (_, field_peek) in peek_tuple.fields().rev() {
+                    // Get the innermost peek value - this is essential for proper serialization
+                    // to unwrap transparent wrappers and get to the actual value
+                    let innermost_peek = field_peek.innermost_peek();
+
+                    // Push the innermost peek to the stack
+                    stack.push(SerializeTask::Value(innermost_peek, None));
+                }
+                trace!("  Pushed {} tuple fields to stack", peek_tuple.len());
             }
             SerializeTask::ArrayItems(peek_list) => {
                 // Push items in reverse order

@@ -1,11 +1,14 @@
 use core::{cmp::Ordering, marker::PhantomData};
 use facet_core::{
-    Def, Facet, PointerType, PtrConst, PtrMut, Shape, Type, TypeNameOpts, UserType, ValueVTable,
+    Def, Facet, PointerType, PtrConst, PtrMut, SequenceType, Shape, Type, TypeNameOpts, UserType,
+    ValueVTable,
 };
 
 use crate::{ReflectError, ScalarType};
 
-use super::{ListLikeDef, PeekEnum, PeekList, PeekListLike, PeekMap, PeekSmartPointer, PeekStruct};
+use super::{
+    ListLikeDef, PeekEnum, PeekList, PeekListLike, PeekMap, PeekSmartPointer, PeekStruct, PeekTuple,
+};
 
 /// A unique identifier for a peek value
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -188,6 +191,26 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
         }
     }
 
+    /// Try to get the value as a string if it's a string type
+    /// Returns None if the value is not a string or couldn't be extracted
+    pub fn as_str(&self) -> Option<&str> {
+        let peek = self.innermost_peek();
+        if let Some(ScalarType::Str) = peek.scalar_type() {
+            unsafe { Some(peek.data.get::<&str>()) }
+        } else if let Some(ScalarType::String) = peek.scalar_type() {
+            unsafe { Some(peek.data.get::<String>().as_str()) }
+        } else if let Type::Pointer(PointerType::Reference(vpt)) = peek.shape.ty {
+            let target_shape = (vpt.target)();
+            if let Some(ScalarType::Str) = ScalarType::try_from_shape(target_shape) {
+                unsafe { Some(peek.data.get::<&str>()) }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
     /// Tries to identify this value as a struct
     pub fn into_struct(self) -> Result<PeekStruct<'mem, 'facet_lifetime>, ReflectError> {
         if let Type::User(UserType::Struct(ty)) = self.shape.ty {
@@ -294,6 +317,18 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
         } else {
             Err(ReflectError::WasNotA {
                 expected: "option",
+                actual: self.shape,
+            })
+        }
+    }
+
+    /// Tries to identify this value as a tuple
+    pub fn into_tuple(self) -> Result<PeekTuple<'mem, 'facet_lifetime>, ReflectError> {
+        if let Type::Sequence(SequenceType::Tuple(ty)) = self.shape.ty {
+            Ok(PeekTuple { value: self, ty })
+        } else {
+            Err(ReflectError::WasNotA {
+                expected: "tuple",
                 actual: self.shape,
             })
         }

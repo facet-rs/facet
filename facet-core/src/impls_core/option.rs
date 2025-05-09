@@ -108,7 +108,9 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
                 // discriminant.
                 //
                 // See: https://doc.rust-lang.org/std/option/index.html#representation
-                if core::mem::size_of::<T>() == core::mem::size_of::<Option<T>>() {
+                if core::mem::size_of::<T>() == core::mem::size_of::<Option<T>>()
+                    && core::mem::size_of::<T>() <= core::mem::size_of::<usize>()
+                {
                     UserType::Enum(EnumType {
                         repr: Repr::default(),
                         enum_repr: EnumRepr::RustNPO,

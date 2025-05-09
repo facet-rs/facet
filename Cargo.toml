@@ -20,7 +20,7 @@ members = [
 
     # # formats / ecosystem
     # "facet-args",
-    # "facet-json",
+    "facet-json",
     # "facet-msgpack",
     "facet-serialize",
     "facet-pretty",
@@ -29,7 +29,7 @@ members = [
     # "facet-urlencoded",
     # "facet-yaml",
     # "facet-jsonschema",
-    # "facet-deserialize",
+    "facet-deserialize",
     # "facet-bench",
 ]
 exclude = ["outside-workspace"]

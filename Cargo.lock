@@ -24,6 +24,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "55cc3b69f167a1ef2e161439aa98aed94e6028e5f9a59be9a6ffb47aef1651f9"
 
 [[package]]
+name = "ariadne"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36f5e3dca4e09a6f340a61a0e9c7b61e030c69fc27bf29d73218f7e5e3b7638f"
+dependencies = [
+ "unicode-width 0.1.14",
+ "yansi",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -213,7 +223,7 @@ dependencies = [
  "encode_unicode",
  "libc",
  "once_cell",
- "unicode-width",
+ "unicode-width 0.2.0",
  "windows-sys",
 ]
 
@@ -295,7 +305,7 @@ dependencies = [
  "bitflags",
  "camino",
  "eyre",
- "facet-testhelpers",
+ "facet-testhelpers 0.17.1",
  "impls",
  "ordered-float",
  "ulid",
@@ -330,17 +340,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-deserialize"
+version = "0.23.0"
+dependencies = [
+ "ariadne",
+ "eyre",
+ "facet",
+ "facet-core",
+ "facet-reflect",
+ "facet-testhelpers 0.17.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "log",
+ "owo-colors",
+]
+
+[[package]]
 name = "facet-dev"
 version = "0.1.1"
 dependencies = [
  "ctrlc",
- "facet-testhelpers",
+ "facet-testhelpers 0.17.1",
  "fs-err",
  "indicatif",
  "log",
  "similar",
  "termion",
  "yansi",
+]
+
+[[package]]
+name = "facet-json"
+version = "0.23.0"
+dependencies = [
+ "eyre",
+ "facet",
+ "facet-core",
+ "facet-deserialize",
+ "facet-reflect",
+ "facet-serialize",
+ "facet-testhelpers 0.17.1",
+ "insta",
+ "log",
 ]
 
 [[package]]
@@ -364,7 +403,7 @@ dependencies = [
  "eyre",
  "facet",
  "facet-core",
- "facet-testhelpers",
+ "facet-testhelpers 0.17.1",
  "log",
  "owo-colors",
  "tempfile",
@@ -380,7 +419,7 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-reflect",
- "facet-testhelpers",
+ "facet-testhelpers 0.17.1",
  "insta",
  "log",
 ]
@@ -388,6 +427,18 @@ dependencies = [
 [[package]]
 name = "facet-testhelpers"
 version = "0.17.1"
+dependencies = [
+ "color-backtrace",
+ "color-eyre",
+ "log",
+ "yansi",
+]
+
+[[package]]
+name = "facet-testhelpers"
+version = "0.17.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "45f6a0c2938796bdb380423301f47b9c9c5101a4a0645e4f742090117c491ed4"
 dependencies = [
  "color-backtrace",
  "color-eyre",
@@ -465,7 +516,7 @@ dependencies = [
  "console",
  "number_prefix",
  "portable-atomic",
- "unicode-width",
+ "unicode-width 0.2.0",
  "web-time",
 ]
 
@@ -893,6 +944,12 @@ name = "unicode-ident"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a5f39404a5da50712a4c1eecf25e90dd62b613502b7e925fd4e4d19b5c96512"
+
+[[package]]
+name = "unicode-width"
+version = "0.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7dd6e30e90baa6f72411720665d41d89b9a3d039dc45b8faea1ddd07f617f6af"
 
 [[package]]
 name = "unicode-width"

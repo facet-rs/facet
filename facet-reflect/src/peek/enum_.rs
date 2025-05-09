@@ -114,13 +114,23 @@ impl<'mem, 'facet_lifetime> PeekEnum<'mem, 'facet_lifetime> {
     #[inline]
     pub fn variant_index(self) -> Result<usize, VariantError> {
         if self.ty.enum_repr == EnumRepr::RustNPO {
+            // Check if enum is all zeros
+            let layout = self
+                .value
+                .shape
+                .layout
+                .sized_layout()
+                .expect("Unsized enums in NPO repr are unsupported");
+
             let data = self.value.data();
-            let ptr_value = unsafe { data.read::<usize>() & 0x0fff_ffff };
-            let niche_zero = ptr_value == 0;
+            let slice = unsafe { core::slice::from_raw_parts(data.as_byte_ptr(), layout.size()) };
+            let all_zero = slice.iter().all(|v| *v == 0);
 
             trace!(
-                "PeekEnum::variant_index (RustNPO): niche_zero = {} (masked ptr_value is 0x{:x})",
-                niche_zero, ptr_value
+                "PeekEnum::variant_index (RustNPO): layout size = {}, all_zero = {} (slice is actually {:?})",
+                layout.size(),
+                all_zero,
+                slice
             );
 
             Ok(self
@@ -150,7 +160,7 @@ impl<'mem, 'facet_lifetime> PeekEnum<'mem, 'facet_lifetime> {
 
                     // If we are all zero, then find the enum variant that has no size,
                     // otherwise, the one with size.
-                    if niche_zero {
+                    if all_zero {
                         max_offset == 0
                     } else {
                         max_offset != 0
@@ -258,6 +268,7 @@ impl<'mem, 'facet_lifetime> HasFields<'mem, 'facet_lifetime> for PeekEnum<'mem, 
 }
 
 /// Error that can occur when trying to determine variant information
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum VariantError {
     /// Error indicating that enum internals are opaque and cannot be determined
     OpaqueInternals,

@@ -16,7 +16,9 @@ use alloc::borrow::Cow;
 pub use error::*;
 
 mod span;
-use facet_core::{Characteristic, Def, Facet, FieldFlags, ScalarAffinity};
+use facet_core::{
+    Characteristic, Def, Facet, FieldFlags, ScalarAffinity, SequenceType, Type, UserType,
+};
 use owo_colors::OwoColorize;
 pub use span::*;
 
@@ -385,8 +387,8 @@ impl<'input> StackRunner<'input> {
         trace!("Popping because {:?}", reason.yellow());
 
         let container_shape = wip.shape();
-        match container_shape.def {
-            Def::Struct(sd) => {
+        match container_shape.ty {
+            Type::User(UserType::Struct(sd)) => {
                 let mut has_unset = false;
 
                 trace!("Let's check all fields are initialized");
@@ -460,10 +462,136 @@ impl<'input> StackRunner<'input> {
                     }
                 }
             }
-            Def::Enum(_) => {
-                trace!(
-                    "TODO: make sure enums are initialized (support container-level and field-level default, etc.)"
-                );
+            Type::User(UserType::Enum(ed)) => {
+                trace!("Checking if enum is initialized correctly");
+
+                // Check if a variant has been selected
+                if let Some(variant) = wip.selected_variant() {
+                    trace!("Variant {} is selected", variant.name.blue());
+
+                    // Check if all fields in the variant are initialized
+                    if variant.data.fields.len() > 0 {
+                        let mut has_unset = false;
+
+                        for (index, field) in variant.data.fields.iter().enumerate() {
+                            let is_set = wip.is_field_set(index).map_err(|err| {
+                                trace!("Error checking field set status: {:?}", err);
+                                self.reflect_err(err)
+                            })?;
+
+                            if !is_set {
+                                if field.flags.contains(FieldFlags::DEFAULT) {
+                                    wip = wip.field(index).map_err(|e| self.reflect_err(e))?;
+                                    if let Some(default_in_place_fn) = field.vtable.default_fn {
+                                        wip = wip
+                                            .put_from_fn(default_in_place_fn)
+                                            .map_err(|e| self.reflect_err(e))?;
+                                        trace!(
+                                            "Field #{} {:?} in variant {} was set to default value (via custom fn)",
+                                            index.yellow(),
+                                            field.blue(),
+                                            variant.name
+                                        );
+                                    } else {
+                                        if !field.shape().is(Characteristic::Default) {
+                                            return Err(self.reflect_err(
+                                                ReflectError::DefaultAttrButNoDefaultImpl {
+                                                    shape: field.shape(),
+                                                },
+                                            ));
+                                        }
+                                        wip = wip.put_default().map_err(|e| self.reflect_err(e))?;
+                                        trace!(
+                                            "Field #{} {:?} in variant {} was set to default value (via default impl)",
+                                            index.yellow(),
+                                            field.blue(),
+                                            variant.name
+                                        );
+                                    }
+                                    wip = wip.pop().map_err(|e| self.reflect_err(e))?;
+                                } else {
+                                    trace!(
+                                        "Field #{} {:?} in variant {} is not initialized",
+                                        index.yellow(),
+                                        field.blue(),
+                                        variant.name
+                                    );
+                                    has_unset = true;
+                                }
+                            }
+                        }
+
+                        if has_unset && container_shape.has_default_attr() {
+                            trace!("Enum has DEFAULT attr but variant has uninitialized fields");
+                            // Handle similar to struct, allocate and build default value for variant
+                            let default_val = Wip::alloc_shape(container_shape)
+                                .map_err(|e| self.reflect_err(e))?
+                                .put_default()
+                                .map_err(|e| self.reflect_err(e))?
+                                .build()
+                                .map_err(|e| self.reflect_err(e))?;
+
+                            let peek = default_val.peek();
+                            let peek_enum = peek.into_enum().map_err(|e| self.reflect_err(e))?;
+                            let default_variant = peek_enum
+                                .active_variant()
+                                .map_err(|e| self.err(DeserErrorKind::VariantError(e)))?;
+
+                            if default_variant == &variant {
+                                // It's the same variant, fill in the missing fields
+                                for (index, field) in variant.data.fields.iter().enumerate() {
+                                    let is_set = wip.is_field_set(index).map_err(|err| {
+                                        trace!("Error checking field set status: {:?}", err);
+                                        self.reflect_err(err)
+                                    })?;
+                                    if !is_set {
+                                        if let Ok(Some(def_field)) = peek_enum.field(index) {
+                                            wip = wip
+                                                .field(index)
+                                                .map_err(|e| self.reflect_err(e))?;
+                                            wip = wip
+                                                .put_shape(def_field.data(), field.shape())
+                                                .map_err(|e| self.reflect_err(e))?;
+                                            wip = wip.pop().map_err(|e| self.reflect_err(e))?;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if container_shape.has_default_attr() {
+                    // No variant selected, but enum has default attribute - set to default
+                    trace!("No variant selected but enum has DEFAULT attr; setting to default");
+                    let default_val = Wip::alloc_shape(container_shape)
+                        .map_err(|e| self.reflect_err(e))?
+                        .put_default()
+                        .map_err(|e| self.reflect_err(e))?
+                        .build()
+                        .map_err(|e| self.reflect_err(e))?;
+
+                    let peek = default_val.peek();
+                    let peek_enum = peek.into_enum().map_err(|e| self.reflect_err(e))?;
+                    let default_variant_idx = peek_enum
+                        .variant_index()
+                        .map_err(|e| self.err(DeserErrorKind::VariantError(e)))?;
+
+                    // Select the default variant
+                    wip = wip
+                        .variant(default_variant_idx)
+                        .map_err(|e| self.reflect_err(e))?;
+
+                    // Copy all fields from default value
+                    let variant = &ed.variants[default_variant_idx];
+                    for (index, field) in variant.data.fields.iter().enumerate() {
+                        if let Ok(Some(def_field)) = peek_enum.field(index) {
+                            wip = wip.field(index).map_err(|e| self.reflect_err(e))?;
+                            wip = wip
+                                .put_shape(def_field.data(), field.shape())
+                                .map_err(|e| self.reflect_err(e))?;
+                            wip = wip.pop().map_err(|e| self.reflect_err(e))?;
+                        }
+                    }
+                }
             }
             _ => {
                 trace!(
@@ -483,8 +611,8 @@ impl<'input> StackRunner<'input> {
     ) -> Result<Wip<'facet>, DeserError<'input>> {
         match scalar {
             Scalar::String(cow) => {
-                match wip.innermost_shape().def {
-                    Def::Enum(_) => {
+                match wip.innermost_shape().ty {
+                    Type::User(UserType::Enum(_)) => {
                         if wip.selected_variant().is_some() {
                             // If we already have a variant selected, just put the string
                             wip.put(cow.to_string()).map_err(|e| self.reflect_err(e))
@@ -530,6 +658,7 @@ impl<'input> StackRunner<'input> {
             }
             _ => {
                 if matches!(wip.shape().def, Def::Option(_)) {
+                    // TODO: Update option handling
                     trace!("Starting Some(_) option for {}", wip.shape().blue());
                     wip = wip.push_some().map_err(|e| self.reflect_err(e))?;
                     self.stack.push(Instruction::Pop(PopReason::Some));
@@ -554,13 +683,6 @@ impl<'input> StackRunner<'input> {
                         trace!("Array starting for list ({})!", shape.blue());
                         wip = wip.put_default().map_err(|e| self.reflect_err(e))?;
                     }
-                    Def::Enum(_) => {
-                        trace!("Array starting for enum ({})!", shape.blue());
-                    }
-                    Def::Struct(_) => {
-                        trace!("Array starting for tuple ({})!", shape.blue());
-                        wip = wip.put_default().map_err(|e| self.reflect_err(e))?;
-                    }
                     Def::Scalar(sd) => {
                         if matches!(sd.affinity, ScalarAffinity::Empty(_)) {
                             trace!("Empty tuple/scalar, nice");
@@ -573,13 +695,41 @@ impl<'input> StackRunner<'input> {
                         }
                     }
                     _ => {
-                        return Err(self.err(DeserErrorKind::UnsupportedType {
-                            got: shape,
-                            wanted: "array, list, tuple, or slice",
-                        }));
+                        // For non-collection types, check the Type enum
+                        if let Type::User(user_ty) = shape.ty {
+                            match user_ty {
+                                UserType::Enum(_) => {
+                                    trace!("Array starting for enum ({})!", shape.blue());
+                                }
+                                UserType::Struct(_) => {
+                                    trace!("Array starting for tuple struct ({})!", shape.blue());
+                                    wip = wip.put_default().map_err(|e| self.reflect_err(e))?;
+                                }
+                                _ => {
+                                    return Err(self.err(DeserErrorKind::UnsupportedType {
+                                        got: shape,
+                                        wanted: "array, list, tuple, or slice",
+                                    }));
+                                }
+                            }
+                        } else if let Type::Sequence(SequenceType::Tuple(tuple_type)) = shape.ty {
+                            trace!(
+                                "Array starting for tuple ({}) with {} fields!",
+                                shape.blue(),
+                                tuple_type.fields.len()
+                            );
+                            // Initialize the tuple with default values
+                            wip = wip.put_default().map_err(|e| self.reflect_err(e))?;
+                            // No special handling needed here - the tuple is already set up correctly
+                            // and will receive array elements via pushback
+                        } else {
+                            return Err(self.err(DeserErrorKind::UnsupportedType {
+                                got: shape,
+                                wanted: "array, list, tuple, or slice",
+                            }));
+                        }
                     }
                 }
-
                 trace!("Beginning pushback");
                 self.stack.push(Instruction::ListItemOrListClose);
                 wip = wip.begin_pushback().map_err(|e| self.reflect_err(e))?;
@@ -595,19 +745,41 @@ impl<'input> StackRunner<'input> {
                         trace!("Object starting for map value ({})!", shape.blue());
                         wip = wip.put_default().map_err(|e| self.reflect_err(e))?;
                     }
-                    Def::Enum(_ed) => {
-                        trace!("Object starting for enum value ({})!", shape.blue());
-                        // nothing to do here
-                    }
-                    Def::Struct(_) => {
-                        trace!("Object starting for struct value ({})!", shape.blue());
-                        // nothing to do here
-                    }
                     _ => {
-                        return Err(self.err(DeserErrorKind::UnsupportedType {
-                            got: shape,
-                            wanted: "map, enum, or struct",
-                        }));
+                        // For non-collection types, check the Type enum
+                        if let Type::User(user_ty) = shape.ty {
+                            match user_ty {
+                                UserType::Enum(_) => {
+                                    trace!("Object starting for enum value ({})!", shape.blue());
+                                    // nothing to do here
+                                }
+                                UserType::Struct(_) => {
+                                    trace!("Object starting for struct value ({})!", shape.blue());
+                                    // nothing to do here
+                                }
+                                _ => {
+                                    return Err(self.err(DeserErrorKind::UnsupportedType {
+                                        got: shape,
+                                        wanted: "map, enum, or struct",
+                                    }));
+                                }
+                            }
+                        } else if let Type::Sequence(SequenceType::Tuple(tuple_type)) = shape.ty {
+                            // This could be a tuple that was serialized as an object
+                            // Despite this being unusual, we'll handle it here for robustness
+                            trace!(
+                                "Object starting for tuple ({}) with {} fields - unusual but handling",
+                                shape.blue(),
+                                tuple_type.fields.len()
+                            );
+                            // Initialize the tuple with default values
+                            wip = wip.put_default().map_err(|e| self.reflect_err(e))?;
+                        } else {
+                            return Err(self.err(DeserErrorKind::UnsupportedType {
+                                got: shape,
+                                wanted: "map, enum, struct, or tuple",
+                            }));
+                        }
                     }
                 }
 
@@ -634,8 +806,9 @@ impl<'input> StackRunner<'input> {
                 let mut needs_pop = true;
                 let mut handled_by_flatten = false;
 
-                match wip.innermost_shape().def {
-                    Def::Struct(sd) => {
+                let shape = wip.innermost_shape();
+                match shape.ty {
+                    Type::User(UserType::Struct(sd)) => {
                         // First try to find a direct field match
                         if let Some(index) = wip.field_index(&key) {
                             trace!("It's a struct field");
@@ -692,7 +865,7 @@ impl<'input> StackRunner<'input> {
                             }
                         }
                     }
-                    Def::Enum(_ed) => match wip.find_variant(&key) {
+                    Type::User(UserType::Enum(_ed)) => match wip.find_variant(&key) {
                         Some((index, variant)) => {
                             trace!("Variant {} selected", variant.name.blue());
                             wip = wip.variant(index).map_err(|e| self.reflect_err(e))?;
@@ -725,15 +898,17 @@ impl<'input> StackRunner<'input> {
                             }
                         }
                     },
-                    Def::Map(_) => {
-                        wip = wip.push_map_key().map_err(|e| self.reflect_err(e))?;
-                        wip = wip.put(key.to_string()).map_err(|e| self.reflect_err(e))?;
-                        wip = wip.push_map_value().map_err(|e| self.reflect_err(e))?;
-                    }
                     _ => {
-                        return Err(self.err(DeserErrorKind::Unimplemented(
-                            "object key for non-struct/map",
-                        )));
+                        // Check if it's a map
+                        if let Def::Map(_) = shape.def {
+                            wip = wip.push_map_key().map_err(|e| self.reflect_err(e))?;
+                            wip = wip.put(key.to_string()).map_err(|e| self.reflect_err(e))?;
+                            wip = wip.push_map_value().map_err(|e| self.reflect_err(e))?;
+                        } else {
+                            return Err(self.err(DeserErrorKind::Unimplemented(
+                                "object key for non-struct/map",
+                            )));
+                        }
                     }
                 }
 
@@ -788,7 +963,22 @@ impl<'input> StackRunner<'input> {
                     outcome.magenta()
                 );
                 trace!("Before push, wip.shape is {}", wip.shape().blue());
-                wip = wip.push().map_err(|e| self.reflect_err(e))?;
+
+                // Special handling for tuples - we need to identify if we're in a tuple context
+                let is_tuple = matches!(
+                    wip.innermost_shape().ty,
+                    Type::Sequence(SequenceType::Tuple(_))
+                );
+
+                if is_tuple {
+                    trace!("Handling list item for a tuple type");
+                    // For tuples, we need to use field-based access by index
+                    wip = wip.push().map_err(|e| self.reflect_err(e))?;
+                } else {
+                    // Standard list/array handling
+                    wip = wip.push().map_err(|e| self.reflect_err(e))?;
+                }
+
                 trace!(" After push, wip.shape is {}", wip.shape().cyan());
                 wip = self.value(wip, outcome)?;
                 Ok(wip)

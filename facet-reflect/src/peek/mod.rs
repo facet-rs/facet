@@ -23,3 +23,6 @@ pub use option::*;
 
 mod smartptr;
 pub use smartptr::*;
+
+mod tuple;
+pub use tuple::*;
