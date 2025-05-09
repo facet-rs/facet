@@ -1,6 +1,6 @@
 use facet_core::{EnumRepr, EnumType, Field, Shape, UserType, Variant};
 
-use crate::Peek;
+use crate::{Peek, trace};
 
 use super::HasFields;
 
@@ -114,23 +114,21 @@ impl<'mem, 'facet_lifetime> PeekEnum<'mem, 'facet_lifetime> {
     #[inline]
     pub fn variant_index(self) -> Result<usize, VariantError> {
         if self.ty.enum_repr == EnumRepr::RustNPO {
-            // Check if enum is all zeros
-            let layout = self
-                .value
-                .shape
-                .layout
-                .sized_layout()
-                .expect("Unsized enums in NPO repr are unsupported");
-
             let data = self.value.data();
-            let slice = unsafe { core::slice::from_raw_parts(data.as_byte_ptr(), layout.size()) };
-            let all_zero = slice.iter().all(|v| *v == 0);
+            let ptr_value = unsafe { data.read::<usize>() & 0x0fff_ffff };
+            let niche_zero = ptr_value == 0;
+
+            trace!(
+                "PeekEnum::variant_index (RustNPO): niche_zero = {} (masked ptr_value is 0x{:x})",
+                niche_zero, ptr_value
+            );
 
             Ok(self
                 .ty
                 .variants
                 .iter()
-                .position(|variant| {
+                .enumerate()
+                .position(|#[allow(unused)] (variant_idx, variant)| {
                     // Find the maximum end bound
                     let mut max_offset = 0;
 
@@ -145,9 +143,14 @@ impl<'mem, 'facet_lifetime> PeekEnum<'mem, 'facet_lifetime> {
                         max_offset = core::cmp::max(max_offset, offset);
                     }
 
+                    trace!(
+                        "  variant[{}] = '{}', max_offset = {}",
+                        variant_idx, variant.name, max_offset
+                    );
+
                     // If we are all zero, then find the enum variant that has no size,
                     // otherwise, the one with size.
-                    if all_zero {
+                    if niche_zero {
                         max_offset == 0
                     } else {
                         max_offset != 0
@@ -157,12 +160,20 @@ impl<'mem, 'facet_lifetime> PeekEnum<'mem, 'facet_lifetime> {
         } else {
             let discriminant = self.discriminant();
 
+            trace!(
+                "PeekEnum::variant_index: discriminant = {} (repr = {:?})",
+                discriminant, self.ty.enum_repr
+            );
+
             // Find the variant with matching discriminant using position method
             Ok(self
                 .ty
                 .variants
                 .iter()
-                .position(|variant| variant.discriminant == Some(discriminant))
+                .enumerate()
+                .position(|#[allow(unused)] (variant_idx, variant)| {
+                    variant.discriminant == Some(discriminant)
+                })
                 .expect("No variant found with matching discriminant"))
         }
     }

@@ -66,15 +66,20 @@ fn peek_option_as_enum() -> eyre::Result<()> {
 
     let en = peek.into_enum()?;
     let fields = en.fields_for_serialize().collect::<Vec<_>>();
-    assert_eq!(fields.len(), 1);
-    let (_field, field_peek) = fields[0];
-    eprintln!("field peek shape: {}", field_peek.shape().yellow());
-    eprintln!("field peek type: {:#?}", field_peek.shape().ty.blue());
-    assert!(field_peek.get::<u32>().is_err());
-    assert!(field_peek.get::<&str>().is_err());
-    assert!(field_peek.get::<String>().is_ok());
-    let s = field_peek.get::<String>().unwrap();
-    assert_eq!(s, "IAMA String AMA");
+    assert_eq!(fields.len(), 0);
+
+    Ok(())
+}
+
+#[test]
+fn peek_option_minimum_repro() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    let opt: Option<String> = None;
+    let peek = Peek::new(&opt);
+    let en = peek.into_enum()?;
+    let v = en.active_variant()?;
+    assert_eq!(v.name, "None");
 
     Ok(())
 }

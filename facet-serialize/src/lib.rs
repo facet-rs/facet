@@ -355,14 +355,14 @@ where
                         stack.push(SerializeTask::EndMap);
                         stack.push(SerializeTask::MapEntries(peek_map));
                     }
-                    // (Def::Option(_), _) => {
-                    //     let opt = cpeek.into_option().unwrap();
-                    //     if let Some(inner_peek) = opt.value() {
-                    //         stack.push(SerializeTask::Value(inner_peek, None));
-                    //     } else {
-                    //         serializer.serialize_none()?;
-                    //     }
-                    // }
+                    (Def::Option(_), _) => {
+                        let opt = cpeek.into_option().unwrap();
+                        if let Some(inner_peek) = opt.value() {
+                            stack.push(SerializeTask::Value(inner_peek, None));
+                        } else {
+                            serializer.serialize_none()?;
+                        }
+                    }
                     (Def::SmartPointer(_), _) => {
                         let _sp = cpeek.into_smart_pointer().unwrap();
                         panic!("TODO: Implement serialization for smart pointers");
