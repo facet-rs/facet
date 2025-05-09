@@ -305,6 +305,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-args"
+version = "0.18.5"
+dependencies = [
+ "eyre",
+ "facet",
+ "facet-core",
+ "facet-pretty",
+ "facet-reflect",
+ "facet-testhelpers 0.17.1",
+ "log",
+]
+
+[[package]]
 name = "facet-bench"
 version = "0.23.0"
 dependencies = [

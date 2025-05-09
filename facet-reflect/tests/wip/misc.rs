@@ -1,6 +1,9 @@
-use std::mem::MaybeUninit;
+use std::{fmt::Pointer, mem::MaybeUninit};
 
-use facet::{EnumType, Facet, Field, PtrConst, PtrUninit, StructType, Type, UserType, Variant};
+use facet::{
+    EnumType, Facet, Field, PointerType, PtrConst, PtrUninit, StructType, Type, UserType,
+    ValuePointerType, Variant,
+};
 use facet_reflect::{ReflectError, Wip};
 
 #[derive(Facet, PartialEq, Eq, Debug)]

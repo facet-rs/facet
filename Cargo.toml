@@ -19,7 +19,7 @@ members = [
     "facet-testhelpers",
 
     # # formats / ecosystem
-    # "facet-args",
+    "facet-args",
     "facet-json",
     # "facet-msgpack",
     "facet-serialize",
