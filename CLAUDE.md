@@ -1,3 +1,7 @@
+### GitHub Repository
+
+The main GitHub repository for Facet is at https://github.com/facet-rs/facet
+
 ### READMEs
 
 Don't edit any `README.md` files directly — edit `README.md.in` and run `just
