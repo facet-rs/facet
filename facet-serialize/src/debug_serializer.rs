@@ -321,6 +321,8 @@ mod tests {
 
     #[test]
     fn test_serialize_debug_container() {
+        facet_testhelpers::setup();
+
         let val = FooBarBazContainer {
             foo_bar_baz: FooBarBaz {
                 foo: 42,
@@ -357,6 +359,8 @@ mod tests {
 
     #[test]
     fn test_serialize_transparent() {
+        facet_testhelpers::setup();
+
         let val = Wrapper("TransparentValue".to_string());
         let peek = Peek::new(&val);
 

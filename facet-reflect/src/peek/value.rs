@@ -311,8 +311,10 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
             current_peek.shape.inner,
         ) {
             unsafe {
-                let inner_data = try_borrow_inner_fn(current_peek.data)
-                    .expect("innermost_peek: try_borrow_inner returned an error");
+                let inner_data = try_borrow_inner_fn(current_peek.data).unwrap_or_else(|e| {
+                    panic!("innermost_peek: try_borrow_inner returned an error! was trying to go from {} to {}. error: {e}", current_peek.shape,
+                        inner_shape())
+                });
 
                 current_peek = Peek {
                     data: inner_data,

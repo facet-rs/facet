@@ -247,7 +247,7 @@ where
     while let Some(task) = stack.pop() {
         match task {
             SerializeTask::Value(mut cpeek, maybe_field) => {
-                debug!("Serializing a value");
+                debug!("Serializing a value, shape is {}", cpeek.shape(),);
 
                 if cpeek
                     .shape()
