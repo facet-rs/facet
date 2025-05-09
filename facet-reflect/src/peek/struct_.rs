@@ -109,7 +109,10 @@ pub trait HasFields<'mem, 'facet_lifetime> {
                         //   {
                         //     "VariantName": { "field_on_variant": "foo" }
                         //   }
-                        field.name = enum_peek.active_variant().name;
+                        field.name = enum_peek
+                            .active_variant()
+                            .expect("Failed to get active variant")
+                            .name;
                         field.flattened = true;
                         flattened.push((field, peek));
                     } else {

@@ -355,14 +355,14 @@ where
                         stack.push(SerializeTask::EndMap);
                         stack.push(SerializeTask::MapEntries(peek_map));
                     }
-                    (Def::Option(_), _) => {
-                        let opt = cpeek.into_option().unwrap();
-                        if let Some(inner_peek) = opt.value() {
-                            stack.push(SerializeTask::Value(inner_peek, None));
-                        } else {
-                            serializer.serialize_none()?;
-                        }
-                    }
+                    // (Def::Option(_), _) => {
+                    //     let opt = cpeek.into_option().unwrap();
+                    //     if let Some(inner_peek) = opt.value() {
+                    //         stack.push(SerializeTask::Value(inner_peek, None));
+                    //     } else {
+                    //         serializer.serialize_none()?;
+                    //     }
+                    // }
                     (Def::SmartPointer(_), _) => {
                         let _sp = cpeek.into_smart_pointer().unwrap();
                         panic!("TODO: Implement serialization for smart pointers");
@@ -416,8 +416,16 @@ where
                     }
                     (_, Type::User(UserType::Enum(_))) => {
                         let peek_enum = cpeek.into_enum().unwrap();
-                        let variant = peek_enum.active_variant();
-                        let variant_index = peek_enum.variant_index();
+                        let variant = peek_enum
+                            .active_variant()
+                            .expect("Failed to get active variant");
+                        let variant_index = peek_enum
+                            .variant_index()
+                            .expect("Failed to get variant index");
+                        trace!(
+                            "Active variant index is {}, variant is {:?}",
+                            variant_index, variant
+                        );
                         let flattened = maybe_field.map(|f| f.flattened).unwrap_or_default();
 
                         if variant.data.fields.is_empty() {

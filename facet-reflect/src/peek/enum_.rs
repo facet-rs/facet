@@ -112,7 +112,7 @@ impl<'mem, 'facet_lifetime> PeekEnum<'mem, 'facet_lifetime> {
 
     /// Returns the variant index for this enum value
     #[inline]
-    pub fn variant_index(self) -> usize {
+    pub fn variant_index(self) -> Result<usize, VariantError> {
         if self.ty.enum_repr == EnumRepr::RustNPO {
             // Check if enum is all zeros
             let layout = self
@@ -126,11 +126,12 @@ impl<'mem, 'facet_lifetime> PeekEnum<'mem, 'facet_lifetime> {
             let slice = unsafe { core::slice::from_raw_parts(data.as_byte_ptr(), layout.size()) };
             let all_zero = slice.iter().all(|v| *v == 0);
 
-            self.ty
+            Ok(self
+                .ty
                 .variants
                 .iter()
                 .position(|variant| {
-                    // Find the mazimum end bound
+                    // Find the maximum end bound
                     let mut max_offset = 0;
 
                     for field in variant.data.fields {
@@ -152,69 +153,81 @@ impl<'mem, 'facet_lifetime> PeekEnum<'mem, 'facet_lifetime> {
                         max_offset != 0
                     }
                 })
-                .expect("No variant found with matching discriminant")
+                .expect("No variant found with matching discriminant"))
         } else {
             let discriminant = self.discriminant();
 
             // Find the variant with matching discriminant using position method
-            self.ty
+            Ok(self
+                .ty
                 .variants
                 .iter()
-                .position(|variant| variant.discriminant == discriminant)
-                .expect("No variant found with matching discriminant")
+                .position(|variant| variant.discriminant == Some(discriminant))
+                .expect("No variant found with matching discriminant"))
         }
     }
 
     /// Returns the active variant
     #[inline]
-    pub fn active_variant(self) -> &'static Variant {
-        let index = self.variant_index();
-        &self.ty.variants[index]
+    pub fn active_variant(self) -> Result<&'static Variant, VariantError> {
+        let index = self.variant_index()?;
+        Ok(&self.ty.variants[index])
     }
 
     /// Returns the name of the active variant for this enum value
     #[inline]
-    pub fn variant_name_active(self) -> &'static str {
-        self.active_variant().name
+    pub fn variant_name_active(self) -> Result<&'static str, VariantError> {
+        Ok(self.active_variant()?.name)
     }
 
     // variant_data has been removed to reduce unsafe code exposure
 
     /// Returns a PeekValue handle to a field of a tuple or struct variant by index
-    pub fn field(self, index: usize) -> Option<Peek<'mem, 'facet_lifetime>> {
-        let variant = self.active_variant();
+    pub fn field(self, index: usize) -> Result<Option<Peek<'mem, 'facet_lifetime>>, VariantError> {
+        let variant = self.active_variant()?;
         let fields = &variant.data.fields;
 
         if index >= fields.len() {
-            return None;
+            return Ok(None);
         }
 
         let field = &fields[index];
         let field_data = unsafe { self.value.data().field(field.offset) };
-        Some(unsafe { Peek::unchecked_new(field_data, field.shape()) })
+        Ok(Some(unsafe {
+            Peek::unchecked_new(field_data, field.shape())
+        }))
     }
 
     /// Returns the index of a field in the active variant by name
-    pub fn field_index(self, field_name: &str) -> Option<usize> {
-        let variant = self.active_variant();
-        variant
+    pub fn field_index(self, field_name: &str) -> Result<Option<usize>, VariantError> {
+        let variant = self.active_variant()?;
+        Ok(variant
             .data
             .fields
             .iter()
-            .position(|f| f.name == field_name)
+            .position(|f| f.name == field_name))
     }
 
     /// Returns a PeekValue handle to a field of a tuple or struct variant by name
-    pub fn field_by_name(self, field_name: &str) -> Option<Peek<'mem, 'facet_lifetime>> {
-        let index = self.field_index(field_name)?;
-        self.field(index)
+    pub fn field_by_name(
+        self,
+        field_name: &str,
+    ) -> Result<Option<Peek<'mem, 'facet_lifetime>>, VariantError> {
+        let index_opt = self.field_index(field_name)?;
+        match index_opt {
+            Some(index) => self.field(index),
+            None => Ok(None),
+        }
     }
 }
 
 impl<'mem, 'facet_lifetime> HasFields<'mem, 'facet_lifetime> for PeekEnum<'mem, 'facet_lifetime> {
     fn fields(&self) -> impl DoubleEndedIterator<Item = (Field, Peek<'mem, 'facet_lifetime>)> {
         // Get the active variant and its fields
-        let variant = self.active_variant();
+        let variant = match self.active_variant() {
+            Ok(v) => v,
+            Err(e) => panic!("Cannot get active variant: {:?}", e),
+        };
         let fields = &variant.data.fields;
 
         // Create an iterator that yields the field definition and field value
@@ -222,9 +235,36 @@ impl<'mem, 'facet_lifetime> HasFields<'mem, 'facet_lifetime> for PeekEnum<'mem, 
             // Get the field definition
             let field = fields[i];
             // Get the field value
-            let field_value = self.field(i)?;
+            let field_value = match self.field(i) {
+                Ok(Some(v)) => v,
+                Ok(None) => return None,
+                Err(e) => panic!("Cannot get field: {:?}", e),
+            };
             // Return the field definition and value
             Some((field, field_value))
         })
     }
 }
+
+/// Error that can occur when trying to determine variant information
+pub enum VariantError {
+    /// Error indicating that enum internals are opaque and cannot be determined
+    OpaqueInternals,
+}
+
+impl core::fmt::Display for VariantError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "enum layout is opaque, cannot determine variant")
+    }
+}
+
+impl core::fmt::Debug for VariantError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "VariantError::OpaqueInternals: enum layout is opaque, cannot determine variant"
+        )
+    }
+}
+
+impl core::error::Error for VariantError {}

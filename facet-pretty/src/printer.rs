@@ -288,8 +288,16 @@ impl PrettyPrinter {
                             // Only increment type_depth if we're moving to a different address
                             let enum_peek = item.value.into_enum().unwrap();
 
-                            // Get the active variant
-                            let variant = enum_peek.active_variant();
+                            // Get the active variant or handle error
+                            let variant = match enum_peek.active_variant() {
+                                Ok(v) => v,
+                                Err(_) => {
+                                    // Print the enum name
+                                    self.write_type_name(f, &item.value)?;
+                                    write!(f, " /* cannot determine variant */")?;
+                                    continue;
+                                }
+                            };
 
                             // Get enum and variant doc comments
                             let doc_comments = item.value.shape().doc;
@@ -312,8 +320,8 @@ impl PrettyPrinter {
 
                             // Variant docs are already handled above
 
-                            // Get the active variant name
-                            let variant = enum_peek.active_variant();
+                            // Get the active variant name - we've already checked above that we can get it
+                            // This is the same variant, but we're repeating the code here to ensure consistency
 
                             // Apply color for variant name
                             if self.use_colors {
@@ -466,7 +474,14 @@ impl PrettyPrinter {
                     } else if let Type::User(UserType::Enum(_def)) = item.value.shape().ty {
                         let enum_val = item.value.into_enum().unwrap();
 
-                        let variant = enum_val.active_variant();
+                        // Get active variant or skip this field processing
+                        let variant = match enum_val.active_variant() {
+                            Ok(v) => v,
+                            Err(_) => {
+                                // Skip field processing for this enum
+                                continue;
+                            }
+                        };
                         if field_index >= variant.data.fields.len() {
                             // Determine variant kind to use the right closing delimiter
                             match variant.data.kind {
@@ -496,7 +511,19 @@ impl PrettyPrinter {
                         }
 
                         let field = variant.data.fields[field_index];
-                        let field_value = enum_val.field(field_index).unwrap();
+
+                        // Get field value or skip this field
+                        let field_value = match enum_val.field(field_index) {
+                            Ok(Some(v)) => v,
+                            _ => {
+                                // Can't get the field value, skip this field
+                                item.state = StackState::ProcessStructField {
+                                    field_index: field_index + 1,
+                                };
+                                stack.push_back(item);
+                                continue;
+                            }
+                        };
 
                         // Add field doc comments if available
                         // Only add new line if not the first field
@@ -520,7 +547,7 @@ impl PrettyPrinter {
                         }
 
                         // For struct variants, print field name
-                        if let StructKind::Struct = enum_val.active_variant().data.kind {
+                        if let StructKind::Struct = variant.data.kind {
                             self.write_field_name(f, field.name)?;
                             self.write_punctuation(f, ": ")?;
                         }

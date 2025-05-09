@@ -42,37 +42,42 @@ impl Wip<'_> {
         ISet::clear(&mut frame.istate.fields);
 
         // Write the discriminant value based on the enum's representation
-        let discriminant = variant.discriminant;
-        unsafe {
-            let data_ptr = frame.data.as_mut_byte_ptr();
-            match def.enum_repr {
-                facet_core::EnumRepr::U8 => *data_ptr = discriminant as u8,
-                facet_core::EnumRepr::U16 => *(data_ptr as *mut u16) = discriminant as u16,
-                facet_core::EnumRepr::U32 => *(data_ptr as *mut u32) = discriminant as u32,
-                facet_core::EnumRepr::U64 => *(data_ptr as *mut u64) = discriminant as u64,
-                facet_core::EnumRepr::USize => *(data_ptr as *mut usize) = discriminant as usize,
-                facet_core::EnumRepr::I8 => *(data_ptr as *mut i8) = discriminant as i8,
-                facet_core::EnumRepr::I16 => *(data_ptr as *mut i16) = discriminant as i16,
-                facet_core::EnumRepr::I32 => *(data_ptr as *mut i32) = discriminant as i32,
-                facet_core::EnumRepr::I64 => *(data_ptr as *mut i64) = discriminant,
-                facet_core::EnumRepr::ISize => *(data_ptr as *mut isize) = discriminant as isize,
-                facet_core::EnumRepr::RustNPO => (),
-                _ => {
-                    // Default to a reasonable size for other representations
-                    *(data_ptr as *mut u32) = discriminant as u32;
+        if let Some(discriminant) = variant.discriminant {
+            unsafe {
+                let data_ptr = frame.data.as_mut_byte_ptr();
+                match def.enum_repr {
+                    facet_core::EnumRepr::U8 => *data_ptr = discriminant as u8,
+                    facet_core::EnumRepr::U16 => *(data_ptr as *mut u16) = discriminant as u16,
+                    facet_core::EnumRepr::U32 => *(data_ptr as *mut u32) = discriminant as u32,
+                    facet_core::EnumRepr::U64 => *(data_ptr as *mut u64) = discriminant as u64,
+                    facet_core::EnumRepr::USize => {
+                        *(data_ptr as *mut usize) = discriminant as usize
+                    }
+                    facet_core::EnumRepr::I8 => *(data_ptr as *mut i8) = discriminant as i8,
+                    facet_core::EnumRepr::I16 => *(data_ptr as *mut i16) = discriminant as i16,
+                    facet_core::EnumRepr::I32 => *(data_ptr as *mut i32) = discriminant as i32,
+                    facet_core::EnumRepr::I64 => *(data_ptr as *mut i64) = discriminant,
+                    facet_core::EnumRepr::ISize => {
+                        *(data_ptr as *mut isize) = discriminant as isize
+                    }
+                    facet_core::EnumRepr::RustNPO => (),
+                    _ => {
+                        // Default to a reasonable size for other representations
+                        *(data_ptr as *mut u32) = discriminant as u32;
+                    }
                 }
             }
-        }
+        } // If there's no discriminant, don't try to write one (e.g., for RustNPO)
 
         // Now that we've set the discriminant, we can store the variant
         frame.istate.variant = Some(variant);
 
         trace!(
-            "[{}] Selecting variant {} of {} with discriminant {}",
+            "[{}] Selecting variant {} of {} with discriminant {:?}",
             self.frames.len(),
             variant.name.blue(),
             shape.blue(),
-            discriminant
+            variant.discriminant
         );
 
         Ok(self)

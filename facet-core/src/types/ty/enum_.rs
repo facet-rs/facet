@@ -77,7 +77,7 @@ pub struct Variant {
     pub name: &'static str,
 
     /// Discriminant value (if available). Might fit in a u8, etc.
-    pub discriminant: i64,
+    pub discriminant: Option<i64>,
 
     /// Attributes set for this variant via the derive macro
     pub attributes: &'static [VariantAttribute],
@@ -161,7 +161,7 @@ impl VariantBuilder {
     pub const fn build(self) -> Variant {
         Variant {
             name: self.name.unwrap(),
-            discriminant: self.discriminant.unwrap(),
+            discriminant: self.discriminant,
             attributes: self.attributes,
             data: self.data.unwrap(),
             doc: self.doc,
