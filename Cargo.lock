@@ -299,6 +299,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-bench"
+version = "0.23.0"
+dependencies = [
+ "codspeed-divan-compat",
+ "facet",
+ "facet-json",
+ "facet-testhelpers 0.17.1",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "facet-core"
 version = "0.21.1"
 dependencies = [

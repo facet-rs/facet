@@ -30,7 +30,7 @@ members = [
     # "facet-yaml",
     # "facet-jsonschema",
     "facet-deserialize",
-    # "facet-bench",
+    "facet-bench",
 ]
 exclude = ["outside-workspace"]
 resolver = "3"
