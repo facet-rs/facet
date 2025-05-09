@@ -10,7 +10,7 @@ keywords = ["toml", "serialization", "deserialization", "reflection", "facet"]
 categories = ["encoding", "parsing", "data-structures"]
 
 [features]
-deserialize = ["alloc", "toml_edit/parse"]
+deserialize = ["alloc", "dep:facet-deserialize", "toml_edit/parse"]
 serialize = ["alloc", "dep:facet-serialize", "toml_edit/display"]
 std = ["alloc", "facet-core/std", "facet-reflect/std", "num-traits/std", "facet-serialize?/std"]
 alloc = ["facet-core/alloc", "facet-reflect/alloc", "facet-serialize?/alloc"]
@@ -27,6 +27,7 @@ toml_edit = { version = "0.22.26", default-features = false, features = [
 facet-core = { version = "0.21.1", path = "../facet-core", default-features = false }
 facet-reflect = { version = "0.19.1", path = "../facet-reflect", default-features = false }
 facet-serialize = { version = "0.23.0", path = "../facet-serialize", default-features = false, optional = true }
+facet-deserialize = { version = "0.23.0", path = "../facet-deserialize", default-features = false, optional = true }
 yansi = "1.0.1"
 
 [dev-dependencies]

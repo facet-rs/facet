@@ -4,7 +4,7 @@ use facet::Facet;
 #[derive(Debug, Facet, PartialEq)]
 struct Person {
     name: String,
-    age: u64,
+    age: i64,
 }
 
 #[cfg(feature = "alloc")]
