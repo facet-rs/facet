@@ -123,7 +123,7 @@ fn transparent_option_non_zero_u64_none() -> eyre::Result<()> {
 }
 
 #[test]
-fn transparent_option_non_zero_u16() -> eyre::Result<()> {
+fn transparent_option_non_zero_u16_some() -> eyre::Result<()> {
     facet_testhelpers::setup();
     use std::num::NonZeroU16;
 
@@ -133,6 +133,14 @@ fn transparent_option_non_zero_u16() -> eyre::Result<()> {
     "#;
     let opt_num: Option<NonZeroU16> = from_str(markup)?;
     assert_eq!(opt_num, Some(NonZeroU16::new(10).unwrap()));
+
+    Ok(())
+}
+
+#[test]
+fn transparent_option_non_zero_u16_none() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+    use std::num::NonZeroU16;
 
     // Test deserializing a null into Option<NonZeroU16>, which should yield None
     let markup = r#"

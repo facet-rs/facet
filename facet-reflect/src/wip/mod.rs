@@ -1,4 +1,4 @@
-use crate::{ReflectError, ValueId};
+use crate::{Peek, ReflectError, ValueId};
 use crate::{debug, trace};
 #[cfg(feature = "log")]
 use alloc::string::ToString;
@@ -226,10 +226,24 @@ impl Frame {
                     );
                     self.istate.fields = ISet::all(variant.data.fields);
                 } else {
-                    panic!(
+                    trace!(
                         "[{}] Trying to mark enum as initialized without variant",
                         self.istate.depth
                     );
+
+                    // now let's find which variant was set with a Peek
+                    let peek = unsafe {
+                        Peek::unchecked_new(self.data.assume_init().as_const(), self.shape)
+                    };
+                    let enum_peek = peek.into_enum().unwrap();
+                    let variant = enum_peek.active_variant().unwrap();
+                    self.istate.variant = Some(*variant);
+                    if variant.data.fields.is_empty() {
+                        // for unit variants, we mark "fields zero" as initialized
+                        self.istate.fields.set(0);
+                    } else {
+                        self.istate.fields = ISet::all(variant.data.fields);
+                    }
                 }
             }
             _ => {
@@ -635,6 +649,7 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
                         for i in 0..sd.fields.len() {
                             if !istate.fields.has(i) {
                                 let field = &sd.fields[i];
+                                trace!("Found uninitialized field: {}", field.name);
                                 return Err(ReflectError::UninitializedField {
                                     shape: id.shape,
                                     field_name: field.name,
@@ -669,6 +684,7 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
                             // Check each field, just like for structs
                             for (i, field) in variant.data.fields.iter().enumerate() {
                                 if !istate.fields.has(i) {
+                                    trace!("Found uninitialized field: {}", field.name);
                                     return Err(ReflectError::UninitializedEnumField {
                                         shape: id.shape,
                                         variant_name: variant.name,
@@ -1008,7 +1024,9 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
 
         unsafe {
             default_in_place(frame.data);
+            trace!("Marking frame as fully initialized...");
             frame.mark_fully_initialized();
+            trace!("Marking frame as fully initialized... done!");
         }
 
         let shape = frame.shape;

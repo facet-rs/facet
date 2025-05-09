@@ -5,8 +5,8 @@
 #![doc = include_str!("../README.md")]
 
 use log::{Level, LevelFilter, Log, Metadata, Record};
+use owo_colors::{OwoColorize, Style};
 use std::io::Write;
-use yansi::{Paint as _, Style};
 
 struct SimpleLogger;
 
@@ -18,20 +18,20 @@ impl Log for SimpleLogger {
     fn log(&self, record: &Record) {
         // Create style based on log level
         let level_style = match record.level() {
-            Level::Error => Style::new().rgb(243, 139, 168), // Catppuccin red (Maroon)
-            Level::Warn => Style::new().rgb(249, 226, 175),  // Catppuccin yellow (Peach)
-            Level::Info => Style::new().rgb(166, 227, 161),  // Catppuccin green (Green)
-            Level::Debug => Style::new().rgb(137, 180, 250), // Catppuccin blue (Blue)
-            Level::Trace => Style::new().rgb(148, 226, 213), // Catppuccin teal (Teal)
+            Level::Error => Style::new().fg_rgb::<243, 139, 168>(), // Catppuccin red (Maroon)
+            Level::Warn => Style::new().fg_rgb::<249, 226, 175>(),  // Catppuccin yellow (Peach)
+            Level::Info => Style::new().fg_rgb::<166, 227, 161>(),  // Catppuccin green (Green)
+            Level::Debug => Style::new().fg_rgb::<137, 180, 250>(), // Catppuccin blue (Blue)
+            Level::Trace => Style::new().fg_rgb::<148, 226, 213>(), // Catppuccin teal (Teal)
         };
 
         // Convert level to styled display
-        let level = record.level();
-
         eprintln!(
             "{} - {}: {}",
-            level.paint(level_style),
-            record.target().blue(),
+            record.level().style(level_style),
+            record
+                .target()
+                .style(Style::new().fg_rgb::<137, 180, 250>()), // Blue for the target
             record.args()
         );
     }

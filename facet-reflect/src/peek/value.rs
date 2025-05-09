@@ -198,7 +198,7 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
         if let Some(ScalarType::Str) = peek.scalar_type() {
             unsafe { Some(peek.data.get::<&str>()) }
         } else if let Some(ScalarType::String) = peek.scalar_type() {
-            unsafe { Some(peek.data.get::<String>().as_str()) }
+            unsafe { Some(peek.data.get::<alloc::string::String>().as_str()) }
         } else if let Type::Pointer(PointerType::Reference(vpt)) = peek.shape.ty {
             let target_shape = (vpt.target)();
             if let Some(ScalarType::Str) = ScalarType::try_from_shape(target_shape) {

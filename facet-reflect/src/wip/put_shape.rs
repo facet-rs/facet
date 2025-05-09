@@ -1,4 +1,5 @@
 use facet_core::{Def, PtrConst, PtrMut, SequenceType, Shape, Type, UserType};
+#[allow(unused_imports)]
 use owo_colors::OwoColorize;
 
 use crate::{ISet, ReflectError};
@@ -296,6 +297,8 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
 
                                         let shape = frame.shape;
                                         let index = frame.field_index_in_parent;
+
+                                        #[allow(unused_variables)]
                                         let variant_name = variant.name;
 
                                         // If all fields are now initialized, mark the enum itself as initialized

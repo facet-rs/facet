@@ -4,8 +4,8 @@ use alloc::string::String;
 use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::{
-    value_vtable, Def, Facet, PtrConst, PtrMut, PtrUninit, ScalarAffinity, ScalarDef, Shape,
-    TryBorrowInnerError, TryFromError, TryIntoInnerError, Type, UserType, ValueVTable,
+    Def, Facet, PtrConst, PtrMut, PtrUninit, ScalarAffinity, ScalarDef, Shape, TryBorrowInnerError,
+    TryFromError, TryIntoInnerError, Type, UserType, ValueVTable, value_vtable,
 };
 
 unsafe impl Facet<'_> for Utf8PathBuf {

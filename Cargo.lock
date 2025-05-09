@@ -431,7 +431,7 @@ dependencies = [
  "color-backtrace",
  "color-eyre",
  "log",
- "yansi",
+ "owo-colors",
 ]
 
 [[package]]

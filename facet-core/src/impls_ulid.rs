@@ -3,8 +3,8 @@ use alloc::string::String;
 use ulid::Ulid;
 
 use crate::{
-    value_vtable, Def, Facet, ParseError, PtrConst, PtrMut, PtrUninit, ScalarAffinity, ScalarDef,
-    Shape, TryFromError, TryIntoInnerError, Type, UserType, ValueVTable,
+    Def, Facet, ParseError, PtrConst, PtrMut, PtrUninit, ScalarAffinity, ScalarDef, Shape,
+    TryFromError, TryIntoInnerError, Type, UserType, ValueVTable, value_vtable,
 };
 
 unsafe impl Facet<'_> for Ulid {

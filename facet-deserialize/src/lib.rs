@@ -470,7 +470,7 @@ impl<'input> StackRunner<'input> {
                     trace!("Variant {} is selected", variant.name.blue());
 
                     // Check if all fields in the variant are initialized
-                    if variant.data.fields.len() > 0 {
+                    if !variant.data.fields.is_empty() {
                         let mut has_unset = false;
 
                         for (index, field) in variant.data.fields.iter().enumerate() {

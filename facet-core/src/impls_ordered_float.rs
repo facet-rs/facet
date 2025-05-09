@@ -1,7 +1,7 @@
 use crate::{
-    field_in_type, value_vtable, Characteristic, Def, Facet, PtrConst, PtrMut, PtrUninit, Repr,
-    ScalarAffinity, ScalarDef, Shape, StructType, TryBorrowInnerError, TryFromError,
-    TryIntoInnerError, Type, UserType, ValueVTable,
+    Characteristic, Def, Facet, PtrConst, PtrMut, PtrUninit, Repr, ScalarAffinity, ScalarDef,
+    Shape, StructType, TryBorrowInnerError, TryFromError, TryIntoInnerError, Type, UserType,
+    ValueVTable, field_in_type, value_vtable,
 };
 use ordered_float::{NotNan, OrderedFloat};
 

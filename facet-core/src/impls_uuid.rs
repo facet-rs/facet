@@ -4,8 +4,9 @@ use alloc::string::ToString;
 use uuid::Uuid;
 
 use crate::{
-    value_vtable, Def, Facet, ParseError, PtrConst, PtrMut, PtrUninit, ScalarAffinity, ScalarDef,
-    Shape, TryBorrowInnerError, TryFromError, TryIntoInnerError, Type, UserType, ValueVTable,
+    Def, Facet, ParseError, PtrConst, PtrMut, PtrUninit, ScalarAffinity, ScalarDef, Shape,
+    TryBorrowInnerError, TryFromError, TryIntoInnerError, Type, UserType, ValueVTable,
+    value_vtable,
 };
 
 unsafe impl Facet<'_> for Uuid {
