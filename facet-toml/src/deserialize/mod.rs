@@ -86,6 +86,12 @@ fn deserialize_item<'input, 'facet>(
     wip: Wip<'facet>,
     item: &Item,
 ) -> Result<Wip<'facet>, TomlDeError<'input>> {
+    // Check for Option before anything else, since it's a special case
+    // Option is an enum in Rust, but we handle it specially
+    if let Def::Option(_) = wip.shape().def {
+        return deserialize_as_option(toml, wip, item);
+    }
+
     // First check the type system (Type)
     if let Type::User(UserType::Struct(struct_def)) = &wip.shape().ty {
         return deserialize_as_struct(toml, wip, struct_def, item);
@@ -94,11 +100,6 @@ fn deserialize_item<'input, 'facet>(
     // Check for enum in the type system
     if let Type::User(UserType::Enum(_)) = &wip.shape().ty {
         return deserialize_as_enum(toml, wip, item);
-    }
-
-    // Check for Option in the def system (it might not be in Type yet)
-    if let Def::Option(_) = wip.shape().def {
-        return deserialize_as_option(toml, wip, item);
     }
 
     // Fall back to the def system for other types
@@ -532,10 +533,44 @@ fn deserialize_as_option<'input, 'a>(
         "option".blue()
     );
 
+    // Push the Some variant
     reflect!(wip, toml, item.span(), push_some());
 
-    wip = deserialize_item(toml, wip, item)?;
+    // Handle nested options recursively
+    fn handle_nested_options<'input, 'a>(
+        toml: &'input str,
+        mut wip: Wip<'a>,
+        item: &Item,
+    ) -> Result<Wip<'a>, TomlDeError<'input>> {
+        // Check if we have another nested Option
+        if let Def::Option(_) = wip.shape().def {
+            trace!("Detected another level of nested Option");
 
+            // Push Some for this level too
+            reflect!(wip, toml, item.span(), push_some());
+
+            // Recursively handle any more levels of nesting
+            wip = handle_nested_options(toml, wip, item)?;
+
+            // Pop back up one level
+            reflect!(wip, toml, item.span(), pop());
+        } else {
+            // We've reached the innermost level - handle the actual value
+            if item.is_integer() {
+                trace!("Deserializing integer at innermost Option level");
+                wip = deserialize_as_scalar(toml, wip, item)?;
+            } else {
+                wip = deserialize_item(toml, wip, item)?;
+            }
+        }
+
+        Ok(wip)
+    }
+
+    // Start processing from the current level
+    wip = handle_nested_options(toml, wip, item)?;
+
+    // Pop the outermost Option
     reflect!(wip, toml, item.span(), pop());
 
     trace!("Finished deserializing {}", "option".blue());
