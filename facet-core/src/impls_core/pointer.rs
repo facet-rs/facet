@@ -79,8 +79,8 @@ impl_facet_for_pointer!(
                     .union(MarkerTraits::COPY)
                     .union(MarkerTraits::UNPIN),
             )
-            .debug(|data, f| fmt::Debug::fmt(data, f))
-            .clone_into(|src, dst| unsafe { dst.put(src.clone()) })
+            .debug(fmt::Debug::fmt)
+            .clone_into(|src, dst| unsafe { dst.put(*src) })
             .eq(|left, right| left.cast::<()>().eq(&right.cast::<()>()))
             .partial_ord(|&left, &right| {
                 left.cast::<()>().partial_cmp(&right.cast::<()>())
@@ -105,8 +105,8 @@ impl_facet_for_pointer!(
                     .union(MarkerTraits::COPY)
                     .union(MarkerTraits::UNPIN),
             )
-            .debug(|data, f| fmt::Debug::fmt(data, f))
-            .clone_into(|src, dst| unsafe { dst.put(src.clone()) })
+            .debug(fmt::Debug::fmt)
+            .clone_into(|src, dst| unsafe { dst.put(*src) })
             .eq(|left, right| left.cast::<()>().eq(&right.cast::<()>()))
             .partial_ord(|&left, &right| {
                 left.cast::<()>().partial_cmp(&right.cast::<()>())
