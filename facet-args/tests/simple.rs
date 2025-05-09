@@ -70,7 +70,7 @@ fn test_error_non_struct_type_not_supported() -> Result<()> {
     }
     let args: Result<Args, _> = facet_args::from_slice(&["error", "wrong", "type"]);
     let err = args.unwrap_err();
-    assert_eq!(err.message(), "Args error: Expected struct defintion");
+    assert_eq!(err.message(), "Args error: Expected struct type");
 
     Ok(())
 }
