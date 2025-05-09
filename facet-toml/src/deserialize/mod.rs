@@ -11,7 +11,7 @@ use alloc::{
     string::{String, ToString},
 };
 pub use error::{TomlDeError, TomlDeErrorKind};
-use facet_core::{Characteristic, Def, Facet, FieldFlags, StructDef, StructKind};
+use facet_core::{Characteristic, Def, Facet, FieldFlags, StructKind, Type, UserType};
 use facet_reflect::{ReflectError, ScalarType, Wip};
 use log::trace;
 use toml_edit::{ImDocument, Item, TomlError};
@@ -86,13 +86,26 @@ fn deserialize_item<'input, 'facet>(
     wip: Wip<'facet>,
     item: &Item,
 ) -> Result<Wip<'facet>, TomlDeError<'input>> {
+    // First check the type system (Type)
+    if let Type::User(UserType::Struct(struct_def)) = &wip.shape().ty {
+        return deserialize_as_struct(toml, wip, struct_def, item);
+    }
+
+    // Check for enum in the type system
+    if let Type::User(UserType::Enum(_)) = &wip.shape().ty {
+        return deserialize_as_enum(toml, wip, item);
+    }
+
+    // Check for Option in the def system (it might not be in Type yet)
+    if let Def::Option(_) = wip.shape().def {
+        return deserialize_as_option(toml, wip, item);
+    }
+
+    // Fall back to the def system for other types
     match wip.shape().def {
         Def::Scalar(_) => deserialize_as_scalar(toml, wip, item),
         Def::List(_) => deserialize_as_list(toml, wip, item),
         Def::Map(_) => deserialize_as_map(toml, wip, item),
-        Def::Struct(def) => deserialize_as_struct(toml, wip, def, item),
-        Def::Enum(_) => deserialize_as_enum(toml, wip, item),
-        Def::Option(_) => deserialize_as_option(toml, wip, item),
         Def::SmartPointer(_) => deserialize_as_smartpointer(toml, wip, item),
         _ => todo!(),
     }
@@ -101,7 +114,7 @@ fn deserialize_item<'input, 'facet>(
 fn deserialize_as_struct<'input, 'a>(
     toml: &'input str,
     mut wip: Wip<'a>,
-    def: StructDef,
+    def: &facet_core::StructType,
     item: &Item,
 ) -> Result<Wip<'a>, TomlDeError<'input>> {
     trace!(
@@ -114,8 +127,8 @@ fn deserialize_as_struct<'input, 'a>(
     if item.is_value() && !item.is_inline_table() {
         // Only allow unit structs
         let shape = wip.shape();
-        if let Def::Struct(def) = shape.def {
-            if def.fields.len() > 1 {
+        if let Type::User(UserType::Struct(struct_def)) = &shape.ty {
+            if struct_def.fields.len() > 1 {
                 return Err(TomlDeError::new(
                     toml,
                     TomlDeErrorKind::ParseSingleValueAsMultipleFieldStruct,
