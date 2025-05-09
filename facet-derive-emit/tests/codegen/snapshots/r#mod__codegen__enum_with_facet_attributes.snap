@@ -54,7 +54,9 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                     .build(),
                 {
                     let fields: &'static [::facet::Field] = &const {
-                        [:: facet :: Field :: builder () . name ("0") . shape (:: facet :: shape_of (& | s : & __Shadow_RustRepr_Tuple_for_EnumWithAttributes_InternalVariant < '__facet > | & s . _0)) . offset (:: core :: mem :: offset_of ! (__Shadow_RustRepr_Tuple_for_EnumWithAttributes_InternalVariant < '__facet > , _0)) . build ()]
+                        [{
+                            :: facet :: Field :: builder () . name ("0") . shape (:: facet :: shape_of (& | s : & __Shadow_RustRepr_Tuple_for_EnumWithAttributes_InternalVariant < '__facet > | & s . _0)) . offset (:: core :: mem :: offset_of ! (__Shadow_RustRepr_Tuple_for_EnumWithAttributes_InternalVariant < '__facet > , _0)) . build ()
+                        }]
                     };
                     ::facet::Variant::builder()
                         .name("InternalVariant")
@@ -71,19 +73,9 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                 },
                 {
                     let fields: &'static [::facet::Field] = &const {
-                        [::facet::Field::builder()
-                            .name("secret")
-                            .shape(::facet::shape_of(
-                                &|s: &__Shadow_RustRepr_Struct_for_EnumWithAttributes_VariantC<
-                                    '__facet,
-                                >| &s.secret,
-                            ))
-                            .offset(::core::mem::offset_of!(
-                                __Shadow_RustRepr_Struct_for_EnumWithAttributes_VariantC<'__facet>,
-                                secret
-                            ))
-                            .flags(::facet::FieldFlags::SENSITIVE)
-                            .build()]
+                        [{
+                            :: facet :: Field :: builder () . name ("secret") . shape (:: facet :: shape_of (& | s : & __Shadow_RustRepr_Struct_for_EnumWithAttributes_VariantC < '__facet > | & s . secret)) . offset (:: core :: mem :: offset_of ! (__Shadow_RustRepr_Struct_for_EnumWithAttributes_VariantC < '__facet > , secret)) . flags (:: facet :: FieldFlags :: SENSITIVE) . build ()
+                        }]
                     };
                     ::facet::Variant::builder()
                         .name("VariantC")
@@ -102,26 +94,9 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                 },
                 {
                     let fields: &'static [::facet::Field] = &const {
-                        [::facet::Field::builder()
-                            .name("value")
-                            .shape(::facet::shape_of(
-                                &|s: &__Shadow_RustRepr_Struct_for_EnumWithAttributes_VariantD<
-                                    '__facet,
-                                >| &s.value,
-                            ))
-                            .offset(::core::mem::offset_of!(
-                                __Shadow_RustRepr_Struct_for_EnumWithAttributes_VariantD<'__facet>,
-                                value
-                            ))
-                            .flags(::facet::FieldFlags::DEFAULT)
-                            .vtable(
-                                &const {
-                                    ::facet::FieldVTable::builder()
-                                        .default_fn(|ptr| unsafe { ptr.put::<i32>(forty_two()) })
-                                        .build()
-                                },
-                            )
-                            .build()]
+                        [{
+                            :: facet :: Field :: builder () . name ("value") . shape (:: facet :: shape_of (& | s : & __Shadow_RustRepr_Struct_for_EnumWithAttributes_VariantD < '__facet > | & s . value)) . offset (:: core :: mem :: offset_of ! (__Shadow_RustRepr_Struct_for_EnumWithAttributes_VariantD < '__facet > , value)) . flags (:: facet :: FieldFlags :: DEFAULT) . vtable (& const { :: facet :: FieldVTable :: builder () . default_fn (| ptr | { unsafe { ptr . put :: < i32 > (forty_two ()) } }) . build () }) . build ()
+                        }]
                     };
                     ::facet::Variant::builder()
                         .name("VariantD")

@@ -14,18 +14,22 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Blah {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [
-                ::facet::Field::builder()
-                    .name("0")
-                    .shape(::facet::shape_of(&|s: &Blah| &s.0))
-                    .offset(::core::mem::offset_of!(Blah, 0))
-                    .doc(&[" and this is a public field"])
-                    .build(),
-                ::facet::Field::builder()
-                    .name("1")
-                    .shape(::facet::shape_of(&|s: &Blah| &s.1))
-                    .offset(::core::mem::offset_of!(Blah, 1))
-                    .doc(&[" and this is a crate public field"])
-                    .build(),
+                {
+                    ::facet::Field::builder()
+                        .name("0")
+                        .shape(::facet::shape_of(&|s: &Blah| &s.0))
+                        .offset(::core::mem::offset_of!(Blah, 0))
+                        .doc(&[" and this is a public field"])
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("1")
+                        .shape(::facet::shape_of(&|s: &Blah| &s.1))
+                        .offset(::core::mem::offset_of!(Blah, 1))
+                        .doc(&[" and this is a crate public field"])
+                        .build()
+                },
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()

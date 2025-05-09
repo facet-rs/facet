@@ -13,11 +13,13 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Handle {
     };
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
-            [::facet::Field::builder()
-                .name("0")
-                .shape(::facet::shape_of_opaque(&|s: &Handle| &s.0))
-                .offset(::core::mem::offset_of!(Handle, 0))
-                .build()]
+            [{
+                ::facet::Field::builder()
+                    .name("0")
+                    .shape(::facet::shape_of_opaque(&|s: &Handle| &s.0))
+                    .offset(::core::mem::offset_of!(Handle, 0))
+                    .build()
+            }]
         };
         ::facet::Shape::builder_for_sized::<Self>()
             .ty(::facet::Type::User(::facet::UserType::Struct(

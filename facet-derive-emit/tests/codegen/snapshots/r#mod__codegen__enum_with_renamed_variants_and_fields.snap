@@ -33,18 +33,20 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
             [
                 {
                     let fields: &'static [::facet::Field] = &const {
-                        [::facet::Field::builder()
-                            .name("responseData")
-                            .shape(::facet::shape_of(
-                                &|s: &__Shadow_RustRepr_Struct_for_ApiResponse_Ok<'__facet>| {
-                                    &s.data
-                                },
-                            ))
-                            .offset(::core::mem::offset_of!(
-                                __Shadow_RustRepr_Struct_for_ApiResponse_Ok<'__facet>,
-                                data
-                            ))
-                            .build()]
+                        [{
+                            ::facet::Field::builder()
+                                .name("responseData")
+                                .shape(::facet::shape_of(
+                                    &|s: &__Shadow_RustRepr_Struct_for_ApiResponse_Ok<'__facet>| {
+                                        &s.data
+                                    },
+                                ))
+                                .offset(::core::mem::offset_of!(
+                                    __Shadow_RustRepr_Struct_for_ApiResponse_Ok<'__facet>,
+                                    data
+                                ))
+                                .build()
+                        }]
                     };
                     ::facet::Variant::builder()
                         .name("Success")
@@ -61,30 +63,34 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                 {
                     let fields: &'static [::facet::Field] = &const {
                         [
-                            ::facet::Field::builder()
-                                .name("errorCode")
-                                .shape(::facet::shape_of(
-                                    &|s: &__Shadow_RustRepr_Struct_for_ApiResponse_Err<
-                                        '__facet,
-                                    >| &s.code,
-                                ))
-                                .offset(::core::mem::offset_of!(
-                                    __Shadow_RustRepr_Struct_for_ApiResponse_Err<'__facet>,
-                                    code
-                                ))
-                                .build(),
-                            ::facet::Field::builder()
-                                .name("errorMessage")
-                                .shape(::facet::shape_of(
-                                    &|s: &__Shadow_RustRepr_Struct_for_ApiResponse_Err<
-                                        '__facet,
-                                    >| &s.message,
-                                ))
-                                .offset(::core::mem::offset_of!(
-                                    __Shadow_RustRepr_Struct_for_ApiResponse_Err<'__facet>,
-                                    message
-                                ))
-                                .build(),
+                            {
+                                ::facet::Field::builder()
+                                    .name("errorCode")
+                                    .shape(::facet::shape_of(
+                                        &|s: &__Shadow_RustRepr_Struct_for_ApiResponse_Err<
+                                            '__facet,
+                                        >| &s.code,
+                                    ))
+                                    .offset(::core::mem::offset_of!(
+                                        __Shadow_RustRepr_Struct_for_ApiResponse_Err<'__facet>,
+                                        code
+                                    ))
+                                    .build()
+                            },
+                            {
+                                ::facet::Field::builder()
+                                    .name("errorMessage")
+                                    .shape(::facet::shape_of(
+                                        &|s: &__Shadow_RustRepr_Struct_for_ApiResponse_Err<
+                                            '__facet,
+                                        >| &s.message,
+                                    ))
+                                    .offset(::core::mem::offset_of!(
+                                        __Shadow_RustRepr_Struct_for_ApiResponse_Err<'__facet>,
+                                        message
+                                    ))
+                                    .build()
+                            },
                         ]
                     };
                     ::facet::Variant::builder()

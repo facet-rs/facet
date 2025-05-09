@@ -13,11 +13,13 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Macroed {
     };
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
-            [::facet::Field::builder()
-                .name("value")
-                .shape(::facet::shape_of(&|s: &Macroed| &s.value))
-                .offset(::core::mem::offset_of!(Macroed, value))
-                .build()]
+            [{
+                ::facet::Field::builder()
+                    .name("value")
+                    .shape(::facet::shape_of(&|s: &Macroed| &s.value))
+                    .offset(::core::mem::offset_of!(Macroed, value))
+                    .build()
+            }]
         };
         ::facet::Shape::builder_for_sized::<Self>()
             .ty(::facet::Type::User(::facet::UserType::Struct(

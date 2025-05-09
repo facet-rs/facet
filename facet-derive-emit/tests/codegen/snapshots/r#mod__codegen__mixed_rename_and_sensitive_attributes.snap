@@ -14,23 +14,29 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for User {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [
-                ::facet::Field::builder()
-                    .name("userName")
-                    .shape(::facet::shape_of(&|s: &User| &s.name))
-                    .offset(::core::mem::offset_of!(User, name))
-                    .build(),
-                ::facet::Field::builder()
-                    .name("userEmail")
-                    .shape(::facet::shape_of(&|s: &User| &s.email))
-                    .offset(::core::mem::offset_of!(User, email))
-                    .flags(::facet::FieldFlags::SENSITIVE)
-                    .build(),
-                ::facet::Field::builder()
-                    .name("password")
-                    .shape(::facet::shape_of(&|s: &User| &s.password))
-                    .offset(::core::mem::offset_of!(User, password))
-                    .flags(::facet::FieldFlags::SENSITIVE)
-                    .build(),
+                {
+                    ::facet::Field::builder()
+                        .name("userName")
+                        .shape(::facet::shape_of(&|s: &User| &s.name))
+                        .offset(::core::mem::offset_of!(User, name))
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("userEmail")
+                        .shape(::facet::shape_of(&|s: &User| &s.email))
+                        .offset(::core::mem::offset_of!(User, email))
+                        .flags(::facet::FieldFlags::SENSITIVE)
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("password")
+                        .shape(::facet::shape_of(&|s: &User| &s.password))
+                        .offset(::core::mem::offset_of!(User, password))
+                        .flags(::facet::FieldFlags::SENSITIVE)
+                        .build()
+                },
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()

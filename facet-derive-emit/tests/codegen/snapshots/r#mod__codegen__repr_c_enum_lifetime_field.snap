@@ -44,23 +44,25 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithLifetimeField {
         let __facet_variants: &'static [::facet::Variant] = &const {
             [{
                 let fields: &'static [::facet::Field] = &const {
-                    [::facet::Field::builder()
-                        .name("field1")
-                        .shape(::facet::shape_of(
-                            &|s: &__Shadow_CRepr_FieldEnumWithLifetimeField_Variant1<'__facet>| {
-                                &s.field1
-                            },
-                        ))
-                        .offset(
-                            ::core::mem::offset_of!(
-                                __Shadow_CRepr_Struct_for_EnumWithLifetimeField<'__facet>,
-                                _fields
-                            ) + ::core::mem::offset_of!(
-                                __Shadow_CRepr_FieldEnumWithLifetimeField_Variant1<'__facet>,
-                                field1
-                            ),
-                        )
-                        .build()]
+                    [{
+                        ::facet::Field::builder()
+                            .name("field1")
+                            .shape(::facet::shape_of(
+                                &|s: &__Shadow_CRepr_FieldEnumWithLifetimeField_Variant1<
+                                    '__facet,
+                                >| &s.field1,
+                            ))
+                            .offset(
+                                ::core::mem::offset_of!(
+                                    __Shadow_CRepr_Struct_for_EnumWithLifetimeField<'__facet>,
+                                    _fields
+                                ) + ::core::mem::offset_of!(
+                                    __Shadow_CRepr_FieldEnumWithLifetimeField_Variant1<'__facet>,
+                                    field1
+                                ),
+                            )
+                            .build()
+                    }]
                 };
                 ::facet::Variant::builder()
                     .name("Variant1")

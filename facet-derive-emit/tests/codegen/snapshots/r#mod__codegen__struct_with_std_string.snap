@@ -15,16 +15,20 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for FileInfo {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [
-                ::facet::Field::builder()
-                    .name("path")
-                    .shape(::facet::shape_of(&|s: &FileInfo| &s.path))
-                    .offset(::core::mem::offset_of!(FileInfo, path))
-                    .build(),
-                ::facet::Field::builder()
-                    .name("size")
-                    .shape(::facet::shape_of(&|s: &FileInfo| &s.size))
-                    .offset(::core::mem::offset_of!(FileInfo, size))
-                    .build(),
+                {
+                    ::facet::Field::builder()
+                        .name("path")
+                        .shape(::facet::shape_of(&|s: &FileInfo| &s.path))
+                        .offset(::core::mem::offset_of!(FileInfo, path))
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("size")
+                        .shape(::facet::shape_of(&|s: &FileInfo| &s.size))
+                        .offset(::core::mem::offset_of!(FileInfo, size))
+                        .build()
+                },
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()

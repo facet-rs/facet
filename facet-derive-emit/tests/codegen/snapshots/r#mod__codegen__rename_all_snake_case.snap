@@ -17,16 +17,20 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for SnakeCaseExample {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [
-                ::facet::Field::builder()
-                    .name("field_one")
-                    .shape(::facet::shape_of(&|s: &SnakeCaseExample| &s.field_one))
-                    .offset(::core::mem::offset_of!(SnakeCaseExample, field_one))
-                    .build(),
-                ::facet::Field::builder()
-                    .name("field_two")
-                    .shape(::facet::shape_of(&|s: &SnakeCaseExample| &s.field_two))
-                    .offset(::core::mem::offset_of!(SnakeCaseExample, field_two))
-                    .build(),
+                {
+                    ::facet::Field::builder()
+                        .name("field_one")
+                        .shape(::facet::shape_of(&|s: &SnakeCaseExample| &s.field_one))
+                        .offset(::core::mem::offset_of!(SnakeCaseExample, field_one))
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("field_two")
+                        .shape(::facet::shape_of(&|s: &SnakeCaseExample| &s.field_two))
+                        .offset(::core::mem::offset_of!(SnakeCaseExample, field_two))
+                        .build()
+                },
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()

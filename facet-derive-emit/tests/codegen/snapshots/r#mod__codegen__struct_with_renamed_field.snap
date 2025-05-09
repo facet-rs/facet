@@ -14,21 +14,27 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Person {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [
-                ::facet::Field::builder()
-                    .name("firstName")
-                    .shape(::facet::shape_of(&|s: &Person| &s.first_name))
-                    .offset(::core::mem::offset_of!(Person, first_name))
-                    .build(),
-                ::facet::Field::builder()
-                    .name("lastName")
-                    .shape(::facet::shape_of(&|s: &Person| &s.last_name))
-                    .offset(::core::mem::offset_of!(Person, last_name))
-                    .build(),
-                ::facet::Field::builder()
-                    .name("age")
-                    .shape(::facet::shape_of(&|s: &Person| &s.age))
-                    .offset(::core::mem::offset_of!(Person, age))
-                    .build(),
+                {
+                    ::facet::Field::builder()
+                        .name("firstName")
+                        .shape(::facet::shape_of(&|s: &Person| &s.first_name))
+                        .offset(::core::mem::offset_of!(Person, first_name))
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("lastName")
+                        .shape(::facet::shape_of(&|s: &Person| &s.last_name))
+                        .offset(::core::mem::offset_of!(Person, last_name))
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("age")
+                        .shape(::facet::shape_of(&|s: &Person| &s.age))
+                        .offset(::core::mem::offset_of!(Person, age))
+                        .build()
+                },
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()

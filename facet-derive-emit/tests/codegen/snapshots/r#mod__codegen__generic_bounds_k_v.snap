@@ -16,11 +16,13 @@ where
     };
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
-            [::facet::Field::builder()
-                .name("inner")
-                .shape(::facet::shape_of(&|s: &Foo<K, V>| &s.inner))
-                .offset(:: core :: mem :: offset_of ! (Foo < K , V > , inner))
-                .build()]
+            [{
+                ::facet::Field::builder()
+                    .name("inner")
+                    .shape(::facet::shape_of(&|s: &Foo<K, V>| &s.inner))
+                    .offset(:: core :: mem :: offset_of ! (Foo < K , V > , inner))
+                    .build()
+            }]
         };
         ::facet::Shape::builder_for_sized::<Self>()
             .type_params(&[

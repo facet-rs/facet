@@ -17,32 +17,39 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ForFacetDefaultDemo {
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [
-                ::facet::Field::builder()
-                    .name("field1")
-                    .shape(::facet::shape_of(&|s: &ForFacetDefaultDemo| &s.field1))
-                    .offset(::core::mem::offset_of!(ForFacetDefaultDemo, field1))
-                    .flags(::facet::FieldFlags::DEFAULT)
-                    .build(),
-                ::facet::Field::builder()
-                    .name("field2")
-                    .shape(::facet::shape_of(&|s: &ForFacetDefaultDemo| &s.field2))
-                    .offset(::core::mem::offset_of!(ForFacetDefaultDemo, field2))
-                    .flags(::facet::FieldFlags::DEFAULT)
-                    .vtable(
-                        &const {
-                            ::facet::FieldVTable::builder()
-                                .default_fn(|ptr| unsafe {
-                                    ptr.put::<String>(my_field_default_fn())
-                                })
-                                .build()
-                        },
-                    )
-                    .build(),
-                ::facet::Field::builder()
-                    .name("field3")
-                    .shape(::facet::shape_of(&|s: &ForFacetDefaultDemo| &s.field3))
-                    .offset(::core::mem::offset_of!(ForFacetDefaultDemo, field3))
-                    .build(),
+                {
+                    :: facet :: static_assertions :: assert_impl_all ! (u32 : :: core :: default :: Default);
+                    ::facet::Field::builder()
+                        .name("field1")
+                        .shape(::facet::shape_of(&|s: &ForFacetDefaultDemo| &s.field1))
+                        .offset(::core::mem::offset_of!(ForFacetDefaultDemo, field1))
+                        .flags(::facet::FieldFlags::DEFAULT)
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("field2")
+                        .shape(::facet::shape_of(&|s: &ForFacetDefaultDemo| &s.field2))
+                        .offset(::core::mem::offset_of!(ForFacetDefaultDemo, field2))
+                        .flags(::facet::FieldFlags::DEFAULT)
+                        .vtable(
+                            &const {
+                                ::facet::FieldVTable::builder()
+                                    .default_fn(|ptr| unsafe {
+                                        ptr.put::<String>(my_field_default_fn())
+                                    })
+                                    .build()
+                            },
+                        )
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("field3")
+                        .shape(::facet::shape_of(&|s: &ForFacetDefaultDemo| &s.field3))
+                        .offset(::core::mem::offset_of!(ForFacetDefaultDemo, field3))
+                        .build()
+                },
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()
