@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 
 use facet_core::{Def, Facet, Field, PointerType, ShapeAttribute, StructKind, Type, UserType};
 use facet_reflect::{HasFields, Peek, PeekListLike, PeekMap, PeekStruct, ScalarType};
-use log::debug;
+use log::{debug, trace};
 
 mod debug_serializer;
 
@@ -341,26 +341,73 @@ where
                             None => panic!("Unsupported shape: {}", cpeek.shape()),
                         }
                     }
+                    (Def::List(_), _) | (Def::Array(_), _) | (Def::Slice(_), _) => {
+                        let peek_list = cpeek.into_list_like().unwrap();
+                        let len = peek_list.len();
+                        serializer.start_array(Some(len))?;
+                        stack.push(SerializeTask::EndArray);
+                        stack.push(SerializeTask::ArrayItems(peek_list));
+                    }
+                    (Def::Map(_), _) => {
+                        let peek_map = cpeek.into_map().unwrap();
+                        let len = peek_map.len();
+                        serializer.start_map(Some(len))?;
+                        stack.push(SerializeTask::EndMap);
+                        stack.push(SerializeTask::MapEntries(peek_map));
+                    }
+                    (Def::Option(_), _) => {
+                        let opt = cpeek.into_option().unwrap();
+                        if let Some(inner_peek) = opt.value() {
+                            stack.push(SerializeTask::Value(inner_peek, None));
+                        } else {
+                            serializer.serialize_none()?;
+                        }
+                    }
+                    (Def::SmartPointer(_), _) => {
+                        let _sp = cpeek.into_smart_pointer().unwrap();
+                        panic!("TODO: Implement serialization for smart pointers");
+                    }
                     (_, Type::User(UserType::Struct(sd))) => {
-                        debug!("cpeek.shape(): {}", cpeek.shape());
+                        debug!("Serializing struct: shape={}", cpeek.shape(),);
+                        debug!(
+                            "  Struct details: kind={:?}, field_count={}",
+                            sd.kind,
+                            sd.fields.len()
+                        );
+
                         match sd.kind {
                             StructKind::Unit => {
+                                debug!("  Handling unit struct (no fields)");
                                 // Correctly handle unit struct type when encountered as a value
                                 serializer.serialize_unit()?;
                             }
                             StructKind::Tuple | StructKind::TupleStruct => {
+                                debug!("  Handling tuple struct with {:?} kind", sd.kind);
                                 let peek_struct = cpeek.into_struct().unwrap();
                                 let fields = peek_struct.fields_for_serialize().count();
+                                debug!("  Serializing {} fields as array", fields);
+
                                 serializer.start_array(Some(fields))?;
                                 stack.push(SerializeTask::EndArray);
                                 stack.push(SerializeTask::TupleStructFields(peek_struct));
+                                trace!(
+                                    "  Pushed TupleStructFields to stack, will handle {} fields",
+                                    fields
+                                );
                             }
                             StructKind::Struct => {
+                                debug!("  Handling record struct");
                                 let peek_struct = cpeek.into_struct().unwrap();
                                 let fields = peek_struct.fields_for_serialize().count();
+                                debug!("  Serializing {} fields as object", fields);
+
                                 serializer.start_object(Some(fields))?;
                                 stack.push(SerializeTask::EndObject);
                                 stack.push(SerializeTask::ObjectFields(peek_struct));
+                                trace!(
+                                    "  Pushed ObjectFields to stack, will handle {} fields",
+                                    fields
+                                );
                             }
                             _ => {
                                 unreachable!()
@@ -418,32 +465,6 @@ where
                                 }
                             }
                         }
-                    }
-                    (Def::List(_), _) | (Def::Array(_), _) | (Def::Slice(_), _) => {
-                        let peek_list = cpeek.into_list_like().unwrap();
-                        let len = peek_list.len();
-                        serializer.start_array(Some(len))?;
-                        stack.push(SerializeTask::EndArray);
-                        stack.push(SerializeTask::ArrayItems(peek_list));
-                    }
-                    (Def::Map(_), _) => {
-                        let peek_map = cpeek.into_map().unwrap();
-                        let len = peek_map.len();
-                        serializer.start_map(Some(len))?;
-                        stack.push(SerializeTask::EndMap);
-                        stack.push(SerializeTask::MapEntries(peek_map));
-                    }
-                    (Def::Option(_), _) => {
-                        let opt = cpeek.into_option().unwrap();
-                        if let Some(inner_peek) = opt.value() {
-                            stack.push(SerializeTask::Value(inner_peek, None));
-                        } else {
-                            serializer.serialize_none()?;
-                        }
-                    }
-                    (Def::SmartPointer(_), _) => {
-                        let _sp = cpeek.into_smart_pointer().unwrap();
-                        panic!("TODO: Implement serialization for smart pointers");
                     }
                     (_, Type::Pointer(PointerType::Function(_))) => {
                         // Serialize function pointers as units or some special representation
