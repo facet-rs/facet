@@ -11,6 +11,7 @@ mod error;
 
 use error::{ArgsError, ArgsErrorKind};
 use facet_core::{Def, Facet, FieldAttribute, Type, UserType};
+use facet_deserialize::{PopReason, Span, StackRunner};
 use facet_reflect::{ReflectError, Wip};
 
 fn parse_field<'facet>(wip: Wip<'facet>, value: &'facet str) -> Result<Wip<'facet>, ArgsError> {
@@ -153,42 +154,24 @@ where
         }
     }
 
-    // Look for uninitialized fields with DEFAULT flag
-    // Adapted from the approach in `facet-deserialize::StackRunner::pop()`
-    for (field_index, field) in st.fields.iter().enumerate() {
-        if !wip.is_field_set(field_index).expect("in bounds") {
-            log::trace!(
-                "Field {} is not initialized, checking if it has DEFAULT flag",
-                field.name
-            );
+    // Use facet-deserialize's StackRunner to handle defaults
+    let mut runner = StackRunner {
+        original_input: &[],
+        input: &[],
+        stack: vec![],
+        last_span: Span::new(0, 0),
+    };
 
-            // Check if the field has the DEFAULT flag
-            if field.flags.contains(facet_core::FieldFlags::DEFAULT) {
-                log::trace!("Field {} has DEFAULT flag, applying default", field.name);
-
-                let field_wip = wip.field(field_index).expect("field_index is in bounds");
-
-                // Check if there's a custom default function
-                if let Some(default_fn) = field.vtable.default_fn {
-                    log::trace!("Using custom default function for field {}", field.name);
-                    wip = field_wip
-                        .put_from_fn(default_fn)
-                        .map_err(|e| ArgsError::new(ArgsErrorKind::GenericReflect(e)))?;
-                } else {
-                    // Otherwise use the Default trait
-                    log::trace!("Using Default trait for field {}", field.name);
-                    wip = field_wip
-                        .put_default()
-                        .map_err(|e| ArgsError::new(ArgsErrorKind::GenericReflect(e)))?;
-                }
-
-                // Pop back up to the struct level
-                wip = wip
-                    .pop()
-                    .map_err(|e| ArgsError::new(ArgsErrorKind::GenericReflect(e)))?;
-            }
-        }
-    }
+    // Apply defaults using StackRunner, making sure to capture the shape before moving wip
+    let shape = wip.shape(); // Capture the shape before moving wip
+    wip = runner.pop(wip, PopReason::TopLevel).map_err(|_e| {
+        ArgsError::new(ArgsErrorKind::GenericReflect(
+            ReflectError::OperationFailed {
+                shape,
+                operation: "applying defaults",
+            },
+        ))
+    })?;
 
     // If a boolean field is unset the value is set to `false`
     // This behaviour means `#[facet(default = false)]` does not need to be explicitly set
