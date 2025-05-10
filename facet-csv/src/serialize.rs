@@ -12,6 +12,27 @@ pub fn to_string<'a, T: Facet<'a>>(value: &T) -> String {
     String::from_utf8(output).unwrap()
 }
 
+/// Serializes a Peek instance to CSV
+pub fn peek_to_string(peek: &Peek<'_, '_>) -> String {
+    let mut output = Vec::new();
+    let mut serializer = CsvSerializer::new(&mut output);
+    serialize_iterative(*peek, &mut serializer).unwrap();
+    String::from_utf8(output).unwrap()
+}
+
+/// Serializes a value to a writer in CSV format
+pub fn to_writer<'a, T: Facet<'a>, W: Write>(value: &T, writer: &mut W) -> io::Result<()> {
+    let peek = Peek::new(value);
+    let mut serializer = CsvSerializer::new(writer);
+    serialize_iterative(peek, &mut serializer)
+}
+
+/// Serializes a Peek instance to a writer in CSV format
+pub fn peek_to_writer<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<()> {
+    let mut serializer = CsvSerializer::new(writer);
+    serialize_iterative(*peek, &mut serializer)
+}
+
 /// A struct to handle the CSV serializer logic
 pub struct CsvSerializer<W> {
     /// Owned writer
