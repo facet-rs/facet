@@ -95,6 +95,13 @@ pub type ListLenFn = unsafe fn(list: PtrConst) -> usize;
 /// The `list` parameter must point to aligned, initialized memory of the correct type.
 pub type ListAsPtrFn = unsafe fn(list: PtrConst) -> PtrConst;
 
+/// Get mutable pointer to the data buffer of the list.
+///
+/// # Safety
+///
+/// The `list` parameter must point to aligned, initialized memory of the correct type.
+pub type ListAsMutPtrFn = unsafe fn(list: PtrMut) -> PtrMut;
+
 /// Virtual table for a list-like type (like `Vec<T>`,
 /// but also `HashSet<T>`, etc.)
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -113,6 +120,9 @@ pub struct ListVTable {
 
     /// cf. [`ListAsPtrFn`]
     pub as_ptr: ListAsPtrFn,
+
+    /// cf. [`ListAsMutPtrFn`]
+    pub as_mut_ptr: ListAsMutPtrFn,
 }
 
 impl ListVTable {
@@ -128,6 +138,7 @@ pub struct ListVTableBuilder {
     push: Option<ListPushFn>,
     len: Option<ListLenFn>,
     as_ptr: Option<ListAsPtrFn>,
+    as_mut_ptr: Option<ListAsMutPtrFn>,
 }
 
 impl ListVTableBuilder {
@@ -139,6 +150,7 @@ impl ListVTableBuilder {
             push: None,
             len: None,
             as_ptr: None,
+            as_mut_ptr: None,
         }
     }
 
@@ -166,6 +178,12 @@ impl ListVTableBuilder {
         self
     }
 
+    /// Sets the as_mut_ptr field
+    pub const fn as_mut_ptr(mut self, f: ListAsMutPtrFn) -> Self {
+        self.as_mut_ptr = Some(f);
+        self
+    }
+
     /// Builds the [`ListVTable`] from the current state of the builder.
     ///
     /// # Panics
@@ -177,6 +195,7 @@ impl ListVTableBuilder {
             push: self.push.unwrap(),
             len: self.len.unwrap(),
             as_ptr: self.as_ptr.unwrap(),
+            as_mut_ptr: self.as_mut_ptr.unwrap(),
         }
     }
 }

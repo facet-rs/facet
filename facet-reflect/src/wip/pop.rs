@@ -337,8 +337,8 @@ impl Wip<'_> {
 
                                 unsafe {
                                     // Get raw pointer to the array data
-                                    let array_ptr = (array_def.vtable.as_ptr)(PtrConst::new(
-                                        parent_frame.data.as_byte_ptr(),
+                                    let array_ptr = (array_def.vtable.as_mut_ptr)(PtrMut::new(
+                                        parent_frame.data.as_mut_byte_ptr(),
                                     ));
 
                                     // Calculate the element size and offset

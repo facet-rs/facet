@@ -1,4 +1,4 @@
-use crate::ptr::PtrConst;
+use crate::{PtrMut, ptr::PtrConst};
 
 use super::Shape;
 
@@ -82,6 +82,13 @@ impl ArrayDefBuilder {
 /// The `array` parameter must point to aligned, initialized memory of the correct type.
 pub type ArrayAsPtrFn = unsafe fn(array: PtrConst) -> PtrConst;
 
+/// Get mutable pointer to the data buffer of the array.
+///
+/// # Safety
+///
+/// The `array` parameter must point to aligned, initialized memory of the correct type.
+pub type ArrayAsMutPtrFn = unsafe fn(array: PtrMut) -> PtrMut;
+
 /// Virtual table for an array
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 #[repr(C)]
@@ -89,6 +96,9 @@ pub type ArrayAsPtrFn = unsafe fn(array: PtrConst) -> PtrConst;
 pub struct ArrayVTable {
     /// cf. [`ArrayAsPtrFn`]
     pub as_ptr: ArrayAsPtrFn,
+
+    /// cf. [`ArrayAsMutPtrFn`]
+    pub as_mut_ptr: ArrayAsMutPtrFn,
 }
 
 impl ArrayVTable {
@@ -101,18 +111,28 @@ impl ArrayVTable {
 /// Builds a [`ArrayVTable`]
 pub struct ArrayVTableBuilder {
     as_ptr_fn: Option<ArrayAsPtrFn>,
+    as_mut_ptr_fn: Option<ArrayAsMutPtrFn>,
 }
 
 impl ArrayVTableBuilder {
     /// Creates a new [`ArrayVTableBuilder`] with all fields set to `None`.
     #[allow(clippy::new_without_default)]
     pub const fn new() -> Self {
-        Self { as_ptr_fn: None }
+        Self {
+            as_ptr_fn: None,
+            as_mut_ptr_fn: None,
+        }
     }
 
     /// Sets the as_ptr field
     pub const fn as_ptr(mut self, f: ArrayAsPtrFn) -> Self {
         self.as_ptr_fn = Some(f);
+        self
+    }
+
+    /// Sets the as_mut_ptr field
+    pub const fn as_mut_ptr(mut self, f: ArrayAsMutPtrFn) -> Self {
+        self.as_mut_ptr_fn = Some(f);
         self
     }
 
@@ -124,6 +144,7 @@ impl ArrayVTableBuilder {
     pub const fn build(self) -> ArrayVTable {
         ArrayVTable {
             as_ptr: self.as_ptr_fn.unwrap(),
+            as_mut_ptr: self.as_mut_ptr_fn.unwrap(),
         }
     }
 }

@@ -136,6 +136,10 @@ where
                                     let array = ptr.get::<[T; L]>();
                                     PtrConst::new(array.as_ptr())
                                 })
+                                .as_mut_ptr(|ptr| unsafe {
+                                    let array = ptr.as_mut::<[T; L]>();
+                                    PtrMut::new(array.as_mut_ptr())
+                                })
                                 .build()
                         },
                     )

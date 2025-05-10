@@ -1,4 +1,4 @@
-use crate::ptr::PtrConst;
+use crate::{PtrMut, ptr::PtrConst};
 
 use super::Shape;
 
@@ -77,6 +77,13 @@ pub type SliceLenFn = unsafe fn(slice: PtrConst) -> usize;
 /// The `slice` parameter must point to aligned, initialized memory of the correct type.
 pub type SliceAsPtrFn = unsafe fn(slice: PtrConst) -> PtrConst;
 
+/// Get mutable pointer to the data buffer of the slice
+///
+/// # Safety
+///
+/// The `slice` parameter must point to aligned, initialized memory of the correct type.
+pub type SliceAsMutPtrFn = unsafe fn(slice: PtrMut) -> PtrMut;
+
 /// Virtual table for a slice-like type (like `Vec<T>`,
 /// but also `HashSet<T>`, etc.)
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -87,6 +94,8 @@ pub struct SliceVTable {
     pub len: SliceLenFn,
     /// Get pointer to the data buffer of the slice.
     pub as_ptr: SliceAsPtrFn,
+    /// Get mutable pointer to the data buffer of the slice.
+    pub as_mut_ptr: SliceAsMutPtrFn,
 }
 
 impl SliceVTable {
@@ -99,6 +108,7 @@ impl SliceVTable {
 /// Builds a [`SliceVTable`]
 pub struct SliceVTableBuilder {
     as_ptr: Option<SliceAsPtrFn>,
+    as_mut_ptr: Option<SliceAsMutPtrFn>,
     len: Option<SliceLenFn>,
 }
 
@@ -109,6 +119,7 @@ impl SliceVTableBuilder {
         Self {
             len: None,
             as_ptr: None,
+            as_mut_ptr: None,
         }
     }
 
@@ -124,6 +135,12 @@ impl SliceVTableBuilder {
         self
     }
 
+    /// Sets the as_mut_ptr field
+    pub const fn as_mut_ptr(mut self, f: SliceAsMutPtrFn) -> Self {
+        self.as_mut_ptr = Some(f);
+        self
+    }
+
     /// Builds the [`SliceVTable`] from the current state of the builder.
     ///
     /// # Panics
@@ -133,6 +150,7 @@ impl SliceVTableBuilder {
         SliceVTable {
             len: self.len.unwrap(),
             as_ptr: self.as_ptr.unwrap(),
+            as_mut_ptr: self.as_mut_ptr.unwrap(),
         }
     }
 }

@@ -119,6 +119,10 @@ where
                                     let vec = ptr.get::<Self>();
                                     PtrConst::new(vec.as_ptr())
                                 })
+                                .as_mut_ptr(|ptr| unsafe {
+                                    let vec = ptr.as_mut::<Self>();
+                                    PtrMut::new(vec.as_mut_ptr())
+                                })
                                 .build()
                         },
                     )

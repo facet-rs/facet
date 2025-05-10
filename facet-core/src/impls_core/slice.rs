@@ -109,6 +109,10 @@ where
                                     let slice = ptr.get::<&[T]>();
                                     PtrConst::new(slice.as_ptr())
                                 })
+                                .as_mut_ptr(|ptr| unsafe {
+                                    let slice = ptr.as_mut::<&mut [T]>();
+                                    PtrMut::new(slice.as_mut_ptr())
+                                })
                                 .build()
                         },
                     )
