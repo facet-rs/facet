@@ -499,3 +499,30 @@ fn test_field_rename_not_alias() -> Result<()> {
 
     Ok(())
 }
+
+/// Empty string rename test (which is valid in JSON)
+#[test]
+#[cfg(feature = "std")]
+fn test_field_empty_string_rename() {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, PartialEq, Facet)]
+    struct EmptyStringField {
+        #[facet(rename = "")]
+        empty_key: String,
+
+        normal_field: i32,
+    }
+
+    // Test with empty string key
+    let test_struct = EmptyStringField {
+        empty_key: "value for empty key".to_string(),
+        normal_field: 42,
+    };
+
+    let json = to_string(&test_struct);
+    assert_eq!(json, r#"{"":"value for empty key","normal_field":42}"#);
+
+    let roundtrip: EmptyStringField = from_str(&json).unwrap();
+    assert_eq!(test_struct, roundtrip);
+}

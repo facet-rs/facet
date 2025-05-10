@@ -11,43 +11,6 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     // Use already-parsed PEnum, including container/variant/field attributes and rename rules
     let pe = PEnum::parse(&parsed);
 
-    // Check for empty renames in enum container
-    for attr in &pe.container.attrs.facet {
-        if matches!(attr, PFacetAttr::EmptyRenameError) {
-            return quote::quote! {
-                compile_error!("Empty string rename values are not allowed. Use a non-empty string with #[facet(rename = \"...\")]");
-            };
-        }
-    }
-
-    // Check for empty renames in enum variants and their fields
-    for variant in &pe.variants {
-        // Check variant itself
-        for attr in &variant.attrs.facet {
-            if matches!(attr, PFacetAttr::EmptyRenameError) {
-                return quote::quote! {
-                    compile_error!("Empty string rename values are not allowed. Use a non-empty string with #[facet(rename = \"...\")]");
-                };
-            }
-        }
-
-        // Check variant fields
-        match &variant.kind {
-            PVariantKind::Struct { fields } | PVariantKind::Tuple { fields } => {
-                for field in fields {
-                    for attr in &field.attrs.facet {
-                        if matches!(attr, PFacetAttr::EmptyRenameError) {
-                            return quote::quote! {
-                                compile_error!("Empty string rename values are not allowed. Use a non-empty string with #[facet(rename = \"...\")]");
-                            };
-                        }
-                    }
-                }
-            }
-            PVariantKind::Unit => {}
-        }
-    }
-
     let enum_name = pe.container.name.clone();
     let enum_name_str = enum_name.to_string();
     let bgp = pe.container.bgp.clone();
@@ -82,7 +45,6 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                     // Maybe panic or warn here? For now, ignoring.
                     panic!("Invariants are not supported on enums")
                 }
-                PFacetAttr::EmptyRenameError => {} // Already handled earlier
                 // Opaque, Transparent, SkipSerializing/If, Default/Equals are not relevant/valid for enum containers.
                 _ => {}
             }

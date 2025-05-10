@@ -101,8 +101,7 @@ pub(crate) fn gen_field_from_pfield(
             PFacetAttr::RenameAll { .. } => {} // Explicitly ignore rename attributes here
             PFacetAttr::Transparent
             | PFacetAttr::Invariants { .. }
-            | PFacetAttr::DenyUnknownFields
-            | PFacetAttr::EmptyRenameError => {}
+            | PFacetAttr::DenyUnknownFields => {}
         }
     }
 
@@ -175,31 +174,6 @@ pub(crate) fn gen_field_from_pfield(
 /// ```
 pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     let ps = PStruct::parse(&parsed); // Use the parsed representation
-
-    // Check for empty renames in fields or container
-    for attr in &ps.container.attrs.facet {
-        if matches!(attr, PFacetAttr::EmptyRenameError) {
-            return quote::quote! {
-                compile_error!("Empty string rename values are not allowed. Use a non-empty string with #[facet(rename = \"...\")]");
-            };
-        }
-    }
-
-    // Check fields for empty renames
-    match &ps.kind {
-        PStructKind::Struct { fields } | PStructKind::TupleStruct { fields } => {
-            for field in fields {
-                for attr in &field.attrs.facet {
-                    if matches!(attr, PFacetAttr::EmptyRenameError) {
-                        return quote::quote! {
-                            compile_error!("Empty string rename values are not allowed. Use a non-empty string with #[facet(rename = \"...\")]");
-                        };
-                    }
-                }
-            }
-        }
-        PStructKind::UnitStruct => {}
-    }
 
     let struct_name_ident = format_ident!("{}", ps.container.name);
     let struct_name = &ps.container.name;
@@ -279,8 +253,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 | PFacetAttr::SkipSerializing
                 | PFacetAttr::SkipSerializingIf { .. }
                 | PFacetAttr::Flatten
-                | PFacetAttr::Child
-                | PFacetAttr::EmptyRenameError => {}
+                | PFacetAttr::Child => {}
             }
         }
         if items.is_empty() {
