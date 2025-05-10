@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.7](https://github.com/facet-rs/facet/compare/facet-v0.18.6...facet-v0.18.7) - 2025-05-10
+
+### Fixed
+
+- Facet impl for core::ops::Range and add a test
+
+### Other
+
+- Release facet-reflect
+- Release facet-derive
+- Upgrade facet-core
+- Fix slow tests
+- Rework type information (Def)
+
 ## [0.18.6](https://github.com/facet-rs/facet/compare/facet-v0.18.5...facet-v0.18.6) - 2025-05-08
 
 ### Other

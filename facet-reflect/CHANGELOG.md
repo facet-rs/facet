@@ -6,6 +6,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0](https://github.com/facet-rs/facet/compare/facet-reflect-v0.19.1...facet-reflect-v0.20.0) - 2025-05-10
+
+### Other
+
+- Upgrade facet-core
+- References don't have default, too (shame but)
+- Clippy warnings
+- references are not pointers
+- Use hash of source for target dir when running slow tests
+- Determine enum variant after default_from_fn
+- Uncomment deserialize
+- Fix up enums a bit
+- Make variant() getters fallible — we might not know the internal enough to read the discriminant etc.
+- debug facet-serialize
+- Fix memory leak, work on facet-serisalize
+- Rework type information (Def)
+
 ## [0.19.1](https://github.com/facet-rs/facet/compare/facet-reflect-v0.19.0...facet-reflect-v0.19.1) - 2025-05-08
 
 ### Other

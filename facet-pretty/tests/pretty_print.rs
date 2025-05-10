@@ -133,3 +133,18 @@ fn test_sensitive_fields() {
     assert!(buffer.contains("[REDACTED]"));
     assert!(!buffer.contains("TOP SECRET PASSWORD"));
 }
+
+#[test]
+fn test_tuple() {
+    let printer = PrettyPrinter::new().with_colors(false);
+    assert_eq!(
+        printer.format(&(1, 2)).to_string(),
+        r#"
+(i32, i32) (
+  1,
+  2,
+)
+        "#
+        .trim()
+    );
+}

@@ -510,3 +510,19 @@ fn enum_rename_all_snake_case() {
         panic!("Expected Enum definition");
     }
 }
+
+#[test]
+fn core_ops_range() {
+    let shape = core::ops::Range::<usize>::SHAPE;
+    let Type::User(UserType::Struct(struct_type)) = shape.ty else {
+        panic!("expected struct type");
+    };
+
+    assert_eq!(shape.type_params.len(), 1);
+    assert_eq!(shape.type_params[0].name, "Idx");
+    assert_eq!(shape.type_params[0].shape(), usize::SHAPE);
+
+    assert_eq!(struct_type.fields.len(), 2);
+    assert_eq!(struct_type.fields[0].name, "start");
+    assert_eq!(struct_type.fields[1].name, "end");
+}

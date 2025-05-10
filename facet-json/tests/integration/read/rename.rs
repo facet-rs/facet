@@ -198,27 +198,6 @@ fn test_field_rename_with_numeric_name() {
     assert_eq!(test_struct, roundtrip);
 }
 
-/// Serialization and deserialization with empty field name
-#[cfg(feature = "std")]
-#[test]
-fn test_field_rename_with_empty_name() {
-    facet_testhelpers::setup();
-
-    #[derive(Debug, PartialEq, Facet)]
-    struct EmptyName {
-        #[facet(rename = "")]
-        empty_name: bool,
-    }
-
-    let test_struct = EmptyName { empty_name: true };
-
-    let json = to_string(&test_struct);
-    assert_eq!(json, r#"{"":true}"#);
-
-    let roundtrip: EmptyName = from_str(&json).unwrap();
-    assert_eq!(test_struct, roundtrip);
-}
-
 /// Serialization and deserialization of renamed enum variants (unit and tuple variants)
 #[cfg(feature = "std")]
 #[test]
@@ -519,4 +498,31 @@ fn test_field_rename_not_alias() -> Result<()> {
     assert_eq!(result.b, "focus group 2");
 
     Ok(())
+}
+
+/// Empty string rename test (which is valid in JSON)
+#[test]
+#[cfg(feature = "std")]
+fn test_field_empty_string_rename() {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, PartialEq, Facet)]
+    struct EmptyStringField {
+        #[facet(rename = "")]
+        empty_key: String,
+
+        normal_field: i32,
+    }
+
+    // Test with empty string key
+    let test_struct = EmptyStringField {
+        empty_key: "value for empty key".to_string(),
+        normal_field: 42,
+    };
+
+    let json = to_string(&test_struct);
+    assert_eq!(json, r#"{"":"value for empty key","normal_field":42}"#);
+
+    let roundtrip: EmptyStringField = from_str(&json).unwrap();
+    assert_eq!(test_struct, roundtrip);
 }

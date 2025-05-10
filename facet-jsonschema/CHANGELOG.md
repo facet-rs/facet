@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.1](https://github.com/facet-rs/facet/compare/facet-jsonschema-v0.23.0...facet-jsonschema-v0.23.1) - 2025-05-10
+
+### Other
+
+- Release facet-derive
+- Release facet-derive-parser
+- Upgrade facet-core
+- Fix clippy warning: use core instead of std
+- Migrate facet-jsonschema to use Type::User(UserType::Struct)
+
 ## [0.22.0](https://github.com/facet-rs/facet/compare/facet-jsonschema-v0.21.0...facet-jsonschema-v0.22.0) - 2025-05-06
 
 ### Other

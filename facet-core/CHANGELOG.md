@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.22.0](https://github.com/facet-rs/facet/compare/facet-core-v0.21.1...facet-core-v0.22.0) - 2025-05-10
+
+### Added
+
+- support core::ops::Range
+
+### Fixed
+
+- Facet impl for core::ops::Range and add a test
+
+### Other
+
+- References don't have default, too (shame but)
+- Clippy warnings
+- references are not pointers
+- Fix ops::Range implementation
+- Determine enum variant after default_from_fn
+- Uncomment deserialize
+- Make variant() getters fallible — we might not know the internal enough to read the discriminant etc.
+- Rework type information (Def)
+
 ## [0.21.1](https://github.com/facet-rs/facet/compare/facet-core-v0.21.0...facet-core-v0.21.1) - 2025-05-08
 
 ### Other

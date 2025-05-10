@@ -9,7 +9,9 @@ use core::{
 use std::{collections::HashMap, hash::DefaultHasher};
 use yansi::Paint as _;
 
-use facet_core::{Def, Facet, FieldFlags, PointerType, StructKind, Type, TypeNameOpts, UserType};
+use facet_core::{
+    Def, Facet, FieldFlags, PointerType, SequenceType, StructKind, Type, TypeNameOpts, UserType,
+};
 use facet_reflect::{Peek, ValueId};
 
 use crate::color::ColorGenerator;
@@ -39,11 +41,16 @@ impl Default for PrettyPrinter {
 enum StackState {
     Start,
     ProcessStructField { field_index: usize },
-    ProcessListItem { item_index: usize },
+    ProcessSeqItem { item_index: usize, kind: SeqKind },
     ProcessBytesItem { item_index: usize },
     ProcessMapEntry,
     Finish,
     OptionFinish,
+}
+
+enum SeqKind {
+    List,
+    Tuple,
 }
 
 /// Stack item for iterative traversal
@@ -260,13 +267,28 @@ impl PrettyPrinter {
                                 // TODO: write all the bytes here instead?
                             } else {
                                 // Push back the item with the next state to continue processing list items
-                                item.state = StackState::ProcessListItem { item_index: 0 };
+                                item.state = StackState::ProcessSeqItem {
+                                    item_index: 0,
+                                    kind: SeqKind::List,
+                                };
                                 self.write_punctuation(f, " [")?;
                                 writeln!(f)?;
                             }
 
                             item.format_depth += 1;
                             item.type_depth = new_type_depth;
+                            stack.push_back(item);
+                        }
+                        (_, Type::Sequence(SequenceType::Tuple(..))) => {
+                            self.write_type_name(f, &item.value)?;
+                            item.state = StackState::ProcessSeqItem {
+                                item_index: 0,
+                                kind: SeqKind::Tuple,
+                            };
+                            self.write_punctuation(f, " (")?;
+                            writeln!(f)?;
+                            item.format_depth += 1;
+                            item.type_depth += 1;
                             stack.push_back(item);
                         }
                         (Def::Map(_), _) => {
@@ -577,9 +599,18 @@ impl PrettyPrinter {
                         stack.push_back(start_item);
                     }
                 }
-                StackState::ProcessListItem { item_index } => {
-                    let list = item.value.into_list().unwrap();
-                    if item_index >= list.len() {
+                StackState::ProcessSeqItem { item_index, kind } => {
+                    let (len, elem) = match kind {
+                        SeqKind::List => {
+                            let list = item.value.into_list().unwrap();
+                            (list.len(), list.get(item_index))
+                        }
+                        SeqKind::Tuple => {
+                            let tuple = item.value.into_tuple().unwrap();
+                            (tuple.len(), tuple.field(item_index))
+                        }
+                    };
+                    if item_index >= len {
                         // All items processed, write closing bracket
                         write!(
                             f,
@@ -587,7 +618,13 @@ impl PrettyPrinter {
                             "",
                             width = (item.format_depth - 1) * self.indent_size
                         )?;
-                        self.write_punctuation(f, "]")?;
+                        self.write_punctuation(
+                            f,
+                            match kind {
+                                SeqKind::List => "]",
+                                SeqKind::Tuple => ")",
+                            },
+                        )?;
                         continue;
                     }
 
@@ -600,17 +637,19 @@ impl PrettyPrinter {
                     )?;
 
                     // Push back current item to continue after formatting list item
-                    item.state = StackState::ProcessListItem {
+                    item.state = StackState::ProcessSeqItem {
                         item_index: item_index + 1,
+                        kind,
                     };
                     let next_format_depth = item.format_depth;
                     let next_type_depth = item.type_depth + 1;
                     stack.push_back(item);
 
+                    let elem = elem.unwrap();
+
                     // Push list item to format first
-                    let list_item = list.get(item_index).unwrap();
                     stack.push_back(StackItem {
-                        value: list_item,
+                        value: elem,
                         format_depth: next_format_depth,
                         type_depth: next_type_depth,
                         state: StackState::Finish,
@@ -618,7 +657,7 @@ impl PrettyPrinter {
 
                     // When we push a list item to format, we need to process it from the beginning
                     stack.push_back(StackItem {
-                        value: list_item,
+                        value: elem,
                         format_depth: next_format_depth,
                         type_depth: next_type_depth,
                         state: StackState::Start, // Use Start state to properly process the item

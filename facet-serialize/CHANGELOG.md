@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.1](https://github.com/facet-rs/facet/compare/facet-serialize-v0.23.0...facet-serialize-v0.23.1) - 2025-05-10
+
+### Other
+
+- Release facet-reflect
+- Release facet-derive-parser
+- Upgrade facet-core
+- Determine enum variant after default_from_fn
+- Uncomment deserialize
+- Fix up enums a bit
+- Make variant() getters fallible — we might not know the internal enough to read the discriminant etc.
+- Make options work for facet-serialize
+- debug facet-serialize
+- Fix memory leak, work on facet-serisalize
+
 ## [0.23.0](https://github.com/facet-rs/facet/compare/facet-serialize-v0.22.0...facet-serialize-v0.23.0) - 2025-05-08
 
 ### Other

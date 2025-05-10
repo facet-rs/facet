@@ -1,6 +1,6 @@
 [package]
 name = "facet-deserialize"
-version.workspace = true
+version = "0.24.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -24,8 +24,8 @@ default = ["std", "rich-diagnostics"]
 
 [dependencies]
 ariadne = { version = "0.5.1", optional = true }
-facet-core = { version = "0.21.1", path = "../facet-core", default-features = false }
-facet-reflect = { version = "0.19.1", path = "../facet-reflect", default-features = false }
+facet-core = { version = "0.22.0", path = "../facet-core", default-features = false }
+facet-reflect = { version = "0.20.0", path = "../facet-reflect", default-features = false }
 log = "0.4.27"
 owo-colors = "4.2.0"
 

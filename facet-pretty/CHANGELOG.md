@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.1](https://github.com/facet-rs/facet/compare/facet-pretty-v0.23.0...facet-pretty-v0.23.1) - 2025-05-10
+
+### Fixed
+
+- *(pretty)* Fix clippy warnings
+- *(pretty)* Fix printer with new Type/Def structure
+
+### Other
+
+- Release facet-reflect
+- Release facet-derive-parser
+- Upgrade facet-core
+- Make variant() getters fallible — we might not know the internal enough to read the discriminant etc.
+
 ## [0.22.0](https://github.com/facet-rs/facet/compare/facet-pretty-v0.21.0...facet-pretty-v0.22.0) - 2025-05-06
 
 ### Other

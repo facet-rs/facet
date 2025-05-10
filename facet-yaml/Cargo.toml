@@ -1,6 +1,6 @@
 [package]
 name = "facet-yaml"
-version = "0.19.0"
+version = "0.24.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -19,8 +19,8 @@ ulid = ["facet-core/ulid"]
 
 [dependencies]
 yaml-rust2 = "0.10.1"
-facet-core = { version = "0.21.1", path = "../facet-core", default-features = false }
-facet-reflect = { version = "0.19.1", path = "../facet-reflect", default-features = false }
+facet-core = { version = "0.22.0", path = "../facet-core", default-features = false }
+facet-reflect = { version = "0.20.0", path = "../facet-reflect", default-features = false }
 
 [dev-dependencies]
 facet = { path = "../facet" }

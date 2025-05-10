@@ -1,6 +1,6 @@
 [package]
 name = "facet-testhelpers"
-version = "0.17.1"
+version = "0.17.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

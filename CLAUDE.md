@@ -30,7 +30,7 @@ When committing changes, facet-dev will run to check for code generation and for
 This presents an interactive menu that requires user input which can be problematic for bots and
 automated processes.
 
-To bypass the interactive menu and automatically apply all fixes, you can set the 
+To bypass the interactive menu and automatically apply all fixes, you can set the
 `FACET_PRECOMMIT_ACCEPT_ALL=1` environment variable when running git commit:
 
 ```bash
@@ -38,6 +38,12 @@ FACET_PRECOMMIT_ACCEPT_ALL=1 git commit -m "Your commit message"
 ```
 
 This is particularly useful for automated systems and bots that cannot provide interactive input.
+
+### Git Force Push Safety
+
+Always use `git push --force-with-lease` instead of `git push --force` when force-pushing changes.
+The `--force-with-lease` option provides a safety check that prevents overwriting others' work that
+you haven't seen yet, making it safer for collaborative development.
 
 ### Tuple implementations
 
