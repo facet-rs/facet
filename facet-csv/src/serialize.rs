@@ -79,6 +79,7 @@ where
         }
     }
 
+    /// Conditionally suffix the value with the required newline
     fn end_value(&mut self) -> Result<(), io::Error> {
         if self.pos == self.n_fields - 1 {
             // Reset the position to zero
