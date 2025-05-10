@@ -10,7 +10,7 @@ keywords = ["facet", "introspection", "reflection"]
 categories = ["development-tools"]
 
 [package.metadata.docs.rs]
-features = ["std", "reflect", "camino"]
+features = ["std", "reflect", "camino", "ordered-float"]
 
 [features]
 default = ["std"]
@@ -22,6 +22,7 @@ camino = [
     "facet-core/camino",
 ] # Implements Facet for camino types (Utf8PathBuf, Utf8Path)
 uuid = ["facet-core/uuid"] # Implements Facet for Uuid
+ordered-float = ["facet-core/ordered-float"] # Implements Facet for OrderedFloat
 
 [dependencies]
 facet-core = { path = "../facet-core", version = "0.25.0", default-features = false }
@@ -35,3 +36,4 @@ cargo-husky = { version = "1.5.0", default-features = false, features = [
 ] }
 eyre = { version = "0.6.12", default-features = false }
 facet-reflect = { path = "../facet-reflect" }
+ordered-float = { version = "5.0.0", default-features = false }

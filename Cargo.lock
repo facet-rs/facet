@@ -325,6 +325,7 @@ dependencies = [
  "facet-core",
  "facet-derive",
  "facet-reflect",
+ "ordered-float",
  "static_assertions",
 ]
 

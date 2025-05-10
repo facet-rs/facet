@@ -63,6 +63,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for OrderedFloat<T> {
                 StructType::builder()
                     .repr(Repr::transparent())
                     .fields(&const { [field_in_type!(Self, 0)] })
+                    .kind(crate::StructKind::Tuple)
                     .build(),
             )))
             .def(Def::Scalar(
@@ -139,6 +140,7 @@ unsafe impl<'a, T: Facet<'a> + ordered_float::FloatCore + Clone + core::str::Fro
         }
 
         Shape::builder_for_sized::<Self>()
+            .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::opaque().build())
