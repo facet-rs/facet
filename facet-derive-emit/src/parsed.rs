@@ -727,7 +727,7 @@ pub struct PVariant {
     /// Kind of the variant (unit, tuple, or struct)
     pub kind: PVariantKind,
     /// Optional explicit discriminant (`= literal`)
-    pub discriminant: Option<facet_derive_parse::Literal>,
+    pub discriminant: Option<TokenStream>,
 }
 
 impl PVariant {
@@ -819,7 +819,10 @@ impl PVariant {
         };
 
         // Extract the discriminant literal if present
-        let discriminant = var_like.discriminant.as_ref().map(|d| d.second.clone());
+        let discriminant = var_like
+            .discriminant
+            .as_ref()
+            .map(|d| d.second.to_token_stream());
 
         PVariant {
             name,

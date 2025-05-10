@@ -33,7 +33,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for CommentedEnum {
             [
                 ::facet::Variant::builder()
                     .name("A")
-                    .discriminant(0i64)
+                    .discriminant(0)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -61,7 +61,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for CommentedEnum {
                     };
                     ::facet::Variant::builder()
                         .name("B")
-                        .discriminant(1i64)
+                        .discriminant(0 + 1)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())
@@ -109,7 +109,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for CommentedEnum {
                     };
                     ::facet::Variant::builder()
                         .name("C")
-                        .discriminant(2i64)
+                        .discriminant(0 + 1 + 1)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())

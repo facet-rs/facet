@@ -134,15 +134,14 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
             });
 
             // Generate variant_expressions
-            let mut discriminant = 0i64; // Use i64 for discriminant
+            let mut discriminant: TokenStream = quote! { 0 };
             let mut exprs = Vec::new();
 
             for pv in pe.variants.iter() {
-                if let Some(lit) = &pv.discriminant {
+                if let Some(dis) = &pv.discriminant {
                     // Parse literal into i64
-                    discriminant = get_discriminant_value(lit);
+                    discriminant = dis.clone();
                 }
-                let discriminant_literal = Literal::i64_suffixed(discriminant); // For quoting
 
                 let display_name = pv.name.effective.clone();
                 let variant_attrs_tokens = {
@@ -211,7 +210,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                         exprs.push(quote! {
                             ::facet::Variant::builder()
                                 #variant_attrs_tokens
-                                .discriminant(#discriminant_literal)
+                                .discriminant(#discriminant)
                                 .data(::facet::StructType::builder().repr(::facet::Repr::c()).unit().build())
                                 #maybe_doc
                                 .build()
@@ -257,7 +256,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                             ]};
                             ::facet::Variant::builder()
                                 #variant_attrs_tokens
-                                .discriminant(#discriminant_literal)
+                                .discriminant(#discriminant)
                                 .data(::facet::StructType::builder().repr(::facet::Repr::c()).tuple().fields(fields).build())
                                 #maybe_doc
                                 .build()
@@ -313,15 +312,19 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                             ]};
                             ::facet::Variant::builder()
                                 #variant_attrs_tokens
-                                .discriminant(#discriminant_literal)
+                                .discriminant(#discriminant)
                                 .data(::facet::StructType::builder().repr(::facet::Repr::c()).struct_().fields(fields).build())
                                 #maybe_doc
                                 .build()
                         }});
                     }
                 };
+
                 // C-style enums increment discriminant unless explicitly set
-                discriminant = discriminant.wrapping_add(1);
+                // FIXME: this codegens `+ 1 + 1 + 1 + 1` when we could generate `+ 4`
+                discriminant = quote! {
+                    #discriminant + 1
+                };
             }
 
             // Generate the EnumRepr token stream
@@ -335,22 +338,22 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
             (shadow_defs, exprs, repr_type_ts)
         }
         PRepr::Rust(Some(prim)) => {
-            // Updated match arms for PRepr
             // Treat as primitive repr
             let facet_bgp = bgp.with_lifetime(LifetimeName(format_ident!("__facet")));
             let bgp_with_bounds = facet_bgp.display_with_bounds();
             let phantom_data = facet_bgp.display_as_phantom_data();
             let discriminant_rust_type = prim.type_name();
             let mut shadow_defs = Vec::new();
-            let mut discriminant = 0i64; // Use i64 for discriminant
+            let mut discriminant: TokenStream = quote! { 0 };
             let mut exprs = Vec::new();
 
             for pv in pe.variants.iter() {
-                if let Some(lit) = &pv.discriminant {
-                    // Parse literal into i64
-                    discriminant = get_discriminant_value(lit);
+                if let Some(dis) = &pv.discriminant {
+                    // assign discriminant directly
+                    discriminant = dis.clone();
                 }
-                let discriminant_literal = Literal::i64_suffixed(discriminant); // For quoting
+                // Render as isize literal to be type-agnostic when quoting
+                let discriminant_literal = quote! { #discriminant };
 
                 let display_name = pv.name.effective.clone();
                 let variant_attrs_tokens = {
@@ -512,7 +515,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                     }
                 }
                 // Rust-style enums increment discriminant unless explicitly set
-                discriminant = discriminant.wrapping_add(1);
+                discriminant = quote! { #discriminant + 1 };
             }
             let repr_type_ts = enum_repr_ts_from_primitive(*prim);
             (shadow_defs, exprs, repr_type_ts)

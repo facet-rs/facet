@@ -45,7 +45,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithEmptyStructVariant {
                 let fields: &'static [::facet::Field] = &const { [] };
                 ::facet::Variant::builder()
                     .name("Variant1")
-                    .discriminant(0i64)
+                    .discriminant(0)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())

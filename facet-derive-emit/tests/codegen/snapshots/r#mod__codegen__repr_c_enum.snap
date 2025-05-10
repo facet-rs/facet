@@ -62,7 +62,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithVariants {
             [
                 ::facet::Variant::builder()
                     .name("Variant1")
-                    .discriminant(0i64)
+                    .discriminant(0)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -95,7 +95,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithVariants {
                     };
                     ::facet::Variant::builder()
                         .name("Variant2")
-                        .discriminant(1i64)
+                        .discriminant(0 + 1)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())
@@ -151,7 +151,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithVariants {
                     };
                     ::facet::Variant::builder()
                         .name("Variant3")
-                        .discriminant(2i64)
+                        .discriminant(0 + 1 + 1)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())

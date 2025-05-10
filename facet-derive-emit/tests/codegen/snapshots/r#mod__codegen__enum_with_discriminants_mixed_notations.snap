@@ -15,7 +15,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Status {
             [
                 ::facet::Variant::builder()
                     .name("Ok")
-                    .discriminant(1i64)
+                    .discriminant(1)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -25,7 +25,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Status {
                     .build(),
                 ::facet::Variant::builder()
                     .name("Warn")
-                    .discriminant(10i64)
+                    .discriminant(0xA)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -35,7 +35,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Status {
                     .build(),
                 ::facet::Variant::builder()
                     .name("Error")
-                    .discriminant(15i64)
+                    .discriminant(0b1111)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -45,7 +45,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Status {
                     .build(),
                 ::facet::Variant::builder()
                     .name("Timeout")
-                    .discriminant(63i64)
+                    .discriminant(0o77)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())

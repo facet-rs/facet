@@ -1077,3 +1077,17 @@ fn struct_facet_transparent() {
         "#
     ));
 }
+
+#[test]
+fn enum_with_macro_discriminants() {
+    insta::assert_snapshot!(expand(
+        r#"
+        #[repr(u16)]
+        #[derive(Facet)]
+        enum TestEnum {
+            Value1 = test_macro!(1, 2),
+            Value2 = test_macro!(3, 4),
+        }
+        "#
+    ));
+}

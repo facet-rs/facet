@@ -17,7 +17,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for BitFlags {
             [
                 ::facet::Variant::builder()
                     .name("None")
-                    .discriminant(0i64)
+                    .discriminant(0b0000_0000)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -27,7 +27,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for BitFlags {
                     .build(),
                 ::facet::Variant::builder()
                     .name("Read")
-                    .discriminant(1i64)
+                    .discriminant(0b0000_0001)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -37,7 +37,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for BitFlags {
                     .build(),
                 ::facet::Variant::builder()
                     .name("Write")
-                    .discriminant(2i64)
+                    .discriminant(0b0000_0010)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -47,7 +47,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for BitFlags {
                     .build(),
                 ::facet::Variant::builder()
                     .name("Execute")
-                    .discriminant(4i64)
+                    .discriminant(0b0000_0100)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -57,7 +57,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for BitFlags {
                     .build(),
                 ::facet::Variant::builder()
                     .name("All")
-                    .discriminant(7i64)
+                    .discriminant(0b0000_0111)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())

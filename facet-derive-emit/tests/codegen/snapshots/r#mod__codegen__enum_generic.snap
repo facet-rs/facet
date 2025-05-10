@@ -61,7 +61,7 @@ where
             [
                 ::facet::Variant::builder()
                     .name("Unit")
-                    .discriminant(0i64)
+                    .discriminant(0)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -110,7 +110,7 @@ where
                     };
                     ::facet::Variant::builder()
                         .name("Tuple")
-                        .discriminant(1i64)
+                        .discriminant(0 + 1)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())
@@ -178,7 +178,7 @@ where
                     };
                     ::facet::Variant::builder()
                         .name("Record")
-                        .discriminant(2i64)
+                        .discriminant(0 + 1 + 1)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())

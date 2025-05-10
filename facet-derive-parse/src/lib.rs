@@ -429,7 +429,7 @@ unsynn! {
         /// The actual variant
         pub variant: EnumVariantData,
         /// The optional discriminant value
-        pub discriminant: Option<Cons<Eq, Literal>>
+        pub discriminant: Option<Cons<Eq, VerbatimUntil<Comma>>>
     }
 
     /// Represents the different kinds of variants an enum can have.

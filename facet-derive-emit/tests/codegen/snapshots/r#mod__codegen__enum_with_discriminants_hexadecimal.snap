@@ -15,7 +15,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Color {
             [
                 ::facet::Variant::builder()
                     .name("Red")
-                    .discriminant(1i64)
+                    .discriminant(0x01)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -25,7 +25,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Color {
                     .build(),
                 ::facet::Variant::builder()
                     .name("Blue")
-                    .discriminant(127i64)
+                    .discriminant(0x7F)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -35,7 +35,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Color {
                     .build(),
                 ::facet::Variant::builder()
                     .name("Green")
-                    .discriminant(128i64)
+                    .discriminant(0x80)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -45,7 +45,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Color {
                     .build(),
                 ::facet::Variant::builder()
                     .name("Yellow")
-                    .discriminant(16i64)
+                    .discriminant(0x10)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -55,7 +55,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Color {
                     .build(),
                 ::facet::Variant::builder()
                     .name("Magenta")
-                    .discriminant(65261i64)
+                    .discriminant(0xfeed)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -65,7 +65,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Color {
                     .build(),
                 ::facet::Variant::builder()
                     .name("Cyan")
-                    .discriminant(48879i64)
+                    .discriminant(0xBEEF)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())

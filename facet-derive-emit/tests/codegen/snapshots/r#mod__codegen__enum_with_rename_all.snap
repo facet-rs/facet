@@ -50,7 +50,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                     };
                     ::facet::Variant::builder()
                         .name("ok_response")
-                        .discriminant(0i64)
+                        .discriminant(0)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())
@@ -73,7 +73,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                     };
                     ::facet::Variant::builder()
                         .name("error_response")
-                        .discriminant(1i64)
+                        .discriminant(0 + 1)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())
