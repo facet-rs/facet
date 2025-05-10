@@ -16,7 +16,13 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 divan = { version = "2.10.1", package = "codspeed-divan-compat" }
 facet-json = { path = "../facet-json" }
+facet-reflect = { path = "../facet-reflect", features = ["std"] }
+xz2 = "0.1"
 
 [[bench]]
 name = "json"
+harness = false
+
+[[bench]]
+name = "canada"
 harness = false
