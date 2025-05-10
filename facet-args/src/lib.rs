@@ -7,14 +7,18 @@
 extern crate alloc;
 use alloc::borrow::Cow;
 
-mod error;
+/// Apply field default values and function values using facet-deserialize
+pub mod defaults;
+/// Errors raised when CLI arguments are not parsed or otherwise fail during reflection
+pub mod error;
 
+use defaults::apply_field_defaults;
 use error::{ArgsError, ArgsErrorKind};
 use facet_core::{Def, Facet, FieldAttribute, Type, UserType};
-use facet_deserialize::{PopReason, Span, StackRunner};
 use facet_reflect::{ReflectError, Wip};
 
-fn parse_field<'facet>(wip: Wip<'facet>, value: &'facet str) -> Result<Wip<'facet>, ArgsError> {
+/// Process a field in the Wip
+pub fn parse_field<'facet>(wip: Wip<'facet>, value: &'facet str) -> Result<Wip<'facet>, ArgsError> {
     let shape = wip.shape();
 
     if shape.is_type::<String>() {
@@ -56,35 +60,6 @@ fn kebab_to_snake(input: &str) -> Cow<str> {
         return Cow::Borrowed(input);
     }
     Cow::Owned(input.replace('-', "_"))
-}
-
-/// Applies defaults to uninitialized fields
-fn apply_field_defaults(wip: Wip<'_>) -> Result<Wip<'_>, ArgsError> {
-    // Guard clause for non-struct types
-    if !matches!(wip.shape().ty, Type::User(UserType::Struct(_))) {
-        return Ok(wip); // Not a struct, return as is
-    }
-
-    // Set up StackRunner for default handling
-    let mut runner = StackRunner {
-        original_input: &[],
-        input: &[],
-        stack: vec![],
-        last_span: Span::new(0, 0),
-    };
-
-    // Capture shape before moving wip
-    let shape = wip.shape();
-
-    // Apply defaults using StackRunner
-    runner.pop(wip, PopReason::TopLevel).map_err(|_e| {
-        ArgsError::new(ArgsErrorKind::GenericReflect(
-            ReflectError::OperationFailed {
-                shape,
-                operation: "applying defaults",
-            },
-        ))
-    })
 }
 
 /// Parses command-line arguments
