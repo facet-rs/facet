@@ -359,6 +359,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-csv"
+version = "0.23.0"
+dependencies = [
+ "eyre",
+ "facet",
+ "facet-core",
+ "facet-deserialize",
+ "facet-reflect",
+ "facet-serialize",
+ "facet-testhelpers 0.17.1",
+ "insta",
+ "log",
+]
+
+[[package]]
 name = "facet-derive"
 version = "0.18.6"
 dependencies = [

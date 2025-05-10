@@ -1,0 +1,33 @@
+[package]
+name = "facet-csv"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "A CSV deserializer and serializer for the facet ecosystem"
+keywords = ["json", "serialization", "deserialization", "reflection", "facet"]
+categories = ["encoding", "parser-implementations"]
+
+[features]
+std = ["facet-core/std", "alloc"] # Uses libstd and alloc
+alloc = [
+    "facet-core/alloc",
+    "facet-serialize/alloc",
+    "facet-deserialize/alloc",
+] # Enables alloc support
+rich-diagnostics = ["facet-deserialize/rich-diagnostics"]
+default = ["std", "rich-diagnostics"]
+
+[dependencies]
+facet-core = { version = "0.21.1", path = "../facet-core", default-features = false }
+facet-deserialize = { version = "0.23.0", path = "../facet-deserialize", default-features = false }
+facet-reflect = { version = "0.19.1", path = "../facet-reflect", default-features = false }
+facet-serialize = { version = "0.23.0", path = "../facet-serialize", default-features = false }
+log = "0.4.27"
+
+[dev-dependencies]
+eyre = "0.6.12"
+facet = { path = "../facet" }
+facet-testhelpers = { path = "../facet-testhelpers" }
+insta = "1.43.1"

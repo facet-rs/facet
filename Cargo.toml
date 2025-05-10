@@ -20,6 +20,7 @@ members = [
 
     # # formats / ecosystem
     "facet-args",
+    "facet-csv",
     "facet-json",
     "facet-msgpack",
     "facet-serialize",
