@@ -58,6 +58,35 @@ fn kebab_to_snake(input: &str) -> Cow<str> {
     Cow::Owned(input.replace('-', "_"))
 }
 
+/// Applies defaults to uninitialized fields
+fn apply_field_defaults(wip: Wip<'_>) -> Result<Wip<'_>, ArgsError> {
+    // Guard clause for non-struct types
+    if !matches!(wip.shape().ty, Type::User(UserType::Struct(_))) {
+        return Ok(wip); // Not a struct, return as is
+    }
+
+    // Set up StackRunner for default handling
+    let mut runner = StackRunner {
+        original_input: &[],
+        input: &[],
+        stack: vec![],
+        last_span: Span::new(0, 0),
+    };
+
+    // Capture shape before moving wip
+    let shape = wip.shape();
+
+    // Apply defaults using StackRunner
+    runner.pop(wip, PopReason::TopLevel).map_err(|_e| {
+        ArgsError::new(ArgsErrorKind::GenericReflect(
+            ReflectError::OperationFailed {
+                shape,
+                operation: "applying defaults",
+            },
+        ))
+    })
+}
+
 /// Parses command-line arguments
 pub fn from_slice<'input, 'facet, T>(s: &[&'input str]) -> Result<T, ArgsError>
 where
@@ -154,24 +183,7 @@ where
         }
     }
 
-    // Use facet-deserialize's StackRunner to handle defaults
-    let mut runner = StackRunner {
-        original_input: &[],
-        input: &[],
-        stack: vec![],
-        last_span: Span::new(0, 0),
-    };
-
-    // Apply defaults using StackRunner, making sure to capture the shape before moving wip
-    let shape = wip.shape(); // Capture the shape before moving wip
-    wip = runner.pop(wip, PopReason::TopLevel).map_err(|_e| {
-        ArgsError::new(ArgsErrorKind::GenericReflect(
-            ReflectError::OperationFailed {
-                shape,
-                operation: "applying defaults",
-            },
-        ))
-    })?;
+    wip = apply_field_defaults(wip)?;
 
     // If a boolean field is unset the value is set to `false`
     // This behaviour means `#[facet(default = false)]` does not need to be explicitly set
