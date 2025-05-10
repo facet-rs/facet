@@ -11,7 +11,7 @@ pub struct OptionDef {
     pub vtable: &'static OptionVTable,
 
     /// shape of the inner type of the option
-    pub t: fn() -> &'static Shape,
+    pub t: &'static Shape,
 }
 
 impl OptionDef {
@@ -21,15 +21,15 @@ impl OptionDef {
     }
 
     /// Returns the inner type shape of the option
-    pub fn t(&self) -> &'static Shape {
-        (self.t)()
+    pub const fn t(&self) -> &'static Shape {
+        self.t
     }
 }
 
 /// Builder for OptionDef
 pub struct OptionDefBuilder {
     vtable: Option<&'static OptionVTable>,
-    t: Option<fn() -> &'static Shape>,
+    t: Option<&'static Shape>,
 }
 
 impl OptionDefBuilder {
@@ -49,7 +49,7 @@ impl OptionDefBuilder {
     }
 
     /// Sets the inner type shape for the OptionDef
-    pub const fn t(mut self, t: fn() -> &'static Shape) -> Self {
+    pub const fn t(mut self, t: &'static Shape) -> Self {
         self.t = Some(t);
         self
     }

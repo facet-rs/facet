@@ -1,4 +1,6 @@
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 
 use owo_colors::OwoColorize;
@@ -36,6 +38,14 @@ fn strip_ansi_escapes(s: &str) -> String {
         }
     }
     result
+}
+
+/// Calculate a hash for the source code to create a unique target directory
+fn hash_source(name: &str, source: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    name.hash(&mut hasher);
+    source.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// Run a single compilation test that is expected to fail
@@ -85,12 +95,20 @@ facet-reflect = {{ path = {:?} }}
     fs::write(project_dir.join("src").join("main.rs"), test.source)
         .expect("Failed to write main.rs");
 
+    // Generate a unique target directory based on the test name and source code
+    let source_hash = hash_source(test.name, test.source);
+    let target_dir = format!("/tmp/ui_tests/target_{}", source_hash);
+    println!(
+        "{}",
+        format_args!("  Target directory: {}", target_dir).dimmed()
+    );
+
     // Run cargo build
     let mut cmd = std::process::Command::new("cargo");
     cmd.current_dir(project_dir)
         .args(["build", "--color=always"])
         .env("CARGO_TERM_COLOR", "always")
-        .env("CARGO_TARGET_DIR", "/tmp/ui_tests/target"); // Set consistent target directory
+        .env("CARGO_TARGET_DIR", &target_dir); // Use source-hash based target directory
 
     let output = cmd.output().expect("Failed to execute cargo build");
 

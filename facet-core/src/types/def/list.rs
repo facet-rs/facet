@@ -88,12 +88,19 @@ pub type ListPushFn = unsafe fn(list: PtrMut, item: PtrMut);
 /// The `list` parameter must point to aligned, initialized memory of the correct type.
 pub type ListLenFn = unsafe fn(list: PtrConst) -> usize;
 
-/// Get pointer to the item at the given index. Panics if out of bounds.
+/// Get pointer to the data buffer of the list.
 ///
 /// # Safety
 ///
 /// The `list` parameter must point to aligned, initialized memory of the correct type.
-pub type ListGetItemPtrFn = unsafe fn(list: PtrConst, index: usize) -> PtrConst;
+pub type ListAsPtrFn = unsafe fn(list: PtrConst) -> PtrConst;
+
+/// Get mutable pointer to the data buffer of the list.
+///
+/// # Safety
+///
+/// The `list` parameter must point to aligned, initialized memory of the correct type.
+pub type ListAsMutPtrFn = unsafe fn(list: PtrMut) -> PtrMut;
 
 /// Virtual table for a list-like type (like `Vec<T>`,
 /// but also `HashSet<T>`, etc.)
@@ -111,8 +118,11 @@ pub struct ListVTable {
     /// cf. [`ListLenFn`]
     pub len: ListLenFn,
 
-    /// cf. [`ListGetItemPtrFn`]
-    pub get_item_ptr: ListGetItemPtrFn,
+    /// cf. [`ListAsPtrFn`]
+    pub as_ptr: ListAsPtrFn,
+
+    /// cf. [`ListAsMutPtrFn`]
+    pub as_mut_ptr: ListAsMutPtrFn,
 }
 
 impl ListVTable {
@@ -127,7 +137,8 @@ pub struct ListVTableBuilder {
     init_in_place_with_capacity: Option<ListInitInPlaceWithCapacityFn>,
     push: Option<ListPushFn>,
     len: Option<ListLenFn>,
-    get_item_ptr: Option<ListGetItemPtrFn>,
+    as_ptr: Option<ListAsPtrFn>,
+    as_mut_ptr: Option<ListAsMutPtrFn>,
 }
 
 impl ListVTableBuilder {
@@ -138,7 +149,8 @@ impl ListVTableBuilder {
             init_in_place_with_capacity: None,
             push: None,
             len: None,
-            get_item_ptr: None,
+            as_ptr: None,
+            as_mut_ptr: None,
         }
     }
 
@@ -160,9 +172,15 @@ impl ListVTableBuilder {
         self
     }
 
-    /// Sets the get_item_ptr field
-    pub const fn get_item_ptr(mut self, f: ListGetItemPtrFn) -> Self {
-        self.get_item_ptr = Some(f);
+    /// Sets the as_ptr field
+    pub const fn as_ptr(mut self, f: ListAsPtrFn) -> Self {
+        self.as_ptr = Some(f);
+        self
+    }
+
+    /// Sets the as_mut_ptr field
+    pub const fn as_mut_ptr(mut self, f: ListAsMutPtrFn) -> Self {
+        self.as_mut_ptr = Some(f);
         self
     }
 
@@ -176,7 +194,8 @@ impl ListVTableBuilder {
             init_in_place_with_capacity: self.init_in_place_with_capacity,
             push: self.push.unwrap(),
             len: self.len.unwrap(),
-            get_item_ptr: self.get_item_ptr.unwrap(),
+            as_ptr: self.as_ptr.unwrap(),
+            as_mut_ptr: self.as_mut_ptr.unwrap(),
         }
     }
 }

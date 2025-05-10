@@ -1,6 +1,6 @@
 use std::mem::MaybeUninit;
 
-use facet::{Def, EnumDef, Facet, Field, PtrConst, PtrUninit, StructDef, Variant};
+use facet::{EnumType, Facet, Field, PtrConst, PtrUninit, StructType, Type, UserType, Variant};
 use facet_reflect::{ReflectError, Wip};
 
 #[derive(Facet, PartialEq, Eq, Debug)]
@@ -338,13 +338,13 @@ fn wip_enum_with_data_repr_c_i16() -> eyre::Result<()> {
 #[test]
 fn test_enum_reprs() -> eyre::Result<()> {
     const fn field_offsets<T: Facet<'static>>() -> [usize; 2] {
-        match T::SHAPE.def {
-            Def::Enum(EnumDef {
+        match T::SHAPE.ty {
+            Type::User(UserType::Enum(EnumType {
                 variants:
                     &[
                         Variant {
                             data:
-                                StructDef {
+                                StructType {
                                     fields:
                                         &[
                                             Field {
@@ -360,7 +360,7 @@ fn test_enum_reprs() -> eyre::Result<()> {
                         },
                     ],
                 ..
-            }) => [offset1, offset2],
+            })) => [offset1, offset2],
             _ => unreachable!(),
         }
     }
@@ -953,6 +953,47 @@ fn clone_into_btree_map() -> eyre::Result<()> {
 
     assert_eq!(clone_map.get("key"), Some(&42));
     assert_eq!(clone_map.get("new_key"), None);
+
+    Ok(())
+}
+
+#[test]
+fn wip_build_tuple_through_listlike_api_exact() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    let wip = Wip::alloc::<(f64,)>()?;
+    let wip = wip.begin_pushback()?;
+    let wip = wip.put(5.4321)?;
+    let hv = wip.build()?;
+    let tuple = hv.materialize::<(f64,)>()?;
+    assert_eq!(tuple.0, 5.4321);
+
+    Ok(())
+}
+
+#[test]
+fn wip_build_tuple_through_listlike_api_coerce() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    let wip = Wip::alloc::<(f32,)>()?;
+    let wip = wip.begin_pushback()?;
+    let wip = wip.put(5.4321)?;
+    let hv = wip.build()?;
+    let tuple = hv.materialize::<(f32,)>()?;
+    assert_eq!(tuple.0, 5.4321);
+
+    Ok(())
+}
+
+#[test]
+fn wip_build_option_none_through_default() -> eyre::Result<()> {
+    facet_testhelpers::setup();
+
+    let wip = Wip::alloc::<Option<u32>>()?;
+    let wip = wip.put_default()?;
+    let hv = wip.build()?;
+    let option = hv.materialize::<Option<u32>>()?;
+    assert_eq!(option, None);
 
     Ok(())
 }

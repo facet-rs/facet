@@ -1,0 +1,137 @@
+[1m[93mfacet-deserialize/src/lib.rs[39m[0m[2m --- Rust[0m
+[2m461 [0m                           }
+[2m462 [0m                       }
+[2m463 [0m                   }
+[2m464 [0m               }
+[91;1m465 [0m               [1mType[0m::[1mUser[0m([1mUserType[0m::[1mEnum[0m([91m_[0m)) => {
+[91;1m466 [0m                   trace!(
+[91;1m467 [0m                       [91m"TODO: make sure enums are initialized (support container-level and field-level default, etc.)"[0m
+   [92;1m465 [0m            [1mType[0m::[1mUser[0m([1mUserType[0m::[1mEnum[0m([92med[0m)) => {
+   [92;1m466 [0m                trace!([92m"Checking if enum is initialized correctly"[0m);
+   [92;1m468 [0m                [92;3m// Check if a variant has been selected[0m
+   [92;1m469 [0m                [92;1mlet[0m [92mvariant_idx[0m [92m=[0m [92mwip[0m[92m.[0m[92mselected_variant[0m[92;1m([0m[92;1m)[0m[92m;[0m
+   [92;1m470 [0m                [92;1mif[0m [92;1mlet[0m [92;1mSome[0m[92;1m([0m[92mvariant_idx[0m[92;1m)[0m [92m=[0m [92mvariant_idx[0m [92;1m{[0m
+   [92;1m471 [0m                    [92;1mlet[0m [92mvariant[0m [92m=[0m [92;1m&[0m[92med[0m[92m.[0m[92mvariants[0m[92;1m[[0m[92mvariant_idx[0m[92;1m][0m[92m;[0m
+   [92;1m472 [0m                    [92mtrace[0m[92m![0m[92;1m([0m[92m"Variant {} is selected"[0m[92m,[0m [92mvariant[0m[92m.[0m[92mname[0m[92m.[0m[92mblue[0m[92;1m([0m[92;1m)[0m[92;1m)[0m[92m;[0m
+   [92;1m474 [0m                    [92;3m// Check if all fields in the variant are initialized[0m
+   [92;1m475 [0m                    [92;1mif[0m [92mvariant[0m[92m.[0m[92mdata[0m[92m.[0m[92mfields[0m[92m.[0m[92mlen[0m[92;1m([0m[92;1m)[0m [92m>[0m [92;1m0[0m [92;1m{[0m
+   [92;1m476 [0m                        [92;1mlet[0m [92;1mmut[0m [92mhas_unset[0m [92m=[0m [92;1mfalse[0m[92m;[0m
+   [92;1m478 [0m                        [92;1mfor[0m [92;1m([0m[92mindex[0m[92m,[0m [92mfield[0m[92;1m)[0m [92;1min[0m [92mvariant[0m[92m.[0m[92mdata[0m[92m.[0m[92mfields[0m[92m.[0m[92miter[0m[92;1m([0m[92;1m)[0m[92m.[0m[92menumerate[0m[92;1m([0m[92;1m)[0m [92;1m{[0m
+   [92;1m479 [0m                            [92;1mlet[0m [92mis_set[0m [92m=[0m [92mwip[0m[92m.[0m[92mis_field_set[0m[92;1m([0m[92mindex[0m[92;1m)[0m[92m.[0m[92mmap_err[0m[92;1m([0m[92;1m|[0m[92merr[0m[92;1m|[0m [92;1m{[0m
+   [92;1m480 [0m                                [92mtrace[0m[92m![0m[92;1m([0m[92m"Error checking field set status: {:?}"[0m[92m,[0m [92merr[0m[92;1m)[0m[92m;[0m
+   [92;1m481 [0m                                [92mself[0m[92m.[0m[92mreflect_err[0m[92;1m([0m[92merr[0m[92;1m)[0m
+   [92;1m482 [0m                            [92;1m}[0m[92;1m)[0m[92m?[0m[92m;[0m
+   [92;1m484 [0m                            [92;1mif[0m [92m![0m[92mis_set[0m [92;1m{[0m
+   [92;1m485 [0m                                [92;1mif[0m [92mfield[0m[92m.[0m[92mflags[0m[92m.[0m[92mcontains[0m[92;1m([0m[92;1mFieldFlags[0m[92m::[0m[92;1mDEFAULT[0m[92;1m)[0m [92;1m{[0m
+   [92;1m486 [0m                                    [92mwip[0m [92m=[0m [92mwip[0m[92m.[0m[92mfield[0m[92;1m([0m[92mindex[0m[92;1m)[0m[92m.[0m[92mmap_err[0m[92;1m([0m[92;1m|[0m[92me[0m[92;1m|[0m [92mself[0m[92m.[0m[92mreflect_err[0m[92;1m([0m[92me[0m[92;1m)[0m[92;1m)[0m[92m?[0m[92m;[0m
+   [92;1m487 [0m                                    [92;1mif[0m [92;1mlet[0m [92;1mSome[0m[92;1m([0m[92mdefault_in_place_fn[0m[92;1m)[0m [92m=[0m [92mfield[0m[92m.[0m[92mvtable[0m[92m.[0m[92mdefault_fn[0m [92;1m{[0m
+   [92;1m488 [0m                                        [92mwip[0m [92m=[0m [92mwip[0m
+   [92;1m489 [0m                                            [92m.[0m[92mput_from_fn[0m[92;1m([0m[92mdefault_in_place_fn[0m[92;1m)[0m
+   [92;1m490 [0m                                            [92m.[0m[92mmap_err[0m[92;1m([0m[92;1m|[0m[92me[0m[92;1m|[0m [92mself[0m[92m.[0m[92mreflect_err[0m[92;1m([0m[92me[0m[92;1m)[0m[92;1m)[0m[92m?[0m[92m;[0m
+   [92;1m491 [0m                                        [92mtrace[0m[92m![0m[92;1m([0m
+   [92;1m492 [0m                                            [92m"Field #{} {:?} in variant {} was set to default value (via custom fn)"[0m[92m,[0m
+   [92;1m493 [0m                                            [92mindex[0m[92m.[0m[92myellow[0m[92;1m([0m[92;1m)[0m[92m,[0m
+   [92;1m494 [0m                                            [92mfield[0m[92m.[0m[92mblue[0m[92;1m([0m[92;1m)[0m[92m,[0m
+   [92;1m495 [0m                                            [92mvariant[0m[92m.[0m[92mname[0m
+   [92;1m496 [0m                                        [92;1m)[0m[92m;[0m
+   [92;1m497 [0m                                    [92;1m}[0m [92;1melse[0m [92;1m{[0m
+   [92;1m498 [0m                                        [92;1mif[0m [92m![0m[92mfield[0m[92m.[0m[92mshape[0m[92;1m([0m[92;1m)[0m[92m.[0m[92mis[0m[92;1m([0m[92;1mCharacteristic[0m[92m::[0m[92;1mDefault[0m[92;1m)[0m [92;1m{[0m
+   [92;1m499 [0m                                            [92;1mreturn[0m [92;1mErr[0m[92;1m([0m[92mself[0m[92m.[0m[92mreflect_err[0m[92;1m([0m
+   [92;1m500 [0m                                                [92;1mReflectError[0m[92m::[0m[92;1mDefaultAttrButNoDefaultImpl[0m [92;1m{[0m
+   [92;1m501 [0m                                                    [92mshape[0m[92m:[0m [92mfield[0m[92m.[0m[92mshape[0m[92;1m([0m[92;1m)[0m[92m,[0m
+   [92;1m502 [0m                                                [92;1m}[0m[92m,[0m
+   [92;1m503 [0m                                            [92;1m)[0m[92;1m)[0m[92m;[0m
+   [92;1m504 [0m                                        [92;1m}[0m
+   [92;1m505 [0m                                        [92mwip[0m [92m=[0m [92mwip[0m[92m.[0m[92mput_default[0m[92;1m([0m[92;1m)[0m[92m.[0m[92mmap_err[0m[92;1m([0m[92;1m|[0m[92me[0m[92;1m|[0m [92mself[0m[92m.[0m[92mreflect_err[0m[92;1m([0m[92me[0m[92;1m)[0m[92;1m)[0m[92m?[0m[92m;[0m
+   [92;1m506 [0m                                        [92mtrace[0m[92m![0m[92;1m([0m
+   [92;1m507 [0m                                            [92m"Field #{} {:?} in variant {} was set to default value (via default impl)"[0m[92m,[0m
+   [92;1m508 [0m                                            [92mindex[0m[92m.[0m[92myellow[0m[92;1m([0m[92;1m)[0m[92m,[0m
+   [92;1m509 [0m                                            [92mfield[0m[92m.[0m[92mblue[0m[92;1m([0m[92;1m)[0m[92m,[0m
+   [92;1m510 [0m                                            [92mvariant[0m[92m.[0m[92mname[0m
+   [92;1m511 [0m                                        [92;1m)[0m[92m;[0m
+   [92;1m512 [0m                                    [92;1m}[0m
+   [92;1m513 [0m                                    [92mwip[0m [92m=[0m [92mwip[0m[92m.[0m[92mpop[0m[92;1m([0m[92;1m)[0m[92m.[0m[92mmap_err[0m[92;1m([0m[92;1m|[0m[92me[0m[92;1m|[0m [92mself[0m[92m.[0m[92mreflect_err[0m[92;1m([0m[92me[0m[92;1m)[0m[92;1m)[0m[92m?[0m[92m;[0m
+   [92;1m514 [0m                                [92;1m}[0m [92;1melse[0m [92;1m{[0m
+   [92;1m515 [0m                                    [92mtrace[0m[92m![0m[92;1m([0m
+   [92;1m516 [0m                                        [92m"Field #{} {:?} in variant {} is not initialized"[0m[92m,[0m
+   [92;1m517 [0m                                        [92mindex[0m[92m.[0m[92myellow[0m[92;1m([0m[92;1m)[0m[92m,[0m
+   [92;1m518 [0m                                        [92mfield[0m[92m.[0m[92mblue[0m[92;1m([0m[92;1m)[0m[92m,[0m
+   [92;1m519 [0m                                        [92mvariant[0m[92m.[0m[92mname[0m
+   [92;1m520 [0m                                    [92;1m)[0m[92m;[0m
+   [92;1m521 [0m                                    [92mhas_unset[0m [92m=[0m [92;1mtrue[0m[92m;[0m
+   [92;1m522 [0m                                [92;1m}[0m
+   [92;1m523 [0m                            [92;1m}[0m
+   [92;1m524 [0m                        [92;1m}[0m
+   [92;1m526 [0m                        [92;1mif[0m [92mhas_unset[0m [92m&&[0m [92mcontainer_shape[0m[92m.[0m[92mhas_default_attr[0m[92;1m([0m[92;1m)[0m [92;1m{[0m
+   [92;1m527 [0m                            [92mtrace[0m[92m![0m[92;1m([0m[92m"Enum has DEFAULT attr but variant has uninitialized fields"[0m[92;1m)[0m[92m;[0m
+   [92;1m528 [0m                            [92;3m// Handle similar to struct, allocate and build default value for variant[0m
+   [92;1m529 [0m                            [92;1mlet[0m [92mdefault_val[0m [92m=[0m [92;1mWip[0m[92m::[0m[92malloc_shape[0m[92;1m([0m[92mcontainer_shape[0m[92;1m)[0m
+   [92;1m530 [0m                                [92m.[0m[92mmap_err[0m[92;1m([0m[92;1m|[0m[92me[0m[92;1m|[0m [92mself[0m[92m.[0m[92mreflect_err[0m[92;1m([0m[92me[0m[92;1m)[0m[92;1m)[0m[92m?[0m
+   [92;1m531 [0m                                [92m.[0m[92mput_default[0m[92;1m([0m[92;1m)[0m
+   [92;1m532 [0m                                [92m.[0m[92mmap_err[0m[92;1m([0m[92;1m|[0m[92me[0m[92;1m|[0m [92mself[0m[92m.[0m[92mreflect_err[0m[92;1m([0m[92me[0m[92;1m)[0m[92;1m)[0m[92m?[0m
+   [92;1m533 [0m                                [92m.[0m[92mbuild[0m[92;1m([0m[92;1m)[0m
+   [92;1m534 [0m                                [92m.[0m[92mmap_err[0m[92;1m([0m[92;1m|[0m[92me[0m[92;1m|[0m [92mself[0m[92m.[0m[92mreflect_err[0m[92;1m([0m[92me[0m[92;1m)[0m[92;1m)[0m[92m?[0m[92m;[0m
+   [92;1m536 [0m                            [92;1mlet[0m [92mpeek[0m [92m=[0m [92mdefault_val[0m[92m.[0m[92mpeek[0m[92;1m([0m[92;1m)[0m[92m;[0m
+   [92;1m537 [0m                            [92;1mif[0m [92;1mlet[0m [92;1mSome[0m[92;1m([0m[92mpeek_enum[0m[92;1m)[0m [92m=[0m [92mpeek[0m[92m.[0m[92minto_enum[0m[92;1m([0m[92;1m)[0m [92;1m{[0m
+   [92;1m538 [0m                                [92;1mlet[0m [92mdefault_variant_idx[0m [92m=[0m [92mpeek_enum[0m[92m.[0m[92mvariant_index[0m[92;1m([0m[92;1m)[0m
+   [92;1m539 [0m                                    [92m.[0m[92mmap_err[0m[92;1m([0m[92;1m|[0m[92m_[0m[92;1m|[0m [92mself[0m[92m.[0m[92mreflect_err[0m[92;1m([0m[92;1mReflectError[0m[92m::[0m[92;1mTypeMismatch[0m [92;1m{[0m
+   [92;1m540 [0m                                        [92mexpected[0m[92m:[0m [92mcontainer_shape[0m[92m,[0m
+   [92;1m541 [0m                                        [92mgot[0m[92m:[0m [92mcontainer_shape[0m[92m,[0m
+   [92;1m542 [0m                                    [92;1m}[0m[92;1m)[0m[92;1m)[0m[92m?[0m[92m;[0m
+   [92;1m544 [0m                                [92;1mif[0m [92mdefault_variant_idx[0m [92m==[0m [92mvariant_idx[0m [92;1m{[0m
+   [92;1m545 [0m                                    [92;3m// It's the same variant, fill in the missing fields[0m
+   [92;1m546 [0m                                    [92;1mfor[0m [92;1m([0m[92mindex[0m[92m,[0m [92mfield[0m[92;1m)[0m [92;1min[0m [92mvariant[0m[92m.[0m[92mdata[0m[92m.[0m[92mfields[0m[92m.[0m[92miter[0m[92;1m([0m[92;1m)[0m[92m.[0m[92menumerate[0m[92;1m([0m[92;1m)[0m [92;1m{[0m
+   [92;1m547 [0m                                        [92;1mlet[0m [92mis_set[0m [92m=[0m [92mwip[0m[92m.[0m[92mis_field_set[0m[92;1m([0m[92mindex[0m[92;1m)[0m[92m.[0m[92mmap_err[0m[92;1m([0m[92;1m|[0m[92merr[0m[92;1m|[0m [92;1m{[0m
+   [92;1m548 [0m                                            [92mtrace[0m[92m![0m[92;1m([0m[92m"Error checking field set status: {:?}"[0m[92m,[0m [92merr[0m[92;1m)[0m[92m;[0m
+   [92;1m549 [0m                                            [92mself[0m[92m.[0m[92mreflect_err[0m[92;1m([0m[92merr[0m[92;1m)[0m
+   [92;1m550 [0m                                        [92;1m}[0m[92;1m)[0m[92m?[0m[92m;[0m
+   [92;1m551 [0m                                        [92;1mif[0m [92m![0m[92mis_set[0m [92;1m{[0m
+   [92;1m552 [0m                                            [92;1mif[0m [92;1mlet[0m [92;1mOk[0m[92;1m([0m[92;1mSome[0m[92;1m([0m[92mdef_field[0m[92;1m)[0m[92;1m)[0m [92m=[0m [92mpeek_enum[0m[92m.[0m[92mfield[0m[92;1m([0m[92mindex[0m[92;1m)[0m [92;1m{[0m
+   [92;1m553 [0m                                                [92mwip[0m [92m=[0m [92mwip[0m[92m.[0m[92mfield[0m[92;1m([0m[92mindex[0m[92;1m)[0m[92m.[0m[92mmap_err[0m[92;1m([0m[92;1m|[0m[92me[0m[92;1m|[0m [92mself[0m[92m.[0m[92mreflect_err[0m[92;1m([0m[92me[0m[92;1m)[0m[92;1m)[0m[92m?[0m[92m;[0m
+   [92;1m554 [0m                                                [92mwip[0m [92m=[0m [92mwip[0m
+   [92;1m555 [0m                                                    [92m.[0m[92mput_shape[0m[92;1m([0m[92mdef_field[0m[92m.[0m[92mdata[0m[92;1m([0m[92;1m)[0m[92m,[0m [92mfield[0m[92m.[0m[92mshape[0m[92;1m([0m[92;1m)[0m[92;1m)[0m
+   [92;1m556 [0m                                                    [92m.[0m[92mmap_err[0m[92;1m([0m[92;1m|[0m[92me[0m[92;1m|[0m [92mself[0m[92m.[0m[92mreflect_err[0m[92;1m([0m[92me[0m[92;1m)[0m[92;1m)[0m[92m?[0m[92m;[0m
+   [92;1m557 [0m                                                [92mwip[0m [92m=[0m [92mwip[0m[92m.[0m[92mpop[0m[92;1m([0m[92;1m)[0m[92m.[0m[92mmap_err[0m[92;1m([0m[92;1m|[0m[92me[0m[92;1m|[0m [92mself[0m[92m.[0m[92mreflect_err[0m[92;1m([0m[92me[0m[92;1m)[0m[92;1m)[0m[92m?[0m[92m;[0m
+   [92;1m558 [0m                                            [92;1m}[0m
+   [92;1m559 [0m                                        [92;1m}[0m
+   [92;1m560 [0m                                    [92;1m}[0m
+   [92;1m561 [0m                                [92;1m}[0m
+   [92;1m562 [0m                            [92;1m}[0m
+   [92;1m563 [0m                        [92;1m}[0m
+   [92;1m564 [0m                    [92;1m}[0m
+   [92;1m565 [0m                [92;1m}[0m [92;1melse[0m [92;1mif[0m [92mcontainer_shape[0m[92m.[0m[92mhas_default_attr[0m[92;1m([0m[92;1m)[0m [92;1m{[0m
+   [92;1m566 [0m                    [92;3m// No variant selected, but enum has default attribute - set to default[0m
+   [92;1m567 [0m                    [92mtrace[0m[92m![0m[92;1m([0m[92m"No variant selected but enum has DEFAULT attr; setting to default"[0m[92;1m)[0m[92m;[0m
+   [92;1m568 [0m                    [92;1mlet[0m [92mdefault_val[0m [92m=[0m [92;1mWip[0m[92m::[0m[92malloc_shape[0m[92;1m([0m[92mcontainer_shape[0m[92;1m)[0m
+   [92;1m569 [0m                        [92m.[0m[92mmap_err[0m[92;1m([0m[92;1m|[0m[92me[0m[92;1m|[0m [92mself[0m[92m.[0m[92mreflect_err[0m[92;1m([0m[92me[0m[92;1m)[0m[92;1m)[0m[92m?[0m
+   [92;1m570 [0m                        [92m.[0m[92mput_default[0m[92;1m([0m[92;1m)[0m
+   [92;1m571 [0m                        [92m.[0m[92mmap_err[0m[92;1m([0m[92;1m|[0m[92me[0m[92;1m|[0m [92mself[0m[92m.[0m[92mreflect_err[0m[92;1m([0m[92me[0m[92;1m)[0m[92;1m)[0m[92m?[0m
+   [92;1m572 [0m                        [92m.[0m[92mbuild[0m[92;1m([0m[92;1m)[0m
+   [92;1m573 [0m                        [92m.[0m[92mmap_err[0m[92;1m([0m[92;1m|[0m[92me[0m[92;1m|[0m [92mself[0m[92m.[0m[92mreflect_err[0m[92;1m([0m[92me[0m[92;1m)[0m[92;1m)[0m[92m?[0m[92m;[0m
+   [92;1m575 [0m                    [92;1mlet[0m [92mpeek[0m [92m=[0m [92mdefault_val[0m[92m.[0m[92mpeek[0m[92;1m([0m[92;1m)[0m[92m;[0m
+   [92;1m576 [0m                    [92;1mif[0m [92;1mlet[0m [92;1mSome[0m[92;1m([0m[92mpeek_enum[0m[92;1m)[0m [92m=[0m [92mpeek[0m[92m.[0m[92minto_enum[0m[92;1m([0m[92;1m)[0m [92;1m{[0m
+   [92;1m577 [0m                        [92;1mlet[0m [92mdefault_variant_idx[0m [92m=[0m [92mpeek_enum[0m[92m.[0m[92mvariant_index[0m[92;1m([0m[92;1m)[0m
+   [92;1m578 [0m                            [92m.[0m[92mmap_err[0m[92;1m([0m[92;1m|[0m[92m_[0m[92;1m|[0m [92mself[0m[92m.[0m[92mreflect_err[0m[92;1m([0m[92;1mReflectError[0m[92m::[0m[92;1mTypeMismatch[0m [92;1m{[0m
+   [92;1m579 [0m                                [92mexpected[0m[92m:[0m [92mcontainer_shape[0m[92m,[0m
+   [92;1m580 [0m                                [92mgot[0m[92m:[0m [92mcontainer_shape[0m[92m,[0m
+   [92;1m581 [0m                            [92;1m}[0m[92;1m)[0m[92;1m)[0m[92m?[0m[92m;[0m
+   [92;1m583 [0m                        [92;3m// Select the default variant[0m
+   [92;1m584 [0m                        [92mwip[0m [92m=[0m [92mwip[0m[92m.[0m[92mvariant[0m[92;1m([0m[92mdefault_variant_idx[0m[92;1m)[0m[92m.[0m[92mmap_err[0m[92;1m([0m[92;1m|[0m[92me[0m[92;1m|[0m [92mself[0m[92m.[0m[92mreflect_err[0m[92;1m([0m[92me[0m[92;1m)[0m[92;1m)[0m[92m?[0m[92m;[0m
+   [92;1m586 [0m                        [92;3m// Copy all fields from default value[0m
+   [92;1m587 [0m                        [92;1mlet[0m [92mvariant[0m [92m=[0m [92;1m&[0m[92med[0m[92m.[0m[92mvariants[0m[92;1m[[0m[92mdefault_variant_idx[0m[92;1m][0m[92m;[0m
+   [92;1m588 [0m                        [92;1mfor[0m [92;1m([0m[92mindex[0m[92m,[0m [92mfield[0m[92;1m)[0m [92;1min[0m [92mvariant[0m[92m.[0m[92mdata[0m[92m.[0m[92mfields[0m[92m.[0m[92miter[0m[92;1m([0m[92;1m)[0m[92m.[0m[92menumerate[0m[92;1m([0m[92;1m)[0m [92;1m{[0m
+   [92;1m589 [0m                            [92;1mif[0m [92;1mlet[0m [92;1mOk[0m[92;1m([0m[92;1mSome[0m[92;1m([0m[92mdef_field[0m[92;1m)[0m[92;1m)[0m [92m=[0m [92mpeek_enum[0m[92m.[0m[92mfield[0m[92;1m([0m[92mindex[0m[92;1m)[0m [92;1m{[0m
+   [92;1m590 [0m                                [92mwip[0m [92m=[0m [92mwip[0m[92m.[0m[92mfield[0m[92;1m([0m[92mindex[0m[92;1m)[0m[92m.[0m[92mmap_err[0m[92;1m([0m[92;1m|[0m[92me[0m[92;1m|[0m [92mself[0m[92m.[0m[92mreflect_err[0m[92;1m([0m[92me[0m[92;1m)[0m[92;1m)[0m[92m?[0m[92m;[0m
+   [92;1m591 [0m                                [92mwip[0m [92m=[0m [92mwip[0m
+   [92;1m592 [0m                                    [92m.[0m[92mput_shape[0m[92;1m([0m[92mdef_field[0m[92m.[0m[92mdata[0m[92;1m([0m[92;1m)[0m[92m,[0m [92mfield[0m[92m.[0m[92mshape[0m[92;1m([0m[92;1m)[0m[92;1m)[0m
+   [92;1m593 [0m                                    [92m.[0m[92mmap_err[0m[92;1m([0m[92;1m|[0m[92me[0m[92;1m|[0m [92mself[0m[92m.[0m[92mreflect_err[0m[92;1m([0m[92me[0m[92;1m)[0m[92;1m)[0m[92m?[0m[92m;[0m
+   [92;1m594 [0m                                [92mwip[0m [92m=[0m [92mwip[0m[92m.[0m[92mpop[0m[92;1m([0m[92;1m)[0m[92m.[0m[92mmap_err[0m[92;1m([0m[92;1m|[0m[92me[0m[92;1m|[0m [92mself[0m[92m.[0m[92mreflect_err[0m[92;1m([0m[92me[0m[92;1m)[0m[92;1m)[0m[92m?[0m[92m;[0m
+   [92;1m595 [0m                            [92;1m}[0m
+   [92;1m596 [0m                        [92;1m}[0m
+   [92;1m597 [0m                    [92;1m}[0m
+   [92;1m598 [0m                [92;1m}[0m
+   [2m599 [0m            }
+   [2m600 [0m            _ => {
+   [2m601 [0m                trace!(
+   [2m602 [0m                    [95m"Thing being popped is not a container I guess (it's a {})"[0m,
+

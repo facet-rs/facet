@@ -1,6 +1,6 @@
 [package]
 name = "facet-jsonschema"
-version.workspace = true
+version = "0.23.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -16,8 +16,8 @@ keywords = [
 categories = ["development-tools", "encoding"]
 
 [dependencies]
-facet-core = { version = "0.21.1", path = "../facet-core" }
-facet-derive = { version = "0.18.6", path = "../facet-derive" }
+facet-core = { version = "0.24.0", path = "../facet-core" }
+facet-derive = { version = "0.24.0", path = "../facet-derive" }
 
 [dev-dependencies]
 insta = "1.43.1"

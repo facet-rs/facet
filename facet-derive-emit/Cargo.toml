@@ -1,6 +1,6 @@
 [package]
 name = "facet-derive-emit"
-version = "0.20.2"
+version = "0.24.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -19,7 +19,7 @@ categories = ["development-tools", "encoding"]
 slow-tests = [] # Enable slow tests (compile tests)
 
 [dependencies]
-facet-derive-parse = { version = "0.23.0", path = "../facet-derive-parse" }
+facet-derive-parse = { version = "0.24.0", path = "../facet-derive-parse" }
 quote = "1.0.40"
 
 [dev-dependencies]

@@ -1,4 +1,4 @@
-use crate::ptr::PtrConst;
+use crate::{PtrMut, ptr::PtrConst};
 
 use super::Shape;
 
@@ -10,8 +10,8 @@ pub struct ArrayDef {
     /// vtable for interacting with the array
     pub vtable: &'static ArrayVTable,
 
-    /// shape of the items in the list
-    pub t: fn() -> &'static Shape,
+    /// shape of the items in the array
+    pub t: &'static Shape,
 
     /// The length of the array
     pub n: usize,
@@ -25,14 +25,14 @@ impl ArrayDef {
 
     /// Returns the shape of the items in the array
     pub fn t(&self) -> &'static Shape {
-        (self.t)()
+        self.t
     }
 }
 
 /// Builder for ArrayDef
 pub struct ArrayDefBuilder {
     vtable: Option<&'static ArrayVTable>,
-    t: Option<fn() -> &'static Shape>,
+    t: Option<&'static Shape>,
     n: Option<usize>,
 }
 
@@ -54,7 +54,7 @@ impl ArrayDefBuilder {
     }
 
     /// Sets the item shape for the ArrayDef
-    pub const fn t(mut self, t: fn() -> &'static Shape) -> Self {
+    pub const fn t(mut self, t: &'static Shape) -> Self {
         self.t = Some(t);
         self
     }
@@ -75,22 +75,30 @@ impl ArrayDefBuilder {
     }
 }
 
-/// Get pointer to the item at the given index. Panics if out of bounds.
+/// Get pointer to the data buffer of the array.
 ///
 /// # Safety
 ///
 /// The `array` parameter must point to aligned, initialized memory of the correct type.
-pub type ArrayGetItemPtrFn = unsafe fn(array: PtrConst, index: usize) -> PtrConst;
+pub type ArrayAsPtrFn = unsafe fn(array: PtrConst) -> PtrConst;
 
-/// Virtual table for a list-like type (like `Vec<T>`,
-/// but also `HashSet<T>`, etc.)
+/// Get mutable pointer to the data buffer of the array.
+///
+/// # Safety
+///
+/// The `array` parameter must point to aligned, initialized memory of the correct type.
+pub type ArrayAsMutPtrFn = unsafe fn(array: PtrMut) -> PtrMut;
+
+/// Virtual table for an array
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 #[repr(C)]
 #[non_exhaustive]
 pub struct ArrayVTable {
-    /// cf. [`ArrayGetItemPtrFn`]
-    pub get_item_ptr: ArrayGetItemPtrFn,
-    // TODO: mutation
+    /// cf. [`ArrayAsPtrFn`]
+    pub as_ptr: ArrayAsPtrFn,
+
+    /// cf. [`ArrayAsMutPtrFn`]
+    pub as_mut_ptr: ArrayAsMutPtrFn,
 }
 
 impl ArrayVTable {
@@ -102,19 +110,29 @@ impl ArrayVTable {
 
 /// Builds a [`ArrayVTable`]
 pub struct ArrayVTableBuilder {
-    get_item_ptr: Option<ArrayGetItemPtrFn>,
+    as_ptr_fn: Option<ArrayAsPtrFn>,
+    as_mut_ptr_fn: Option<ArrayAsMutPtrFn>,
 }
 
 impl ArrayVTableBuilder {
     /// Creates a new [`ArrayVTableBuilder`] with all fields set to `None`.
     #[allow(clippy::new_without_default)]
     pub const fn new() -> Self {
-        Self { get_item_ptr: None }
+        Self {
+            as_ptr_fn: None,
+            as_mut_ptr_fn: None,
+        }
     }
 
-    /// Sets the get_item_ptr field
-    pub const fn get_item_ptr(mut self, f: ArrayGetItemPtrFn) -> Self {
-        self.get_item_ptr = Some(f);
+    /// Sets the as_ptr field
+    pub const fn as_ptr(mut self, f: ArrayAsPtrFn) -> Self {
+        self.as_ptr_fn = Some(f);
+        self
+    }
+
+    /// Sets the as_mut_ptr field
+    pub const fn as_mut_ptr(mut self, f: ArrayAsMutPtrFn) -> Self {
+        self.as_mut_ptr_fn = Some(f);
         self
     }
 
@@ -125,7 +143,8 @@ impl ArrayVTableBuilder {
     /// This method will panic if any of the required fields are `None`.
     pub const fn build(self) -> ArrayVTable {
         ArrayVTable {
-            get_item_ptr: self.get_item_ptr.unwrap(),
+            as_ptr: self.as_ptr_fn.unwrap(),
+            as_mut_ptr: self.as_mut_ptr_fn.unwrap(),
         }
     }
 }

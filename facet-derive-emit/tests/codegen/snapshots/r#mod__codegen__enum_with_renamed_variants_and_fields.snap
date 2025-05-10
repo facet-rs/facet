@@ -7,6 +7,12 @@ static API_RESPONSE_SHAPE: &'static ::facet::Shape = <ApiResponse as ::facet::Fa
 #[automatically_derived]
 #[allow(non_camel_case_types)]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
+    const VTABLE: &'static ::facet::ValueVTable = &const {
+        ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
+            f,
+            "ApiResponse"
+        ))
+    };
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
         #[allow(non_snake_case, dead_code)]
@@ -30,13 +36,11 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                         [{
                             ::facet::Field::builder()
                                 .name("responseData")
-                                .shape(|| {
-                                    ::facet::shape_of(
-                                        &|s: &__Shadow_RustRepr_Struct_for_ApiResponse_Ok<
-                                            '__facet,
-                                        >| &s.data,
-                                    )
-                                })
+                                .shape(::facet::shape_of(
+                                    &|s: &__Shadow_RustRepr_Struct_for_ApiResponse_Ok<'__facet>| {
+                                        &s.data
+                                    },
+                                ))
                                 .offset(::core::mem::offset_of!(
                                     __Shadow_RustRepr_Struct_for_ApiResponse_Ok<'__facet>,
                                     data
@@ -47,8 +51,9 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                     ::facet::Variant::builder()
                         .name("Success")
                         .discriminant(0i64)
-                        .fields(
-                            ::facet::StructDef::builder()
+                        .data(
+                            ::facet::StructType::builder()
+                                .repr(::facet::Repr::c())
                                 .struct_()
                                 .fields(fields)
                                 .build(),
@@ -61,13 +66,11 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                             {
                                 ::facet::Field::builder()
                                     .name("errorCode")
-                                    .shape(|| {
-                                        ::facet::shape_of(
-                                            &|s: &__Shadow_RustRepr_Struct_for_ApiResponse_Err<
-                                                '__facet,
-                                            >| &s.code,
-                                        )
-                                    })
+                                    .shape(::facet::shape_of(
+                                        &|s: &__Shadow_RustRepr_Struct_for_ApiResponse_Err<
+                                            '__facet,
+                                        >| &s.code,
+                                    ))
                                     .offset(::core::mem::offset_of!(
                                         __Shadow_RustRepr_Struct_for_ApiResponse_Err<'__facet>,
                                         code
@@ -77,15 +80,11 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                             {
                                 ::facet::Field::builder()
                                     .name("errorMessage")
-                                    .shape(|| {
-                                        ::facet::shape_of(
-                                            &|s: &__Shadow_RustRepr_Struct_for_ApiResponse_Err<
-                                                '__facet,
-                                            >| {
-                                                &s.message
-                                            },
-                                        )
-                                    })
+                                    .shape(::facet::shape_of(
+                                        &|s: &__Shadow_RustRepr_Struct_for_ApiResponse_Err<
+                                            '__facet,
+                                        >| &s.message,
+                                    ))
                                     .offset(::core::mem::offset_of!(
                                         __Shadow_RustRepr_Struct_for_ApiResponse_Err<'__facet>,
                                         message
@@ -97,8 +96,9 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                     ::facet::Variant::builder()
                         .name("Error")
                         .discriminant(1i64)
-                        .fields(
-                            ::facet::StructDef::builder()
+                        .data(
+                            ::facet::StructType::builder()
+                                .repr(::facet::Repr::c())
                                 .struct_()
                                 .fields(fields)
                                 .build(),
@@ -107,23 +107,14 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                 },
             ]
         };
-        ::facet::Shape::builder()
-            .id(::facet::ConstTypeId::of::<Self>())
-            .layout(::core::alloc::Layout::new::<Self>())
-            .vtable(
-                &const {
-                    ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
-                        f,
-                        "ApiResponse"
-                    ))
-                },
-            )
-            .def(::facet::Def::Enum(
-                ::facet::EnumDef::builder()
+        ::facet::Shape::builder_for_sized::<Self>()
+            .ty(::facet::Type::User(::facet::UserType::Enum(
+                ::facet::EnumType::builder()
                     .variants(__facet_variants)
-                    .repr(::facet::EnumRepr::U8)
+                    .repr(::facet::Repr::c())
+                    .enum_repr(::facet::EnumRepr::U8)
                     .build(),
-            ))
+            )))
             .build()
     };
 }

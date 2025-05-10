@@ -10,31 +10,35 @@ use alloc::borrow::Cow;
 mod error;
 
 use error::{ArgsError, ArgsErrorKind};
-use facet_core::{Def, Facet, FieldAttribute};
+use facet_core::{Def, Facet, FieldAttribute, Type, UserType};
 use facet_reflect::{ReflectError, Wip};
 
 fn parse_field<'facet>(wip: Wip<'facet>, value: &'facet str) -> Result<Wip<'facet>, ArgsError> {
     let shape = wip.shape();
-    match shape.def {
-        Def::Scalar(_) => {
-            if shape.is_type::<String>() {
-                wip.put(value.to_string())
-            } else if shape.is_type::<&str>() {
-                wip.put(value)
-            } else if shape.is_type::<bool>() {
-                log::trace!("Boolean field detected, setting to true");
-                wip.put(value.to_lowercase() == "true")
-            } else {
+
+    if shape.is_type::<String>() {
+        log::trace!("shape is String");
+        wip.put(value.to_string())
+    } else if shape.is_type::<&str>() {
+        log::trace!("shape is &str");
+        wip.put(value)
+    } else if shape.is_type::<bool>() {
+        log::trace!("shape is bool, setting to true");
+        wip.put(value.to_lowercase() == "true")
+    } else {
+        match shape.def {
+            Def::Scalar(_) => {
+                log::trace!("shape is nothing known, falling back to parse: {}", shape);
                 wip.parse(value)
             }
-        }
-        _def => {
-            return Err(ArgsError::new(ArgsErrorKind::GenericReflect(
-                ReflectError::OperationFailed {
-                    shape,
-                    operation: "parsing field",
-                },
-            )));
+            _def => {
+                return Err(ArgsError::new(ArgsErrorKind::GenericReflect(
+                    ReflectError::OperationFailed {
+                        shape,
+                        operation: "parsing field",
+                    },
+                )));
+            }
         }
     }
     .map_err(|e| ArgsError::new(ArgsErrorKind::GenericReflect(e)))?
@@ -64,9 +68,9 @@ where
     let mut wip =
         Wip::alloc::<T>().map_err(|e| ArgsError::new(ArgsErrorKind::GenericReflect(e)))?;
     log::trace!("Allocated Poke for type T");
-    let Def::Struct(sd) = wip.shape().def else {
+    let Type::User(UserType::Struct(st)) = wip.shape().ty else {
         return Err(ArgsError::new(ArgsErrorKind::GenericArgsError(
-            "Expected struct defintion".to_string(),
+            "Expected struct type".to_string(),
         )));
     };
 
@@ -105,7 +109,7 @@ where
             }
         } else if let Some(key) = token.strip_prefix("-") {
             log::trace!("Found short named argument: {}", key);
-            for (field_index, f) in sd.fields.iter().enumerate() {
+            for (field_index, f) in st.fields.iter().enumerate() {
                 if f.attributes
                     .iter()
                     .any(|a| matches!(a, FieldAttribute::Arbitrary(a) if a.contains("short") && a.contains(key))
@@ -130,7 +134,7 @@ where
             }
         } else {
             log::trace!("Encountered positional argument: {}", token);
-            for (field_index, f) in sd.fields.iter().enumerate() {
+            for (field_index, f) in st.fields.iter().enumerate() {
                 if f.attributes
                     .iter()
                     .any(|a| matches!(a, FieldAttribute::Arbitrary(a) if a.contains("positional")))
@@ -189,7 +193,7 @@ where
     // If a boolean field is unset the value is set to `false`
     // This behaviour means `#[facet(default = false)]` does not need to be explicitly set
     // on each boolean field specified on a Command struct
-    for (field_index, f) in sd.fields.iter().enumerate() {
+    for (field_index, f) in st.fields.iter().enumerate() {
         if f.shape().is_type::<bool>() && !wip.is_field_set(field_index).expect("in bounds") {
             let field = wip.field(field_index).expect("field_index is in bounds");
             wip = parse_field(field, "false")?;

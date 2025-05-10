@@ -1,18 +1,34 @@
 use crate::{
-    Def, Facet, KnownSmartPointer, PtrConst, SmartPointerDef, SmartPointerFlags,
-    SmartPointerVTable, value_vtable,
+    Def, Facet, Field, FieldFlags, KnownSmartPointer, PtrConst, Repr, SmartPointerDef,
+    SmartPointerFlags, SmartPointerVTable, StructKind, StructType, Type, UserType, ValueVTable,
+    value_vtable,
 };
 
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for core::ptr::NonNull<T> {
+    const VTABLE: &'static ValueVTable =
+        &const { value_vtable!(core::ptr::NonNull<T>, |f, _opts| write!(f, "NonNull")) };
+
     const SHAPE: &'static crate::Shape = &const {
         crate::Shape::builder_for_sized::<Self>()
             .type_params(&[crate::TypeParam {
                 name: "T",
                 shape: || T::SHAPE,
             }])
+            .ty(Type::User(UserType::Struct(StructType {
+                repr: Repr::transparent(),
+                kind: StructKind::Struct,
+                fields: &const {
+                    [Field::builder()
+                        .name("pointer")
+                        .shape(<*mut T>::SHAPE)
+                        .offset(0)
+                        .flags(FieldFlags::EMPTY)
+                        .build()]
+                },
+            })))
             .def(Def::SmartPointer(
                 SmartPointerDef::builder()
-                    .pointee(T::SHAPE)
+                    .pointee(|| T::SHAPE)
                     .flags(SmartPointerFlags::EMPTY)
                     .known(KnownSmartPointer::NonNull)
                     .vtable(
@@ -33,9 +49,6 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for core::ptr::NonNull<T> {
                     )
                     .build(),
             ))
-            .vtable(
-                &const { value_vtable!(core::ptr::NonNull<T>, |f, _opts| write!(f, "NonNull")) },
-            )
             .build()
     };
 }

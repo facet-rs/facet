@@ -1,4 +1,4 @@
-use facet_core::{Characteristic, EnumDef, Field, FieldError, Shape, TryFromError};
+use facet_core::{Characteristic, EnumType, Field, FieldError, Shape, TryFromError};
 use owo_colors::OwoColorize;
 
 /// Errors that can occur when reflecting on types.
@@ -14,7 +14,7 @@ pub enum ReflectError {
     /// Tried to set an enum to a variant that does not exist
     NoSuchVariant {
         /// The enum definition containing all known variants.
-        enum_def: EnumDef,
+        enum_type: EnumType,
     },
 
     /// Tried to get the wrong shape out of a value — e.g. we were manipulating
@@ -121,6 +121,26 @@ pub enum ReflectError {
         /// The shape for the type that is unsized
         shape: &'static Shape,
     },
+
+    /// Array not fully initialized during build
+    ArrayNotFullyInitialized {
+        /// The shape of the array
+        shape: &'static Shape,
+        /// The number of elements pushed
+        pushed_count: usize,
+        /// The expected array size
+        expected_size: usize,
+    },
+
+    /// Array index out of bounds
+    ArrayIndexOutOfBounds {
+        /// The shape of the array
+        shape: &'static Shape,
+        /// The index that was out of bounds
+        index: usize,
+        /// The array size
+        size: usize,
+    },
 }
 
 impl core::fmt::Display for ReflectError {
@@ -133,9 +153,9 @@ impl core::fmt::Display for ReflectError {
                     field.name.yellow()
                 )
             }
-            ReflectError::NoSuchVariant { enum_def } => {
+            ReflectError::NoSuchVariant { enum_type } => {
                 write!(f, "No such variant in enum. Known variants: ")?;
-                for v in enum_def.variants {
+                for v in enum_type.variants {
                     write!(f, ", {}", v.name.cyan())?;
                 }
                 write!(f, ", that's it.")
@@ -219,6 +239,28 @@ impl core::fmt::Display for ReflectError {
                 shape.red()
             ),
             ReflectError::Unsized { shape } => write!(f, "Shape '{}' is unsized", shape.red()),
+            ReflectError::ArrayNotFullyInitialized {
+                shape,
+                pushed_count,
+                expected_size,
+            } => {
+                write!(
+                    f,
+                    "Array '{}' not fully initialized: expected {} elements, but got {}",
+                    shape.blue(),
+                    expected_size,
+                    pushed_count
+                )
+            }
+            ReflectError::ArrayIndexOutOfBounds { shape, index, size } => {
+                write!(
+                    f,
+                    "Array index {} out of bounds for '{}' (array length is {})",
+                    index,
+                    shape.blue(),
+                    size
+                )
+            }
         }
     }
 }

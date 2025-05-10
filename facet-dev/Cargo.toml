@@ -12,7 +12,7 @@ categories = ["development-tools"]
 
 [dependencies]
 ctrlc = "3.4.6"
-facet-testhelpers = { version = "0.17.1", path = "../facet-testhelpers" }
+facet-testhelpers = { version = "0.17.2", path = "../facet-testhelpers" }
 fs-err = "3.1.0"
 indicatif = "0.17.11"
 log = "0.4.27"

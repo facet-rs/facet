@@ -70,7 +70,13 @@ fn list_uninit() {
 
 #[test]
 fn array_uninit() {
-    test_uninit::<[f32; 8]>();
+    facet_testhelpers::setup();
+    let wip = Wip::alloc::<[f32; 8]>().unwrap();
+    let res = wip.build();
+    assert!(
+        matches!(res, Err(ReflectError::ArrayNotFullyInitialized { .. })),
+        "Expected ArrayNotFullyInitialized error, got {res:?}"
+    );
 }
 
 #[test]
@@ -91,8 +97,9 @@ fn smart_pointer_uninit() {
 fn test_uninit<T: Facet<'static>>() {
     facet_testhelpers::setup();
     let wip = Wip::alloc::<T>().unwrap();
+    let res = wip.build();
     assert!(
-        matches!(wip.build(), Err(ReflectError::UninitializedValue { .. })),
-        "Expected UninitializedValue error"
+        matches!(res, Err(ReflectError::UninitializedValue { .. })),
+        "Expected UninitializedValue error, got {res:?}"
     );
 }

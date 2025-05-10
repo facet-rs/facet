@@ -11,18 +11,19 @@ members = [
 
     # reflection
     "facet-reflect",
-    "facet-serialize",
 
     # dev helpers
     "facet-dev",
 
-    # test helpers
+    # # test helpers
     "facet-testhelpers",
 
-    # formats / ecosystem
+    # # formats / ecosystem
     "facet-args",
+    "facet-csv",
     "facet-json",
     "facet-msgpack",
+    "facet-serialize",
     "facet-pretty",
     "facet-toml",
     "facet-kdl",
@@ -30,14 +31,12 @@ members = [
     "facet-yaml",
     "facet-jsonschema",
     "facet-deserialize",
-    "facet-json",
     "facet-bench",
 ]
 exclude = ["outside-workspace"]
 resolver = "3"
 
 [workspace.package]
-version = "0.23.0"
 edition = "2024"
 rust-version = "1.86.0"
 license = "MIT OR Apache-2.0"

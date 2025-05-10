@@ -1,9 +1,14 @@
 use core::{cmp::Ordering, marker::PhantomData};
-use facet_core::{Def, Facet, PtrConst, PtrMut, Shape, TypeNameOpts, ValueVTable};
+use facet_core::{
+    Def, Facet, PointerType, PtrConst, PtrMut, SequenceType, Shape, Type, TypeNameOpts, UserType,
+    ValueVTable,
+};
 
 use crate::{ReflectError, ScalarType};
 
-use super::{ListLikeDef, PeekEnum, PeekList, PeekListLike, PeekMap, PeekSmartPointer, PeekStruct};
+use super::{
+    ListLikeDef, PeekEnum, PeekList, PeekListLike, PeekMap, PeekSmartPointer, PeekStruct, PeekTuple,
+};
 
 /// A unique identifier for a peek value
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -186,10 +191,30 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
         }
     }
 
+    /// Try to get the value as a string if it's a string type
+    /// Returns None if the value is not a string or couldn't be extracted
+    pub fn as_str(&self) -> Option<&str> {
+        let peek = self.innermost_peek();
+        if let Some(ScalarType::Str) = peek.scalar_type() {
+            unsafe { Some(peek.data.get::<&str>()) }
+        } else if let Some(ScalarType::String) = peek.scalar_type() {
+            unsafe { Some(peek.data.get::<alloc::string::String>().as_str()) }
+        } else if let Type::Pointer(PointerType::Reference(vpt)) = peek.shape.ty {
+            let target_shape = (vpt.target)();
+            if let Some(ScalarType::Str) = ScalarType::try_from_shape(target_shape) {
+                unsafe { Some(peek.data.get::<&str>()) }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
     /// Tries to identify this value as a struct
     pub fn into_struct(self) -> Result<PeekStruct<'mem, 'facet_lifetime>, ReflectError> {
-        if let Def::Struct(def) = self.shape.def {
-            Ok(PeekStruct { value: self, def })
+        if let Type::User(UserType::Struct(ty)) = self.shape.ty {
+            Ok(PeekStruct { value: self, ty })
         } else {
             Err(ReflectError::WasNotA {
                 expected: "struct",
@@ -200,8 +225,8 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
 
     /// Tries to identify this value as an enum
     pub fn into_enum(self) -> Result<PeekEnum<'mem, 'facet_lifetime>, ReflectError> {
-        if let Def::Enum(def) = self.shape.def {
-            Ok(PeekEnum { value: self, def })
+        if let Type::User(UserType::Enum(ty)) = self.shape.ty {
+            Ok(PeekEnum { value: self, ty })
         } else {
             Err(ReflectError::WasNotA {
                 expected: "enum",
@@ -239,11 +264,35 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
         match self.shape.def {
             Def::List(def) => Ok(PeekListLike::new(self, ListLikeDef::List(def))),
             Def::Array(def) => Ok(PeekListLike::new(self, ListLikeDef::Array(def))),
-            Def::Slice(def) => Ok(PeekListLike::new(self, ListLikeDef::Slice(def))),
-            _ => Err(ReflectError::WasNotA {
-                expected: "list, array or slice",
-                actual: self.shape,
-            }),
+            _ => {
+                // &[i32] is actually a _pointer_ to a slice.
+                match self.shape.ty {
+                    Type::Pointer(ptr) => match ptr {
+                        PointerType::Reference(vpt) | PointerType::Raw(vpt) => {
+                            let target = (vpt.target)();
+                            match target.def {
+                                Def::Slice(def) => {
+                                    return Ok(PeekListLike::new(self, ListLikeDef::Slice(def)));
+                                }
+                                _ => {
+                                    // well it's not list-like then
+                                }
+                            }
+                        }
+                        PointerType::Function(_) => {
+                            // well that's not a list-like
+                        }
+                    },
+                    _ => {
+                        // well that's not a list-like either
+                    }
+                }
+
+                Err(ReflectError::WasNotA {
+                    expected: "list, array or slice",
+                    actual: self.shape,
+                })
+            }
         }
     }
 
@@ -273,6 +322,18 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
         }
     }
 
+    /// Tries to identify this value as a tuple
+    pub fn into_tuple(self) -> Result<PeekTuple<'mem, 'facet_lifetime>, ReflectError> {
+        if let Type::Sequence(SequenceType::Tuple(ty)) = self.shape.ty {
+            Ok(PeekTuple { value: self, ty })
+        } else {
+            Err(ReflectError::WasNotA {
+                expected: "tuple",
+                actual: self.shape,
+            })
+        }
+    }
+
     /// Tries to return the innermost value — useful for serialization. For example, we serialize a `NonZero<u8>` the same
     /// as a `u8`. Similarly, we serialize a `Utf8PathBuf` the same as a `String.
     ///
@@ -285,8 +346,10 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
             current_peek.shape.inner,
         ) {
             unsafe {
-                let inner_data = try_borrow_inner_fn(current_peek.data)
-                    .expect("innermost_peek: try_borrow_inner returned an error");
+                let inner_data = try_borrow_inner_fn(current_peek.data).unwrap_or_else(|e| {
+                    panic!("innermost_peek: try_borrow_inner returned an error! was trying to go from {} to {}. error: {e}", current_peek.shape,
+                        inner_shape())
+                });
 
                 current_peek = Peek {
                     data: inner_data,

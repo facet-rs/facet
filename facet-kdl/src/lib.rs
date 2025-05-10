@@ -8,7 +8,7 @@ use std::{
     fmt::{self, Display},
 };
 
-use facet_core::{Def, Facet, FieldFlags};
+use facet_core::{Def, Facet, FieldFlags, Type, UserType};
 use facet_reflect::{ReflectError, Wip};
 use kdl::{KdlDocument, KdlError as KdlParseError};
 
@@ -121,29 +121,32 @@ impl<'input, 'facet> KdlDeserializer<'input> {
         document: KdlDocument,
     ) -> Result<Wip<'facet>> {
         log::trace!("Entering `deserialize_document` method");
+
+        // First check the type system (Type)
+        if let Type::User(UserType::Struct(struct_def)) = &wip.shape().ty {
+            log::trace!("Document `Wip` is a struct: {struct_def:#?}");
+            // QUESTION: Would be be possible, once we allow custom types, to make all attributes arbitrary? With
+            // the sort of general tool that `facet` is, I think it might actually be best if we didn't try to
+            // "bake-in" anything like sensitive, default, skip, etc...
+            let is_valid_toplevel = struct_def
+                .fields
+                .iter()
+                .all(|field| field.flags.contains(FieldFlags::CHILD));
+            log::trace!("WIP represents a valid top-level: {is_valid_toplevel}");
+
+            if is_valid_toplevel {
+                // FIXME: At this point I'm really not sure where function boundaries should be... It's a messy disaster
+                // whilst I try to work that out...
+                // FIXME: For example, this feels like maybe it should take a `KdlNode` and not a `KdlDocument`?
+                return self.deserialize_node(wip, document);
+            } else {
+                return Err(KdlErrorKind::InvalidDocumentShape(wip.shape().def).into());
+            }
+        }
+
+        // Fall back to the def system for backward compatibility
         let def = wip.shape().def;
         match def {
-            // FIXME: Refactor this checking code out into some functions!
-            Def::Struct(struct_def) => {
-                log::trace!("Document `Wip` is a struct: {struct_def:#?}");
-                // QUESTION: Would be be possible, once we allow custom types, to make all attributes arbitrary? With
-                // the sort of general tool that `facet` is, I think it might actually be best if we didn't try to
-                // "bake-in" anything like sensitive, default, skip, etc...
-                let is_valid_toplevel = struct_def
-                    .fields
-                    .iter()
-                    .all(|field| field.flags.contains(FieldFlags::CHILD));
-                log::trace!("WIP represents a valid top-level: {is_valid_toplevel}");
-
-                if is_valid_toplevel {
-                    // FIXME: At this point I'm really not sure where function boundaries should be... It's a messy disaster
-                    // whilst I try to work that out...
-                    // FIXME: For example, this feels like maybe it should take a `KdlNode` and not a `KdlDocument`?
-                    self.deserialize_node(wip, document)
-                } else {
-                    Err(KdlErrorKind::InvalidDocumentShape(def).into())
-                }
-            }
             // TODO: Valid if the list contains only enums with single fields that can be parsed as entries?
             Def::List(_list_def) => todo!(),
             _ => todo!(),

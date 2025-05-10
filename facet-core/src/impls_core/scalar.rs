@@ -1,10 +1,12 @@
 use crate::value_vtable;
 use crate::*;
-use core::alloc::Layout;
 use core::num::NonZero;
 use typeid::ConstTypeId;
 
 unsafe impl Facet<'_> for ConstTypeId {
+    const VTABLE: &'static ValueVTable =
+        &const { value_vtable!(ConstTypeId, |f, _opts| write!(f, "ConstTypeId")) };
+
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
@@ -12,12 +14,34 @@ unsafe impl Facet<'_> for ConstTypeId {
                     .affinity(ScalarAffinity::opaque().build())
                     .build(),
             ))
-            .vtable(&const { value_vtable!((), |f, _opts| write!(f, "ConstTypeId")) })
+            .ty(Type::User(UserType::Struct(StructType {
+                repr: Repr::c(),
+                kind: StructKind::Struct,
+                fields: &const { [field_in_type!(ConstTypeId, type_id_fn)] },
+            })))
+            .build()
+    };
+}
+
+unsafe impl Facet<'_> for core::any::TypeId {
+    const VTABLE: &'static ValueVTable =
+        &const { value_vtable!(core::any::TypeId, |f, _opts| write!(f, "TypeId")) };
+
+    const SHAPE: &'static Shape = &const {
+        Shape::builder_for_sized::<Self>()
+            .def(Def::Scalar(
+                ScalarDef::builder()
+                    .affinity(ScalarAffinity::opaque().build())
+                    .build(),
+            ))
+            .ty(Type::User(UserType::Opaque))
             .build()
     };
 }
 
 unsafe impl Facet<'_> for () {
+    const VTABLE: &'static ValueVTable = &const { value_vtable!((), |f, _opts| write!(f, "()")) };
+
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
@@ -25,12 +49,18 @@ unsafe impl Facet<'_> for () {
                     .affinity(ScalarAffinity::empty().build())
                     .build(),
             ))
-            .vtable(&const { value_vtable!((), |f, _opts| write!(f, "()")) })
+            .ty(Type::Sequence(SequenceType::Tuple(TupleType {
+                fields: &[],
+            })))
             .build()
     };
 }
 
 unsafe impl<'a, T: ?Sized + 'a> Facet<'a> for core::marker::PhantomData<T> {
+    // TODO: we might be able to do something with specialization re: the shape of T?
+    const VTABLE: &'static ValueVTable =
+        &const { value_vtable!((), |f, _opts| write!(f, "PhantomData")) };
+
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
@@ -38,13 +68,19 @@ unsafe impl<'a, T: ?Sized + 'a> Facet<'a> for core::marker::PhantomData<T> {
                     .affinity(ScalarAffinity::empty().build())
                     .build(),
             ))
-            // TODO: we might be able to do something with specialization re: the shape of T?
-            .vtable(&const { value_vtable!((), |f, _opts| write!(f, "PhantomData")) })
+            .ty(Type::User(UserType::Struct(StructType {
+                repr: Repr::default(),
+                kind: StructKind::Unit,
+                fields: &[],
+            })))
             .build()
     };
 }
 
 unsafe impl Facet<'_> for char {
+    const VTABLE: &'static ValueVTable =
+        &const { value_vtable!(char, |f, _opts| write!(f, "char")) };
+
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
@@ -52,25 +88,32 @@ unsafe impl Facet<'_> for char {
                     .affinity(ScalarAffinity::char().build())
                     .build(),
             ))
-            .vtable(&const { value_vtable!(char, |f, _opts| write!(f, "char")) })
+            .ty(Type::Primitive(PrimitiveType::Textual(TextualType::Char)))
             .build()
     };
 }
 
-unsafe impl<'a> Facet<'a> for &'a str {
+unsafe impl Facet<'_> for str {
+    // Intentionally &str, since str is a DST.
+    const VTABLE: &'static ValueVTable =
+        &const { value_vtable!(&str, |f, _opts| write!(f, "str")) };
+
     const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
+        Shape::builder_for_unsized::<Self>()
+            .ty(Type::Primitive(PrimitiveType::Textual(TextualType::Str)))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::string().build())
                     .build(),
             ))
-            .vtable(&const { value_vtable!(&str, |f, _opts| write!(f, "&str")) })
             .build()
     };
 }
 
 unsafe impl Facet<'_> for bool {
+    const VTABLE: &'static ValueVTable =
+        &const { value_vtable!(bool, |f, _opts| write!(f, "bool")) };
+
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
@@ -78,7 +121,7 @@ unsafe impl Facet<'_> for bool {
                     .affinity(ScalarAffinity::boolean().build())
                     .build(),
             ))
-            .vtable(&const { value_vtable!(bool, |f, _opts| write!(f, "bool")) })
+            .ty(Type::Primitive(PrimitiveType::Boolean))
             .build()
     };
 }
@@ -86,175 +129,157 @@ unsafe impl Facet<'_> for bool {
 macro_rules! impl_facet_for_integer {
     ($type:ty, $affinity:expr, $nz_affinity:expr) => {
         unsafe impl<'a> Facet<'a> for $type {
+            const VTABLE: &'static ValueVTable = &const {
+                let mut vtable =
+                    value_vtable!($type, |f, _opts| write!(f, "{}", stringify!($type)));
+
+                vtable.try_from = Some(|source, source_shape, dest| {
+                    if source_shape == Self::SHAPE {
+                        return Ok(unsafe { dest.copy_from(source, source_shape)? });
+                    }
+                    if source_shape == u64::SHAPE {
+                        let value: u64 = *unsafe { source.get::<u64>() };
+                        match <$type>::try_from(value) {
+                            Ok(converted) => {
+                                return Ok(unsafe { dest.put::<$type>(converted) });
+                            }
+                            Err(_) => {
+                                return Err(TryFromError::Generic("conversion from u64 failed"));
+                            }
+                        }
+                    }
+                    if source_shape == u32::SHAPE {
+                        let value: u32 = *unsafe { source.get::<u32>() };
+                        let value: u64 = value as u64;
+                        match <$type>::try_from(value) {
+                            Ok(converted) => {
+                                return Ok(unsafe { dest.put::<$type>(converted) });
+                            }
+                            Err(_) => {
+                                return Err(TryFromError::Generic("conversion from u32 failed"));
+                            }
+                        }
+                    }
+                    if source_shape == u16::SHAPE {
+                        let value: u16 = *unsafe { source.get::<u16>() };
+                        let value: u64 = value as u64;
+                        match <$type>::try_from(value) {
+                            Ok(converted) => {
+                                return Ok(unsafe { dest.put::<$type>(converted) });
+                            }
+                            Err(_) => {
+                                return Err(TryFromError::Generic("conversion from u16 failed"));
+                            }
+                        }
+                    }
+                    if source_shape == u8::SHAPE {
+                        let value: u8 = *unsafe { source.get::<u8>() };
+                        let value: u64 = value as u64;
+                        match <$type>::try_from(value) {
+                            Ok(converted) => {
+                                return Ok(unsafe { dest.put::<$type>(converted) });
+                            }
+                            Err(_) => {
+                                return Err(TryFromError::Generic("conversion from u8 failed"));
+                            }
+                        }
+                    }
+                    if source_shape == i64::SHAPE {
+                        let value: i64 = *unsafe { source.get::<i64>() };
+                        match <$type>::try_from(value) {
+                            Ok(converted) => {
+                                return Ok(unsafe { dest.put::<$type>(converted) });
+                            }
+                            Err(_) => {
+                                return Err(TryFromError::Generic("conversion from i64 failed"));
+                            }
+                        }
+                    }
+                    if source_shape == i32::SHAPE {
+                        let value: i32 = *unsafe { source.get::<i32>() };
+                        let value: i64 = value as i64;
+                        match <$type>::try_from(value) {
+                            Ok(converted) => {
+                                return Ok(unsafe { dest.put::<$type>(converted) });
+                            }
+                            Err(_) => {
+                                return Err(TryFromError::Generic("conversion from i32 failed"));
+                            }
+                        }
+                    }
+                    if source_shape == i16::SHAPE {
+                        let value: i16 = *unsafe { source.get::<i16>() };
+                        let value: i64 = value as i64;
+                        match <$type>::try_from(value) {
+                            Ok(converted) => {
+                                return Ok(unsafe { dest.put::<$type>(converted) });
+                            }
+                            Err(_) => {
+                                return Err(TryFromError::Generic("conversion from i16 failed"));
+                            }
+                        }
+                    }
+                    if source_shape == i8::SHAPE {
+                        let value: i8 = *unsafe { source.get::<i8>() };
+                        let value: i64 = value as i64;
+                        match <$type>::try_from(value) {
+                            Ok(converted) => {
+                                return Ok(unsafe { dest.put::<$type>(converted) });
+                            }
+                            Err(_) => {
+                                return Err(TryFromError::Generic("conversion from i8 failed"));
+                            }
+                        }
+                    }
+                    if source_shape == f64::SHAPE {
+                        let value: f64 = *unsafe { source.get::<f64>() };
+                        let value = value as i64;
+                        match <$type>::try_from(value) {
+                            Ok(converted) => {
+                                return Ok(unsafe { dest.put::<$type>(converted) });
+                            }
+                            Err(_) => {
+                                return Err(TryFromError::Generic("conversion from f64 failed"));
+                            }
+                        }
+                    }
+                    if source_shape == f32::SHAPE {
+                        let value: f32 = *unsafe { source.get::<f32>() };
+                        let value = value as i64;
+                        match <$type>::try_from(value) {
+                            Ok(converted) => {
+                                return Ok(unsafe { dest.put::<$type>(converted) });
+                            }
+                            Err(_) => {
+                                return Err(TryFromError::Generic("conversion from f32 failed"));
+                            }
+                        }
+                    }
+                    Err(TryFromError::UnsupportedSourceShape {
+                        src_shape: source_shape,
+                        expected: &[Self::SHAPE, u64::SHAPE, i64::SHAPE, f64::SHAPE],
+                    })
+                });
+
+                vtable
+            };
+
             const SHAPE: &'static Shape = &const {
-                Shape::builder()
-                    .id(ConstTypeId::of::<Self>())
-                    .layout(Layout::new::<Self>())
+                Shape::builder_for_sized::<Self>()
+                    .ty(Type::Primitive(PrimitiveType::Numeric(
+                        NumericType::Integer {
+                            signed: (1 as $type).checked_neg().is_some(),
+                        },
+                    )))
                     .def(Def::Scalar(
                         ScalarDef::builder().affinity($affinity).build(),
                     ))
-                    .vtable(
-                        &const {
-                            let mut vtable =
-                                value_vtable!($type, |f, _opts| write!(f, "{}", stringify!($type)));
-
-                            vtable.try_from = Some(|source, source_shape, dest| {
-                                if source_shape == Self::SHAPE {
-                                    return Ok(unsafe { dest.copy_from(source, source_shape)? });
-                                }
-                                if source_shape == u64::SHAPE {
-                                    let value: u64 = *unsafe { source.get::<u64>() };
-                                    match <$type>::try_from(value) {
-                                        Ok(converted) => {
-                                            return Ok(unsafe { dest.put::<$type>(converted) });
-                                        }
-                                        Err(_) => {
-                                            return Err(TryFromError::Generic(
-                                                "conversion from u64 failed",
-                                            ));
-                                        }
-                                    }
-                                }
-                                if source_shape == u32::SHAPE {
-                                    let value: u32 = *unsafe { source.get::<u32>() };
-                                    let value: u64 = value as u64;
-                                    match <$type>::try_from(value) {
-                                        Ok(converted) => {
-                                            return Ok(unsafe { dest.put::<$type>(converted) });
-                                        }
-                                        Err(_) => {
-                                            return Err(TryFromError::Generic(
-                                                "conversion from u32 failed",
-                                            ));
-                                        }
-                                    }
-                                }
-                                if source_shape == u16::SHAPE {
-                                    let value: u16 = *unsafe { source.get::<u16>() };
-                                    let value: u64 = value as u64;
-                                    match <$type>::try_from(value) {
-                                        Ok(converted) => {
-                                            return Ok(unsafe { dest.put::<$type>(converted) });
-                                        }
-                                        Err(_) => {
-                                            return Err(TryFromError::Generic(
-                                                "conversion from u16 failed",
-                                            ));
-                                        }
-                                    }
-                                }
-                                if source_shape == u8::SHAPE {
-                                    let value: u8 = *unsafe { source.get::<u8>() };
-                                    let value: u64 = value as u64;
-                                    match <$type>::try_from(value) {
-                                        Ok(converted) => {
-                                            return Ok(unsafe { dest.put::<$type>(converted) });
-                                        }
-                                        Err(_) => {
-                                            return Err(TryFromError::Generic(
-                                                "conversion from u8 failed",
-                                            ));
-                                        }
-                                    }
-                                }
-                                if source_shape == i64::SHAPE {
-                                    let value: i64 = *unsafe { source.get::<i64>() };
-                                    match <$type>::try_from(value) {
-                                        Ok(converted) => {
-                                            return Ok(unsafe { dest.put::<$type>(converted) });
-                                        }
-                                        Err(_) => {
-                                            return Err(TryFromError::Generic(
-                                                "conversion from i64 failed",
-                                            ));
-                                        }
-                                    }
-                                }
-                                if source_shape == i32::SHAPE {
-                                    let value: i32 = *unsafe { source.get::<i32>() };
-                                    let value: i64 = value as i64;
-                                    match <$type>::try_from(value) {
-                                        Ok(converted) => {
-                                            return Ok(unsafe { dest.put::<$type>(converted) });
-                                        }
-                                        Err(_) => {
-                                            return Err(TryFromError::Generic(
-                                                "conversion from i32 failed",
-                                            ));
-                                        }
-                                    }
-                                }
-                                if source_shape == i16::SHAPE {
-                                    let value: i16 = *unsafe { source.get::<i16>() };
-                                    let value: i64 = value as i64;
-                                    match <$type>::try_from(value) {
-                                        Ok(converted) => {
-                                            return Ok(unsafe { dest.put::<$type>(converted) });
-                                        }
-                                        Err(_) => {
-                                            return Err(TryFromError::Generic(
-                                                "conversion from i16 failed",
-                                            ));
-                                        }
-                                    }
-                                }
-                                if source_shape == i8::SHAPE {
-                                    let value: i8 = *unsafe { source.get::<i8>() };
-                                    let value: i64 = value as i64;
-                                    match <$type>::try_from(value) {
-                                        Ok(converted) => {
-                                            return Ok(unsafe { dest.put::<$type>(converted) });
-                                        }
-                                        Err(_) => {
-                                            return Err(TryFromError::Generic(
-                                                "conversion from i8 failed",
-                                            ));
-                                        }
-                                    }
-                                }
-                                if source_shape == f64::SHAPE {
-                                    let value: f64 = *unsafe { source.get::<f64>() };
-                                    let value = value as i64;
-                                    match <$type>::try_from(value) {
-                                        Ok(converted) => {
-                                            return Ok(unsafe { dest.put::<$type>(converted) });
-                                        }
-                                        Err(_) => {
-                                            return Err(TryFromError::Generic(
-                                                "conversion from f64 failed",
-                                            ));
-                                        }
-                                    }
-                                }
-                                if source_shape == f32::SHAPE {
-                                    let value: f32 = *unsafe { source.get::<f32>() };
-                                    let value = value as i64;
-                                    match <$type>::try_from(value) {
-                                        Ok(converted) => {
-                                            return Ok(unsafe { dest.put::<$type>(converted) });
-                                        }
-                                        Err(_) => {
-                                            return Err(TryFromError::Generic(
-                                                "conversion from f32 failed",
-                                            ));
-                                        }
-                                    }
-                                }
-                                Err(TryFromError::UnsupportedSourceShape {
-                                    src_shape: source_shape,
-                                    expected: &[Self::SHAPE, u64::SHAPE, i64::SHAPE, f64::SHAPE],
-                                })
-                            });
-
-                            vtable
-                        },
-                    )
                     .build()
             };
         }
 
         unsafe impl<'a> Facet<'a> for NonZero<$type> {
-            const SHAPE: &'static Shape = &const {
+            const VTABLE: &'static ValueVTable = &const {
                 // Define conversion functions for transparency
                 unsafe fn try_from<'dst>(
                     src_ptr: PtrConst<'_>,
@@ -312,51 +337,61 @@ macro_rules! impl_facet_for_integer {
                     Ok(src_ptr)
                 }
 
+                let mut vtable = value_vtable!($type, |f, _opts| write!(
+                    f,
+                    "NonZero<{}>",
+                    stringify!($type)
+                ));
+
+                // Keep existing try_from for compatibility
+                vtable.try_from = Some(|source, source_shape, dest| {
+                    if source_shape == Self::SHAPE {
+                        return Ok(unsafe { dest.copy_from(source, source_shape)? });
+                    }
+                    if source_shape == <$type>::SHAPE {
+                        let value: $type = *unsafe { source.get::<$type>() };
+                        let nz = NonZero::new(value)
+                            .ok_or_else(|| TryFromError::Generic("value must be non-zero"))?;
+                        return Ok(unsafe { dest.put::<NonZero<$type>>(nz) });
+                    }
+                    Err(TryFromError::UnsupportedSourceShape {
+                        src_shape: source_shape,
+                        expected: &[Self::SHAPE, <$type>::SHAPE],
+                    })
+                });
+
+                // Add our new transparency functions
+                vtable.try_from = Some(try_from);
+                vtable.try_into_inner = Some(try_into_inner);
+                vtable.try_borrow_inner = Some(try_borrow_inner);
+
+                vtable
+            };
+
+            const SHAPE: &'static Shape = &const {
                 // Function to return inner type's shape
                 fn inner_shape() -> &'static Shape {
                     <$type as Facet>::SHAPE
                 }
 
-                Shape::builder()
-                    .id(ConstTypeId::of::<Self>())
-                    .layout(Layout::new::<Self>())
+                Shape::builder_for_sized::<Self>()
                     .def(Def::Scalar(
                         ScalarDef::builder().affinity($nz_affinity).build(),
                     ))
-                    .vtable(
-                        &const {
-                            let mut vtable = value_vtable!($type, |f, _opts| write!(
-                                f,
-                                "NonZero<{}>",
-                                stringify!($type)
-                            ));
-
-                            // Keep existing try_from for compatibility
-                            vtable.try_from = Some(|source, source_shape, dest| {
-                                if source_shape == Self::SHAPE {
-                                    return Ok(unsafe { dest.copy_from(source, source_shape)? });
-                                }
-                                if source_shape == <$type>::SHAPE {
-                                    let value: $type = *unsafe { source.get::<$type>() };
-                                    let nz = NonZero::new(value).ok_or_else(|| {
-                                        TryFromError::Generic("value must be non-zero")
-                                    })?;
-                                    return Ok(unsafe { dest.put::<NonZero<$type>>(nz) });
-                                }
-                                Err(TryFromError::UnsupportedSourceShape {
-                                    src_shape: source_shape,
-                                    expected: &[Self::SHAPE, <$type>::SHAPE],
-                                })
-                            });
-
-                            // Add our new transparency functions
-                            vtable.try_from = Some(try_from);
-                            vtable.try_into_inner = Some(try_into_inner);
-                            vtable.try_borrow_inner = Some(try_borrow_inner);
-
-                            vtable
+                    .ty(Type::User(UserType::Struct(StructType {
+                        repr: Repr::transparent(),
+                        kind: StructKind::TupleStruct,
+                        fields: &const {
+                            [Field::builder()
+                                .name("0")
+                                // TODO: is it correct to represent $type here, when we, in
+                                // fact, store $type::NonZeroInner.
+                                .shape(<$type>::SHAPE)
+                                .offset(0)
+                                .flags(FieldFlags::EMPTY)
+                                .build()]
                         },
-                    )
+                    })))
                     .inner(inner_shape)
                     .build()
             };
@@ -613,8 +648,40 @@ static NEGATIVE_ZERO_F64: f64 = -0.0f64;
 static EPSILON_F64: f64 = f64::EPSILON;
 
 unsafe impl Facet<'_> for f32 {
+    const VTABLE: &'static ValueVTable = &const {
+        let mut vtable = value_vtable!(f32, |f, _opts| write!(f, "f32"));
+
+        vtable.try_from = Some(|source, source_shape, dest| {
+            if source_shape == Self::SHAPE {
+                return Ok(unsafe { dest.copy_from(source, source_shape)? });
+            }
+            if source_shape == u64::SHAPE {
+                let value: u64 = *unsafe { source.get::<u64>() };
+                let converted: f32 = value as f32;
+                return Ok(unsafe { dest.put::<f32>(converted) });
+            }
+            if source_shape == i64::SHAPE {
+                let value: i64 = *unsafe { source.get::<i64>() };
+                let converted: f32 = value as f32;
+                return Ok(unsafe { dest.put::<f32>(converted) });
+            }
+            if source_shape == f64::SHAPE {
+                let value: f64 = *unsafe { source.get::<f64>() };
+                let converted: f32 = value as f32;
+                return Ok(unsafe { dest.put::<f32>(converted) });
+            }
+            Err(TryFromError::UnsupportedSourceShape {
+                src_shape: source_shape,
+                expected: &[Self::SHAPE, u64::SHAPE, i64::SHAPE, f64::SHAPE],
+            })
+        });
+
+        vtable
+    };
+
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
+            .ty(Type::Primitive(PrimitiveType::Numeric(NumericType::Float)))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(
@@ -632,45 +699,45 @@ unsafe impl Facet<'_> for f32 {
                     )
                     .build(),
             ))
-            .vtable(
-                &const {
-                    let mut vtable = value_vtable!(f32, |f, _opts| write!(f, "f32"));
-
-                    vtable.try_from = Some(|source, source_shape, dest| {
-                        if source_shape == Self::SHAPE {
-                            return Ok(unsafe { dest.copy_from(source, source_shape)? });
-                        }
-                        if source_shape == u64::SHAPE {
-                            let value: u64 = *unsafe { source.get::<u64>() };
-                            let converted: f32 = value as f32;
-                            return Ok(unsafe { dest.put::<f32>(converted) });
-                        }
-                        if source_shape == i64::SHAPE {
-                            let value: i64 = *unsafe { source.get::<i64>() };
-                            let converted: f32 = value as f32;
-                            return Ok(unsafe { dest.put::<f32>(converted) });
-                        }
-                        if source_shape == f64::SHAPE {
-                            let value: f64 = *unsafe { source.get::<f64>() };
-                            let converted: f32 = value as f32;
-                            return Ok(unsafe { dest.put::<f32>(converted) });
-                        }
-                        Err(TryFromError::UnsupportedSourceShape {
-                            src_shape: source_shape,
-                            expected: &[Self::SHAPE, u64::SHAPE, i64::SHAPE, f64::SHAPE],
-                        })
-                    });
-
-                    vtable
-                },
-            )
             .build()
     };
 }
 
 unsafe impl Facet<'_> for f64 {
+    const VTABLE: &'static ValueVTable = &const {
+        let mut vtable = value_vtable!(f64, |f, _opts| write!(f, "f64"));
+
+        vtable.try_from = Some(|source, source_shape, dest| {
+            if source_shape == Self::SHAPE {
+                return Ok(unsafe { dest.copy_from(source, source_shape)? });
+            }
+            if source_shape == u64::SHAPE {
+                let value: u64 = *unsafe { source.get::<u64>() };
+                let converted: f64 = value as f64;
+                return Ok(unsafe { dest.put::<f64>(converted) });
+            }
+            if source_shape == i64::SHAPE {
+                let value: i64 = *unsafe { source.get::<i64>() };
+                let converted: f64 = value as f64;
+                return Ok(unsafe { dest.put::<f64>(converted) });
+            }
+            if source_shape == f32::SHAPE {
+                let value: f32 = *unsafe { source.get::<f32>() };
+                let converted: f64 = value as f64;
+                return Ok(unsafe { dest.put::<f64>(converted) });
+            }
+            Err(TryFromError::UnsupportedSourceShape {
+                src_shape: source_shape,
+                expected: &[Self::SHAPE, u64::SHAPE, i64::SHAPE, f32::SHAPE],
+            })
+        });
+
+        vtable
+    };
+
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
+            .ty(Type::Primitive(PrimitiveType::Numeric(NumericType::Float)))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(
@@ -688,92 +755,70 @@ unsafe impl Facet<'_> for f64 {
                     )
                     .build(),
             ))
-            .vtable(
-                &const {
-                    let mut vtable = value_vtable!(f64, |f, _opts| write!(f, "f64"));
-
-                    vtable.try_from = Some(|source, source_shape, dest| {
-                        if source_shape == Self::SHAPE {
-                            return Ok(unsafe { dest.copy_from(source, source_shape)? });
-                        }
-                        if source_shape == u64::SHAPE {
-                            let value: u64 = *unsafe { source.get::<u64>() };
-                            let converted: f64 = value as f64;
-                            return Ok(unsafe { dest.put::<f64>(converted) });
-                        }
-                        if source_shape == i64::SHAPE {
-                            let value: i64 = *unsafe { source.get::<i64>() };
-                            let converted: f64 = value as f64;
-                            return Ok(unsafe { dest.put::<f64>(converted) });
-                        }
-                        if source_shape == f32::SHAPE {
-                            let value: f32 = *unsafe { source.get::<f32>() };
-                            let converted: f64 = value as f64;
-                            return Ok(unsafe { dest.put::<f64>(converted) });
-                        }
-                        Err(TryFromError::UnsupportedSourceShape {
-                            src_shape: source_shape,
-                            expected: &[Self::SHAPE, u64::SHAPE, i64::SHAPE, f32::SHAPE],
-                        })
-                    });
-
-                    vtable
-                },
-            )
             .build()
     };
 }
 
 unsafe impl Facet<'_> for core::net::SocketAddr {
+    const VTABLE: &'static ValueVTable =
+        &const { value_vtable!(core::net::SocketAddr, |f, _opts| write!(f, "SocketAddr")) };
+
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
+            .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::socket_addr().build())
                     .build(),
             ))
-            .vtable(
-                &const { value_vtable!(core::net::SocketAddr, |f, _opts| write!(f, "SocketAddr")) },
-            )
             .build()
     };
 }
 
 unsafe impl Facet<'_> for core::net::IpAddr {
+    const VTABLE: &'static ValueVTable =
+        &const { value_vtable!(core::net::IpAddr, |f, _opts| write!(f, "IpAddr")) };
+
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
+            .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::ip_addr().build())
                     .build(),
             ))
-            .vtable(&const { value_vtable!(core::net::IpAddr, |f, _opts| write!(f, "IpAddr")) })
             .build()
     };
 }
 
 unsafe impl Facet<'_> for core::net::Ipv4Addr {
+    const VTABLE: &'static ValueVTable =
+        &const { value_vtable!(core::net::Ipv4Addr, |f, _opts| write!(f, "Ipv4Addr")) };
+
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
+            .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::ip_addr().build())
                     .build(),
             ))
-            .vtable(&const { value_vtable!(core::net::Ipv4Addr, |f, _opts| write!(f, "Ipv4Addr")) })
             .build()
     };
 }
 
 unsafe impl Facet<'_> for core::net::Ipv6Addr {
+    const VTABLE: &'static ValueVTable =
+        &const { value_vtable!(core::net::Ipv6Addr, |f, _opts| write!(f, "Ipv6Addr")) };
+
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
+            .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(ScalarAffinity::ip_addr().build())
                     .build(),
             ))
-            .vtable(&const { value_vtable!(core::net::Ipv6Addr, |f, _opts| write!(f, "Ipv6Addr")) })
             .build()
     };
 }

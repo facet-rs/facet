@@ -8,6 +8,12 @@ static ENUM_WITH_EMPTY_STRUCT_VARIANT_SHAPE: &'static ::facet::Shape =
 #[automatically_derived]
 #[allow(non_camel_case_types)]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithEmptyStructVariant {
+    const VTABLE: &'static ::facet::ValueVTable = &const {
+        ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
+            f,
+            "EnumWithEmptyStructVariant"
+        ))
+    };
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
         #[allow(dead_code)]
@@ -40,8 +46,9 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithEmptyStructVariant {
                 ::facet::Variant::builder()
                     .name("Variant1")
                     .discriminant(0i64)
-                    .fields(
-                        ::facet::StructDef::builder()
+                    .data(
+                        ::facet::StructType::builder()
+                            .repr(::facet::Repr::c())
                             .struct_()
                             .fields(fields)
                             .build(),
@@ -49,25 +56,16 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithEmptyStructVariant {
                     .build()
             }]
         };
-        ::facet::Shape::builder()
-            .id(::facet::ConstTypeId::of::<Self>())
-            .layout(::core::alloc::Layout::new::<Self>())
-            .vtable(
-                &const {
-                    ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
-                        f,
-                        "EnumWithEmptyStructVariant"
-                    ))
-                },
-            )
-            .def(::facet::Def::Enum(
-                ::facet::EnumDef::builder()
+        ::facet::Shape::builder_for_sized::<Self>()
+            .ty(::facet::Type::User(::facet::UserType::Enum(
+                ::facet::EnumType::builder()
                     .variants(__facet_variants)
-                    .repr(::facet::EnumRepr::from_discriminant_size::<
+                    .repr(::facet::Repr::c())
+                    .enum_repr(::facet::EnumRepr::from_discriminant_size::<
                         __Shadow_CRepr_Discriminant_for_EnumWithEmptyStructVariant,
                     >())
                     .build(),
-            ))
+            )))
             .build()
     };
 }

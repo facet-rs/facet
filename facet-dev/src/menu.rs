@@ -22,6 +22,13 @@ pub fn show_menu(question: &str, items: &[MenuItem]) -> Option<String> {
 
 #[cfg(not(windows))]
 pub fn show_menu(question: &str, items: &[MenuItem]) -> Option<String> {
+    // Check for environment variable to automatically accept
+    if std::env::var("FACET_PRECOMMIT_ACCEPT_ALL").is_ok() {
+        // If FACET_PRECOMMIT_ACCEPT_ALL is set, automatically return "apply"
+        println!("FACET_PRECOMMIT_ACCEPT_ALL is set, automatically accepting changes");
+        return Some("apply".to_string());
+    }
+
     // Requires the 'termion' crate for raw input handling
     use std::io::{self, Write};
     use termion::event::{Event, Key};

@@ -1,7 +1,7 @@
 use crate::constants::*;
 use crate::errors::Error as DecodeError;
 
-use facet_core::{Def, Facet};
+use facet_core::{Def, Facet, Type, UserType};
 use facet_reflect::{HeapValue, Wip};
 use log::trace;
 
@@ -407,6 +407,32 @@ impl<'input> Decoder<'input> {
         let shape = wip.shape();
         trace!("Deserializing {:?}", shape);
 
+        // First check the type system (Type)
+        if let Type::User(UserType::Struct(_)) = &shape.ty {
+            trace!("Deserializing struct");
+            let map_len = self.decode_map_len()?;
+
+            let mut wip = wip;
+            for _ in 0..map_len {
+                let key = self.decode_string()?;
+                match wip.field_index(&key) {
+                    Some(index) => {
+                        wip = self
+                            .deserialize_value(wip.field(index).unwrap())?
+                            .pop()
+                            .unwrap();
+                    }
+                    None => {
+                        // Skip unknown field value
+                        self.skip_value()?;
+                        trace!("Skipping unknown field: {}", key);
+                    }
+                }
+            }
+            return Ok(wip);
+        }
+
+        // Then check the def system (Def)
         let wip = match shape.def {
             Def::Scalar(_) => {
                 trace!("Deserializing scalar");
@@ -453,29 +479,6 @@ impl<'input> Decoder<'input> {
                 } else {
                     return Err(DecodeError::UnsupportedType(format!("{}", shape)));
                 }
-            }
-            Def::Struct(_) => {
-                trace!("Deserializing struct");
-                let map_len = self.decode_map_len()?;
-
-                let mut wip = wip;
-                for _ in 0..map_len {
-                    let key = self.decode_string()?;
-                    match wip.field_index(&key) {
-                        Some(index) => {
-                            wip = self
-                                .deserialize_value(wip.field(index).unwrap())?
-                                .pop()
-                                .unwrap();
-                        }
-                        None => {
-                            // Skip unknown field value
-                            self.skip_value()?;
-                            trace!("Skipping unknown field: {}", key);
-                        }
-                    }
-                }
-                wip
             }
             _ => {
                 return Err(DecodeError::UnsupportedShape(format!("{:?}", shape)));

@@ -7,37 +7,42 @@ static MY_ENUM_SHAPE: &'static ::facet::Shape = <MyEnum as ::facet::Facet>::SHAP
 #[automatically_derived]
 #[allow(non_camel_case_types)]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for MyEnum {
+    const VTABLE: &'static ::facet::ValueVTable = &const {
+        ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "MyEnum"))
+    };
     const SHAPE: &'static ::facet::Shape = &const {
         let __facet_variants: &'static [::facet::Variant] = &const {
             [
                 ::facet::Variant::builder()
                     .name("A")
                     .discriminant(0i64)
-                    .fields(::facet::StructDef::builder().unit().build())
+                    .data(
+                        ::facet::StructType::builder()
+                            .repr(::facet::Repr::c())
+                            .unit()
+                            .build(),
+                    )
                     .build(),
                 ::facet::Variant::builder()
                     .name("B")
                     .discriminant(1i64)
-                    .fields(::facet::StructDef::builder().unit().build())
+                    .data(
+                        ::facet::StructType::builder()
+                            .repr(::facet::Repr::c())
+                            .unit()
+                            .build(),
+                    )
                     .build(),
             ]
         };
-        ::facet::Shape::builder()
-            .id(::facet::ConstTypeId::of::<Self>())
-            .layout(::core::alloc::Layout::new::<Self>())
-            .vtable(
-                &const {
-                    ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
-                        f, "MyEnum"
-                    ))
-                },
-            )
-            .def(::facet::Def::Enum(
-                ::facet::EnumDef::builder()
+        ::facet::Shape::builder_for_sized::<Self>()
+            .ty(::facet::Type::User(::facet::UserType::Enum(
+                ::facet::EnumType::builder()
                     .variants(__facet_variants)
-                    .repr(::facet::EnumRepr::U8)
+                    .repr(::facet::Repr::c())
+                    .enum_repr(::facet::EnumRepr::U8)
                     .build(),
-            ))
+            )))
             .doc(&[" This is an enum"])
             .build()
     };

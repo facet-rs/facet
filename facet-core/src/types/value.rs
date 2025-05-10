@@ -562,6 +562,20 @@ impl ValueVTable {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct VTableView<T>(&'static ValueVTable, PhantomData<T>);
 
+impl<'a, T: crate::Facet<'a> + ?Sized> VTableView<&'a mut T> {
+    /// Fetches the vtable for the type.
+    pub fn of_deref() -> Self {
+        Self(T::SHAPE.vtable, PhantomData)
+    }
+}
+
+impl<'a, T: crate::Facet<'a> + ?Sized> VTableView<&'a T> {
+    /// Fetches the vtable for the type.
+    pub fn of_deref() -> Self {
+        Self(T::SHAPE.vtable, PhantomData)
+    }
+}
+
 impl<'a, T: crate::Facet<'a>> VTableView<T> {
     /// Fetches the vtable for the type.
     pub fn of() -> Self {

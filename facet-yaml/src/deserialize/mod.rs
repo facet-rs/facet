@@ -10,7 +10,7 @@ use alloc::{
     string::{String, ToString},
 };
 use error::AnyErr;
-use facet_core::{Def, Facet};
+use facet_core::{Def, Facet, Type, UserType};
 use facet_reflect::Wip;
 use yaml_rust2::{Yaml, YamlLoader};
 
@@ -62,6 +62,30 @@ fn from_str_value<'a>(wip: Wip<'a>, yaml: &str) -> Result<Wip<'a>, AnyErr> {
 
 fn deserialize_value<'a>(mut wip: Wip<'a>, value: &Yaml) -> Result<Wip<'a>, AnyErr> {
     let shape = wip.shape();
+
+    // First check the type system (Type)
+    if let Type::User(UserType::Struct(_)) = &shape.ty {
+        if let Yaml::Hash(hash) = value {
+            for (k, v) in hash {
+                let k = k
+                    .as_str()
+                    .ok_or_else(|| AnyErr(format!("Expected string key, got: {}", yaml_type(k))))?;
+                let field_index = wip
+                    .field_index(k)
+                    .ok_or_else(|| AnyErr(format!("Field '{}' not found", k)))?;
+                wip = wip
+                    .field(field_index)
+                    .map_err(|e| AnyErr(format!("Field '{}' error: {}", k, e)))?;
+                wip = deserialize_value(wip, v)?;
+                wip = wip.pop().map_err(|e| AnyErr(e.to_string()))?;
+            }
+        } else {
+            return Err(AnyErr(format!("Expected a YAML hash, got: {:?}", value)));
+        }
+        return Ok(wip);
+    }
+
+    // Then check the def system (Def)
     match shape.def {
         Def::Scalar(_) => {
             if shape.is_type::<u64>() {
@@ -79,26 +103,7 @@ fn deserialize_value<'a>(mut wip: Wip<'a>, value: &Yaml) -> Result<Wip<'a>, AnyE
         }
         Def::List(_) => todo!(),
         Def::Map(_) => todo!(),
-        Def::Struct(_) => {
-            if let Yaml::Hash(hash) = value {
-                for (k, v) in hash {
-                    let k = k.as_str().ok_or_else(|| {
-                        AnyErr(format!("Expected string key, got: {}", yaml_type(k)))
-                    })?;
-                    let field_index = wip
-                        .field_index(k)
-                        .ok_or_else(|| AnyErr(format!("Field '{}' not found", k)))?;
-                    wip = wip
-                        .field(field_index)
-                        .map_err(|e| AnyErr(format!("Field '{}' error: {}", k, e)))?;
-                    wip = deserialize_value(wip, v)?;
-                    wip = wip.pop().map_err(|e| AnyErr(e.to_string()))?;
-                }
-            } else {
-                return Err(AnyErr(format!("Expected a YAML hash, got: {:?}", value)));
-            }
-        }
-        Def::Enum(_) => todo!(),
+        // Enum has been moved to Type system
         _ => return Err(AnyErr(format!("Unsupported type: {:?}", shape))),
     }
     Ok(wip)

@@ -215,7 +215,67 @@ impl<'input> Tokenizer<'input> {
                             b'n' => buf.push(b'\n'),   // line feed
                             b'r' => buf.push(b'\r'),   // carriage return
                             b't' => buf.push(b'\t'),   // tab
-                            _ => buf.push(esc), // other escapes (should handle \uXXXX properly)
+                            b'u' => {
+                                // Handle \uXXXX Unicode escape sequence
+                                // We need to read 4 hexadecimal digits
+                                self.pos += 1; // Move past 'u'
+                                let hex_start = self.pos;
+                                if self.pos + 4 > self.input.len() {
+                                    return Err(TokenError {
+                                        kind: TokenErrorKind::UnexpectedEof(
+                                            "in Unicode escape sequence",
+                                        ),
+                                        span: Span::new(hex_start, self.input.len() - hex_start),
+                                    });
+                                }
+
+                                // Read 4 hexadecimal digits
+                                let hex_digits = &self.input[self.pos..self.pos + 4];
+                                let hex_str = match str::from_utf8(hex_digits) {
+                                    Ok(s) => s,
+                                    Err(_) => {
+                                        return Err(TokenError {
+                                            kind: TokenErrorKind::InvalidUtf8(
+                                                "invalid UTF-8 in Unicode escape".to_string(),
+                                            ),
+                                            span: Span::new(hex_start, 4),
+                                        });
+                                    }
+                                };
+
+                                // Parse hexadecimal value
+                                let code_point = match u16::from_str_radix(hex_str, 16) {
+                                    Ok(cp) => cp,
+                                    Err(_) => {
+                                        return Err(TokenError {
+                                            kind: TokenErrorKind::UnexpectedCharacter('?'),
+                                            span: Span::new(hex_start, 4),
+                                        });
+                                    }
+                                };
+
+                                // Convert to UTF-8 and append to buffer
+                                // Handle basic Unicode code points (BMP)
+                                let c = match char::from_u32(code_point as u32) {
+                                    Some(c) => c,
+                                    None => {
+                                        return Err(TokenError {
+                                            kind: TokenErrorKind::InvalidUtf8(
+                                                "invalid Unicode code point".to_string(),
+                                            ),
+                                            span: Span::new(hex_start, 4),
+                                        });
+                                    }
+                                };
+
+                                // Extend buffer with UTF-8 bytes for the character
+                                let mut utf8_buf = [0u8; 4];
+                                let utf8_bytes = c.encode_utf8(&mut utf8_buf).as_bytes();
+                                buf.extend_from_slice(utf8_bytes);
+
+                                self.pos += 3; // +3 because we'll increment once more below
+                            }
+                            _ => buf.push(esc), // other escapes
                         }
                         self.pos += 1;
                     } else {

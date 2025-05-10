@@ -1,0 +1,76 @@
+[workspace]
+changelog_update = true
+semver_check = true
+dependencies_update = true
+git_release_enable = true
+
+# Core group - always versioned together
+[[package]]
+name = "facet-core"
+version_group = "core"
+
+[[package]]
+name = "facet"
+version_group = "core"
+
+# Derive macros - part of core group
+[[package]]
+name = "facet-derive-parse"
+version_group = "core"
+
+[[package]]
+name = "facet-derive-emit"
+version_group = "core"
+
+[[package]]
+name = "facet-derive"
+version_group = "core"
+
+# Reflection - part of core group
+[[package]]
+name = "facet-reflect"
+version_group = "core"
+
+# Dev tools - separate versioning
+[[package]]
+name = "facet-dev"
+
+[[package]]
+name = "facet-testhelpers"
+
+# Formats and ecosystem - separate versioning for each format
+[[package]]
+name = "facet-args"
+
+[[package]]
+name = "facet-json"
+
+[[package]]
+name = "facet-msgpack"
+
+[[package]]
+name = "facet-serialize"
+
+[[package]]
+name = "facet-pretty"
+
+[[package]]
+name = "facet-toml"
+
+[[package]]
+name = "facet-kdl"
+
+[[package]]
+name = "facet-urlencoded"
+
+[[package]]
+name = "facet-yaml"
+
+[[package]]
+name = "facet-jsonschema"
+
+[[package]]
+name = "facet-deserialize"
+
+[[package]]
+name = "facet-bench"

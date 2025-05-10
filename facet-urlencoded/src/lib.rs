@@ -2,7 +2,7 @@
 #![forbid(unsafe_code)]
 #![doc = include_str!("../README.md")]
 
-use facet_core::{Def, Facet};
+use facet_core::{Def, Facet, Type, UserType};
 use facet_reflect::{HeapValue, Wip};
 use log::*;
 
@@ -181,8 +181,9 @@ fn deserialize_value<'mem>(
     wip: Wip<'mem>,
     values: &NestedValues,
 ) -> Result<HeapValue<'mem>, UrlEncodedError> {
-    match wip.shape().def {
-        Def::Struct(_sd) => {
+    let shape = wip.shape();
+    match shape.ty {
+        Type::User(UserType::Struct(_)) => {
             trace!("Deserializing struct");
 
             let mut wip = wip;
@@ -264,8 +265,9 @@ fn deserialize_nested_field<'mem>(
     nested_values: &NestedValues,
     wip: Wip<'mem>,
 ) -> Result<Wip<'mem>, UrlEncodedError> {
-    match wip.shape().def {
-        Def::Struct(_sd) => {
+    let shape = wip.shape();
+    match shape.ty {
+        Type::User(UserType::Struct(_)) => {
             trace!("Deserializing nested struct field: {}", key);
 
             let mut current_wip = wip;

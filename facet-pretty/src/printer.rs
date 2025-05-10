@@ -9,7 +9,9 @@ use core::{
 use std::{collections::HashMap, hash::DefaultHasher};
 use yansi::Paint as _;
 
-use facet_core::{Def, Facet, FieldFlags, StructKind, TypeNameOpts};
+use facet_core::{
+    Def, Facet, FieldFlags, PointerType, SequenceType, StructKind, Type, TypeNameOpts, UserType,
+};
 use facet_reflect::{Peek, ValueId};
 
 use crate::color::ColorGenerator;
@@ -39,11 +41,16 @@ impl Default for PrettyPrinter {
 enum StackState {
     Start,
     ProcessStructField { field_index: usize },
-    ProcessListItem { item_index: usize },
+    ProcessSeqItem { item_index: usize, kind: SeqKind },
     ProcessBytesItem { item_index: usize },
     ProcessMapEntry,
     Finish,
     OptionFinish,
+}
+
+enum SeqKind {
+    List,
+    Tuple,
 }
 
 /// Stack item for iterative traversal
@@ -167,12 +174,14 @@ impl PrettyPrinter {
                         visited.insert(item.value.id(), item.type_depth);
                     }
 
-                    // Process based on the peek variant
-                    match item.value.shape().def {
-                        Def::Scalar(_def) => {
+                    // Process based on the peek variant and type
+                    match (item.value.shape().def, item.value.shape().ty) {
+                        // Handle scalar values
+                        (Def::Scalar(_def), _) => {
                             self.format_scalar(item.value, f)?;
                         }
-                        Def::Option(_def) => {
+                        // Handle option types
+                        (Def::Option(_def), _) => {
                             let option = item.value.into_option().unwrap();
 
                             // Print the Option name
@@ -209,7 +218,8 @@ impl PrettyPrinter {
                                 self.write_punctuation(f, "::None")?;
                             }
                         }
-                        Def::Struct(_def) => {
+                        // Handle struct types
+                        (_, Type::User(UserType::Struct(_))) => {
                             let struct_ = item.value.into_struct().unwrap();
 
                             // Get struct doc comments from the shape
@@ -237,7 +247,7 @@ impl PrettyPrinter {
                             item.format_depth += 1;
                             stack.push_back(item);
                         }
-                        Def::List(_) => {
+                        (Def::List(_), _) => {
                             let list = item.value.into_list().unwrap();
                             // When recursing into a list, always increment format_depth
                             // Only increment type_depth if we're moving to a different address
@@ -257,7 +267,10 @@ impl PrettyPrinter {
                                 // TODO: write all the bytes here instead?
                             } else {
                                 // Push back the item with the next state to continue processing list items
-                                item.state = StackState::ProcessListItem { item_index: 0 };
+                                item.state = StackState::ProcessSeqItem {
+                                    item_index: 0,
+                                    kind: SeqKind::List,
+                                };
                                 self.write_punctuation(f, " [")?;
                                 writeln!(f)?;
                             }
@@ -266,7 +279,19 @@ impl PrettyPrinter {
                             item.type_depth = new_type_depth;
                             stack.push_back(item);
                         }
-                        Def::Map(_) => {
+                        (_, Type::Sequence(SequenceType::Tuple(..))) => {
+                            self.write_type_name(f, &item.value)?;
+                            item.state = StackState::ProcessSeqItem {
+                                item_index: 0,
+                                kind: SeqKind::Tuple,
+                            };
+                            self.write_punctuation(f, " (")?;
+                            writeln!(f)?;
+                            item.format_depth += 1;
+                            item.type_depth += 1;
+                            stack.push_back(item);
+                        }
+                        (Def::Map(_), _) => {
                             let _map = item.value.into_map().unwrap();
                             // Print the map name
                             self.write_type_name(f, &item.value)?;
@@ -280,13 +305,21 @@ impl PrettyPrinter {
                             item.type_depth += 1; // Always increment type_depth for map operations
                             stack.push_back(item);
                         }
-                        Def::Enum(_enum) => {
+                        (_, Type::User(UserType::Enum(_))) => {
                             // When recursing into an enum, increment format_depth
                             // Only increment type_depth if we're moving to a different address
                             let enum_peek = item.value.into_enum().unwrap();
 
-                            // Get the active variant
-                            let variant = enum_peek.active_variant();
+                            // Get the active variant or handle error
+                            let variant = match enum_peek.active_variant() {
+                                Ok(v) => v,
+                                Err(_) => {
+                                    // Print the enum name
+                                    self.write_type_name(f, &item.value)?;
+                                    write!(f, " /* cannot determine variant */")?;
+                                    continue;
+                                }
+                            };
 
                             // Get enum and variant doc comments
                             let doc_comments = item.value.shape().doc;
@@ -309,8 +342,8 @@ impl PrettyPrinter {
 
                             // Variant docs are already handled above
 
-                            // Get the active variant name
-                            let variant = enum_peek.active_variant();
+                            // Get the active variant name - we've already checked above that we can get it
+                            // This is the same variant, but we're repeating the code here to ensure consistency
 
                             // Apply color for variant name
                             if self.use_colors {
@@ -366,8 +399,10 @@ impl PrettyPrinter {
                                 }
                             }
                         }
-                        Def::FunctionPointer(_) => {
+                        (_, Type::Pointer(PointerType::Function(_))) => {
+                            // Just print the type name for function pointers
                             self.write_type_name(f, &item.value)?;
+                            write!(f, " /* function pointer (not yet supported) */")?;
                         }
                         _ => {
                             write!(f, "unsupported peek variant: {:?}", item.value)?;
@@ -376,7 +411,7 @@ impl PrettyPrinter {
                 }
                 StackState::ProcessStructField { field_index } => {
                     // Handle both struct and enum fields
-                    if let Def::Struct(struct_) = item.value.shape().def {
+                    if let Type::User(UserType::Struct(struct_)) = item.value.shape().ty {
                         let peek_struct = item.value.into_struct().unwrap();
                         if field_index >= struct_.fields.len() {
                             // All fields processed, write closing brace
@@ -458,10 +493,17 @@ impl PrettyPrinter {
                             stack.push_back(finish_item);
                             stack.push_back(start_item);
                         }
-                    } else if let Def::Enum(_def) = item.value.shape().def {
+                    } else if let Type::User(UserType::Enum(_def)) = item.value.shape().ty {
                         let enum_val = item.value.into_enum().unwrap();
 
-                        let variant = enum_val.active_variant();
+                        // Get active variant or skip this field processing
+                        let variant = match enum_val.active_variant() {
+                            Ok(v) => v,
+                            Err(_) => {
+                                // Skip field processing for this enum
+                                continue;
+                            }
+                        };
                         if field_index >= variant.data.fields.len() {
                             // Determine variant kind to use the right closing delimiter
                             match variant.data.kind {
@@ -491,7 +533,19 @@ impl PrettyPrinter {
                         }
 
                         let field = variant.data.fields[field_index];
-                        let field_value = enum_val.field(field_index).unwrap();
+
+                        // Get field value or skip this field
+                        let field_value = match enum_val.field(field_index) {
+                            Ok(Some(v)) => v,
+                            _ => {
+                                // Can't get the field value, skip this field
+                                item.state = StackState::ProcessStructField {
+                                    field_index: field_index + 1,
+                                };
+                                stack.push_back(item);
+                                continue;
+                            }
+                        };
 
                         // Add field doc comments if available
                         // Only add new line if not the first field
@@ -515,7 +569,7 @@ impl PrettyPrinter {
                         }
 
                         // For struct variants, print field name
-                        if let StructKind::Struct = enum_val.active_variant().data.kind {
+                        if let StructKind::Struct = variant.data.kind {
                             self.write_field_name(f, field.name)?;
                             self.write_punctuation(f, ": ")?;
                         }
@@ -545,9 +599,18 @@ impl PrettyPrinter {
                         stack.push_back(start_item);
                     }
                 }
-                StackState::ProcessListItem { item_index } => {
-                    let list = item.value.into_list().unwrap();
-                    if item_index >= list.len() {
+                StackState::ProcessSeqItem { item_index, kind } => {
+                    let (len, elem) = match kind {
+                        SeqKind::List => {
+                            let list = item.value.into_list().unwrap();
+                            (list.len(), list.get(item_index))
+                        }
+                        SeqKind::Tuple => {
+                            let tuple = item.value.into_tuple().unwrap();
+                            (tuple.len(), tuple.field(item_index))
+                        }
+                    };
+                    if item_index >= len {
                         // All items processed, write closing bracket
                         write!(
                             f,
@@ -555,7 +618,13 @@ impl PrettyPrinter {
                             "",
                             width = (item.format_depth - 1) * self.indent_size
                         )?;
-                        self.write_punctuation(f, "]")?;
+                        self.write_punctuation(
+                            f,
+                            match kind {
+                                SeqKind::List => "]",
+                                SeqKind::Tuple => ")",
+                            },
+                        )?;
                         continue;
                     }
 
@@ -568,17 +637,19 @@ impl PrettyPrinter {
                     )?;
 
                     // Push back current item to continue after formatting list item
-                    item.state = StackState::ProcessListItem {
+                    item.state = StackState::ProcessSeqItem {
                         item_index: item_index + 1,
+                        kind,
                     };
                     let next_format_depth = item.format_depth;
                     let next_type_depth = item.type_depth + 1;
                     stack.push_back(item);
 
+                    let elem = elem.unwrap();
+
                     // Push list item to format first
-                    let list_item = list.get(item_index).unwrap();
                     stack.push_back(StackItem {
-                        value: list_item,
+                        value: elem,
                         format_depth: next_format_depth,
                         type_depth: next_type_depth,
                         state: StackState::Finish,
@@ -586,7 +657,7 @@ impl PrettyPrinter {
 
                     // When we push a list item to format, we need to process it from the beginning
                     stack.push_back(StackItem {
-                        value: list_item,
+                        value: elem,
                         format_depth: next_format_depth,
                         type_depth: next_type_depth,
                         state: StackState::Start, // Use Start state to properly process the item

@@ -296,6 +296,7 @@ mod tests {
             need_comma: vec![false],
         };
         serialize_iterative(peek, &mut serializer)?;
+        #[cfg(not(miri))]
         insta::assert_snapshot!(s);
 
         Ok(())
@@ -320,6 +321,8 @@ mod tests {
 
     #[test]
     fn test_serialize_debug_container() {
+        facet_testhelpers::setup();
+
         let val = FooBarBazContainer {
             foo_bar_baz: FooBarBaz {
                 foo: 42,
@@ -345,6 +348,7 @@ mod tests {
             need_comma: vec![false],
         };
         serialize_iterative(peek, &mut serializer).unwrap();
+        #[cfg(not(miri))]
         insta::assert_snapshot!(s);
     }
 
@@ -355,6 +359,8 @@ mod tests {
 
     #[test]
     fn test_serialize_transparent() {
+        facet_testhelpers::setup();
+
         let val = Wrapper("TransparentValue".to_string());
         let peek = Peek::new(&val);
 
@@ -364,6 +370,7 @@ mod tests {
             need_comma: vec![false],
         };
         serialize_iterative(peek, &mut serializer).unwrap();
+        #[cfg(not(miri))]
         insta::assert_snapshot!(s);
     }
 }

@@ -258,7 +258,7 @@ unsynn! {
         pub name: Ident,
         /// Generic parameters for the struct, if any.
         pub generics: Option<GenericParams>,
-        /// The kind of struct (unit, tuple, or regular struct with named fields).
+        /// The variant of struct (unit, tuple, or regular struct with named fields).
         pub kind: StructKind,
     }
 
@@ -437,7 +437,7 @@ unsynn! {
         /// A tuple-like variant, e.g., `Variant(u32, String)`.
         Tuple(TupleVariant),
         /// A struct-like variant, e.g., `Variant { field1: u32, field2: String }`.
-        Struct(StructVariant),
+        Struct(StructEnumVariant),
         /// A unit-like variant, e.g., `Variant`.
         Unit(UnitVariant),
     }
@@ -464,7 +464,7 @@ unsynn! {
 
     /// Represents a struct-like enum variant.
     /// e.g., `MyVariant { field1: u32, field2: String }`.
-    pub struct StructVariant {
+    pub struct StructEnumVariant {
         /// Attributes applied to the variant.
         pub attributes: Vec<Attribute>,
         /// The name of the variant.

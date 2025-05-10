@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.3](https://github.com/facet-rs/facet/compare/facet-derive-emit-v0.20.2...facet-derive-emit-v0.20.3) - 2025-05-10
+
+### Added
+
+- Allow empty string rename values
+
+### Fixed
+
+- Empty string rename values are now compile errors
+
+### Other
+
+- Release facet-derive-parser
+- Fix slow tests
+- Rework type information (Def)
+
 ## [0.20.2](https://github.com/facet-rs/facet/compare/facet-derive-emit-v0.20.1...facet-derive-emit-v0.20.2) - 2025-05-08
 
 ### Other

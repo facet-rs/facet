@@ -436,7 +436,6 @@ fn test_string_traits() {
             .equal_and(false)
             .ord_and(Ordering::Less)
             .clone()
-            .default()
             .build(),
     );
 
@@ -493,7 +492,6 @@ fn test_slice_traits() {
             .equal_and(false)
             .ord_and(Ordering::Less)
             .clone()
-            .default()
             .build(),
     );
 
@@ -506,7 +504,6 @@ fn test_slice_traits() {
             .equal_and(false)
             .ord_and(Ordering::Greater)
             .clone()
-            .default()
             .build(),
     );
 }
@@ -576,7 +573,6 @@ fn test_array_traits() {
             .debug()
             .equal_and(false)
             .ord_and(Ordering::Less)
-            .default()
             .clone()
             .build(),
     );

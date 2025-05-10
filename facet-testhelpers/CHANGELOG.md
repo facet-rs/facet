@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.2](https://github.com/facet-rs/facet/compare/facet-testhelpers-v0.17.1...facet-testhelpers-v0.17.2) - 2025-05-10
+
+### Other
+
+- Determine enum variant after default_from_fn
+- Rework type information (Def)
+
 ## [0.17.1](https://github.com/facet-rs/facet/compare/facet-testhelpers-v0.17.0...facet-testhelpers-v0.17.1) - 2025-05-06
 
 ### Other
