@@ -57,7 +57,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
                     };
                     ::facet::Variant::builder()
                         .name("TextValue")
-                        .discriminant(0)
+                        .discriminant(0i64)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())
@@ -103,7 +103,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
                     };
                     ::facet::Variant::builder()
                         .name("NumberValue")
-                        .discriminant(0 + 1)
+                        .discriminant(1i64)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())
@@ -132,7 +132,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
                     };
                     ::facet::Variant::builder()
                         .name("BoolValue")
-                        .discriminant(0 + 1 + 1)
+                        .discriminant(2i64)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())

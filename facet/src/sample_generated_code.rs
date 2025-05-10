@@ -1175,7 +1175,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
             [
                 crate::Variant::builder()
                     .name("UnitVariant")
-                    .discriminant(0)
+                    .discriminant(0i64)
                     .data(
                         crate::StructType::builder()
                             .repr(crate::Repr::c())
@@ -1197,7 +1197,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                     };
                     crate::Variant::builder()
                         .name("TupleVariantSimple")
-                        .discriminant(0 + 1)
+                        .discriminant(1i64)
                         .data(
                             crate::StructType::builder()
                                 .repr(crate::Repr::c())
@@ -1243,7 +1243,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                     };
                     crate::Variant::builder()
                         .name("TupleVariantMulti")
-                        .discriminant(0 + 1 + 1)
+                        .discriminant(2i64)
                         .data(
                             crate::StructType::builder()
                                 .repr(crate::Repr::c())
@@ -1284,7 +1284,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                     };
                     crate::Variant::builder()
                         .name("StructVariant")
-                        .discriminant(0 + 1 + 1 + 1)
+                        .discriminant(3i64)
                         .data(
                             crate::StructType::builder()
                                 .repr(crate::Repr::c())
@@ -1308,7 +1308,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                     };
                     crate::Variant::builder()
                         .name("SensitiveTupleVariant")
-                        .discriminant(0 + 1 + 1 + 1 + 1)
+                        .discriminant(4i64)
                         .data(
                             crate::StructType::builder()
                                 .repr(crate::Repr::c())
@@ -1342,7 +1342,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                     };
                     crate::Variant::builder()
                         .name("StructVariantWithSensitiveField")
-                        .discriminant(0 + 1 + 1 + 1 + 1 + 1)
+                        .discriminant(5i64)
                         .data(
                             crate::StructType::builder()
                                 .repr(crate::Repr::c())
@@ -1364,9 +1364,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                                                                                     }).build()
                         }]
                     };
-                    crate::Variant::builder().name("ArbitraryVariant").attributes(&[crate::VariantAttribute::Arbitrary("arbitrary")]).discriminant(0
-                                                                                        + 1 + 1 + 1 + 1 + 1 +
-                                                                    1).data(crate::StructType::builder().repr(crate::Repr::c()).tuple().fields(fields).build()).doc(&[" A variant marked as arbitrary, potentially skipped during processing."]).build()
+                    crate::Variant::builder().name("ArbitraryVariant").attributes(&[crate::VariantAttribute::Arbitrary("arbitrary")]).discriminant(6i64).data(crate::StructType::builder().repr(crate::Repr::c()).tuple().fields(fields).build()).doc(&[" A variant marked as arbitrary, potentially skipped during processing."]).build()
                 },
                 {
                     let fields: &'static [crate::Field] = &const {
@@ -1381,7 +1379,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                     };
                     crate::Variant::builder()
                         .name("NestedEnumVariant")
-                        .discriminant(0 + 1 + 1 + 1 + 1 + 1 + 1 + 1)
+                        .discriminant(7i64)
                         .data(
                             crate::StructType::builder()
                                 .repr(crate::Repr::c())
@@ -1751,7 +1749,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for SubEnum {
             [
                 crate::Variant::builder()
                     .name("OptionA")
-                    .discriminant(0)
+                    .discriminant(0i64)
                     .data(
                         crate::StructType::builder()
                             .repr(crate::Repr::c())
@@ -1773,7 +1771,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for SubEnum {
                     };
                     crate::Variant::builder()
                         .name("OptionB")
-                        .discriminant(0 + 1)
+                        .discriminant(1i64)
                         .data(
                             crate::StructType::builder()
                                 .repr(crate::Repr::c())
@@ -1797,7 +1795,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for SubEnum {
                     };
                     crate::Variant::builder()
                         .name("SensitiveOption")
-                        .discriminant(0 + 1 + 1)
+                        .discriminant(2i64)
                         .data(
                             crate::StructType::builder()
                                 .repr(crate::Repr::c())
@@ -1822,7 +1820,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for SubEnum {
                     crate::Variant::builder()
                         .name("ArbitraryOption")
                         .attributes(&[crate::VariantAttribute::Arbitrary("arbitrary")])
-                        .discriminant(0 + 1 + 1 + 1)
+                        .discriminant(3i64)
                         .data(
                             crate::StructType::builder()
                                 .repr(crate::Repr::c())

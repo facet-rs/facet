@@ -60,7 +60,7 @@ where
                     };
                     ::facet::Variant::builder()
                         .name("VariantA")
-                        .discriminant(0)
+                        .discriminant(0i64)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())
@@ -93,7 +93,7 @@ where
                     };
                     ::facet::Variant::builder()
                         .name("VariantB")
-                        .discriminant(0 + 1)
+                        .discriminant(1i64)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())
@@ -105,7 +105,7 @@ where
                 },
                 ::facet::Variant::builder()
                     .name("Plain")
-                    .discriminant(0 + 1 + 1)
+                    .discriminant(2i64)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())

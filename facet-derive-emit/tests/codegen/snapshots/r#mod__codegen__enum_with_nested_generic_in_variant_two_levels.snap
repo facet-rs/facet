@@ -57,7 +57,7 @@ where
                     };
                     ::facet::Variant::builder()
                         .name("LevelOne")
-                        .discriminant(0)
+                        .discriminant(0i64)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())
@@ -87,7 +87,7 @@ where
                     };
                     ::facet::Variant::builder()
                         .name("Simple")
-                        .discriminant(0 + 1)
+                        .discriminant(1i64)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())

@@ -15,7 +15,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Test {
             [
                 ::facet::Variant::builder()
                     .name("Red")
-                    .discriminant(0)
+                    .discriminant(0i64)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -35,7 +35,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Test {
                     .build(),
                 ::facet::Variant::builder()
                     .name("Green")
-                    .discriminant(7 + 1)
+                    .discriminant(7 + 1i64)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
