@@ -12,6 +12,8 @@ unsafe impl<'a, Idx: Facet<'a>> Facet<'a> for core::ops::Range<Idx> {
             .layout(Layout::new::<Self>())
             .ty(Type::User(crate::UserType::Struct(
                 StructType::builder()
+                    .kind(crate::StructKind::Struct)
+                    .repr(crate::Repr::default())
                     .fields(
                         &const {
                             [
