@@ -21,7 +21,7 @@
     "vite-plugin-wasm": "^3.4.1"
   },
   "dependencies": {
-    "@bearcove/home-base": "^9.13.0",
+    "@bearcove/home-base": "^11.0.0",
     "svelte": "^5.28.2"
   }
 }
