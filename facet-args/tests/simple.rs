@@ -58,6 +58,58 @@ fn test_missing_bool_is_false() -> Result<()> {
 }
 
 #[test]
+fn test_missing_default() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Debug)]
+    struct Args {
+        #[facet(positional, default = 42)]
+        answer: usize,
+        #[facet(named, short = 'p')]
+        path: String,
+    }
+
+    let args: Args = facet_args::from_slice(&["-p", "absence_uses_default.rs"])?;
+    assert_eq!(args.answer, 42);
+    assert_eq!(args.path, "absence_uses_default.rs".to_string());
+
+    let args: Args = facet_args::from_slice(&["100", "-p", "presence_overrides_default.rs"])?;
+    assert_eq!(args.answer, 100);
+    assert_eq!(args.path, "presence_overrides_default.rs".to_string());
+
+    Ok(())
+}
+
+#[test]
+fn test_missing_default_fn() -> Result<()> {
+    facet_testhelpers::setup();
+
+    // Could be done e.g. using `num_cpus::get()`, but just mock it as 2 + 2 = 4
+    fn default_concurrency() -> usize {
+        2 + 2
+    }
+
+    #[derive(Facet, Debug)]
+    struct Args {
+        #[facet(named, short = 'p')]
+        path: String,
+        #[facet(named, short = 'j', default = default_concurrency())]
+        concurrency: usize,
+    }
+
+    let args: Args = facet_args::from_slice(&["-p", "absence_uses_default_fn.rs"])?;
+    assert_eq!(args.path, "absence_uses_default_fn.rs".to_string());
+    assert_eq!(args.concurrency, 4);
+
+    let args: Args =
+        facet_args::from_slice(&["-p", "presence_overrides_default_fn.rs", "-j", "2"])?;
+    assert_eq!(args.path, "presence_overrides_default_fn.rs".to_string());
+    assert_eq!(args.concurrency, 2);
+
+    Ok(())
+}
+
+#[test]
 fn test_error_non_struct_type_not_supported() -> Result<()> {
     facet_testhelpers::setup();
 

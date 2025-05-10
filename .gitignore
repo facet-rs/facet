@@ -7,3 +7,4 @@ tarpaulin-report.html
 .env
 *long-type-*.txt
 .ignore.rs
+*.sw[op]
