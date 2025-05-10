@@ -24,3 +24,5 @@ mod option_leak;
 mod put_into_tuples;
 
 mod variance;
+
+mod array_building;

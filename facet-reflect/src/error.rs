@@ -121,6 +121,26 @@ pub enum ReflectError {
         /// The shape for the type that is unsized
         shape: &'static Shape,
     },
+
+    /// Array not fully initialized during build
+    ArrayNotFullyInitialized {
+        /// The shape of the array
+        shape: &'static Shape,
+        /// The number of elements pushed
+        pushed_count: usize,
+        /// The expected array size
+        expected_size: usize,
+    },
+
+    /// Array index out of bounds
+    ArrayIndexOutOfBounds {
+        /// The shape of the array
+        shape: &'static Shape,
+        /// The index that was out of bounds
+        index: usize,
+        /// The array size
+        size: usize,
+    },
 }
 
 impl core::fmt::Display for ReflectError {
@@ -219,6 +239,28 @@ impl core::fmt::Display for ReflectError {
                 shape.red()
             ),
             ReflectError::Unsized { shape } => write!(f, "Shape '{}' is unsized", shape.red()),
+            ReflectError::ArrayNotFullyInitialized {
+                shape,
+                pushed_count,
+                expected_size,
+            } => {
+                write!(
+                    f,
+                    "Array '{}' not fully initialized: expected {} elements, but got {}",
+                    shape.blue(),
+                    expected_size,
+                    pushed_count
+                )
+            }
+            ReflectError::ArrayIndexOutOfBounds { shape, index, size } => {
+                write!(
+                    f,
+                    "Array index {} out of bounds for '{}' (array length is {})",
+                    index,
+                    shape.blue(),
+                    size
+                )
+            }
         }
     }
 }

@@ -405,9 +405,10 @@ impl<'input> StackRunner<'input> {
                                     .put_from_fn(default_in_place_fn)
                                     .map_err(|e| self.reflect_err(e))?;
                                 trace!(
-                                    "Field #{} {:?} was set to default value (via custom fn)",
+                                    "Field #{} {} @ {} was set to default value (via custom fn)",
                                     index.yellow(),
-                                    field.blue()
+                                    field.name.green(),
+                                    field.offset.blue(),
                                 );
                             } else {
                                 if !field.shape().is(Characteristic::Default) {
@@ -419,17 +420,19 @@ impl<'input> StackRunner<'input> {
                                 }
                                 wip = wip.put_default().map_err(|e| self.reflect_err(e))?;
                                 trace!(
-                                    "Field #{} {:?} was set to default value (via default impl)",
+                                    "Field #{} {} @ {} was set to default value (via default impl)",
                                     index.yellow(),
-                                    field.blue()
+                                    field.name.green(),
+                                    field.offset.blue(),
                                 );
                             }
                             wip = wip.pop().map_err(|e| self.reflect_err(e))?;
                         } else {
                             trace!(
-                                "Field #{} {:?} is not initialized",
+                                "Field #{} {} @ {} is not initialized",
                                 index.yellow(),
-                                field.blue()
+                                field.name.green(),
+                                field.offset.blue(),
                             );
                             has_unset = true;
                         }
@@ -675,6 +678,8 @@ impl<'input> StackRunner<'input> {
                 match shape.def {
                     Def::Array(_) => {
                         trace!("Array starting for array ({})!", shape.blue());
+                        // We'll initialize the array elements one by one through the pushback workflow
+                        // Don't call put_default, as arrays need different initialization
                     }
                     Def::Slice(_) => {
                         trace!("Array starting for slice ({})!", shape.blue());
