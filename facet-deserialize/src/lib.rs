@@ -153,6 +153,11 @@ impl<'input: 'facet, 'facet> NextData<'input, 'facet> {
     pub fn start(&self) -> usize {
         self.start
     }
+
+    /// Get the span for the whole document.
+    pub fn document_span(&self) -> Span {
+        Span::new(0, self.runner.input.len())
+    }
 }
 
 /// The result of advancing the parser: updated state and parse outcome or error.
