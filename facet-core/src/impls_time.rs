@@ -11,9 +11,9 @@ unsafe impl Facet<'_> for UtcDateTime {
         vtable.try_from = Some(
             |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
                 if source_shape.is_type::<String>() {
-                    let source = unsafe { source.get::<String>() };
+                    let source = unsafe { source.read::<String>() };
                     let parsed =
-                        UtcDateTime::parse(source, &time::format_description::well_known::Rfc3339)
+                        UtcDateTime::parse(&source, &time::format_description::well_known::Rfc3339)
                             .map_err(|_| ParseError::Generic("could not parse date"));
                     match parsed {
                         Ok(val) => Ok(unsafe { target.put(val) }),
@@ -60,10 +60,12 @@ unsafe impl Facet<'_> for OffsetDateTime {
         vtable.try_from = Some(
             |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
                 if source_shape.is_type::<String>() {
-                    let source = unsafe { source.get::<String>() };
-                    let parsed =
-                        UtcDateTime::parse(source, &time::format_description::well_known::Rfc3339)
-                            .map_err(|_| ParseError::Generic("could not parse date"));
+                    let source = unsafe { source.read::<String>() };
+                    let parsed = OffsetDateTime::parse(
+                        &source,
+                        &time::format_description::well_known::Rfc3339,
+                    )
+                    .map_err(|_| ParseError::Generic("could not parse date"));
                     match parsed {
                         Ok(val) => Ok(unsafe { target.put(val) }),
                         Err(_e) => Err(crate::TryFromError::Generic("could not parse date")),
@@ -139,6 +141,11 @@ mod tests {
 
         let s = format!("{}", DisplayWrapper(PtrConst::new(&odt as *const _)));
         assert_eq!(s, "2023-03-14T15:09:26Z");
+
+        // Deallocate the heap allocation to avoid memory leaks under Miri
+        unsafe {
+            OffsetDateTime::SHAPE.deallocate_uninit(target)?;
+        }
 
         Ok(())
     }
