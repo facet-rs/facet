@@ -55,20 +55,6 @@ impl Toml {
         })
     }
 
-    /// Pop the last item and remove it from the document.
-    fn pop_and_remove(&mut self) {
-        let last_key = self.stack.pop().unwrap();
-
-        trace!("Removing key '{last_key}' from table");
-
-        let parent_item = self.item_mut();
-        parent_item
-            .as_table_like_mut()
-            .unwrap()
-            .remove(&last_key)
-            .unwrap();
-    }
-
     /// Pop the last item and remove it from the document, then push the next child of the parent item if there's still one.
     ///
     /// # Returns
@@ -102,36 +88,27 @@ impl Toml {
     ///
     /// # Returns
     ///
-    /// - `true` if a child is pushed.
-    /// - `false` if nothing is done.
-    fn push_child_if_exists(&mut self) -> bool {
+    /// - `Some(item_type)` if a child is pushed, where `item_type` is the TOML item type of the child.
+    /// - `None` if nothing is done.
+    fn push_child_if_exists(&mut self) -> Option<&'static str> {
         // Remove the last item from the parent item
         let parent_item = self.item_mut();
-        let Some(parent_table) = parent_item.as_table_like_mut() else {
-            return false;
-        };
+        let parent_table = parent_item.as_table_like_mut()?;
 
         // Push the next child if there's still one
-        let maybe_next_field_key = parent_table
+        let maybe_next_field = parent_table
             .iter()
             .next()
-            .map(|(key, _item)| key.to_string());
-        if let Some(key) = maybe_next_field_key {
+            .map(|(key, item)| (key.to_string(), item.type_name()));
+        if let Some((key, item_type)) = maybe_next_field {
             self.stack.push(key);
 
             self.first = true;
 
-            true
+            Some(item_type)
         } else {
-            false
+            None
         }
-    }
-
-    /// Whether the last item is a table type and has more than zero fields.
-    fn is_table_with_fields(&self) -> bool {
-        self.item()
-            .as_table_like()
-            .is_some_and(|table| !table.is_empty())
     }
 
     /// Get the span of an item or the whole document when it doesn't have one.
@@ -180,7 +157,21 @@ impl Format for Toml {
             }
             // Push the child of the current table as a new child object value
             (Item::Table(_table), Expectation::ObjectVal) => {
-                assert!(self.push_child_if_exists());
+                let Some(_item_type) = self.push_child_if_exists() else {
+                    // Throw error
+                    let got = next.wip.shape();
+                    return (
+                        next,
+                        Err(Spanned {
+                            node: DeserErrorKind::UnsupportedType {
+                                got,
+                                // TODO: what should this be?
+                                wanted: "table",
+                            },
+                            span,
+                        }),
+                    );
+                };
 
                 Spanned {
                     node: Outcome::ObjectStarted,
@@ -205,7 +196,7 @@ impl Format for Toml {
                 Spanned { node, span }
             }
             // Push the key, or close the object when done
-            (_, Expectation::ObjectKeyOrObjectClose) => {
+            (Item::Value(_) | Item::Table(_), Expectation::ObjectKeyOrObjectClose) => {
                 let node = if self.first || self.pop_and_push_next_sibling_if_exists() {
                     // It's a field, push the key
                     self.first = false;
