@@ -27,7 +27,9 @@ facet-serialize = { version = "0.23.4", path = "../facet-serialize", default-fea
 log = "0.4.27"
 
 [dev-dependencies]
+facet-core = { version = "0.25.1", path = "../facet-core", features = ["time"] }
 eyre = "0.6.12"
 facet = { path = "../facet" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 insta = "1.43.1"
+time = { version = "0.3.41", features = ["macros"] }

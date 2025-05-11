@@ -1,4 +1,5 @@
 mod bool;
+mod datetime;
 mod deny_unknown_and_default;
 mod diagnostics;
 mod enums;

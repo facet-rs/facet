@@ -11,7 +11,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use facet_core::{
-    Def, Facet, Field, PointerType, SequenceType, ShapeAttribute, StructKind, Type, UserType,
+    Def, Facet, Field, PointerType, ScalarAffinity, SequenceType, ShapeAttribute, StructKind, Type,
+    UserType,
 };
 use facet_reflect::{HasFields, Peek, PeekListLike, PeekMap, PeekStruct, PeekTuple, ScalarType};
 use log::{debug, trace};
@@ -271,7 +272,7 @@ where
                 }
 
                 match (cpeek.shape().def, cpeek.shape().ty) {
-                    (Def::Scalar(_), _) => {
+                    (Def::Scalar(sd), _) => {
                         let cpeek = cpeek.innermost_peek();
 
                         // Dispatch to appropriate scalar serialization method based on type
@@ -341,7 +342,22 @@ where
                                 serializer.serialize_isize(*cpeek.get::<isize>().unwrap())?
                             }
                             Some(unsupported) => panic!("Unsupported scalar type: {unsupported:?}"),
-                            None => panic!("Unsupported shape: {}", cpeek.shape()),
+                            None => {
+                                match sd.affinity {
+                                    ScalarAffinity::Time(_) => {
+                                        if let Some(_display) = cpeek.shape().vtable.display {
+                                            // Use display formatting if available
+                                            serializer
+                                                .serialize_str(&alloc::format!("{}", cpeek))?
+                                        } else {
+                                            panic!("Unsupported shape: {}", cpeek.shape())
+                                        }
+                                    }
+                                    _ => {
+                                        panic!("Unsupported shape: {}", cpeek.shape())
+                                    }
+                                }
+                            }
                         }
                     }
                     (Def::List(_), _) | (Def::Array(_), _) | (Def::Slice(_), _) => {
