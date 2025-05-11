@@ -1,3 +1,4 @@
+use alloc::borrow::Cow;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
@@ -41,11 +42,11 @@ impl Display for TokenErrorKind {
 }
 
 /// Tokenization result, yielding a spanned token
-pub type TokenizeResult = Result<Spanned<Token>, TokenError>;
+pub type TokenizeResult<'input> = Result<Spanned<Token<'input>>, TokenError>;
 
 /// JSON tokens (without positions)
 #[derive(Debug, Clone, PartialEq)]
-pub enum Token {
+pub enum Token<'input> {
     /// Left brace character: '{'
     LBrace,
     /// Right brace character: '}'
@@ -60,7 +61,7 @@ pub enum Token {
     Comma,
     /// A JSON string value
     /// TODO: should be a &[u8], lazily de-escaped if/when needed
-    String(String),
+    String(Cow<'input, str>),
     /// A 64-bit floating point number value — used if the value contains a decimal point
     F64(f64),
     /// A signed 64-bit integer number value — used if the value does not contain a decimal point but contains a sign
@@ -77,7 +78,7 @@ pub enum Token {
     Eof,
 }
 
-impl Display for Token {
+impl Display for Token<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Token::LBrace => write!(f, "{{"),
@@ -111,7 +112,7 @@ impl<'input> Tokenizer<'input> {
     }
 
     /// Return the next spanned token or a TokenizeError
-    pub fn next_token(&mut self) -> TokenizeResult {
+    pub fn next_token(&mut self) -> TokenizeResult<'input> {
         self.skip_whitespace();
         let start = self.pos;
         let c = match self.input.get(self.pos).copied() {
@@ -193,21 +194,74 @@ impl<'input> Tokenizer<'input> {
         }
     }
 
-    fn parse_string(&mut self, start: Pos) -> TokenizeResult {
+    fn parse_string(&mut self, start: Pos) -> TokenizeResult<'input> {
         // Skip opening quote
         self.pos += 1;
-        let mut buf = Vec::new();
         let content_start = self.pos;
 
-        while let Some(&b) = self.input.get(self.pos) {
+        // First, scan ahead to see if this is a simple string without escapes
+        let mut scan_pos = self.pos;
+        let mut has_escapes = false;
+
+        // Scan for the end quote or escape sequences
+        while let Some(&b) = self.input.get(scan_pos) {
+            match b {
+                b'"' => break, // Found closing quote
+                b'\\' => {
+                    has_escapes = true;
+                    break;
+                }
+                _ => scan_pos += 1,
+            }
+        }
+
+        // If we found the end quote and there were no escapes, we can use a borrowed string
+        if !has_escapes && scan_pos < self.input.len() && self.input[scan_pos] == b'"' {
+            // We have a simple string with no escapes
+            let string_content = &self.input[self.pos..scan_pos];
+
+            // Validate UTF-8
+            match str::from_utf8(string_content) {
+                Ok(s) => {
+                    // Skip to after the closing quote
+                    self.pos = scan_pos + 1;
+                    let len = self.pos - start;
+                    let span = Span::new(start, len);
+
+                    return Ok(Spanned {
+                        node: Token::String(Cow::Borrowed(s)),
+                        span,
+                    });
+                }
+                Err(e) => {
+                    return Err(TokenError {
+                        kind: TokenErrorKind::InvalidUtf8(e.to_string()),
+                        span: Span::new(content_start, string_content.len()),
+                    });
+                }
+            }
+        }
+
+        // If we're here, we need to process escapes or handle invalid UTF-8
+        let mut buf = Vec::new();
+
+        // Reset position to start of content
+        scan_pos = self.pos;
+
+        while let Some(&b) = self.input.get(scan_pos) {
             match b {
                 b'"' => {
-                    self.pos += 1;
+                    self.pos = scan_pos + 1; // Skip past the closing quote
                     break;
                 }
                 b'\\' => {
-                    self.pos += 1;
-                    if let Some(&esc) = self.input.get(self.pos) {
+                    // Copy characters up to this escape
+                    buf.extend_from_slice(&self.input[self.pos..scan_pos]);
+
+                    // Move scan_pos past the backslash
+                    scan_pos += 1;
+
+                    if let Some(&esc) = self.input.get(scan_pos) {
                         match esc {
                             b'"' | b'\\' | b'/' => buf.push(esc),
                             b'b' => buf.push(b'\x08'), // backspace
@@ -217,10 +271,9 @@ impl<'input> Tokenizer<'input> {
                             b't' => buf.push(b'\t'),   // tab
                             b'u' => {
                                 // Handle \uXXXX Unicode escape sequence
-                                // We need to read 4 hexadecimal digits
-                                self.pos += 1; // Move past 'u'
-                                let hex_start = self.pos;
-                                if self.pos + 4 > self.input.len() {
+                                scan_pos += 1; // Move past 'u'
+                                let hex_start = scan_pos;
+                                if scan_pos + 4 > self.input.len() {
                                     return Err(TokenError {
                                         kind: TokenErrorKind::UnexpectedEof(
                                             "in Unicode escape sequence",
@@ -230,7 +283,7 @@ impl<'input> Tokenizer<'input> {
                                 }
 
                                 // Read 4 hexadecimal digits
-                                let hex_digits = &self.input[self.pos..self.pos + 4];
+                                let hex_digits = &self.input[scan_pos..scan_pos + 4];
                                 let hex_str = match str::from_utf8(hex_digits) {
                                     Ok(s) => s,
                                     Err(_) => {
@@ -273,23 +326,29 @@ impl<'input> Tokenizer<'input> {
                                 let utf8_bytes = c.encode_utf8(&mut utf8_buf).as_bytes();
                                 buf.extend_from_slice(utf8_bytes);
 
-                                self.pos += 3; // +3 because we'll increment once more below
+                                scan_pos += 3; // We'll increment one more time below
                             }
                             _ => buf.push(esc), // other escapes
                         }
-                        self.pos += 1;
+
+                        scan_pos += 1;
+                        self.pos = scan_pos; // Update position to after the escape
                     } else {
                         return Err(TokenError {
                             kind: TokenErrorKind::UnexpectedEof("in string escape"),
-                            span: Span::new(self.pos, 0),
+                            span: Span::new(scan_pos, 0),
                         });
                     }
                 }
                 _ => {
-                    buf.push(b);
-                    self.pos += 1;
+                    scan_pos += 1;
                 }
             }
+        }
+
+        // Copy any remaining characters
+        if self.pos < scan_pos {
+            buf.extend_from_slice(&self.input[self.pos..scan_pos]);
         }
 
         // Check if we reached the end without finding a closing quote
@@ -302,8 +361,9 @@ impl<'input> Tokenizer<'input> {
             });
         }
 
+        // Convert buffer to UTF-8 string
         let s = match str::from_utf8(&buf) {
-            Ok(st) => st.to_string(),
+            Ok(st) => Cow::Owned(st.to_string()),
             Err(e) => {
                 return Err(TokenError {
                     kind: TokenErrorKind::InvalidUtf8(e.to_string()),
@@ -320,7 +380,7 @@ impl<'input> Tokenizer<'input> {
         })
     }
 
-    fn parse_number(&mut self, start: Pos) -> TokenizeResult {
+    fn parse_number(&mut self, start: Pos) -> TokenizeResult<'input> {
         let mut end = self.pos;
         if self.input[end] == b'-' {
             end += 1;
@@ -399,9 +459,9 @@ impl<'input> Tokenizer<'input> {
         Ok(Spanned { node: token, span })
     }
 
-    fn parse_literal<F>(&mut self, start: Pos, pat: &[u8], ctor: F) -> TokenizeResult
+    fn parse_literal<F>(&mut self, start: Pos, pat: &[u8], ctor: F) -> TokenizeResult<'input>
     where
-        F: FnOnce() -> Token,
+        F: FnOnce() -> Token<'input>,
     {
         let end = start + pat.len();
         if end <= self.input.len() && &self.input[start..end] == pat {

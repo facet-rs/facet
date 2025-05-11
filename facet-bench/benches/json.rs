@@ -249,21 +249,21 @@ fn create_nested_data() -> Vec<Nested15> {
 //
 // Nested benchmark functions
 
-#[divan::bench(name = "Serialize - Nested (depth=15) - facet_json")]
+#[divan::bench(name = "facet_json serialize nested (depth=15)")]
 fn bench_nested_facet_json_serialize(bencher: Bencher) {
     let data = create_nested_data();
 
     bencher.bench(|| black_box(facet_json::to_string(black_box(&data))));
 }
 
-#[divan::bench(name = "Serialize - Nested (depth=15) - serde")]
+#[divan::bench(name = "serde_json serialize nested (depth=15)")]
 fn bench_nested_serde_serialize(bencher: Bencher) {
     let data = create_nested_data();
 
     bencher.bench(|| black_box(serde_json::to_string(black_box(&data))));
 }
 
-#[divan::bench(name = "Deserialize - Nested (depth=15) - facet_json")]
+#[divan::bench(name = "facet_json deserialize nested (depth=15)")]
 fn bench_nested_facet_json_deserialize(bencher: Bencher) {
     let data = create_nested_data();
     let json_string =
@@ -275,7 +275,7 @@ fn bench_nested_facet_json_deserialize(bencher: Bencher) {
     });
 }
 
-#[divan::bench(name = "Deserialize - Nested (depth=15) - serde")]
+#[divan::bench(name = "serde_json deserialize nested (depth=15)")]
 fn bench_nested_serde_deserialize(bencher: Bencher) {
     let data = create_nested_data();
     let json_string =
@@ -289,7 +289,7 @@ fn bench_nested_serde_deserialize(bencher: Bencher) {
 
 // Wide benchmark functions
 
-#[divan::bench(name = "Serialize - Wide - facet_json")]
+#[divan::bench(name = "facet_json serialize wide")]
 fn bench_wide_facet_json_serialize(bencher: Bencher) {
     let data = create_wide();
     let json_string = serde_json::to_string(&data).expect("Failed to create wide JSON");
@@ -299,14 +299,14 @@ fn bench_wide_facet_json_serialize(bencher: Bencher) {
     bencher.bench(|| black_box(facet_json::to_string(black_box(&data))));
 }
 
-#[divan::bench(name = "Serialize - Wide - serde")]
+#[divan::bench(name = "serde_json serialize wide")]
 fn bench_wide_serde_serialize(bencher: Bencher) {
     let data = create_wide();
 
     bencher.bench(|| black_box(serde_json::to_string(black_box(&data))));
 }
 
-#[divan::bench(name = "Deserialize - Wide - facet_json")]
+#[divan::bench(name = "facet_json deserialize wide")]
 fn bench_wide_facet_json_deserialize(bencher: Bencher) {
     let data = create_wide();
     let json_string = serde_json::to_string(&data).expect("Failed to create wide JSON");
@@ -317,7 +317,7 @@ fn bench_wide_facet_json_deserialize(bencher: Bencher) {
     });
 }
 
-#[divan::bench(name = "Deserialize - Wide - serde")]
+#[divan::bench(name = "serde_json deserialize wide")]
 fn bench_wide_serde_deserialize(bencher: Bencher) {
     let data = create_wide();
     let json_string = serde_json::to_string(&data).expect("Failed to create wide JSON");
@@ -343,21 +343,21 @@ fn create_long_string(size: usize) -> LongString {
     }
 }
 
-#[divan::bench(name = "Serialize - Long String (10KB) - facet_json")]
+#[divan::bench(name = "facet_json serialize long string (10KB)")]
 fn bench_long_string_facet_json_serialize(bencher: Bencher) {
     let data = create_long_string(10_000); // 10KB string
 
     bencher.bench(|| black_box(facet_json::to_string(black_box(&data))));
 }
 
-#[divan::bench(name = "Serialize - Long String (10KB) - serde")]
+#[divan::bench(name = "serde_json serialize long string (10KB)")]
 fn bench_long_string_serde_serialize(bencher: Bencher) {
     let data = create_long_string(10_000); // 10KB string
 
     bencher.bench(|| black_box(serde_json::to_string(black_box(&data))));
 }
 
-#[divan::bench(name = "Deserialize - Long String (10KB) - facet_json")]
+#[divan::bench(name = "facet_json deserialize long string (10KB)")]
 fn bench_long_string_facet_json_deserialize(bencher: Bencher) {
     let data = create_long_string(10_000); // 10KB string
     let json_string = serde_json::to_string(&data).expect("Failed to create long string JSON");
@@ -368,7 +368,7 @@ fn bench_long_string_facet_json_deserialize(bencher: Bencher) {
     });
 }
 
-#[divan::bench(name = "Deserialize - Long String (10KB) - serde")]
+#[divan::bench(name = "serde_json deserialize long string (10KB)")]
 fn bench_long_string_serde_deserialize(bencher: Bencher) {
     let data = create_long_string(10_000); // 10KB string
     let json_string = serde_json::to_string(&data).expect("Failed to create long string JSON");
@@ -381,21 +381,21 @@ fn bench_long_string_serde_deserialize(bencher: Bencher) {
 
 // Add a larger string test for more SIMD-oriented workloads
 
-#[divan::bench(name = "Serialize - Long String (100KB) - facet_json")]
+#[divan::bench(name = "facet_json serialize long string (100KB)")]
 fn bench_long_string_100k_facet_json_serialize(bencher: Bencher) {
     let data = create_long_string(100_000); // 100KB string
 
     bencher.bench(|| black_box(facet_json::to_string(black_box(&data))));
 }
 
-#[divan::bench(name = "Serialize - Long String (100KB) - serde")]
+#[divan::bench(name = "serde_json serialize long string (100KB)")]
 fn bench_long_string_100k_serde_serialize(bencher: Bencher) {
     let data = create_long_string(100_000); // 100KB string
 
     bencher.bench(|| black_box(serde_json::to_string(black_box(&data))));
 }
 
-#[divan::bench(name = "Deserialize - Long String (100KB) - facet_json")]
+#[divan::bench(name = "facet_json deserialize long string (100KB)")]
 fn bench_long_string_100k_facet_json_deserialize(bencher: Bencher) {
     let data = create_long_string(100_000); // 100KB string
     let json_string = serde_json::to_string(&data).expect("Failed to create long string JSON");
@@ -406,7 +406,7 @@ fn bench_long_string_100k_facet_json_deserialize(bencher: Bencher) {
     });
 }
 
-#[divan::bench(name = "Deserialize - Long String (100KB) - serde")]
+#[divan::bench(name = "serde_json deserialize long string (100KB)")]
 fn bench_long_string_100k_serde_deserialize(bencher: Bencher) {
     let data = create_long_string(100_000); // 100KB string
     let json_string = serde_json::to_string(&data).expect("Failed to create long string JSON");

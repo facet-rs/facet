@@ -10,3 +10,4 @@ tarpaulin-report.html
 **/.claude/settings.local.json
 **/CLAUDE.local.md
 *.sw[op]
+profile.json.gz

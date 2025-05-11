@@ -50,9 +50,8 @@ fn load_canada_json() -> String {
 
     json_string
 }
-
 /// Benchmark for reading canada.json
-#[divan::bench(name = "Deserialize - canada.json - facet_json")]
+#[divan::bench(name = "facet_json deserialize canada")]
 fn bench_canada_facet_json_deserialize(bencher: Bencher) {
     let json_string = load_canada_json();
 
@@ -63,8 +62,8 @@ fn bench_canada_facet_json_deserialize(bencher: Bencher) {
     });
 }
 
-#[divan::bench(name = "Deserialize - canada.json - serde")]
-fn bench_canada_serde_deserialize(bencher: Bencher) {
+#[divan::bench(name = "serde_json deserialize canada")]
+fn bench_canada_serde_json_deserialize(bencher: Bencher) {
     let json_string = load_canada_json();
 
     bencher.bench(|| {
@@ -77,7 +76,7 @@ fn bench_canada_serde_deserialize(bencher: Bencher) {
 /// Benchmark for writing canada.json
 /// Note: Currently will error with "Unsupported shape: String"
 /// See issue #338
-#[divan::bench(name = "Serialize - canada.json - facet_json")]
+#[divan::bench(name = "facet_json serialize canada")]
 fn bench_canada_facet_json_serialize(bencher: Bencher) {
     let json_string = load_canada_json();
     let data: FeatureCollection = serde_json::from_str(&json_string).unwrap();
@@ -86,8 +85,8 @@ fn bench_canada_facet_json_serialize(bencher: Bencher) {
     bencher.bench(|| black_box(facet_json::to_string(black_box(&data))));
 }
 
-#[divan::bench(name = "Serialize - canada.json - serde")]
-fn bench_canada_serde_serialize(bencher: Bencher) {
+#[divan::bench(name = "serde_json serialize canada")]
+fn bench_canada_serde_json_serialize(bencher: Bencher) {
     let json_string = load_canada_json();
 
     // Parse the JSON

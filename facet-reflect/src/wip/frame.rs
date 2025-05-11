@@ -167,6 +167,7 @@ impl Frame {
     }
 
     /// Marks the frame as fully initialized
+    #[inline]
     pub(crate) unsafe fn mark_fully_initialized(&mut self) {
         trace!(
             "[{}] Marking frame as fully initialized: shape={}, type={:?}, def={:?}",
