@@ -9,7 +9,7 @@ codegen` to regenerate the READMEs.
 
 Run `just` to make sure that tests pass.
 
-For doc tests, you need to do `just codegen && just doc-tests`. Remember to fix
+For doc tests, you need to do `just gen && just doc-tests`. Remember to fix
 them by editing the corresponding `README.md.in`, not `README.md`.
 
 All crates have their own readme template, except for the `facet/` crate, which

@@ -1,4 +1,4 @@
-use alloc::{borrow::Cow, format};
+use alloc::format;
 
 use facet_core::Facet;
 use facet_deserialize::{

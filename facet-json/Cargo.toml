@@ -17,7 +17,9 @@ alloc = [
     "facet-deserialize/alloc",
 ] # Enables alloc support
 rich-diagnostics = ["facet-deserialize/rich-diagnostics"]
-default = ["std", "rich-diagnostics"]
+memchr = ["dep:memchr"] # Optional optimization for string scanning using memchr
+perf = ["memchr"] # General performance optimizations (enables memchr)
+default = ["std", "rich-diagnostics", "perf"]
 
 [dependencies]
 facet-core = { version = "0.25.1", path = "../facet-core", default-features = false }
@@ -25,6 +27,7 @@ facet-deserialize = { version = "0.24.3", path = "../facet-deserialize", default
 facet-reflect = { version = "0.25.1", path = "../facet-reflect", default-features = false }
 facet-serialize = { version = "0.23.4", path = "../facet-serialize", default-features = false }
 log = "0.4.27"
+memchr = { version = "2.6", optional = true }
 
 [dev-dependencies]
 eyre = "0.6.12"

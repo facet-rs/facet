@@ -4,6 +4,9 @@ use alloc::vec::Vec;
 
 use core::str;
 
+#[cfg(feature = "memchr")]
+use memchr::memchr2;
+
 /// Error encountered during tokenization
 #[derive(Debug, Clone, PartialEq)]
 pub struct TokenError {
@@ -203,15 +206,38 @@ impl<'input> Tokenizer<'input> {
         let mut scan_pos = self.pos;
         let mut has_escapes = false;
 
-        // Scan for the end quote or escape sequences
-        while let Some(&b) = self.input.get(scan_pos) {
-            match b {
-                b'"' => break, // Found closing quote
-                b'\\' => {
+        #[cfg(feature = "memchr")]
+        {
+            // Use memchr2 to efficiently find the next quote or backslash
+            let remaining = &self.input[scan_pos..];
+
+            // Look for either quote (b'"') or backslash (b'\\') in a single pass
+            if let Some(pos) = memchr2(b'"', b'\\', remaining) {
+                // Found either a quote or a backslash
+                scan_pos += pos;
+
+                // Check which one we found
+                if remaining[pos] == b'\\' {
+                    // Found a backslash (escape)
                     has_escapes = true;
-                    break;
                 }
-                _ => scan_pos += 1,
+                // If it's a quote, we'll just use scan_pos as is
+            }
+            // If we didn't find either, scan_pos remains unchanged and error handling below will take care of it
+        }
+
+        #[cfg(not(feature = "memchr"))]
+        {
+            // Scan for the end quote or escape sequences
+            while let Some(&b) = self.input.get(scan_pos) {
+                match b {
+                    b'"' => break, // Found closing quote
+                    b'\\' => {
+                        has_escapes = true;
+                        break;
+                    }
+                    _ => scan_pos += 1,
+                }
             }
         }
 
@@ -248,100 +274,227 @@ impl<'input> Tokenizer<'input> {
         // Reset position to start of content
         scan_pos = self.pos;
 
-        while let Some(&b) = self.input.get(scan_pos) {
-            match b {
-                b'"' => {
-                    self.pos = scan_pos + 1; // Skip past the closing quote
-                    break;
-                }
-                b'\\' => {
-                    // Copy characters up to this escape
-                    buf.extend_from_slice(&self.input[self.pos..scan_pos]);
+        #[cfg(feature = "memchr")]
+        {
+            let mut last_pos = scan_pos;
 
-                    // Move scan_pos past the backslash
-                    scan_pos += 1;
+            loop {
+                // Use memchr2 to efficiently find the next quote or backslash in a single pass
+                let remaining = &self.input[scan_pos..];
 
-                    if let Some(&esc) = self.input.get(scan_pos) {
-                        match esc {
-                            b'"' | b'\\' | b'/' => buf.push(esc),
-                            b'b' => buf.push(b'\x08'), // backspace
-                            b'f' => buf.push(b'\x0C'), // form feed
-                            b'n' => buf.push(b'\n'),   // line feed
-                            b'r' => buf.push(b'\r'),   // carriage return
-                            b't' => buf.push(b'\t'),   // tab
-                            b'u' => {
-                                // Handle \uXXXX Unicode escape sequence
-                                scan_pos += 1; // Move past 'u'
-                                let hex_start = scan_pos;
-                                if scan_pos + 4 > self.input.len() {
-                                    return Err(TokenError {
-                                        kind: TokenErrorKind::UnexpectedEof(
-                                            "in Unicode escape sequence",
-                                        ),
-                                        span: Span::new(hex_start, self.input.len() - hex_start),
-                                    });
-                                }
+                if let Some(pos) = memchr2(b'"', b'\\', remaining) {
+                    let found_byte = remaining[pos];
+                    let abs_pos = scan_pos + pos;
 
-                                // Read 4 hexadecimal digits
-                                let hex_digits = &self.input[scan_pos..scan_pos + 4];
-                                let hex_str = match str::from_utf8(hex_digits) {
-                                    Ok(s) => s,
-                                    Err(_) => {
-                                        return Err(TokenError {
-                                            kind: TokenErrorKind::InvalidUtf8(
-                                                "invalid UTF-8 in Unicode escape".to_string(),
-                                            ),
-                                            span: Span::new(hex_start, 4),
-                                        });
-                                    }
-                                };
-
-                                // Parse hexadecimal value
-                                let code_point = match u16::from_str_radix(hex_str, 16) {
-                                    Ok(cp) => cp,
-                                    Err(_) => {
-                                        return Err(TokenError {
-                                            kind: TokenErrorKind::UnexpectedCharacter('?'),
-                                            span: Span::new(hex_start, 4),
-                                        });
-                                    }
-                                };
-
-                                // Convert to UTF-8 and append to buffer
-                                // Handle basic Unicode code points (BMP)
-                                let c = match char::from_u32(code_point as u32) {
-                                    Some(c) => c,
-                                    None => {
-                                        return Err(TokenError {
-                                            kind: TokenErrorKind::InvalidUtf8(
-                                                "invalid Unicode code point".to_string(),
-                                            ),
-                                            span: Span::new(hex_start, 4),
-                                        });
-                                    }
-                                };
-
-                                // Extend buffer with UTF-8 bytes for the character
-                                let mut utf8_buf = [0u8; 4];
-                                let utf8_bytes = c.encode_utf8(&mut utf8_buf).as_bytes();
-                                buf.extend_from_slice(utf8_bytes);
-
-                                scan_pos += 3; // We'll increment one more time below
-                            }
-                            _ => buf.push(esc), // other escapes
+                    if found_byte == b'"' {
+                        // Found closing quote
+                        if last_pos < abs_pos {
+                            buf.extend_from_slice(&self.input[last_pos..abs_pos]);
+                        }
+                        self.pos = abs_pos + 1; // Skip past the closing quote
+                        break;
+                    } else {
+                        // Found escape character - copy everything up to it
+                        if last_pos < abs_pos {
+                            buf.extend_from_slice(&self.input[last_pos..abs_pos]);
                         }
 
-                        scan_pos += 1;
-                        self.pos = scan_pos; // Update position to after the escape
-                    } else {
-                        return Err(TokenError {
-                            kind: TokenErrorKind::UnexpectedEof("in string escape"),
-                            span: Span::new(scan_pos, 0),
-                        });
+                        // Move past backslash
+                        scan_pos = abs_pos + 1;
+
+                        // Handle the escape sequence
+                        if let Some(&esc) = self.input.get(scan_pos) {
+                            match esc {
+                                b'"' | b'\\' | b'/' => buf.push(esc),
+                                b'b' => buf.push(b'\x08'), // backspace
+                                b'f' => buf.push(b'\x0C'), // form feed
+                                b'n' => buf.push(b'\n'),   // line feed
+                                b'r' => buf.push(b'\r'),   // carriage return
+                                b't' => buf.push(b'\t'),   // tab
+                                b'u' => {
+                                    // Handle \uXXXX Unicode escape sequence
+                                    scan_pos += 1; // Move past 'u'
+                                    let hex_start = scan_pos;
+                                    if scan_pos + 4 > self.input.len() {
+                                        return Err(TokenError {
+                                            kind: TokenErrorKind::UnexpectedEof(
+                                                "in Unicode escape sequence",
+                                            ),
+                                            span: Span::new(
+                                                hex_start,
+                                                self.input.len() - hex_start,
+                                            ),
+                                        });
+                                    }
+
+                                    // Read 4 hexadecimal digits
+                                    let hex_digits = &self.input[scan_pos..scan_pos + 4];
+                                    let hex_str = match str::from_utf8(hex_digits) {
+                                        Ok(s) => s,
+                                        Err(_) => {
+                                            return Err(TokenError {
+                                                kind: TokenErrorKind::InvalidUtf8(
+                                                    "invalid UTF-8 in Unicode escape".to_string(),
+                                                ),
+                                                span: Span::new(hex_start, 4),
+                                            });
+                                        }
+                                    };
+
+                                    // Parse hexadecimal value
+                                    let code_point = match u16::from_str_radix(hex_str, 16) {
+                                        Ok(cp) => cp,
+                                        Err(_) => {
+                                            return Err(TokenError {
+                                                kind: TokenErrorKind::UnexpectedCharacter('?'),
+                                                span: Span::new(hex_start, 4),
+                                            });
+                                        }
+                                    };
+
+                                    // Convert to UTF-8 and append to buffer
+                                    // Handle basic Unicode code points (BMP)
+                                    let c = match char::from_u32(code_point as u32) {
+                                        Some(c) => c,
+                                        None => {
+                                            return Err(TokenError {
+                                                kind: TokenErrorKind::InvalidUtf8(
+                                                    "invalid Unicode code point".to_string(),
+                                                ),
+                                                span: Span::new(hex_start, 4),
+                                            });
+                                        }
+                                    };
+
+                                    // Extend buffer with UTF-8 bytes for the character
+                                    let mut utf8_buf = [0u8; 4];
+                                    let utf8_bytes = c.encode_utf8(&mut utf8_buf).as_bytes();
+                                    buf.extend_from_slice(utf8_bytes);
+
+                                    scan_pos += 3; // We'll add one more below
+                                }
+                                _ => buf.push(esc), // other escapes
+                            }
+
+                            scan_pos += 1;
+                            last_pos = scan_pos; // Update position to after the escape
+                        } else {
+                            return Err(TokenError {
+                                kind: TokenErrorKind::UnexpectedEof("in string escape"),
+                                span: Span::new(scan_pos, 0),
+                            });
+                        }
                     }
+                } else {
+                    // Didn't find either - string is unterminated
+                    return Err(TokenError {
+                        kind: TokenErrorKind::UnexpectedEof("in string literal"),
+                        span: Span::new(start, self.input.len() - start),
+                    });
                 }
-                _ => {
-                    scan_pos += 1;
+            }
+        }
+
+        #[cfg(not(feature = "memchr"))]
+        {
+            while let Some(&b) = self.input.get(scan_pos) {
+                match b {
+                    b'"' => {
+                        self.pos = scan_pos + 1; // Skip past the closing quote
+                        break;
+                    }
+                    b'\\' => {
+                        // Copy characters up to this escape
+                        buf.extend_from_slice(&self.input[self.pos..scan_pos]);
+
+                        // Move scan_pos past the backslash
+                        scan_pos += 1;
+
+                        if let Some(&esc) = self.input.get(scan_pos) {
+                            match esc {
+                                b'"' | b'\\' | b'/' => buf.push(esc),
+                                b'b' => buf.push(b'\x08'), // backspace
+                                b'f' => buf.push(b'\x0C'), // form feed
+                                b'n' => buf.push(b'\n'),   // line feed
+                                b'r' => buf.push(b'\r'),   // carriage return
+                                b't' => buf.push(b'\t'),   // tab
+                                b'u' => {
+                                    // Handle \uXXXX Unicode escape sequence
+                                    scan_pos += 1; // Move past 'u'
+                                    let hex_start = scan_pos;
+                                    if scan_pos + 4 > self.input.len() {
+                                        return Err(TokenError {
+                                            kind: TokenErrorKind::UnexpectedEof(
+                                                "in Unicode escape sequence",
+                                            ),
+                                            span: Span::new(
+                                                hex_start,
+                                                self.input.len() - hex_start,
+                                            ),
+                                        });
+                                    }
+
+                                    // Read 4 hexadecimal digits
+                                    let hex_digits = &self.input[scan_pos..scan_pos + 4];
+                                    let hex_str = match str::from_utf8(hex_digits) {
+                                        Ok(s) => s,
+                                        Err(_) => {
+                                            return Err(TokenError {
+                                                kind: TokenErrorKind::InvalidUtf8(
+                                                    "invalid UTF-8 in Unicode escape".to_string(),
+                                                ),
+                                                span: Span::new(hex_start, 4),
+                                            });
+                                        }
+                                    };
+
+                                    // Parse hexadecimal value
+                                    let code_point = match u16::from_str_radix(hex_str, 16) {
+                                        Ok(cp) => cp,
+                                        Err(_) => {
+                                            return Err(TokenError {
+                                                kind: TokenErrorKind::UnexpectedCharacter('?'),
+                                                span: Span::new(hex_start, 4),
+                                            });
+                                        }
+                                    };
+
+                                    // Convert to UTF-8 and append to buffer
+                                    // Handle basic Unicode code points (BMP)
+                                    let c = match char::from_u32(code_point as u32) {
+                                        Some(c) => c,
+                                        None => {
+                                            return Err(TokenError {
+                                                kind: TokenErrorKind::InvalidUtf8(
+                                                    "invalid Unicode code point".to_string(),
+                                                ),
+                                                span: Span::new(hex_start, 4),
+                                            });
+                                        }
+                                    };
+
+                                    // Extend buffer with UTF-8 bytes for the character
+                                    let mut utf8_buf = [0u8; 4];
+                                    let utf8_bytes = c.encode_utf8(&mut utf8_buf).as_bytes();
+                                    buf.extend_from_slice(utf8_bytes);
+
+                                    scan_pos += 3; // We'll increment one more time below
+                                }
+                                _ => buf.push(esc), // other escapes
+                            }
+
+                            scan_pos += 1;
+                            self.pos = scan_pos; // Update position to after the escape
+                        } else {
+                            return Err(TokenError {
+                                kind: TokenErrorKind::UnexpectedEof("in string escape"),
+                                span: Span::new(scan_pos, 0),
+                            });
+                        }
+                    }
+                    _ => {
+                        scan_pos += 1;
+                    }
                 }
             }
         }

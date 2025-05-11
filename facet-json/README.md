@@ -48,6 +48,14 @@ Thanks to all individual and corporate sponsors, without whom this work could no
 
 A JSON deserializer based on facet-deserialize
 
+## Features
+
+* `std`: Enables std support (enabled by default)
+* `alloc`: Enables alloc support (enabled by `std`)
+* `rich-diagnostics`: Enables rich diagnostic messages (enabled by default)
+* `memchr`: Utilizes the `memchr` crate for faster string scanning (low-level performance optimization)
+* `perf`: Enables all performance optimizations, currently includes `memchr` (enabled by default)
+
 ## License
 
 Licensed under either of:

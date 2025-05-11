@@ -20,4 +20,4 @@ Do not edit `README.md` files directly, edit `README.md.in` in the respective
 folders.
 
 Similarly, don't edit `tuples_impls.rs`, edit the `tuples_impls.rs.j2` next to
-it, and then run `just codegen` — the code is in `facet-codegen/`
+it, and then run `just gen` — the code is in `facet-codegen/`
