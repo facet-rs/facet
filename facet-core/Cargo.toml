@@ -17,7 +17,7 @@ camino = ["dep:camino", "alloc"]
 ordered-float = ["dep:ordered-float"]
 uuid = ["alloc", "dep:uuid"]
 ulid = ["alloc", "dep:ulid"]
-time = ["dep:time"]
+time = ["alloc", "dep:time"]
 
 [dependencies]
 impls = "1.0.3"
