@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 use facet::Facet;
 
 use eyre::{Ok, Result};

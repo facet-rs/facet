@@ -345,6 +345,7 @@ dependencies = [
  "eyre",
  "facet",
  "facet-core",
+ "facet-deserialize",
  "facet-pretty",
  "facet-reflect",
  "facet-testhelpers 0.17.2",

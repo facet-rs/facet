@@ -7,13 +7,22 @@
 extern crate alloc;
 use alloc::borrow::Cow;
 
-mod error;
+/// Apply field default values and function values using facet-deserialize
+pub mod defaults;
+/// Errors raised when CLI arguments are not parsed or otherwise fail during reflection
+pub mod error;
+/// Parsing utilities for CLI arguments
+pub mod parse;
 
+use defaults::apply_field_defaults;
 use error::{ArgsError, ArgsErrorKind};
-use facet_core::{Def, Facet, FieldAttribute, Type, UserType};
+use facet_core::{Def, Facet, Type, UserType};
 use facet_reflect::{ReflectError, Wip};
+// use format::CliFormat;
+use parse::{parse_named_arg, parse_positional_arg, parse_short_arg};
 
-fn parse_field<'facet>(wip: Wip<'facet>, value: &'facet str) -> Result<Wip<'facet>, ArgsError> {
+/// Process a field in the Wip
+pub fn parse_field<'facet>(wip: Wip<'facet>, value: &'facet str) -> Result<Wip<'facet>, ArgsError> {
     let shape = wip.shape();
 
     if shape.is_type::<String>() {
@@ -80,115 +89,19 @@ where
 
         if let Some(key) = token.strip_prefix("--") {
             let key = kebab_to_snake(key);
-            let field_index = match wip.field_index(&key) {
-                Some(index) => index,
-                None => {
-                    return Err(ArgsError::new(ArgsErrorKind::GenericArgsError(format!(
-                        "Unknown argument `{key}`",
-                    ))));
-                }
-            };
             log::trace!("Found named argument: {}", key);
-
-            let field = wip
-                .field(field_index)
-                .expect("field_index should be a valid field bound");
-
-            if field.shape().is_type::<bool>() {
-                // TODO: absence i.e "false" case is not handled
-                wip = parse_field(field, "true")?;
-            } else {
-                let value = s
-                    .first()
-                    .ok_or(ArgsError::new(ArgsErrorKind::GenericArgsError(format!(
-                        "expected value after argument `{key}`"
-                    ))))?;
-                log::trace!("Field value: {}", value);
-                s = &s[1..];
-                wip = parse_field(field, value)?;
-            }
+            wip = parse_named_arg(wip, &key, &mut s)?;
         } else if let Some(key) = token.strip_prefix("-") {
             log::trace!("Found short named argument: {}", key);
-            for (field_index, f) in st.fields.iter().enumerate() {
-                if f.attributes
-                    .iter()
-                    .any(|a| matches!(a, FieldAttribute::Arbitrary(a) if a.contains("short") && a.contains(key))
-                   )
-                {
-                    log::trace!("Found field matching short_code: {} for field {}", key, f.name);
-                    let field = wip.field(field_index).expect("field_index is in bounds");
-                    if field.shape().is_type::<bool>() {
-                        wip = parse_field(field, "true")?;
-                    } else {
-                        let value = s
-                            .first()
-                            .ok_or(ArgsError::new(ArgsErrorKind::GenericArgsError(format!(
-                                "expected value after argument `{key}`"
-                            ))))?;
-                        log::trace!("Field value: {}", value);
-                        s = &s[1..];
-                        wip = parse_field(field, value)?;
-                    }
-                    break;
-                }
-            }
+            wip = parse_short_arg(wip, key, &mut s, &st)?;
         } else {
             log::trace!("Encountered positional argument: {}", token);
-            for (field_index, f) in st.fields.iter().enumerate() {
-                if f.attributes
-                    .iter()
-                    .any(|a| matches!(a, FieldAttribute::Arbitrary(a) if a.contains("positional")))
-                {
-                    if wip
-                        .is_field_set(field_index)
-                        .expect("field_index is in bounds")
-                    {
-                        continue;
-                    }
-                    let field = wip.field(field_index).expect("field_index is in bounds");
-                    wip = parse_field(field, token)?;
-                    break;
-                }
-            }
+            wip = parse_positional_arg(wip, token, &st)?;
         }
     }
 
-    // Look for uninitialized fields with DEFAULT flag
-    // Adapted from the approach in `facet-deserialize::StackRunner::pop()`
-    for (field_index, field) in st.fields.iter().enumerate() {
-        if !wip.is_field_set(field_index).expect("in bounds") {
-            log::trace!(
-                "Field {} is not initialized, checking if it has DEFAULT flag",
-                field.name
-            );
-
-            // Check if the field has the DEFAULT flag
-            if field.flags.contains(facet_core::FieldFlags::DEFAULT) {
-                log::trace!("Field {} has DEFAULT flag, applying default", field.name);
-
-                let field_wip = wip.field(field_index).expect("field_index is in bounds");
-
-                // Check if there's a custom default function
-                if let Some(default_fn) = field.vtable.default_fn {
-                    log::trace!("Using custom default function for field {}", field.name);
-                    wip = field_wip
-                        .put_from_fn(default_fn)
-                        .map_err(|e| ArgsError::new(ArgsErrorKind::GenericReflect(e)))?;
-                } else {
-                    // Otherwise use the Default trait
-                    log::trace!("Using Default trait for field {}", field.name);
-                    wip = field_wip
-                        .put_default()
-                        .map_err(|e| ArgsError::new(ArgsErrorKind::GenericReflect(e)))?;
-                }
-
-                // Pop back up to the struct level
-                wip = wip
-                    .pop()
-                    .map_err(|e| ArgsError::new(ArgsErrorKind::GenericReflect(e)))?;
-            }
-        }
-    }
+    // Apply defaults, except for absent booleans being implicitly default false
+    wip = apply_field_defaults(wip)?;
 
     // If a boolean field is unset the value is set to `false`
     // This behaviour means `#[facet(default = false)]` does not need to be explicitly set

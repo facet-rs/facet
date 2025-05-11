@@ -13,6 +13,7 @@ categories = ["command-line-interface"]
 [dependencies]
 facet-reflect = { path = "../facet-reflect", version = "0.25.1" }
 facet-core = { path = "../facet-core", version = "0.25.1" }
+facet-deserialize = { path = "../facet-deserialize", version = "0.24.3" }
 log = "0.4.27"
 
 [dev-dependencies]

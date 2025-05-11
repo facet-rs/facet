@@ -1,3 +1,4 @@
+use facet_deserialize::{DeserError, DeserErrorKind};
 use facet_reflect::ReflectError;
 
 /// Error deserializing the Arguments
@@ -43,4 +44,27 @@ pub enum ArgsErrorKind {
     GenericReflect(ReflectError),
     /// Parsing arguments error
     GenericArgsError(String),
+}
+
+/// Convert a DeserError to an ArgsError
+pub fn from_deser_error(error: DeserError<'_>) -> ArgsError {
+    match error.kind {
+        DeserErrorKind::UnexpectedEof { wanted } => ArgsError::new(
+            ArgsErrorKind::GenericArgsError(format!("Unexpected end of input: {}", wanted)),
+        ),
+        DeserErrorKind::MissingField(field) => ArgsError::new(ArgsErrorKind::GenericArgsError(
+            format!("Missing required field: {}", field),
+        )),
+        DeserErrorKind::ReflectError(e) => ArgsError::new(ArgsErrorKind::GenericReflect(e)),
+        DeserErrorKind::UnknownField { field_name, .. } => ArgsError::new(
+            ArgsErrorKind::GenericArgsError(format!("Unknown field: {}", field_name)),
+        ),
+        DeserErrorKind::Unimplemented(msg) => ArgsError::new(ArgsErrorKind::GenericArgsError(
+            format!("Unimplemented feature: {}", msg),
+        )),
+        _ => ArgsError::new(ArgsErrorKind::GenericArgsError(format!(
+            "Deserialization error: {}",
+            error
+        ))),
+    }
 }

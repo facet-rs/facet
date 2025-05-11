@@ -357,7 +357,7 @@ where
 /// and remembers the span of the last processed token to provide accurate error reporting.
 pub struct StackRunner<'input> {
     /// A version of the input that doesn't advance as we parse.
-    original_input: &'input [u8],
+    pub original_input: &'input [u8],
     /// The raw input data being deserialized.
     pub input: &'input [u8],
 
@@ -379,7 +379,7 @@ impl<'input> StackRunner<'input> {
         DeserError::new_reflect(err, self.original_input, self.last_span)
     }
 
-    fn pop<'facet>(
+    pub fn pop<'facet>(
         &mut self,
         mut wip: Wip<'facet>,
         reason: PopReason,
