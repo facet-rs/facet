@@ -516,6 +516,7 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-testhelpers 0.17.2",
+ "la-arena",
  "log",
  "owo-colors",
  "tempfile",
@@ -764,6 +765,12 @@ dependencies = [
  "num",
  "winnow 0.6.24",
 ]
+
+[[package]]
+name = "la-arena"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3752f229dcc5a481d60f385fa479ff46818033d881d2d801aa27dffcfb5e8306"
 
 [[package]]
 name = "lazy_static"

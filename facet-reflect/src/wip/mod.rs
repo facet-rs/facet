@@ -2,6 +2,7 @@ use crate::{ReflectError, ValueId};
 use crate::{debug, trace};
 #[cfg(feature = "log")]
 use alloc::string::ToString;
+use la_arena::{Arena, Idx};
 #[cfg(feature = "log")]
 use owo_colors::OwoColorize;
 
@@ -136,7 +137,7 @@ pub struct Wip<'facet_lifetime> {
     frames: alloc::vec::Vec<Frame>,
 
     /// keeps track of initialization of out-of-tree frames
-    istates: FlatMap<ValueId, IState>,
+    istates: Arena<IState>,
 
     invariant: PhantomData<fn(&'facet_lifetime ()) -> &'facet_lifetime ()>,
 }
@@ -188,115 +189,115 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
             return;
         }
 
-        self.istates.insert(frame.id(), frame.istate);
+        // self.istates.insert(frame.id(), frame.istate);
     }
 
     unsafe fn mark_moved_out_of(&mut self, frame: &mut Frame) {
-        // Recursively mark `istates` entries as MOVED and deallocate. Needed because
-        // descendant values might be tracked separately in `istates`.
-        unsafe fn mark_subtree_moved(wip: &mut Wip, id: ValueId) {
-            // Function requires unsafe due to pointer manipulation and potential deallocation.
-            unsafe {
-                // Process only if the value is still tracked off-stack.
-                if let Some(mut istate) = wip.istates.remove(&id) {
-                    // Ensure value is marked as MOVED.
-                    istate.flags.insert(FrameFlags::MOVED);
+        // // Recursively mark `istates` entries as MOVED and deallocate. Needed because
+        // // descendant values might be tracked separately in `istates`.
+        // unsafe fn mark_subtree_moved(wip: &mut Wip, id: ValueId) {
+        //     // Function requires unsafe due to pointer manipulation and potential deallocation.
+        //     unsafe {
+        //         // Process only if the value is still tracked off-stack.
+        //         if let Some(mut istate) = wip.istates.remove(&id) {
+        //             // Ensure value is marked as MOVED.
+        //             istate.flags.insert(FrameFlags::MOVED);
 
-                    // Ensure all owned fields within structs/enums are also marked.
-                    match id.shape.ty {
-                        Type::User(UserType::Struct(sd)) => {
-                            let container_ptr = PtrUninit::new(id.ptr as *mut u8);
-                            for field in sd.fields.iter() {
-                                let field_ptr_uninit = container_ptr.field_uninit_at(field.offset);
-                                let field_id =
-                                    ValueId::new(field.shape(), field_ptr_uninit.as_byte_ptr());
-                                // Recurse.
-                                mark_subtree_moved(wip, field_id);
-                            }
-                        }
-                        Type::User(UserType::Enum(_)) => {
-                            // Use the variant info from the processed istate.
-                            if let Some(variant) = &istate.variant {
-                                let container_ptr = PtrUninit::new(id.ptr as *mut u8);
-                                for field in variant.data.fields.iter() {
-                                    let field_ptr_uninit =
-                                        container_ptr.field_uninit_at(field.offset);
-                                    let field_id =
-                                        ValueId::new(field.shape(), field_ptr_uninit.as_byte_ptr());
-                                    // Recurse.
-                                    mark_subtree_moved(wip, field_id);
-                                }
-                            }
-                        }
-                        // Only recurse for direct fields (struct/enum). Other owned values
-                        // (list elements, map entries, option Some payload) are handled
-                        // individually when *their* ValueId is processed, if tracked.
-                        _ => {}
-                    }
+        //             // Ensure all owned fields within structs/enums are also marked.
+        //             match id.shape.ty {
+        //                 Type::User(UserType::Struct(sd)) => {
+        //                     let container_ptr = PtrUninit::new(id.ptr as *mut u8);
+        //                     for field in sd.fields.iter() {
+        //                         let field_ptr_uninit = container_ptr.field_uninit_at(field.offset);
+        //                         let field_id =
+        //                             ValueId::new(field.shape(), field_ptr_uninit.as_byte_ptr());
+        //                         // Recurse.
+        //                         mark_subtree_moved(wip, field_id);
+        //                     }
+        //                 }
+        //                 Type::User(UserType::Enum(_)) => {
+        //                     // Use the variant info from the processed istate.
+        //                     if let Some(variant) = &istate.variant {
+        //                         let container_ptr = PtrUninit::new(id.ptr as *mut u8);
+        //                         for field in variant.data.fields.iter() {
+        //                             let field_ptr_uninit =
+        //                                 container_ptr.field_uninit_at(field.offset);
+        //                             let field_id =
+        //                                 ValueId::new(field.shape(), field_ptr_uninit.as_byte_ptr());
+        //                             // Recurse.
+        //                             mark_subtree_moved(wip, field_id);
+        //                         }
+        //                     }
+        //                 }
+        //                 // Only recurse for direct fields (struct/enum). Other owned values
+        //                 // (list elements, map entries, option Some payload) are handled
+        //                 // individually when *their* ValueId is processed, if tracked.
+        //                 _ => {}
+        //             }
 
-                    // Prevent memory leaks for heap-allocated values that are now moved.
-                    // Only deallocate AFTER recursively processing child fields to prevent use-after-free.
-                    if istate.flags.contains(FrameFlags::ALLOCATED) {
-                        // `dealloc_if_needed` needs a `Frame`.
-                        let mut temp_frame = Frame::recompose(id, istate);
-                        temp_frame.dealloc_if_needed();
-                    }
-                }
-                // If istate wasn't found, value was already handled or not tracked off-stack.
-            }
-        }
+        //             // Prevent memory leaks for heap-allocated values that are now moved.
+        //             // Only deallocate AFTER recursively processing child fields to prevent use-after-free.
+        //             if istate.flags.contains(FrameFlags::ALLOCATED) {
+        //                 // `dealloc_if_needed` needs a `Frame`.
+        //                 let mut temp_frame = Frame::recompose(id, istate);
+        //                 temp_frame.dealloc_if_needed();
+        //             }
+        //         }
+        //         // If istate wasn't found, value was already handled or not tracked off-stack.
+        //     }
+        // }
 
-        // Function requires unsafe due to pointer manipulation, potential deallocation,
-        // and calling other unsafe functions/methods.
-        unsafe {
-            // 1. Process the primary frame being moved: mark MOVED, clear state
-            let frame_id = frame.id();
+        // // Function requires unsafe due to pointer manipulation, potential deallocation,
+        // // and calling other unsafe functions/methods.
+        // unsafe {
+        //     // 1. Process the primary frame being moved: mark MOVED, clear state
+        //     let frame_id = frame.id();
 
-            // Save variant information for recursive processing before we clear it
-            let variant_opt = frame.istate.variant;
+        //     // Save variant information for recursive processing before we clear it
+        //     let variant_opt = frame.istate.variant;
 
-            // Mark as MOVED and clear any initialization progress.
-            frame.istate.flags.insert(FrameFlags::MOVED);
-            ISet::clear(&mut frame.istate.fields);
+        //     // Mark as MOVED and clear any initialization progress.
+        //     frame.istate.flags.insert(FrameFlags::MOVED);
+        //     ISet::clear(&mut frame.istate.fields);
 
-            // 2. Recursively mark descendants (struct/enum fields) in `istates` as MOVED.
-            // This ensures consistency if fields were pushed/popped and stored in `istates`.
-            match frame.shape.ty {
-                Type::User(UserType::Struct(sd)) => {
-                    let container_ptr = PtrUninit::new(frame_id.ptr as *mut u8);
-                    for field in sd.fields.iter() {
-                        let field_ptr_uninit = container_ptr.field_uninit_at(field.offset);
-                        let field_id = ValueId::new(field.shape(), field_ptr_uninit.as_byte_ptr());
-                        mark_subtree_moved(self, field_id);
-                    }
-                }
-                Type::User(UserType::Enum(_)) => {
-                    // Use the saved variant information for recursion
-                    if let Some(variant) = &variant_opt {
-                        let container_ptr = PtrUninit::new(frame_id.ptr as *mut u8);
-                        for field in variant.data.fields.iter() {
-                            let field_ptr_uninit = container_ptr.field_uninit_at(field.offset);
-                            let field_id =
-                                ValueId::new(field.shape(), field_ptr_uninit.as_byte_ptr());
-                            mark_subtree_moved(self, field_id);
-                        }
-                    }
-                }
-                // Other types don't have direct fields requiring recursive marking here.
-                _ => {}
-            }
+        //     // 2. Recursively mark descendants (struct/enum fields) in `istates` as MOVED.
+        //     // This ensures consistency if fields were pushed/popped and stored in `istates`.
+        //     match frame.shape.ty {
+        //         Type::User(UserType::Struct(sd)) => {
+        //             let container_ptr = PtrUninit::new(frame_id.ptr as *mut u8);
+        //             for field in sd.fields.iter() {
+        //                 let field_ptr_uninit = container_ptr.field_uninit_at(field.offset);
+        //                 let field_id = ValueId::new(field.shape(), field_ptr_uninit.as_byte_ptr());
+        //                 mark_subtree_moved(self, field_id);
+        //             }
+        //         }
+        //         Type::User(UserType::Enum(_)) => {
+        //             // Use the saved variant information for recursion
+        //             if let Some(variant) = &variant_opt {
+        //                 let container_ptr = PtrUninit::new(frame_id.ptr as *mut u8);
+        //                 for field in variant.data.fields.iter() {
+        //                     let field_ptr_uninit = container_ptr.field_uninit_at(field.offset);
+        //                     let field_id =
+        //                         ValueId::new(field.shape(), field_ptr_uninit.as_byte_ptr());
+        //                     mark_subtree_moved(self, field_id);
+        //                 }
+        //             }
+        //         }
+        //         // Other types don't have direct fields requiring recursive marking here.
+        //         _ => {}
+        //     }
 
-            // Now clear the variant after processing is done
-            frame.istate.variant = None;
+        //     // Now clear the variant after processing is done
+        //     frame.istate.variant = None;
 
-            // Untrack the frame in `istates`
-            self.istates.remove(&frame_id);
+        //     // Untrack the frame in `istates`
+        //     // self.istates.remove(&frame_id);
 
-            // Deallocate AFTER all processing is complete to prevent use-after-free
-            if frame.istate.flags.contains(FrameFlags::ALLOCATED) {
-                frame.dealloc_if_needed();
-            }
-        }
+        //     // Deallocate AFTER all processing is complete to prevent use-after-free
+        //     if frame.istate.flags.contains(FrameFlags::ALLOCATED) {
+        //         frame.dealloc_if_needed();
+        //     }
+        // }
     }
 
     /// Returns the shape of the current frame
@@ -349,184 +350,184 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
         // now the root frame is at index 0
         let root_frame = &self.frames[0];
 
-        enum FrameRef {
-            Root,
-            ById(ValueId),
-        }
-        let mut to_check = alloc::vec![FrameRef::Root];
+        // enum FrameRef {
+        //     Root,
+        //     ById(Idx<Frame>),
+        // }
+        // let mut to_check = alloc::vec![FrameRef::Root];
 
-        // 4. Traverse the tree
-        while let Some(fr) = to_check.pop() {
-            let (id, istate) = match fr {
-                FrameRef::Root => (root_frame.id(), &root_frame.istate),
-                FrameRef::ById(id) => {
-                    // Look up the istate for the frame with this ValueId.
-                    let istate = self.istates.get(&id).unwrap();
-                    (id, istate)
-                }
-            };
+        // // 4. Traverse the tree
+        // while let Some(fr) = to_check.pop() {
+        //     let (id, istate) = match fr {
+        //         FrameRef::Root => (root_frame.id(), &root_frame.istate),
+        //         FrameRef::ById(id) => {
+        //             // Look up the istate for the frame with this ValueId.
+        //             let istate = self.istates.get(&id).unwrap();
+        //             (id, istate)
+        //         }
+        //     };
 
-            trace!(
-                "Checking shape {} at {:p}, flags={:?}, mode={:?}, fully_initialized={}",
-                id.shape.blue(),
-                id.ptr,
-                istate.flags.bright_magenta(),
-                istate.mode.yellow(),
-                if is_fully_initialized(id.shape, istate) {
-                    "✅"
-                } else {
-                    "❌"
-                }
-            );
+        //     trace!(
+        //         "Checking shape {} at {:p}, flags={:?}, mode={:?}, fully_initialized={}",
+        //         id.shape.blue(),
+        //         id.ptr,
+        //         istate.flags.bright_magenta(),
+        //         istate.mode.yellow(),
+        //         if is_fully_initialized(id.shape, istate) {
+        //             "✅"
+        //         } else {
+        //             "❌"
+        //         }
+        //     );
 
-            // Skip moved frames
-            if istate.flags.contains(FrameFlags::MOVED) {
-                trace!(
-                    "{}",
-                    "Frame was moved out of, skipping initialization check".yellow()
-                );
-                continue;
-            }
+        //     // Skip moved frames
+        //     if istate.flags.contains(FrameFlags::MOVED) {
+        //         trace!(
+        //             "{}",
+        //             "Frame was moved out of, skipping initialization check".yellow()
+        //         );
+        //         continue;
+        //     }
 
-            // Check initialization for the current frame
+        //     // Check initialization for the current frame
 
-            // Special handling for arrays - check that all elements were properly set
-            if let Def::Array(array_def) = id.shape.def {
-                // Get the number of items we've pushed to the array
-                let pushed_count = istate.list_index.unwrap_or(0);
+        //     // Special handling for arrays - check that all elements were properly set
+        //     if let Def::Array(array_def) = id.shape.def {
+        //         // Get the number of items we've pushed to the array
+        //         let pushed_count = istate.list_index.unwrap_or(0);
 
-                // Make sure we pushed exactly the right number of items
-                if pushed_count != array_def.n {
-                    return Err(ReflectError::ArrayNotFullyInitialized {
-                        shape: id.shape,
-                        pushed_count,
-                        expected_size: array_def.n,
-                    });
-                }
-            }
-            // For other types that manage their own contents (List, Map, Option, Scalar, etc.),
-            // we just need to check if the *container* itself is marked as initialized.
-            // The recursive check handles struct/enum *elements* within these containers if they exist.
-            else if !matches!(id.shape.def, Def::Undefined) {
-                if !istate.fields.are_all_set(1) {
-                    // Check specific modes for better errors
-                    match istate.mode {
-                        FrameMode::OptionNone => {
-                            // This should technically be marked initialized, but if not, treat as uninit Option
-                            debug!("Found uninitialized value (option none) — {}", id.shape);
-                            return Err(ReflectError::UninitializedValue { shape: id.shape });
-                        }
-                        // Add more specific checks if needed, e.g., for lists/maps that started but weren't finished?
-                        _ => {
-                            debug!(
-                                "Found uninitialized value (list/map/option/etc. — {})",
-                                id.shape
-                            );
-                            return Err(ReflectError::UninitializedValue { shape: id.shape });
-                        }
-                    }
-                }
-                // No children to push onto `to_check` from the perspective of the *container* frame itself.
-                // If a List contains Structs, those struct frames would have been pushed/popped
-                // and their states tracked individually in `istates`, and checked when encountered via
-                // `to_check` if they were fields of another struct/enum.
-                // The `Drop` logic handles cleaning these contained items based on the container's drop_in_place.
-                // For `build`, we trust that if the container is marked initialized, its contents are valid
-                // according to its type's rules.
-            } else {
-                match id.shape.ty {
-                    Type::User(UserType::Struct(sd)) => {
-                        // find the field that's not initialized
-                        for i in 0..sd.fields.len() {
-                            if !istate.fields.has(i) {
-                                let field = &sd.fields[i];
-                                trace!("Found uninitialized field: {}", field.name);
-                                return Err(ReflectError::UninitializedField {
-                                    shape: id.shape,
-                                    field_name: field.name,
-                                });
-                            }
-                        }
+        //         // Make sure we pushed exactly the right number of items
+        //         if pushed_count != array_def.n {
+        //             return Err(ReflectError::ArrayNotFullyInitialized {
+        //                 shape: id.shape,
+        //                 pushed_count,
+        //                 expected_size: array_def.n,
+        //             });
+        //         }
+        //     }
+        //     // For other types that manage their own contents (List, Map, Option, Scalar, etc.),
+        //     // we just need to check if the *container* itself is marked as initialized.
+        //     // The recursive check handles struct/enum *elements* within these containers if they exist.
+        //     else if !matches!(id.shape.def, Def::Undefined) {
+        //         if !istate.fields.are_all_set(1) {
+        //             // Check specific modes for better errors
+        //             match istate.mode {
+        //                 FrameMode::OptionNone => {
+        //                     // This should technically be marked initialized, but if not, treat as uninit Option
+        //                     debug!("Found uninitialized value (option none) — {}", id.shape);
+        //                     return Err(ReflectError::UninitializedValue { shape: id.shape });
+        //                 }
+        //                 // Add more specific checks if needed, e.g., for lists/maps that started but weren't finished?
+        //                 _ => {
+        //                     debug!(
+        //                         "Found uninitialized value (list/map/option/etc. — {})",
+        //                         id.shape
+        //                     );
+        //                     return Err(ReflectError::UninitializedValue { shape: id.shape });
+        //                 }
+        //             }
+        //         }
+        //         // No children to push onto `to_check` from the perspective of the *container* frame itself.
+        //         // If a List contains Structs, those struct frames would have been pushed/popped
+        //         // and their states tracked individually in `istates`, and checked when encountered via
+        //         // `to_check` if they were fields of another struct/enum.
+        //         // The `Drop` logic handles cleaning these contained items based on the container's drop_in_place.
+        //         // For `build`, we trust that if the container is marked initialized, its contents are valid
+        //         // according to its type's rules.
+        //     } else {
+        //         match id.shape.ty {
+        //             Type::User(UserType::Struct(sd)) => {
+        //                 // find the field that's not initialized
+        //                 for i in 0..sd.fields.len() {
+        //                     if !istate.fields.has(i) {
+        //                         let field = &sd.fields[i];
+        //                         trace!("Found uninitialized field: {}", field.name);
+        //                         return Err(ReflectError::UninitializedField {
+        //                             shape: id.shape,
+        //                             field_name: field.name,
+        //                         });
+        //                     }
+        //                 }
 
-                        let container_ptr = PtrUninit::new(id.ptr as *mut u8);
+        //                 let container_ptr = PtrUninit::new(id.ptr as *mut u8);
 
-                        // If initialized, push children to check stack
-                        #[allow(clippy::unused_enumerate_index)]
-                        for (_i, field) in sd.fields.iter().enumerate() {
-                            let field_shape = field.shape();
-                            let field_ptr = unsafe { container_ptr.field_init_at(field.offset) };
-                            let field_id = ValueId::new(field_shape, field_ptr.as_byte_ptr());
+        //                 // If initialized, push children to check stack
+        //                 #[allow(clippy::unused_enumerate_index)]
+        //                 for (_i, field) in sd.fields.iter().enumerate() {
+        //                     let field_shape = field.shape();
+        //                     let field_ptr = unsafe { container_ptr.field_init_at(field.offset) };
+        //                     let field_id = ValueId::new(field_shape, field_ptr.as_byte_ptr());
 
-                            if self.istates.contains_key(&field_id) {
-                                debug!(
-                                    "Queueing struct field check: #{} '{}' of {}: shape={}, ptr={:p}",
-                                    _i.to_string().bright_cyan(),
-                                    field.name.bright_blue(),
-                                    id.shape.blue(),
-                                    field_shape.green(),
-                                    field_ptr.as_byte_ptr()
-                                );
-                                to_check.push(FrameRef::ById(field_id));
-                            }
-                        }
-                    }
-                    Type::User(UserType::Enum(_ed)) => {
-                        if let Some(variant) = &istate.variant {
-                            // Check each field, just like for structs
-                            for (i, field) in variant.data.fields.iter().enumerate() {
-                                if !istate.fields.has(i) {
-                                    trace!("Found uninitialized field: {}", field.name);
-                                    return Err(ReflectError::UninitializedEnumField {
-                                        shape: id.shape,
-                                        variant_name: variant.name,
-                                        field_name: field.name,
-                                    });
-                                }
-                            }
+        //                     if self.istates.contains_key(&field_id) {
+        //                         debug!(
+        //                             "Queueing struct field check: #{} '{}' of {}: shape={}, ptr={:p}",
+        //                             _i.to_string().bright_cyan(),
+        //                             field.name.bright_blue(),
+        //                             id.shape.blue(),
+        //                             field_shape.green(),
+        //                             field_ptr.as_byte_ptr()
+        //                         );
+        //                         to_check.push(FrameRef::ById(field_id));
+        //                     }
+        //                 }
+        //             }
+        //             Type::User(UserType::Enum(_ed)) => {
+        //                 if let Some(variant) = &istate.variant {
+        //                     // Check each field, just like for structs
+        //                     for (i, field) in variant.data.fields.iter().enumerate() {
+        //                         if !istate.fields.has(i) {
+        //                             trace!("Found uninitialized field: {}", field.name);
+        //                             return Err(ReflectError::UninitializedEnumField {
+        //                                 shape: id.shape,
+        //                                 variant_name: variant.name,
+        //                                 field_name: field.name,
+        //                             });
+        //                         }
+        //                     }
 
-                            // All fields initialized, push children to check stack
-                            #[allow(clippy::unused_enumerate_index)]
-                            for (_i, field) in variant.data.fields.iter().enumerate() {
-                                let field_shape = field.shape();
-                                let container_ptr = PtrUninit::new(id.ptr as *mut u8);
-                                // We're in an enum, so get the field ptr out of the variant's payload
-                                let field_ptr =
-                                    unsafe { container_ptr.field_init_at(field.offset) };
-                                let field_id = ValueId::new(field_shape, field_ptr.as_byte_ptr());
+        //                     // All fields initialized, push children to check stack
+        //                     #[allow(clippy::unused_enumerate_index)]
+        //                     for (_i, field) in variant.data.fields.iter().enumerate() {
+        //                         let field_shape = field.shape();
+        //                         let container_ptr = PtrUninit::new(id.ptr as *mut u8);
+        //                         // We're in an enum, so get the field ptr out of the variant's payload
+        //                         let field_ptr =
+        //                             unsafe { container_ptr.field_init_at(field.offset) };
+        //                         let field_id = ValueId::new(field_shape, field_ptr.as_byte_ptr());
 
-                                if self.istates.contains_key(&field_id) {
-                                    debug!(
-                                        "Queueing enum field check: #{} '{}' of variant '{}' of {}: shape={}, ptr={:p}",
-                                        _i.to_string().bright_cyan(),
-                                        field.name.bright_blue(),
-                                        variant.name.yellow(),
-                                        id.shape.blue(),
-                                        field_shape.green(),
-                                        field_ptr.as_byte_ptr()
-                                    );
-                                    to_check.push(FrameRef::ById(field_id));
-                                }
-                            }
-                        } else {
-                            // No variant selected is an error during build
-                            debug!("Found no variant selected for enum");
-                            return Err(ReflectError::NoVariantSelected { shape: id.shape });
-                        }
-                    }
-                    // Handle other Def variants if necessary
-                    _ => {
-                        // Default: Check if initialized using the standard method
-                        if !istate.fields.are_all_set(1) {
-                            debug!("Found uninitialized value (other)");
-                            return Err(ReflectError::UninitializedValue { shape: id.shape });
-                        }
-                    }
-                }
-            }
-        }
+        //                         if self.istates.contains_key(&field_id) {
+        //                             debug!(
+        //                                 "Queueing enum field check: #{} '{}' of variant '{}' of {}: shape={}, ptr={:p}",
+        //                                 _i.to_string().bright_cyan(),
+        //                                 field.name.bright_blue(),
+        //                                 variant.name.yellow(),
+        //                                 id.shape.blue(),
+        //                                 field_shape.green(),
+        //                                 field_ptr.as_byte_ptr()
+        //                             );
+        //                             to_check.push(FrameRef::ById(field_id));
+        //                         }
+        //                     }
+        //                 } else {
+        //                     // No variant selected is an error during build
+        //                     debug!("Found no variant selected for enum");
+        //                     return Err(ReflectError::NoVariantSelected { shape: id.shape });
+        //                 }
+        //             }
+        //             // Handle other Def variants if necessary
+        //             _ => {
+        //                 // Default: Check if initialized using the standard method
+        //                 if !istate.fields.are_all_set(1) {
+        //                     debug!("Found uninitialized value (other)");
+        //                     return Err(ReflectError::UninitializedValue { shape: id.shape });
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
 
-        // If we finished the loop, all reachable and non-moved frames are initialized.
-        debug!("All reachable frames checked and initialized.");
+        // // If we finished the loop, all reachable and non-moved frames are initialized.
+        // debug!("All reachable frames checked and initialized.");
 
         // 5. Check invariants on the root
         // We have already checked root is fully initialized above, so we only need to check its invariants.
@@ -551,10 +552,10 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
         }
 
         // Prevent Drop from running on the successfully built value.
-        {
-            FlatMap::clear(&mut self.istates);
-            self.frames.clear();
-        }
+        // {
+        //     FlatMap::clear(&mut self.istates);
+        //     self.frames.clear();
+        // }
 
         // Build the guard from the root data.
         let guard = Guard {
@@ -641,27 +642,27 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
             index.yellow(),
             shape.blue(),
         );
-        if let Some(iset) = self.istates.remove(&frame.id()) {
-            trace!(
-                "[{}] Restoring saved state for {} (istate.mode = {:?}, istate.fields = {:?}, istate.flags = {:?}, istate.depth = {:?})",
-                self.frames.len(),
-                frame.id().shape.blue(),
-                iset.mode,
-                iset.fields,
-                iset.flags,
-                iset.depth
-            );
-            frame.istate = iset;
-        } else {
-            trace!(
-                "[{}] no saved state for field {} ({}#{}) of {}",
-                self.frames.len(),
-                field.name.blue(),
-                field.shape().green(),
-                index.yellow(),
-                shape.blue(),
-            );
-        }
+        // if let Some(iset) = self.istates.remove(&frame.id()) {
+        //     trace!(
+        //         "[{}] Restoring saved state for {} (istate.mode = {:?}, istate.fields = {:?}, istate.flags = {:?}, istate.depth = {:?})",
+        //         self.frames.len(),
+        //         frame.id().shape.blue(),
+        //         iset.mode,
+        //         iset.fields,
+        //         iset.flags,
+        //         iset.depth
+        //     );
+        //     frame.istate = iset;
+        // } else {
+        //     trace!(
+        //         "[{}] no saved state for field {} ({}#{}) of {}",
+        //         self.frames.len(),
+        //         field.name.blue(),
+        //         field.shape().green(),
+        //         index.yellow(),
+        //         shape.blue(),
+        //     );
+        // }
         self.frames.push(frame);
         Ok(self)
     }
@@ -1570,67 +1571,67 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
     /// (because we're about to use `drop_in_place` on it — not
     /// yet though, we need to know the variant for enums, etc.)
     pub(crate) fn evict_tree(&mut self, frame: Frame) -> Frame {
-        match frame.shape.ty {
-            Type::User(UserType::Struct(sd)) => {
-                for f in sd.fields {
-                    let id = ValueId {
-                        shape: f.shape(),
-                        ptr: unsafe { frame.data.field_uninit_at(f.offset) }.as_byte_ptr(),
-                    };
-                    if let Some(istate) = self.istates.remove(&id) {
-                        let frame = Frame::recompose(id, istate);
-                        self.evict_tree(frame);
-                    } else {
-                        trace!("No istate found for field {}", f.name);
-                    }
-                }
-            }
-            Type::User(UserType::Enum(_ed)) => {
-                // Check if a variant is selected in the istate
-                if let Some(variant) = &frame.istate.variant {
-                    trace!(
-                        "Evicting enum {} variant '{}' fields",
-                        frame.shape.blue(),
-                        variant.name.yellow()
-                    );
-                    // Iterate over the fields of the selected variant
-                    for field in variant.data.fields {
-                        // Calculate the pointer to the field within the enum's data payload
-                        let field_ptr = unsafe { frame.data.field_uninit_at(field.offset) };
-                        let field_shape = field.shape();
-                        let field_id = ValueId::new(field_shape, field_ptr.as_byte_ptr());
+        // match frame.shape.ty {
+        //     Type::User(UserType::Struct(sd)) => {
+        //         for f in sd.fields {
+        //             let id = ValueId {
+        //                 shape: f.shape(),
+        //                 ptr: unsafe { frame.data.field_uninit_at(f.offset) }.as_byte_ptr(),
+        //             };
+        //             if let Some(istate) = self.istates.remove(&id) {
+        //                 let frame = Frame::recompose(id, istate);
+        //                 self.evict_tree(frame);
+        //             } else {
+        //                 trace!("No istate found for field {}", f.name);
+        //             }
+        //         }
+        //     }
+        //     Type::User(UserType::Enum(_ed)) => {
+        //         // Check if a variant is selected in the istate
+        //         if let Some(variant) = &frame.istate.variant {
+        //             trace!(
+        //                 "Evicting enum {} variant '{}' fields",
+        //                 frame.shape.blue(),
+        //                 variant.name.yellow()
+        //             );
+        //             // Iterate over the fields of the selected variant
+        //             for field in variant.data.fields {
+        //                 // Calculate the pointer to the field within the enum's data payload
+        //                 let field_ptr = unsafe { frame.data.field_uninit_at(field.offset) };
+        //                 let field_shape = field.shape();
+        //                 let field_id = ValueId::new(field_shape, field_ptr.as_byte_ptr());
 
-                        // Try to remove the field's state from istates
-                        if let Some(field_istate) = self.istates.remove(&field_id) {
-                            trace!(
-                                "Evicting field '{}' (shape {}) of enum variant '{}'",
-                                field.name.bright_blue(),
-                                field_shape.green(),
-                                variant.name.yellow()
-                            );
-                            // Recompose the frame for the field
-                            let field_frame = Frame::recompose(field_id, field_istate);
-                            // Recursively evict the field's subtree
-                            self.evict_tree(field_frame);
-                        } else {
-                            trace!(
-                                "Field '{}' (shape {}) of enum variant '{}' not found in istates, skipping eviction",
-                                field.name.red(),
-                                field_shape.red(),
-                                variant.name.yellow()
-                            );
-                        }
-                    }
-                } else {
-                    // No variant selected, nothing to evict within the enum
-                    trace!(
-                        "Enum {} has no variant selected, no fields to evict.",
-                        frame.shape.blue()
-                    );
-                }
-            }
-            _ => {}
-        }
+        //                 // Try to remove the field's state from istates
+        //                 if let Some(field_istate) = self.istates.remove(&field_id) {
+        //                     trace!(
+        //                         "Evicting field '{}' (shape {}) of enum variant '{}'",
+        //                         field.name.bright_blue(),
+        //                         field_shape.green(),
+        //                         variant.name.yellow()
+        //                     );
+        //                     // Recompose the frame for the field
+        //                     let field_frame = Frame::recompose(field_id, field_istate);
+        //                     // Recursively evict the field's subtree
+        //                     self.evict_tree(field_frame);
+        //                 } else {
+        //                     trace!(
+        //                         "Field '{}' (shape {}) of enum variant '{}' not found in istates, skipping eviction",
+        //                         field.name.red(),
+        //                         field_shape.red(),
+        //                         variant.name.yellow()
+        //                     );
+        //                 }
+        //             }
+        //         } else {
+        //             // No variant selected, nothing to evict within the enum
+        //             trace!(
+        //                 "Enum {} has no variant selected, no fields to evict.",
+        //                 frame.shape.blue()
+        //             );
+        //         }
+        //     }
+        //     _ => {}
+        // }
         frame
     }
 
