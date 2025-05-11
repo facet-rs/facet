@@ -48,3 +48,51 @@ fn json_read_more_types() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn json_read_float_extremes() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Facet)]
+    struct FloatExtremes {
+        max: f64,
+        min: f64,
+        very_small: f64,
+        very_large: f64,
+        special: f64,
+    }
+
+    let json = r#"{
+        "max": 1.7976931348623157e+308,
+        "min": 4.9e-324,
+        "very_small": 1.0e-100,
+        "very_large": 1.0e+100,
+        "special": 1.234567890123456789
+    }"#;
+
+    let values: FloatExtremes = from_str(json)?;
+
+    // Different parsers may have slightly different precision
+    // especially for extreme values, so test approximately
+    assert!(f64::abs(values.max - f64::MAX) < f64::EPSILON * 100.0);
+
+    // MIN_POSITIVE is tricky, as some parsers round differently
+    // The lexical-parse library claims to parse "4.9e-324" as 5e-324 which is close enough
+    let min_positive_ratio = values.min / f64::MIN_POSITIVE;
+    assert!(
+        min_positive_ratio > 0.9 && min_positive_ratio < 3.0,
+        "min value {} should be close to MIN_POSITIVE {}",
+        values.min,
+        f64::MIN_POSITIVE
+    );
+
+    assert_eq!(values.very_small, 1.0e-100);
+    assert_eq!(values.very_large, 1.0e+100);
+
+    // High-precision floating point values may differ between parsers
+    // so we test approximately
+    let expected_special = 1.234567890123456789;
+    assert!(f64::abs(values.special - expected_special) < f64::EPSILON * 100.0);
+
+    Ok(())
+}

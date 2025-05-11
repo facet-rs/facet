@@ -54,7 +54,8 @@ A JSON deserializer based on facet-deserialize
 * `alloc`: Enables alloc support (enabled by `std`)
 * `rich-diagnostics`: Enables rich diagnostic messages (enabled by default)
 * `memchr`: Utilizes the `memchr` crate for faster string scanning (low-level performance optimization)
-* `perf`: Enables all performance optimizations, currently includes `memchr` (enabled by default)
+* `lexical-parse`: Uses the `lexical-core` crate for faster number parsing (low-level performance optimization)
+* `perf`: Enables all performance optimizations, currently includes `memchr` and `lexical-parse` (enabled by default)
 
 ## License
 

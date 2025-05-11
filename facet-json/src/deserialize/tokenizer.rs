@@ -7,6 +7,9 @@ use core::str;
 #[cfg(feature = "memchr")]
 use memchr::memchr2;
 
+#[cfg(feature = "lexical-parse")]
+use lexical_core::parse;
+
 /// Error encountered during tokenization
 #[derive(Debug, Clone, PartialEq)]
 pub struct TokenError {
@@ -559,6 +562,13 @@ impl<'input> Tokenizer<'input> {
         let slice = &self.input[start..end];
         let span = Span::new(start, end - start);
 
+        #[cfg(feature = "lexical-parse")]
+        let has_decimal_or_exp = {
+            // Check if there's a decimal point or exponent without UTF-8 conversion
+            slice.iter().any(|&b| b == b'.' || b == b'e' || b == b'E')
+        };
+
+        #[cfg(not(feature = "lexical-parse"))]
         let text = match str::from_utf8(slice) {
             Ok(t) => t,
             Err(e) => {
@@ -569,41 +579,92 @@ impl<'input> Tokenizer<'input> {
             }
         };
 
-        let token = if text.contains('.') || text.contains('e') || text.contains('E') {
+        #[cfg(not(feature = "lexical-parse"))]
+        let has_decimal_or_exp = text.contains('.') || text.contains('e') || text.contains('E');
+
+        let token = if has_decimal_or_exp {
             // If the number contains a decimal point or exponent, parse as f64
-            match text.parse::<f64>() {
-                Ok(n) => Token::F64(n),
-                Err(_) => {
-                    return Err(TokenError {
-                        kind: TokenErrorKind::NumberOutOfRange(0.0),
-                        span,
-                    });
+            #[cfg(feature = "lexical-parse")]
+            {
+                let bytes = slice;
+                match parse::<f64>(bytes) {
+                    Ok(n) => Token::F64(n),
+                    Err(_) => {
+                        return Err(TokenError {
+                            kind: TokenErrorKind::NumberOutOfRange(0.0),
+                            span,
+                        });
+                    }
                 }
             }
-        } else if text.starts_with('-') {
+            #[cfg(not(feature = "lexical-parse"))]
+            {
+                match text.parse::<f64>() {
+                    Ok(n) => Token::F64(n),
+                    Err(_) => {
+                        return Err(TokenError {
+                            kind: TokenErrorKind::NumberOutOfRange(0.0),
+                            span,
+                        });
+                    }
+                }
+            }
+        } else if slice[0] == b'-' {
             // If the number starts with a negative sign, parse as i64
-            match text.parse::<i64>() {
-                Ok(n) => Token::I64(n),
-                Err(_) => {
-                    // If i64 parsing fails, try to parse as f64 for error reporting
-                    let num = text.parse::<f64>().unwrap_or(0.0);
-                    return Err(TokenError {
-                        kind: TokenErrorKind::NumberOutOfRange(num),
-                        span,
-                    });
+            #[cfg(feature = "lexical-parse")]
+            {
+                match parse::<i64>(slice) {
+                    Ok(n) => Token::I64(n),
+                    Err(_) => {
+                        // If i64 parsing fails, create a fallback error
+                        return Err(TokenError {
+                            kind: TokenErrorKind::NumberOutOfRange(0.0),
+                            span,
+                        });
+                    }
+                }
+            }
+            #[cfg(not(feature = "lexical-parse"))]
+            {
+                match text.parse::<i64>() {
+                    Ok(n) => Token::I64(n),
+                    Err(_) => {
+                        // If i64 parsing fails, try to parse as f64 for error reporting
+                        let num = text.parse::<f64>().unwrap_or(0.0);
+                        return Err(TokenError {
+                            kind: TokenErrorKind::NumberOutOfRange(num),
+                            span,
+                        });
+                    }
                 }
             }
         } else {
             // Otherwise, parse as u64
-            match text.parse::<u64>() {
-                Ok(n) => Token::U64(n),
-                Err(_) => {
-                    // If u64 parsing fails, try to parse as f64 for error reporting
-                    let num = text.parse::<f64>().unwrap_or(0.0);
-                    return Err(TokenError {
-                        kind: TokenErrorKind::NumberOutOfRange(num),
-                        span,
-                    });
+            #[cfg(feature = "lexical-parse")]
+            {
+                match parse::<u64>(slice) {
+                    Ok(n) => Token::U64(n),
+                    Err(_) => {
+                        // If u64 parsing fails, create a fallback error
+                        return Err(TokenError {
+                            kind: TokenErrorKind::NumberOutOfRange(0.0),
+                            span,
+                        });
+                    }
+                }
+            }
+            #[cfg(not(feature = "lexical-parse"))]
+            {
+                match text.parse::<u64>() {
+                    Ok(n) => Token::U64(n),
+                    Err(_) => {
+                        // If u64 parsing fails, try to parse as f64 for error reporting
+                        let num = text.parse::<f64>().unwrap_or(0.0);
+                        return Err(TokenError {
+                            kind: TokenErrorKind::NumberOutOfRange(num),
+                            span,
+                        });
+                    }
                 }
             }
         };
