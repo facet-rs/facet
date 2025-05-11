@@ -61,7 +61,6 @@ impl TomlSerializer {
             // Push the value as a new item
             KeyOrValue::Key => {
                 let map_key = value
-                    .clone()
                     .as_str()
                     .ok_or_else(|| TomlSerError::InvalidKeyConversion {
                         toml_type: value.type_name(),
@@ -88,17 +87,15 @@ impl TomlSerializer {
 
     /// Get the mutable item for the current key.
     fn item_mut(&'_ mut self) -> &'_ mut Item {
-        let mut item = self.document.as_item_mut();
-        for key in &self.key_stack {
-            let key: &str = key.borrow();
-            item = &mut item[key];
-        }
-
-        item
+        self.key_stack
+            .iter()
+            .fold(self.document.as_item_mut(), |item, key| {
+                let key: &str = key.borrow();
+                item.get_mut(key).unwrap()
+            })
     }
 
     /// Create a new empty item at the key.
-    #[track_caller]
     fn push_key(&mut self, key: Cow<'static, str>, type_name: &'static str) {
         // Push empty item
         self.item_mut()
@@ -113,7 +110,6 @@ impl TomlSerializer {
     }
 
     /// Pop the current key, which means the item is finished.
-    #[track_caller]
     fn pop_key(&mut self, type_name: &'static str) {
         trace!("Pop {type_name} {}", self.display_full_key());
 
