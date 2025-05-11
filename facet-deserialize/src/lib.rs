@@ -45,7 +45,7 @@ pub enum Scalar<'input> {
     Null,
 }
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 /// Expected next input token or structure during deserialization.
 pub enum Expectation {
     /// Accept a value.

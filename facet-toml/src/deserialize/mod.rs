@@ -28,41 +28,116 @@ pub struct Toml {
     root: Item,
     /// Current stack of where we are in the tree.
     stack: Vec<String>,
+    /// Whether the current item is uninitialized.
+    first: bool,
 }
 
 impl Toml {
     /// Instantiate the format from a parsed TOML document.
     pub fn new(root: Item) -> Self {
         let stack = Vec::new();
+        let first = false;
 
-        Self { root, stack }
+        Self { root, stack, first }
     }
 
     /// Get the last item.
-    fn item(&self) -> &'_ Item {
+    fn item(&self) -> &Item {
         self.stack.iter().fold(&self.root, move |item, key| {
             item.as_table_like().unwrap().get(key).unwrap()
         })
     }
 
-    /// Apply a function on a the current item.
-    ///
-    /// Can't return a mutable reference due to lifetime issues.
-    fn apply_on_item(&mut self, func: impl Fn(&mut Item)) {
-        todo!()
+    /// Get a mutable reference to the last item.
+    fn item_mut(&mut self) -> &mut Item {
+        self.stack.iter().fold(&mut self.root, move |item, key| {
+            item.as_table_like_mut().unwrap().get_mut(key).unwrap()
+        })
     }
 
     /// Pop the last item and remove it from the document.
-    fn pop(&mut self) {
+    fn pop_and_remove(&mut self) {
         let last_key = self.stack.pop().unwrap();
 
-        self.apply_on_item(|item| {
-            item.as_table_like_mut().unwrap().remove(&last_key).unwrap();
-        });
+        trace!("Removing key '{last_key}' from table");
+
+        let parent_item = self.item_mut();
+        parent_item
+            .as_table_like_mut()
+            .unwrap()
+            .remove(&last_key)
+            .unwrap();
     }
 
-    /// Get the span of an item.
-    fn item_span<'input, 'facet>(&self, item: &Item, next: &NextData<'input, 'facet>) -> Span {
+    /// Pop the last item and remove it from the document, then push the next child of the parent item if there's still one.
+    ///
+    /// # Returns
+    ///
+    /// - `true` if a sibling is pushed.
+    /// - `false` if the parent item is the new current item.
+    fn pop_and_push_next_sibling_if_exists(&mut self) -> bool {
+        // Pop the last item
+        let last_key = self.stack.pop().unwrap();
+
+        // Remove the last item from the parent item
+        let parent_item = self.item_mut();
+        let parent_table = parent_item.as_table_like_mut().unwrap();
+        parent_table.remove(&last_key).unwrap();
+
+        for child in parent_table.iter() {
+            dbg!(child);
+        }
+
+        // Push the next child if there's still one
+        let maybe_next_field_key = parent_table
+            .iter()
+            .next()
+            .map(|(key, _item)| key.to_string());
+        if let Some(key) = maybe_next_field_key {
+            self.stack.push(key);
+
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Push the next child of the current item if there's still one.
+    ///
+    /// # Returns
+    ///
+    /// - `true` if a child is pushed.
+    /// - `false` if nothing is done.
+    fn push_child_if_exists(&mut self) -> bool {
+        // Remove the last item from the parent item
+        let parent_item = self.item_mut();
+        let Some(parent_table) = parent_item.as_table_like_mut() else {
+            return false;
+        };
+
+        // Push the next child if there's still one
+        let maybe_next_field_key = parent_table
+            .iter()
+            .next()
+            .map(|(key, _item)| key.to_string());
+        if let Some(key) = maybe_next_field_key {
+            self.stack.push(key);
+
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Whether the last item is a table type and has more than zero fields.
+    fn is_table_with_fields(&self) -> bool {
+        self.item()
+            .as_table_like()
+            .is_some_and(|table| !table.is_empty())
+    }
+
+    /// Get the span of an item or the whole document when it doesn't have one.
+    fn item_span(&self, item: &Item, next: &NextData<'_, '_>) -> Span {
         item.span().map_or_else(
             || next.document_span(),
             |range| Span::new(range.start, range.end),
@@ -80,54 +155,66 @@ impl Format for Toml {
         // Convert the TOML span to a facet span
         let span = self.item_span(item, &next);
 
-        eprintln!("{}, {expectation:?}", item.type_name());
+        eprint!("{}, {expectation:?}", item.type_name());
 
-        let res = match (&item, expectation) {
-            (Item::Value(_value), Expectation::ObjectKeyOrObjectClose) => {
-                self.pop();
-
-                Spanned {
-                    node: Outcome::ObjectEnded,
-                    span,
-                }
-            }
+        let res = match (item, expectation) {
             (Item::Value(value), Expectation::ObjectVal) => {
-                // There is a another field, go to it
-                // *self.stack.last_mut().unwrap() += 1;
-
-                match value {
-                    Value::String(formatted) => Spanned {
-                        node: Scalar::String(formatted.value().to_owned().into()).into(),
-                        span,
-                    },
-                    Value::Integer(formatted) => Spanned {
-                        node: Scalar::I64(*formatted.value()).into(),
-                        span,
-                    },
+                let node = match value {
+                    Value::String(formatted) => {
+                        Scalar::String(formatted.value().to_owned().into()).into()
+                    }
+                    Value::Integer(formatted) => Scalar::I64(*formatted.value()).into(),
                     value => panic!("Unimplemented {}", value.type_name()),
-                }
+                };
+
+                Spanned { node, span }
             }
             (Item::Table(table), Expectation::Value) => {
-                if let Some((key, _)) = table.iter().next() {
-                    self.stack.push(key.to_string());
-                }
+                // Try to get the next field
+                let key = table.iter().next().map(|(key, _)| key.to_string());
 
-                Spanned {
-                    node: Outcome::ObjectStarted,
-                    span,
-                }
+                let node = if let Some(key) = key {
+                    // If there is a field push the key for it on the stack
+                    self.stack.push(key);
+                    self.first = true;
+
+                    Outcome::ObjectStarted
+                } else {
+                    // No field, that means the object is finished
+                    todo!()
+                };
+
+                Spanned { node, span }
             }
-            (Item::Table(table), Expectation::ObjectKeyOrObjectClose) => {
-                // TODO: get next item
-                let key = self.stack.last().unwrap();
-                // Key
-                Spanned {
-                    node: Scalar::String(key.to_owned().into()).into(),
-                    span,
-                }
+            (Item::Table(_) | Item::ArrayOfTables(_), Expectation::ObjectKeyOrObjectClose) => {
+                // let node = if self.push_child_if_exists() {
+                //     Outcome::ObjectStarted
+                // } else if self.pop_and_push_next_sibling_if_exists() {
+                //     // Sibling found, push it's key
+                // } else {
+                //     // No sibling found, the object is done
+                //     Outcome::ObjectEnded
+                // };
+                todo!()
+            }
+            // Push the key of the value
+            (Item::Value(_), Expectation::ObjectKeyOrObjectClose) => {
+                let node = if self.first || self.pop_and_push_next_sibling_if_exists() {
+                    // It's a field, push the key
+                    self.first = false;
+
+                    Scalar::String(self.stack.last().unwrap().clone().into()).into()
+                } else {
+                    // No more fields
+                    Outcome::ObjectEnded
+                };
+
+                Spanned { node, span }
             }
             (item, expectation) => panic!("Unimplemented {}/{:?}", item.type_name(), expectation),
         };
+
+        eprintln!("-> {}", res.node);
 
         (next, Ok(res))
     }
