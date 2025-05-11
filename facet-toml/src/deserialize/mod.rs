@@ -84,10 +84,6 @@ impl Toml {
         let parent_table = parent_item.as_table_like_mut().unwrap();
         parent_table.remove(&last_key).unwrap();
 
-        for child in parent_table.iter() {
-            dbg!(child);
-        }
-
         // Push the next child if there's still one
         let maybe_next_field_key = parent_table
             .iter()
@@ -122,6 +118,8 @@ impl Toml {
             .map(|(key, _item)| key.to_string());
         if let Some(key) = maybe_next_field_key {
             self.stack.push(key);
+
+            self.first = true;
 
             true
         } else {
@@ -164,10 +162,30 @@ impl Format for Toml {
                         Scalar::String(formatted.value().to_owned().into()).into()
                     }
                     Value::Integer(formatted) => Scalar::I64(*formatted.value()).into(),
-                    value => panic!("Unimplemented {}", value.type_name()),
+                    Value::Float(formatted) => Scalar::F64(*formatted.value()).into(),
+                    Value::Boolean(formatted) => Scalar::Bool(*formatted.value()).into(),
+                    value => {
+                        // Throw unimplemented error
+                        return (
+                            next,
+                            Err(Spanned {
+                                node: DeserErrorKind::Unimplemented(value.type_name()),
+                                span,
+                            }),
+                        );
+                    }
                 };
 
                 Spanned { node, span }
+            }
+            // Push the child of the current table as a new child object value
+            (Item::Table(_table), Expectation::ObjectVal) => {
+                assert!(self.push_child_if_exists());
+
+                Spanned {
+                    node: Outcome::ObjectStarted,
+                    span,
+                }
             }
             (Item::Table(table), Expectation::Value) => {
                 // Try to get the next field
@@ -186,19 +204,8 @@ impl Format for Toml {
 
                 Spanned { node, span }
             }
-            (Item::Table(_) | Item::ArrayOfTables(_), Expectation::ObjectKeyOrObjectClose) => {
-                // let node = if self.push_child_if_exists() {
-                //     Outcome::ObjectStarted
-                // } else if self.pop_and_push_next_sibling_if_exists() {
-                //     // Sibling found, push it's key
-                // } else {
-                //     // No sibling found, the object is done
-                //     Outcome::ObjectEnded
-                // };
-                todo!()
-            }
-            // Push the key of the value
-            (Item::Value(_), Expectation::ObjectKeyOrObjectClose) => {
+            // Push the key, or close the object when done
+            (_, Expectation::ObjectKeyOrObjectClose) => {
                 let node = if self.first || self.pop_and_push_next_sibling_if_exists() {
                     // It's a field, push the key
                     self.first = false;
