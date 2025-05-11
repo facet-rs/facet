@@ -6,8 +6,22 @@ use crate::{
 };
 
 unsafe impl Facet<'_> for UtcDateTime {
-    const VTABLE: &'static ValueVTable =
-        &const { value_vtable!(UtcDateTime, |f, _opts| write!(f, "UtcDateTime")) };
+    const VTABLE: &'static ValueVTable = &const {
+        let mut vtable = value_vtable!(UtcDateTime, |f, _opts| write!(f, "UtcDateTime"));
+        vtable.parse = Some(|s: &str, target: PtrUninit| {
+            let parsed = UtcDateTime::parse(s, &time::format_description::well_known::Rfc3339)
+                .map_err(|_| ParseError::Generic("could not parse date"))?;
+            Ok(unsafe { target.put(parsed) })
+        });
+        vtable.display = Some(|value, f| unsafe {
+            let udt = value.get::<UtcDateTime>();
+            match udt.format(&time::format_description::well_known::Rfc3339) {
+                Ok(s) => write!(f, "{s}"),
+                Err(_) => write!(f, "<invalid UtcDateTime>"),
+            }
+        });
+        vtable
+    };
 
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
@@ -25,11 +39,16 @@ unsafe impl Facet<'_> for OffsetDateTime {
     const VTABLE: &'static ValueVTable = &const {
         let mut vtable = value_vtable!(OffsetDateTime, |f, _opts| write!(f, "OffsetDateTime"));
         vtable.parse = Some(|s: &str, target: PtrUninit| {
-            // Use the correct pattern for the `time` crate.
-            // RFC 3339 is the format of "2023-03-14T15:09:26Z"
             let parsed = OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
                 .map_err(|_| ParseError::Generic("could not parse date"))?;
             Ok(unsafe { target.put(parsed) })
+        });
+        vtable.display = Some(|value, f| unsafe {
+            let odt = value.get::<OffsetDateTime>();
+            match odt.format(&time::format_description::well_known::Rfc3339) {
+                Ok(s) => write!(f, "{s}"),
+                Err(_) => write!(f, "<invalid OffsetDateTime>"),
+            }
         });
         vtable
     };
@@ -48,9 +67,11 @@ unsafe impl Facet<'_> for OffsetDateTime {
 
 #[cfg(test)]
 mod tests {
+    use core::fmt;
+
     use time::OffsetDateTime;
 
-    use crate::Facet;
+    use crate::{Facet, PtrConst};
 
     #[test]
     fn parse_offset_date_time() -> eyre::Result<()> {
@@ -69,6 +90,17 @@ mod tests {
             )
             .unwrap()
         );
+
+        struct DisplayWrapper<'a>(PtrConst<'a>);
+
+        impl fmt::Display for DisplayWrapper<'_> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                unsafe { (OffsetDateTime::VTABLE.display.unwrap())(self.0, f) }
+            }
+        }
+
+        let s = format!("{}", DisplayWrapper(PtrConst::new(&odt as *const _)));
+        assert_eq!(s, "2023-03-14T15:09:26Z");
 
         Ok(())
     }
