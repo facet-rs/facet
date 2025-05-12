@@ -621,6 +621,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-xdr"
+version = "0.1.0"
+dependencies = [
+ "facet",
+ "facet-core",
+ "facet-reflect",
+ "facet-testhelpers 0.17.2",
+]
+
+[[package]]
 name = "facet-yaml"
 version = "0.24.5"
 dependencies = [

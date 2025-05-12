@@ -28,6 +28,7 @@ members = [
     "facet-toml",
     "facet-kdl",
     "facet-urlencoded",
+    "facet-xdr",
     "facet-yaml",
     "facet-jsonschema",
     "facet-deserialize",
