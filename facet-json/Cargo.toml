@@ -30,9 +30,16 @@ log = "0.4.27"
 camino = { version = "1" }
 eyre = "0.6.12"
 facet = { path = "../facet" }
-facet-core = { version = "0.25.1", path = "../facet-core", features = ["camino", "time", "ulid", "uuid"] }
+facet-core = { version = "0.25.1", path = "../facet-core", features = [
+    "camino",
+    "time",
+    "ulid",
+    "uuid",
+    "jiff",
+] }
 facet-testhelpers = { path = "../facet-testhelpers" }
 insta = "1.43.1"
 time = { version = "0.3.41", features = ["macros"] }
 ulid = { version = "1.2.1" }
 uuid = { version = "1.16.0" }
+jiff = "0.2.13"

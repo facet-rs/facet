@@ -19,8 +19,10 @@ uuid = ["alloc", "dep:uuid"]
 ulid = ["alloc", "dep:ulid"]
 time = ["alloc", "dep:time"]
 url = ["alloc", "dep:url"]
+jiff = ["alloc", "dep:jiff"]
 
 [dependencies]
+url = { version = "2.5.4", optional = true, default-features = false }
 impls = "1.0.3"
 bitflags = "2.9.0"
 camino = { version = "1", optional = true }
@@ -31,7 +33,7 @@ time = { version = "0.3.41", optional = true, features = [
     "parsing",
     "formatting",
 ] }
-url = { version = "2.5.4", optional = true, default-features = false }
+jiff = { version = "0.2.13", optional = true }
 
 [dev-dependencies]
 eyre = "0.6.12"

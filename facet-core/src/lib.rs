@@ -50,6 +50,9 @@ mod impls_time;
 #[cfg(feature = "url")]
 mod impls_url;
 
+#[cfg(feature = "jiff")]
+mod impls_jiff;
+
 // Const type Id
 mod typeid;
 pub use typeid::*;

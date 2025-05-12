@@ -20,12 +20,20 @@ log = [
     "dep:log",
 ] # Enable logging of reflection operations (mostly for internal development)
 slow-tests = [] # Enable slow tests (compile tests)
+camino = ["alloc", "dep:camino", "facet-core/camino"]
+uuid = ["alloc", "dep:uuid", "facet-core/uuid"]
+ulid = ["alloc", "dep:ulid", "facet-core/ulid"]
+time = ["facet-core/time"]
+jiff = ["facet-core/jiff"]
 
 [dependencies]
 bitflags = "2.9.0"
 facet-core = { path = "../facet-core", version = "0.25.1", default-features = false }
 log = { version = "0.4.27", optional = true }
 owo-colors = { version = "4.2.0" }
+camino = { version = "1", optional = true }
+uuid = { version = "1.16.0", optional = true }
+ulid = { version = "1.2.1", optional = true }
 
 [dev-dependencies]
 eyre = "0.6.12"

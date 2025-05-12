@@ -1,0 +1,90 @@
+use alloc::string::String;
+use jiff::Zoned;
+
+use crate::{
+    Def, Facet, ParseError, PtrConst, PtrUninit, ScalarAffinity, ScalarDef, Shape, Type, UserType,
+    ValueVTable, value_vtable,
+};
+
+unsafe impl Facet<'_> for Zoned {
+    const VTABLE: &'static ValueVTable = &const {
+        let mut vtable = value_vtable!(Zoned, |f, _opts| write!(f, "Zoned"));
+        vtable.try_from = Some(
+            |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
+                if source_shape.is_type::<String>() {
+                    let source = unsafe { source.read::<String>() };
+                    let parsed = source.parse::<Zoned>().map_err(|_| {
+                        ParseError::Generic("could not parse time-zone aware instant of time")
+                    });
+                    match parsed {
+                        Ok(val) => Ok(unsafe { target.put(val) }),
+                        Err(_e) => Err(crate::TryFromError::Generic("could not parse date")),
+                    }
+                } else {
+                    Err(crate::TryFromError::UnsupportedSourceShape {
+                        src_shape: source_shape,
+                        expected: &[String::SHAPE],
+                    })
+                }
+            },
+        );
+        vtable.parse = Some(|s: &str, target: PtrUninit| {
+            let parsed: Zoned = s.parse().map_err(|_| {
+                ParseError::Generic("could not parse time-zone aware instant of time")
+            })?;
+            Ok(unsafe { target.put(parsed) })
+        });
+        vtable.display = Some(|value, f| unsafe { write!(f, "{}", value.get::<Zoned>()) });
+        vtable
+    };
+
+    const SHAPE: &'static Shape = &const {
+        Shape::builder_for_sized::<Self>()
+            .ty(Type::User(UserType::Opaque))
+            .def(Def::Scalar(
+                ScalarDef::builder()
+                    .affinity(ScalarAffinity::time().build())
+                    .build(),
+            ))
+            .build()
+    };
+}
+
+#[cfg(test)]
+mod tests {
+    use core::fmt;
+
+    use jiff::Zoned;
+
+    use crate::{Facet, PtrConst};
+
+    #[test]
+    fn parse_zoned() -> eyre::Result<()> {
+        facet_testhelpers::setup();
+
+        let target = Zoned::SHAPE.allocate()?;
+        unsafe {
+            (Zoned::VTABLE.parse.unwrap())("2023-12-31T18:30:00+07:00[Asia/Ho_Chi_Minh]", target)?;
+        }
+        let odt: Zoned = unsafe { target.assume_init().read() };
+        assert_eq!(odt, "2023-12-31T18:30:00+07:00[Asia/Ho_Chi_Minh]".parse()?);
+
+        struct DisplayWrapper<'a>(PtrConst<'a>);
+
+        impl fmt::Display for DisplayWrapper<'_> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                unsafe { (Zoned::VTABLE.display.unwrap())(self.0, f) }
+            }
+        }
+
+        let s = format!("{}", DisplayWrapper(PtrConst::new(&odt as *const _)));
+        assert_eq!(s, "2023-12-31T18:30:00+07:00[Asia/Ho_Chi_Minh]");
+
+        // Deallocate the heap allocation to avoid memory leaks under Miri
+        unsafe {
+            Zoned::SHAPE.deallocate_uninit(target)?;
+        }
+
+        Ok(())
+    }
+}
