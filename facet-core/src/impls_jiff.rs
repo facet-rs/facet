@@ -1,5 +1,5 @@
 use alloc::string::String;
-use jiff::{Timestamp, Zoned};
+use jiff::{Timestamp, Zoned, civil::DateTime};
 
 use crate::{
     Def, Facet, ParseError, PtrConst, PtrUninit, ScalarAffinity, ScalarDef, Shape, Type, UserType,
@@ -96,11 +96,55 @@ unsafe impl Facet<'_> for Timestamp {
     };
 }
 
+const DATETIME_ERROR: &str = "could not parse civil datetime";
+
+unsafe impl Facet<'_> for DateTime {
+    const VTABLE: &'static ValueVTable = &const {
+        let mut vtable = value_vtable!(DateTime, |f, _opts| write!(f, "DateTime"));
+        vtable.try_from = Some(
+            |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
+                if source_shape.is_type::<String>() {
+                    let source = unsafe { source.read::<String>() };
+                    let parsed = source
+                        .parse::<DateTime>()
+                        .map_err(|_| ParseError::Generic(DATETIME_ERROR));
+                    match parsed {
+                        Ok(val) => Ok(unsafe { target.put(val) }),
+                        Err(_e) => Err(crate::TryFromError::Generic(DATETIME_ERROR)),
+                    }
+                } else {
+                    Err(crate::TryFromError::UnsupportedSourceShape {
+                        src_shape: source_shape,
+                        expected: &[String::SHAPE],
+                    })
+                }
+            },
+        );
+        vtable.parse = Some(|s: &str, target: PtrUninit| {
+            let parsed: DateTime = s.parse().map_err(|_| ParseError::Generic(DATETIME_ERROR))?;
+            Ok(unsafe { target.put(parsed) })
+        });
+        vtable.display = Some(|value, f| unsafe { write!(f, "{}", value.get::<DateTime>()) });
+        vtable
+    };
+
+    const SHAPE: &'static Shape = &const {
+        Shape::builder_for_sized::<Self>()
+            .ty(Type::User(UserType::Opaque))
+            .def(Def::Scalar(
+                ScalarDef::builder()
+                    .affinity(ScalarAffinity::time().build())
+                    .build(),
+            ))
+            .build()
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use core::fmt;
 
-    use jiff::{Timestamp, Zoned};
+    use jiff::{Timestamp, Zoned, civil::DateTime};
 
     use crate::{Facet, PtrConst};
 
@@ -159,6 +203,36 @@ mod tests {
         // Deallocate the heap allocation to avoid memory leaks under Miri
         unsafe {
             Timestamp::SHAPE.deallocate_uninit(target)?;
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn parse_datetime() -> eyre::Result<()> {
+        facet_testhelpers::setup();
+
+        let target = DateTime::SHAPE.allocate()?;
+        unsafe {
+            (DateTime::VTABLE.parse.unwrap())("2024-06-19T15:22:45", target)?;
+        }
+        let odt: DateTime = unsafe { target.assume_init().read() };
+        assert_eq!(odt, "2024-06-19T15:22:45".parse()?);
+
+        struct DisplayWrapper<'a>(PtrConst<'a>);
+
+        impl fmt::Display for DisplayWrapper<'_> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                unsafe { (DateTime::VTABLE.display.unwrap())(self.0, f) }
+            }
+        }
+
+        let s = format!("{}", DisplayWrapper(PtrConst::new(&odt as *const _)));
+        assert_eq!(s, "2024-06-19T15:22:45");
+
+        // Deallocate the heap allocation to avoid memory leaks under Miri
+        unsafe {
+            DateTime::SHAPE.deallocate_uninit(target)?;
         }
 
         Ok(())
