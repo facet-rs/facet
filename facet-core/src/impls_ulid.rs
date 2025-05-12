@@ -39,7 +39,7 @@ unsafe impl Facet<'_> for Ulid {
             Ok(unsafe { dst.put(ulid.to_string()) })
         }
 
-        let mut vtable = value_vtable!((), |f, _opts| write!(f, "Ulid"));
+        let mut vtable = value_vtable!(Ulid, |f, _opts| write!(f, "Ulid"));
         vtable.parse = Some(|s, target| match Ulid::from_string(s) {
             Ok(ulid) => Ok(unsafe { target.put(ulid) }),
             Err(_) => Err(ParseError::Generic("ULID parsing failed")),
