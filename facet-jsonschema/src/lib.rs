@@ -5,7 +5,7 @@
 #![doc = include_str!("../README.md")]
 
 extern crate facet_core as facet;
-use facet::PointerType;
+use facet::{PointerType, SmartPointerDef};
 use facet_core::{Def, Facet, ScalarDef, Shape, Type, UserType};
 
 use std::io::Write;
@@ -95,7 +95,10 @@ fn serialize<W: Write>(shape: &'static Shape, doc: &[&str], writer: &mut W) -> s
         Def::Slice(slice_def) => serialize_slice(slice_def, writer)?,
         Def::Array(array_def) => serialize_array(array_def, writer)?,
         Def::Option(option_def) => serialize_option(option_def, writer)?,
-        Def::SmartPointer(_smart_pointer_def) => todo!("SmartPointer"),
+        Def::SmartPointer(SmartPointerDef {
+            pointee: Some(inner_shape),
+            ..
+        }) => serialize(inner_shape(), &[], writer)?,
         Def::Undefined => {
             // Handle the case when not yet migrated to the Type enum
             // For primitives, we can try to infer the type
@@ -254,6 +257,9 @@ fn serialize_option<W: Write>(
 
 #[cfg(test)]
 mod tests {
+    extern crate alloc;
+    use alloc::{rc::Rc, sync::Arc};
+
     use super::*;
     use facet_derive::Facet;
     use insta::assert_snapshot;
@@ -271,6 +277,24 @@ mod tests {
             vec_field: Vec<bool>,
             slice_field: &'static [f64],
             array_field: [f64; 3],
+        }
+
+        let schema = to_string::<TestStruct>();
+        assert_snapshot!(schema);
+    }
+
+    #[test]
+    fn test_pointers() {
+        /// Test documentation
+        #[derive(Facet)]
+        #[facet(id = "http://example.com/schema")]
+        struct TestStruct<'a> {
+            normal_pointer: &'a str,
+            box_pointer: Box<u32>,
+            arc: Arc<u32>,
+            rc: Rc<u32>,
+            #[allow(clippy::redundant_allocation)]
+            nested: Rc<&'a Arc<&'a *const u32>>,
         }
 
         let schema = to_string::<TestStruct>();
