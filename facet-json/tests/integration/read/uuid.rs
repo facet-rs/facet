@@ -4,6 +4,24 @@ use facet_json::from_str;
 use uuid::Uuid;
 
 #[test]
+fn json_write_uuid() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct FooBar {
+        id: Uuid,
+    }
+
+    let original = FooBar {
+        id: "f49e1d6c-7e95-4654-a861-8b66f94a623a".parse().unwrap(),
+    };
+
+    let _json = facet_json::to_string(&original);
+
+    Ok(())
+}
+
+#[test]
 fn json_read_uuid() -> Result<()> {
     facet_testhelpers::setup();
 

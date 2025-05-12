@@ -24,3 +24,21 @@ fn json_read_utf8pathbuf() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn json_write_utf8pathbuf() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct FooBar {
+        path: Utf8PathBuf,
+    }
+
+    let original = FooBar {
+        path: Utf8PathBuf::from("foo/bar/baz"),
+    };
+
+    let _json = facet_json::to_string(&original);
+
+    Ok(())
+}

@@ -21,8 +21,8 @@ unsafe impl Facet<'_> for Ulid {
                     expected: &[<String as Facet>::SHAPE],
                 });
             }
-            let s = unsafe { src_ptr.get::<String>() };
-            match Ulid::from_string(s) {
+            let s = unsafe { src_ptr.read::<String>() };
+            match Ulid::from_string(&s) {
                 Ok(ulid) => Ok(unsafe { dst.put(ulid) }),
                 Err(_) => Err(TryFromError::UnsupportedSourceShape {
                     src_shape,
@@ -35,7 +35,7 @@ unsafe impl Facet<'_> for Ulid {
             src_ptr: PtrConst<'_>,
             dst: PtrUninit<'dst>,
         ) -> Result<PtrMut<'dst>, TryIntoInnerError> {
-            let ulid = unsafe { src_ptr.get::<Ulid>() };
+            let ulid = unsafe { src_ptr.read::<Ulid>() };
             Ok(unsafe { dst.put(ulid.to_string()) })
         }
 

@@ -22,16 +22,16 @@ unsafe impl Facet<'_> for Utf8PathBuf {
                     expected: &[<String as Facet>::SHAPE],
                 });
             }
-            let s = unsafe { src_ptr.get::<String>() };
-            Ok(unsafe { dst.put(Utf8PathBuf::from(s.clone())) })
+            let s = unsafe { src_ptr.read::<String>() };
+            Ok(unsafe { dst.put(Utf8PathBuf::from(s)) })
         }
 
         unsafe fn try_into_inner<'dst>(
             src_ptr: PtrConst<'_>,
             dst: PtrUninit<'dst>,
         ) -> Result<PtrMut<'dst>, TryIntoInnerError> {
-            let path = unsafe { src_ptr.get::<Utf8PathBuf>() };
-            Ok(unsafe { dst.put(path.as_str().to_owned()) })
+            let path = unsafe { src_ptr.read::<Utf8PathBuf>() };
+            Ok(unsafe { dst.put(path.into_string()) })
         }
 
         let mut vtable = value_vtable!(Utf8PathBuf, |f, _opts| write!(f, "Utf8PathBuf"));
