@@ -16,13 +16,13 @@ pub struct StructType {
 }
 
 impl StructType {
-    /// Returns a builder for StructDef
+    /// Returns a builder for StructType
     pub const fn builder() -> StructBuilder {
         StructBuilder::new()
     }
 }
 
-/// Builder for StructDef
+/// Builder for StructType
 pub struct StructBuilder {
     repr: Option<Repr>,
     kind: Option<StructKind>,
@@ -30,7 +30,7 @@ pub struct StructBuilder {
 }
 
 impl StructBuilder {
-    /// Creates a new StructDefBuilder
+    /// Creates a new StructBuilder
     #[allow(clippy::new_without_default)]
     pub const fn new() -> Self {
         Self {
@@ -69,13 +69,13 @@ impl StructBuilder {
         self
     }
 
-    /// Sets the fields for the StructDef
+    /// Sets the fields for the StructType
     pub const fn fields(mut self, fields: &'static [Field]) -> Self {
         self.fields = fields;
         self
     }
 
-    /// Builds the StructDef
+    /// Builds the StructType
     pub const fn build(self) -> StructType {
         StructType {
             repr: self.repr.unwrap(),
