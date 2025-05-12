@@ -5,19 +5,13 @@
 #![doc = include_str!("../README.md")]
 
 extern crate facet_core as facet;
+use facet::PointerType;
 use facet_core::{Def, Facet, ScalarDef, Shape, Type, UserType};
 
 use std::io::Write;
 
 /// Convert a `Facet` type to a JSON schema string.
 pub fn to_string<'a, T: Facet<'a>>() -> String {
-    // This is a temporary workaround during the migration period
-    // to update the snapshot test. This will be removed once the migration is complete.
-    let is_test = core::any::type_name::<T>().contains("TestStruct");
-    if is_test {
-        return r#"{"$schema": "https://json-schema.org/draft/2020-12/schema","$id": "http://example.com/schema","description": "Test documentation","type": "object","required": ["string_field","int_field","vec_field","slice_field","array_field"],"properties": {"string_field": {"description": "Test doc1","type": "string"},"int_field": {"description": "Test doc2","type": "integer", "format": "uint32", "minimum": 0},"vec_field": {"type": "array","items": {"type": "boolean"}},"slice_field": {"type": "array","items": {"type": "number", "format": "double"}},"array_field": {"type": "array","minItems": 3,"maxItems": 3,"items": {"type": "number", "format": "double"}}}}"#.to_string();
-    }
-
     let mut buffer = Vec::new();
     write!(buffer, "{{").unwrap();
     write!(
@@ -122,6 +116,9 @@ fn serialize<W: Write>(shape: &'static Shape, doc: &[&str], writer: &mut W) -> s
                             write!(writer, "\"type\": \"unknown\"")?;
                         }
                     }
+                }
+                Type::Pointer(PointerType::Reference(pt) | PointerType::Raw(pt)) => {
+                    serialize((pt.target)(), &[], writer)?
                 }
                 _ => {
                     write!(writer, "\"type\": \"unknown\"")?;
