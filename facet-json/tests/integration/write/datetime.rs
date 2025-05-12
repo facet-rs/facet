@@ -1,7 +1,7 @@
 use eyre::Result;
 use facet::Facet;
 use facet_json::to_string;
-use jiff::Zoned;
+use jiff::{Timestamp, Zoned};
 use time::OffsetDateTime;
 
 #[test]
@@ -45,6 +45,25 @@ fn write_jiff_zoned() -> Result<()> {
         json,
         r#"{"created_at":"2023-12-31T18:30:00+07:00[Asia/Ho_Chi_Minh]"}"#
     );
+
+    Ok(())
+}
+
+#[test]
+fn write_jiff_timestamp() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct FooBar {
+        created_at: Timestamp,
+    }
+
+    let value = FooBar {
+        created_at: "2023-12-31T18:30:00+07:00[Asia/Ho_Chi_Minh]".parse()?,
+    };
+
+    let json = to_string(&value);
+    assert_eq!(json, r#"{"created_at":"2023-12-31T11:30:00Z"}"#);
 
     Ok(())
 }
