@@ -57,18 +57,6 @@ pub enum ScalarType {
     Ipv6Addr,
     /// `facet_core::typeid::ConstTypeId`.
     ConstTypeId,
-    /// `&camino::Utf8Path`.
-    #[cfg(feature = "camino")]
-    Utf8Path,
-    /// `camino::Utf8PathBuf`.
-    #[cfg(feature = "camino")]
-    Utf8PathBuf,
-    /// `uuid::Uuid`.
-    #[cfg(feature = "uuid")]
-    Uuid,
-    /// `ulid::Ulid`.
-    #[cfg(feature = "ulid")]
-    Ulid,
 }
 
 impl ScalarType {
@@ -81,23 +69,6 @@ impl ScalarType {
             return Some(ScalarType::CowStr);
         } else if shape.id == ConstTypeId::of::<core::net::SocketAddr>() {
             return Some(ScalarType::SocketAddr);
-        }
-
-        #[cfg(feature = "camino")]
-        if shape.id == ConstTypeId::of::<&camino::Utf8Path>() {
-            return Some(ScalarType::Utf8Path);
-        } else if shape.id == ConstTypeId::of::<camino::Utf8PathBuf>() {
-            return Some(ScalarType::Utf8PathBuf);
-        }
-
-        #[cfg(feature = "uuid")]
-        if shape.id == ConstTypeId::of::<uuid::Uuid>() {
-            return Some(ScalarType::Uuid);
-        }
-
-        #[cfg(feature = "ulid")]
-        if shape.id == ConstTypeId::of::<ulid::Ulid>() {
-            return Some(ScalarType::Ulid);
         }
 
         if shape.id == ConstTypeId::of::<()>() {
@@ -259,26 +230,6 @@ mod tests {
         assert_eq!(
             ScalarType::ConstTypeId,
             ScalarType::try_from_shape(ConstTypeId::SHAPE).unwrap()
-        );
-        #[cfg(feature = "camino")]
-        assert_eq!(
-            ScalarType::Utf8Path,
-            ScalarType::try_from_shape(<&camino::Utf8Path>::SHAPE).unwrap()
-        );
-        #[cfg(feature = "camino")]
-        assert_eq!(
-            ScalarType::Utf8PathBuf,
-            ScalarType::try_from_shape(camino::Utf8PathBuf::SHAPE).unwrap()
-        );
-        #[cfg(feature = "uuid")]
-        assert_eq!(
-            ScalarType::Uuid,
-            ScalarType::try_from_shape(uuid::Uuid::SHAPE).unwrap()
-        );
-        #[cfg(feature = "ulid")]
-        assert_eq!(
-            ScalarType::Ulid,
-            ScalarType::try_from_shape(ulid::Ulid::SHAPE).unwrap()
         );
     }
 }
