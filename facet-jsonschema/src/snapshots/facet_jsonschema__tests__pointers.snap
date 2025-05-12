@@ -1,0 +1,5 @@
+---
+source: facet-jsonschema/src/lib.rs
+expression: schema
+---
+{"$schema": "https://json-schema.org/draft/2020-12/schema","$id": "http://example.com/schema","description": "Test documentation","type": "object","required": ["normal_pointer","box_pointer","arc","rc","nested"],"properties": {"normal_pointer": {"type": "string"},"box_pointer": {"type": "integer", "format": "uint32", "minimum": 0},"arc": {"type": "integer", "format": "uint32", "minimum": 0},"rc": {"type": "integer", "format": "uint32", "minimum": 0},"nested": {"type": "integer", "format": "uint32", "minimum": 0}}}
