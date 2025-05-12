@@ -25,7 +25,7 @@ unsafe impl<'a, Idx: Facet<'a>> Facet<'a> for core::ops::Range<Idx> {
                                 Field::builder()
                                     .name("end")
                                     .shape(Idx::SHAPE)
-                                    .offset(mem::offset_of!(core::ops::Range<Idx>, start))
+                                    .offset(mem::offset_of!(core::ops::Range<Idx>, end))
                                     .build(),
                             ]
                         },

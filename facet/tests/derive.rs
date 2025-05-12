@@ -524,5 +524,16 @@ fn core_ops_range() {
 
     assert_eq!(struct_type.fields.len(), 2);
     assert_eq!(struct_type.fields[0].name, "start");
+    assert_eq!(struct_type.fields[0].shape(), usize::SHAPE);
+    assert_eq!(
+        struct_type.fields[0].offset,
+        offset_of!(core::ops::Range::<usize>, start)
+    );
+
     assert_eq!(struct_type.fields[1].name, "end");
+    assert_eq!(struct_type.fields[1].shape(), usize::SHAPE);
+    assert_eq!(
+        struct_type.fields[1].offset,
+        offset_of!(core::ops::Range::<usize>, end)
+    );
 }
