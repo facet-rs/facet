@@ -5,8 +5,7 @@ use uuid::Uuid;
 
 use crate::{
     Def, Facet, ParseError, PtrConst, PtrMut, PtrUninit, ScalarAffinity, ScalarDef, Shape,
-    TryBorrowInnerError, TryFromError, TryIntoInnerError, Type, UserType, ValueVTable,
-    value_vtable,
+    TryFromError, TryIntoInnerError, Type, UserType, ValueVTable, value_vtable,
 };
 
 unsafe impl Facet<'_> for Uuid {
@@ -41,13 +40,6 @@ unsafe impl Facet<'_> for Uuid {
             Ok(unsafe { dst.put(uuid.to_string()) })
         }
 
-        unsafe fn try_borrow_inner(
-            src_ptr: PtrConst<'_>,
-        ) -> Result<PtrConst<'_>, TryBorrowInnerError> {
-            let uuid = unsafe { src_ptr.get::<Uuid>() };
-            Ok(PtrConst::new(uuid.as_bytes().as_ptr()))
-        }
-
         let mut vtable = value_vtable!((), |f, _opts| write!(f, "Uuid"));
         vtable.parse = Some(|s, target| match Uuid::parse_str(s) {
             Ok(uuid) => Ok(unsafe { target.put(uuid) }),
@@ -55,7 +47,6 @@ unsafe impl Facet<'_> for Uuid {
         });
         vtable.try_from = Some(try_from);
         vtable.try_into_inner = Some(try_into_inner);
-        vtable.try_borrow_inner = Some(try_borrow_inner);
         vtable
     };
 

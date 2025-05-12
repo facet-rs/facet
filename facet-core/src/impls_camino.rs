@@ -4,8 +4,8 @@ use alloc::string::String;
 use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::{
-    Def, Facet, PtrConst, PtrMut, PtrUninit, ScalarAffinity, ScalarDef, Shape, TryBorrowInnerError,
-    TryFromError, TryIntoInnerError, Type, UserType, ValueVTable, value_vtable,
+    Def, Facet, PtrConst, PtrMut, PtrUninit, ScalarAffinity, ScalarDef, Shape, TryFromError,
+    TryIntoInnerError, Type, UserType, ValueVTable, value_vtable,
 };
 
 unsafe impl Facet<'_> for Utf8PathBuf {
@@ -34,18 +34,10 @@ unsafe impl Facet<'_> for Utf8PathBuf {
             Ok(unsafe { dst.put(path.as_str().to_owned()) })
         }
 
-        unsafe fn try_borrow_inner(
-            src_ptr: PtrConst<'_>,
-        ) -> Result<PtrConst<'_>, TryBorrowInnerError> {
-            let path = unsafe { src_ptr.get::<Utf8PathBuf>() };
-            Ok(PtrConst::new(path.as_str().as_ptr()))
-        }
-
         let mut vtable = value_vtable!(Utf8PathBuf, |f, _opts| write!(f, "Utf8PathBuf"));
         vtable.parse = Some(|s, target| Ok(unsafe { target.put(Utf8Path::new(s).to_owned()) }));
         vtable.try_from = Some(try_from);
         vtable.try_into_inner = Some(try_into_inner);
-        vtable.try_borrow_inner = Some(try_borrow_inner);
         vtable
     };
 
