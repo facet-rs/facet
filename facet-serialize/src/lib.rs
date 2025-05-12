@@ -344,7 +344,10 @@ where
                             Some(unsupported) => panic!("Unsupported scalar type: {unsupported:?}"),
                             None => {
                                 match sd.affinity {
-                                    ScalarAffinity::Time(_) => {
+                                    ScalarAffinity::Time(_)
+                                    | ScalarAffinity::Path(_)
+                                    | ScalarAffinity::ULID(_)
+                                    | ScalarAffinity::UUID(_) => {
                                         if let Some(_display) = cpeek.shape().vtable.display {
                                             // Use display formatting if available
                                             serializer
