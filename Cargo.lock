@@ -455,6 +455,7 @@ dependencies = [
 name = "facet-json"
 version = "0.23.4"
 dependencies = [
+ "camino",
  "eyre",
  "facet",
  "facet-core",
@@ -465,6 +466,8 @@ dependencies = [
  "insta",
  "log",
  "time",
+ "ulid",
+ "uuid",
 ]
 
 [[package]]
@@ -523,7 +526,6 @@ name = "facet-reflect"
 version = "0.25.1"
 dependencies = [
  "bitflags",
- "camino",
  "eyre",
  "facet",
  "facet-core",
@@ -531,9 +533,6 @@ dependencies = [
  "log",
  "owo-colors",
  "tempfile",
- "time",
- "ulid",
- "uuid",
 ]
 
 [[package]]

@@ -1,3 +1,4 @@
+mod camino;
 mod datetime;
 mod enums;
 mod json;
@@ -8,3 +9,5 @@ mod skip_serializing;
 mod string;
 mod structs;
 mod tuple;
+mod ulid;
+mod uuid;

@@ -1,4 +1,5 @@
 mod bool;
+mod camino;
 mod datetime;
 mod deny_unknown_and_default;
 mod diagnostics;
@@ -13,4 +14,6 @@ mod rename;
 mod skip_unknown_fields;
 mod structs;
 mod tuple;
+mod ulid;
+mod uuid;
 mod vec;
