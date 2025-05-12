@@ -19,7 +19,7 @@ uuid = ["alloc", "dep:uuid"]
 ulid = ["alloc", "dep:ulid"]
 time = ["alloc", "dep:time"]
 url = ["alloc", "dep:url"]
-jiff = ["alloc", "dep:jiff"]
+jiff02 = ["alloc", "dep:jiff"]
 
 [dependencies]
 url = { version = "2.5.4", optional = true, default-features = false }

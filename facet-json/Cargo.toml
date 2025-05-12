@@ -35,7 +35,7 @@ facet-core = { version = "0.25.1", path = "../facet-core", features = [
     "time",
     "ulid",
     "uuid",
-    "jiff",
+    "jiff02",
 ] }
 facet-testhelpers = { path = "../facet-testhelpers" }
 insta = "1.43.1"

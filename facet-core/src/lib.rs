@@ -50,7 +50,7 @@ mod impls_time;
 #[cfg(feature = "url")]
 mod impls_url;
 
-#[cfg(feature = "jiff")]
+#[cfg(feature = "jiff02")]
 mod impls_jiff;
 
 // Const type Id

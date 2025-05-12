@@ -24,7 +24,7 @@ camino = ["alloc", "dep:camino", "facet-core/camino"]
 uuid = ["alloc", "dep:uuid", "facet-core/uuid"]
 ulid = ["alloc", "dep:ulid", "facet-core/ulid"]
 time = ["facet-core/time"]
-jiff = ["facet-core/jiff"]
+jiff02 = ["facet-core/jiff02"]
 
 [dependencies]
 bitflags = "2.9.0"
