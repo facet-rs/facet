@@ -472,6 +472,14 @@ unsynn! {
         /// The fields enclosed in braces `{}`.
         pub fields: BraceGroupContaining<CommaDelimitedVec<StructField>>,
     }
+
+    /// A lifetime or a tokentree, used to gather lifetimes in type definitions
+    pub enum LifetimeOrTt {
+        /// A lifetime annotation.
+        Lifetime(Lifetime),
+        /// A single token tree.
+        TokenTree(TokenTree),
+    }
 }
 
 impl core::fmt::Display for AngleTokenTree {

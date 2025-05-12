@@ -12,6 +12,18 @@ pub(crate) fn gen_field_from_pfield(
     let field_name_raw = &field.name.raw;
     let field_type = &field.ty; // TokenStream of the type
 
+    let tts: facet_derive_parse::TokenStream = field_type.clone();
+    let field_type_static = tts
+        .to_token_iter()
+        .parse::<Vec<LifetimeOrTt>>()
+        .unwrap()
+        .into_iter()
+        .map(|lott| match lott {
+            LifetimeOrTt::TokenTree(tt) => quote! { #tt },
+            LifetimeOrTt::Lifetime(_) => quote! { 'static },
+        })
+        .collect::<TokenStream>();
+
     let bgp_without_bounds = bgp.display_without_bounds();
 
     // Determine field flags and other attributes from field.attrs
@@ -43,7 +55,7 @@ pub(crate) fn gen_field_from_pfield(
                     flags = quote! { #flags.union(::facet::FieldFlags::DEFAULT) };
                 }
                 asserts.push(quote! {
-                    ::facet::static_assertions::assert_impl_all!(#field_type: ::core::default::Default);
+                    ::facet::static_assertions::assert_impl_all!(#field_type_static: ::core::default::Default);
                 })
             }
             PFacetAttr::DefaultEquals { expr } => {

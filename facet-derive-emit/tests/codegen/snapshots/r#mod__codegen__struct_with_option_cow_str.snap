@@ -1,0 +1,38 @@
+---
+source: facet-derive-emit/tests/codegen/mod.rs
+expression: "expand(r#\"\n        #[derive(Facet)]\n        struct Foo<'a> {\n            #[facet(default)]\n            name: Option<Cow<'a, str>>,\n        }\n        \"#)"
+---
+#[automatically_derived]
+unsafe impl<'a, '__facet> ::facet::Facet<'__facet> for Foo<'a>
+where
+    'a: '__facet,
+    '__facet: 'a,
+{
+    const VTABLE: &'static ::facet::ValueVTable = &const {
+        let mut vtable =
+            ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "Foo"));
+        vtable
+    };
+    const SHAPE: &'static ::facet::Shape = &const {
+        let fields: &'static [::facet::Field] = &const {
+            [{
+                :: facet :: static_assertions :: assert_impl_all ! (Option < Cow < 'static , str > > : :: core :: default :: Default);
+                ::facet::Field::builder()
+                    .name("name")
+                    .shape(::facet::shape_of(&|s: &Foo<'a>| &s.name))
+                    .offset(::core::mem::offset_of!(Foo<'a>, name))
+                    .flags(::facet::FieldFlags::DEFAULT)
+                    .build()
+            }]
+        };
+        ::facet::Shape::builder_for_sized::<Self>()
+            .ty(::facet::Type::User(::facet::UserType::Struct(
+                ::facet::StructType::builder()
+                    .repr(::facet::Repr::c())
+                    .kind(::facet::StructKind::Struct)
+                    .fields(fields)
+                    .build(),
+            )))
+            .build()
+    };
+}

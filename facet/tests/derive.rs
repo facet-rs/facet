@@ -537,3 +537,12 @@ fn core_ops_range() {
         offset_of!(core::ops::Range::<usize>, end)
     );
 }
+
+#[test]
+fn struct_with_default_field_that_has_lifetime() {
+    #[derive(Facet)]
+    struct Foo<'a> {
+        #[facet(default)]
+        name: Option<std::borrow::Cow<'a, str>>,
+    }
+}

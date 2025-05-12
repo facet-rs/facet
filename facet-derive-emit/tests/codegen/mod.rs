@@ -1091,3 +1091,16 @@ fn enum_with_macro_discriminants() {
         "#
     ));
 }
+
+#[test]
+fn struct_with_option_cow_str() {
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        struct Foo<'a> {
+            #[facet(default)]
+            name: Option<Cow<'a, str>>,
+        }
+        "#
+    ));
+}
