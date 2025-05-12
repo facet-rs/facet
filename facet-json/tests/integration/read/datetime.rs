@@ -29,6 +29,7 @@ fn read_time_datetime() -> Result<()> {
 }
 
 #[test]
+#[cfg(not(miri))] // I don't think we can read time zones from miri, the test just fails
 fn read_jiff_zoned() -> Result<()> {
     facet_testhelpers::setup();
 

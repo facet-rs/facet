@@ -149,6 +149,7 @@ mod tests {
     use crate::{Facet, PtrConst};
 
     #[test]
+    #[cfg(not(miri))] // I don't think we can read time zones from miri, the test just fails
     fn parse_zoned() -> eyre::Result<()> {
         facet_testhelpers::setup();
 
