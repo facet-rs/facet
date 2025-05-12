@@ -8,11 +8,11 @@ extern crate alloc;
 use alloc::borrow::Cow;
 
 /// Apply field default values and function values using facet-deserialize
-pub mod defaults;
+pub(crate) mod defaults;
 /// Errors raised when CLI arguments are not parsed or otherwise fail during reflection
 pub mod error;
 /// Parsing utilities for CLI arguments
-pub mod parse;
+pub(crate) mod parse;
 
 use defaults::apply_field_defaults;
 use error::{ArgsError, ArgsErrorKind};
@@ -22,7 +22,10 @@ use facet_reflect::{ReflectError, Wip};
 use parse::{parse_named_arg, parse_positional_arg, parse_short_arg};
 
 /// Process a field in the Wip
-pub fn parse_field<'facet>(wip: Wip<'facet>, value: &'facet str) -> Result<Wip<'facet>, ArgsError> {
+pub(crate) fn parse_field<'facet>(
+    wip: Wip<'facet>,
+    value: &'facet str,
+) -> Result<Wip<'facet>, ArgsError> {
     let shape = wip.shape();
 
     if shape.is_type::<String>() {
