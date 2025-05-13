@@ -363,7 +363,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
 
                 // Define the try_into_inner function for the value vtable
                 unsafe fn try_into_inner<'src, 'dst>(
-                    src_ptr: ::facet::PtrConst<'src>,
+                    src_ptr: ::facet::PtrMut<'src>,
                     dst: ::facet::PtrUninit<'dst>
                 ) -> Result<::facet::PtrMut<'dst>, ::facet::TryIntoInnerError> {
                     let wrapper = unsafe { src_ptr.get::<#struct_name_ident #bgp_without_bounds>() };

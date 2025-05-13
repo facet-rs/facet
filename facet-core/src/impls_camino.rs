@@ -27,7 +27,7 @@ unsafe impl Facet<'_> for Utf8PathBuf {
         }
 
         unsafe fn try_into_inner<'dst>(
-            src_ptr: PtrConst<'_>,
+            src_ptr: PtrMut<'_>,
             dst: PtrUninit<'dst>,
         ) -> Result<PtrMut<'dst>, TryIntoInnerError> {
             let path = unsafe { src_ptr.read::<Utf8PathBuf>() };

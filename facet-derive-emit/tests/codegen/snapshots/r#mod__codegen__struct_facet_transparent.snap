@@ -30,7 +30,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Wrapper {
         }
         vtable.try_from = Some(try_from);
         unsafe fn try_into_inner<'src, 'dst>(
-            src_ptr: ::facet::PtrConst<'src>,
+            src_ptr: ::facet::PtrMut<'src>,
             dst: ::facet::PtrUninit<'dst>,
         ) -> Result<::facet::PtrMut<'dst>, ::facet::TryIntoInnerError> {
             let wrapper = unsafe { src_ptr.get::<Wrapper>() };

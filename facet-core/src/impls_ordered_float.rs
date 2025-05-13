@@ -26,7 +26,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for OrderedFloat<T> {
 
         // Conversion back to inner float type
         unsafe fn try_into_inner<'a, 'dst, T: Facet<'a>>(
-            src_ptr: PtrConst<'_>,
+            src_ptr: PtrMut<'_>,
             dst: PtrUninit<'dst>,
         ) -> Result<PtrMut<'dst>, TryIntoInnerError> {
             let v = unsafe { src_ptr.read::<OrderedFloat<T>>() };
@@ -102,7 +102,7 @@ unsafe impl<'a, T: Facet<'a> + ordered_float::FloatCore + Clone + core::str::Fro
 
         // Conversion back to inner float type
         unsafe fn try_into_inner<'a, 'dst, T: Facet<'a> + ordered_float::FloatCore + Clone>(
-            src_ptr: PtrConst<'_>,
+            src_ptr: PtrMut<'_>,
             dst: PtrUninit<'dst>,
         ) -> Result<PtrMut<'dst>, TryIntoInnerError> {
             let v = unsafe { src_ptr.read::<NotNan<T>>() };

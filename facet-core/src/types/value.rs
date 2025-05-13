@@ -239,7 +239,7 @@ impl From<UnsizedError> for TryFromError {
 ///
 /// The function will return a pointer to the initialized inner value.
 pub type TryIntoInnerFn = for<'src, 'dst> unsafe fn(
-    src_ptr: PtrConst<'src>,
+    src_ptr: PtrMut<'src>,
     dst: PtrUninit<'dst>,
 ) -> Result<PtrMut<'dst>, TryIntoInnerError>;
 /// Function to convert a transparent/newtype wrapper into its inner type.

@@ -321,7 +321,7 @@ macro_rules! impl_facet_for_integer {
                 }
 
                 unsafe fn try_into_inner<'dst>(
-                    src_ptr: PtrConst<'_>,
+                    src_ptr: PtrMut<'_>,
                     dst: PtrUninit<'dst>,
                 ) -> Result<PtrMut<'dst>, TryIntoInnerError> {
                     // Get the NonZero value and extract the inner value

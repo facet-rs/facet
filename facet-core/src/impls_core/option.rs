@@ -26,7 +26,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
         }
 
         unsafe fn try_into_inner<'a, 'src, 'dst, T: Facet<'a>>(
-            src_ptr: PtrConst<'src>,
+            src_ptr: PtrMut<'src>,
             dst: PtrUninit<'dst>,
         ) -> Result<PtrMut<'dst>, TryIntoInnerError> {
             let option = unsafe { src_ptr.read::<Option<T>>() };

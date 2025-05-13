@@ -24,7 +24,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::boxed::Box<T> {
         }
 
         unsafe fn try_into_inner<'a, 'src, 'dst, T: Facet<'a>>(
-            src_ptr: PtrConst<'src>,
+            src_ptr: PtrMut<'src>,
             dst: PtrUninit<'dst>,
         ) -> Result<PtrMut<'dst>, TryIntoInnerError> {
             let boxed = unsafe { src_ptr.read::<alloc::boxed::Box<T>>() };

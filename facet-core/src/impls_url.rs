@@ -39,7 +39,7 @@ unsafe impl Facet<'_> for Url {
         }
 
         unsafe fn try_into_inner<'dst>(
-            src_ptr: PtrConst<'_>,
+            src_ptr: PtrMut<'_>,
             dst: PtrUninit<'dst>,
         ) -> Result<PtrMut<'dst>, TryIntoInnerError> {
             let url = unsafe { src_ptr.get::<Url>() };

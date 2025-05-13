@@ -33,7 +33,7 @@ unsafe impl Facet<'_> for Uuid {
         }
 
         unsafe fn try_into_inner<'dst>(
-            src_ptr: PtrConst<'_>,
+            src_ptr: PtrMut<'_>,
             dst: PtrUninit<'dst>,
         ) -> Result<PtrMut<'dst>, TryIntoInnerError> {
             let uuid = unsafe { src_ptr.read::<Uuid>() };

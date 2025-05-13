@@ -21,57 +21,107 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for alloc::sync::Arc<T> {
                 });
             }
 
-            let type_size = match T::SHAPE.layout {
-                ShapeLayout::Sized(l) => l.size(),
-                _ => panic!("can't try_from with unsized type"),
-            };
-
-            let mut arc: alloc::sync::Arc<[core::mem::MaybeUninit<u8>]> =
-                alloc::sync::Arc::new_uninit_slice(type_size);
-            {
-                let arc_mut = alloc::sync::Arc::get_mut(&mut arc).unwrap();
-                let arc_ptr = arc_mut.as_mut_ptr();
-                let arc_ptr: *mut u8 = arc_ptr as *mut u8;
-                unsafe {
-                    core::ptr::copy_nonoverlapping(src_ptr.as_ptr::<u8>(), arc_ptr, type_size)
-                };
+            if let ShapeLayout::Unsized = T::SHAPE.layout {
+                panic!("can't try_from with unsized type");
             }
 
+            use alloc::sync::Arc;
+
+            // Get the layout for T
+            let layout = match T::SHAPE.layout {
+                ShapeLayout::Sized(layout) => layout,
+                ShapeLayout::Unsized => panic!("Unsized type not supported"),
+            };
+
+            // We'll create a new memory location, copy the value, then create an Arc from it
+            let size_of_arc_header = core::mem::size_of::<usize>() * 2;
+
+            // Allocate memory for the Arc header plus the value
+            let arc_layout = unsafe {
+                Layout::from_size_align_unchecked(
+                    size_of_arc_header + layout.size(),
+                    layout.align(),
+                )
+            };
+            let mem = unsafe { alloc::alloc::alloc(arc_layout) };
+
+            unsafe {
+                // Copy the Arc header (refcounts, vtable pointer, etc.) from a dummy Arc<()>
+                let dummy_arc = Arc::new(());
+                let header_start = (Arc::as_ptr(&dummy_arc) as *const u8).sub(size_of_arc_header);
+                core::ptr::copy_nonoverlapping(header_start, mem, size_of_arc_header);
+
+                // Copy the source value into the memory area just after the Arc header
+                core::ptr::copy_nonoverlapping(
+                    src_ptr.as_byte_ptr(),
+                    mem.add(size_of_arc_header),
+                    layout.size(),
+                );
+            }
+
+            // Create an Arc from our allocated and initialized memory
+            let ptr = unsafe { mem.add(size_of_arc_header) };
+            let t_ptr: *mut T = unsafe { core::mem::transmute_copy(&ptr) };
+            let arc = unsafe { Arc::from_raw(t_ptr) };
+
+            // Move the Arc into the destination and return a PtrMut for it
             Ok(unsafe { dst.put(arc) })
         }
 
         unsafe fn try_into_inner<'a, 'src, 'dst, T: Facet<'a> + ?Sized>(
-            src_ptr: PtrConst<'src>,
+            src_ptr: PtrMut<'src>,
             dst: PtrUninit<'dst>,
         ) -> Result<PtrMut<'dst>, TryIntoInnerError> {
-            // Copy the bytes of the inner value pointed by the Arc<T> into the destination.
-            let mut arc = unsafe { src_ptr.read::<alloc::sync::Arc<T>>() };
+            use alloc::sync::Arc;
+
+            // Read the Arc from the source pointer
+            let mut arc = unsafe { src_ptr.read::<Arc<T>>() };
 
             // For unsized types, we need to know how many bytes to copy.
-            let type_size = match T::SHAPE.layout {
+            let size = match T::SHAPE.layout {
                 ShapeLayout::Sized(layout) => layout.size(),
                 _ => panic!("cannot try_into_inner with unsized type"),
             };
 
-            // Get a pointer to the inner T held by the Arc<T> using Arc::get_mut.
-            // Safety: We assume the caller has exclusive access to the Arc at this point.
-            let arc_mut: Option<&mut T> = alloc::sync::Arc::get_mut(&mut arc);
-            let src: *const u8 = match arc_mut {
-                Some(t_mut) => t_mut as *mut T as *const u8,
-                None => {
-                    // Don't fallback to shared, just return an error.
-                    return Err(TryIntoInnerError::Unavailable);
+            // Check if we have exclusive access to the Arc (strong count = 1)
+            if let Some(inner_ref) = Arc::get_mut(&mut arc) {
+                // We have exclusive access, so we can safely copy the inner value
+                let inner_ptr = inner_ref as *const T as *const u8;
+
+                unsafe {
+                    // Copy the inner value to the destination
+                    core::ptr::copy_nonoverlapping(inner_ptr, dst.as_mut_byte_ptr(), size);
+
+                    // Prevent dropping the Arc normally which would also drop the inner value
+                    // that we've already copied
+                    let raw_ptr = Arc::into_raw(arc);
+
+                    // We need to deallocate the Arc without running destructors
+                    // Get the Arc layout
+                    let size_of_arc_header = core::mem::size_of::<usize>() * 2;
+                    let layout = match T::SHAPE.layout {
+                        ShapeLayout::Sized(layout) => layout,
+                        _ => unreachable!("We already checked that T is sized"),
+                    };
+                    let arc_layout = Layout::from_size_align_unchecked(
+                        size_of_arc_header + size,
+                        layout.align(),
+                    );
+
+                    // Get the start of the allocation (header is before the data)
+                    let allocation_start = (raw_ptr as *mut u8).sub(size_of_arc_header);
+
+                    // Deallocate the memory without running any destructors
+                    alloc::alloc::dealloc(allocation_start, arc_layout);
+
+                    // Return a PtrMut to the destination, which now owns the value
+                    Ok(PtrMut::new(dst.as_mut_byte_ptr()))
                 }
-            };
-            let dst: *mut u8 = dst.as_mut_byte_ptr();
-
-            // Actually copy the inner value bytes from Arc<T> to the destination memory.
-            unsafe {
-                core::ptr::copy_nonoverlapping(src, dst, type_size);
+            } else {
+                // Arc is shared, so we can't extract the inner value
+                core::mem::forget(arc);
+                Err(TryIntoInnerError::Unavailable)
             }
-
-            // Use PtrMut::new to construct a PtrMut from the destination pointer.
-            Ok(PtrMut::new(dst))
         }
 
         unsafe fn try_borrow_inner<'a, 'src, T: Facet<'a> + ?Sized>(
@@ -422,6 +472,122 @@ mod tests {
             // Drop and deallocate the weak pointer
             weak_drop_fn(weak1_ptr);
             weak_shape.deallocate_mut(weak1_ptr)?;
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_arc_vtable_4_try_from() -> eyre::Result<()> {
+        facet_testhelpers::setup();
+
+        // Get the shapes we'll be working with
+        let string_shape = <String>::SHAPE;
+        let arc_shape = <Arc<String>>::SHAPE;
+        let arc_def = arc_shape
+            .def
+            .into_smart_pointer()
+            .expect("Arc<T> should have a smart pointer definition");
+
+        // 1. Create a String value
+        let value = String::from("try_from test");
+        let value_ptr = PtrConst::new(&value as *const String as *const u8);
+
+        // 2. Allocate memory for the Arc<String>
+        let arc_uninit_ptr = arc_shape.allocate()?;
+
+        // 3. Get the try_from function from the Arc<String> shape's ValueVTable
+        let try_from_fn = arc_shape
+            .vtable
+            .try_from
+            .expect("Arc<T> should have try_from");
+
+        // 4. Try to convert String to Arc<String>
+        let arc_ptr = unsafe { try_from_fn(value_ptr, string_shape, arc_uninit_ptr) }
+            .expect("try_from should succeed");
+        core::mem::forget(value);
+
+        // 5. Borrow the inner value and verify it's correct
+        let borrow_fn = arc_def
+            .vtable
+            .borrow_fn
+            .expect("Arc<T> should have borrow_fn");
+        let borrowed_ptr = unsafe { borrow_fn(arc_ptr.as_const()) };
+
+        // SAFETY: borrowed_ptr points to a valid String within the Arc
+        assert_eq!(unsafe { borrowed_ptr.get::<String>() }, "try_from test");
+
+        // 6. Clean up
+        let drop_fn = arc_shape
+            .vtable
+            .drop_in_place
+            .expect("Arc<T> should have drop_in_place");
+
+        unsafe {
+            drop_fn(arc_ptr);
+            arc_shape.deallocate_mut(arc_ptr)?;
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_arc_vtable_5_try_into_inner() -> eyre::Result<()> {
+        facet_testhelpers::setup();
+
+        // Get the shapes we'll be working with
+        let string_shape = <String>::SHAPE;
+        let arc_shape = <Arc<String>>::SHAPE;
+        let arc_def = arc_shape
+            .def
+            .into_smart_pointer()
+            .expect("Arc<T> should have a smart pointer definition");
+
+        // 1. Create an Arc<String>
+        let arc_uninit_ptr = arc_shape.allocate()?;
+        let new_into_fn = arc_def
+            .vtable
+            .new_into_fn
+            .expect("Arc<T> should have new_into_fn");
+
+        let mut value = String::from("try_into_inner test");
+        let arc_ptr = unsafe { new_into_fn(arc_uninit_ptr, PtrMut::new(&raw mut value)) };
+        core::mem::forget(value); // Value now owned by arc
+
+        // 2. Allocate memory for the extracted String
+        let string_uninit_ptr = string_shape.allocate()?;
+
+        // 3. Get the try_into_inner function from the Arc<String>'s ValueVTable
+        let try_into_inner_fn = arc_shape
+            .vtable
+            .try_into_inner
+            .expect("Arc<T> Shape should have try_into_inner");
+
+        // 4. Try to extract the String from the Arc<String>
+        // This should succeed because we have exclusive access to the Arc (strong count = 1)
+        let string_ptr = unsafe { try_into_inner_fn(arc_ptr, string_uninit_ptr) }
+            .expect("try_into_inner should succeed with exclusive access");
+
+        // 5. Verify the extracted String
+        assert_eq!(
+            unsafe { string_ptr.as_const().get::<String>() },
+            "try_into_inner test"
+        );
+
+        // 6. Clean up
+        let string_drop_fn = string_shape
+            .vtable
+            .drop_in_place
+            .expect("String should have drop_in_place");
+
+        unsafe {
+            // The Arc should already be dropped by try_into_inner
+            // But we still need to deallocate its memory
+            arc_shape.deallocate_mut(arc_ptr)?;
+
+            // Drop and deallocate the extracted String
+            string_drop_fn(string_ptr);
+            string_shape.deallocate_mut(string_ptr)?;
         }
 
         Ok(())
