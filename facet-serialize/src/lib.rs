@@ -211,6 +211,13 @@ pub trait Serializer {
     fn end_field(&mut self) -> Result<(), Self::Error> {
         Ok(())
     }
+
+    /// Signal the start of an enum variant
+    #[inline(always)]
+    fn start_enum_variant(&mut self, discriminant: u64) -> Result<(), Self::Error> {
+        let _ = discriminant;
+        Ok(())
+    }
 }
 
 // --- Iterative Serialization Logic ---
@@ -363,12 +370,44 @@ where
                             }
                         }
                     }
-                    (Def::List(_), _) | (Def::Array(_), _) | (Def::Slice(_), _) => {
-                        let peek_list = cpeek.into_list_like().unwrap();
-                        let len = peek_list.len();
-                        serializer.start_array(Some(len))?;
-                        stack.push(SerializeTask::EndArray);
-                        stack.push(SerializeTask::ArrayItems(peek_list));
+                    (Def::List(ld), _) => {
+                        if ld.t().is_type::<u8>() {
+                            serializer.serialize_bytes(cpeek.get::<Vec<u8>>().unwrap())?
+                        } else {
+                            let peek_list = cpeek.into_list_like().unwrap();
+                            let len = peek_list.len();
+                            serializer.start_array(Some(len))?;
+                            stack.push(SerializeTask::EndArray);
+                            stack.push(SerializeTask::ArrayItems(peek_list));
+                        }
+                    }
+                    (Def::Array(ad), _) => {
+                        if ad.t().is_type::<u8>() {
+                            let bytes: Vec<u8> = peek
+                                .into_list_like()
+                                .unwrap()
+                                .iter()
+                                .map(|p| *p.get::<u8>().unwrap())
+                                .collect();
+                            serializer.serialize_bytes(&bytes)?;
+                        } else {
+                            let peek_list = cpeek.into_list_like().unwrap();
+                            let len = peek_list.len();
+                            serializer.start_array(Some(len))?;
+                            stack.push(SerializeTask::EndArray);
+                            stack.push(SerializeTask::ArrayItems(peek_list));
+                        }
+                    }
+                    (Def::Slice(sd), _) => {
+                        if sd.t().is_type::<u8>() {
+                            serializer.serialize_bytes(cpeek.get::<&[u8]>().unwrap())?
+                        } else {
+                            let peek_list = cpeek.into_list_like().unwrap();
+                            let len = peek_list.len();
+                            serializer.start_array(Some(len))?;
+                            stack.push(SerializeTask::EndArray);
+                            stack.push(SerializeTask::ArrayItems(peek_list));
+                        }
                     }
                     (Def::Map(_), _) => {
                         let peek_map = cpeek.into_map().unwrap();
@@ -487,6 +526,11 @@ where
                             "Active variant index is {}, variant is {:?}",
                             variant_index, variant
                         );
+                        let discriminant = variant
+                            .discriminant
+                            .map(|d| d as u64)
+                            .unwrap_or(variant_index as u64);
+                        serializer.start_enum_variant(discriminant)?;
                         let flattened = maybe_field.map(|f| f.flattened).unwrap_or_default();
 
                         if variant.data.fields.is_empty() {

@@ -515,7 +515,9 @@ mod tests {
     fn rmp_serialize<T: Serialize>(value: &T) -> Vec<u8> {
         // Configure rmp_serde to serialize structs as maps
         let mut buf = Vec::new();
-        let mut ser = rmp_serde::Serializer::new(&mut buf).with_struct_map();
+        let mut ser = rmp_serde::Serializer::new(&mut buf)
+            .with_bytes(rmp_serde::config::BytesMode::ForceIterables)
+            .with_struct_map();
         value.serialize(&mut ser).unwrap();
         buf
     }
@@ -575,7 +577,7 @@ mod tests {
                 c: true,
             },
             d: None,
-            e: vec![],
+            e: vec![0], // rmp can't serialize empty bin8 correctly
         };
 
         let facet_bytes = to_vec(&value);
