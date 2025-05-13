@@ -61,7 +61,32 @@ fn from_str_value<'a>(wip: Wip<'a>, yaml: &str) -> Result<Wip<'a>, AnyErr> {
 }
 
 fn deserialize_value<'a>(mut wip: Wip<'a>, value: &Yaml) -> Result<Wip<'a>, AnyErr> {
+    // Get both the direct shape and innermost shape (for transparent types)
     let shape = wip.shape();
+    let innermost_shape = wip.innermost_shape();
+    let is_transparent = shape != innermost_shape;
+
+    #[cfg(feature = "log")]
+    {
+        log::debug!(
+            "deserialize_value: shape={}, innermost_shape={}, transparent={}",
+            shape,
+            innermost_shape,
+            is_transparent
+        );
+        log::debug!("YAML value: {:?}", value);
+    }
+
+    // Handle transparent types that wrap String
+    if is_transparent && innermost_shape.is_type::<String>() {
+        #[cfg(feature = "log")]
+        log::debug!("Handling transparent String wrapper");
+
+        if let Yaml::String(s) = value {
+            wip = wip.put(s.to_string()).map_err(|e| AnyErr(e.to_string()))?;
+            return Ok(wip);
+        }
+    }
 
     // First check the type system (Type)
     if let Type::User(UserType::Struct(_)) = &shape.ty {
@@ -73,6 +98,10 @@ fn deserialize_value<'a>(mut wip: Wip<'a>, value: &Yaml) -> Result<Wip<'a>, AnyE
                 let field_index = wip
                     .field_index(k)
                     .ok_or_else(|| AnyErr(format!("Field '{}' not found", k)))?;
+
+                #[cfg(feature = "log")]
+                log::debug!("Processing struct field '{}' (index: {})", k, field_index);
+
                 wip = wip
                     .field(field_index)
                     .map_err(|e| AnyErr(format!("Field '{}' error: {}", k, e)))?;
@@ -85,16 +114,23 @@ fn deserialize_value<'a>(mut wip: Wip<'a>, value: &Yaml) -> Result<Wip<'a>, AnyE
         return Ok(wip);
     }
 
-    // Then check the def system (Def)
-    match shape.def {
+    // Then check the def system (Def) using innermost_shape instead of shape
+    // This handles transparent types automatically by using the wrapped type
+    match innermost_shape.def {
         Def::Scalar(scalar_def) => {
+            #[cfg(feature = "log")]
+            log::debug!(
+                "Processing scalar type with affinity: {:?}",
+                scalar_def.affinity
+            );
+
             // For type conversions like String → OffsetDateTime, simply put the string value.
             // The Wip system will use the target type's try_from vtable function to handle
             // the conversion automatically. This works for time types, UUIDs, paths, etc.
-            if shape.is_type::<u64>() {
+            if innermost_shape.is_type::<u64>() {
                 let u = yaml_to_u64(value)?;
                 wip = wip.put(u).map_err(|e| AnyErr(e.to_string()))?;
-            } else if shape.is_type::<String>()
+            } else if innermost_shape.is_type::<String>()
                 || matches!(scalar_def.affinity, ScalarAffinity::Time(_))
             {
                 // For strings and types with time affinity (like OffsetDateTime), parse from string
@@ -111,9 +147,15 @@ fn deserialize_value<'a>(mut wip: Wip<'a>, value: &Yaml) -> Result<Wip<'a>, AnyE
             }
         }
         Def::List(_) => {
+            #[cfg(feature = "log")]
+            log::debug!("Processing list type");
+
             wip = deserialize_as_list(wip, value)?;
         }
         Def::Map(_) => {
+            #[cfg(feature = "log")]
+            log::debug!("Processing map type");
+
             wip = deserialize_as_map(wip, value)?;
         }
         // Enum has been moved to Type system
@@ -123,6 +165,9 @@ fn deserialize_value<'a>(mut wip: Wip<'a>, value: &Yaml) -> Result<Wip<'a>, AnyE
 }
 
 fn deserialize_as_list<'a>(mut wip: Wip<'a>, value: &Yaml) -> Result<Wip<'a>, AnyErr> {
+    #[cfg(feature = "log")]
+    log::debug!("deserialize_as_list: shape={}", wip.shape());
+
     if let Yaml::Array(array) = value {
         // Handle empty list
         if array.is_empty() {
@@ -133,7 +178,10 @@ fn deserialize_as_list<'a>(mut wip: Wip<'a>, value: &Yaml) -> Result<Wip<'a>, An
         wip = wip.begin_pushback().map_err(|e| AnyErr(e.to_string()))?;
 
         // Process each element
-        for element in array {
+        for (i, element) in array.iter().enumerate() {
+            #[cfg(feature = "log")]
+            log::debug!("Processing list element {}: {:?}", i, element);
+
             // Push element
             wip = wip.push().map_err(|e| AnyErr(e.to_string()))?;
             wip = deserialize_value(wip, element)?;

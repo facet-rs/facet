@@ -641,6 +641,7 @@ dependencies = [
  "facet-core",
  "facet-reflect",
  "facet-testhelpers 0.17.2",
+ "log",
  "time",
  "ulid",
  "yaml-rust2",

@@ -17,11 +17,13 @@ alloc = ["facet-core/alloc", "facet-reflect/alloc"]
 default = ["serialize", "deserialize", "std"]
 ulid = ["facet-core/ulid"]
 time = ["facet-core/time"]
+log = []
 
 [dependencies]
 yaml-rust2 = "0.10.1"
 facet-core = { version = "0.27.0", path = "../facet-core", default-features = false }
 facet-reflect = { version = "0.27.0", path = "../facet-reflect", default-features = false }
+log = "0.4.27"
 
 [dev-dependencies]
 facet = { path = "../facet" }
