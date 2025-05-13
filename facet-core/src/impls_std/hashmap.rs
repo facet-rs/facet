@@ -185,6 +185,20 @@ where
 
                                             None
                                         })
+                                        .next_back(|iter_ptr| unsafe {
+                                            let state = iter_ptr.as_mut::<HashMapIterator<'_, K>>();
+                                            let map = state.map.get::<HashMap<K, V>>();
+                                            while let Some(key) = state.keys.pop_back() {
+                                                if let Some(value) = map.get(key) {
+                                                    return Some((
+                                                        PtrConst::new(key as *const K),
+                                                        PtrConst::new(value as *const V),
+                                                    ));
+                                                }
+                                            }
+
+                                            None
+                                        })
                                         .dealloc(|iter_ptr| unsafe {
                                             drop(Box::from_raw(
                                                 iter_ptr.as_ptr::<HashMapIterator<'_, K>>()

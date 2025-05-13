@@ -135,6 +135,14 @@ pub type MapIterFn = for<'map> unsafe fn(map: PtrConst<'map>) -> PtrMut<'map>;
 pub type MapIterNextFn =
     for<'iter> unsafe fn(iter: PtrMut<'iter>) -> Option<(PtrConst<'iter>, PtrConst<'iter>)>;
 
+/// Get the next key-value pair from the end of the iterator
+///
+/// # Safety
+///
+/// The `iter` parameter must point to aligned, initialized memory of the correct type.
+pub type MapIterNextBackFn =
+    for<'iter> unsafe fn(iter: PtrMut<'iter>) -> Option<(PtrConst<'iter>, PtrConst<'iter>)>;
+
 /// Deallocate the iterator
 ///
 /// # Safety
@@ -150,6 +158,9 @@ pub struct MapIterVTable {
     /// cf. [`MapIterNextFn`]
     pub next: MapIterNextFn,
 
+    /// cf. [`MapIterNextBackFn`]
+    pub next_back: MapIterNextBackFn,
+
     /// cf. [`MapIterDeallocFn`]
     pub dealloc: MapIterDeallocFn,
 }
@@ -164,6 +175,7 @@ impl MapIterVTable {
 /// Builds a [`MapIterVTable`]
 pub struct MapIterVTableBuilder {
     next: Option<MapIterNextFn>,
+    next_back: Option<MapIterNextBackFn>,
     dealloc: Option<MapIterDeallocFn>,
 }
 
@@ -173,6 +185,7 @@ impl MapIterVTableBuilder {
     pub const fn new() -> Self {
         Self {
             next: None,
+            next_back: None,
             dealloc: None,
         }
     }
@@ -180,6 +193,12 @@ impl MapIterVTableBuilder {
     /// Sets the next field
     pub const fn next(mut self, f: MapIterNextFn) -> Self {
         self.next = Some(f);
+        self
+    }
+
+    /// Sets the next_back field
+    pub const fn next_back(mut self, f: MapIterNextBackFn) -> Self {
+        self.next_back = Some(f);
         self
     }
 
@@ -197,6 +216,7 @@ impl MapIterVTableBuilder {
     pub const fn build(self) -> MapIterVTable {
         MapIterVTable {
             next: self.next.unwrap(),
+            next_back: self.next_back.unwrap(),
             dealloc: self.dealloc.unwrap(),
         }
     }
