@@ -1,6 +1,6 @@
 [package]
 name = "facet-xdr"
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -10,13 +10,14 @@ keywords = ["xdr", "serialization", "deserialization", "reflection", "facet"]
 categories = ["encoding", "parsing", "data-structures"]
 
 [features]
-std = ["alloc", "facet-core/std", "facet-reflect/std"]
-alloc = ["facet-core/alloc", "facet-reflect/alloc"]
+std = ["alloc", "facet-core/std", "facet-reflect/std", "facet-serialize/std"]
+alloc = ["facet-core/alloc", "facet-reflect/alloc", "facet-serialize/alloc"]
 default = ["std"]
 
 [dependencies]
 facet-core = { version = "0.26.1", path = "../facet-core", default-features = false }
 facet-reflect = { version = "0.26.1", path = "../facet-reflect", default-features = false }
+facet-serialize = { version = "0.24.0", path = "../facet-serialize", default-features = false }
 
 [dev-dependencies]
 facet = { path = "../facet" }
