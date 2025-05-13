@@ -13,14 +13,14 @@ use alloc::{vec, vec::Vec};
 mod debug;
 mod error;
 use alloc::borrow::Cow;
-pub use debug::{InputDebug, input_to_cow};
+pub use debug::InputDebug;
 
 pub use error::*;
 
 mod span;
 use facet_core::{
-    Characteristic, Def, Facet, FieldFlags, ScalarAffinity, SequenceType, StructKind, Type,
-    UserType,
+    Characteristic, Def, Facet, FieldFlags, PointerType, ScalarAffinity, SequenceType, StructKind,
+    Type, UserType,
 };
 use owo_colors::OwoColorize;
 pub use span::*;
@@ -170,6 +170,9 @@ pub trait Format {
     /// * `CliFmt`  => `Input<'input> = [&'input str]`
     type Input<'input>: ?Sized;
 
+    /// The lowercase source ID of the format, used for error reporting.
+    fn source(&self) -> &'static str;
+
     /// Advance the parser with current state and expectation, producing the next outcome or error.
     fn next<'input, 'facet>(
         &mut self,
@@ -241,14 +244,12 @@ where
     F::Input<'input>: InputDebug,
     'input: 'facet,
 {
-    let wip = Wip::alloc_shape(T::SHAPE).map_err(|e| DeserError {
-        input: input_to_cow(input), // Helper function to convert any input to Cow<[u8]>
-        span: Span { start: 0, len: 0 },
-        kind: DeserErrorKind::ReflectError(e),
-    })?;
+    let source = format.source();
+    let wip = Wip::alloc_shape(T::SHAPE)
+        .map_err(|e| DeserError::new_reflect(e, input, Span { start: 0, len: 0 }, source))?;
     deserialize_wip(wip, input, format)?
         .materialize()
-        .map_err(|e| DeserError::new_reflect(e, input, Span { start: 0, len: 0 }))
+        .map_err(|e| DeserError::new_reflect(e, input, Span { start: 0, len: 0 }, source))
 }
 
 /// Deserializes a working-in-progress value into a fully materialized heap value.
@@ -272,6 +273,7 @@ where
             Instruction::Value(ValueReason::TopLevel),
         ],
         last_span: Span::new(0, 0),
+        format_source: format.source(),
     };
 
     macro_rules! next {
@@ -381,6 +383,8 @@ pub struct StackRunner<'input, I: ?Sized + 'input = [u8]> {
     pub stack: Vec<Instruction>,
     /// Span of the last processed token, for accurate error reporting.
     pub last_span: Span,
+    /// Format source identifier for error reporting
+    pub format_source: &'static str,
 }
 
 impl<'input, I: ?Sized + 'input> StackRunner<'input, I>
@@ -389,13 +393,18 @@ where
 {
     /// Convenience function to create a DeserError using the original input and last_span.
     fn err(&self, kind: DeserErrorKind) -> DeserError<'input> {
-        DeserError::new(kind, self.original_input, self.last_span)
+        DeserError::new(
+            kind,
+            self.original_input,
+            self.last_span,
+            self.format_source,
+        )
     }
 
     /// Convenience function to create a DeserError from a ReflectError,
     /// using the original input and last_span for context.
     fn reflect_err(&self, err: ReflectError) -> DeserError<'input> {
-        DeserError::new_reflect(err, self.original_input, self.last_span)
+        DeserError::new_reflect(err, self.original_input, self.last_span, self.format_source)
     }
 
     pub fn pop<'facet>(
@@ -630,7 +639,10 @@ where
         &self,
         wip: Wip<'facet>,
         scalar: Scalar<'input>,
-    ) -> Result<Wip<'facet>, DeserError<'input>> {
+    ) -> Result<Wip<'facet>, DeserError<'input>>
+    where
+        'input: 'facet, // 'input outlives 'facet
+    {
         match scalar {
             Scalar::String(cow) => {
                 match wip.innermost_shape().ty {
@@ -651,6 +663,16 @@ where
                             }
                         }
                     }
+                    Type::Pointer(PointerType::Reference(_))
+                        if wip.innermost_shape().is_type::<&str>() =>
+                    {
+                        // This is for handling the &str type
+                        // The Cow may be Borrowed (we may have an owned string but need a &str)
+                        match cow {
+                            Cow::Borrowed(s) => wip.put(s).map_err(|e| self.reflect_err(e)),
+                            Cow::Owned(s) => wip.put(s).map_err(|e| self.reflect_err(e)),
+                        }
+                    }
                     _ => wip.put(cow.to_string()).map_err(|e| self.reflect_err(e)),
                 }
             }
@@ -667,7 +689,10 @@ where
         &mut self,
         mut wip: Wip<'facet>,
         outcome: Spanned<Outcome<'input>>,
-    ) -> Result<Wip<'facet>, DeserError<'input>> {
+    ) -> Result<Wip<'facet>, DeserError<'input>>
+    where
+        'input: 'facet, // 'input must outlive 'facet
+    {
         trace!(
             "Handling value at {} (innermost {})",
             wip.shape().blue(),

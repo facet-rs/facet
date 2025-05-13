@@ -360,6 +360,7 @@ dependencies = [
  "facet-pretty",
  "facet-reflect",
  "facet-testhelpers 0.17.2",
+ "insta",
  "log",
 ]
 

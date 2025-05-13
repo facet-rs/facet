@@ -21,3 +21,4 @@ eyre = "0.6.12"
 facet = { path = "../facet" }
 facet-pretty = { path = "../facet-pretty" }
 facet-testhelpers = { path = "../facet-testhelpers" }
+insta = "1.43.1"

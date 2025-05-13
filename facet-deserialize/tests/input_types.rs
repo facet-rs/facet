@@ -21,6 +21,10 @@ mod tests {
     impl Format for MockByteFormat {
         type Input<'input> = [u8];
 
+        fn source(&self) -> &'static str {
+            "bin"
+        }
+
         /// Generate tokens for deserialization in a predetermined sequence.
         ///
         /// Rather than actually parsing input bytes, this implementation simulates
@@ -158,6 +162,10 @@ mod tests {
 
     impl Format for MockCliFormat {
         type Input<'input> = [&'input str];
+
+        fn source(&self) -> &'static str {
+            "cli"
+        }
 
         /// Generate tokens for processing CLI-like arguments.
         ///

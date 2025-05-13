@@ -21,6 +21,9 @@ pub struct DeserError<'input> {
 
     /// The specific error that occurred while parsing the JSON.
     pub kind: DeserErrorKind,
+
+    /// The source identifier for error reporting
+    pub source_id: &'static str,
 }
 
 impl DeserError<'_> {
@@ -30,6 +33,7 @@ impl DeserError<'_> {
             input: self.input.into_owned().into(),
             span: self.span,
             kind: self.kind,
+            source_id: self.source_id,
         }
     }
 
@@ -68,6 +72,13 @@ pub enum DeserErrorKind {
     UnexpectedEof {
         /// The expected value as a string description.
         wanted: &'static str,
+    },
+    /// Indicates a value was expected to follow an element in the input.
+    MissingValue {
+        /// Describes what type of value was expected.
+        expected: &'static str,
+        /// The element that requires the missing value.
+        field: String,
     },
     /// A required struct field was missing at the end of JSON input.
     MissingField(&'static str),
@@ -110,7 +121,12 @@ pub enum DeserErrorKind {
 
 impl<'input> DeserError<'input> {
     /// Creates a new deser error, preserving input and location context for accurate reporting.
-    pub fn new<I>(kind: DeserErrorKind, input: &'input I, span: Span) -> Self
+    pub fn new<I>(
+        kind: DeserErrorKind,
+        input: &'input I,
+        span: Span,
+        source_id: &'static str,
+    ) -> Self
     where
         I: ?Sized + 'input + InputDebug,
     {
@@ -118,15 +134,52 @@ impl<'input> DeserError<'input> {
             input: input.as_cow(),
             span,
             kind,
+            source_id,
         }
     }
 
+    // pub fn new<I>(kind: DeserErrorKind, input: &'input I, span: Span, source_id: &'static str) -> Self
+    // where
+    //     I: ?Sized + 'input + InputDebug,
+    // {
+    //     Self::with_source(kind, input, span, source_id)
+    // }
+
     /// Constructs a reflection-related deser error, keeping contextual information intact.
-    pub(crate) fn new_reflect<I>(e: ReflectError, input: &'input I, span: Span) -> Self
+    pub(crate) fn new_reflect<I>(
+        e: ReflectError,
+        input: &'input I,
+        span: Span,
+        source_id: &'static str,
+    ) -> Self
     where
         I: ?Sized + 'input + InputDebug,
     {
-        DeserError::new(DeserErrorKind::ReflectError(e), input, span)
+        DeserError::new(DeserErrorKind::ReflectError(e), input, span, source_id)
+    }
+
+    // /// Give the caller full control
+    // pub fn with_source<I>(
+    //     kind: DeserErrorKind,
+    //     input: &'input I,
+    //     span: Span,
+    //     source_id: &'static str,
+    // ) -> Self
+    // where
+    //     I: ?Sized + 'input + InputDebug,
+    // {
+    //     Self {
+    //         input: input.as_cow(),
+    //         span,
+    //         kind,
+    //         source_id,
+    //     }
+    // }
+
+    /// Sets the source ID for this error
+    pub fn with_source_id(mut self, source_id: &'static str) -> Self {
+        self.source_id = source_id;
+        self
     }
 
     /// Provides a human-friendly message wrapper to improve error readability.
@@ -158,6 +211,9 @@ impl core::fmt::Display for DeserErrorMessage<'_> {
             }
             DeserErrorKind::UnexpectedEof { wanted } => {
                 write!(f, "Unexpected end of file: wanted {}", wanted.red())
+            }
+            DeserErrorKind::MissingValue { expected, field } => {
+                write!(f, "Missing {} for {}", expected.red(), field.yellow())
             }
             DeserErrorKind::MissingField(fld) => write!(f, "Missing required field: {}", fld.red()),
             DeserErrorKind::NumberOutOfRange(n) => {
@@ -238,7 +294,7 @@ impl core::fmt::Display for DeserError<'_> {
             return write!(f, "(JSON input was invalid UTF-8)");
         };
 
-        let source_id = "json";
+        let source_id = self.source_id;
         let span_start = self.span.start();
         let span_end = self.span.end();
 

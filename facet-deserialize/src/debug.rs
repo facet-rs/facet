@@ -42,11 +42,3 @@ impl InputDebug for [&str] {
         Cow::Owned(joined.into_bytes())
     }
 }
-
-/// Helper function for error creation
-pub fn input_to_cow<'input, I>(input: &'input I) -> Cow<'input, [u8]>
-where
-    I: ?Sized + 'input + InputDebug,
-{
-    input.as_cow()
-}
