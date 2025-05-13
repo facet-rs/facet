@@ -1,9 +1,7 @@
-use core::alloc::Layout;
-
 use crate::{
     Def, Facet, KnownSmartPointer, PtrConst, PtrMut, PtrUninit, Shape, ShapeLayout,
     SmartPointerDef, SmartPointerFlags, SmartPointerVTable, TryBorrowInnerError, TryFromError,
-    Type, UserType, ValueVTable, value_vtable,
+    TryIntoInnerError, Type, UserType, ValueVTable, value_vtable,
 };
 
 unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for alloc::sync::Arc<T> {
@@ -33,30 +31,53 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for alloc::sync::Arc<T> {
                 let arc_ptr = arc_mut.as_mut_ptr();
                 let arc_ptr: *mut u8 = arc_ptr as *mut u8;
                 unsafe {
-                    std::ptr::copy_nonoverlapping(src_ptr.as_ptr::<u8>(), arc_ptr, type_size)
+                    core::ptr::copy_nonoverlapping(src_ptr.as_ptr::<u8>(), arc_ptr, type_size)
                 };
             }
 
             Ok(unsafe { dst.put(arc) })
         }
 
-        // unsafe fn try_into_inner<'a, 'src, 'dst, T: Facet<'a> + ?Sized>(
-        //     src_ptr: PtrConst<'src>,
-        //     dst: PtrUninit<'dst>,
-        // ) -> Result<PtrMut<'dst>, TryIntoInnerError> {
-        //     let arc = unsafe { src_ptr.get::<alloc::sync::Arc<T>>() };
-        //     match alloc::sync::Arc::try_unwrap(arc.clone()) {
-        //         Ok(t) => Ok(unsafe { dst.put(t) }),
-        //         Err(_) => Err(TryIntoInnerError::Unavailable),
-        //     }
-        // }
+        unsafe fn try_into_inner<'a, 'src, 'dst, T: Facet<'a> + ?Sized>(
+            src_ptr: PtrConst<'src>,
+            dst: PtrUninit<'dst>,
+        ) -> Result<PtrMut<'dst>, TryIntoInnerError> {
+            // Copy the bytes of the inner value pointed by the Arc<T> into the destination.
+            let mut arc = unsafe { src_ptr.read::<alloc::sync::Arc<T>>() };
 
-        // unsafe fn try_borrow_inner<'a, 'src, T: Facet<'a> + ?Sized>(
-        //     src_ptr: PtrConst<'src>,
-        // ) -> Result<PtrConst<'src>, TryBorrowInnerError> {
-        //     let arc = unsafe { src_ptr.get::<alloc::sync::Arc<T>>() };
-        //     Ok(PtrConst::new(&**arc))
-        // }
+            // For unsized types, we need to know how many bytes to copy.
+            let type_size = match T::SHAPE.layout {
+                ShapeLayout::Sized(layout) => layout.size(),
+                _ => panic!("cannot try_into_inner with unsized type"),
+            };
+
+            // Get a pointer to the inner T held by the Arc<T> using Arc::get_mut.
+            // Safety: We assume the caller has exclusive access to the Arc at this point.
+            let arc_mut: Option<&mut T> = alloc::sync::Arc::get_mut(&mut arc);
+            let src: *const u8 = match arc_mut {
+                Some(t_mut) => t_mut as *mut T as *const u8,
+                None => {
+                    // Don't fallback to shared, just return an error.
+                    return Err(TryIntoInnerError::Unavailable);
+                }
+            };
+            let dst: *mut u8 = dst.as_mut_byte_ptr();
+
+            // Actually copy the inner value bytes from Arc<T> to the destination memory.
+            unsafe {
+                core::ptr::copy_nonoverlapping(src, dst, type_size);
+            }
+
+            // Use PtrMut::new to construct a PtrMut from the destination pointer.
+            Ok(PtrMut::new(dst))
+        }
+
+        unsafe fn try_borrow_inner<'a, 'src, T: Facet<'a> + ?Sized>(
+            src_ptr: PtrConst<'src>,
+        ) -> Result<PtrConst<'src>, TryBorrowInnerError> {
+            let arc = unsafe { src_ptr.get::<alloc::sync::Arc<T>>() };
+            Ok(PtrConst::new(&**arc))
+        }
 
         let mut vtable = value_vtable!(alloc::sync::Arc<T>, |f, opts| {
             write!(f, "Arc")?;
@@ -71,8 +92,8 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for alloc::sync::Arc<T> {
         });
 
         vtable.try_from = Some(try_from::<T>);
-        // vtable.try_into_inner = Some(try_into_inner::<T>);
-        // vtable.try_borrow_inner = Some(try_borrow_inner::<T>);
+        vtable.try_into_inner = Some(try_into_inner::<T>);
+        vtable.try_borrow_inner = Some(try_borrow_inner::<T>);
         vtable
     };
 
@@ -101,11 +122,40 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for alloc::sync::Arc<T> {
                                     let ptr = Self::as_ptr(unsafe { this.get() });
                                     PtrConst::new(ptr)
                                 })
-                                // .new_into_fn(|this, ptr| {
-                                //     let t = unsafe { ptr.read::<T>() };
-                                //    let arc = alloc::sync::Arc::new(t);
-                                //     unsafe { this.put(arc) }
-                                // })
+                                .new_into_fn(|this, ptr| {
+                                    // We cannot do ptr.read::<T>() if T:?Sized, so do a raw byte copy instead
+                                    // We assume the out pointer (this) is for Arc<T>, and ptr is the underlying value T
+
+                                    // For unsized types, we need to determine the correct size to copy.
+                                    let shape = T::SHAPE;
+
+                                    let type_size = match shape.layout {
+                                        ShapeLayout::Sized(layout) => layout.size(),
+                                        _ => panic!("Arc<T>: T must be Sized for new_into_fn"),
+                                    };
+
+                                    // create an Arc<[MaybeUninit<u8>]> uninitialized, place into output memory
+                                    let mut arc: alloc::sync::Arc<[core::mem::MaybeUninit<u8>]> =
+                                        alloc::sync::Arc::new_uninit_slice(type_size);
+
+                                    // Copy bytes from user-supplied value (ptr) into the Arc's data buffer
+                                    {
+                                        let arc_mut = alloc::sync::Arc::get_mut(&mut arc).unwrap();
+                                        let arc_ptr = arc_mut.as_mut_ptr();
+                                        let arc_ptr: *mut u8 = arc_ptr as *mut u8;
+                                        unsafe {
+                                            core::ptr::copy_nonoverlapping(
+                                                ptr.as_ptr::<u8>(),
+                                                arc_ptr,
+                                                type_size,
+                                            )
+                                        };
+                                    }
+
+                                    // Now assume_init on the Arc's data
+                                    let arc = unsafe { arc.assume_init() };
+                                    unsafe { this.put(arc) }
+                                })
                                 .downgrade_into_fn(|strong, weak| unsafe {
                                     weak.put(alloc::sync::Arc::downgrade(strong.get::<Self>()))
                                 })
