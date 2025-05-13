@@ -1110,6 +1110,7 @@ fn pub_crate_enum() {
     insta::assert_snapshot!(expand(
         r#"
         #[derive(Facet)]
+        #[repr(u8)]
         pub(crate) enum LogLevel {
             Debug,
             Info,
