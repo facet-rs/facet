@@ -179,7 +179,7 @@ fn serialize_scalar<W: Write>(scalar_def: &ScalarDef, writer: &mut W) -> std::io
         }
         _ => Err(std::io::Error::new(
             std::io::ErrorKind::Other,
-            format!("Unsupported scalar type: {scalar_def:#?}"),
+            format!("facet-jsonschema: nsupported scalar type: {scalar_def:#?}"),
         )),
     }
 }

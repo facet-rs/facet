@@ -93,3 +93,28 @@ When working with type information:
 3. For tuples, use `Type::Sequence(SequenceType::Tuple)`.
 
 This design lets facet handle both generic data structures (`Def`) and Rust's specific type system (`Type`).
+
+### Type Conversion in Deserialization
+
+When implementing deserialization in format-specific modules (YAML, JSON, etc.):
+
+- For types that parse from strings (OffsetDateTime, UUID, etc.), simply `wip.put(string_value)` 
+- The automatic conversion is handled through the type's vtable.try_from implementation
+- You don't need to manually parse the string - the system handles it for you
+- This keeps format-specific code simple and avoids duplication of parsing logic
+
+Use `ScalarAffinity` patterns to detect and handle related types:
+
+```rust
+// For scalar_def with time affinity (like OffsetDateTime)
+if matches!(scalar_def.affinity, ScalarAffinity::Time(_)) {
+    // Simply put the string value, the automatic conversion will handle parsing
+    let s = value.as_str().unwrap_or_default().to_string();
+    wip = wip.put(s).map_err(|e| AnyErr(e.to_string()))?;
+}
+```
+
+Other common scalar affinities to handle:
+- `ScalarAffinity::Path(_)` - for Path types
+- `ScalarAffinity::UUID(_)` - for UUID types 
+- `ScalarAffinity::ULID(_)` - for ULID types

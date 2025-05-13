@@ -10,7 +10,7 @@ use alloc::{
     string::{String, ToString},
 };
 use error::AnyErr;
-use facet_core::{Def, Facet, Type, UserType};
+use facet_core::{Def, Facet, ScalarAffinity, Type, UserType};
 use facet_reflect::Wip;
 use yaml_rust2::{Yaml, YamlLoader};
 
@@ -87,18 +87,27 @@ fn deserialize_value<'a>(mut wip: Wip<'a>, value: &Yaml) -> Result<Wip<'a>, AnyE
 
     // Then check the def system (Def)
     match shape.def {
-        Def::Scalar(_) => {
+        Def::Scalar(scalar_def) => {
+            // For type conversions like String → OffsetDateTime, simply put the string value.
+            // The Wip system will use the target type's try_from vtable function to handle
+            // the conversion automatically. This works for time types, UUIDs, paths, etc.
             if shape.is_type::<u64>() {
                 let u = yaml_to_u64(value)?;
                 wip = wip.put(u).map_err(|e| AnyErr(e.to_string()))?;
-            } else if shape.is_type::<String>() {
+            } else if shape.is_type::<String>()
+                || matches!(scalar_def.affinity, ScalarAffinity::Time(_))
+            {
+                // For strings and types with time affinity (like OffsetDateTime), parse from string
                 let s = value
                     .as_str()
                     .ok_or_else(|| AnyErr(format!("Expected string, got: {}", yaml_type(value))))?
                     .to_string();
                 wip = wip.put(s).map_err(|e| AnyErr(e.to_string()))?;
             } else {
-                return Err(AnyErr(format!("Unsupported scalar type: {}", shape)));
+                return Err(AnyErr(format!(
+                    "facet-yaml: unsupported scalar type: {}",
+                    shape
+                )));
             }
         }
         Def::List(_) => todo!(),

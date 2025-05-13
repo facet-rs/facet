@@ -348,7 +348,9 @@ where
                             Some(ScalarType::ISize) => {
                                 serializer.serialize_isize(*cpeek.get::<isize>().unwrap())?
                             }
-                            Some(unsupported) => panic!("Unsupported scalar type: {unsupported:?}"),
+                            Some(unsupported) => {
+                                panic!("facet-serialize: unsupported scalar type: {unsupported:?}")
+                            }
                             None => {
                                 match sd.affinity {
                                     ScalarAffinity::Time(_)

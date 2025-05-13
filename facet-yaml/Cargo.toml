@@ -16,6 +16,7 @@ std = ["alloc", "facet-core/std", "facet-reflect/std"]
 alloc = ["facet-core/alloc", "facet-reflect/alloc"]
 default = ["serialize", "deserialize", "std"]
 ulid = ["facet-core/ulid"]
+time = ["facet-core/time"]
 
 [dependencies]
 yaml-rust2 = "0.10.1"
@@ -26,3 +27,5 @@ facet-reflect = { version = "0.27.0", path = "../facet-reflect", default-feature
 facet = { path = "../facet" }
 eyre = "0.6.12"
 ulid = "1.2.1"
+time = { version = "0.3.41", features = ["macros", "parsing", "formatting"] }
+facet-testhelpers = { path = "../facet-testhelpers" }

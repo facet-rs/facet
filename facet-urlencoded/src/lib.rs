@@ -244,7 +244,7 @@ fn deserialize_scalar_field<'mem>(
                     }
                 }
             } else {
-                warn!("Unsupported scalar type: {}", wip.shape());
+                warn!("facet-yaml: unsupported scalar type: {}", wip.shape());
                 return Err(UrlEncodedError::UnsupportedType(format!("{}", wip.shape())));
             };
             Ok(wip.pop()?)
