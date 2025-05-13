@@ -1,7 +1,9 @@
+use core::alloc::Layout;
+
 use crate::{
-    Def, Facet, KnownSmartPointer, PtrConst, PtrMut, PtrUninit, Shape, SmartPointerDef,
-    SmartPointerFlags, SmartPointerVTable, TryBorrowInnerError, TryFromError, Type, UserType,
-    ValueVTable, value_vtable,
+    Def, Facet, KnownSmartPointer, PtrConst, PtrMut, PtrUninit, Shape, ShapeLayout,
+    SmartPointerDef, SmartPointerFlags, SmartPointerVTable, TryBorrowInnerError, TryFromError,
+    Type, UserType, ValueVTable, value_vtable,
 };
 
 unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for alloc::sync::Arc<T> {
@@ -18,12 +20,23 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for alloc::sync::Arc<T> {
                     expected: &[T::SHAPE],
                 });
             }
-            // Leverage Arc::from_raw to construct an Arc<T> from the raw pointer.
-            // SAFETY: src_ptr must have come from an Arc<T>::into_raw (or allocation)
-            let t_ptr = unsafe { src_ptr.as_ptr::<T>() };
-            let arc = unsafe { alloc::sync::Arc::from_raw(t_ptr) };
-            // Now that Arc owns the pointer, ensure we don't double-drop by incrementing the strong count pre FromRaw.
-            core::mem::forget(alloc::sync::Arc::clone(&arc));
+
+            let type_size = match T::SHAPE.layout {
+                ShapeLayout::Sized(l) => l.size(),
+                _ => panic!("can't try_from with unsized type"),
+            };
+
+            let mut arc: alloc::sync::Arc<[core::mem::MaybeUninit<u8>]> =
+                alloc::sync::Arc::new_uninit_slice(type_size);
+            {
+                let arc_mut = alloc::sync::Arc::get_mut(&mut arc).unwrap();
+                let arc_ptr = arc_mut.as_mut_ptr();
+                let arc_ptr: *mut u8 = arc_ptr as *mut u8;
+                unsafe {
+                    std::ptr::copy_nonoverlapping(src_ptr.as_ptr::<u8>(), arc_ptr, type_size)
+                };
+            }
+
             Ok(unsafe { dst.put(arc) })
         }
 
@@ -38,12 +51,12 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for alloc::sync::Arc<T> {
         //     }
         // }
 
-        unsafe fn try_borrow_inner<'a, 'src, T: Facet<'a> + ?Sized>(
-            src_ptr: PtrConst<'src>,
-        ) -> Result<PtrConst<'src>, TryBorrowInnerError> {
-            let arc = unsafe { src_ptr.get::<alloc::sync::Arc<T>>() };
-            Ok(PtrConst::new(&**arc))
-        }
+        // unsafe fn try_borrow_inner<'a, 'src, T: Facet<'a> + ?Sized>(
+        //     src_ptr: PtrConst<'src>,
+        // ) -> Result<PtrConst<'src>, TryBorrowInnerError> {
+        //     let arc = unsafe { src_ptr.get::<alloc::sync::Arc<T>>() };
+        //     Ok(PtrConst::new(&**arc))
+        // }
 
         let mut vtable = value_vtable!(alloc::sync::Arc<T>, |f, opts| {
             write!(f, "Arc")?;
@@ -59,7 +72,7 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for alloc::sync::Arc<T> {
 
         vtable.try_from = Some(try_from::<T>);
         // vtable.try_into_inner = Some(try_into_inner::<T>);
-        vtable.try_borrow_inner = Some(try_borrow_inner::<T>);
+        // vtable.try_borrow_inner = Some(try_borrow_inner::<T>);
         vtable
     };
 
@@ -80,7 +93,7 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for alloc::sync::Arc<T> {
                     .pointee(|| T::SHAPE)
                     .flags(SmartPointerFlags::ATOMIC)
                     .known(KnownSmartPointer::Arc)
-                    // .weak(|| <alloc::sync::Weak<T> as Facet>::SHAPE)
+                    .weak(|| <alloc::sync::Weak<T> as Facet>::SHAPE)
                     .vtable(
                         &const {
                             SmartPointerVTable::builder()
@@ -90,7 +103,7 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for alloc::sync::Arc<T> {
                                 })
                                 // .new_into_fn(|this, ptr| {
                                 //     let t = unsafe { ptr.read::<T>() };
-                                //     let arc = alloc::sync::Arc::new(t);
+                                //    let arc = alloc::sync::Arc::new(t);
                                 //     unsafe { this.put(arc) }
                                 // })
                                 .downgrade_into_fn(|strong, weak| unsafe {
@@ -106,7 +119,7 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for alloc::sync::Arc<T> {
     };
 }
 
-unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Weak<T> {
+unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for alloc::sync::Weak<T> {
     const VTABLE: &'static ValueVTable = &const {
         value_vtable!(alloc::sync::Weak<T>, |f, opts| {
             write!(f, "Weak")?;
@@ -123,7 +136,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Weak<T> {
 
     const SHAPE: &'static crate::Shape = &const {
         // Function to return inner type's shape
-        fn inner_shape<'a, T: Facet<'a>>() -> &'static Shape {
+        fn inner_shape<'a, T: Facet<'a> + ?Sized>() -> &'static Shape {
             T::SHAPE
         }
 
