@@ -193,7 +193,7 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
 
     /// Try to get the value as a string if it's a string type
     /// Returns None if the value is not a string or couldn't be extracted
-    pub fn as_str(&self) -> Option<&str> {
+    pub fn as_str(&self) -> Option<&'mem str> {
         let peek = self.innermost_peek();
         if let Some(ScalarType::Str) = peek.scalar_type() {
             unsafe { Some(peek.data.get::<&str>()) }

@@ -106,7 +106,7 @@ pub(crate) fn gen_field_from_pfield(
                 let predicate = expr;
                 let field_ty = field_type;
                 vtable_items.push(quote! {
-                    .skip_serializing_if(unsafe { ::std::mem::transmute((#predicate) as fn(&#field_ty) -> bool) })
+                    .skip_serializing_if(unsafe { ::core::mem::transmute((#predicate) as fn(&#field_ty) -> bool) })
                 });
             }
             // These are handled by PName or are container-level, so ignore them for field attributes.

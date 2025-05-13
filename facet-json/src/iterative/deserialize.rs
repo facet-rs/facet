@@ -7,39 +7,29 @@ use facet_deserialize::{
 };
 use log::trace;
 
-mod tokenizer;
-use tokenizer::{Token, TokenError, TokenErrorKind, Tokenizer};
+use crate::tokenizer::{Token, TokenError, TokenErrorKind, Tokenizer};
 
-/// Deserialize JSON from a given byte slice
-pub fn from_slice<'input: 'facet, 'facet, T: Facet<'facet>>(
+pub(crate) fn from_slice<'input: 'facet, 'facet, T: Facet<'facet>>(
     input: &'input [u8],
 ) -> Result<T, DeserError<'input>> {
-    facet_deserialize::deserialize(input, Json)
+    facet_deserialize::deserialize(input, crate::Json)
 }
 
-/// Deserialize JSON from a given string
-pub fn from_str<'input: 'facet, 'facet, T: Facet<'facet>>(
+pub(crate) fn from_str<'input: 'facet, 'facet, T: Facet<'facet>>(
     input: &'input str,
 ) -> Result<T, DeserError<'input>> {
     let input = input.as_bytes();
-    facet_deserialize::deserialize(input, Json)
+    facet_deserialize::deserialize(input, crate::Json)
 }
 
-/// Deserialize JSON from a given string, converting any dynamic error into a static one.
-///
-/// This function attempts to deserialize a type `T` implementing `Facet` from the input string slice.
-/// If deserialization fails, the error is converted into an owned, static error type to avoid lifetime issues.
-pub fn from_str_static_error<'input: 'facet, 'facet, T: Facet<'facet>>(
+pub(crate) fn from_str_static_error<'input: 'facet, 'facet, T: Facet<'facet>>(
     input: &'input str,
 ) -> Result<T, DeserError<'input>> {
     let input = input.as_bytes();
-    facet_deserialize::deserialize(input, Json).map_err(|e| e.into_owned())
+    facet_deserialize::deserialize(input, crate::Json).map_err(|e| e.into_owned())
 }
 
-/// The JSON format
-pub struct Json;
-
-impl Format for Json {
+impl Format for crate::Json {
     fn next<'input, 'facet>(
         &mut self,
         nd: NextData<'input, 'facet>,
