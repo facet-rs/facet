@@ -1,11 +1,10 @@
-use eyre::Result;
-use facet::Facet;
-use facet_yaml::from_str;
-use time::OffsetDateTime;
-
 #[test]
 #[cfg(feature = "time")]
-fn test_deserialize_datetime_utc() -> Result<()> {
+fn test_deserialize_datetime_utc() -> eyre::Result<()> {
+    use facet::Facet;
+    use facet_yaml::from_str;
+    use time::OffsetDateTime;
+
     facet_testhelpers::setup();
 
     #[derive(Facet, Debug, PartialEq)]
@@ -56,7 +55,11 @@ fn test_deserialize_datetime_utc() -> Result<()> {
 
 #[test]
 #[cfg(feature = "time")]
-fn test_deserialize_datetime_with_offset() -> Result<()> {
+fn test_deserialize_datetime_with_offset() -> eyre::Result<()> {
+    use facet::Facet;
+    use facet_yaml::from_str;
+    use time::OffsetDateTime;
+
     facet_testhelpers::setup();
 
     #[derive(Facet, Debug, PartialEq)]

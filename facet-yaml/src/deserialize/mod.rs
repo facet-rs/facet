@@ -110,10 +110,79 @@ fn deserialize_value<'a>(mut wip: Wip<'a>, value: &Yaml) -> Result<Wip<'a>, AnyE
                 )));
             }
         }
-        Def::List(_) => todo!(),
-        Def::Map(_) => todo!(),
+        Def::List(_) => {
+            wip = deserialize_as_list(wip, value)?;
+        }
+        Def::Map(_) => {
+            wip = deserialize_as_map(wip, value)?;
+        }
         // Enum has been moved to Type system
         _ => return Err(AnyErr(format!("Unsupported type: {:?}", shape))),
     }
     Ok(wip)
+}
+
+fn deserialize_as_list<'a>(mut wip: Wip<'a>, value: &Yaml) -> Result<Wip<'a>, AnyErr> {
+    if let Yaml::Array(array) = value {
+        // Handle empty list
+        if array.is_empty() {
+            return wip.put_empty_list().map_err(|e| AnyErr(e.to_string()));
+        }
+
+        // Start the list
+        wip = wip.begin_pushback().map_err(|e| AnyErr(e.to_string()))?;
+
+        // Process each element
+        for element in array {
+            // Push element
+            wip = wip.push().map_err(|e| AnyErr(e.to_string()))?;
+            wip = deserialize_value(wip, element)?;
+            wip = wip.pop().map_err(|e| AnyErr(e.to_string()))?;
+        }
+
+        Ok(wip)
+    } else {
+        Err(AnyErr(format!(
+            "Expected a YAML array, got: {}",
+            yaml_type(value)
+        )))
+    }
+}
+
+fn deserialize_as_map<'a>(mut wip: Wip<'a>, value: &Yaml) -> Result<Wip<'a>, AnyErr> {
+    if let Yaml::Hash(hash) = value {
+        // Handle empty map
+        if hash.is_empty() {
+            return wip.put_empty_map().map_err(|e| AnyErr(e.to_string()));
+        }
+
+        // Start the map
+        wip = wip.begin_map_insert().map_err(|e| AnyErr(e.to_string()))?;
+
+        // Process each key-value pair
+        for (k, v) in hash {
+            // Get the key as a string
+            let key_str = k
+                .as_str()
+                .ok_or_else(|| AnyErr(format!("Expected string key, got: {}", yaml_type(k))))?;
+
+            // Push map key
+            wip = wip.push_map_key().map_err(|e| AnyErr(e.to_string()))?;
+            wip = wip
+                .put(key_str.to_string())
+                .map_err(|e| AnyErr(e.to_string()))?;
+
+            // Push map value
+            wip = wip.push_map_value().map_err(|e| AnyErr(e.to_string()))?;
+            wip = deserialize_value(wip, v)?;
+            wip = wip.pop().map_err(|e| AnyErr(e.to_string()))?;
+        }
+
+        Ok(wip)
+    } else {
+        Err(AnyErr(format!(
+            "Expected a YAML hash/map, got: {}",
+            yaml_type(value)
+        )))
+    }
 }
