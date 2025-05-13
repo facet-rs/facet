@@ -479,6 +479,7 @@ dependencies = [
  "insta",
  "jiff",
  "log",
+ "ordered-float",
  "time",
  "ulid",
  "uuid",

@@ -36,6 +36,7 @@ facet-core = { version = "0.27.0", path = "../facet-core", features = [
     "ulid",
     "uuid",
     "jiff02",
+    "ordered-float",
 ] }
 facet-testhelpers = { path = "../facet-testhelpers" }
 insta = "1.43.1"
@@ -43,3 +44,4 @@ time = { version = "0.3.41", features = ["macros"] }
 ulid = { version = "1.2.1" }
 uuid = { version = "1.16.0" }
 jiff = "0.2.13"
+ordered-float = "5.0.0"
