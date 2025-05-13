@@ -1,13 +1,13 @@
 use crate::{
     Def, Facet, KnownSmartPointer, PtrConst, PtrMut, PtrUninit, Shape, SmartPointerDef,
-    SmartPointerFlags, SmartPointerVTable, TryBorrowInnerError, TryFromError, TryIntoInnerError,
-    Type, UserType, ValueVTable, value_vtable,
+    SmartPointerFlags, SmartPointerVTable, TryBorrowInnerError, TryFromError, Type, UserType,
+    ValueVTable, value_vtable,
 };
 
-unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
+unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for alloc::sync::Arc<T> {
     const VTABLE: &'static ValueVTable = &const {
         // Define the functions for transparent conversion between Arc<T> and T
-        unsafe fn try_from<'a, 'src, 'dst, T: Facet<'a>>(
+        unsafe fn try_from<'a, 'src, 'dst, T: Facet<'a> + ?Sized>(
             src_ptr: PtrConst<'src>,
             src_shape: &'static Shape,
             dst: PtrUninit<'dst>,
@@ -18,23 +18,27 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
                     expected: &[T::SHAPE],
                 });
             }
-            let t = unsafe { src_ptr.read::<T>() };
-            let arc = alloc::sync::Arc::new(t);
+            // Leverage Arc::from_raw to construct an Arc<T> from the raw pointer.
+            // SAFETY: src_ptr must have come from an Arc<T>::into_raw (or allocation)
+            let t_ptr = unsafe { src_ptr.as_ptr::<T>() };
+            let arc = unsafe { alloc::sync::Arc::from_raw(t_ptr) };
+            // Now that Arc owns the pointer, ensure we don't double-drop by incrementing the strong count pre FromRaw.
+            core::mem::forget(alloc::sync::Arc::clone(&arc));
             Ok(unsafe { dst.put(arc) })
         }
 
-        unsafe fn try_into_inner<'a, 'src, 'dst, T: Facet<'a>>(
-            src_ptr: PtrConst<'src>,
-            dst: PtrUninit<'dst>,
-        ) -> Result<PtrMut<'dst>, TryIntoInnerError> {
-            let arc = unsafe { src_ptr.get::<alloc::sync::Arc<T>>() };
-            match alloc::sync::Arc::try_unwrap(arc.clone()) {
-                Ok(t) => Ok(unsafe { dst.put(t) }),
-                Err(_) => Err(TryIntoInnerError::Unavailable),
-            }
-        }
+        // unsafe fn try_into_inner<'a, 'src, 'dst, T: Facet<'a> + ?Sized>(
+        //     src_ptr: PtrConst<'src>,
+        //     dst: PtrUninit<'dst>,
+        // ) -> Result<PtrMut<'dst>, TryIntoInnerError> {
+        //     let arc = unsafe { src_ptr.get::<alloc::sync::Arc<T>>() };
+        //     match alloc::sync::Arc::try_unwrap(arc.clone()) {
+        //         Ok(t) => Ok(unsafe { dst.put(t) }),
+        //         Err(_) => Err(TryIntoInnerError::Unavailable),
+        //     }
+        // }
 
-        unsafe fn try_borrow_inner<'a, 'src, T: Facet<'a>>(
+        unsafe fn try_borrow_inner<'a, 'src, T: Facet<'a> + ?Sized>(
             src_ptr: PtrConst<'src>,
         ) -> Result<PtrConst<'src>, TryBorrowInnerError> {
             let arc = unsafe { src_ptr.get::<alloc::sync::Arc<T>>() };
@@ -52,15 +56,16 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
             }
             Ok(())
         });
+
         vtable.try_from = Some(try_from::<T>);
-        vtable.try_into_inner = Some(try_into_inner::<T>);
+        // vtable.try_into_inner = Some(try_into_inner::<T>);
         vtable.try_borrow_inner = Some(try_borrow_inner::<T>);
         vtable
     };
 
     const SHAPE: &'static crate::Shape = &const {
         // Function to return inner type's shape
-        fn inner_shape<'a, T: Facet<'a>>() -> &'static Shape {
+        fn inner_shape<'a, T: Facet<'a> + ?Sized>() -> &'static Shape {
             T::SHAPE
         }
 
@@ -75,7 +80,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
                     .pointee(|| T::SHAPE)
                     .flags(SmartPointerFlags::ATOMIC)
                     .known(KnownSmartPointer::Arc)
-                    .weak(|| <alloc::sync::Weak<T> as Facet>::SHAPE)
+                    // .weak(|| <alloc::sync::Weak<T> as Facet>::SHAPE)
                     .vtable(
                         &const {
                             SmartPointerVTable::builder()
@@ -83,11 +88,11 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
                                     let ptr = Self::as_ptr(unsafe { this.get() });
                                     PtrConst::new(ptr)
                                 })
-                                .new_into_fn(|this, ptr| {
-                                    let t = unsafe { ptr.read::<T>() };
-                                    let arc = alloc::sync::Arc::new(t);
-                                    unsafe { this.put(arc) }
-                                })
+                                // .new_into_fn(|this, ptr| {
+                                //     let t = unsafe { ptr.read::<T>() };
+                                //     let arc = alloc::sync::Arc::new(t);
+                                //     unsafe { this.put(arc) }
+                                // })
                                 .downgrade_into_fn(|strong, weak| unsafe {
                                     weak.put(alloc::sync::Arc::downgrade(strong.get::<Self>()))
                                 })

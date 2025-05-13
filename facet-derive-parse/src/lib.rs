@@ -410,8 +410,8 @@ unsynn! {
     pub struct Enum {
         /// Attributes applied to the enum (e.g., `#[repr(...)]`).
         pub attributes: Vec<Attribute>,
-        /// Optional visibility modifier (`pub` keyword).
-        pub _pub: Option<KPub>, // FIXME: Needs to be proper Vis
+        /// Optional visibility modifier (e.g., `pub`, `pub(crate)`, etc.).
+        pub _vis: Option<Vis>,
         /// The `enum` keyword.
         pub _kw_enum: KEnum,
         /// The name of the enum.

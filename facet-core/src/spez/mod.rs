@@ -30,7 +30,7 @@ pub struct Spez<T>(pub T);
 /// Unlike [`Spez`], [`SpezEmpty`] wraps a type instead of a value. It is used in conjunction with
 /// trait implementations that leverage Rust's method resolution rules to select different
 /// implementations based on available traits.
-pub struct SpezEmpty<T>(PhantomData<fn(T) -> T>);
+pub struct SpezEmpty<T: ?Sized>(PhantomData<fn(T) -> T>);
 
 impl<T> SpezEmpty<T> {
     /// An instance of [`SpezEmpty`].

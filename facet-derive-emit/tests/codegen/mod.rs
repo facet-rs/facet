@@ -1104,3 +1104,18 @@ fn struct_with_option_cow_str() {
         "#
     ));
 }
+
+#[test]
+fn pub_crate_enum() {
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        pub(crate) enum LogLevel {
+            Debug,
+            Info,
+            Warn,
+            Error,
+        }
+        "#
+    ));
+}
