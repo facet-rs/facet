@@ -131,8 +131,8 @@ mod tests {
             .expect("Box<T> should have new_into_fn");
 
         // Create the value and initialize the Box
-        let value = String::from("example");
-        let box_ptr = unsafe { new_into_fn(box_uninit_ptr, PtrConst::new(&raw const value)) };
+        let mut value = String::from("example");
+        let box_ptr = unsafe { new_into_fn(box_uninit_ptr, PtrMut::new(&raw mut value)) };
         // The value now belongs to the Box, prevent its drop
         core::mem::forget(value);
 

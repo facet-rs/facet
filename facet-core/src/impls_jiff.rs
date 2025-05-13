@@ -144,13 +144,15 @@ unsafe impl Facet<'_> for DateTime {
 mod tests {
     use core::fmt;
 
-    use jiff::{Timestamp, Zoned, civil::DateTime};
+    use jiff::{Timestamp, civil::DateTime};
 
     use crate::{Facet, PtrConst};
 
     #[test]
     #[cfg(not(miri))] // I don't think we can read time zones from miri, the test just fails
     fn parse_zoned() -> eyre::Result<()> {
+        use jiff::Zoned;
+
         facet_testhelpers::setup();
 
         let target = Zoned::SHAPE.allocate()?;

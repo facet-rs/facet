@@ -1,3 +1,5 @@
+use core::alloc::Layout;
+
 use crate::{
     Def, Facet, KnownSmartPointer, PtrConst, PtrMut, PtrUninit, Shape, ShapeLayout,
     SmartPointerDef, SmartPointerFlags, SmartPointerVTable, TryBorrowInnerError, TryFromError,
@@ -123,37 +125,51 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for alloc::sync::Arc<T> {
                                     PtrConst::new(ptr)
                                 })
                                 .new_into_fn(|this, ptr| {
-                                    // We cannot do ptr.read::<T>() if T:?Sized, so do a raw byte copy instead
-                                    // We assume the out pointer (this) is for Arc<T>, and ptr is the underlying value T
+                                    use alloc::sync::Arc;
 
-                                    // For unsized types, we need to determine the correct size to copy.
-                                    let shape = T::SHAPE;
-
-                                    let type_size = match shape.layout {
-                                        ShapeLayout::Sized(layout) => layout.size(),
-                                        _ => panic!("Arc<T>: T must be Sized for new_into_fn"),
+                                    let layout = match T::SHAPE.layout {
+                                        ShapeLayout::Sized(layout) => layout,
+                                        ShapeLayout::Unsized => panic!("nope"),
                                     };
 
-                                    // create an Arc<[MaybeUninit<u8>]> uninitialized, place into output memory
-                                    let mut arc: alloc::sync::Arc<[core::mem::MaybeUninit<u8>]> =
-                                        alloc::sync::Arc::new_uninit_slice(type_size);
+                                    let size_of_arc_header = core::mem::size_of::<usize>() * 2;
 
-                                    // Copy bytes from user-supplied value (ptr) into the Arc's data buffer
-                                    {
-                                        let arc_mut = alloc::sync::Arc::get_mut(&mut arc).unwrap();
-                                        let arc_ptr = arc_mut.as_mut_ptr();
-                                        let arc_ptr: *mut u8 = arc_ptr as *mut u8;
-                                        unsafe {
-                                            core::ptr::copy_nonoverlapping(
-                                                ptr.as_ptr::<u8>(),
-                                                arc_ptr,
-                                                type_size,
-                                            )
-                                        };
+                                    // we don't know the layout of dummy_arc, but we can tell its size and we can copy it
+                                    // in front of the `PtrMut`
+                                    let arc_layout = unsafe {
+                                        Layout::from_size_align_unchecked(
+                                            size_of_arc_header + layout.size(),
+                                            layout.align(),
+                                        )
+                                    };
+                                    let mem = unsafe { alloc::alloc::alloc(arc_layout) };
+
+                                    unsafe {
+                                        // Copy the Arc header (including refcounts, vtable pointers, etc.) from a freshly-allocated Arc<()>
+                                        // so that the struct before the T value is a valid Arc header.
+                                        let dummy_arc = alloc::sync::Arc::new(());
+                                        let header_start = (Arc::as_ptr(&dummy_arc) as *const u8)
+                                            .sub(size_of_arc_header);
+                                        core::ptr::copy_nonoverlapping(
+                                            header_start,
+                                            mem,
+                                            size_of_arc_header,
+                                        );
+
+                                        // Copy the value for T, pointed to by `ptr`, into the bytes just after the Arc header
+                                        core::ptr::copy_nonoverlapping(
+                                            ptr.as_byte_ptr(),
+                                            mem.add(size_of_arc_header),
+                                            layout.size(),
+                                        );
                                     }
 
-                                    // Now assume_init on the Arc's data
-                                    let arc = unsafe { arc.assume_init() };
+                                    // Safety: `mem` is valid and contains a valid Arc header and valid T.
+                                    let ptr = unsafe { mem.add(size_of_arc_header) };
+                                    let t_ptr: *mut T = unsafe { core::mem::transmute_copy(&ptr) };
+                                    // Safety: This is the pointer to the Arc header + value; from_raw assumes a pointer to T located immediately after the Arc header.
+                                    let arc = unsafe { Arc::from_raw(t_ptr) };
+                                    // Move the Arc into the destination (this) and return a PtrMut for it.
                                     unsafe { this.put(arc) }
                                 })
                                 .downgrade_into_fn(|strong, weak| unsafe {
@@ -253,8 +269,8 @@ mod tests {
             .expect("Arc<T> should have new_into_fn");
 
         // Create the value and initialize the Arc
-        let value = String::from("example");
-        let arc_ptr = unsafe { new_into_fn(arc_uninit_ptr, PtrConst::new(&raw const value)) };
+        let mut value = String::from("example");
+        let arc_ptr = unsafe { new_into_fn(arc_uninit_ptr, PtrMut::new(&raw mut value)) };
         // The value now belongs to the Arc, prevent its drop
         core::mem::forget(value);
 
@@ -305,8 +321,8 @@ mod tests {
         // 1. Create the first Arc (arc1)
         let arc1_uninit_ptr = arc_shape.allocate()?;
         let new_into_fn = arc_def.vtable.new_into_fn.unwrap();
-        let value = String::from("example");
-        let arc1_ptr = unsafe { new_into_fn(arc1_uninit_ptr, PtrConst::new(&raw const value)) };
+        let mut value = String::from("example");
+        let arc1_ptr = unsafe { new_into_fn(arc1_uninit_ptr, PtrMut::new(&raw mut value)) };
         core::mem::forget(value); // Value now owned by arc1
 
         // 2. Downgrade arc1 to create a weak pointer (weak1)
@@ -368,8 +384,8 @@ mod tests {
         // 1. Create the strong Arc (arc1)
         let arc1_uninit_ptr = arc_shape.allocate()?;
         let new_into_fn = arc_def.vtable.new_into_fn.unwrap();
-        let value = String::from("example");
-        let arc1_ptr = unsafe { new_into_fn(arc1_uninit_ptr, PtrConst::new(&raw const value)) };
+        let mut value = String::from("example");
+        let arc1_ptr = unsafe { new_into_fn(arc1_uninit_ptr, PtrMut::new(&raw mut value)) };
         core::mem::forget(value);
 
         // 2. Downgrade arc1 to create a weak pointer (weak1)

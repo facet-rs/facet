@@ -185,8 +185,8 @@ mod tests {
             .expect("Rc<T> should have new_into_fn");
 
         // Create the value and initialize the Rc
-        let value = String::from("example");
-        let rc_ptr = unsafe { new_into_fn(rc_uninit_ptr, PtrConst::new(&raw const value)) };
+        let mut value = String::from("example");
+        let rc_ptr = unsafe { new_into_fn(rc_uninit_ptr, PtrMut::new(&raw mut value)) };
         // The value now belongs to the Rc, prevent its drop
         core::mem::forget(value);
 
@@ -237,8 +237,8 @@ mod tests {
         // 1. Create the first Rc (rc1)
         let rc1_uninit_ptr = rc_shape.allocate()?;
         let new_into_fn = rc_def.vtable.new_into_fn.unwrap();
-        let value = String::from("example");
-        let rc1_ptr = unsafe { new_into_fn(rc1_uninit_ptr, PtrConst::new(&raw const value)) };
+        let mut value = String::from("example");
+        let rc1_ptr = unsafe { new_into_fn(rc1_uninit_ptr, PtrMut::new(&raw mut value)) };
         core::mem::forget(value); // Value now owned by rc1
 
         // 2. Downgrade rc1 to create a weak pointer (weak1)
@@ -300,8 +300,8 @@ mod tests {
         // 1. Create the strong Rc (rc1)
         let rc1_uninit_ptr = rc_shape.allocate()?;
         let new_into_fn = rc_def.vtable.new_into_fn.unwrap();
-        let value = String::from("example");
-        let rc1_ptr = unsafe { new_into_fn(rc1_uninit_ptr, PtrConst::new(&raw const value)) };
+        let mut value = String::from("example");
+        let rc1_ptr = unsafe { new_into_fn(rc1_uninit_ptr, PtrMut::new(&raw mut value)) };
         core::mem::forget(value);
 
         // 2. Downgrade rc1 to create a weak pointer (weak1)

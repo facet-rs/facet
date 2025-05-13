@@ -222,8 +222,7 @@ pub type BorrowFn = for<'ptr> unsafe fn(this: PtrConst<'ptr>) -> PtrConst<'ptr>;
 ///
 /// `ptr` is moved out of (with [`core::ptr::read`]) — it should be deallocated afterwards (e.g.
 /// with [`core::mem::forget`]) but NOT dropped).
-pub type NewIntoFn =
-    for<'ptr> unsafe fn(this: PtrUninit<'ptr>, ptr: PtrConst<'ptr>) -> PtrMut<'ptr>;
+pub type NewIntoFn = for<'ptr> unsafe fn(this: PtrUninit<'ptr>, ptr: PtrMut<'ptr>) -> PtrMut<'ptr>;
 
 /// Type-erased result of locking a mutex-like smart pointer
 pub struct LockResult<'ptr> {
@@ -299,7 +298,7 @@ impl SmartPointerVTable {
             upgrade_into_fn: None,
             downgrade_into_fn: None,
             borrow_fn: None,
-            new_fn: None,
+            new_into_fn: None,
             lock_fn: None,
             read_fn: None,
             write_fn: None,
@@ -313,7 +312,7 @@ pub struct SmartPointerVTableBuilder {
     upgrade_into_fn: Option<UpgradeIntoFn>,
     downgrade_into_fn: Option<DowngradeIntoFn>,
     borrow_fn: Option<BorrowFn>,
-    new_fn: Option<NewIntoFn>,
+    new_into_fn: Option<NewIntoFn>,
     lock_fn: Option<LockFn>,
     read_fn: Option<ReadFn>,
     write_fn: Option<WriteFn>,
@@ -328,7 +327,7 @@ impl SmartPointerVTableBuilder {
             upgrade_into_fn: None,
             downgrade_into_fn: None,
             borrow_fn: None,
-            new_fn: None,
+            new_into_fn: None,
             lock_fn: None,
             read_fn: None,
             write_fn: None,
@@ -356,10 +355,10 @@ impl SmartPointerVTableBuilder {
         self
     }
 
-    /// Sets the `new` function.
+    /// Sets the `new_into` function.
     #[must_use]
     pub const fn new_into_fn(mut self, new_fn: NewIntoFn) -> Self {
-        self.new_fn = Some(new_fn);
+        self.new_into_fn = Some(new_fn);
         self
     }
 
@@ -391,7 +390,7 @@ impl SmartPointerVTableBuilder {
             upgrade_into_fn: self.upgrade_into_fn,
             downgrade_into_fn: self.downgrade_into_fn,
             borrow_fn: self.borrow_fn,
-            new_into_fn: self.new_fn,
+            new_into_fn: self.new_into_fn,
             lock_fn: self.lock_fn,
             read_fn: self.read_fn,
             write_fn: self.write_fn,
