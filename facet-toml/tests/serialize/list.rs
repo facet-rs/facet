@@ -1,13 +1,11 @@
 //! Tests for TOML values to lists.
 
-use eyre::Result;
 use facet::Facet;
+use facet_testhelpers::test;
 use facet_toml::TomlDeErrorKind;
 
 #[test]
-fn test_scalar_list() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_scalar_list() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         values: Vec<i32>,
@@ -39,14 +37,10 @@ fn test_scalar_list() -> Result<()> {
             got: "boolean"
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_unit_struct_list() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_unit_struct_list() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         values: Vec<Item>,
@@ -101,14 +95,10 @@ fn test_unit_struct_list() -> Result<()> {
             got: "boolean"
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_nested_lists() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_nested_lists() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         values: Vec<Vec<i32>>,
@@ -166,6 +156,4 @@ fn test_nested_lists() -> Result<()> {
             got: "boolean"
         }
     );
-
-    Ok(())
 }

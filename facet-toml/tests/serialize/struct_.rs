@@ -1,14 +1,12 @@
 //! Tests for TOML table values.
 
-use eyre::Result;
 use facet::Facet;
+use facet_testhelpers::test;
 
 use crate::assert_serialize;
 
 #[test]
-fn test_table_to_struct() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_table_to_struct() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: i32,
@@ -27,14 +25,10 @@ fn test_table_to_struct() -> Result<()> {
             table: Table { value: 2 },
         },
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_unit_struct() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_unit_struct() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: i32,
@@ -51,14 +45,10 @@ fn test_unit_struct() -> Result<()> {
             unit: Unit(2),
         },
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_nested_unit_struct() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_nested_unit_struct() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: i32,
@@ -78,14 +68,10 @@ fn test_nested_unit_struct() -> Result<()> {
             unit: NestedUnit(Unit(2)),
         },
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_root_struct_multiple_fields() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_root_struct_multiple_fields() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         a: i32,
@@ -101,14 +87,10 @@ fn test_root_struct_multiple_fields() -> Result<()> {
             c: "'' \"test ".to_string()
         },
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_nested_struct_multiple_fields() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_nested_struct_multiple_fields() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         nested: Nested,
@@ -131,14 +113,10 @@ fn test_nested_struct_multiple_fields() -> Result<()> {
             }
         },
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_rename_single_struct_fields() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_rename_single_struct_fields() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         #[facet(rename = "1")]
@@ -156,18 +134,14 @@ fn test_rename_single_struct_fields() -> Result<()> {
         Root {
             a: 1,
             b: true,
-            c: "quoted".parse().unwrap(),
+            c: "quoted".parse()?,
             d: 2
         },
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_rename_all_struct_fields() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_rename_all_struct_fields() {
     #[derive(Debug, Facet, PartialEq)]
     #[facet(rename_all = "kebab-case")]
     struct Root {
@@ -185,14 +159,10 @@ fn test_rename_all_struct_fields() -> Result<()> {
             shouldnt_matter: 1.0
         },
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_default_struct_fields() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_default_struct_fields() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         #[facet(default)]
@@ -211,14 +181,10 @@ fn test_default_struct_fields() -> Result<()> {
             c: "hi".to_string()
         },
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_optional_default_struct_fields() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_optional_default_struct_fields() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         #[facet(default)]
@@ -237,6 +203,4 @@ fn test_optional_default_struct_fields() -> Result<()> {
             c: Some("hi".to_string())
         },
     );
-
-    Ok(())
 }

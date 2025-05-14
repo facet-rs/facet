@@ -2,16 +2,14 @@
 
 use std::collections::HashMap;
 
-use eyre::Result;
 use facet::Facet;
 use facet_toml::TomlSerError;
 
 use crate::assert_serialize;
+use facet_testhelpers::test;
 
 #[test]
-fn test_scalar_map() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_scalar_map() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         values: HashMap<String, i32>,
@@ -30,14 +28,10 @@ fn test_scalar_map() -> Result<()> {
             values: [("a".to_string(), 0), ("b".to_string(), -1)].into()
         },
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_optional_scalar_map() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_optional_scalar_map() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         values: Option<HashMap<String, i32>>,
@@ -58,14 +52,10 @@ fn test_optional_scalar_map() -> Result<()> {
             values: Some([("a".to_string(), 0), ("b".to_string(), -1)].into())
         },
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_scalar_map_with_other_fields() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_scalar_map_with_other_fields() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         values: HashMap<String, i32>,
@@ -87,14 +77,10 @@ fn test_scalar_map_with_other_fields() -> Result<()> {
             other: 2,
         },
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_unit_struct_map() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_unit_struct_map() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         values: HashMap<String, Item>,
@@ -120,14 +106,10 @@ fn test_unit_struct_map() -> Result<()> {
             .into()
         },
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_struct_map() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_struct_map() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         dependencies: HashMap<String, Dependency>,
@@ -161,14 +143,10 @@ fn test_struct_map() -> Result<()> {
             .into()
         },
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_optional_struct_map() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_optional_struct_map() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         dependencies: HashMap<String, Dependency>,
@@ -209,14 +187,10 @@ fn test_optional_struct_map() -> Result<()> {
             .into()
         },
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_invalid_map_key() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_invalid_map_key() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: HashMap<bool, i32>,
@@ -229,6 +203,4 @@ fn test_invalid_map_key() -> Result<()> {
         .unwrap_err(),
         TomlSerError::InvalidKeyConversion { .. }
     ));
-
-    Ok(())
 }

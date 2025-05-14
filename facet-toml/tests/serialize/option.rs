@@ -1,13 +1,11 @@
 //! Tests for TOML values to different forms of options.
 
-use eyre::Result;
 use facet::Facet;
+use facet_testhelpers::test;
 use facet_toml::TomlDeErrorKind;
 
 #[test]
-fn test_option_scalar() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_option_scalar() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: Option<i32>,
@@ -28,14 +26,10 @@ fn test_option_scalar() -> Result<()> {
             got: "boolean"
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_nested_option() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_nested_option() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: Option<Option<i32>>,
@@ -58,14 +52,10 @@ fn test_nested_option() -> Result<()> {
             got: "boolean"
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_option_struct() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_option_struct() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: Option<Item>,
@@ -90,14 +80,10 @@ fn test_option_struct() -> Result<()> {
             .kind,
         TomlDeErrorKind::ExpectedFieldWithName("value")
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_option_struct_with_option() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_option_struct_with_option() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: Option<Item>,
@@ -125,14 +111,10 @@ fn test_option_struct_with_option() -> Result<()> {
             got: "boolean"
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_option_enum() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_option_enum() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: Option<Item>,
@@ -165,14 +147,10 @@ fn test_option_enum() -> Result<()> {
             .kind,
         TomlDeErrorKind::GenericReflect(_)
     ));
-
-    Ok(())
 }
 
 #[test]
-fn test_option_enum_option_scalar() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_option_enum_option_scalar() {
     #[derive(Debug, Facet, PartialEq)]
     #[repr(u8)]
     enum Root {
@@ -227,14 +205,10 @@ fn test_option_enum_option_scalar() -> Result<()> {
             got: "boolean"
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_option_enum_with_option_variant() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_option_enum_with_option_variant() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: Option<Item>,
@@ -260,6 +234,4 @@ fn test_option_enum_with_option_variant() -> Result<()> {
             value: Some(Item::B(Some(1)))
         },
     );
-
-    Ok(())
 }

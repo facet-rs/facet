@@ -1,5 +1,5 @@
-use eyre::Result;
 use facet::Facet;
+use facet_testhelpers::test;
 
 #[derive(Debug, Facet, PartialEq)]
 struct Person {
@@ -9,9 +9,7 @@ struct Person {
 
 #[cfg(feature = "alloc")]
 #[test]
-fn test_serialize_person() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_serialize_person() {
     let person = Person {
         name: "Alice".to_string(),
         age: 30,
@@ -20,6 +18,4 @@ fn test_serialize_person() -> Result<()> {
     let toml = facet_toml::to_string(&person)?;
 
     assert_eq!(toml, "name = \"Alice\"\nage = 30\n");
-
-    Ok(())
 }

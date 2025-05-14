@@ -1,13 +1,11 @@
 //! Tests for TOML values to structs.
 
-use eyre::Result;
 use facet::Facet;
+use facet_testhelpers::test;
 use facet_toml::TomlDeErrorKind;
 
 #[test]
-fn test_unit_only_enum() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_unit_only_enum() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: UnitOnlyEnum,
@@ -39,14 +37,10 @@ fn test_unit_only_enum() -> Result<()> {
             .kind,
         TomlDeErrorKind::ExpectedFieldWithName("value")
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_single_value_on_non_unit_enum() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_single_value_on_non_unit_enum() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: WithNonUnitVariant,
@@ -67,14 +61,10 @@ fn test_single_value_on_non_unit_enum() -> Result<()> {
         },
     );
     assert!(facet_toml::from_str::<Root>("value = 'VariantB'").is_err());
-
-    Ok(())
 }
 
 #[test]
-fn test_tuple_enum() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_tuple_enum() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: WithTupleVariants,
@@ -105,14 +95,10 @@ fn test_tuple_enum() -> Result<()> {
             value: WithTupleVariants::TwoFields(true, 1)
         },
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_struct_enum() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_struct_enum() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: WithStructVariants,
@@ -146,14 +132,10 @@ fn test_struct_enum() -> Result<()> {
             }
         },
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_nested_struct_enum() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_nested_struct_enum() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: WithNestedStructVariants,
@@ -204,14 +186,10 @@ fn test_nested_struct_enum() -> Result<()> {
             }
         },
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_enum_root() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_enum_root() {
     #[derive(Debug, Facet, PartialEq)]
     #[repr(u8)]
     enum Root {
@@ -226,6 +204,4 @@ fn test_enum_root() -> Result<()> {
     );
     assert_eq!(facet_toml::from_str::<Root>("B = 2")?, Root::B(2));
     assert_eq!(facet_toml::from_str::<Root>("[C]")?, Root::C);
-
-    Ok(())
 }

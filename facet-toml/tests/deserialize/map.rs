@@ -2,14 +2,12 @@
 
 use std::collections::HashMap;
 
-use eyre::Result;
 use facet::Facet;
+use facet_testhelpers::test;
 use facet_toml::TomlDeErrorKind;
 
 #[test]
-fn test_scalar_map() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_scalar_map() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         values: HashMap<String, i32>,
@@ -60,14 +58,10 @@ fn test_scalar_map() -> Result<()> {
             got: "table"
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_scalar_map_with_other_fields() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_scalar_map_with_other_fields() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         values: HashMap<String, i32>,
@@ -127,14 +121,10 @@ fn test_scalar_map_with_other_fields() -> Result<()> {
             got: "table"
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_unit_struct_map() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_unit_struct_map() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         values: HashMap<String, Item>,
@@ -184,14 +174,10 @@ fn test_unit_struct_map() -> Result<()> {
             got: "integer"
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_struct_map() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_struct_map() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         dependencies: HashMap<String, Dependency>,
@@ -238,6 +224,4 @@ fn test_struct_map() -> Result<()> {
             .into()
         },
     );
-
-    Ok(())
 }

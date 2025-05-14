@@ -1,16 +1,14 @@
 //! Tests for scalar values.
 
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use facet_testhelpers::test;
 
-use eyre::Result;
 use facet::{ConstTypeId, Facet};
 use facet_toml::TomlDeErrorKind;
 
 #[cfg(feature = "std")]
 #[test]
-fn test_string() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_string() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: String,
@@ -29,15 +27,11 @@ fn test_string() -> Result<()> {
             got: "integer"
         }
     );
-
-    Ok(())
 }
 
 #[cfg(feature = "std")]
 #[test]
-fn test_cow_string() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_cow_string() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: std::borrow::Cow<'static, str>,
@@ -56,14 +50,10 @@ fn test_cow_string() -> Result<()> {
             got: "integer"
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_bool() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_bool() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: bool,
@@ -100,14 +90,10 @@ fn test_bool() -> Result<()> {
             got: "table"
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_char() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_char() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: char,
@@ -126,15 +112,11 @@ fn test_char() -> Result<()> {
             got: "string"
         }
     );
-
-    Ok(())
 }
 
 #[cfg(feature = "std")]
 #[test]
-fn test_socket_addr() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_socket_addr() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: std::net::SocketAddr,
@@ -146,14 +128,10 @@ fn test_socket_addr() -> Result<()> {
             value: "127.0.0.1:8000".parse().unwrap()
         },
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_ip_addr() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_ip_addr() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: IpAddr,
@@ -188,14 +166,10 @@ fn test_ip_addr() -> Result<()> {
             got: "boolean"
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_ipv4_addr() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_ipv4_addr() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: Ipv4Addr,
@@ -207,14 +181,10 @@ fn test_ipv4_addr() -> Result<()> {
             value: "127.0.0.1".parse().unwrap()
         },
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_ipv6_addr() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_ipv6_addr() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: Ipv6Addr,
@@ -226,14 +196,10 @@ fn test_ipv6_addr() -> Result<()> {
             value: "::1".parse().unwrap()
         },
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_f64() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_f64() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: f64,
@@ -252,14 +218,10 @@ fn test_f64() -> Result<()> {
             got: "boolean"
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_f32() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_f32() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: f32,
@@ -278,14 +240,10 @@ fn test_f32() -> Result<()> {
             got: "boolean"
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_usize() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_usize() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: usize,
@@ -305,14 +263,10 @@ fn test_usize() -> Result<()> {
             got: "boolean"
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_u64() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_u64() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: u64,
@@ -332,14 +286,10 @@ fn test_u64() -> Result<()> {
             got: "boolean"
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_u32() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_u32() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: u32,
@@ -359,14 +309,10 @@ fn test_u32() -> Result<()> {
             got: "boolean"
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_u16() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_u16() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: u16,
@@ -386,14 +332,10 @@ fn test_u16() -> Result<()> {
             got: "boolean"
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_u8() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_u8() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: u8,
@@ -413,14 +355,10 @@ fn test_u8() -> Result<()> {
             got: "boolean"
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_isize() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_isize() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: isize,
@@ -439,14 +377,10 @@ fn test_isize() -> Result<()> {
             got: "boolean"
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_i64() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_i64() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: i64,
@@ -465,14 +399,10 @@ fn test_i64() -> Result<()> {
             got: "boolean"
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_i32() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_i32() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: i32,
@@ -491,14 +421,10 @@ fn test_i32() -> Result<()> {
             got: "boolean"
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_i16() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_i16() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: i16,
@@ -517,14 +443,10 @@ fn test_i16() -> Result<()> {
             got: "boolean"
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_i8() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_i8() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: i8,
@@ -553,28 +475,20 @@ fn test_i8() -> Result<()> {
             got: "boolean"
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_unit() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_unit() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: (),
     }
 
     assert_eq!(facet_toml::from_str::<Root>("")?, Root { value: () });
-
-    Ok(())
 }
 
 #[test]
 fn test_unparsable_scalar() {
-    facet_testhelpers::setup();
-
     // The error type might have changed with our implementation
     // Test now just checks that we get an error of some kind
     let result = facet_toml::from_str::<ConstTypeId>("value = 1");
