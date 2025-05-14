@@ -14,9 +14,9 @@ pub enum ScalarType {
     Char,
     /// Primitive type `str`.
     Str,
-    /// `std::string::String`.
+    /// `alloc::string::String`.
     String,
-    /// `std::borrow::Cow<'_, str>`.
+    /// `alloc::borrow::Cow<'_, str>`.
     CowStr,
     /// Primitive type `f32`.
     F32,
@@ -47,7 +47,6 @@ pub enum ScalarType {
     /// Primitive type `isize`.
     ISize,
     /// `core::net::SocketAddr`.
-    #[cfg(feature = "std")]
     SocketAddr,
     /// `core::net::IpAddr`.
     IpAddr,
@@ -62,8 +61,8 @@ pub enum ScalarType {
 impl ScalarType {
     /// Infer the type from a shape definition.
     pub fn try_from_shape(shape: &'static Shape) -> Option<Self> {
-        #[cfg(feature = "std")]
-        if shape.id == ConstTypeId::of::<String>() {
+        #[cfg(feature = "alloc")]
+        if shape.id == ConstTypeId::of::<alloc::string::String>() {
             return Some(ScalarType::String);
         } else if shape.id == ConstTypeId::of::<alloc::borrow::Cow<'_, str>>() {
             return Some(ScalarType::CowStr);

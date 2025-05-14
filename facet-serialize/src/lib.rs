@@ -362,11 +362,17 @@ where
                                             serializer
                                                 .serialize_str(&alloc::format!("{}", cpeek))?
                                         } else {
-                                            panic!("Unsupported shape: {}", cpeek.shape())
+                                            panic!(
+                                                "Unsupported shape (no display): {}",
+                                                cpeek.shape()
+                                            )
                                         }
                                     }
                                     _ => {
-                                        panic!("Unsupported shape: {}", cpeek.shape())
+                                        panic!(
+                                            "Unsupported shape (unsupported affinity): {}",
+                                            cpeek.shape()
+                                        )
                                     }
                                 }
                             }

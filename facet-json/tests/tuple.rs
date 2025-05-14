@@ -1,5 +1,5 @@
 use eyre::Result;
-use facet_json::from_str;
+use facet_json::{from_str, to_string};
 
 #[test]
 fn test_deserialize_tuple_string() -> Result<()> {
@@ -187,4 +187,17 @@ fn test_deserialize_tuple_empty_nested_2x_flexible() -> Result<()> {
     let _ok: (((((),),),),) = from_str("[[[]]]")?; // Should be from "[[[[[]]]]]" but OK
 
     Ok(())
+}
+
+#[test]
+fn test_serialize_tuple() {
+    let test_tuple1 = ("groetjes", 3);
+    let json = to_string(&test_tuple1);
+    assert_eq!(json, r#"["groetjes",3]"#);
+
+    #[derive(facet::Facet)]
+    struct TestTuple(i32, String, bool);
+    let test_tuple2 = TestTuple(3, "aaa".to_string(), true);
+    let json = to_string(&test_tuple2);
+    assert_eq!(json, r#"[3,"aaa",true]"#);
 }

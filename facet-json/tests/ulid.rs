@@ -1,10 +1,10 @@
 use eyre::Result;
 use facet::Facet;
-use facet_json::from_str;
+use facet_json::{from_str, to_string};
 use ulid::Ulid;
 
 #[test]
-fn json_read_ulid() -> Result<()> {
+fn ulid_read() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Facet, Debug, PartialEq)]
@@ -26,19 +26,20 @@ fn json_read_ulid() -> Result<()> {
 }
 
 #[test]
-fn json_write_ulid() -> Result<()> {
+fn ulid_write() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Facet, Debug, PartialEq)]
     struct FooBar {
-        id: Ulid,
+        better_id: Ulid,
     }
 
-    let original = FooBar {
-        id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".parse().unwrap(),
+    let value = FooBar {
+        better_id: "01ARZ3NDEKTSV4RRFFQ69G5FAV".parse().unwrap(),
     };
 
-    let _json = facet_json::to_string(&original);
+    let json = to_string(&value);
+    assert_eq!(json, r#"{"better_id":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}"#);
 
     Ok(())
 }

@@ -4,7 +4,7 @@ use facet_json::from_str;
 use uuid::Uuid;
 
 #[test]
-fn json_write_uuid() -> Result<()> {
+fn uuid_write() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Facet, Debug, PartialEq)]
@@ -22,7 +22,7 @@ fn json_write_uuid() -> Result<()> {
 }
 
 #[test]
-fn json_read_uuid() -> Result<()> {
+fn uuid_read() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Facet, Debug, PartialEq)]

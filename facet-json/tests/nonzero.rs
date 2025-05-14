@@ -1,11 +1,11 @@
-use std::num::NonZero;
-
 use eyre::Result;
 use facet::Facet;
-use facet_json::from_str;
+use facet_json::{from_str, to_string};
 use insta::assert_snapshot;
+use std::num::NonZero;
+
 #[test]
-fn json_read_nonzero_one() -> Result<()> {
+fn read_nonzero_one() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Facet)]
@@ -19,7 +19,7 @@ fn json_read_nonzero_one() -> Result<()> {
 }
 
 #[test]
-fn json_read_nonzero_zero() -> Result<()> {
+fn read_nonzero_zero() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Facet, Debug)]
@@ -32,4 +32,21 @@ fn json_read_nonzero_zero() -> Result<()> {
     #[cfg(not(miri))]
     assert_snapshot!(result.unwrap_err().to_string());
     Ok(())
+}
+
+#[test]
+fn write_nonzero() {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, PartialEq, Clone, Facet)]
+    struct Foo {
+        foo: NonZero<u8>,
+    }
+
+    let test_struct = Foo {
+        foo: const { NonZero::new(1).unwrap() },
+    };
+
+    let json = to_string(&test_struct);
+    assert_eq!(json, r#"{"foo":1}"#);
 }
