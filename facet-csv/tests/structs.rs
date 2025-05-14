@@ -1,7 +1,7 @@
+use facet_testhelpers::test;
+
 #[test]
 fn test_writing_flat_structs() {
-    facet_testhelpers::setup();
-
     #[derive(facet::Facet)]
     struct MyStruct {
         value1: usize,

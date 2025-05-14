@@ -2,12 +2,11 @@
 
 use facet::Facet;
 
-use eyre::{Ok, Result};
+use eyre::Result;
+use facet_testhelpers::test;
 
 #[test]
-fn test_arg_parse() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_arg_parse() {
     #[derive(Facet)]
     struct Args<'a> {
         #[facet(positional)]
@@ -40,13 +39,10 @@ fn test_arg_parse() -> Result<()> {
     assert_eq!(args.path_borrow, "test.rs");
     assert_eq!(args.concurrency, 14);
     assert_eq!(args.consider_casing, 0);
-    Ok(())
 }
 
 #[test]
-fn test_missing_bool_is_false() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_missing_bool_is_false() {
     #[derive(Facet)]
     struct Args {
         #[facet(named, short = 'v')]
@@ -56,13 +52,10 @@ fn test_missing_bool_is_false() -> Result<()> {
     }
     let args: Args = facet_args::from_slice(&["absence_is_falsey.rs"])?;
     assert!(!args.verbose);
-    Ok(())
 }
 
 #[test]
-fn test_missing_default() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_missing_default() {
     #[derive(Facet, Debug)]
     struct Args {
         #[facet(positional, default = 42)]
@@ -78,14 +71,10 @@ fn test_missing_default() -> Result<()> {
     let args: Args = facet_args::from_slice(&["100", "-p", "presence_overrides_default.rs"])?;
     assert_eq!(args.answer, 100);
     assert_eq!(args.path, "presence_overrides_default.rs".to_string());
-
-    Ok(())
 }
 
 #[test]
-fn test_missing_default_fn() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_missing_default_fn() {
     // Could be done e.g. using `num_cpus::get()`, but just mock it as 2 + 2 = 4
     fn default_concurrency() -> usize {
         2 + 2
@@ -107,14 +96,10 @@ fn test_missing_default_fn() -> Result<()> {
         facet_args::from_slice(&["-p", "presence_overrides_default_fn.rs", "-j", "2"])?;
     assert_eq!(args.path, "presence_overrides_default_fn.rs".to_string());
     assert_eq!(args.concurrency, 2);
-
-    Ok(())
 }
 
 #[test]
-fn test_error_non_struct_type_not_supported() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_error_non_struct_type_not_supported() {
     #[derive(Facet, Debug)]
     #[repr(u8)]
     #[allow(dead_code)]
@@ -125,14 +110,10 @@ fn test_error_non_struct_type_not_supported() -> Result<()> {
     let args: Result<Args, _> = facet_args::from_slice(&["error", "wrong", "type"]);
     let err = args.unwrap_err();
     assert_eq!(err.message(), "Args error: Expected struct type");
-
-    Ok(())
 }
 
 #[test]
-fn test_error_missing_value_for_argument() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_error_missing_value_for_argument() {
     #[derive(Facet, Debug)]
     struct Args {
         #[facet(named, short = 'j')]
@@ -144,14 +125,10 @@ fn test_error_missing_value_for_argument() -> Result<()> {
         err.message(),
         "Args error: expected value after argument `concurrency`"
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_error_missing_value_for_argument_short() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_error_missing_value_for_argument_short() {
     #[derive(Facet, Debug)]
     struct Args {
         #[facet(named, short = 'j')]
@@ -163,14 +140,10 @@ fn test_error_missing_value_for_argument_short() -> Result<()> {
         err.message(),
         "Args error: expected value after argument `j`"
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_error_unknown_argument() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_error_unknown_argument() {
     #[derive(Facet, Debug)]
     struct Args {
         #[facet(named, short = 'j')]
@@ -179,6 +152,4 @@ fn test_error_unknown_argument() -> Result<()> {
     let args: Result<Args, _> = facet_args::from_slice(&["--c0ncurrency"]);
     let err = args.unwrap_err();
     assert_eq!(err.message(), "Args error: Unknown argument `c0ncurrency`");
-
-    Ok(())
 }
