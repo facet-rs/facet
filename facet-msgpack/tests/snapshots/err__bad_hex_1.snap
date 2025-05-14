@@ -1,5 +1,5 @@
 ---
-source: facet-msgpack/tests/integration/err.rs
+source: facet-msgpack/tests/err.rs
 expression: err
 ---
 Insufficient data to decode
