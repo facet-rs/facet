@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 #![doc = include_str!("../README.md")]
 
+#[cfg(feature = "std")]
 use std::io::{self, Write};
 
 use facet_core::Facet;
@@ -22,6 +23,7 @@ mod tokenizer;
 const MAX_RECURSION_DEPTH: usize = 100;
 
 /// Deserialize JSON from a given byte slice
+#[cfg(feature = "std")]
 pub fn from_slice<'input: 'facet, 'facet, T: Facet<'facet>>(
     input: &'input [u8],
 ) -> Result<T, DeserError<'input>> {
@@ -29,6 +31,7 @@ pub fn from_slice<'input: 'facet, 'facet, T: Facet<'facet>>(
 }
 
 /// Deserialize JSON from a given string
+#[cfg(feature = "std")]
 pub fn from_str<'input: 'facet, 'facet, T: Facet<'facet>>(
     input: &'input str,
 ) -> Result<T, DeserError<'input>> {
@@ -39,6 +42,7 @@ pub fn from_str<'input: 'facet, 'facet, T: Facet<'facet>>(
 ///
 /// This function attempts to deserialize a type `T` implementing `Facet` from the input string slice.
 /// If deserialization fails, the error is converted into an owned, static error type to avoid lifetime issues.
+#[cfg(feature = "std")]
 pub fn from_str_static_error<'input: 'facet, 'facet, T: Facet<'facet>>(
     input: &'input str,
 ) -> Result<T, DeserError<'input>> {
@@ -46,16 +50,19 @@ pub fn from_str_static_error<'input: 'facet, 'facet, T: Facet<'facet>>(
 }
 
 /// Serializes a value to JSON
+#[cfg(feature = "std")]
 pub fn to_string<'a, T: Facet<'a>>(value: &'a T) -> String {
     recursive::to_string(value, 0)
 }
 
 /// Serializes a Peek instance to JSON
+#[cfg(feature = "std")]
 pub fn peek_to_string<'a>(peek: Peek<'a, 'a>) -> String {
     recursive::peek_to_string(peek, 0)
 }
 
 /// Serializes a value to a writer in JSON format
+#[cfg(feature = "std")]
 pub fn to_writer<'mem: 'facet, 'facet, T: Facet<'facet>, W: Write>(
     value: &'mem T,
     writer: &mut W,
@@ -64,6 +71,7 @@ pub fn to_writer<'mem: 'facet, 'facet, T: Facet<'facet>, W: Write>(
 }
 
 /// Serializes a Peek instance to a writer in JSON format
+#[cfg(feature = "std")]
 pub fn peek_to_writer<'mem: 'facet, 'facet, W: Write>(
     peek: Peek<'mem, 'facet>,
     writer: &mut W,
@@ -75,6 +83,7 @@ pub fn peek_to_writer<'mem: 'facet, 'facet, W: Write>(
 struct Json;
 
 /// Properly escapes and writes a JSON string
+#[cfg(feature = "std")]
 fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
     writer.write_all(b"\"")?;
 
@@ -86,6 +95,7 @@ fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
 }
 
 /// Writes a single JSON escaped character
+#[cfg(feature = "std")]
 fn write_json_escaped_char<W: Write>(writer: &mut W, c: char) -> io::Result<()> {
     match c {
         '"' => writer.write_all(b"\\\""),
