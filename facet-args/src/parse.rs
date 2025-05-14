@@ -6,35 +6,28 @@ use facet_reflect::Wip;
 pub(crate) fn parse_named_arg<'input, 'facet>(
     wip: Wip<'facet>,
     key: &str,
-    args: &mut &[&'input str],
+    value: Option<&'input str>,
 ) -> Result<Wip<'facet>, ArgsError>
 where
     'input: 'facet,
 {
-    // Extract the named argument parsing logic from from_slice
-    let field_index = match wip.field_index(key) {
-        Some(index) => index,
+    let field = wip.field_named(key).map_err(|_| ArgsError {
+        kind: ArgsErrorKind::GenericArgsError(format!("Unknown argument `{key}`")),
+    })?;
+
+    match value {
+        Some(v) => crate::parse_field(field, v),
         None => {
-            return Err(ArgsError::new(ArgsErrorKind::GenericArgsError(format!(
-                "Unknown argument `{key}`",
-            ))));
+            if field.shape().is_type::<bool>() {
+                return crate::parse_field(field, "true");
+            }
+            Err(ArgsError {
+                kind: ArgsErrorKind::GenericArgsError(format!(
+                    "expected value after argument `{}`",
+                    key
+                )),
+            })
         }
-    };
-
-    let field = wip
-        .field(field_index)
-        .expect("field_index should be a valid field bound");
-
-    if field.shape().is_type::<bool>() {
-        crate::parse_field(field, "true")
-    } else {
-        let value = args
-            .first()
-            .ok_or(ArgsError::new(ArgsErrorKind::GenericArgsError(format!(
-                "expected value after argument `{key}`"
-            ))))?;
-        *args = &args[1..]; // Consume the value token
-        crate::parse_field(field, value)
     }
 }
 
@@ -42,7 +35,7 @@ where
 pub(crate) fn parse_short_arg<'input, 'facet>(
     wip: Wip<'facet>,
     key: &str,
-    args: &mut &[&'input str],
+    value: Option<&'input str>,
     st: &facet_core::StructType,
 ) -> Result<Wip<'facet>, ArgsError>
 where
@@ -54,16 +47,19 @@ where
             |a| matches!(a, FieldAttribute::Arbitrary(a) if a.contains("short") && a.contains(key)),
         ) {
             let field = wip.field(field_index).expect("field_index is in bounds");
-            if field.shape().is_type::<bool>() {
-                return crate::parse_field(field, "true");
-            } else {
-                let value = args
-                    .first()
-                    .ok_or(ArgsError::new(ArgsErrorKind::GenericArgsError(format!(
-                        "expected value after argument `{key}`"
-                    ))))?;
-                *args = &args[1..]; // Consume the value token
-                return crate::parse_field(field, value);
+            match value {
+                Some(v) => {
+                    return crate::parse_field(field, v);
+                }
+                None => {
+                    if field.shape().is_type::<bool>() {
+                        return crate::parse_field(field, "true");
+                    }
+                    return Err(ArgsError::new(ArgsErrorKind::GenericArgsError(format!(
+                        "expected value after argument `{}`",
+                        key
+                    ))));
+                }
             }
         }
     }
@@ -129,15 +125,13 @@ mod tests {
 
         // Test parsing a named string argument
         let wip = Wip::alloc::<TestStruct>()?;
-        let mut args = &["value_for_text"][..];
-        let wip = parse_named_arg(wip, "text", &mut args)?;
+        let wip = parse_named_arg(wip, "text", Some("value_for_text"))?;
 
         // Test parsing a named boolean argument
-        let wip = parse_named_arg(wip, "flag", &mut args)?;
+        let wip = parse_named_arg(wip, "flag", None)?;
 
         // Test parsing a named numeric argument
-        let mut args = &["42"][..];
-        let wip = parse_named_arg(wip, "count", &mut args)?;
+        let wip = parse_named_arg(wip, "count", Some("42"))?;
 
         // Build and verify
         let heap_value = wip.build()?;
@@ -162,8 +156,7 @@ mod tests {
 
         // Test unknown argument error
         let wip = Wip::alloc::<TestStruct>()?;
-        let mut args = &["some_value"][..];
-        let result = parse_named_arg(wip, "unknown_field", &mut args);
+        let result = parse_named_arg(wip, "unknown_field", Some("some_value"));
         assert!(result.is_err());
 
         // Check the error message without using unwrap_err()
@@ -178,8 +171,7 @@ mod tests {
 
         // Test missing value error
         let wip = Wip::alloc::<TestStruct>()?;
-        let mut args = &[][..]; // Empty args
-        let result = parse_named_arg(wip, "value", &mut args);
+        let result = parse_named_arg(wip, "value", None);
         assert!(result.is_err());
 
         if let Err(err) = result {
@@ -213,11 +205,10 @@ mod tests {
         };
 
         // Test parsing a short boolean flag
-        let wip = parse_short_arg(wip, "v", &mut &[][..], &st)?;
+        let wip = parse_short_arg(wip, "v", None, &st)?;
 
         // Test parsing a short numeric argument
-        let mut args = &["42"][..];
-        let wip = parse_short_arg(wip, "c", &mut args, &st)?;
+        let wip = parse_short_arg(wip, "c", Some("42"), &st)?;
 
         // Build and verify
         let heap_value = wip.build()?;
@@ -246,7 +237,7 @@ mod tests {
         };
 
         // Test unknown short argument
-        let result = parse_short_arg(wip, "x", &mut &[][..], &st);
+        let result = parse_short_arg(wip, "x", None, &st);
         assert!(result.is_err());
 
         if let Err(err) = result {
@@ -257,8 +248,7 @@ mod tests {
 
         // Test missing value for short argument
         let wip = Wip::alloc::<TestStruct>()?;
-        let mut args = &[][..]; // Empty args
-        let result = parse_short_arg(wip, "c", &mut args, &st);
+        let result = parse_short_arg(wip, "c", None, &st);
         assert!(result.is_err());
 
         if let Err(err) = result {
@@ -421,15 +411,13 @@ mod tests {
         let wip = Wip::alloc::<TestStruct>()?;
 
         // Parse string arg
-        let mut args = &["hello"][..];
-        let wip = parse_named_arg(wip, "string", &mut args)?;
+        let wip = parse_named_arg(wip, "string", Some("hello"))?;
 
         // Parse numeric arg
-        let mut args = &["42"][..];
-        let wip = parse_named_arg(wip, "number", &mut args)?;
+        let wip = parse_named_arg(wip, "number", Some("42"))?;
 
         // Parse boolean arg
-        let wip = parse_named_arg(wip, "flag", &mut &[][..])?;
+        let wip = parse_named_arg(wip, "flag", None)?;
 
         // Build and verify
         let heap_value = wip.build()?;
