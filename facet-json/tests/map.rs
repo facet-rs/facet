@@ -40,12 +40,12 @@ fn test_hashmap_to_json() {
 
     // Using peek_to_string
     let peek = Peek::new(&json_data);
-    let json = peek_to_string(&peek);
+    let json = peek_to_string(peek);
     assert_eq!(json, expected_json);
 
     // Using peek_to_writer
     let mut buffer = Vec::new();
-    peek_to_writer(&peek, &mut buffer).unwrap();
+    peek_to_writer(peek, &mut buffer).unwrap();
     let json = String::from_utf8(buffer).unwrap();
     assert_eq!(json, expected_json);
 }

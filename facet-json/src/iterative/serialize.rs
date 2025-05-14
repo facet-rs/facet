@@ -1,37 +1,12 @@
-use facet_core::Facet;
 use facet_reflect::Peek;
 use facet_serialize::{Serializer, serialize_iterative};
 use log::debug;
 use std::io::{self, Write};
 
-/// Serializes a value to JSON
-pub(crate) fn to_string<'a, T: Facet<'a>>(value: &T) -> String {
-    let peek = Peek::new(value);
-    let mut output = Vec::new();
-    let mut serializer = JsonSerializer::new(&mut output);
-    serialize_iterative(peek, &mut serializer).unwrap();
-    String::from_utf8(output).unwrap()
-}
-
-/// Serializes a Peek instance to JSON
-pub(crate) fn peek_to_string(peek: &Peek<'_, '_>) -> String {
-    let mut output = Vec::new();
-    let mut serializer = JsonSerializer::new(&mut output);
-    serialize_iterative(*peek, &mut serializer).unwrap();
-    String::from_utf8(output).unwrap()
-}
-
-/// Serializes a value to a writer in JSON format
-pub(crate) fn to_writer<'a, T: Facet<'a>, W: Write>(value: &T, writer: &mut W) -> io::Result<()> {
-    let peek = Peek::new(value);
+/// Serializes a Peek instance to a writer in JSON format
+pub(crate) fn peek_to_writer<W: Write>(peek: Peek<'_, '_>, writer: &mut W) -> io::Result<()> {
     let mut serializer = JsonSerializer::new(writer);
     serialize_iterative(peek, &mut serializer)
-}
-
-/// Serializes a Peek instance to a writer in JSON format
-pub(crate) fn peek_to_writer<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<()> {
-    let mut serializer = JsonSerializer::new(writer);
-    serialize_iterative(*peek, &mut serializer)
 }
 
 #[derive(Debug)]
@@ -204,14 +179,14 @@ where
     fn serialize_char(&mut self, value: char) -> Result<(), Self::Error> {
         self.start_value()?;
         self.writer.write_all(b"\"")?;
-        write_json_escaped_char(&mut self.writer, value)?;
+        crate::write_json_escaped_char(&mut self.writer, value)?;
         self.writer.write_all(b"\"")?;
         self.end_value()
     }
 
     fn serialize_str(&mut self, value: &str) -> Result<(), Self::Error> {
         self.start_value()?;
-        write_json_string(&mut self.writer, value)?;
+        crate::write_json_string(&mut self.writer, value)?;
         self.end_value()
     }
 
@@ -237,7 +212,7 @@ where
         variant_name: &'static str,
     ) -> Result<(), Self::Error> {
         self.start_value()?;
-        write_json_string(&mut self.writer, variant_name)?;
+        crate::write_json_string(&mut self.writer, variant_name)?;
         self.end_value()
     }
 
@@ -307,50 +282,10 @@ where
                 ObjectItemState::Value => unreachable!(),
             }
         }
-        write_json_string(&mut self.writer, name)?;
+        crate::write_json_string(&mut self.writer, name)?;
         if let Some(StackItem::ObjectItem { object_state }) = self.stack.last_mut() {
             *object_state = ObjectItemState::Value;
         }
         Ok(())
-    }
-}
-
-/// Properly escapes and writes a JSON string
-fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
-    writer.write_all(b"\"")?;
-
-    for c in s.chars() {
-        write_json_escaped_char(writer, c)?;
-    }
-
-    writer.write_all(b"\"")
-}
-
-/// Writes a single JSON escaped character
-fn write_json_escaped_char<W: Write>(writer: &mut W, c: char) -> io::Result<()> {
-    match c {
-        '"' => writer.write_all(b"\\\""),
-        '\\' => writer.write_all(b"\\\\"),
-        '\n' => writer.write_all(b"\\n"),
-        '\r' => writer.write_all(b"\\r"),
-        '\t' => writer.write_all(b"\\t"),
-        '\u{08}' => writer.write_all(b"\\b"),
-        '\u{0C}' => writer.write_all(b"\\f"),
-        c if c.is_control() => {
-            let mut buf = [0; 6];
-            let s = format!("{:04x}", c as u32);
-            buf[0] = b'\\';
-            buf[1] = b'u';
-            buf[2] = s.as_bytes()[0];
-            buf[3] = s.as_bytes()[1];
-            buf[4] = s.as_bytes()[2];
-            buf[5] = s.as_bytes()[3];
-            writer.write_all(&buf)
-        }
-        c => {
-            let mut buf = [0; 4];
-            let len = c.encode_utf8(&mut buf).len();
-            writer.write_all(&buf[..len])
-        }
     }
 }

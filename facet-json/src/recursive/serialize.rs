@@ -1,16 +1,17 @@
 use std::io::{self, Write};
 
 use facet_core::Facet;
+use facet_core::Field;
 use facet_core::PointerType;
 use facet_core::ScalarAffinity;
 use facet_core::SequenceType;
+use facet_core::ShapeAttribute;
 use facet_core::StructKind;
 use facet_core::Type;
 use facet_core::UserType;
 use facet_reflect::HasFields;
 use facet_reflect::{Peek, ScalarType};
 use log::debug;
-// use std::io::{self, Write};
 
 /// Serializes a value to JSON
 pub(crate) fn to_string<'facet: 'input, 'input: 'facet, T: Facet<'facet>>(
@@ -18,21 +19,18 @@ pub(crate) fn to_string<'facet: 'input, 'input: 'facet, T: Facet<'facet>>(
     recursion_depth: usize,
 ) -> String {
     let peek = Peek::new(value);
-    if recursion_depth > crate::MAX_RECURSION_DEPTH {
-        return crate::iterative::to_string(value).into();
-    }
     let mut out = Vec::new();
-    write_peek(&peek, recursion_depth, &mut out).unwrap();
+    peek_to_writer(peek, None, recursion_depth, &mut out).unwrap();
     String::from_utf8(out).unwrap()
 }
 
 /// Serializes a Peek instance to JSON
 pub(crate) fn peek_to_string<'facet: 'input, 'input: 'facet>(
-    peek: &Peek<'input, 'facet>,
+    peek: Peek<'input, 'facet>,
     recursion_depth: usize,
 ) -> String {
     let mut out = Vec::new();
-    write_peek(peek, recursion_depth, &mut out).unwrap();
+    peek_to_writer(peek, None, recursion_depth, &mut out).unwrap();
     String::from_utf8(out).unwrap()
 }
 
@@ -42,23 +40,39 @@ pub(crate) fn to_writer<'mem: 'facet, 'facet, T: Facet<'facet>, W: Write>(
     writer: &mut W,
 ) -> io::Result<()> {
     let peek = Peek::new(value);
-    write_peek(&peek, 0, writer)
+    peek_to_writer(peek, None, 0, writer)
 }
 
 /// Serializes a Peek instance to a writer in JSON format
 pub(crate) fn peek_to_writer<'mem: 'facet, 'facet, W: Write>(
-    peek: &Peek<'mem, 'facet>,
-    writer: &mut W,
-) -> io::Result<()> {
-    write_peek(peek, 0, writer)
-}
-
-fn write_peek<'mem: 'facet, 'facet, W: Write>(
-    peek: &Peek<'mem, 'facet>,
+    peek: Peek<'mem, 'facet>,
+    maybe_field: Option<&Field>,
     recursion_depth: usize,
     output: &mut W,
 ) -> io::Result<()> {
     use facet_core::Def::*;
+    if recursion_depth > crate::MAX_RECURSION_DEPTH {
+        return crate::iterative::peek_to_writer(peek, output);
+    }
+
+    let peek = if peek
+        .shape()
+        .attributes
+        .iter()
+        .any(|attr| *attr == ShapeAttribute::Transparent)
+    {
+        let old_shape = peek.shape();
+
+        // then serialize the inner shape instead
+        let ps = peek.into_struct().unwrap();
+        let new_peek = ps.field(0).unwrap();
+
+        let new_shape = peek.shape();
+        debug!("{old_shape} is transparent, let's serialize the inner {new_shape} instead");
+        new_peek
+    } else {
+        peek
+    };
     match (peek.shape().def, peek.shape().ty) {
         // (Undefined, _) => todo!(),
         (Scalar(scalar_def), _) => {
@@ -67,20 +81,19 @@ fn write_peek<'mem: 'facet, 'facet, W: Write>(
                 Some(ScalarType::Unit) => write!(output, "null"),
                 Some(ScalarType::Bool) => write!(output, "{}", scalar_peek.get::<bool>().unwrap()),
                 Some(ScalarType::Char) => {
-                    write!(output, r#""{}""#, scalar_peek.get::<char>().unwrap())
+                    crate::write_json_escaped_char(output, *scalar_peek.get::<char>().unwrap())
                 }
 
                 // String types
                 Some(ScalarType::Str) => {
-                    write!(output, r#""{}""#, scalar_peek.get::<&str>().unwrap())
+                    crate::write_json_string(output, scalar_peek.get::<&str>().unwrap())
                 }
                 Some(ScalarType::String) => {
-                    write!(output, r#""{}""#, scalar_peek.get::<String>().unwrap())
+                    crate::write_json_string(output, scalar_peek.get::<String>().unwrap())
                 }
-                Some(ScalarType::CowStr) => write!(
+                Some(ScalarType::CowStr) => crate::write_json_string(
                     output,
-                    r#""{}""#,
-                    scalar_peek.get::<alloc::borrow::Cow<'_, str>>().unwrap()
+                    scalar_peek.get::<alloc::borrow::Cow<'_, str>>().unwrap(),
                 ),
 
                 // Float types
@@ -113,10 +126,13 @@ fn write_peek<'mem: 'facet, 'facet, W: Write>(
                         | ScalarAffinity::UUID(_) => {
                             if let Some(_display) = scalar_peek.shape().vtable.display {
                                 // Use display formatting if available
-                                write!(output, "{}", scalar_peek)
+                                crate::write_json_string(output, &scalar_peek.to_string())
                             } else {
                                 panic!("Unsupported shape: {}", scalar_peek.shape())
                             }
+                        }
+                        ScalarAffinity::String(_) => {
+                            crate::write_json_string(output, scalar_peek.get::<String>().unwrap())
                         }
                         _ => {
                             panic!("Unsupported shape: {}", scalar_peek.shape())
@@ -134,9 +150,9 @@ fn write_peek<'mem: 'facet, 'facet, W: Write>(
                     write!(output, ",")?;
                 }
                 first = false;
-                write!(output, r#""{}""#, key)?;
+                crate::write_json_string(output, &key.to_string())?;
                 write!(output, ":")?;
-                write_peek(&value, recursion_depth + 1, output)?;
+                peek_to_writer(value, None, recursion_depth + 1, output)?;
             }
             write!(output, "}}")
         }
@@ -149,14 +165,21 @@ fn write_peek<'mem: 'facet, 'facet, W: Write>(
                     write!(output, ",")?;
                 }
                 first = false;
-                write_peek(&value, recursion_depth + 1, output)?;
+                peek_to_writer(value, None, recursion_depth + 1, output)?;
             }
             write!(output, "]")
         }
         (SmartPointer(_smart_pointer_def), _) => {
-            write_peek(&peek.innermost_peek(), recursion_depth + 1, output)
+            peek_to_writer(peek.innermost_peek(), None, recursion_depth + 1, output)
         }
-        (Option(_option_def), _) => write_peek(&peek.innermost_peek(), recursion_depth + 1, output),
+        (Option(_option_def), _) => {
+            let opt = peek.into_option().unwrap();
+            if let Some(inner_peek) = opt.value() {
+                peek_to_writer(inner_peek, None, recursion_depth + 1, output)
+            } else {
+                write!(output, "null")
+            }
+        }
         (_, Type::User(UserType::Struct(sd))) => {
             debug!("Serializing struct: shape={}", peek.shape(),);
             debug!(
@@ -175,12 +198,12 @@ fn write_peek<'mem: 'facet, 'facet, W: Write>(
                     let peek = peek.into_struct().unwrap();
                     write!(output, "[")?;
                     let mut first = true;
-                    for (_field, peek) in peek.fields_for_serialize() {
+                    for (field, peek) in peek.fields_for_serialize() {
                         if !first {
                             write!(output, ",")?;
                         }
                         first = false;
-                        write_peek(&peek, recursion_depth + 1, output)?;
+                        peek_to_writer(peek, Some(&field), recursion_depth + 1, output)?;
                     }
 
                     write!(output, "]")
@@ -194,9 +217,9 @@ fn write_peek<'mem: 'facet, 'facet, W: Write>(
                             write!(output, ",")?;
                         }
                         first = false;
-                        write!(output, r#""{}""#, field.name)?;
+                        crate::write_json_string(output, field.name)?;
                         write!(output, ":")?;
-                        write_peek(&peek, recursion_depth + 1, output)?;
+                        peek_to_writer(peek, Some(&field), recursion_depth + 1, output)?;
                     }
 
                     write!(output, "}}")
@@ -216,13 +239,13 @@ fn write_peek<'mem: 'facet, 'facet, W: Write>(
 
                 write!(output, "[")?;
                 let mut first = true;
-                for (_, field_peek) in peek_tuple.fields().rev() {
+                for (_field, field_peek) in peek_tuple.fields() {
                     if !first {
                         write!(output, ",")?;
                     }
                     first = false;
                     let innermost_peek = field_peek.innermost_peek();
-                    write_peek(&innermost_peek, recursion_depth + 1, output)?;
+                    peek_to_writer(innermost_peek, None, recursion_depth + 1, output)?;
                 }
                 write!(output, "]")
             } else {
@@ -239,7 +262,7 @@ fn write_peek<'mem: 'facet, 'facet, W: Write>(
                         }
                         first = false;
                         let innermost_peek = elem.innermost_peek();
-                        write_peek(&innermost_peek, recursion_depth + 1, output)?;
+                        peek_to_writer(innermost_peek, None, recursion_depth + 1, output)?;
                     }
                     write!(output, "]")
                 } else {
@@ -252,29 +275,81 @@ fn write_peek<'mem: 'facet, 'facet, W: Write>(
             let variant = peek_enum
                 .active_variant()
                 .expect("Failed to get active variant");
-            let variant_index = peek_enum
+            let _variant_index = peek_enum
                 .variant_index()
                 .expect("Failed to get variant index");
-            // let flattened = maybe_field.map(|f| f.flattened).unwrap_or_default();
+            // trace!(
+            //     "Active variant index is {}, variant is {:?}",
+            //     variant_index, variant
+            // );
+            let flattened = maybe_field.map(|f| f.flattened).unwrap_or_default();
 
             if variant.data.fields.is_empty() {
-                write!(output, "{}", variant.name)
+                // Unit variant
+                crate::write_json_string(output, variant.name)
             } else {
-                todo!()
+                if !flattened {
+                    // For now, treat all enum variants with data as objects
+                    write!(output, "{{")?;
+                    crate::write_json_string(output, variant.name)?;
+                    write!(output, ":")?;
+                }
+
+                if crate::variant_is_newtype_like(variant) {
+                    // Newtype variant - serialize the inner value directly
+                    let (field, field_peek) = peek_enum.fields_for_serialize().next().unwrap();
+                    peek_to_writer(field_peek, Some(&field), recursion_depth + 1, output)?;
+                } else if variant.data.kind == StructKind::Tuple
+                    || variant.data.kind == StructKind::TupleStruct
+                {
+                    // Tuple variant - serialize as array
+                    write!(output, "[")?;
+
+                    // Push fields in reverse order for tuple variant
+                    let mut first = true;
+                    for (field, field_peek) in peek_enum.fields_for_serialize() {
+                        if !first {
+                            write!(output, ",")?;
+                        }
+                        first = false;
+                        peek_to_writer(field_peek, Some(&field), recursion_depth + 1, output)?;
+                    }
+                    write!(output, "]")?;
+                } else {
+                    // Struct variant - serialize as object
+                    write!(output, "{{")?;
+
+                    // Push fields in reverse order for struct variant
+                    let mut first = true;
+                    for (field, field_peek) in peek_enum.fields_for_serialize() {
+                        if !first {
+                            write!(output, ",")?;
+                        }
+                        first = false;
+                        crate::write_json_string(output, field.name)?;
+                        write!(output, ":")?;
+                        peek_to_writer(field_peek, Some(&field), recursion_depth + 1, output)?;
+                    }
+                    write!(output, "}}")?;
+                }
+
+                if !flattened {
+                    write!(output, "}}")?;
+                }
+                Ok(())
             }
         }
         (_, Type::Pointer(pointer_type)) => {
             // Handle pointer types using our new safe abstraction
             if let Some(str_value) = peek.as_str() {
-                write!(output, "\"{}\"", str_value)?;
-                Ok(())
+                crate::write_json_string(output, str_value)
             } else if let PointerType::Function(_) = pointer_type {
                 write!(output, "null")
             } else {
                 // Handle other pointer types with innermost_peek which is safe
                 let innermost = peek.innermost_peek();
                 if innermost.shape() != peek.shape() {
-                    write_peek(&innermost, recursion_depth + 1, output)
+                    peek_to_writer(innermost, None, recursion_depth + 1, output)
                 } else {
                     write!(output, "null")
                 }
@@ -299,7 +374,7 @@ mod tests {
         // Test basic scalar types
         assert_eq!(to_string(&42i32, 0), "42");
         assert_eq!(to_string(&true, 0), "true");
-        assert_eq!(to_string(&3.14f64, 0), "3.14");
+        assert_eq!(to_string(&3.13f64, 0), "3.13");
         assert_eq!(to_string(&"hello", 0), "\"hello\"");
         assert_eq!(to_string(&&*my_string, 0), "\"world\"");
     }

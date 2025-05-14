@@ -1,7 +1,7 @@
 #[cfg(feature = "std")]
 mod serialize;
 #[cfg(feature = "std")]
-pub use serialize::*;
+pub(crate) use serialize::*;
 
 mod deserialize;
-pub use deserialize::*;
+pub(crate) use deserialize::*;

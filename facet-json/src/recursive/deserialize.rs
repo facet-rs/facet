@@ -4,9 +4,9 @@ use facet_deserialize::DeserError;
 /// Deserialize JSON from a given byte slice
 pub(crate) fn from_slice<'input: 'facet, 'facet, T: Facet<'facet>>(
     input: &'input [u8],
-    recursion_depth: usize,
+    _recursion_depth: usize,
 ) -> Result<T, DeserError<'input>> {
-    todo!()
+    crate::iterative::from_slice(input)
 }
 
 /// Deserialize JSON from a given string
@@ -24,8 +24,7 @@ pub(crate) fn from_str<'input: 'facet, 'facet, T: Facet<'facet>>(
 /// If deserialization fails, the error is converted into an owned, static error type to avoid lifetime issues.
 pub(crate) fn from_str_static_error<'input: 'facet, 'facet, T: Facet<'facet>>(
     input: &'input str,
-    recursion_depth: usize,
+    _recursion_depth: usize,
 ) -> Result<T, DeserError<'input>> {
-    let input = input.as_bytes();
-    todo!()
+    crate::iterative::from_str_static_error(input)
 }
