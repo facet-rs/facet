@@ -1,10 +1,9 @@
 use facet::Facet;
 use facet_reflect::Wip;
+use facet_testhelpers::test;
 
 #[test]
-fn test_put_into_tuples() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn test_put_into_tuples() {
     type T = (u32, String, bool);
 
     let mut wip = Wip::alloc::<T>()?;
@@ -13,14 +12,10 @@ fn test_put_into_tuples() -> eyre::Result<()> {
     wip = wip.put::<bool>(true)?;
     let t = wip.build()?.materialize::<T>()?;
     assert_eq!(t, (42, "hello".to_string(), true));
-
-    Ok(())
 }
 
 #[test]
-fn test_put_into_struct_like_tuple() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn test_put_into_struct_like_tuple() {
     #[derive(Facet)]
     struct Point(u32, u32, String);
 
@@ -32,14 +27,10 @@ fn test_put_into_struct_like_tuple() -> eyre::Result<()> {
     assert_eq!(point.0, 10);
     assert_eq!(point.1, 20);
     assert_eq!(point.2, "point");
-
-    Ok(())
 }
 
 #[test]
-fn test_put_into_enum_variant_with_tuple_fields() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn test_put_into_enum_variant_with_tuple_fields() {
     #[derive(Facet)]
     #[repr(u8)]
     #[allow(dead_code)]
@@ -79,6 +70,4 @@ fn test_put_into_enum_variant_with_tuple_fields() -> eyre::Result<()> {
         }
         _ => panic!("Expected Write variant"),
     }
-
-    Ok(())
 }

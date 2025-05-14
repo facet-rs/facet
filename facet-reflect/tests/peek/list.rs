@@ -1,9 +1,8 @@
 use facet_reflect::Peek;
+use facet_testhelpers::test;
 
 #[test]
-fn peek_list() -> Result<(), Box<dyn std::error::Error>> {
-    facet_testhelpers::setup();
-
+fn peek_list() {
     // Create test Vec instance
     let test_list = vec![1, 2, 3, 4, 5];
     let peek_value = Peek::new(&test_list);
@@ -31,6 +30,4 @@ fn peek_list() -> Result<(), Box<dyn std::error::Error>> {
 
     // Test out of bounds
     assert!(peek_list.get(5).is_none());
-
-    Ok(())
 }

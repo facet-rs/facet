@@ -1,10 +1,9 @@
 use facet::Facet;
 use facet_reflect::Wip;
+use facet_testhelpers::test;
 
 #[test]
-fn build_with_invariants() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn build_with_invariants() {
     #[derive(Facet, PartialEq, Debug)]
     #[facet(invariants = MyNonZeroU8::invariants)]
     struct MyNonZeroU8(u8);
@@ -29,6 +28,4 @@ fn build_with_invariants() -> eyre::Result<()> {
         .pop()?
         .build();
     assert!(result.is_err());
-
-    Ok(())
 }

@@ -1,9 +1,8 @@
 use facet_reflect::Peek;
+use facet_testhelpers::test;
 
 #[test]
-fn peek_list_like_list() -> Result<(), Box<dyn std::error::Error>> {
-    facet_testhelpers::setup();
-
+fn peek_list_like_list() {
     // Create test Vec instance
     let test_list = vec![1, 2, 3, 4, 5];
     let peek_value = Peek::new(&test_list);
@@ -31,14 +30,10 @@ fn peek_list_like_list() -> Result<(), Box<dyn std::error::Error>> {
 
     // Test out of bounds
     assert!(peek_list.get(5).is_none());
-
-    Ok(())
 }
 
 #[test]
-fn peek_list_like_array() -> Result<(), Box<dyn std::error::Error>> {
-    facet_testhelpers::setup();
-
+fn peek_list_like_array() {
     // Create test array instance
     let test_list = [1, 2, 3, 4, 5];
     let peek_value = Peek::new(&test_list);
@@ -66,14 +61,10 @@ fn peek_list_like_array() -> Result<(), Box<dyn std::error::Error>> {
 
     // Test out of bounds
     assert!(peek_list.get(5).is_none());
-
-    Ok(())
 }
 
 #[test]
-fn peek_list_like_slice() -> Result<(), Box<dyn std::error::Error>> {
-    facet_testhelpers::setup();
-
+fn peek_list_like_slice() {
     // Create test Vec instance
     let test_list = &[1, 2, 3, 4, 5][..];
     let peek_value = Peek::new(&test_list);
@@ -101,6 +92,4 @@ fn peek_list_like_slice() -> Result<(), Box<dyn std::error::Error>> {
 
     // Test out of bounds
     assert!(peek_list.get(5).is_none());
-
-    Ok(())
 }

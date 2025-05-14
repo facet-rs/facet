@@ -1,11 +1,10 @@
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use facet_reflect::Peek;
+use facet_testhelpers::test;
 
 #[test]
 fn test_peek_value_twoints() {
-    facet_testhelpers::setup();
-
     let a = 42_i32;
     let b = 42_i32;
 
@@ -28,8 +27,6 @@ fn test_peek_value_twoints() {
 
 #[test]
 fn test_peek_value_twostrings() {
-    facet_testhelpers::setup();
-
     let a = Some(42_i32);
     let av = Peek::new(&a);
 

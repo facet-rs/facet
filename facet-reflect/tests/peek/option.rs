@@ -1,9 +1,8 @@
 use facet_reflect::Peek;
+use facet_testhelpers::test;
 
 #[test]
 fn peek_option() {
-    facet_testhelpers::setup();
-
     // Test with Some value
     let some_value = Some(42);
     let peek_value = Peek::new(&some_value);

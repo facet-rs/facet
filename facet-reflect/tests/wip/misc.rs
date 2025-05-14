@@ -1,3 +1,4 @@
+use facet_testhelpers::test;
 use std::mem::MaybeUninit;
 
 use facet::{EnumType, Facet, Field, PtrConst, PtrUninit, StructType, Type, UserType, Variant};
@@ -16,9 +17,7 @@ struct Inner {
 }
 
 #[test]
-fn wip_nested() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_nested() {
     let v = Wip::alloc::<Outer>()?
         .field_named("name")?
         .put(String::from("Hello, world!"))?
@@ -41,14 +40,10 @@ fn wip_nested() -> eyre::Result<()> {
             inner: Inner { x: 42, b: 43 }
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn wip_nested_out_of_order() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_nested_out_of_order() {
     let v = Wip::alloc::<Outer>()?
         .field_named("inner")?
         .field_named("x")?
@@ -73,14 +68,10 @@ fn wip_nested_out_of_order() -> eyre::Result<()> {
             inner: Inner { x: 42, b: 43 }
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn readme_sample() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn readme_sample() {
     use facet::Facet;
 
     #[derive(Debug, PartialEq, Eq, Facet)]
@@ -99,10 +90,7 @@ fn readme_sample() -> eyre::Result<()> {
         .build()?
         .materialize::<FooBar>()?;
 
-    // Now we can use the constructed value
     println!("{}", foo_bar.bar);
-
-    Ok(())
 }
 
 // Enum tests
@@ -117,9 +105,7 @@ enum SimpleEnum {
 }
 
 #[test]
-fn wip_unit_enum() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_unit_enum() {
     // Test unit variant A
     let a = Wip::alloc::<SimpleEnum>()?
         .variant_named("A")?
@@ -133,8 +119,6 @@ fn wip_unit_enum() -> eyre::Result<()> {
         .build()?
         .materialize::<SimpleEnum>()?;
     assert_eq!(b, SimpleEnum::B);
-
-    Ok(())
 }
 
 #[derive(Facet, PartialEq, Eq, Debug)]
@@ -147,9 +131,7 @@ enum EnumWithData {
 }
 
 #[test]
-fn wip_enum_with_data() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_enum_with_data() {
     // Test empty variant
     let empty = Wip::alloc::<EnumWithData>()?
         .variant_named("Empty")?
@@ -198,8 +180,6 @@ fn wip_enum_with_data() -> eyre::Result<()> {
             y: String::from("World")
         }
     );
-
-    Ok(())
 }
 
 #[derive(Facet, PartialEq, Eq, Debug)]
@@ -212,9 +192,7 @@ enum EnumWithDataReprC {
 }
 
 #[test]
-fn wip_enum_with_data_repr_c() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_enum_with_data_repr_c() {
     // Test empty variant
     let empty = Wip::alloc::<EnumWithDataReprC>()?
         .variant_named("Empty")?
@@ -263,8 +241,6 @@ fn wip_enum_with_data_repr_c() -> eyre::Result<()> {
             y: String::from("World")
         }
     );
-
-    Ok(())
 }
 
 #[derive(Facet, PartialEq, Eq, Debug)]
@@ -277,9 +253,7 @@ enum EnumWithDataReprCI16 {
 }
 
 #[test]
-fn wip_enum_with_data_repr_c_i16() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_enum_with_data_repr_c_i16() {
     // Test empty variant
     let empty = Wip::alloc::<EnumWithDataReprCI16>()?
         .variant_named("Empty")?
@@ -331,12 +305,10 @@ fn wip_enum_with_data_repr_c_i16() -> eyre::Result<()> {
             y: String::from("World")
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_enum_reprs() -> eyre::Result<()> {
+fn test_enum_reprs() {
     const fn field_offsets<T: Facet<'static>>() -> [usize; 2] {
         match T::SHAPE.ty {
             Type::User(UserType::Enum(EnumType {
@@ -409,14 +381,10 @@ fn test_enum_reprs() -> eyre::Result<()> {
 
     let v2: ReprCU8 = build()?;
     assert_eq!(v2, ReprCU8::A(1, 2));
-
-    Ok(())
 }
 
 #[test]
-fn wip_enum_error_cases() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_enum_error_cases() {
     // Test error: trying to access a field without selecting a variant
     let result = Wip::alloc::<EnumWithData>()?.field_named("x");
     assert!(result.is_err());
@@ -439,17 +407,13 @@ fn wip_enum_error_cases() -> eyre::Result<()> {
         .pop()?
         .build();
     assert!(result.is_err());
-
-    Ok(())
 }
 
 // We've already tested enum functionality with SimpleEnum and EnumWithData,
 // so we'll skip additional representation tests
 
 #[test]
-fn wip_switch_enum_variant() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_switch_enum_variant() {
     // Test switching variants
     let result = Wip::alloc::<EnumWithData>()?
         .variant_named("Single")?
@@ -467,16 +431,12 @@ fn wip_switch_enum_variant() -> eyre::Result<()> {
         .materialize::<EnumWithData>()?;
 
     assert_eq!(result, EnumWithData::Tuple(43, String::from("Changed")));
-
-    Ok(())
 }
 
 // List tests
 
 #[test]
-fn wip_empty_list() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_empty_list() {
     // Create an empty list with put_empty_list
     let empty_list = Wip::alloc::<Vec<i32>>()?
         .put_empty_list()?
@@ -485,14 +445,10 @@ fn wip_empty_list() -> eyre::Result<()> {
 
     assert_eq!(empty_list, Vec::<i32>::new());
     assert_eq!(empty_list.len(), 0);
-
-    Ok(())
 }
 
 #[test]
-fn wip_list_push() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_list_push() {
     // Build a vector by pushing elements one by one
     let list = Wip::alloc::<Vec<i32>>()?
         .begin_pushback()?
@@ -510,14 +466,10 @@ fn wip_list_push() -> eyre::Result<()> {
 
     assert_eq!(list, vec![10, 20, 30]);
     assert_eq!(list.len(), 3);
-
-    Ok(())
 }
 
 #[test]
-fn wip_list_string() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_list_string() {
     // Build a vector of strings
     let list = Wip::alloc::<Vec<String>>()?
         .begin_pushback()?
@@ -531,8 +483,6 @@ fn wip_list_string() -> eyre::Result<()> {
         .materialize::<Vec<String>>()?;
 
     assert_eq!(list, vec!["hello".to_string(), "world".to_string()]);
-
-    Ok(())
 }
 
 #[derive(Facet, Debug, PartialEq)]
@@ -542,9 +492,7 @@ struct WithList {
 }
 
 #[test]
-fn wip_struct_with_list() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_struct_with_list() {
     // Create a struct that contains a list
     let with_list = Wip::alloc::<WithList>()?
         .field_named("name")?
@@ -572,14 +520,10 @@ fn wip_struct_with_list() -> eyre::Result<()> {
             values: vec![42, 43, 44]
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn wip_list_error_cases() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_list_error_cases() {
     // Test error: trying to push to a non-list type
     let result = Wip::alloc::<i32>()?.push();
     assert!(result.is_err());
@@ -591,14 +535,10 @@ fn wip_list_error_cases() -> eyre::Result<()> {
     // Test error: trying to put_empty_list on non-list type
     let result = Wip::alloc::<i32>()?.put_empty_list();
     assert!(result.is_err());
-
-    Ok(())
 }
 
 #[test]
-fn wip_opaque_arc() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_opaque_arc() {
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     pub struct NotDerivingFacet(u64);
 
@@ -618,14 +558,10 @@ fn wip_opaque_arc() -> eyre::Result<()> {
         .materialize::<Container>()?;
 
     assert_eq!(*result.inner.0, NotDerivingFacet(35));
-
-    Ok(())
 }
 
 #[test]
-fn wip_put_option_explicit_some() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_put_option_explicit_some() {
     // Test switching variants
     let result = Wip::alloc::<Option<u64>>()?
         .put::<Option<u64>>(Some(42))?
@@ -633,28 +569,20 @@ fn wip_put_option_explicit_some() -> eyre::Result<()> {
         .materialize::<Option<u64>>()?;
 
     assert_eq!(result, Some(42));
-
-    Ok(())
 }
 
 #[test]
-fn wip_put_option_explicit_none() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_put_option_explicit_none() {
     let result = Wip::alloc::<Option<u64>>()?
         .put::<Option<u64>>(None)?
         .build()?
         .materialize::<Option<u64>>()?;
 
     assert_eq!(result, None);
-
-    Ok(())
 }
 
 #[test]
-fn wip_put_option_implicit_some() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_put_option_implicit_some() {
     // Test switching variants
     let result = Wip::alloc::<Option<u64>>()?
         .put::<u64>(42)?
@@ -662,14 +590,10 @@ fn wip_put_option_implicit_some() -> eyre::Result<()> {
         .materialize::<Option<u64>>()?;
 
     assert_eq!(result, Some(42));
-
-    Ok(())
 }
 
 #[test]
-fn wip_parse_option() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_parse_option() {
     // Test switching variants
     let result = Wip::alloc::<Option<f64>>()?
         .parse("8.13")?
@@ -677,18 +601,14 @@ fn wip_parse_option() -> eyre::Result<()> {
         .materialize::<Option<f64>>()?;
 
     assert_eq!(result, Some(8.13));
-
-    Ok(())
 }
 
 #[test]
-fn wip_option_explicit_some_through_push_some() -> eyre::Result<()> {
+fn wip_option_explicit_some_through_push_some() {
     #[derive(Facet, Debug, PartialEq, Eq)]
     struct Foo {
         foo: u32,
     }
-
-    facet_testhelpers::setup();
 
     // Test switching variants
     let result = Wip::alloc::<Option<Foo>>()?
@@ -701,18 +621,14 @@ fn wip_option_explicit_some_through_push_some() -> eyre::Result<()> {
         .materialize::<Option<Foo>>()?;
 
     assert_eq!(result, Some(Foo { foo: 42 }));
-
-    Ok(())
 }
 
 #[test]
-fn wip_fn_ptr() -> eyre::Result<()> {
+fn wip_fn_ptr() {
     #[derive(Facet, Debug, PartialEq, Eq)]
     struct Foo {
         foo: fn() -> i32,
     }
-
-    facet_testhelpers::setup();
 
     fn f() -> i32 {
         1113
@@ -733,14 +649,10 @@ fn wip_fn_ptr() -> eyre::Result<()> {
             .put::<fn() -> f32>(|| 0.0)
             .is_err()
     );
-
-    Ok(())
 }
 
 #[test]
-fn wip_put_u16_into_u64() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_put_u16_into_u64() {
     // put a u16 into an u64 field (should work, coercion up)
     #[derive(Facet, Debug, PartialEq, Eq)]
     struct FooU64 {
@@ -753,14 +665,10 @@ fn wip_put_u16_into_u64() -> eyre::Result<()> {
         .build()?
         .materialize::<FooU64>()?;
     assert_eq!(result.value, 12345u64);
-
-    Ok(())
 }
 
 #[test]
-fn wip_put_u64_into_u16() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_put_u64_into_u16() {
     #[derive(Facet, Debug, PartialEq, Eq)]
     struct FooU16 {
         value: u16,
@@ -789,14 +697,10 @@ fn wip_put_u64_into_u16() -> eyre::Result<()> {
         err.is_err(),
         "Expected error when putting negative i64 into u16"
     );
-
-    Ok(())
 }
 
 #[test]
-fn gh_354_leak_1() -> Result<(), ReflectError> {
-    facet_testhelpers::setup();
-
+fn gh_354_leak_1() {
     #[derive(Debug, Facet)]
     struct Foo {
         a: String,
@@ -813,13 +717,10 @@ fn gh_354_leak_1() -> Result<(), ReflectError> {
         Ok(())
     }
     leak1().unwrap_err();
-    Ok(())
 }
 
 #[test]
-fn gh_354_leak_2() -> Result<(), ReflectError> {
-    facet_testhelpers::setup();
-
+fn gh_354_leak_2() {
     #[derive(Debug, Facet)]
     struct Foo {
         a: String,
@@ -840,13 +741,10 @@ fn gh_354_leak_2() -> Result<(), ReflectError> {
     }
 
     leak2().unwrap_err();
-    Ok(())
 }
 
 #[test]
-fn clone_into() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn clone_into() {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static CLONES: AtomicU64 = AtomicU64::new(0);
@@ -874,14 +772,10 @@ fn clone_into() -> eyre::Result<()> {
         clone_into(PtrConst::new(&f), PtrUninit::from_maybe_uninit(&mut f3));
     }
     assert_eq!(CLONES.load(Ordering::SeqCst), 2);
-
-    Ok(())
 }
 
 #[test]
-fn clone_into_vec() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn clone_into_vec() {
     type Type = Vec<String>;
     let mut vec: Type = vec!["hello".to_owned()];
     let mut vec_clone: MaybeUninit<Type> = MaybeUninit::uninit();
@@ -895,14 +789,10 @@ fn clone_into_vec() -> eyre::Result<()> {
     };
     vec[0].push_str(" world");
     assert_eq!(clone_vec[0], "hello");
-
-    Ok(())
 }
 
 #[test]
-fn clone_into_hash_map() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn clone_into_hash_map() {
     use std::collections::HashMap;
 
     type Type = HashMap<String, i32>;
@@ -924,14 +814,10 @@ fn clone_into_hash_map() -> eyre::Result<()> {
 
     assert_eq!(clone_map.get("key"), Some(&42));
     assert_eq!(clone_map.get("new_key"), None);
-
-    Ok(())
 }
 
 #[test]
-fn clone_into_btree_map() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn clone_into_btree_map() {
     use std::collections::BTreeMap;
 
     type Type = BTreeMap<String, i32>;
@@ -953,47 +839,33 @@ fn clone_into_btree_map() -> eyre::Result<()> {
 
     assert_eq!(clone_map.get("key"), Some(&42));
     assert_eq!(clone_map.get("new_key"), None);
-
-    Ok(())
 }
 
 #[test]
-fn wip_build_tuple_through_listlike_api_exact() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_build_tuple_through_listlike_api_exact() {
     let wip = Wip::alloc::<(f64,)>()?;
     let wip = wip.begin_pushback()?;
     let wip = wip.put(5.4321)?;
     let hv = wip.build()?;
     let tuple = hv.materialize::<(f64,)>()?;
     assert_eq!(tuple.0, 5.4321);
-
-    Ok(())
 }
 
 #[test]
-fn wip_build_tuple_through_listlike_api_coerce() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_build_tuple_through_listlike_api_coerce() {
     let wip = Wip::alloc::<(f32,)>()?;
     let wip = wip.begin_pushback()?;
     let wip = wip.put(5.4321)?;
     let hv = wip.build()?;
     let tuple = hv.materialize::<(f32,)>()?;
     assert_eq!(tuple.0, 5.4321);
-
-    Ok(())
 }
 
 #[test]
-fn wip_build_option_none_through_default() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_build_option_none_through_default() {
     let wip = Wip::alloc::<Option<u32>>()?;
     let wip = wip.put_default()?;
     let hv = wip.build()?;
     let option = hv.materialize::<Option<u32>>()?;
     assert_eq!(option, None);
-
-    Ok(())
 }

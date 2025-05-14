@@ -1,7 +1,7 @@
-// we want these for clarity
 #![allow(clippy::needless_lifetimes)]
 use facet::Facet;
 use facet_reflect::{ReflectError, Wip};
+use facet_testhelpers::test;
 
 #[derive(Debug, Facet)]
 struct CovariantLifetime<'a> {
@@ -35,8 +35,7 @@ fn covariant_works() {
     }
     scope(CovariantLifetime {
         _pd: std::marker::PhantomData,
-    })
-    .unwrap();
+    })?;
 }
 
 #[test]
@@ -56,8 +55,7 @@ fn contravariant_works() {
     }
     scope(ContravariantLifetime {
         _pd: std::marker::PhantomData,
-    })
-    .unwrap();
+    })?;
 }
 
 #[test]
@@ -77,6 +75,5 @@ fn invariant_works() {
     }
     scope(InvariantLifetime {
         _pd: std::marker::PhantomData,
-    })
-    .unwrap();
+    })?;
 }

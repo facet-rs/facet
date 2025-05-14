@@ -1,11 +1,10 @@
 use facet::Facet;
 use facet_reflect::Wip;
+use facet_testhelpers::test;
 use std::collections::HashMap;
 
 #[test]
-fn wip_map_trivial() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_map_trivial() {
     let wip = Wip::alloc::<HashMap<String, String>>()?
         .begin_map_insert()?
         .push_map_key()?
@@ -20,18 +19,14 @@ fn wip_map_trivial() -> eyre::Result<()> {
         wip,
         HashMap::from([("key".to_string(), "value".to_string())])
     );
-
-    Ok(())
 }
 
 #[test]
-fn wip_map_twice() -> eyre::Result<()> {
+fn wip_map_twice() {
     #[derive(Facet)]
     struct MapWrap {
         map: HashMap<String, String>,
     }
-
-    facet_testhelpers::setup();
 
     let _wip = Wip::alloc::<MapWrap>()?
         .field_named("map")?
@@ -51,6 +46,4 @@ fn wip_map_twice() -> eyre::Result<()> {
         .pop()?
         .build()?
         .materialize::<MapWrap>()?;
-
-    Ok(())
 }

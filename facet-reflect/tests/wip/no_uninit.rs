@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use facet::Facet;
 use facet_reflect::{ReflectError, Wip};
+use facet_testhelpers::test;
 
 // The order of these tests mirrors the Def enum
 
@@ -17,12 +18,11 @@ fn struct_uninit() {
         foo: u32,
     }
 
-    facet_testhelpers::setup();
-    let wip = Wip::alloc::<FooBar>().unwrap();
+    let wip = Wip::alloc::<FooBar>()?;
     assert!(matches!(
         wip.build(),
         Err(ReflectError::UninitializedField { .. })
-    ),);
+    ));
 }
 
 #[test]
@@ -35,23 +35,16 @@ fn enum_uninit() {
         Bar { x: u32 },
     }
 
-    facet_testhelpers::setup();
-    let wip = Wip::alloc::<FooBar>().unwrap();
+    let wip = Wip::alloc::<FooBar>()?;
     assert!(matches!(
         wip.build(),
         Err(ReflectError::NoVariantSelected { .. })
-    ),);
+    ));
 
-    let wip = Wip::alloc::<FooBar>()
-        .unwrap()
-        .variant_named("Foo")
-        .unwrap();
+    let wip = Wip::alloc::<FooBar>()?.variant_named("Foo")?;
     assert!(wip.build().is_ok());
 
-    let wip = Wip::alloc::<FooBar>()
-        .unwrap()
-        .variant_named("Bar")
-        .unwrap();
+    let wip = Wip::alloc::<FooBar>()?.variant_named("Bar")?;
     assert!(matches!(
         wip.build(),
         Err(ReflectError::UninitializedEnumField { .. })
@@ -70,8 +63,7 @@ fn list_uninit() {
 
 #[test]
 fn array_uninit() {
-    facet_testhelpers::setup();
-    let wip = Wip::alloc::<[f32; 8]>().unwrap();
+    let wip = Wip::alloc::<[f32; 8]>()?;
     let res = wip.build();
     assert!(
         matches!(res, Err(ReflectError::ArrayNotFullyInitialized { .. })),
@@ -95,7 +87,6 @@ fn smart_pointer_uninit() {
 }
 
 fn test_uninit<T: Facet<'static>>() {
-    facet_testhelpers::setup();
     let wip = Wip::alloc::<T>().unwrap();
     let res = wip.build();
     assert!(

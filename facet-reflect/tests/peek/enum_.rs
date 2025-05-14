@@ -1,5 +1,6 @@
 use facet::Facet;
 use facet_reflect::Peek;
+use facet_testhelpers::test;
 
 #[derive(Facet)]
 #[repr(u8)]
@@ -10,9 +11,7 @@ enum DefinitelyNotAnEnum {
 }
 
 #[test]
-fn peek_enum() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn peek_enum() {
     // Test with Some value
     let some_value = DefinitelyNotAnEnum::Some(42);
     let peek_value = Peek::new(&some_value);
@@ -43,8 +42,6 @@ fn peek_enum() -> eyre::Result<()> {
 
     assert!(peek_def_not_enum.variant_name_active()? == "None");
     // None variant has no fields to check
-
-    Ok(())
 }
 
 #[derive(Facet)]
@@ -57,9 +54,7 @@ enum ReprCEnum {
 }
 
 #[test]
-fn peek_repr_c_enum() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn peek_repr_c_enum() {
     // Test with unit
     let unit_value = ReprCEnum::Unit;
     let peek_value = Peek::new(&unit_value);
@@ -98,6 +93,4 @@ fn peek_repr_c_enum() -> eyre::Result<()> {
     let inner_value = peek_enum.field_by_name("b")?.unwrap();
     let value = inner_value.get::<String>()?;
     assert_eq!(value, "Hello");
-
-    Ok(())
 }

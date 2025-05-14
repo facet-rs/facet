@@ -1,9 +1,8 @@
 use facet_reflect::Wip;
+use facet_testhelpers::test;
 
 #[test]
-fn wip_list_leaktest1() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_list_leaktest1() {
     let _ = Wip::alloc::<Vec<i32>>()?
         .begin_pushback()?
         .push()?
@@ -16,13 +15,10 @@ fn wip_list_leaktest1() -> eyre::Result<()> {
         .put(30)?
         .pop()?
         .build()?;
-    Ok(())
 }
 
 #[test]
-fn wip_list_leaktest2() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_list_leaktest2() {
     let _ = Wip::alloc::<Vec<i32>>()?
         .begin_pushback()?
         .push()?
@@ -34,13 +30,10 @@ fn wip_list_leaktest2() -> eyre::Result<()> {
         .push()?
         .put(30)?
         .pop()?;
-    Ok(())
 }
 
 #[test]
-fn wip_list_leaktest3() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_list_leaktest3() {
     let _ = Wip::alloc::<Vec<i32>>()?
         .begin_pushback()?
         .push()?
@@ -51,13 +44,10 @@ fn wip_list_leaktest3() -> eyre::Result<()> {
         .pop()?
         .push()?
         .put(30)?;
-    Ok(())
 }
 
 #[test]
-fn wip_list_leaktest4() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_list_leaktest4() {
     let _ = Wip::alloc::<Vec<i32>>()?
         .begin_pushback()?
         .push()?
@@ -67,13 +57,10 @@ fn wip_list_leaktest4() -> eyre::Result<()> {
         .put(20)?
         .pop()?
         .push()?;
-    Ok(())
 }
 
 #[test]
-fn wip_list_leaktest5() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_list_leaktest5() {
     let _ = Wip::alloc::<Vec<i32>>()?
         .begin_pushback()?
         .push()?
@@ -82,13 +69,10 @@ fn wip_list_leaktest5() -> eyre::Result<()> {
         .push()?
         .put(20)?
         .pop()?;
-    Ok(())
 }
 
 #[test]
-fn wip_list_leaktest6() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_list_leaktest6() {
     let _ = Wip::alloc::<Vec<i32>>()?
         .begin_pushback()?
         .push()?
@@ -96,65 +80,46 @@ fn wip_list_leaktest6() -> eyre::Result<()> {
         .pop()?
         .push()?
         .put(20)?;
-    Ok(())
 }
 
 #[test]
-fn wip_list_leaktest7() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_list_leaktest7() {
     let _ = Wip::alloc::<Vec<i32>>()?
         .begin_pushback()?
         .push()?
         .put(10)?
         .pop()?
         .push()?;
-    Ok(())
 }
 
 #[test]
-fn wip_list_leaktest8() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_list_leaktest8() {
     let _ = Wip::alloc::<Vec<i32>>()?
         .begin_pushback()?
         .push()?
         .put(10)?
         .pop()?;
-    Ok(())
 }
 
 #[test]
-fn wip_list_leaktest9() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_list_leaktest9() {
     let _ = Wip::alloc::<Vec<i32>>()?
         .begin_pushback()?
         .push()?
         .put(10)?;
-    Ok(())
 }
 
 #[test]
-fn wip_list_leaktest10() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_list_leaktest10() {
     let _ = Wip::alloc::<Vec<i32>>()?.begin_pushback()?.push()?;
-    Ok(())
 }
 
 #[test]
-fn wip_list_leaktest11() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_list_leaktest11() {
     let _ = Wip::alloc::<Vec<i32>>()?.begin_pushback()?;
-    Ok(())
 }
 
 #[test]
-fn wip_list_leaktest12() -> eyre::Result<()> {
-    facet_testhelpers::setup();
-
+fn wip_list_leaktest12() {
     let _ = Wip::alloc::<Vec<i32>>()?;
-    Ok(())
 }

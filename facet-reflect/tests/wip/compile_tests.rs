@@ -3,6 +3,7 @@ use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 
+use facet_testhelpers::test;
 use owo_colors::OwoColorize;
 
 /// Test case structure for compilation tests
@@ -182,69 +183,59 @@ facet-reflect = {{ path = {:?} }}
 #[test]
 #[cfg(not(miri))]
 fn test_poke_lifetime_error() {
-    // Define the test case
     let test = CompilationTest {
         name: "poke_lifetime_error",
         source: include_str!("compile_tests/lifetimes.rs"),
         expected_errors: &["error[E0597]: `s` does not live long enough"],
     };
 
-    // Run the test
     run_compilation_test(&test);
 }
 
 #[test]
 #[cfg(not(miri))]
 fn test_covariant_growing() {
-    // Define the test case
     let test = CompilationTest {
         name: "covariant_growing",
         source: include_str!("compile_tests/covariant_growing.rs"),
         expected_errors: &["error: lifetime may not live long enough"],
     };
 
-    // Run the test
     run_compilation_test(&test);
 }
 
 #[test]
 #[cfg(not(miri))]
 fn test_invariant_growing() {
-    // Define the test case
     let test = CompilationTest {
         name: "invariant_growing",
         source: include_str!("compile_tests/invariant_growing.rs"),
         expected_errors: &["error: lifetime may not live long enough"],
     };
 
-    // Run the test
     run_compilation_test(&test);
 }
 
 #[test]
 #[cfg(not(miri))]
 fn test_contravariant_shrinking() {
-    // Define the test case
     let test = CompilationTest {
         name: "contravariant_shrinking",
         source: include_str!("compile_tests/contravariant_shrinking.rs"),
         expected_errors: &["error[E0521]: borrowed data escapes outside of function"],
     };
 
-    // Run the test
     run_compilation_test(&test);
 }
 
 #[test]
 #[cfg(not(miri))]
 fn test_invariant_shrinking() {
-    // Define the test case
     let test = CompilationTest {
         name: "invariant_shrinking",
         source: include_str!("compile_tests/invariant_shrinking.rs"),
         expected_errors: &["error[E0521]: borrowed data escapes outside of function"],
     };
 
-    // Run the test
     run_compilation_test(&test);
 }
