@@ -1,26 +1,20 @@
-use eyre::Result;
 use facet::Facet;
+use facet_testhelpers::test;
 
 #[derive(Debug, Facet, PartialEq, Clone)]
 #[facet(transparent)]
 struct MyString(String);
 
 #[test]
-fn test_transparent_string() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_transparent_string() {
     let yaml = r#""Hello, world!""#;
 
     let my_string: MyString = facet_yaml::from_str(yaml)?;
     assert_eq!(my_string.0, "Hello, world!".to_string());
-
-    Ok(())
 }
 
 #[test]
-fn test_transparent_string_vec() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_transparent_string_vec() {
     let yaml = r#"
         - "Hello"
         - "World"
@@ -36,14 +30,10 @@ fn test_transparent_string_vec() -> Result<()> {
             MyString("!".to_string())
         ]
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_transparent_in_struct() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_transparent_in_struct() {
     #[derive(Debug, Facet, PartialEq)]
     struct Message {
         content: MyString,
@@ -68,6 +58,4 @@ fn test_transparent_in_struct() -> Result<()> {
             ]
         }
     );
-
-    Ok(())
 }

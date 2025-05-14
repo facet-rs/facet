@@ -1,4 +1,5 @@
 use facet::Facet;
+use facet_testhelpers::test;
 use facet_xdr::{deserialize, to_vec};
 
 const FILE_EXAMPLE_BYTES: [u8; 48] = [
@@ -37,12 +38,12 @@ struct File {
 
 #[test]
 fn test_serialize_file_example() {
-    let file_bytes = to_vec(&file_example()).unwrap();
+    let file_bytes = to_vec(&file_example())?;
     assert_eq!(&file_bytes[..], FILE_EXAMPLE_BYTES);
 }
 
 #[test]
 fn test_deserialize_file_example() {
-    let file: File = deserialize(&FILE_EXAMPLE_BYTES).unwrap();
+    let file: File = deserialize(&FILE_EXAMPLE_BYTES)?;
     assert_eq!(file, file_example());
 }

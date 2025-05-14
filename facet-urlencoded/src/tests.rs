@@ -1,6 +1,6 @@
 use crate::from_str;
-use eyre::Result;
 use facet::Facet;
+use facet_testhelpers::test;
 
 #[derive(Debug, Facet, PartialEq)]
 struct SearchParams {
@@ -30,9 +30,7 @@ struct OrderForm {
 }
 
 #[test]
-fn test_basic_urlencoded() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_basic_urlencoded() {
     let query_string = "query=rust+programming&page=2";
 
     let params: SearchParams = from_str(query_string)?;
@@ -43,14 +41,10 @@ fn test_basic_urlencoded() -> Result<()> {
             page: 2
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_encoded_characters() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_encoded_characters() {
     let query_string = "query=rust%20programming%21&page=3";
 
     let params: SearchParams = from_str(query_string)?;
@@ -61,14 +55,10 @@ fn test_encoded_characters() -> Result<()> {
             page: 3
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_missing_field_light() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_missing_field_light() {
     #[derive(Debug, Facet, PartialEq)]
     struct TestStruct {
         field1: String,
@@ -95,14 +85,10 @@ fn test_missing_field_light() -> Result<()> {
             _ => panic!("Expected ReflectError, got: {:?}", err),
         }
     }
-
-    Ok(())
 }
 
 #[test]
-fn test_unknown_field() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_unknown_field() {
     let query_string = "query=rust+programming&page=2&unknown=value";
 
     let params: SearchParams = from_str(query_string)?;
@@ -113,14 +99,10 @@ fn test_unknown_field() -> Result<()> {
             page: 2
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_invalid_number() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_invalid_number() {
     let query_string = "query=rust+programming&page=not_a_number";
 
     let result = from_str::<SearchParams>(query_string);
@@ -135,14 +117,10 @@ fn test_invalid_number() -> Result<()> {
             _ => panic!("Expected InvalidNumber error"),
         }
     }
-
-    Ok(())
 }
 
 #[test]
-fn test_nested_struct() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_nested_struct() {
     let query_string = "user[name]=John+Doe&user[age]=30&user[address][street]=123+Main+St&user[address][city]=Anytown&user[address][zip]=12345&product_id=ABC123&quantity=2";
 
     let order: OrderForm = from_str(query_string)?;
@@ -163,14 +141,10 @@ fn test_nested_struct() -> Result<()> {
             },
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_partial_nested_struct() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_partial_nested_struct() {
     // Missing some nested fields
     let query_string = "user[name]=John+Doe&user[age]=30&user[address][street]=123+Main+St&user[address][zip]=12345&product_id=ABC123&quantity=2";
 
@@ -192,12 +166,10 @@ fn test_partial_nested_struct() -> Result<()> {
             _ => panic!("Expected ReflectError, got: {:?}", err),
         }
     }
-
-    Ok(())
 }
 
 #[test]
-fn test_deep_nesting() -> Result<()> {
+fn test_deep_nesting() {
     let query_string = "very[very][deeply][nested][field]=value&simple=data";
 
     #[derive(Debug, Facet, PartialEq)]
@@ -243,6 +215,4 @@ fn test_deep_nesting() -> Result<()> {
             simple: "data".to_string(),
         }
     );
-
-    Ok(())
 }

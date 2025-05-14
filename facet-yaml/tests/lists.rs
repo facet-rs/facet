@@ -1,5 +1,5 @@
-use eyre::Result;
 use facet::Facet;
+use facet_testhelpers::test;
 
 #[derive(Debug, Facet, PartialEq)]
 struct Person {
@@ -8,7 +8,7 @@ struct Person {
 }
 
 #[test]
-fn test_deserialize_primitive_list() -> Result<()> {
+fn test_deserialize_primitive_list() {
     let yaml = r#"
         - 1
         - 2
@@ -19,12 +19,10 @@ fn test_deserialize_primitive_list() -> Result<()> {
 
     let numbers: Vec<u64> = facet_yaml::from_str(yaml)?;
     assert_eq!(numbers, vec![1, 2, 3, 4, 5]);
-
-    Ok(())
 }
 
 #[test]
-fn test_deserialize_struct_list() -> Result<()> {
+fn test_deserialize_struct_list() {
     let yaml = r#"
         - name: Alice
           age: 30
@@ -52,24 +50,20 @@ fn test_deserialize_struct_list() -> Result<()> {
             }
         ]
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_deserialize_empty_list() -> Result<()> {
+fn test_deserialize_empty_list() {
     let yaml = r#"[]"#;
 
     let empty_list: Vec<u64> = facet_yaml::from_str(yaml)?;
     assert_eq!(empty_list, Vec::<u64>::new());
-
-    Ok(())
 }
 
 #[test]
-fn test_deserialize_nested_lists() -> Result<()> {
+fn test_deserialize_nested_lists() {
     let yaml = r#"
-        - 
+        -
           - 1
           - 2
         -
@@ -79,6 +73,4 @@ fn test_deserialize_nested_lists() -> Result<()> {
 
     let nested: Vec<Vec<u64>> = facet_yaml::from_str(yaml)?;
     assert_eq!(nested, vec![vec![1, 2], vec![3, 4]]);
-
-    Ok(())
 }

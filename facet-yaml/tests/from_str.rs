@@ -1,5 +1,5 @@
-use eyre::Result;
 use facet::Facet;
+use facet_testhelpers::test;
 
 #[derive(Debug, Facet, PartialEq)]
 struct Person {
@@ -8,7 +8,7 @@ struct Person {
 }
 
 #[test]
-fn test_deserialize_person() -> Result<()> {
+fn test_deserialize_person() {
     let yaml = r#"
             name: Alice
             age: 30
@@ -22,6 +22,4 @@ fn test_deserialize_person() -> Result<()> {
             age: 30
         }
     );
-
-    Ok(())
 }

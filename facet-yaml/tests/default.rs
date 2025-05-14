@@ -1,10 +1,8 @@
-use eyre::Result;
 use facet::Facet;
+use facet_testhelpers::test;
 
 #[test]
-fn test_struct_level_default() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_struct_level_default() {
     #[derive(Facet, Default, Debug, PartialEq)]
     #[facet(default)]
     struct DefaultStruct {
@@ -24,13 +22,10 @@ fn test_struct_level_default() -> Result<()> {
         "Expected bar to be empty string, got {:?}",
         s.bar
     );
-    Ok(())
 }
 
 #[test]
-fn test_field_level_default_no_function() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_field_level_default_no_function() {
     #[derive(Facet, Debug, PartialEq)]
     struct FieldDefault {
         foo: i32,
@@ -50,13 +45,10 @@ fn test_field_level_default_no_function() -> Result<()> {
         "Expected bar to be empty string, got {:?}",
         s.bar
     );
-    Ok(())
 }
 
 #[test]
-fn test_field_level_default_function() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_field_level_default_function() {
     fn default_number() -> i32 {
         12345
     }
@@ -76,13 +68,10 @@ fn test_field_level_default_function() -> Result<()> {
     let s: FieldDefaultFn = facet_yaml::from_str(yaml)?;
     assert_eq!(s.foo, 12345, "Expected foo to be 12345, got {}", s.foo);
     assert_eq!(s.bar, "hello", "Expected bar to be 'hello', got {}", s.bar);
-    Ok(())
 }
 
 #[test]
-fn test_nested_struct_with_defaults() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_nested_struct_with_defaults() {
     #[derive(Facet, Debug, PartialEq)]
     struct Root {
         value: i32,
@@ -132,14 +121,10 @@ fn test_nested_struct_with_defaults() -> Result<()> {
         s2.nested.name, "test",
         "Expected 'test' for explicitly set name field"
     );
-
-    Ok(())
 }
 
 #[test]
-fn test_default_with_complex_expression() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_default_with_complex_expression() {
     const DEFAULT_PORT: u16 = 8080;
 
     fn default_timeout() -> u64 {
@@ -176,7 +161,7 @@ fn test_default_with_complex_expression() -> Result<()> {
         host: example.com
         port: 9000
         timeout_seconds: 60
-        default_roles: 
+        default_roles:
           - guest
     "#;
 
@@ -185,6 +170,4 @@ fn test_default_with_complex_expression() -> Result<()> {
     assert_eq!(config2.port, 9000);
     assert_eq!(config2.timeout_seconds, 60);
     assert_eq!(config2.default_roles, vec!["guest".to_string()]);
-
-    Ok(())
 }
