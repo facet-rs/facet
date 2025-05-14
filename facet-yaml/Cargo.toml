@@ -11,7 +11,7 @@ categories = ["encoding", "parsing", "data-structures"]
 
 [features]
 deserialize = ["alloc"]
-serialize = ["alloc"]
+serialize = ["alloc", "dep:facet-serialize"]
 std = ["alloc", "facet-core/std", "facet-reflect/std"]
 alloc = ["facet-core/alloc", "facet-reflect/alloc"]
 default = ["serialize", "deserialize", "std"]
@@ -23,7 +23,9 @@ log = ["dep:log"]
 yaml-rust2 = "0.10.1"
 facet-core = { version = "0.27.0", path = "../facet-core", default-features = false }
 facet-reflect = { version = "0.27.0", path = "../facet-reflect", default-features = false }
+facet-serialize = { version = "0.24.1", path = "../facet-serialize", default-features = false, optional = true }
 log = { version = "0.4.27", optional = true }
+yansi = "1.0.1"
 
 [dev-dependencies]
 facet = { path = "../facet" }
