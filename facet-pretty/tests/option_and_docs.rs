@@ -1,5 +1,6 @@
 use facet::Facet;
 use facet_pretty::PrettyPrinter;
+use facet_testhelpers::test;
 
 #[derive(Clone, Facet)]
 /// A test struct with doc comments

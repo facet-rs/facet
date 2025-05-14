@@ -3,6 +3,7 @@
 use camino::{Utf8Path, Utf8PathBuf};
 use facet::Facet;
 use facet_pretty::PrettyPrinter;
+use facet_testhelpers::test;
 
 #[derive(Facet)]
 struct TestPathBuf {

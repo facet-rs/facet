@@ -1,6 +1,7 @@
 use core::fmt::Write;
 use facet::Facet;
 use facet_pretty::{FacetPretty, PrettyPrinter};
+use facet_testhelpers::test;
 
 #[derive(Debug, Facet)]
 struct Person {
@@ -62,7 +63,7 @@ fn test_pretty_print_simple() {
 
     // Test the FacetPretty trait
     let mut buffer = String::new();
-    write!(buffer, "{}", person.pretty()).unwrap();
+    write!(buffer, "{}", person.pretty())?;
 
     // Ensure the output contains the field names
     assert!(buffer.contains("name"));
@@ -87,8 +88,7 @@ fn test_pretty_print_simple() {
 
     // Test the FacetPretty trait with custom printer
     let mut custom_buffer = String::new();
-    write!(custom_buffer, "{}", person.pretty_with(custom_printer)).unwrap();
-
+    write!(custom_buffer, "{}", person.pretty_with(custom_printer))?;
     // Ensure the output contains the field names
     assert!(custom_buffer.contains("name"));
     assert!(custom_buffer.contains("age"));
@@ -120,7 +120,7 @@ fn test_sensitive_fields() {
 
     // Test pretty with trait
     let mut buffer = String::new();
-    write!(buffer, "{}", test_data.pretty()).unwrap();
+    write!(buffer, "{}", test_data.pretty())?;
 
     eprintln!("{}", buffer);
 

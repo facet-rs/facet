@@ -533,6 +533,7 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-reflect",
+ "facet-testhelpers 0.17.2",
  "yansi",
 ]
 
