@@ -20,8 +20,12 @@ pub enum Error {
     UnsupportedShape(String),
     /// Type is not supported for deserialization
     UnsupportedType(String),
+    /// Feature not yet implemented
+    NotImplemented(String),
     /// Reflection error
     ReflectError(facet_reflect::ReflectError),
+    /// Invalid enum variant
+    InvalidEnum(String),
 }
 
 impl From<facet_reflect::ReflectError> for Error {
@@ -45,8 +49,14 @@ impl fmt::Display for Error {
             Error::UnsupportedType(typ) => {
                 write!(f, "Unsupported type for deserialization: {}", typ)
             }
+            Error::NotImplemented(feature) => {
+                write!(f, "Feature not yet implemented: {}", feature)
+            }
             Error::ReflectError(err) => {
                 write!(f, "Reflection error: {}", err)
+            }
+            Error::InvalidEnum(message) => {
+                write!(f, "Invalid enum variant: {}", message)
             }
         }
     }

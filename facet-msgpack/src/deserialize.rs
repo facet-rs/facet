@@ -272,6 +272,21 @@ impl<'input> Decoder<'input> {
         Ok(self.input[self.offset] == MSGPACK_NIL)
     }
 
+    /// Peeks at the next byte to check if it's a string value without advancing the offset.
+    /// Returns true if the next value is a string, false otherwise.
+    fn peek_string(&mut self) -> Result<bool, DecodeError> {
+        if self.offset >= self.input.len() {
+            return Err(DecodeError::InsufficientData);
+        }
+        let prefix = self.input[self.offset];
+        Ok(
+            (prefix >= MSGPACK_FIXSTR_MIN && prefix <= MSGPACK_FIXSTR_MAX)
+                || prefix == MSGPACK_STR8
+                || prefix == MSGPACK_STR16
+                || prefix == MSGPACK_STR32,
+        )
+    }
+
     /// Skips a MessagePack value of any type.
     /// This is used when encountering unknown field names in a struct.
     fn skip_value(&mut self) -> Result<(), DecodeError> {
@@ -403,87 +418,342 @@ impl<'input> Decoder<'input> {
         }
     }
 
-    fn deserialize_value(&mut self, wip: Wip<'input>) -> Result<Wip<'input>, DecodeError> {
+    fn deserialize_value(&mut self, mut wip: Wip<'input>) -> Result<Wip<'input>, DecodeError> {
         let shape = wip.shape();
         trace!("Deserializing {:?}", shape);
 
         // First check the type system (Type)
-        if let Type::User(UserType::Struct(_)) = &shape.ty {
-            trace!("Deserializing struct");
-            let map_len = self.decode_map_len()?;
+        match &shape.ty {
+            Type::User(UserType::Struct(struct_type)) => {
+                trace!("Deserializing struct");
+                let map_len = self.decode_map_len()?;
 
-            let mut wip = wip;
-            for _ in 0..map_len {
-                let key = self.decode_string()?;
-                match wip.field_index(&key) {
-                    Some(index) => {
-                        wip = self
-                            .deserialize_value(wip.field(index).unwrap())?
-                            .pop()
-                            .unwrap();
-                    }
-                    None => {
-                        // Skip unknown field value
-                        self.skip_value()?;
-                        trace!("Skipping unknown field: {}", key);
+                // Track which fields we've seen so we can handle defaults for the rest
+                let mut seen_fields = vec![false; struct_type.fields.len()];
+
+                let mut wip = wip;
+                for _ in 0..map_len {
+                    let key = self.decode_string()?;
+                    match wip.field_index(&key) {
+                        Some(index) => {
+                            seen_fields[index] = true;
+                            wip = self
+                                .deserialize_value(wip.field(index).unwrap())?
+                                .pop()
+                                .unwrap();
+                        }
+                        None => {
+                            // Skip unknown field value
+                            self.skip_value()?;
+                            trace!("Skipping unknown field: {}", key);
+                        }
                     }
                 }
+
+                // Handle defaults for fields that weren't seen in the input
+                for (i, &seen) in seen_fields.iter().enumerate() {
+                    if !seen {
+                        let field = &struct_type.fields[i];
+                        if field.flags.contains(facet_core::FieldFlags::DEFAULT) {
+                            // Field has default attribute, so we should apply the default
+                            let field_wip =
+                                wip.field(i).map_err(|e| DecodeError::ReflectError(e))?;
+
+                            // Whether there's a custom default function or not, we just use put_default()
+                            // the Wip.put_default() API in the facet system will handle calling the
+                            // appropriate default function set in the #[facet(default = ...)] attribute
+                            wip = field_wip
+                                .put_default()
+                                .map_err(|e| DecodeError::ReflectError(e))?
+                                .pop()
+                                .map_err(|e| DecodeError::ReflectError(e))?;
+                        } else {
+                            // Non-default field was missing
+                            return Err(DecodeError::MissingField(field.name.to_string()));
+                        }
+                    }
+                }
+
+                return Ok(wip);
             }
-            return Ok(wip);
+            Type::Sequence(facet_core::SequenceType::Tuple(tuple_type)) => {
+                trace!("Deserializing tuple");
+                let array_len = self.decode_array_len()?;
+                let field_count = tuple_type.fields.len();
+
+                if array_len != field_count {
+                    return Err(DecodeError::InvalidData);
+                }
+
+                // For tuples, we need to use begin_pushback for the new API
+                let mut tuple_wip = wip
+                    .begin_pushback()
+                    .map_err(|e| DecodeError::ReflectError(e))?;
+
+                for _ in 0..field_count {
+                    // Push a new element
+                    let element_wip = tuple_wip.push().map_err(|e| DecodeError::ReflectError(e))?;
+
+                    // Deserialize the element value
+                    let element_wip = self.deserialize_value(element_wip)?;
+
+                    // Pop back up to the tuple level
+                    tuple_wip = element_wip
+                        .pop()
+                        .map_err(|e| DecodeError::ReflectError(e))?;
+                }
+
+                return Ok(tuple_wip);
+            }
+            Type::User(UserType::Enum(enum_type)) => {
+                trace!("Deserializing enum");
+
+                // Check if it's a unit variant which is represented as a string
+                if self.peek_string()? {
+                    let variant_name = self.decode_string()?;
+                    for (idx, variant) in enum_type.variants.iter().enumerate() {
+                        if variant.name == variant_name {
+                            return Ok(wip
+                                .variant(idx)
+                                .map_err(|e| DecodeError::ReflectError(e))?);
+                        }
+                    }
+                    return Err(DecodeError::InvalidEnum(format!(
+                        "Unknown variant: {}",
+                        variant_name
+                    )));
+                }
+
+                // Otherwise it's represented as a map with single entry where key is the variant name
+                let map_len = self.decode_map_len()?;
+                if map_len != 1 {
+                    return Err(DecodeError::InvalidData);
+                }
+
+                let variant_name = self.decode_string()?;
+
+                for (idx, variant) in enum_type.variants.iter().enumerate() {
+                    if variant.name == variant_name {
+                        match &variant.data.kind {
+                            // Handle unit variant
+                            facet_core::StructKind::Unit => {
+                                // Need to skip any value that might be present
+                                self.skip_value()?;
+                                return Ok(wip
+                                    .variant(idx)
+                                    .map_err(|e| DecodeError::ReflectError(e))?);
+                            }
+
+                            // Handle tuple variant
+                            facet_core::StructKind::Tuple => {
+                                let array_len = self.decode_array_len()?;
+                                let field_count = variant.data.fields.len();
+
+                                if array_len != field_count {
+                                    return Err(DecodeError::InvalidData);
+                                }
+
+                                // First select the variant - not used since we return immediately
+                                let _ =
+                                    wip.variant(idx).map_err(|e| DecodeError::ReflectError(e))?;
+
+                                // Temporarily using a not-implemented error while we figure out the correct approach
+                                return Err(DecodeError::NotImplemented(
+                                    "Enum tuple variants not yet fully implemented".to_string(),
+                                ));
+                            }
+
+                            // Handle struct variant
+                            facet_core::StructKind::Struct => {
+                                let map_len = self.decode_map_len()?;
+                                // First select the variant
+                                let mut enum_wip =
+                                    wip.variant(idx).map_err(|e| DecodeError::ReflectError(e))?;
+
+                                // Handle fields as a normal struct
+                                for _ in 0..map_len {
+                                    let field_name = self.decode_string()?;
+                                    match enum_wip.field_index(&field_name) {
+                                        Some(field_idx) => {
+                                            let field_wip = enum_wip
+                                                .field(field_idx)
+                                                .map_err(|e| DecodeError::ReflectError(e))?;
+                                            let field_wip = self.deserialize_value(field_wip)?;
+                                            enum_wip = field_wip
+                                                .pop()
+                                                .map_err(|e| DecodeError::ReflectError(e))?;
+                                        }
+                                        None => {
+                                            // Skip unknown field
+                                            self.skip_value()?;
+                                            trace!(
+                                                "Skipping unknown field in enum: {}",
+                                                field_name
+                                            );
+                                        }
+                                    }
+                                }
+
+                                return Ok(enum_wip);
+                            }
+
+                            // Handle other kinds that might be added in the future
+                            _ => {
+                                return Err(DecodeError::UnsupportedType(format!(
+                                    "Unsupported enum variant kind: {:?}",
+                                    variant.data.kind
+                                )));
+                            }
+                        }
+                    }
+                }
+
+                return Err(DecodeError::InvalidEnum(format!(
+                    "Unknown variant: {}",
+                    variant_name
+                )));
+            }
+            _ => {}
         }
 
         // Then check the def system (Def)
-        let wip = match shape.def {
-            Def::Scalar(_) => {
-                trace!("Deserializing scalar");
-                if shape.is_type::<String>() {
-                    let s = self.decode_string()?;
-                    wip.put(s).unwrap()
-                } else if shape.is_type::<u64>() {
-                    let n = self.decode_u64()?;
-                    wip.put(n).unwrap()
-                } else if shape.is_type::<u32>() {
-                    let n = self.decode_u64()?;
-                    if n > u32::MAX as u64 {
-                        return Err(DecodeError::IntegerOverflow);
-                    }
-                    wip.put(n as u32).unwrap()
-                } else if shape.is_type::<u16>() {
-                    let n = self.decode_u64()?;
-                    if n > u16::MAX as u64 {
-                        return Err(DecodeError::IntegerOverflow);
-                    }
-                    wip.put(n as u16).unwrap()
-                } else if shape.is_type::<u8>() {
-                    let n = self.decode_u64()?;
-                    if n > u8::MAX as u64 {
-                        return Err(DecodeError::IntegerOverflow);
-                    }
-                    wip.put(n as u8).unwrap()
-                } else if shape.is_type::<i64>() {
-                    // This is a simplification - need to implement proper int decoding
-                    let n = self.decode_u64()?;
-                    if n > i64::MAX as u64 {
-                        return Err(DecodeError::IntegerOverflow);
-                    }
-                    wip.put(n as i64).unwrap()
-                } else if shape.is_type::<i32>() {
-                    let n = self.decode_u64()?;
-                    if n > i32::MAX as u64 {
-                        return Err(DecodeError::IntegerOverflow);
-                    }
-                    wip.put(n as i32).unwrap()
-                } else if shape.is_type::<bool>() {
-                    let b = self.decode_bool()?;
-                    wip.put(b).unwrap()
-                } else {
-                    return Err(DecodeError::UnsupportedType(format!("{}", shape)));
+        if let Def::Scalar(_) = shape.def {
+            trace!("Deserializing scalar");
+            if shape.is_type::<String>() {
+                let s = self.decode_string()?;
+                wip = wip.put(s).map_err(|e| DecodeError::ReflectError(e))?;
+            } else if shape.is_type::<u64>() {
+                let n = self.decode_u64()?;
+                wip = wip.put(n).map_err(|e| DecodeError::ReflectError(e))?;
+            } else if shape.is_type::<u32>() {
+                let n = self.decode_u64()?;
+                if n > u32::MAX as u64 {
+                    return Err(DecodeError::IntegerOverflow);
                 }
+                wip = wip
+                    .put(n as u32)
+                    .map_err(|e| DecodeError::ReflectError(e))?;
+            } else if shape.is_type::<u16>() {
+                let n = self.decode_u64()?;
+                if n > u16::MAX as u64 {
+                    return Err(DecodeError::IntegerOverflow);
+                }
+                wip = wip
+                    .put(n as u16)
+                    .map_err(|e| DecodeError::ReflectError(e))?;
+            } else if shape.is_type::<u8>() {
+                let n = self.decode_u64()?;
+                if n > u8::MAX as u64 {
+                    return Err(DecodeError::IntegerOverflow);
+                }
+                wip = wip.put(n as u8).map_err(|e| DecodeError::ReflectError(e))?;
+            } else if shape.is_type::<i64>() {
+                // TODO: implement proper signed int decoding including negative values
+                let n = self.decode_u64()?;
+                if n > i64::MAX as u64 {
+                    return Err(DecodeError::IntegerOverflow);
+                }
+                wip = wip
+                    .put(n as i64)
+                    .map_err(|e| DecodeError::ReflectError(e))?;
+            } else if shape.is_type::<i32>() {
+                let n = self.decode_u64()?;
+                if n > i32::MAX as u64 {
+                    return Err(DecodeError::IntegerOverflow);
+                }
+                wip = wip
+                    .put(n as i32)
+                    .map_err(|e| DecodeError::ReflectError(e))?;
+            } else if shape.is_type::<i16>() {
+                let n = self.decode_u64()?;
+                if n > i16::MAX as u64 {
+                    return Err(DecodeError::IntegerOverflow);
+                }
+                wip = wip
+                    .put(n as i16)
+                    .map_err(|e| DecodeError::ReflectError(e))?;
+            } else if shape.is_type::<i8>() {
+                let n = self.decode_u64()?;
+                if n > i8::MAX as u64 {
+                    return Err(DecodeError::IntegerOverflow);
+                }
+                wip = wip.put(n as i8).map_err(|e| DecodeError::ReflectError(e))?;
+            } else if shape.is_type::<f64>() {
+                // TODO: Implement proper f64 decoding from MessagePack format
+                return Err(DecodeError::NotImplemented(format!(
+                    "f64 deserialization not yet implemented"
+                )));
+            } else if shape.is_type::<f32>() {
+                // TODO: Implement proper f32 decoding from MessagePack format
+                return Err(DecodeError::NotImplemented(format!(
+                    "f32 deserialization not yet implemented"
+                )));
+            } else if shape.is_type::<bool>() {
+                let b = self.decode_bool()?;
+                wip = wip.put(b).map_err(|e| DecodeError::ReflectError(e))?;
+            } else {
+                return Err(DecodeError::UnsupportedType(format!("{}", shape)));
             }
-            _ => {
-                return Err(DecodeError::UnsupportedShape(format!("{:?}", shape)));
+        } else if let Def::Map(_map_def) = shape.def {
+            trace!("Deserializing map");
+            let map_len = self.decode_map_len()?;
+            let mut map_wip = wip
+                .begin_map_insert()
+                .map_err(|e| DecodeError::ReflectError(e))?;
+
+            for _ in 0..map_len {
+                // Each map entry has a key and value
+                let key_wip = map_wip
+                    .push_map_key()
+                    .map_err(|e| DecodeError::ReflectError(e))?;
+                let key_wip = self.deserialize_value(key_wip)?;
+
+                let value_wip = key_wip
+                    .push_map_value()
+                    .map_err(|e| DecodeError::ReflectError(e))?;
+                let map_wip_next = self.deserialize_value(value_wip)?;
+
+                map_wip = map_wip_next
+                    .pop()
+                    .map_err(|e| DecodeError::ReflectError(e))?;
             }
-        };
+
+            wip = map_wip;
+        } else if let Def::List(_list_def) = shape.def {
+            trace!("Deserializing list");
+            let array_len = self.decode_array_len()?;
+            let mut list_wip = wip
+                .begin_pushback()
+                .map_err(|e| DecodeError::ReflectError(e))?;
+
+            for _ in 0..array_len {
+                let item_wip = list_wip.push().map_err(|e| DecodeError::ReflectError(e))?;
+                list_wip = self
+                    .deserialize_value(item_wip)?
+                    .pop()
+                    .map_err(|e| DecodeError::ReflectError(e))?;
+            }
+
+            wip = list_wip;
+        } else if let Def::Option(_option_def) = shape.def {
+            trace!("Deserializing option");
+            // Check if we have a null/nil value
+            if self.peek_nil()? {
+                // Consume the nil value
+                self.decode_nil()?;
+                // Initialize None option
+                wip = wip
+                    .put_default()
+                    .map_err(|e| DecodeError::ReflectError(e))?;
+            } else {
+                // Value is present - initialize a Some option
+                let some_wip = wip.push_some().map_err(|e| DecodeError::ReflectError(e))?;
+                let some_wip = self.deserialize_value(some_wip)?;
+                wip = some_wip.pop().map_err(|e| DecodeError::ReflectError(e))?;
+            }
+        } else {
+            return Err(DecodeError::UnsupportedShape(format!("{:?}", shape)));
+        }
 
         Ok(wip)
     }
