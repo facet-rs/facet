@@ -1,13 +1,11 @@
-use eyre::Result;
 use facet::Facet;
 use facet_json::{from_str, to_string};
+use facet_testhelpers::test;
 use jiff::{Timestamp, Zoned, civil::DateTime};
 use time::OffsetDateTime;
 
 #[test]
-fn read_time_datetime() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn read_time_datetime() {
     #[derive(Facet, Debug, PartialEq)]
     struct FooBar {
         created_at: OffsetDateTime,
@@ -24,15 +22,11 @@ fn read_time_datetime() -> Result<()> {
             created_at: datetime!(2023-01-15 12:34:56 UTC),
         }
     );
-
-    Ok(())
 }
 
 #[test]
 #[cfg(not(miri))] // I don't think we can read time zones from miri, the test just fails
-fn read_jiff_zoned() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn read_jiff_zoned() {
     #[derive(Facet, Debug, PartialEq)]
     struct FooBar {
         created_at: Zoned,
@@ -50,14 +44,10 @@ fn read_jiff_zoned() -> Result<()> {
                 .in_tz("Asia/Ho_Chi_Minh")?
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn read_jiff_timestamp() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn read_jiff_timestamp() {
     #[derive(Facet, Debug, PartialEq)]
     struct FooBar {
         created_at: Timestamp,
@@ -73,14 +63,10 @@ fn read_jiff_timestamp() -> Result<()> {
             created_at: "2023-12-31T18:30:00+07:00[Asia/Ho_Chi_Minh]".parse()?,
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn read_jiff_datetime() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn read_jiff_datetime() {
     #[derive(Facet, Debug, PartialEq)]
     struct FooBar {
         created_at: DateTime,
@@ -96,14 +82,10 @@ fn read_jiff_datetime() -> Result<()> {
             created_at: "2024-06-19T15:22:45".parse()?,
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn write_time_datetime() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn write_time_datetime() {
     #[derive(Facet, Debug, PartialEq)]
     struct FooBar {
         created_at: OffsetDateTime,
@@ -117,15 +99,11 @@ fn write_time_datetime() -> Result<()> {
 
     let json = to_string(&value);
     assert_eq!(json, r#"{"created_at":"2023-01-15T12:34:56Z"}"#);
-
-    Ok(())
 }
 
 #[test]
 #[cfg(not(miri))] // I don't think we can read time zones from miri, the test just fails
-fn write_jiff_zoned() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn write_jiff_zoned() {
     #[derive(Facet, Debug, PartialEq)]
     struct FooBar {
         created_at: Zoned,
@@ -142,14 +120,10 @@ fn write_jiff_zoned() -> Result<()> {
         json,
         r#"{"created_at":"2023-12-31T18:30:00+07:00[Asia/Ho_Chi_Minh]"}"#
     );
-
-    Ok(())
 }
 
 #[test]
-fn write_jiff_timestamp() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn write_jiff_timestamp() {
     #[derive(Facet, Debug, PartialEq)]
     struct FooBar {
         created_at: Timestamp,
@@ -161,14 +135,10 @@ fn write_jiff_timestamp() -> Result<()> {
 
     let json = to_string(&value);
     assert_eq!(json, r#"{"created_at":"2023-12-31T11:30:00Z"}"#);
-
-    Ok(())
 }
 
 #[test]
-fn write_jiff_datetime() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn write_jiff_datetime() {
     #[derive(Facet, Debug, PartialEq)]
     struct FooBar {
         created_at: DateTime,
@@ -180,6 +150,4 @@ fn write_jiff_datetime() -> Result<()> {
 
     let json = to_string(&value);
     assert_eq!(json, r#"{"created_at":"2024-06-19T15:22:45"}"#);
-
-    Ok(())
 }

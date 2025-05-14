@@ -1,11 +1,10 @@
 use eyre::Result;
 use facet::Facet;
 use facet_json::from_str;
+use facet_testhelpers::test;
 
 #[test]
-fn test_struct_with_missing_field() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_struct_with_missing_field() {
     #[derive(Facet, Debug)]
     struct ThreeField {
         foo: String,
@@ -18,13 +17,10 @@ fn test_struct_with_missing_field() -> Result<()> {
     let err = result.expect_err("Expected an error, but deserialization succeeded");
     #[cfg(not(miri))]
     insta::assert_snapshot!(err);
-    Ok(())
 }
 
 #[test]
-fn test_deny_unknown_fields() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_deny_unknown_fields() {
     #[derive(Facet, Debug)]
     #[facet(deny_unknown_fields)]
     struct StrictStruct {
@@ -34,7 +30,7 @@ fn test_deny_unknown_fields() -> Result<()> {
 
     // JSON with only expected fields
     let json_ok = r#"{"foo":"abc","bar":42}"#;
-    let _strict: StrictStruct = from_str(json_ok)?;
+    let _strict: StrictStruct = from_str(json_ok).unwrap();
 
     // JSON with an unexpected extra field should generate an error
     let json_extra = r#"{"foo":"abc","bar":42,"baz":true}"#;
@@ -43,13 +39,10 @@ fn test_deny_unknown_fields() -> Result<()> {
         result_extra.expect_err("Expected error for json_extra, but deserialization succeeded");
     #[cfg(not(miri))]
     insta::assert_snapshot!(err);
-    Ok(())
 }
 
 #[test]
-fn json_read_struct_level_default_unset_field() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn json_read_struct_level_default_unset_field() {
     #[derive(Facet, Default, Debug)]
     #[facet(default)]
     struct DefaultStruct {
@@ -60,20 +53,17 @@ fn json_read_struct_level_default_unset_field() -> Result<()> {
     // Only set foo, leave bar missing - should use Default for String
     let json = r#"{"foo": 123}"#;
 
-    let s: DefaultStruct = from_str(json)?;
+    let s: DefaultStruct = from_str(json).unwrap();
     assert_eq!(s.foo, 123, "Expected foo to be 123, got {}", s.foo);
     assert!(
         s.bar.is_empty(),
         "Expected bar to be empty string, got {:?}",
         s.bar
     );
-    Ok(())
 }
 
 #[test]
-fn json_read_field_level_default_no_function() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn json_read_field_level_default_no_function() {
     #[derive(Facet, Debug, PartialEq)]
     struct FieldDefault {
         foo: i32,
@@ -84,20 +74,17 @@ fn json_read_field_level_default_no_function() -> Result<()> {
     // Only set foo, leave bar missing - should use Default for String
     let json = r#"{"foo": 789}"#;
 
-    let s: FieldDefault = from_str(json)?;
+    let s: FieldDefault = from_str(json).unwrap();
     assert_eq!(s.foo, 789, "Expected foo to be 789, got {}", s.foo);
     assert_eq!(
         s.bar, "",
         "Expected bar to be empty string, got {:?}",
         s.bar
     );
-    Ok(())
 }
 
 #[test]
-fn json_read_field_level_default_function() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn json_read_field_level_default_function() {
     fn default_number() -> i32 {
         12345
     }
@@ -112,16 +99,13 @@ fn json_read_field_level_default_function() -> Result<()> {
     // Only set bar, leave foo missing - should use default_number()
     let json = r#"{"bar": "hello"}"#;
 
-    let s: FieldDefaultFn = from_str(json)?;
+    let s: FieldDefaultFn = from_str(json).unwrap();
     assert_eq!(s.foo, 12345, "Expected foo to be 12345, got {}", s.foo);
     assert_eq!(s.bar, "hello", "Expected bar to be 'hello', got {}", s.bar);
-    Ok(())
 }
 
 #[test]
-fn test_allow_unknown_fields_1() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_allow_unknown_fields_1() {
     #[derive(Facet, Debug)]
     struct PermissiveStruct {
         foo: String,
@@ -130,18 +114,15 @@ fn test_allow_unknown_fields_1() -> Result<()> {
 
     // JSON with only expected fields
     let json_ok = r#"{"foo":"abc","bar":42}"#;
-    let _ = from_str::<PermissiveStruct>(json_ok)?;
+    let _ = from_str::<PermissiveStruct>(json_ok).unwrap();
 
     // JSON with an unexpected extra field should NOT generate an error
     let json_extra = r#"{"foo":"abc","bar":42,"baz":[]}"#;
-    let _ = from_str::<PermissiveStruct>(json_extra)?;
-    Ok(())
+    let _ = from_str::<PermissiveStruct>(json_extra).unwrap();
 }
 
 #[test]
-fn test_allow_unknown_fields_complex() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_allow_unknown_fields_complex() {
     #[derive(Facet, Debug)]
     struct PermissiveStruct {
         foo: String,
@@ -169,12 +150,11 @@ fn test_allow_unknown_fields_complex() -> Result<()> {
         ]
     }
     "#;
-    let result: PermissiveStruct = from_str(json_complex)?;
+    let result: PermissiveStruct = from_str(json_complex).unwrap();
     assert_eq!(
         result.foo, "xyz",
         "Expected foo to be 'xyz', got {}",
         result.foo
     );
     assert_eq!(result.bar, 99, "Expected bar to be 99, got {}", result.bar);
-    Ok(())
 }

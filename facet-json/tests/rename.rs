@@ -1,14 +1,12 @@
-use eyre::Result;
 use facet::Facet;
 use facet_deserialize::DeserErrorKind;
 use facet_json::{from_str, to_string};
+use facet_testhelpers::test;
 use insta::assert_snapshot;
 
 /// Basic deserialization with renamed fields
 #[test]
-fn test_field_rename_deserialization() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_field_rename_deserialization() {
     #[derive(Facet, Debug, PartialEq)]
     struct Greetings {
         #[facet(rename = "bonjour")]
@@ -24,16 +22,12 @@ fn test_field_rename_deserialization() -> Result<()> {
 
     assert_eq!(result.hello, "monde");
     assert_eq!(result.goodbye, "world");
-
-    Ok(())
 }
 
 /// Round-trip serialization then deserialization with a renamed field
 #[cfg(feature = "std")]
 #[test]
 fn test_field_rename_roundtrip() {
-    facet_testhelpers::setup();
-
     #[derive(Facet, Debug, PartialEq)]
     struct Greetings {
         #[facet(rename = "bonjour")]
@@ -53,9 +47,7 @@ fn test_field_rename_roundtrip() {
 
 /// Deserialization with common naming conventions (kebab-case, snake_case, camelCase)
 #[test]
-fn test_field_rename_common_case_styles() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_field_rename_common_case_styles() {
     #[derive(Facet, Debug, PartialEq)]
     struct SpecialNames {
         #[facet(rename = "kebab-case")]
@@ -74,16 +66,12 @@ fn test_field_rename_common_case_styles() -> Result<()> {
     assert_eq!(result.kebab_case, "dash");
     assert_eq!(result.original_snake, "underscore");
     assert_eq!(result.camel_case, "hump");
-
-    Ok(())
 }
 
 /// Serialization and deserialization with special symbol characters in field name
 #[test]
 #[cfg(feature = "std")]
 fn test_field_rename_with_symbol_chars_name() {
-    facet_testhelpers::setup();
-
     #[derive(Debug, PartialEq, Facet)]
     struct SpecialCharsName {
         #[facet(rename = "@#$%^&")]
@@ -105,8 +93,6 @@ fn test_field_rename_with_symbol_chars_name() {
 #[test]
 #[cfg(feature = "std")]
 fn test_field_rename_with_unicode_name_emoji() {
-    facet_testhelpers::setup();
-
     #[derive(Debug, PartialEq, Facet)]
     struct EmojiCharsName {
         #[facet(rename = "🏀")]
@@ -128,8 +114,6 @@ fn test_field_rename_with_unicode_name_emoji() {
 #[cfg(feature = "std")]
 #[test]
 fn test_raw_identifier_fields_roundtrip() {
-    facet_testhelpers::setup();
-
     #[derive(Facet, Debug, PartialEq)]
     struct RawIdentifiers {
         // Use rename because the JSON key won't have the r# prefix
@@ -158,8 +142,6 @@ fn test_raw_identifier_fields_roundtrip() {
 #[test]
 #[cfg(feature = "std")]
 fn test_field_rename_with_unicode_name_special_signs() {
-    facet_testhelpers::setup();
-
     #[derive(Debug, PartialEq, Facet)]
     struct EmojiCharsName {
         #[facet(rename = "€℮↑→↓↔↕")]
@@ -181,8 +163,6 @@ fn test_field_rename_with_unicode_name_special_signs() {
 #[cfg(feature = "std")]
 #[test]
 fn test_field_rename_with_numeric_name() {
-    facet_testhelpers::setup();
-
     #[derive(Debug, PartialEq, Facet)]
     struct NumericName {
         #[facet(rename = "123")]
@@ -203,8 +183,6 @@ fn test_field_rename_with_numeric_name() {
 #[test]
 #[ignore]
 fn test_enum_variant_rename() {
-    facet_testhelpers::setup();
-
     #[derive(Debug, PartialEq, Facet)]
     #[repr(u8)]
     enum Color {
@@ -235,8 +213,6 @@ fn test_enum_variant_rename() {
 #[test]
 #[ignore]
 fn test_enum_struct_variant_field_rename() {
-    facet_testhelpers::setup();
-
     #[derive(Debug, PartialEq, Facet)]
     #[repr(u8)]
     enum Message {
@@ -294,8 +270,6 @@ fn test_enum_struct_variant_field_rename() {
 #[cfg(feature = "std")]
 #[test]
 fn test_field_rename_nested_structures() {
-    facet_testhelpers::setup();
-
     #[derive(Debug, PartialEq, Facet)]
     struct Address {
         #[facet(rename = "streetName")]
@@ -356,8 +330,6 @@ fn test_field_rename_nested_structures() {
 #[cfg(feature = "std")]
 #[test]
 fn test_field_rename_optional_values() {
-    facet_testhelpers::setup();
-
     #[derive(Debug, PartialEq, Facet)]
     struct OptionalFields {
         #[facet(rename = "requiredField")]
@@ -406,8 +378,6 @@ fn test_field_rename_optional_values() {
 /// Deserialization with extra fields in JSON that aren't in the target struct
 #[test]
 fn test_field_rename_ignore_extra_fields() {
-    facet_testhelpers::setup();
-
     #[derive(Debug, PartialEq, Facet)]
     struct User {
         #[facet(rename = "userId")]
@@ -432,8 +402,6 @@ fn test_field_rename_ignore_extra_fields() {
 #[test]
 #[ignore]
 fn test_field_rename_serialization_priority() {
-    facet_testhelpers::setup();
-
     // When serializing, the rename attribute should always be used instead of
     // the original field name
     #[derive(Debug, PartialEq, Facet)]
@@ -454,8 +422,6 @@ fn test_field_rename_serialization_priority() {
 #[test]
 #[ignore]
 fn test_field_rename_missing_required_error() {
-    facet_testhelpers::setup();
-
     #[derive(Debug, PartialEq, Facet)]
     struct Required {
         #[facet(rename = "renamedField")]
@@ -478,9 +444,7 @@ fn test_field_rename_missing_required_error() {
 
 /// Rename to verify it's not an accidental alias
 #[test]
-fn test_field_rename_not_alias() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_field_rename_not_alias() {
     #[derive(Facet, Debug, PartialEq)]
     struct ABTesting {
         #[facet(rename = "b")]
@@ -496,16 +460,12 @@ fn test_field_rename_not_alias() -> Result<()> {
 
     assert_eq!(result.a, "focus group 1");
     assert_eq!(result.b, "focus group 2");
-
-    Ok(())
 }
 
 /// Empty string rename test (which is valid in JSON)
 #[test]
 #[cfg(feature = "std")]
 fn test_field_empty_string_rename() {
-    facet_testhelpers::setup();
-
     #[derive(Debug, PartialEq, Facet)]
     struct EmptyStringField {
         #[facet(rename = "")]

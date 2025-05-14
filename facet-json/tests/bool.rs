@@ -1,11 +1,9 @@
-use eyre::Result;
 use facet::Facet;
 use facet_json::from_str;
+use facet_testhelpers::test;
 
 #[test]
-fn json_read_bool() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn json_read_bool() {
     #[derive(Facet, Debug, PartialEq)]
     struct BoolStruct {
         yes: bool,
@@ -22,6 +20,4 @@ fn json_read_bool() -> Result<()> {
             no: false
         }
     );
-
-    Ok(())
 }

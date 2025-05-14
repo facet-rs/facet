@@ -1,35 +1,25 @@
-use eyre::Result;
 use facet::Facet;
 use facet_json::from_str;
+use facet_testhelpers::test;
 
 #[test]
-fn json_read_empty_vec() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn json_read_empty_vec() {
     let json = r#"[]"#;
 
-    let v: Vec<i32> = from_str(json)?;
+    let v: Vec<i32> = from_str(json).unwrap();
     assert_eq!(v, vec![]);
-
-    Ok(())
 }
 
 #[test]
-fn json_read_vec() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn json_read_vec() {
     let json = r#"[1, 2, 3, 4, 5]"#;
 
-    let v: Vec<u64> = from_str(json)?;
+    let v: Vec<u64> = from_str(json).unwrap();
     assert_eq!(v, vec![1, 2, 3, 4, 5]);
-
-    Ok(())
 }
 
 #[test]
-fn test_two_empty_vecs() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_two_empty_vecs() {
     #[derive(Facet, Clone, Default)]
     pub struct RevisionConfig {
         pub one: Vec<String>,
@@ -43,17 +33,13 @@ fn test_two_empty_vecs() -> Result<()> {
     }
     "#;
 
-    let config: RevisionConfig = from_str(markup)?;
+    let config: RevisionConfig = from_str(markup).unwrap();
     assert!(config.one.is_empty());
     assert!(config.two.is_empty());
-
-    Ok(())
 }
 
 #[test]
-fn test_one_empty_one_nonempty_vec() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_one_empty_one_nonempty_vec() {
     #[derive(Facet, Clone, Default)]
     pub struct RevisionConfig {
         pub one: Vec<String>,
@@ -67,17 +53,13 @@ fn test_one_empty_one_nonempty_vec() -> Result<()> {
     }
     "#;
 
-    let config: RevisionConfig = from_str(markup)?;
+    let config: RevisionConfig = from_str(markup).unwrap();
     assert!(config.one.is_empty());
     assert_eq!(config.two, vec!["a", "b", "c"]);
-
-    Ok(())
 }
 
 #[test]
-fn test_one_nonempty_one_empty_vec() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_one_nonempty_one_empty_vec() {
     #[derive(Facet, Clone, Default)]
     pub struct RevisionConfig {
         pub one: Vec<String>,
@@ -91,17 +73,13 @@ fn test_one_nonempty_one_empty_vec() -> Result<()> {
     }
     "#;
 
-    let config: RevisionConfig = from_str(markup)?;
+    let config: RevisionConfig = from_str(markup).unwrap();
     assert_eq!(config.one, vec!["x", "y"]);
     assert!(config.two.is_empty());
-
-    Ok(())
 }
 
 #[test]
-fn test_nested_arrays() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_nested_arrays() {
     #[derive(Facet, Clone, Default)]
     pub struct NestedArrays {
         pub matrix: Vec<Vec<u64>>,
@@ -117,20 +95,16 @@ fn test_nested_arrays() -> Result<()> {
     }
     "#;
 
-    let nested: NestedArrays = from_str(markup)?;
+    let nested: NestedArrays = from_str(markup).unwrap();
     assert_eq!(nested.matrix.len(), 3);
     assert_eq!(nested.matrix[0], vec![1, 2, 3]);
     assert_eq!(nested.matrix[1], vec![]);
     assert_eq!(nested.matrix[2], vec![4, 5]);
-
-    Ok(())
 }
 
 #[test]
-fn test_deserialize_list() -> Result<()> {
-    let result: Vec<i32> = from_str(r#"[1,3]"#)?;
+fn test_deserialize_list() {
+    let result: Vec<i32> = from_str(r#"[1,3]"#).unwrap();
     assert_eq!(result[0], 1);
     assert_eq!(result[1], 3);
-
-    Ok(())
 }

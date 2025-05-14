@@ -1,12 +1,9 @@
-use eyre::Result;
 use facet::Facet;
 use facet_json::from_str;
-use std::fmt::Debug;
+use facet_testhelpers::test;
 
 #[test]
-fn test_skip_over_value() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_skip_over_value() {
     #[derive(Facet, Debug)]
     struct StructWithUnknownField {
         known: String,
@@ -48,14 +45,10 @@ fn test_skip_over_value() -> Result<()> {
     let json = r#"{"unknown": {"a": [1, 2, {"b": [3, 4, {"c": 5}]}]}, "known": "value"}"#;
     let result = from_str::<StructWithUnknownField>(json)?;
     assert_eq!(result.known, "value");
-
-    Ok(())
 }
 
 #[test]
-fn test_skip_over_value_with_escape_sequences() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_skip_over_value_with_escape_sequences() {
     #[derive(Facet, Debug)]
     struct StructWithUnknownField {
         known: String,
@@ -70,14 +63,10 @@ fn test_skip_over_value_with_escape_sequences() -> Result<()> {
     let json = r#"{"unknown": "test with \n\r\t\\ escapes", "known": "value"}"#;
     let result = from_str::<StructWithUnknownField>(json)?;
     assert_eq!(result.known, "value");
-
-    Ok(())
 }
 
 #[test]
-fn test_skip_over_complex_numbers() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_skip_over_complex_numbers() {
     #[derive(Facet, Debug)]
     struct StructWithUnknownField {
         known: String,
@@ -99,6 +88,4 @@ fn test_skip_over_complex_numbers() -> Result<()> {
     let json = r#"{"unknown": 1.23e-4, "known": "value"}"#;
     let result = from_str::<StructWithUnknownField>(json)?;
     assert_eq!(result.known, "value");
-
-    Ok(())
 }

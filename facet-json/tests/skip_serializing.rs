@@ -2,11 +2,10 @@
 
 use facet::Facet;
 use facet_json::to_string;
+use facet_testhelpers::test;
 
 #[test]
 fn test_skip_serializing() {
-    facet_testhelpers::setup();
-
     #[derive(Debug, PartialEq, Clone, Facet)]
     struct Greetings {
         hello: &'static str,
@@ -45,8 +44,6 @@ fn test_skip_serializing() {
 
 #[test]
 fn test_skip_serializing_if() {
-    facet_testhelpers::setup();
-
     #[derive(Debug, PartialEq, Clone, Facet)]
     struct Greetings {
         hello: &'static str,

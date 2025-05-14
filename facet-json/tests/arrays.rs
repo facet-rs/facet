@@ -1,6 +1,6 @@
-// Test to reproduce issue #504: facet-json failing to parse arrays in structs
 use facet::Facet;
 use facet_json::from_str;
+use facet_testhelpers::test;
 
 #[derive(Debug, Facet)]
 struct ElectricityData {
@@ -18,8 +18,6 @@ struct ElectricityData {
 
 #[test]
 fn test_array_field_parsing() {
-    facet_testhelpers::setup();
-
     // Simplified test data based on the issue
     let json = r#"{
         "time": "2024-08-27 11:55:42.428526+00:00",
@@ -55,8 +53,6 @@ struct NestedArrays {
 
 #[test]
 fn test_nested_array_parsing() {
-    facet_testhelpers::setup();
-
     let json = r#"{
         "name": "test matrix",
         "matrix": [
@@ -92,8 +88,6 @@ struct MixedArrayTypes {
 
 #[test]
 fn test_mixed_array_types() {
-    facet_testhelpers::setup();
-
     let json = r#"{
         "strings": ["hello", "world"],
         "numbers": [42, 123, 999],

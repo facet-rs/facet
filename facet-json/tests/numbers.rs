@@ -1,11 +1,9 @@
-use eyre::Result;
 use facet::Facet;
 use facet_json::from_str;
+use facet_testhelpers::test;
 
 #[test]
-fn json_read_more_types() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn json_read_more_types() {
     #[derive(Facet)]
     struct TestStructWithMoreTypes {
         u8_val: u8,
@@ -45,6 +43,4 @@ fn json_read_more_types() -> Result<()> {
     assert_eq!(test_struct.i64_val, -9223372036854775808);
     assert!((test_struct.f32_val - std::f32::consts::PI).abs() < f32::EPSILON);
     assert!((test_struct.f64_val - std::f64::consts::PI).abs() < f64::EPSILON);
-
-    Ok(())
 }

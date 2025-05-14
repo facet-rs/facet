@@ -1,53 +1,41 @@
-use eyre::Result;
 use facet::Facet;
 use facet_json::from_str;
 use facet_json::to_string;
+use facet_testhelpers::test;
 use std::collections::HashMap;
 use std::f64::consts::PI;
 use std::num::NonZero;
 
 #[test]
-fn json_read_empty_object_for_struct() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn json_read_empty_object_for_struct() {
     #[derive(Facet)]
     struct TestStruct {}
     let json = r#"{}"#;
 
-    let _: TestStruct = from_str(json)?;
-    Ok(())
+    let _: TestStruct = from_str(json).unwrap();
 }
 
 #[test]
-fn json_read_empty_object_for_hashmap() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn json_read_empty_object_for_hashmap() {
     let json = r#"{}"#;
 
-    let _: HashMap<String, String> = from_str(json)?;
-    Ok(())
+    let _: HashMap<String, String> = from_str(json).unwrap();
 }
 
 #[test]
-fn test_str_escaped() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_str_escaped() {
     #[derive(Facet, Debug)]
     struct S {
         foo: String,
     }
 
     let json_ok = r#"{"foo":"\"\\abc"}"#;
-    let ok: S = from_str(json_ok)?;
+    let ok: S = from_str(json_ok).unwrap();
     assert_eq!(ok.foo, "\"\\abc");
-
-    Ok(())
 }
 
 #[test]
 fn test_bool_serialization() {
-    facet_testhelpers::setup();
-
     #[derive(Debug, Facet)]
     struct BoolStruct {
         flag: bool,
@@ -62,8 +50,6 @@ fn test_bool_serialization() {
 
 #[test]
 fn test_integer_types_serialization() {
-    facet_testhelpers::setup();
-
     #[derive(Debug, Facet)]
     struct IntegerTypes {
         u8_val: u8,
@@ -105,8 +91,6 @@ fn test_integer_types_serialization() {
 
 #[test]
 fn test_nonzero_types_serialization() {
-    facet_testhelpers::setup();
-
     #[derive(Debug, Facet)]
     struct NonZeroTypes {
         u16_val: NonZero<u16>,
@@ -148,8 +132,6 @@ fn test_nonzero_types_serialization() {
 
 #[test]
 fn test_f64_serialization() {
-    facet_testhelpers::setup();
-
     #[derive(Debug, Facet)]
     struct F64Struct {
         value: f64,
@@ -162,8 +144,6 @@ fn test_f64_serialization() {
 
 #[test]
 fn test_string_escaping() {
-    facet_testhelpers::setup();
-
     #[derive(Debug, Facet)]
     struct EscapeTestStruct {
         quote: String,

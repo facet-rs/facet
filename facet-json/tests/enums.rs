@@ -1,11 +1,9 @@
-use eyre::Result;
 use facet::Facet;
 use facet_json::from_str;
+use facet_testhelpers::test;
 
 #[test]
-fn json_read_unit_enum_variant() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn json_read_unit_enum_variant() {
     #[derive(Facet, Debug, PartialEq)]
     #[repr(u8)]
     enum FontStyle {
@@ -20,14 +18,10 @@ fn json_read_unit_enum_variant() -> Result<()> {
 
     let s_oblique: FontStyle = from_str(json_oblique)?;
     assert_eq!(s_oblique, FontStyle::Oblique);
-
-    Ok(())
 }
 
 #[test]
-fn json_read_unit_enum_variant_lowercase() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn json_read_unit_enum_variant_lowercase() {
     #[derive(Facet, Debug, PartialEq)]
     #[facet(rename_all = "snake_case")]
     #[repr(u8)]
@@ -43,14 +37,10 @@ fn json_read_unit_enum_variant_lowercase() -> Result<()> {
 
     let s_oblique: FontStyle = from_str(json_oblique)?;
     assert_eq!(s_oblique, FontStyle::Oblique);
-
-    Ok(())
 }
 
 #[test]
-fn json_read_tuple_variant() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn json_read_tuple_variant() {
     #[derive(Facet, Debug, PartialEq)]
     #[repr(u8)]
     enum Point {
@@ -66,14 +56,10 @@ fn json_read_tuple_variant() -> Result<()> {
 
     let p_y: Point = from_str(json_y)?;
     assert_eq!(p_y, Point::Y("hello".to_string(), true));
-
-    Ok(())
 }
 
 #[test]
-fn json_read_struct_variant() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn json_read_struct_variant() {
     #[derive(Facet, Debug, PartialEq)]
     #[repr(u8)]
     #[allow(dead_code)]
@@ -94,8 +80,6 @@ fn json_read_struct_variant() -> Result<()> {
             guess: 3
         }
     );
-
-    Ok(())
 }
 
 #[test]
@@ -140,8 +124,6 @@ fn enum_generic_c() {
 
 #[test]
 fn enum_() {
-    facet_testhelpers::setup();
-
     #[allow(dead_code)]
     #[derive(facet::Facet)]
     #[repr(C)]
@@ -171,9 +153,7 @@ fn enum_() {
 }
 
 #[test]
-fn enum_variants() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn enum_variants() {
     // Unit variants
     #[derive(Debug, Facet, PartialEq)]
     #[repr(u8)]
@@ -241,14 +221,10 @@ fn enum_variants() -> Result<()> {
 
     let deserialized_y: Point = facet_json::from_str(&json_y).map_err(|e| eyre::eyre!("{}", e))?;
     assert_eq!(deserialized_y, y);
-
-    Ok(())
 }
 
 #[test]
-fn enum_unit_variants() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn enum_unit_variants() {
     // Unit variants
     #[derive(Debug, Facet, PartialEq)]
     #[repr(u8)]
@@ -266,14 +242,10 @@ fn enum_unit_variants() -> Result<()> {
     let deserialized_italic: FontStyle =
         facet_json::from_str(&json_italic).map_err(|e| eyre::eyre!("{}", e))?;
     assert_eq!(deserialized_italic, italic);
-
-    Ok(())
 }
 
 #[test]
-fn enum_tuple_primitive_variants() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn enum_tuple_primitive_variants() {
     // Tuple variants with primitive types
     #[derive(Debug, Facet, PartialEq)]
     #[repr(u8)]
@@ -297,14 +269,10 @@ fn enum_tuple_primitive_variants() -> Result<()> {
 
     let deserialized_y: Point = facet_json::from_str(&json_y).map_err(|e| eyre::eyre!("{}", e))?;
     assert_eq!(deserialized_y, y);
-
-    Ok(())
 }
 
 #[test]
-fn enum_struct_variants_1() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn enum_struct_variants_1() {
     #[derive(Debug, Facet, PartialEq)]
     #[repr(C)]
     enum Message {
@@ -348,14 +316,10 @@ fn enum_struct_variants_1() -> Result<()> {
     let json = facet_json::to_string(&good);
     let roundtrip: Message = facet_json::from_str(&json).map_err(|e| eyre::eyre!("{}", e))?;
     assert_eq!(roundtrip, good);
-
-    Ok(())
 }
 
 #[test]
-fn tuple_struct_variants() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn tuple_struct_variants() {
     #[derive(Debug, Facet, PartialEq)]
     struct GoodMorning {
         greeting: String,
@@ -417,14 +381,10 @@ fn tuple_struct_variants() -> Result<()> {
         }
         _ => panic!("Expected Tenant variant"),
     }
-
-    Ok(())
 }
 
 #[test]
-fn enum_struct_variants_2() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn enum_struct_variants_2() {
     // Struct variants
     #[derive(Debug, Facet, PartialEq)]
     #[repr(C)]
@@ -444,6 +404,4 @@ fn enum_struct_variants_2() -> Result<()> {
     let deserialized_good: Message =
         facet_json::from_str(&json_good).map_err(|e| eyre::eyre!("{}", e))?;
     assert_eq!(deserialized_good, good);
-
-    Ok(())
 }

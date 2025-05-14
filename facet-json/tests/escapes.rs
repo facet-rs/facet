@@ -1,5 +1,4 @@
-#![expect(clippy::panic_in_result_fn, reason = "this is a test suite")]
-#![expect(clippy::print_stdout, reason = "this is a test suite")]
+use facet_testhelpers::test;
 
 /// Something `facet-json` has no trouble parsing.
 const OK_JSON: &str = "\"This is fine.\"";
@@ -10,24 +9,20 @@ const FAIL_JSON: &str = "\"This\\u0020is fine.\"";
 /// The expected result of the failed parse.
 const FAIL_EXPECTED: &str = "This is fine.";
 
-use eyre::{Result, eyre};
-
 #[test]
-fn parse_ok() -> Result<()> {
+fn parse_ok() {
     println!("Attempting to parse {OK_JSON}");
     let parsed_ok = facet_json::from_str::<String>(OK_JSON)
-        .map_err(|err| eyre!("Could not parse {OK_JSON:?}: {err}"))?;
+        .map_err(|err| eyre::eyre!("Could not parse {OK_JSON:?}: {err}"))?;
     assert_eq!(parsed_ok, OK_EXPECTED);
-    Ok(())
 }
 
 #[test]
-fn parse_fail() -> Result<()> {
+fn parse_fail() {
     println!("Attempting to parse {FAIL_JSON}");
     let parsed_fail = facet_json::from_str::<String>(FAIL_JSON)
-        .map_err(|err| eyre!("Could not parse {FAIL_JSON:?}: {err}"))?;
+        .map_err(|err| eyre::eyre!("Could not parse {FAIL_JSON:?}: {err}"))?;
     assert_eq!(parsed_fail, FAIL_EXPECTED);
-    Ok(())
 }
 
 /// Test cases for various Unicode escape sequences
@@ -47,12 +42,11 @@ const UNICODE_TEST_CASES: &[(&str, &str)] = &[
 ];
 
 #[test]
-fn test_unicode_escapes() -> Result<()> {
+fn test_unicode_escapes() {
     for (input, expected) in UNICODE_TEST_CASES {
         println!("Attempting to parse {input}");
         let parsed = facet_json::from_str::<String>(input)
-            .map_err(|err| eyre!("Could not parse {input:?}: {err}"))?;
+            .map_err(|err| eyre::eyre!("Could not parse {input:?}: {err}"))?;
         assert_eq!(&parsed, expected, "Failed on input: {input}");
     }
-    Ok(())
 }

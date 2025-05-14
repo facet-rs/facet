@@ -1,13 +1,11 @@
-use eyre::Result;
 use facet::Facet;
 use facet_deserialize::DeserErrorKind;
 use facet_json::{from_slice, from_str};
+use facet_testhelpers::test;
 use std::fmt::Debug;
 
 #[test]
 fn test_eof_errors() {
-    facet_testhelpers::setup();
-
     // Test empty input
     let result = from_str::<String>("");
     let err = result.unwrap_err();
@@ -63,8 +61,6 @@ fn test_eof_errors() {
 // Adjusted test for UTF-8 handling based on actual behavior
 #[test]
 fn test_invalid_utf8_handling() {
-    facet_testhelpers::setup();
-
     // Create invalid UTF-8 bytes - this should be truly invalid
     let invalid_bytes = &[b'"', 0xFF, 0xC0, 0x80, b'"'][..]; // Invalid UTF-8 sequence
     let result = from_slice::<String>(invalid_bytes);
@@ -74,9 +70,7 @@ fn test_invalid_utf8_handling() {
 }
 
 #[test]
-fn test_null_handling() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn test_null_handling() {
     // Test with invalid null value
     let result = from_str::<Option<i32>>("nul");
     let err = result.unwrap_err();
@@ -94,6 +88,4 @@ fn test_null_handling() -> Result<()> {
     let json = r#"{"val": null}"#;
     let ok = from_str::<OptionalStruct>(json)?;
     assert_eq!(ok.val, None);
-
-    Ok(())
 }

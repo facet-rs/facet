@@ -1,8 +1,8 @@
-use eyre::Result;
 use facet_json::{from_str, to_string};
+use facet_testhelpers::test;
 
 #[test]
-fn test_deserialize_tuple_string() -> Result<()> {
+fn test_deserialize_tuple_string() {
     let ok: (String,) = from_str(r#"[""]"#)?;
     assert_eq!(ok.0, "");
 
@@ -15,12 +15,10 @@ fn test_deserialize_tuple_string() -> Result<()> {
     assert_eq!(ok.0, "🐑");
     assert_eq!(ok.1, "🐑🐑");
     assert_eq!(ok.2, "🐑🐑🐑");
-
-    Ok(())
 }
 
 #[test]
-fn test_deserialize_tuple_i32() -> Result<()> {
+fn test_deserialize_tuple_i32() {
     let ok: (i32,) = from_str(r#"[10]"#)?;
     assert_eq!(ok.0, 10);
 
@@ -49,12 +47,10 @@ fn test_deserialize_tuple_i32() -> Result<()> {
     let ok: (i32, i32) = from_str(r#"[-1,-0]"#)?;
     assert_eq!(ok.0, -1);
     assert_eq!(ok.1, 0);
-
-    Ok(())
 }
 
 #[test]
-fn test_deserialize_tuple_f32() -> Result<()> {
+fn test_deserialize_tuple_f32() {
     let ok: (f32,) = from_str(r#"[10]"#)?;
     assert_eq!(ok.0, 10.0);
 
@@ -83,21 +79,17 @@ fn test_deserialize_tuple_f32() -> Result<()> {
     let ok: (f32, f32) = from_str(r#"[-1,-0]"#)?;
     assert_eq!(ok.0, -1.0);
     assert_eq!(ok.1, 0.0);
-
-    Ok(())
 }
 
 #[test]
-fn test_deserialize_tuple_mixed_string_i32() -> Result<()> {
+fn test_deserialize_tuple_mixed_string_i32() {
     let ok: (String, i32) = from_str(r#"["aaa",100]"#)?;
     assert_eq!(ok.0, "aaa");
     assert_eq!(ok.1, 100);
-
-    Ok(())
 }
 
 #[test]
-fn test_deserialize_tuple_mixed_i32_f32() -> Result<()> {
+fn test_deserialize_tuple_mixed_i32_f32() {
     let ok: (i32, f32) = from_str(r#"[10,20]"#)?;
     assert_eq!(ok.0, 10);
     assert_eq!(ok.1, 20.0);
@@ -116,33 +108,25 @@ fn test_deserialize_tuple_mixed_i32_f32() -> Result<()> {
     assert_eq!(ok.1, 20);
     assert_eq!(ok.2, 30.0);
     assert_eq!(ok.3, 40);
-
-    Ok(())
 }
 
 #[test]
-fn test_deserialize_tuple_empty_simple() -> Result<()> {
+fn test_deserialize_tuple_empty_simple() {
     let _ok: () = from_str(r#"[]"#)?;
-
-    Ok(())
 }
 
 #[test]
-fn test_deserialize_tuple_empty_nest() -> Result<()> {
+fn test_deserialize_tuple_empty_nest() {
     let _ok: ((),) = from_str(r#"[[]]"#)?;
-
-    Ok(())
 }
 
 #[test]
-fn test_deserialize_tuple_empty_nests() -> Result<()> {
+fn test_deserialize_tuple_empty_nests() {
     let _ok: ((), ()) = from_str(r#"[[],[]]"#)?;
-
-    Ok(())
 }
 
 #[test]
-fn test_deserialize_tuple_nest() -> Result<()> {
+fn test_deserialize_tuple_nest() {
     let ok: ((String,),) = from_str(r#"[["hello"]]"#)?;
     assert_eq!(ok.0.0, "hello");
 
@@ -154,8 +138,6 @@ fn test_deserialize_tuple_nest() -> Result<()> {
     assert_eq!(ok.1.0, 1);
     assert_eq!(ok.1.1, 2.0);
     assert_eq!(ok.1.2, "3");
-
-    Ok(())
 }
 
 // (uGGP:uP,uGP:uP,uP:uP) Not unit (great grandparent, grandparent, parent) --> unit parent
@@ -163,30 +145,26 @@ fn test_deserialize_tuple_nest() -> Result<()> {
 // NOTE: Silently coerces to the type
 /// Expect a 1-tuple[1-tuple[0-tuple]] but it's a 1-tuple[0-tuple]
 #[test]
-fn test_deserialize_tuple_empty_nested_flexible() -> Result<()> {
+fn test_deserialize_tuple_empty_nested_flexible() {
     // Expect a 1x-nested 0-tuple - yup it's a 1x-nested 0-tuple
     let _ok: ((),) = from_str("[[]]")?; // Correct
     // Expect a 2x-nested 0-tuple - coerced from a 1x-nested 0-tuple
     let _ok: (((),),) = from_str("[[]]")?; // Should be from "[[[]]]" but OK
     // Expect a 3x-nested 0-tuple - coerced from a 1x-nested 0-tuple
     let _ok: ((((),),),) = from_str("[[]]")?; // Should be from "[[[[]]]]" but OK
-
-    Ok(())
 }
 
 // (uGGP:uP) Not unit great grandparent --> unit parent
 // (as for uGP:uP case)
 // NOTE: Silently coerces to the type
 #[test]
-fn test_deserialize_tuple_empty_nested_2x_flexible() -> Result<()> {
+fn test_deserialize_tuple_empty_nested_2x_flexible() {
     // Expect a 2x-nested 0-tuple - yup it's a 2x-nested 0-tuple
     let _ok: (((),),) = from_str("[[[]]]")?; // Correct
     // Expect a 3x-nested 0-tuple - coerced from a 2x-nested 0-tuple
     let _ok: ((((),),),) = from_str("[[[]]]")?; // Should be from "[[[[]]]]" but OK
     // Expect a 4x-nested 0-tuple - coerced from a 2x-nested 0-tuple
     let _ok: (((((),),),),) = from_str("[[[]]]")?; // Should be from "[[[[[]]]]]" but OK
-
-    Ok(())
 }
 
 #[test]

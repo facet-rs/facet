@@ -2,11 +2,10 @@
 
 use facet::Facet;
 use facet_json::to_string;
+use facet_testhelpers::test;
 
 #[test]
 fn test_strings() {
-    facet_testhelpers::setup();
-
     #[derive(Debug, PartialEq, Clone, Facet)]
     struct StaticFoo<'a> {
         foo: &'a str,

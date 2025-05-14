@@ -1,13 +1,11 @@
 use camino::Utf8PathBuf;
-use eyre::Result;
 use facet::Facet;
 use facet_json::from_str;
 use facet_json::to_string;
+use facet_testhelpers::test;
 
 #[test]
-fn json_read_utf8pathbuf() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn json_read_utf8pathbuf() {
     #[derive(Facet, Debug, PartialEq)]
     struct FooBar {
         path: Utf8PathBuf,
@@ -22,14 +20,10 @@ fn json_read_utf8pathbuf() -> Result<()> {
             path: Utf8PathBuf::from("foo/bar"),
         }
     );
-
-    Ok(())
 }
 
 #[test]
-fn json_write_utf8pathbuf_1() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn json_write_utf8pathbuf_1() {
     #[derive(Facet, Debug, PartialEq)]
     struct FooBar {
         path: Utf8PathBuf,
@@ -40,14 +34,10 @@ fn json_write_utf8pathbuf_1() -> Result<()> {
     };
 
     let _json = facet_json::to_string(&original);
-
-    Ok(())
 }
 
 #[test]
-fn json_write_utf8pathbuf_2() -> Result<()> {
-    facet_testhelpers::setup();
-
+fn json_write_utf8pathbuf_2() {
     #[derive(Facet, Debug, PartialEq)]
     struct FooBar {
         path: Utf8PathBuf,
@@ -59,6 +49,4 @@ fn json_write_utf8pathbuf_2() -> Result<()> {
 
     let json = to_string(&value);
     assert_eq!(json, r#"{"path":"foo/bar"}"#);
-
-    Ok(())
 }
