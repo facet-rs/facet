@@ -2,11 +2,10 @@
 
 use facet_json::{peek_to_string, peek_to_writer, to_string};
 use facet_reflect::Peek;
+use facet_testhelpers::test;
 
 #[test]
 fn test_map_with_string_keys() {
-    facet_testhelpers::setup();
-
     let mut map = std::collections::HashMap::new();
     map.insert("key1".to_string(), "value1");
     map.insert("key2".to_string(), "value2");
@@ -20,8 +19,6 @@ fn test_map_with_string_keys() {
 
 #[test]
 fn test_map_with_multiple_entries() {
-    facet_testhelpers::setup();
-
     let mut map = std::collections::HashMap::new();
     map.insert("first", 1);
     map.insert("second", 2);
@@ -36,8 +33,6 @@ fn test_map_with_multiple_entries() {
 
 #[test]
 fn test_hashmap_to_json() {
-    facet_testhelpers::setup();
-
     let mut json_data = std::collections::HashMap::<&str, &str>::new();
     json_data.insert("foo", "bar");
 

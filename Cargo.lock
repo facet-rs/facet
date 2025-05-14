@@ -572,6 +572,7 @@ version = "0.17.2"
 dependencies = [
  "color-backtrace",
  "color-eyre",
+ "facet-testhelpers-macros",
  "log",
  "owo-colors",
 ]
@@ -586,6 +587,14 @@ dependencies = [
  "color-eyre",
  "log",
  "owo-colors",
+]
+
+[[package]]
+name = "facet-testhelpers-macros"
+version = "0.1.0"
+dependencies = [
+ "quote",
+ "unsynn",
 ]
 
 [[package]]

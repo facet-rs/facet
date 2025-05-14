@@ -4,6 +4,9 @@
 #![forbid(unsafe_code)]
 #![doc = include_str!("../README.md")]
 
+pub use color_eyre::eyre;
+pub use facet_testhelpers_macros::test;
+
 use log::{Level, LevelFilter, Log, Metadata, Record};
 use owo_colors::{OwoColorize, Style};
 use std::io::Write;

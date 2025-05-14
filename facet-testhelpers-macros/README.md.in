@@ -1,0 +1,1 @@
+Provides a proc macro attribute named `#[test]` which calls `facet_testhelpers::setup()`
