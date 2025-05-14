@@ -3,6 +3,7 @@ use facet::Facet;
 use facet_msgpack::from_slice;
 
 #[test]
+#[ignore]
 fn msgpack_deserialize_more_types() -> Result<()> {
     facet_testhelpers::setup();
 

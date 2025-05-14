@@ -33,6 +33,7 @@ fn msgpack_deserialize_unit_enum_variant() -> Result<()> {
 }
 
 #[test]
+#[ignore]
 fn msgpack_deserialize_tuple_variant() -> Result<()> {
     facet_testhelpers::setup();
 

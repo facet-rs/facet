@@ -279,12 +279,10 @@ impl<'input> Decoder<'input> {
             return Err(DecodeError::InsufficientData);
         }
         let prefix = self.input[self.offset];
-        Ok(
-            (prefix >= MSGPACK_FIXSTR_MIN && prefix <= MSGPACK_FIXSTR_MAX)
-                || prefix == MSGPACK_STR8
-                || prefix == MSGPACK_STR16
-                || prefix == MSGPACK_STR32,
-        )
+        Ok((MSGPACK_FIXSTR_MIN..=MSGPACK_FIXSTR_MAX).contains(&prefix)
+            || prefix == MSGPACK_STR8
+            || prefix == MSGPACK_STR16
+            || prefix == MSGPACK_STR32)
     }
 
     /// Skips a MessagePack value of any type.
@@ -456,17 +454,16 @@ impl<'input> Decoder<'input> {
                         let field = &struct_type.fields[i];
                         if field.flags.contains(facet_core::FieldFlags::DEFAULT) {
                             // Field has default attribute, so we should apply the default
-                            let field_wip =
-                                wip.field(i).map_err(|e| DecodeError::ReflectError(e))?;
+                            let field_wip = wip.field(i).map_err(DecodeError::ReflectError)?;
 
                             // Whether there's a custom default function or not, we just use put_default()
                             // the Wip.put_default() API in the facet system will handle calling the
                             // appropriate default function set in the #[facet(default = ...)] attribute
                             wip = field_wip
                                 .put_default()
-                                .map_err(|e| DecodeError::ReflectError(e))?
+                                .map_err(DecodeError::ReflectError)?
                                 .pop()
-                                .map_err(|e| DecodeError::ReflectError(e))?;
+                                .map_err(DecodeError::ReflectError)?;
                         } else {
                             // Non-default field was missing
                             return Err(DecodeError::MissingField(field.name.to_string()));
@@ -486,21 +483,17 @@ impl<'input> Decoder<'input> {
                 }
 
                 // For tuples, we need to use begin_pushback for the new API
-                let mut tuple_wip = wip
-                    .begin_pushback()
-                    .map_err(|e| DecodeError::ReflectError(e))?;
+                let mut tuple_wip = wip.begin_pushback().map_err(DecodeError::ReflectError)?;
 
                 for _ in 0..field_count {
                     // Push a new element
-                    let element_wip = tuple_wip.push().map_err(|e| DecodeError::ReflectError(e))?;
+                    let element_wip = tuple_wip.push().map_err(DecodeError::ReflectError)?;
 
                     // Deserialize the element value
                     let element_wip = self.deserialize_value(element_wip)?;
 
                     // Pop back up to the tuple level
-                    tuple_wip = element_wip
-                        .pop()
-                        .map_err(|e| DecodeError::ReflectError(e))?;
+                    tuple_wip = element_wip.pop().map_err(DecodeError::ReflectError)?;
                 }
 
                 return Ok(tuple_wip);
@@ -513,9 +506,7 @@ impl<'input> Decoder<'input> {
                     let variant_name = self.decode_string()?;
                     for (idx, variant) in enum_type.variants.iter().enumerate() {
                         if variant.name == variant_name {
-                            return Ok(wip
-                                .variant(idx)
-                                .map_err(|e| DecodeError::ReflectError(e))?);
+                            return wip.variant(idx).map_err(DecodeError::ReflectError);
                         }
                     }
                     return Err(DecodeError::InvalidEnum(format!(
@@ -539,9 +530,7 @@ impl<'input> Decoder<'input> {
                             facet_core::StructKind::Unit => {
                                 // Need to skip any value that might be present
                                 self.skip_value()?;
-                                return Ok(wip
-                                    .variant(idx)
-                                    .map_err(|e| DecodeError::ReflectError(e))?);
+                                return wip.variant(idx).map_err(DecodeError::ReflectError);
                             }
 
                             // Handle tuple variant
@@ -554,8 +543,7 @@ impl<'input> Decoder<'input> {
                                 }
 
                                 // First select the variant - not used since we return immediately
-                                let _ =
-                                    wip.variant(idx).map_err(|e| DecodeError::ReflectError(e))?;
+                                let _ = wip.variant(idx).map_err(DecodeError::ReflectError)?;
 
                                 // Temporarily using a not-implemented error while we figure out the correct approach
                                 return Err(DecodeError::NotImplemented(
@@ -568,7 +556,7 @@ impl<'input> Decoder<'input> {
                                 let map_len = self.decode_map_len()?;
                                 // First select the variant
                                 let mut enum_wip =
-                                    wip.variant(idx).map_err(|e| DecodeError::ReflectError(e))?;
+                                    wip.variant(idx).map_err(DecodeError::ReflectError)?;
 
                                 // Handle fields as a normal struct
                                 for _ in 0..map_len {
@@ -577,11 +565,11 @@ impl<'input> Decoder<'input> {
                                         Some(field_idx) => {
                                             let field_wip = enum_wip
                                                 .field(field_idx)
-                                                .map_err(|e| DecodeError::ReflectError(e))?;
+                                                .map_err(DecodeError::ReflectError)?;
                                             let field_wip = self.deserialize_value(field_wip)?;
                                             enum_wip = field_wip
                                                 .pop()
-                                                .map_err(|e| DecodeError::ReflectError(e))?;
+                                                .map_err(DecodeError::ReflectError)?;
                                         }
                                         None => {
                                             // Skip unknown field
@@ -621,117 +609,99 @@ impl<'input> Decoder<'input> {
             trace!("Deserializing scalar");
             if shape.is_type::<String>() {
                 let s = self.decode_string()?;
-                wip = wip.put(s).map_err(|e| DecodeError::ReflectError(e))?;
+                wip = wip.put(s).map_err(DecodeError::ReflectError)?;
             } else if shape.is_type::<u64>() {
                 let n = self.decode_u64()?;
-                wip = wip.put(n).map_err(|e| DecodeError::ReflectError(e))?;
+                wip = wip.put(n).map_err(DecodeError::ReflectError)?;
             } else if shape.is_type::<u32>() {
                 let n = self.decode_u64()?;
                 if n > u32::MAX as u64 {
                     return Err(DecodeError::IntegerOverflow);
                 }
-                wip = wip
-                    .put(n as u32)
-                    .map_err(|e| DecodeError::ReflectError(e))?;
+                wip = wip.put(n as u32).map_err(DecodeError::ReflectError)?;
             } else if shape.is_type::<u16>() {
                 let n = self.decode_u64()?;
                 if n > u16::MAX as u64 {
                     return Err(DecodeError::IntegerOverflow);
                 }
-                wip = wip
-                    .put(n as u16)
-                    .map_err(|e| DecodeError::ReflectError(e))?;
+                wip = wip.put(n as u16).map_err(DecodeError::ReflectError)?;
             } else if shape.is_type::<u8>() {
                 let n = self.decode_u64()?;
                 if n > u8::MAX as u64 {
                     return Err(DecodeError::IntegerOverflow);
                 }
-                wip = wip.put(n as u8).map_err(|e| DecodeError::ReflectError(e))?;
+                wip = wip.put(n as u8).map_err(DecodeError::ReflectError)?;
             } else if shape.is_type::<i64>() {
                 // TODO: implement proper signed int decoding including negative values
                 let n = self.decode_u64()?;
                 if n > i64::MAX as u64 {
                     return Err(DecodeError::IntegerOverflow);
                 }
-                wip = wip
-                    .put(n as i64)
-                    .map_err(|e| DecodeError::ReflectError(e))?;
+                wip = wip.put(n as i64).map_err(DecodeError::ReflectError)?;
             } else if shape.is_type::<i32>() {
                 let n = self.decode_u64()?;
                 if n > i32::MAX as u64 {
                     return Err(DecodeError::IntegerOverflow);
                 }
-                wip = wip
-                    .put(n as i32)
-                    .map_err(|e| DecodeError::ReflectError(e))?;
+                wip = wip.put(n as i32).map_err(DecodeError::ReflectError)?;
             } else if shape.is_type::<i16>() {
                 let n = self.decode_u64()?;
                 if n > i16::MAX as u64 {
                     return Err(DecodeError::IntegerOverflow);
                 }
-                wip = wip
-                    .put(n as i16)
-                    .map_err(|e| DecodeError::ReflectError(e))?;
+                wip = wip.put(n as i16).map_err(DecodeError::ReflectError)?;
             } else if shape.is_type::<i8>() {
                 let n = self.decode_u64()?;
                 if n > i8::MAX as u64 {
                     return Err(DecodeError::IntegerOverflow);
                 }
-                wip = wip.put(n as i8).map_err(|e| DecodeError::ReflectError(e))?;
+                wip = wip.put(n as i8).map_err(DecodeError::ReflectError)?;
             } else if shape.is_type::<f64>() {
                 // TODO: Implement proper f64 decoding from MessagePack format
-                return Err(DecodeError::NotImplemented(format!(
-                    "f64 deserialization not yet implemented"
-                )));
+                return Err(DecodeError::NotImplemented(
+                    "f64 deserialization not yet implemented".to_string(),
+                ));
             } else if shape.is_type::<f32>() {
                 // TODO: Implement proper f32 decoding from MessagePack format
-                return Err(DecodeError::NotImplemented(format!(
-                    "f32 deserialization not yet implemented"
-                )));
+                return Err(DecodeError::NotImplemented(
+                    "f32 deserialization not yet implemented".to_string(),
+                ));
             } else if shape.is_type::<bool>() {
                 let b = self.decode_bool()?;
-                wip = wip.put(b).map_err(|e| DecodeError::ReflectError(e))?;
+                wip = wip.put(b).map_err(DecodeError::ReflectError)?;
             } else {
                 return Err(DecodeError::UnsupportedType(format!("{}", shape)));
             }
         } else if let Def::Map(_map_def) = shape.def {
             trace!("Deserializing map");
             let map_len = self.decode_map_len()?;
-            let mut map_wip = wip
-                .begin_map_insert()
-                .map_err(|e| DecodeError::ReflectError(e))?;
+            let mut map_wip = wip.begin_map_insert().map_err(DecodeError::ReflectError)?;
 
             for _ in 0..map_len {
                 // Each map entry has a key and value
-                let key_wip = map_wip
-                    .push_map_key()
-                    .map_err(|e| DecodeError::ReflectError(e))?;
+                let key_wip = map_wip.push_map_key().map_err(DecodeError::ReflectError)?;
                 let key_wip = self.deserialize_value(key_wip)?;
 
                 let value_wip = key_wip
                     .push_map_value()
-                    .map_err(|e| DecodeError::ReflectError(e))?;
+                    .map_err(DecodeError::ReflectError)?;
                 let map_wip_next = self.deserialize_value(value_wip)?;
 
-                map_wip = map_wip_next
-                    .pop()
-                    .map_err(|e| DecodeError::ReflectError(e))?;
+                map_wip = map_wip_next.pop().map_err(DecodeError::ReflectError)?;
             }
 
             wip = map_wip;
         } else if let Def::List(_list_def) = shape.def {
             trace!("Deserializing list");
             let array_len = self.decode_array_len()?;
-            let mut list_wip = wip
-                .begin_pushback()
-                .map_err(|e| DecodeError::ReflectError(e))?;
+            let mut list_wip = wip.begin_pushback().map_err(DecodeError::ReflectError)?;
 
             for _ in 0..array_len {
-                let item_wip = list_wip.push().map_err(|e| DecodeError::ReflectError(e))?;
+                let item_wip = list_wip.push().map_err(DecodeError::ReflectError)?;
                 list_wip = self
                     .deserialize_value(item_wip)?
                     .pop()
-                    .map_err(|e| DecodeError::ReflectError(e))?;
+                    .map_err(DecodeError::ReflectError)?;
             }
 
             wip = list_wip;
@@ -742,14 +712,12 @@ impl<'input> Decoder<'input> {
                 // Consume the nil value
                 self.decode_nil()?;
                 // Initialize None option
-                wip = wip
-                    .put_default()
-                    .map_err(|e| DecodeError::ReflectError(e))?;
+                wip = wip.put_default().map_err(DecodeError::ReflectError)?;
             } else {
                 // Value is present - initialize a Some option
-                let some_wip = wip.push_some().map_err(|e| DecodeError::ReflectError(e))?;
+                let some_wip = wip.push_some().map_err(DecodeError::ReflectError)?;
                 let some_wip = self.deserialize_value(some_wip)?;
-                wip = some_wip.pop().map_err(|e| DecodeError::ReflectError(e))?;
+                wip = some_wip.pop().map_err(DecodeError::ReflectError)?;
             }
         } else {
             return Err(DecodeError::UnsupportedShape(format!("{:?}", shape)));

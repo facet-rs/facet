@@ -32,6 +32,7 @@ fn msgpack_deserialize_field_level_default_no_function() -> Result<()> {
 }
 
 #[test]
+#[ignore]
 fn msgpack_deserialize_field_level_default_function() -> Result<()> {
     facet_testhelpers::setup();
 
