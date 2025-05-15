@@ -43,6 +43,8 @@ pub use facet_core::*;
 ///
 /// * `transparent` Serialize and deserialize a newtype struct exactly the same as if its single field were serialized and deserialized by itself.
 ///
+/// * `as_string` Serialize through [`ToString`] (which should be implemented through [`std::fmt::Display`]), and deserialize through [`std::str::FromStr`], effectively representing the type as a string.
+///
 /// * `deny_unknown_fields` Always throw an error when encountering unknown fields during deserialization. When this attribute is not present unknown fields are ignored.
 ///
 /// * `skip_serializing` Don't allow this type to be serialized.

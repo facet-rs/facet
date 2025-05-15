@@ -92,7 +92,7 @@ pub enum ReflectError {
     /// An unknown error occurred.
     Unknown,
 
-    /// An error occured while putting
+    /// An error occurred while putting
     TryFromError {
         /// The shape of the value being converted from.
         src_shape: &'static Shape,
@@ -107,6 +107,18 @@ pub enum ReflectError {
     /// A shape has a `default` attribute, but no implementation of the `Default` trait.
     DefaultAttrButNoDefaultImpl {
         /// The shape of the value that has a `default` attribute but no default implementation.
+        shape: &'static Shape,
+    },
+
+    /// A shape has a `as_string` attribute, but no implementation of the `ToString` trait.
+    AsStringAttrButNoToStringImpl {
+        /// The shape of the value that has a `as_string` attribute but no `ToString` implementation.
+        shape: &'static Shape,
+    },
+
+    /// A shape has a `as_string` attribute, but no implementation of the `FromStr` trait.
+    AsStringAttrButNoFromStrImpl {
+        /// The shape of the value that has a `as_string` attribute but no `FromStr` implementation.
         shape: &'static Shape,
     },
 
@@ -223,6 +235,16 @@ impl core::fmt::Display for ReflectError {
             ReflectError::DefaultAttrButNoDefaultImpl { shape } => write!(
                 f,
                 "Shape '{}' has a `default` attribute but no default implementation",
+                shape.red()
+            ),
+            ReflectError::AsStringAttrButNoToStringImpl { shape } => write!(
+                f,
+                "Shape '{}' has a `as_string` attribute but no `ToString` (`Display`) implementation",
+                shape.red()
+            ),
+            ReflectError::AsStringAttrButNoFromStrImpl { shape } => write!(
+                f,
+                "Shape '{}' has a `as_string` attribute but no `FromStr` implementation",
                 shape.red()
             ),
             ReflectError::Unsized { shape } => write!(f, "Shape '{}' is unsized", shape.red()),

@@ -546,3 +546,59 @@ fn struct_with_default_field_that_has_lifetime() {
         name: Option<std::borrow::Cow<'a, str>>,
     }
 }
+
+#[test]
+fn struct_with_as_string() {
+    #[derive(Facet)]
+    #[facet(as_string)]
+    struct Foo {
+        name: String,
+    }
+
+    impl core::fmt::Display for Foo {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            f.write_str(&self.name)
+        }
+    }
+
+    impl core::str::FromStr for Foo {
+        type Err = core::convert::Infallible;
+
+        fn from_str(s: &str) -> Result<Self, Self::Err> {
+            Ok(Self {
+                name: s.to_string(),
+            })
+        }
+    }
+}
+
+#[test]
+fn enum_with_as_string() {
+    #[derive(Facet)]
+    #[facet(as_string)]
+    #[repr(u8)]
+    enum Foo {
+        Name(String),
+        Other,
+    }
+
+    impl core::fmt::Display for Foo {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            f.write_str(match self {
+                Foo::Name(name) => name,
+                Foo::Other => "other",
+            })
+        }
+    }
+
+    impl core::str::FromStr for Foo {
+        type Err = core::convert::Infallible;
+
+        fn from_str(s: &str) -> Result<Self, Self::Err> {
+            Ok(match s {
+                "other" => Self::Other,
+                name => Self::Name(name.to_string()),
+            })
+        }
+    }
+}

@@ -119,6 +119,9 @@ pub enum ShapeAttribute {
     /// missing in the input should be filled with corresponding field values from
     /// a `T::default()` (where T is this shape)
     Default,
+    /// Indicates that, this shape should be serialized with its `ToString`
+    /// implementation, and deserialized with its `FromStr` implementation
+    AsString,
     /// Indicates that this is a transparent wrapper type, like `NewType(T)`
     /// it should not be treated like a struct, but like something that can be built
     /// from `T` and converted back to `T`
@@ -168,6 +171,16 @@ impl Shape {
     /// See [`ShapeAttribute::Default`]
     pub fn has_default_attr(&'static self) -> bool {
         self.attributes.contains(&ShapeAttribute::Default)
+    }
+
+    /// See [`ShapeAttribute::Transparent`]
+    pub fn has_transparent_attr(&'static self) -> bool {
+        self.attributes.contains(&ShapeAttribute::Transparent)
+    }
+
+    /// See [`ShapeAttribute::AsString`]
+    pub fn has_as_string_attr(&'static self) -> bool {
+        self.attributes.contains(&ShapeAttribute::AsString)
     }
 
     /// See [`ShapeAttribute::RenameAll`]

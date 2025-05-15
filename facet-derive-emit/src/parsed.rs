@@ -41,6 +41,10 @@ pub enum PFacetAttr {
     /// etc. — when you're doing the newtype pattern. `de/ser` is forwarded.
     Transparent,
 
+    /// Valid in container
+    /// `#[facet(as_string)]` — serialize and deserialize through `core::str::ToString` and `core::str::FromStr`.
+    AsString,
+
     /// Valid in field
     /// `#[facet(flatten)]` — flattens a field's contents
     /// into the parent structure.
@@ -101,6 +105,7 @@ impl PFacetAttr {
                 FacetInner::Sensitive(_) => dest.push(PFacetAttr::Sensitive),
                 FacetInner::Opaque(_) => dest.push(PFacetAttr::Opaque),
                 FacetInner::Flatten(_) => dest.push(PFacetAttr::Flatten),
+                FacetInner::AsString(_) => dest.push(PFacetAttr::AsString),
                 FacetInner::Child(_) => dest.push(PFacetAttr::Child),
                 FacetInner::Transparent(_) => dest.push(PFacetAttr::Transparent),
 
@@ -164,7 +169,6 @@ pub enum PAttr {
 ///   raw = "foo_bar", #[facet(rename = "kiki")], effective = "kiki"
 ///   raw = "foo_bar", #[facet(rename_all = camelCase)], effective = "fooBar"
 ///   raw = "r#type", no rename rule, effective = "type"
-///
 #[derive(Clone)]
 pub struct PName {
     /// The raw identifier, as we found it in the source code. It might

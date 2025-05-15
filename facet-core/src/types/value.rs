@@ -117,8 +117,6 @@ pub type DefaultInPlaceFnTyped<T> = for<'mem> fn(target: TypedPtrUninit<'mem, T>
 
 /// Function to parse a value from a string.
 ///
-/// If both [`DisplayFn`] and [`ParseFn`] are set, we should be able to round-trip the value.
-///
 /// # Safety
 ///
 /// The `target` parameter has the correct layout and alignment, but points to
@@ -149,6 +147,43 @@ impl core::fmt::Display for ParseError {
 }
 
 impl core::error::Error for ParseError {}
+
+/// Function to convert a value into a string.
+///
+/// This is automatically set if [`DisplayFn`] is set.
+///
+/// # Safety
+///
+/// The `target` parameter has the correct layout and alignment, but points to
+/// uninitialized memory. If this function succeeds, it should return `Ok` with the
+/// same pointer wrapped in an [`PtrMut`]. If parsing fails, it returns `Err` with an error.
+pub type ToStringFn = for<'mem> unsafe fn(target: PtrConst<'mem>) -> Result<String, ToStringError>;
+/// Function to convert a value into a string.
+pub type ToStringFnTyped<T> = for<'mem> fn(target: &T) -> Result<String, ToStringError>;
+
+/// Error returned by [`ToStringFn`]
+#[non_exhaustive]
+#[derive(Debug)]
+pub enum ToStringError {
+    /// Generic error message
+    Generic(&'static str),
+    /// The target shape doesn't implement conversion from any source shape (no to_string in vtable)
+    Unimplemented,
+}
+
+impl core::fmt::Display for ToStringError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Generic(msg) => write!(f, "ToString failed: {}", msg),
+            Self::Unimplemented => write!(
+                f,
+                "Shape doesn't implement any conversions (no to_string function)",
+            ),
+        }
+    }
+}
+
+impl core::error::Error for ToStringError {}
 
 /// Function to try converting from another type
 ///
@@ -501,6 +536,9 @@ pub struct ValueVTable {
     /// cf. [`ParseFn`]
     pub parse: Option<ParseFn>,
 
+    /// cf. [`ToString`]
+    pub to_string: Option<ToStringFn>,
+
     /// cf. [`TryFromFn`]
     ///
     /// This also acts as a "TryFromInner" — you can use it to go:
@@ -511,7 +549,6 @@ pub struct ValueVTable {
     ///   * `T` => `Arc<T>`
     ///   * `T` => `NonZero<T>`
     ///   * etc.
-    ///
     pub try_from: Option<TryFromFn>,
 
     /// cf. [`TryIntoInnerFn`]
@@ -668,6 +705,14 @@ impl<'a, T: crate::Facet<'a>> VTableView<T> {
             .map(|parse| unsafe { mem::transmute::<ParseFn, ParseFnTyped<T>>(parse) })
     }
 
+    /// cf. [`ToStringFn`]
+    #[inline(always)]
+    pub fn to_string(self) -> Option<ToStringFnTyped<T>> {
+        self.0
+            .to_string
+            .map(|to_string| unsafe { mem::transmute::<ToStringFn, ToStringFnTyped<T>>(to_string) })
+    }
+
     /// cf. [`TryFromFn`]
     ///
     /// This also acts as a "TryFromInner" — you can use it to go:
@@ -678,7 +723,6 @@ impl<'a, T: crate::Facet<'a>> VTableView<T> {
     ///   * `T` => `Arc<T>`
     ///   * `T` => `NonZero<T>`
     ///   * etc.
-    ///
     #[inline(always)]
     pub fn try_from(self) -> Option<TryFromFnTyped<T>> {
         self.0
@@ -723,6 +767,7 @@ pub struct ValueVTableBuilder<T> {
     drop_in_place: Option<DropInPlaceFn>,
     invariants: Option<InvariantsFnTyped<T>>,
     parse: Option<ParseFnTyped<T>>,
+    to_string: Option<ToStringFnTyped<T>>,
     try_from: Option<TryFromFnTyped<T>>,
     try_into_inner: Option<TryIntoInnerFnTyped<T>>,
     try_borrow_inner: Option<TryBorrowInnerFnTyped<T>>,
@@ -747,6 +792,7 @@ impl<T> ValueVTableBuilder<T> {
             drop_in_place: None,
             invariants: None,
             parse: None,
+            to_string: None,
             try_from: None,
             try_into_inner: None,
             try_borrow_inner: None,
@@ -891,6 +937,18 @@ impl<T> ValueVTableBuilder<T> {
         self
     }
 
+    /// Sets the to_string function for this builder.
+    pub const fn to_string(mut self, to_string: ToStringFnTyped<T>) -> Self {
+        self.to_string = Some(to_string);
+        self
+    }
+
+    /// Sets the to_string function for this builder if Some.
+    pub const fn to_string_maybe(mut self, to_string: Option<ToStringFnTyped<T>>) -> Self {
+        self.to_string = to_string;
+        self
+    }
+
     /// Sets the try_from function for this builder.
     pub const fn try_from(mut self, try_from: TryFromFnTyped<T>) -> Self {
         self.try_from = Some(try_from);
@@ -945,6 +1003,9 @@ impl<T> ValueVTableBuilder<T> {
             hash: unsafe { mem::transmute::<Option<HashFnTyped<T>>, Option<HashFn>>(self.hash) },
             parse: unsafe {
                 mem::transmute::<Option<ParseFnTyped<T>>, Option<ParseFn>>(self.parse)
+            },
+            to_string: unsafe {
+                mem::transmute::<Option<ToStringFnTyped<T>>, Option<ToStringFn>>(self.to_string)
             },
             try_from: unsafe {
                 mem::transmute::<Option<TryFromFnTyped<T>>, Option<TryFromFn>>(self.try_from)

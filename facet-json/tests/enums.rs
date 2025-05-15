@@ -405,3 +405,47 @@ fn enum_struct_variants_2() {
         facet_json::from_str(&json_good).map_err(|e| eyre::eyre!("{}", e))?;
     assert_eq!(deserialized_good, good);
 }
+
+#[test]
+fn enum_as_string() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(as_string)]
+    #[repr(u8)]
+    enum Foo {
+        Bar(String),
+        Baz,
+    }
+
+    impl core::fmt::Display for Foo {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            f.write_str(match self {
+                Self::Bar(name) => name,
+                Self::Baz => "baz",
+            })
+        }
+    }
+
+    impl core::str::FromStr for Foo {
+        type Err = core::convert::Infallible;
+
+        fn from_str(s: &str) -> Result<Self, Self::Err> {
+            Ok(match s {
+                "baz" => Self::Baz,
+                bar => Self::Bar(bar.to_string()),
+            })
+        }
+    }
+
+    let bar = Foo::Bar("text".to_string());
+    let bar_json = r#""text""#;
+    let baz = Foo::Baz;
+    let baz_json = r#""baz""#;
+
+    // Serialize
+    assert_eq!(facet_json::to_string(&bar), bar_json);
+    assert_eq!(facet_json::to_string(&baz), baz_json);
+
+    // Deserialize
+    assert_eq!(facet_json::from_str::<Foo>(bar_json)?, bar);
+    assert_eq!(facet_json::from_str::<Foo>(baz_json)?, baz);
+}
