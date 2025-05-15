@@ -7,6 +7,7 @@ use facet_core::{Shape, Type, UserType};
 use facet_reflect::{ReflectError, VariantError};
 use owo_colors::OwoColorize;
 
+use crate::debug::InputDebug;
 use crate::{Outcome, Span};
 
 /// A JSON parse error, with context. Never would've guessed huh.
@@ -109,16 +110,22 @@ pub enum DeserErrorKind {
 
 impl<'input> DeserError<'input> {
     /// Creates a new deser error, preserving input and location context for accurate reporting.
-    pub fn new(kind: DeserErrorKind, input: &'input [u8], span: Span) -> Self {
+    pub fn new<I>(kind: DeserErrorKind, input: &'input I, span: Span) -> Self
+    where
+        I: ?Sized + 'input + InputDebug,
+    {
         Self {
-            input: alloc::borrow::Cow::Borrowed(input),
+            input: input.as_cow(),
             span,
             kind,
         }
     }
 
     /// Constructs a reflection-related deser error, keeping contextual information intact.
-    pub(crate) fn new_reflect(e: ReflectError, input: &'input [u8], span: Span) -> Self {
+    pub(crate) fn new_reflect<I>(e: ReflectError, input: &'input I, span: Span) -> Self
+    where
+        I: ?Sized + 'input + InputDebug,
+    {
         DeserError::new(DeserErrorKind::ReflectError(e), input, span)
     }
 

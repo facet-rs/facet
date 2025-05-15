@@ -10,8 +10,10 @@ extern crate alloc;
 use alloc::string::ToString;
 use alloc::{vec, vec::Vec};
 
+mod debug;
 mod error;
 use alloc::borrow::Cow;
+pub use debug::{InputDebug, input_to_cow};
 
 pub use error::*;
 
@@ -133,20 +135,20 @@ impl Outcome<'_> {
 
 /// Carries the current parsing state and the in-progress value during deserialization.
 /// This bundles the mutable context that must be threaded through parsing steps.
-pub struct NextData<'input: 'facet, 'facet> {
+pub struct NextData<'input: 'facet, 'facet, I: ?Sized + 'input = [u8]> {
     /// The offset we're supposed to start parsing from
     start: usize,
 
     /// Controls the parsing flow and stack state.
-    runner: StackRunner<'input>,
+    runner: StackRunner<'input, I>,
 
     /// Holds the intermediate representation of the value being built.
     pub wip: Wip<'facet>,
 }
 
-impl<'input: 'facet, 'facet> NextData<'input, 'facet> {
+impl<'input: 'facet, 'facet, I: ?Sized + 'input> NextData<'input, 'facet, I> {
     /// Returns the input (from the start! not from the current position)
-    pub fn input(&self) -> &'input [u8] {
+    pub fn input(&self) -> &'input I {
         self.runner.input
     }
 
@@ -157,23 +159,35 @@ impl<'input: 'facet, 'facet> NextData<'input, 'facet> {
 }
 
 /// The result of advancing the parser: updated state and parse outcome or error.
-pub type NextResult<'input, 'facet, T, E> = (NextData<'input, 'facet>, Result<T, E>);
+pub type NextResult<'input, 'facet, T, E, I = [u8]> = (NextData<'input, 'facet, I>, Result<T, E>);
 
 /// Trait defining a deserialization format.
 /// Provides the next parsing step based on current state and expected input.
 pub trait Format {
+    /// The kind of input this format consumes, parameterized by input lifetime.
+    ///
+    /// * `JsonFmt` => `Input<'input> = [u8]`
+    /// * `CliFmt`  => `Input<'input> = [&'input str]`
+    type Input<'input>: ?Sized;
+
     /// Advance the parser with current state and expectation, producing the next outcome or error.
     fn next<'input, 'facet>(
         &mut self,
-        nd: NextData<'input, 'facet>,
+        nd: NextData<'input, 'facet, Self::Input<'input>>,
         expectation: Expectation,
-    ) -> NextResult<'input, 'facet, Spanned<Outcome<'input>>, Spanned<DeserErrorKind>>;
+    ) -> NextResult<
+        'input,
+        'facet,
+        Spanned<Outcome<'input>>,
+        Spanned<DeserErrorKind>,
+        Self::Input<'input>,
+    >;
 
     /// Skip the next value; used to ignore an input.
     fn skip<'input, 'facet>(
         &mut self,
-        nd: NextData<'input, 'facet>,
-    ) -> NextResult<'input, 'facet, Span, Spanned<DeserErrorKind>>;
+        nd: NextData<'input, 'facet, Self::Input<'input>>,
+    ) -> NextResult<'input, 'facet, Span, Spanned<DeserErrorKind>, Self::Input<'input>>;
 }
 
 /// Instructions guiding the parsing flow, indicating the next expected action or token.
@@ -218,16 +232,17 @@ pub enum PopReason {
 /// This function sets up the initial working state and drives the deserialization process,
 /// ensuring that the resulting value is fully materialized and valid.
 pub fn deserialize<'input, 'facet, T, F>(
-    input: &'input [u8],
+    input: &'input F::Input<'input>,
     format: F,
 ) -> Result<T, DeserError<'input>>
 where
     T: Facet<'facet>,
     F: Format,
+    F::Input<'input>: InputDebug,
     'input: 'facet,
 {
     let wip = Wip::alloc_shape(T::SHAPE).map_err(|e| DeserError {
-        input: input.into(),
+        input: input_to_cow(input), // Helper function to convert any input to Cow<[u8]>
         span: Span { start: 0, len: 0 },
         kind: DeserErrorKind::ReflectError(e),
     })?;
@@ -240,11 +255,12 @@ where
 /// This function drives the parsing loop until the entire input is consumed and the value is complete.
 pub fn deserialize_wip<'input, 'facet, F>(
     mut wip: Wip<'facet>,
-    input: &'input [u8],
+    input: &'input F::Input<'input>,
     mut format: F,
 ) -> Result<HeapValue<'facet>, DeserError<'input>>
 where
     F: Format,
+    F::Input<'input>: InputDebug,
     'input: 'facet,
 {
     // This struct is just a bundle of the state that we need to pass around all the time.
@@ -355,11 +371,11 @@ where
 ///
 /// This struct tracks what the parser expects next, manages input position,
 /// and remembers the span of the last processed token to provide accurate error reporting.
-pub struct StackRunner<'input> {
+pub struct StackRunner<'input, I: ?Sized + 'input = [u8]> {
     /// A version of the input that doesn't advance as we parse.
-    pub original_input: &'input [u8],
+    pub original_input: &'input I,
     /// The raw input data being deserialized.
-    pub input: &'input [u8],
+    pub input: &'input I,
 
     /// Stack of parsing instructions guiding the control flow.
     pub stack: Vec<Instruction>,
@@ -367,7 +383,10 @@ pub struct StackRunner<'input> {
     pub last_span: Span,
 }
 
-impl<'input> StackRunner<'input> {
+impl<'input, I: ?Sized + 'input> StackRunner<'input, I>
+where
+    I: InputDebug,
+{
     /// Convenience function to create a DeserError using the original input and last_span.
     fn err(&self, kind: DeserErrorKind) -> DeserError<'input> {
         DeserError::new(kind, self.original_input, self.last_span)

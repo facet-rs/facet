@@ -24,8 +24,8 @@ pub(crate) fn apply_field_defaults(wip: Wip<'_>) -> Result<Wip<'_>, ArgsError> {
 
     // Set up StackRunner for default handling
     let mut runner = StackRunner {
-        original_input: &[],
-        input: &[],
+        original_input: &[] as &[u8],
+        input: &[] as &[u8],
         stack: vec![],
         last_span: Span::new(0, 0),
     };

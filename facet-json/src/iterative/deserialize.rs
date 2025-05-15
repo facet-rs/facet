@@ -23,6 +23,8 @@ pub(crate) fn from_str_static_error<'input: 'facet, 'facet, T: Facet<'facet>>(
 }
 
 impl Format for crate::Json {
+    type Input<'input> = [u8];
+
     fn next<'input, 'facet>(
         &mut self,
         nd: NextData<'input, 'facet>,
