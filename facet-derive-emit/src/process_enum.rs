@@ -568,7 +568,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                 |f, _opts| ::core::fmt::Write::write_str(f, #enum_name_str)
             )};
 
-            const SHAPE: &'static ::facet::Shape = &const {
+            const SHAPE: &'static ::facet::Shape<'static> = &const {
                 #(#shadow_struct_defs)*
 
                 let __facet_variants: &'static [::facet::Variant] = &const {[

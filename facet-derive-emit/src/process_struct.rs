@@ -462,7 +462,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 vtable
             };
 
-            const SHAPE: &'static ::facet::Shape = &const {
+            const SHAPE: &'static ::facet::Shape<'static> = &const {
                 let fields: &'static [::facet::Field] = &const {[#(#fields_vec),*]};
 
                 #inner_shape_fn // Include inner_shape function if needed

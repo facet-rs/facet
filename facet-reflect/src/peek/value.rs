@@ -12,24 +12,24 @@ use super::{
 
 /// A unique identifier for a peek value
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ValueId {
-    pub(crate) shape: &'static Shape,
+pub struct ValueId<'shape> {
+    pub(crate) shape: &'shape Shape<'shape>,
     pub(crate) ptr: *const u8,
 }
 
-impl ValueId {
-    pub(crate) fn new(shape: &'static Shape, ptr: *const u8) -> Self {
+impl<'shape> ValueId<'shape> {
+    pub(crate) fn new(shape: &'shape Shape<'shape>, ptr: *const u8) -> Self {
         Self { shape, ptr }
     }
 }
 
-impl core::fmt::Display for ValueId {
+impl core::fmt::Display for ValueId<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}@{:p}", self.shape, self.ptr)
     }
 }
 
-impl core::fmt::Debug for ValueId {
+impl core::fmt::Debug for ValueId<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         core::fmt::Display::fmt(self, f)
     }
@@ -37,17 +37,17 @@ impl core::fmt::Debug for ValueId {
 
 /// Lets you read from a value (implements read-only [`ValueVTable`] proxies)
 #[derive(Clone, Copy)]
-pub struct Peek<'mem, 'facet_lifetime> {
+pub struct Peek<'mem, 'facet_lifetime, 'shape> {
     /// Underlying data
     pub(crate) data: PtrConst<'mem>,
 
     /// Shape of the value
-    pub(crate) shape: &'static Shape,
+    pub(crate) shape: &'shape Shape<'shape>,
 
     invariant: PhantomData<fn(&'facet_lifetime ()) -> &'facet_lifetime ()>,
 }
 
-impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
+impl<'mem, 'facet_lifetime, 'shape> Peek<'mem, 'facet_lifetime, 'shape> {
     /// Creates a new `PeekValue` instance for a value of type `T`.
     pub fn new<T: Facet<'facet_lifetime>>(t: &'mem T) -> Self {
         Self {
@@ -74,7 +74,7 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
 
     /// Returns the vtable
     #[inline(always)]
-    pub fn vtable(&self) -> &'static ValueVTable {
+    pub fn vtable(&self) -> &'shape ValueVTable {
         self.shape.vtable
     }
 
@@ -85,7 +85,7 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
 
     /// Returns true if the two values are pointer-equal
     #[inline]
-    pub fn ptr_eq(&self, other: &Peek<'_, '_>) -> bool {
+    pub fn ptr_eq(&self, other: &Peek<'_, '_, '_>) -> bool {
         self.data.as_byte_ptr() == other.data.as_byte_ptr()
     }
 
@@ -95,7 +95,7 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
     ///
     /// `false` if equality comparison is not supported for this scalar type
     #[inline]
-    pub fn eq(&self, other: &Peek<'_, '_>) -> Option<bool> {
+    pub fn eq(&self, other: &Peek<'_, '_, '_>) -> Option<bool> {
         unsafe {
             self.shape
                 .vtable
@@ -110,7 +110,7 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
     ///
     /// `None` if comparison is not supported for this scalar type
     #[inline]
-    pub fn partial_cmp(&self, other: &Peek<'_, '_>) -> Option<Ordering> {
+    pub fn partial_cmp(&self, other: &Peek<'_, '_, '_>) -> Option<Ordering> {
         unsafe {
             self.shape
                 .vtable
@@ -212,7 +212,7 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
     }
 
     /// Tries to identify this value as a struct
-    pub fn into_struct(self) -> Result<PeekStruct<'mem, 'facet_lifetime>, ReflectError> {
+    pub fn into_struct(self) -> Result<PeekStruct<'mem, 'facet_lifetime>, ReflectError<'shape>> {
         if let Type::User(UserType::Struct(ty)) = self.shape.ty {
             Ok(PeekStruct { value: self, ty })
         } else {

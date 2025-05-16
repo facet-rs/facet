@@ -5,21 +5,21 @@ use alloc::{vec, vec::Vec};
 
 /// Lets you read from a struct (implements read-only struct operations)
 #[derive(Clone, Copy)]
-pub struct PeekStruct<'mem, 'facet_lifetime> {
+pub struct PeekStruct<'mem, 'facet_lifetime, 'shape> {
     /// the underlying value
-    pub(crate) value: Peek<'mem, 'facet_lifetime>,
+    pub(crate) value: Peek<'mem, 'facet_lifetime, 'shape>,
 
     /// the definition of the struct!
-    pub(crate) ty: StructType,
+    pub(crate) ty: StructType<'shape>,
 }
 
-impl core::fmt::Debug for PeekStruct<'_, '_> {
+impl core::fmt::Debug for PeekStruct<'_, '_, '_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("PeekStruct").finish_non_exhaustive()
     }
 }
 
-impl<'mem, 'facet_lifetime> PeekStruct<'mem, 'facet_lifetime> {
+impl<'mem, 'facet_lifetime, 'shape> PeekStruct<'mem, 'facet_lifetime, 'shape> {
     /// Returns the struct definition
     #[inline(always)]
     pub fn ty(&self) -> &StructType {

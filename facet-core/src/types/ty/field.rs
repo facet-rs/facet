@@ -312,10 +312,10 @@ pub enum FieldError {
     /// `set` or `set_by_name` was called with an mismatched type
     TypeMismatch {
         /// the actual type of the field
-        expected: &'static Shape<'shape>,
+        expected: &'static Shape<'static>,
 
         /// what someone tried to write into it / read from it
-        actual: &'static Shape,
+        actual: &'static Shape<'static>,
     },
 }
 

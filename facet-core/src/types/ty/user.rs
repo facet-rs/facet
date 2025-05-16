@@ -14,7 +14,7 @@ pub enum UserType<'shape> {
     Opaque,
 }
 
-impl UserType {
+impl<'shape> UserType<'shape> {
     /// Retrieves underlying representation of the type
     pub const fn repr(&self) -> Option<Repr> {
         match self {

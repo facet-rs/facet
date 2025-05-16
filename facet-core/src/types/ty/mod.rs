@@ -36,7 +36,7 @@ pub enum Type<'shape> {
     /// Sequence (tuple, array, slice).
     Sequence(SequenceType<'shape>),
     /// User-defined type (struct, enum, union).
-    User(UserType),
+    User(UserType<'shape>),
     /// Pointer type (reference, raw, function pointer).
     Pointer(PointerType<'shape>),
 }

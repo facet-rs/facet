@@ -6,18 +6,18 @@ use super::HasFields;
 
 /// Lets you read from an enum (implements read-only enum operations)
 #[derive(Clone, Copy)]
-pub struct PeekEnum<'mem, 'facet_lifetime> {
+pub struct PeekEnum<'mem, 'facet_lifetime, 'shape> {
     /// The internal data storage for the enum
     ///
     /// Note that this stores both the discriminant and the variant data
     /// (if any), and the layout depends on the enum representation.
-    pub(crate) value: Peek<'mem, 'facet_lifetime>,
+    pub(crate) value: Peek<'mem, 'facet_lifetime, 'shape>,
 
     /// The definition of the enum.
-    pub(crate) ty: EnumType,
+    pub(crate) ty: EnumType<'shape>,
 }
 
-impl core::fmt::Debug for PeekEnum<'_, '_> {
+impl core::fmt::Debug for PeekEnum<'_, '_, '_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if let Some(debug_fn) = self.vtable().debug {
             unsafe { debug_fn(self.data, f) }
@@ -28,7 +28,7 @@ impl core::fmt::Debug for PeekEnum<'_, '_> {
 }
 
 /// Returns the enum definition if the shape represents an enum, None otherwise
-pub fn peek_enum(shape: &'static Shape) -> Option<EnumType> {
+pub fn peek_enum<'shape>(shape: &'shape Shape) -> Option<EnumType<'shape>> {
     match shape.ty {
         facet_core::Type::User(UserType::Enum(enum_ty)) => Some(enum_ty),
         _ => None,
