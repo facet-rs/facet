@@ -612,7 +612,7 @@ impl PrettyPrinter {
                 StackState::ProcessSeqItem { item_index, kind } => {
                     let (len, elem) = match kind {
                         SeqKind::List => {
-                            let list = item.value.into_list().unwrap();
+                            let list = item.value.into_list_like().unwrap();
                             (list.len(), list.get(item_index))
                         }
                         SeqKind::Tuple => {
@@ -775,7 +775,8 @@ impl PrettyPrinter {
         mut item: StackItem<'a, 'facet_lifetime>,
         f: &mut impl Write,
     ) -> fmt::Result {
-        let list = item.value.into_list().unwrap();
+        let list = item.value.into_list_like().unwrap();
+
         // When recursing into a list, always increment format_depth
         // Only increment type_depth if we're moving to a different address
         let new_type_depth =

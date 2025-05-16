@@ -19,9 +19,11 @@ pub enum PointerType {
 /// Describes the raw/reference pointer
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
+#[non_exhaustive]
 pub struct ValuePointerType {
     /// Is the pointer mutable or not.
     pub mutable: bool,
+
     /// Describes whether the pointer is wider or not
     ///
     /// Note: if the pointer is wide, then the `target` shape will have `ShapeLayout::Unsized`, and
@@ -31,9 +33,17 @@ pub struct ValuePointerType {
     ///
     /// See: <https://github.com/rust-lang/rust/issues/81513>
     pub wide: bool,
+
     /// Shape of the pointer's pointee
     ///
     /// This needs to be indirect (behind a function), in order to allow recursive types without
     /// overflowing the const-eval system.
     pub target: fn() -> &'static Shape,
+}
+
+impl ValuePointerType {
+    /// Returns the shape of the pointer's pointee.
+    pub fn target(&self) -> &'static Shape {
+        (self.target)()
+    }
 }

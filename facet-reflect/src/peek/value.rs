@@ -250,13 +250,13 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
     /// Tries to identify this value as a list
     pub fn into_list(self) -> Result<PeekList<'mem, 'facet_lifetime>, ReflectError> {
         if let Def::List(def) = self.shape.def {
-            Ok(PeekList { value: self, def })
-        } else {
-            Err(ReflectError::WasNotA {
-                expected: "list",
-                actual: self.shape,
-            })
+            return Ok(PeekList { value: self, def });
         }
+
+        Err(ReflectError::WasNotA {
+            expected: "list",
+            actual: self.shape,
+        })
     }
 
     /// Tries to identify this value as a list, array or slice

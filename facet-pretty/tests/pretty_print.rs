@@ -139,7 +139,7 @@ fn test_sensitive_fields() {
 fn test_tuple() {
     let printer = PrettyPrinter::new().with_colors(false);
     assert_eq!(
-        printer.format(&(1, 2)).to_string(),
+        printer.format(&(1, 2)),
         r#"
 (i32, i32) (
   1,
@@ -153,33 +153,33 @@ fn test_tuple() {
 #[test]
 fn test_str() {
     let printer = PrettyPrinter::new().with_colors(false);
-    assert_snapshot!(printer.format(&"hello").to_string());
+    assert_snapshot!(printer.format(&"hello"));
 }
 
 #[test]
 fn test_vec_u8() {
     let printer = PrettyPrinter::new().with_colors(false);
     let bytes = vec![1u8, 2u8, 3u8, 4u8];
-    assert_snapshot!(printer.format(&bytes).to_string());
+    assert_snapshot!(printer.format(&bytes));
 }
 
 #[test]
 fn test_byte_slice() {
     let printer = PrettyPrinter::new().with_colors(false);
     let bytes = [1, 2, 3, 4];
-    assert_snapshot!(printer.format(&&bytes[..]).to_string());
+    assert_snapshot!(printer.format(&&bytes[..]));
 }
 
 #[test]
 fn test_vec_u32() {
     let printer = PrettyPrinter::new().with_colors(false);
     let nums = vec![1u32, 2u32, 3u32, 4u32];
-    assert_snapshot!(printer.format(&nums).to_string());
+    assert_snapshot!(printer.format(&nums));
 }
 
 #[test]
 fn test_u32_slice() {
     let printer = PrettyPrinter::new().with_colors(false);
     let nums = [1u32, 2u32, 3u32, 4u32];
-    assert_eq!(printer.format(&&nums[..]).to_string(), "[1, 2, 3, 4]");
+    assert_snapshot!(printer.format(&&nums[..]));
 }
