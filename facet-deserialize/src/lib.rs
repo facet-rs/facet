@@ -9,6 +9,7 @@ extern crate alloc;
 
 use alloc::string::ToString;
 use alloc::{vec, vec::Vec};
+use core::fmt::Debug;
 
 mod debug;
 mod error;
@@ -135,18 +136,26 @@ impl Outcome<'_> {
 
 /// Carries the current parsing state and the in-progress value during deserialization.
 /// This bundles the mutable context that must be threaded through parsing steps.
-pub struct NextData<'input: 'facet, 'facet, 'shape, I: ?Sized + 'input = [u8]> {
+pub struct NextData<'input, 'facet, 'shape, C = Cooked, I = [u8]>
+where
+    'input: 'facet,
+    I: ?Sized + 'input,
+{
     /// The offset we're supposed to start parsing from
     start: usize,
 
     /// Controls the parsing flow and stack state.
-    runner: StackRunner<'input, I>,
+    runner: StackRunner<'input, C, I>,
 
     /// Holds the intermediate representation of the value being built.
     pub wip: Wip<'facet, 'shape>,
 }
 
-impl<'input: 'facet, 'facet, 'shape, I: ?Sized + 'input> NextData<'input, 'facet, 'shape, I> {
+impl<'input, 'facet, 'shape, C, I> NextData<'input, 'facet, 'shape, C, I>
+where
+    'input: 'facet,
+    I: ?Sized + 'input,
+{
     /// Returns the input (from the start! not from the current position)
     pub fn input(&self) -> &'input I {
         self.runner.input
@@ -159,8 +168,8 @@ impl<'input: 'facet, 'facet, 'shape, I: ?Sized + 'input> NextData<'input, 'facet
 }
 
 /// The result of advancing the parser: updated state and parse outcome or error.
-pub type NextResult<'input, 'facet, 'shape, T, E, I = [u8]> =
-    (NextData<'input, 'facet, 'shape, I>, Result<T, E>);
+pub type NextResult<'input, 'facet, 'shape, T, E, C, I = [u8]> =
+    (NextData<'input, 'facet, 'shape, C, I>, Result<T, E>);
 
 /// Trait defining a deserialization format.
 /// Provides the next parsing step based on current state and expected input.
@@ -171,39 +180,77 @@ pub trait Format {
     /// * `CliFmt`  => `Input<'input> = [&'input str]`
     type Input<'input>: ?Sized;
 
+    /// The type of span used by this format (Raw or Cooked)
+    type SpanType: Debug + 'static;
+
     /// The lowercase source ID of the format, used for error reporting.
     fn source(&self) -> &'static str;
 
     /// Advance the parser with current state and expectation, producing the next outcome or error.
+    #[allow(clippy::type_complexity)]
     fn next<'input, 'facet, 'shape>(
         &mut self,
-        nd: NextData<'input, 'facet, 'shape, Self::Input<'input>>,
+        nd: NextData<'input, 'facet, 'shape, Self::SpanType, Self::Input<'input>>,
         expectation: Expectation,
     ) -> NextResult<
         'input,
         'facet,
         'shape,
-        Spanned<Outcome<'input>>,
-        Spanned<DeserErrorKind<'shape>>,
+        Spanned<Outcome<'input>, Self::SpanType>,
+        Spanned<DeserErrorKind<'shape>, Self::SpanType>,
+        Self::SpanType,
         Self::Input<'input>,
     >
     where
         'shape: 'input;
 
     /// Skip the next value; used to ignore an input.
+    #[allow(clippy::type_complexity)]
     fn skip<'input, 'facet, 'shape>(
         &mut self,
-        nd: NextData<'input, 'facet, 'shape, Self::Input<'input>>,
+        nd: NextData<'input, 'facet, 'shape, Self::SpanType, Self::Input<'input>>,
     ) -> NextResult<
         'input,
         'facet,
         'shape,
-        Span,
-        Spanned<DeserErrorKind<'shape>>,
+        Span<Self::SpanType>,
+        Spanned<DeserErrorKind<'shape>, Self::SpanType>,
+        Self::SpanType,
         Self::Input<'input>,
     >
     where
         'shape: 'input;
+}
+
+/// Trait handling conversion regardless of `Format::SpanType` to `Span<Cooked>`
+pub trait ToCooked<'input, F: Format> {
+    /// Convert a span to a Cooked span (with byte index over the input, not format-specific index)
+    fn to_cooked(self, format: &F, input: &'input F::Input<'input>) -> Span<Cooked>;
+}
+
+impl<'input, F: Format> ToCooked<'input, F> for Span<Cooked> {
+    #[inline]
+    fn to_cooked(self, _format: &F, _input: &'input F::Input<'input>) -> Span<Cooked> {
+        self
+    }
+}
+
+impl<'input, F: Format<SpanType = Raw, Input<'input> = [&'input str]>> ToCooked<'input, F>
+    for Span<Raw>
+{
+    #[inline]
+    fn to_cooked(self, _format: &F, input: &'input [&'input str]) -> Span<Cooked> {
+        // Calculate start position by summing lengths of preceding args plus spaces
+        let mut start = 0;
+        for arg in input.iter().take(self.start) {
+            start += arg.len() + 1; // +1 for space between args
+        }
+
+        // Length is the length of the current arg
+        let len = input[self.start].len();
+
+        Span::<Cooked>::new(start, len)
+    }
 }
 
 /// Instructions guiding the parsing flow, indicating the next expected action or token.
@@ -243,6 +290,91 @@ pub enum PopReason {
     Some,
 }
 
+mod deser_impl {
+    use super::*;
+
+    /// Deserialize a value of type `T` from raw input bytes using format `F`.
+    ///
+    /// This function sets up the initial working state and drives the deserialization process,
+    /// ensuring that the resulting value is fully materialized and valid.
+    pub fn deserialize<'input, 'facet, 'shape, T, F>(
+        input: &'input F::Input<'input>,
+        format: &mut F,
+    ) -> Result<T, DeserError<'input, 'shape, Cooked>>
+    where
+        T: Facet<'facet>,
+        F: Format + 'shape,
+        F::Input<'input>: InputDebug,
+        F::SpanType: core::fmt::Debug,
+        Span<F::SpanType>: ToCooked<'input, F>,
+        'input: 'facet,
+        'shape: 'input,
+    {
+        // Run the entire deserialization process and capture any errors
+        let result: Result<T, DeserError<'input, 'shape, Cooked>> = {
+            let source = format.source();
+
+            // Step 1: Allocate shape
+            let wip = match Wip::alloc_shape(T::SHAPE) {
+                Ok(wip) => wip,
+                Err(e) => {
+                    let default_span = Span::<F::SpanType>::default();
+                    // let cooked_span = cook_span_dispatch!(format, default_span, input);
+                    let cooked_span = default_span.to_cooked(format, input);
+                    return Err(DeserError::new_reflect(e, input, cooked_span, source));
+                }
+            };
+
+            // Step 2: Run deserialize_wip
+            let heap_value = match deserialize_wip(wip, input, format) {
+                Ok(val) => val,
+                Err(e) => {
+                    let cooked_span = e.span.to_cooked(format, input);
+
+                    // Create a completely new error variable with the Cooked type
+                    let cooked_error = DeserError {
+                        input: e.input,
+                        span: cooked_span,
+                        kind: e.kind,
+                        source_id: e.source_id,
+                    };
+
+                    return Err(cooked_error);
+                }
+            };
+
+            // Step 3: Materialize
+            match heap_value.materialize() {
+                Ok(val) => Ok(val),
+                Err(e) => {
+                    let default_span = Span::<F::SpanType>::default();
+                    let cooked_span = default_span.to_cooked(format, input);
+                    return Err(DeserError::new_reflect(e, input, cooked_span, source));
+                }
+            }
+        };
+
+        // Apply span conversion for errors from materialization
+        match result {
+            Ok(value) => Ok(value),
+            Err(mut error) => {
+                let new_span = error.span.to_cooked(format, input);
+
+                if new_span != error.span {
+                    error = DeserError {
+                        input: error.input,
+                        span: new_span,
+                        kind: error.kind,
+                        source_id: error.source_id,
+                    };
+                }
+
+                Err(error)
+            }
+        }
+    }
+}
+
 /// Deserialize a value of type `T` from raw input bytes using format `F`.
 ///
 /// This function sets up the initial working state and drives the deserialization process,
@@ -250,20 +382,18 @@ pub enum PopReason {
 pub fn deserialize<'input, 'facet, 'shape, T, F>(
     input: &'input F::Input<'input>,
     format: F,
-) -> Result<T, DeserError<'input, 'shape>>
+) -> Result<T, DeserError<'input, 'shape, Cooked>>
 where
     T: Facet<'facet>,
     F: Format + 'shape,
     F::Input<'input>: InputDebug,
+    F::SpanType: core::fmt::Debug,
+    Span<F::SpanType>: ToCooked<'input, F>,
     'input: 'facet,
     'shape: 'input,
 {
-    let source = format.source();
-    let wip = Wip::alloc_shape(T::SHAPE)
-        .map_err(|e| DeserError::new_reflect(e, input, Span { start: 0, len: 0 }, source))?;
-    deserialize_wip(wip, input, format)?
-        .materialize()
-        .map_err(|e| DeserError::new_reflect(e, input, Span { start: 0, len: 0 }, source))
+    let mut format_copy = format;
+    deser_impl::deserialize(input, &mut format_copy)
 }
 
 /// Deserializes a working-in-progress value into a fully materialized heap value.
@@ -271,11 +401,12 @@ where
 pub fn deserialize_wip<'input, 'facet, 'shape, F>(
     mut wip: Wip<'facet, 'shape>,
     input: &'input F::Input<'input>,
-    mut format: F,
-) -> Result<HeapValue<'facet, 'shape>, DeserError<'input, 'shape>>
+    format: &mut F,
+) -> Result<HeapValue<'facet, 'shape>, DeserError<'input, 'shape, Cooked>>
 where
     F: Format + 'shape,
     F::Input<'input>: InputDebug,
+    Span<F::SpanType>: ToCooked<'input, F>,
     'input: 'facet,
     'shape: 'input,
 {
@@ -303,10 +434,24 @@ where
             $wip = nd.wip;
             let outcome = res.map_err(|span_kind| {
                 $runner.last_span = span_kind.span;
-                $runner.err(span_kind.node)
+                let error = $runner.err(span_kind.node);
+                // Convert the error's span to Cooked
+                DeserError {
+                    input: error.input,
+                    span: error.span.to_cooked(format, input),
+                    kind: error.kind,
+                    source_id: error.source_id,
+                }
             })?;
             $runner.last_span = outcome.span;
-            $wip = $runner.$method($wip, outcome)?;
+            $wip = $runner.$method($wip, outcome).map_err(|error| {
+                DeserError {
+                    input:  error.input,
+                    span:   error.span.to_cooked(format, input),
+                    kind:   error.kind,
+                    source_id: error.source_id,
+                }
+            })?;
         }};
     }
 
@@ -330,12 +475,38 @@ where
 
         match insn {
             Instruction::Pop(reason) => {
-                wip = runner.pop(wip, reason)?;
+                wip = runner.pop(wip, reason).map_err(|error| {
+                    // Convert the error's span to Cooked
+                    DeserError {
+                        input: error.input,
+                        span: error.span.to_cooked(format, input),
+                        kind: error.kind,
+                        source_id: error.source_id,
+                    }
+                })?;
 
                 if reason == PopReason::TopLevel {
-                    return wip.build().map_err(|e| runner.reflect_err(e));
+                    return wip.build().map_err(|e| {
+                        let reflect_error = runner.reflect_err(e);
+                        // Convert the reflection error's span to Cooked
+                        DeserError {
+                            input: reflect_error.input,
+                            span: reflect_error.span.to_cooked(format, input),
+                            kind: reflect_error.kind,
+                            source_id: reflect_error.source_id,
+                        }
+                    });
                 } else {
-                    wip = wip.pop().map_err(|e| runner.reflect_err(e))?;
+                    wip = wip.pop().map_err(|e| {
+                        let reflect_error = runner.reflect_err(e);
+                        // Convert the reflection error's span to Cooked
+                        DeserError {
+                            input: reflect_error.input,
+                            span: reflect_error.span.to_cooked(format, input),
+                            kind: reflect_error.kind,
+                            source_id: reflect_error.source_id,
+                        }
+                    })?;
                 }
             }
             Instruction::Value(_why) => {
@@ -374,7 +545,14 @@ where
                 // Only propagate error, don't modify wip, since skip just advances input
                 let span = res.map_err(|span_kind| {
                     runner.last_span = span_kind.span;
-                    runner.err(span_kind.node)
+                    let error = runner.err(span_kind.node);
+                    // Convert the error's span to Cooked
+                    DeserError {
+                        input: error.input,
+                        span: error.span.to_cooked(format, input),
+                        kind: error.kind,
+                        source_id: error.source_id,
+                    }
                 })?;
                 // do the actual skip
                 runner.last_span = span;
@@ -388,7 +566,7 @@ where
 ///
 /// This struct tracks what the parser expects next, manages input position,
 /// and remembers the span of the last processed token to provide accurate error reporting.
-pub struct StackRunner<'input, I: ?Sized + 'input = [u8]> {
+pub struct StackRunner<'input, C = Cooked, I: ?Sized + 'input = [u8]> {
     /// A version of the input that doesn't advance as we parse.
     pub original_input: &'input I,
 
@@ -399,18 +577,18 @@ pub struct StackRunner<'input, I: ?Sized + 'input = [u8]> {
     pub stack: Vec<Instruction>,
 
     /// Span of the last processed token, for accurate error reporting.
-    pub last_span: Span,
+    pub last_span: Span<C>,
 
     /// Format source identifier for error reporting
     pub format_source: &'static str,
 }
 
-impl<'input, 'shape, I: ?Sized + 'input> StackRunner<'input, I>
+impl<'input, 'shape, C, I: ?Sized + 'input> StackRunner<'input, C, I>
 where
     I: InputDebug,
 {
     /// Convenience function to create a DeserError using the original input and last_span.
-    fn err(&self, kind: DeserErrorKind<'shape>) -> DeserError<'input, 'shape> {
+    fn err(&self, kind: DeserErrorKind<'shape>) -> DeserError<'input, 'shape, C> {
         DeserError::new(
             kind,
             self.original_input,
@@ -421,7 +599,7 @@ where
 
     /// Convenience function to create a DeserError from a ReflectError,
     /// using the original input and last_span for context.
-    fn reflect_err(&self, err: ReflectError<'shape>) -> DeserError<'input, 'shape> {
+    fn reflect_err(&self, err: ReflectError<'shape>) -> DeserError<'input, 'shape, C> {
         DeserError::new_reflect(err, self.original_input, self.last_span, self.format_source)
     }
 
@@ -429,7 +607,7 @@ where
         &mut self,
         mut wip: Wip<'facet, 'shape>,
         reason: PopReason,
-    ) -> Result<Wip<'facet, 'shape>, DeserError<'input, 'shape>> {
+    ) -> Result<Wip<'facet, 'shape>, DeserError<'input, 'shape, C>> {
         trace!("Popping because {:?}", reason.yellow());
 
         let container_shape = wip.shape();
@@ -657,7 +835,7 @@ where
         &self,
         wip: Wip<'facet, 'shape>,
         scalar: Scalar<'input>,
-    ) -> Result<Wip<'facet, 'shape>, DeserError<'input, 'shape>>
+    ) -> Result<Wip<'facet, 'shape>, DeserError<'input, 'shape, C>>
     where
         'input: 'facet, // 'input outlives 'facet
     {
@@ -706,8 +884,8 @@ where
     fn value<'facet>(
         &mut self,
         mut wip: Wip<'facet, 'shape>,
-        outcome: Spanned<Outcome<'input>>,
-    ) -> Result<Wip<'facet, 'shape>, DeserError<'input, 'shape>>
+        outcome: Spanned<Outcome<'input>, C>,
+    ) -> Result<Wip<'facet, 'shape>, DeserError<'input, 'shape, C>>
     where
         'input: 'facet, // 'input must outlive 'facet
     {
@@ -860,8 +1038,8 @@ where
     fn object_key_or_object_close<'facet>(
         &mut self,
         mut wip: Wip<'facet, 'shape>,
-        outcome: Spanned<Outcome<'input>>,
-    ) -> Result<Wip<'facet, 'shape>, DeserError<'input, 'shape>>
+        outcome: Spanned<Outcome<'input>, C>,
+    ) -> Result<Wip<'facet, 'shape>, DeserError<'input, 'shape, C>>
     where
         'input: 'facet,
     {
@@ -1037,8 +1215,8 @@ where
     fn list_item_or_list_close<'facet>(
         &mut self,
         mut wip: Wip<'facet, 'shape>,
-        outcome: Spanned<Outcome<'input>>,
-    ) -> Result<Wip<'facet, 'shape>, DeserError<'input, 'shape>>
+        outcome: Spanned<Outcome<'input>, C>,
+    ) -> Result<Wip<'facet, 'shape>, DeserError<'input, 'shape, C>>
     where
         'input: 'facet,
     {

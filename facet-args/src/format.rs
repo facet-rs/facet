@@ -3,8 +3,8 @@ use alloc::string::ToString;
 use core::fmt;
 use facet_core::{Facet, FieldAttribute, Type, UserType};
 use facet_deserialize::{
-    DeserError, DeserErrorKind, Expectation, Format, NextData, NextResult, Outcome, Scalar, Span,
-    Spanned,
+    DeserError, DeserErrorKind, Expectation, Format, NextData, NextResult, Outcome, Raw, Scalar,
+    Span, Spanned,
 };
 
 /// Command-line argument format for Facet deserialization
@@ -24,56 +24,6 @@ impl Cli {
         }
         Cow::Owned(input.replace('-', "_"))
     }
-
-    /// Converts an argument index position to a character-based span for error reporting
-    ///
-    /// This function calculates the character position of the argument in the joined command line
-    /// and returns a span that correctly points to that position for error visualization.
-    ///
-    /// * `args` - The full array of command line arguments
-    /// * `arg_idx` - The index of the current argument (0-based)
-    /// * `width` - Optional length to highlight (defaults to the full argument length)
-    fn char_span(
-        args: &[&str],
-        arg_idx: usize,
-        width: Option<usize>,
-        char_offset: Option<isize>,
-    ) -> Span {
-        if arg_idx >= args.len() {
-            // If we're at the end, point to the end of the last argument
-            if args.is_empty() {
-                return Span::new(0, 0);
-            }
-
-            // Calculate position after the last argument
-            let mut char_pos = 0;
-            for (i, arg) in args.iter().enumerate() {
-                char_pos += arg.len();
-                if i < args.len() - 1 {
-                    char_pos += 1; // Add space between arguments
-                }
-            }
-            return Span::new(char_pos, 0);
-        }
-
-        // Calculate the character position of this argument in the joined string
-        let mut char_pos = 0;
-        for arg in args.iter().take(arg_idx) {
-            char_pos += arg.len() + 1; // +1 for space
-        }
-
-        // Determine how much of the argument to highlight
-        let len = width.unwrap_or_else(|| args[arg_idx].len());
-        let offset = char_offset.unwrap_or(0);
-        // Apply the offset to char_pos
-        let effective_pos = if offset >= 0 {
-            char_pos.saturating_add(offset as usize)
-        } else {
-            char_pos.saturating_sub((-offset) as usize)
-        };
-
-        Span::new(effective_pos, len)
-    }
 }
 
 /// Parse command line arguments into a Facet-compatible type
@@ -88,6 +38,7 @@ where
 
 impl Format for Cli {
     type Input<'input> = [&'input str];
+    type SpanType = Raw;
 
     fn source(&self) -> &'static str {
         "args"
@@ -95,14 +46,15 @@ impl Format for Cli {
 
     fn next<'input, 'facet, 'shape>(
         &mut self,
-        nd: NextData<'input, 'facet, 'shape, Self::Input<'input>>,
+        nd: NextData<'input, 'facet, 'shape, Self::SpanType, Self::Input<'input>>,
         expectation: Expectation,
     ) -> NextResult<
         'input,
         'facet,
         'shape,
-        Spanned<Outcome<'input>>,
-        Spanned<DeserErrorKind<'shape>>,
+        Spanned<Outcome<'input>, Self::SpanType>,
+        Spanned<DeserErrorKind<'shape>, Self::SpanType>,
+        Self::SpanType,
         Self::Input<'input>,
     >
     where
@@ -124,7 +76,7 @@ impl Format for Cli {
                                 got: shape,
                                 wanted: "struct",
                             },
-                            span: Self::char_span(args, arg_idx, Some(0), None),
+                            span: Span::new(arg_idx, 0),
                         }),
                     );
                 }
@@ -159,7 +111,7 @@ impl Format for Cli {
                                             field_name: key.to_string(),
                                             shape,
                                         },
-                                        span: Self::char_span(args, arg_idx, None, None),
+                                        span: Span::new(arg_idx, 0),
                                     }),
                                 );
                             }
@@ -206,7 +158,7 @@ impl Format for Cli {
                                     field_name: key.to_string(),
                                     shape,
                                 },
-                                span: Self::char_span(args, arg_idx, None, None),
+                                span: Span::new(arg_idx, 0),
                             }),
                         );
                     }
@@ -246,7 +198,7 @@ impl Format for Cli {
                                 field_name: "positional argument".to_string(),
                                 shape,
                             },
-                            span: Self::char_span(args, arg_idx, None, None),
+                            span: Span::new(arg_idx, 0),
                         }),
                     );
                 }
@@ -315,7 +267,7 @@ impl Format for Cli {
                                 expected: "argument value",
                                 field: args[arg_idx.saturating_sub(1)].to_string(),
                             },
-                            span: Self::char_span(args, arg_idx, Some(1), Some(-1)),
+                            span: Span::new(arg_idx.saturating_sub(1), 0),
                         }),
                     );
                 }
@@ -333,7 +285,7 @@ impl Format for Cli {
                                 expected: "argument value",
                                 field: args[arg_idx.saturating_sub(1)].to_string(),
                             },
-                            span: Self::char_span(args, arg_idx, Some(1), Some(-1)),
+                            span: Span::new(arg_idx.saturating_sub(1), 0),
                         }),
                     );
                 }
@@ -405,13 +357,14 @@ impl Format for Cli {
 
     fn skip<'input, 'facet, 'shape>(
         &mut self,
-        nd: NextData<'input, 'facet, 'shape, Self::Input<'input>>,
+        nd: NextData<'input, 'facet, 'shape, Self::SpanType, Self::Input<'input>>,
     ) -> NextResult<
         'input,
         'facet,
         'shape,
-        Span,
-        Spanned<DeserErrorKind<'shape>>,
+        Span<Self::SpanType>,
+        Spanned<DeserErrorKind<'shape>, Self::SpanType>,
+        Self::SpanType,
         Self::Input<'input>,
     >
     where
@@ -431,7 +384,7 @@ impl Format for Cli {
                     node: DeserErrorKind::UnexpectedEof {
                         wanted: "argument to skip",
                     },
-                    span: Self::char_span(args, arg_idx, None, None),
+                    span: Span::new(arg_idx, 1),
                 }),
             )
         }

@@ -173,3 +173,14 @@ fn test_missing_default_fn() {
     assert_eq!(args.path, "presence_overrides_default_fn.rs".to_string());
     assert_eq!(args.concurrency, 2);
 }
+
+#[test]
+fn test_inf_float_parsing() {
+    #[derive(Facet, Debug)]
+    struct Args {
+        #[facet(named)]
+        rate: f64,
+    }
+    let args: Args = facet_args::from_slice(&["--rate", "infinity"])?;
+    assert_eq!(args.rate, f64::INFINITY);
+}

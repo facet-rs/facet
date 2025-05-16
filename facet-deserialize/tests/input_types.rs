@@ -20,6 +20,7 @@ mod tests {
 
     impl Format for MockByteFormat {
         type Input<'input> = [u8];
+        type SpanType = Cooked;
 
         fn source(&self) -> &'static str {
             "bin"
@@ -32,14 +33,15 @@ mod tests {
         /// current position in the input.
         fn next<'input, 'facet, 'shape>(
             &mut self,
-            nd: NextData<'input, 'facet, 'shape, Self::Input<'input>>,
+            nd: NextData<'input, 'facet, 'shape, Self::SpanType, Self::Input<'input>>,
             _exp: Expectation,
         ) -> NextResult<
             'input,
             'facet,
             'shape,
-            Spanned<Outcome<'input>>,
-            Spanned<DeserErrorKind<'shape>>,
+            Spanned<Outcome<'input>, Self::SpanType>,
+            Spanned<DeserErrorKind<'shape>, Self::SpanType>,
+            Self::SpanType,
             Self::Input<'input>,
         >
         where
@@ -130,13 +132,14 @@ mod tests {
         /// Minimal implementation of the skip method required by the Format trait.
         fn skip<'input, 'facet, 'shape>(
             &mut self,
-            nd: NextData<'input, 'facet, 'shape, Self::Input<'input>>,
+            nd: NextData<'input, 'facet, 'shape, Self::SpanType, Self::Input<'input>>,
         ) -> NextResult<
             'input,
             'facet,
             'shape,
-            Span,
-            Spanned<DeserErrorKind<'shape>>,
+            Span<Self::SpanType>,
+            Spanned<DeserErrorKind<'shape>, Self::SpanType>,
+            Self::SpanType,
             Self::Input<'input>,
         >
         where
@@ -175,6 +178,7 @@ mod tests {
 
     impl Format for MockCliFormat {
         type Input<'input> = [&'input str];
+        type SpanType = Raw;
 
         fn source(&self) -> &'static str {
             "cli"
@@ -186,14 +190,15 @@ mod tests {
         /// ["--nom", "test"]
         fn next<'input, 'facet, 'shape>(
             &mut self,
-            nd: NextData<'input, 'facet, 'shape, Self::Input<'input>>,
+            nd: NextData<'input, 'facet, 'shape, Self::SpanType, Self::Input<'input>>,
             exp: Expectation,
         ) -> NextResult<
             'input,
             'facet,
             'shape,
-            Spanned<Outcome<'input>>,
-            Spanned<DeserErrorKind<'shape>>,
+            Spanned<Outcome<'input>, Self::SpanType>,
+            Spanned<DeserErrorKind<'shape>, Self::SpanType>,
+            Self::SpanType,
             Self::Input<'input>,
         >
         where
@@ -243,6 +248,18 @@ mod tests {
                         // Field name "nom"
                         let field_name = input[position - 1].strip_prefix("--").unwrap();
                         let span = Span::new(position, 1); // Length 1 to advance position
+                        if field_name != "nom" {
+                            return (
+                                nd,
+                                Err(Spanned {
+                                    node: DeserErrorKind::UnknownField {
+                                        field_name: field_name.to_string(),
+                                        shape: <TestConfig as Facet>::SHAPE,
+                                    },
+                                    span,
+                                }),
+                            );
+                        }
                         (
                             nd,
                             Ok(Spanned {
@@ -315,13 +332,14 @@ mod tests {
 
         fn skip<'input, 'facet, 'shape>(
             &mut self,
-            nd: NextData<'input, 'facet, 'shape, Self::Input<'input>>,
+            nd: NextData<'input, 'facet, 'shape, Self::SpanType, Self::Input<'input>>,
         ) -> NextResult<
             'input,
             'facet,
             'shape,
-            Span,
-            Spanned<DeserErrorKind<'shape>>,
+            Span<Self::SpanType>,
+            Spanned<DeserErrorKind<'shape>, Self::SpanType>,
+            Self::SpanType,
             Self::Input<'input>,
         >
         where
@@ -350,5 +368,49 @@ mod tests {
                 nom: "test".to_string()
             }
         );
+    }
+
+    #[test]
+    fn test_error_handling_with_raw_spans() {
+        // Use invalid input to trigger an error to observe Raw span processing
+        let invalid_args: &[&str] = &["--invalid-field", "value"];
+        println!("The deserialize func should get called next");
+        let result: Result<TestConfig, _> = deserialize(invalid_args, MockCliFormat);
+        assert!(result.is_err());
+        println!("{:?}", result);
+
+        // Check that the error contains a properly converted span (from Raw to Cooked)
+        if let Err(error) = result {
+            // First, check that the error kind is what we expect for an unknown field
+            match &error.kind {
+                DeserErrorKind::UnknownField { field_name, .. } => {
+                    assert_eq!(
+                        field_name, "invalid-field",
+                        "Error should indicate unknown field"
+                    );
+                }
+                _ => panic!("Unexpected error kind: {:?}", error.kind),
+            }
+
+            // A real implementation would do more useful conversion e.g. count arg char lengths
+
+            // Initial check: verify the error source_id matches our format
+            assert_eq!(
+                error.source_id, "cli",
+                "Error source should match the format source"
+            );
+            // Check that the span has been properly converted from Raw to Cooked
+            println!("Got error span {:?}", error.span);
+            assert_eq!(
+                error.span.start(),
+                16,
+                "Span should point to the start of the 2nd arg (index 1)"
+            );
+            assert_eq!(
+                error.span.len(),
+                5,
+                "Span should have length of the 2nd arg (5 chars long)"
+            );
+        }
     }
 }
