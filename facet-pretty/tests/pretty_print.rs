@@ -2,6 +2,7 @@ use core::fmt::Write;
 use facet::Facet;
 use facet_pretty::{FacetPretty, PrettyPrinter};
 use facet_testhelpers::test;
+use insta::assert_snapshot;
 
 #[derive(Debug, Facet)]
 struct Person {
@@ -152,28 +153,28 @@ fn test_tuple() {
 #[test]
 fn test_str() {
     let printer = PrettyPrinter::new().with_colors(false);
-    assert_eq!(printer.format(&"hello").to_string(), r#"hello"#.trim());
+    assert_snapshot!(printer.format(&"hello").to_string());
 }
 
 #[test]
 fn test_vec_u8() {
     let printer = PrettyPrinter::new().with_colors(false);
     let bytes = vec![1u8, 2u8, 3u8, 4u8];
-    assert_eq!(printer.format(&bytes).to_string(), "[1, 2, 3, 4]");
+    assert_snapshot!(printer.format(&bytes).to_string());
 }
 
 #[test]
 fn test_byte_slice() {
     let printer = PrettyPrinter::new().with_colors(false);
     let bytes = [1, 2, 3, 4];
-    assert_eq!(printer.format(&&bytes[..]).to_string(), "[1, 2, 3, 4]");
+    assert_snapshot!(printer.format(&&bytes[..]).to_string());
 }
 
 #[test]
 fn test_vec_u32() {
     let printer = PrettyPrinter::new().with_colors(false);
     let nums = vec![1u32, 2u32, 3u32, 4u32];
-    assert_eq!(printer.format(&nums).to_string(), "[1, 2, 3, 4]");
+    assert_snapshot!(printer.format(&nums).to_string());
 }
 
 #[test]

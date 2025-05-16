@@ -535,6 +535,7 @@ dependencies = [
  "facet-core",
  "facet-reflect",
  "facet-testhelpers 0.17.2",
+ "insta",
  "yansi",
 ]
 

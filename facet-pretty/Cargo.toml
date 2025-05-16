@@ -29,6 +29,7 @@ camino = "1.1.9"
 facet = { path = "../facet" }
 divan = { version = "2.10.1", package = "codspeed-divan-compat" }
 facet-testhelpers = { version = "0.17.2", path = "../facet-testhelpers" }
+insta = "1.43.1"
 
 [[bench]]
 path = "benches/compare_derive_more.rs"
