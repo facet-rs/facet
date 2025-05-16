@@ -11,8 +11,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use facet_core::{
-    Def, Facet, Field, PointerType, ScalarAffinity, SequenceType, ShapeAttribute, StructKind, Type,
-    UserType,
+    Def, Facet, Field, PointerType, ScalarAffinity, SequenceType, StructKind, Type, UserType,
 };
 use facet_reflect::{HasFields, Peek, PeekListLike, PeekMap, PeekStruct, PeekTuple, ScalarType};
 use log::{debug, trace};
@@ -258,24 +257,16 @@ where
     while let Some(task) = stack.pop() {
         match task {
             SerializeTask::Value(mut cpeek, maybe_field) => {
-                debug!("Serializing a value, shape is {}", cpeek.shape());
+                let shape = cpeek.shape();
+                debug!("Serializing a value, shape is {}", shape);
 
-                if cpeek
-                    .shape()
-                    .attributes
-                    .iter()
-                    .any(|attr| *attr == ShapeAttribute::Transparent)
-                {
-                    let old_shape = cpeek.shape();
-
+                if shape.has_transparent_attr() {
                     // then serialize the inner shape instead
                     let ps = cpeek.into_struct().unwrap();
                     cpeek = ps.field(0).unwrap();
 
                     let new_shape = cpeek.shape();
-                    debug!(
-                        "{old_shape} is transparent, let's serialize the inner {new_shape} instead"
-                    );
+                    debug!("{shape} is transparent, let's serialize the inner {new_shape} instead");
                 }
 
                 match (cpeek.shape().def, cpeek.shape().ty) {

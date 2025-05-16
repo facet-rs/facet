@@ -110,10 +110,11 @@ pub(crate) fn gen_field_from_pfield(
                 });
             }
             // These are handled by PName or are container-level, so ignore them for field attributes.
-            PFacetAttr::RenameAll { .. } => {} // Explicitly ignore rename attributes here
-            PFacetAttr::Transparent
+            PFacetAttr::RenameAll { .. }
+            | PFacetAttr::Transparent
             | PFacetAttr::Invariants { .. }
-            | PFacetAttr::DenyUnknownFields => {}
+            | PFacetAttr::DenyUnknownFields
+            | PFacetAttr::AsString => {}
         }
     }
 
@@ -254,12 +255,15 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 PFacetAttr::Transparent => {
                     items.push(quote! { ::facet::ShapeAttribute::Transparent });
                 }
-                PFacetAttr::RenameAll { .. } => {}
+                PFacetAttr::AsString => {
+                    items.push(quote! { ::facet::ShapeAttribute::AsString });
+                }
                 PFacetAttr::Arbitrary { content } => {
                     items.push(quote! { ::facet::ShapeAttribute::Arbitrary(#content) });
                 }
                 // Others not applicable at container level or handled elsewhere
-                PFacetAttr::Sensitive
+                PFacetAttr::RenameAll { .. }
+                | PFacetAttr::Sensitive
                 | PFacetAttr::Opaque
                 | PFacetAttr::Invariants { .. }
                 | PFacetAttr::SkipSerializing

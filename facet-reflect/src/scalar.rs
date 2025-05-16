@@ -76,7 +76,7 @@ impl ScalarType {
             Some(ScalarType::Bool)
         } else if shape.id == ConstTypeId::of::<char>() {
             Some(ScalarType::Char)
-        } else if shape.id == ConstTypeId::of::<&str>() {
+        } else if shape.id == ConstTypeId::of::<&str>() || shape.has_as_string_attr() {
             Some(ScalarType::Str)
         } else if shape.id == ConstTypeId::of::<f32>() {
             Some(ScalarType::F32)

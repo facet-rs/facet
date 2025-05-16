@@ -44,6 +44,8 @@ keyword! {
     pub KRenameAll = "rename_all";
     /// The "flatten" keyword
     pub KFlatten = "flatten";
+    /// The "flatten" keyword
+    pub KAsString = "as_string";
     /// The "child" keyword
     pub KChild = "child";
     /// The "skip_serializing" keyword.
@@ -149,6 +151,8 @@ unsynn! {
         Rename(RenameInner),
         /// A flatten attribute that marks a field to be flattened into the parent structure
         Flatten(FlattenInner),
+        /// A as_string attribute that marks a container to be serialized and deserialized as a string
+        AsString(AsStringInner),
         /// A child attribute that marks a field as a child node
         Child(ChildInner),
         /// A skip_serializing attribute that specifies whether a field should be skipped during serialization.
@@ -163,6 +167,12 @@ unsynn! {
     pub struct FlattenInner {
         /// The "flatten" keyword.
         pub _kw_flatten: KFlatten,
+    }
+
+    /// Inner value for #[facet(as_string)]
+    pub struct AsStringInner {
+        /// The "as_string" keyword.
+        pub _kw_as_string: KAsString,
     }
 
     /// Inner value for #[facet(child)]
