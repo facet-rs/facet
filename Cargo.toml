@@ -32,13 +32,14 @@ members = [
     "facet-yaml",
     "facet-jsonschema",
     "facet-deserialize",
-    "facet-bench", "facet-testhelpers-macros",
+    "facet-bench",
+    "facet-testhelpers-macros",
 ]
 exclude = ["outside-workspace"]
 resolver = "3"
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.86.0"
+rust-version = "1.87.0"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/facet-rs/facet"
