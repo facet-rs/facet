@@ -35,9 +35,9 @@ mod heap_value;
 pub use heap_value::*;
 
 /// Initialization state
-pub(crate) struct IState {
+pub(crate) struct IState<'shape> {
     /// Variant chosen — for everything except enums, this stays None
-    variant: Option<Variant>,
+    variant: Option<Variant<'shape>>,
 
     /// Fields that were initialized. For scalars, we only track 0
     fields: ISet,
@@ -78,7 +78,7 @@ bitflags! {
     // Note: there is no 'initialized' flag because initialization can be partial — it's tracked via `ISet`
 }
 
-impl IState {
+impl<'shape> IState<'shape> {
     /// Creates a new `IState` with the given depth.
     pub fn new(depth: usize, mode: FrameMode, flags: FrameFlags) -> Self {
         Self {
@@ -131,22 +131,27 @@ pub enum FrameMode {
 }
 
 /// A work-in-progress heap-allocated value
-pub struct Wip<'facet_lifetime> {
+///
+/// # Lifetimes
+///
+/// * `'facet_lifetime`: The lifetime of borrowed values within the structure
+/// * `'shape`: The lifetime of the Shape structure itself (often 'static)
+pub struct Wip<'facet_lifetime, 'shape> {
     /// stack of frames to keep track of deeply nested initialization
-    frames: alloc::vec::Vec<Frame>,
+    frames: alloc::vec::Vec<Frame<'shape>>,
 
     /// keeps track of initialization of out-of-tree frames
-    istates: FlatMap<ValueId, IState>,
+    istates: FlatMap<ValueId<'shape>, IState<'shape>>,
 
     invariant: PhantomData<fn(&'facet_lifetime ()) -> &'facet_lifetime ()>,
 }
 
-impl<'facet_lifetime> Wip<'facet_lifetime> {
+impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     /// Puts the value from a Peek into the current frame.
     pub fn put_peek(
         self,
-        peek: crate::Peek<'_, 'facet_lifetime>,
-    ) -> Result<Wip<'facet_lifetime>, ReflectError> {
+        peek: crate::Peek<'_, 'facet_lifetime, 'shape>,
+    ) -> Result<Wip<'facet_lifetime, 'shape>, ReflectError<'shape>> {
         self.put_shape(peek.data, peek.shape)
     }
 
@@ -156,7 +161,7 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
     }
 
     /// Allocates a new value of the given shape
-    pub fn alloc_shape(shape: &'static Shape) -> Result<Self, ReflectError> {
+    pub fn alloc_shape(shape: &'shape Shape<'shape>) -> Result<Self, ReflectError<'shape>> {
         let data = shape
             .allocate()
             .map_err(|_| ReflectError::Unsized { shape })?;
@@ -173,11 +178,11 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
     }
 
     /// Allocates a new value of type `S`
-    pub fn alloc<S: Facet<'facet_lifetime>>() -> Result<Self, ReflectError> {
+    pub fn alloc<S: Facet<'facet_lifetime>>() -> Result<Self, ReflectError<'shape>> {
         Self::alloc_shape(S::SHAPE)
     }
 
-    fn track(&mut self, frame: Frame) {
+    fn track(&mut self, frame: Frame<'shape>) {
         // fields might be partially initialized (in-place) and then
         // we might come back to them, so because they're popped off
         // the stack, we still need to track them _somewhere_
@@ -191,10 +196,13 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
         self.istates.insert(frame.id(), frame.istate);
     }
 
-    unsafe fn mark_moved_out_of(&mut self, frame: &mut Frame) {
+    unsafe fn mark_moved_out_of(&mut self, frame: &mut Frame<'shape>) {
         // Recursively mark `istates` entries as MOVED and deallocate. Needed because
         // descendant values might be tracked separately in `istates`.
-        unsafe fn mark_subtree_moved(wip: &mut Wip, id: ValueId) {
+        unsafe fn mark_subtree_moved<'facet_lifetime, 'shape>(
+            wip: &mut Wip<'facet_lifetime, 'shape>,
+            id: ValueId<'shape>,
+        ) {
             // Function requires unsafe due to pointer manipulation and potential deallocation.
             unsafe {
                 // Process only if the value is still tracked off-stack.
@@ -332,7 +340,7 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
     }
 
     /// Asserts everything is initialized and that invariants are upheld (if any)
-    pub fn build(mut self) -> Result<HeapValue<'facet_lifetime>, ReflectError> {
+    pub fn build(mut self) -> Result<HeapValue<'facet_lifetime>, ReflectError<'shape>> {
         debug!("[{}] ⚒️ It's BUILD time", self.frames.len());
 
         // 1. Require that there is exactly one frame on the stack (the root frame)
@@ -349,9 +357,9 @@ impl<'facet_lifetime> Wip<'facet_lifetime> {
         // now the root frame is at index 0
         let root_frame = &self.frames[0];
 
-        enum FrameRef {
+        enum FrameRef<'shape> {
             Root,
-            ById(ValueId),
+            ById(ValueId<'shape>),
         }
         let mut to_check = alloc::vec![FrameRef::Root];
 

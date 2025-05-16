@@ -47,12 +47,12 @@ fn def_kind(def: &Def) -> &'static str {
 }
 
 /// Represents a frame in the initialization stack
-pub(crate) struct Frame {
+pub(crate) struct Frame<'shape> {
     /// The value we're initializing
     pub(crate) data: PtrUninit<'static>,
 
     /// The shape of the value
-    pub(crate) shape: &'static Shape,
+    pub(crate) shape: &'shape Shape<'shape>,
 
     /// If set, when we're initialized, we must mark the
     /// parent's indexth field as initialized.
@@ -61,12 +61,12 @@ pub(crate) struct Frame {
     /// Tracking which of our fields are initialized
     /// TODO: I'm not sure we should track "ourselves" as initialized — we always have the
     /// parent to look out for, right now we're tracking children in two states, which isn't ideal
-    pub(crate) istate: IState,
+    pub(crate) istate: IState<'shape>,
 }
 
-impl Frame {
+impl<'shape> Frame<'shape> {
     /// Given a ValueId and an IState, recompose a Frame suitable for tracking
-    pub(crate) fn recompose(id: ValueId, istate: IState) -> Self {
+    pub(crate) fn recompose(id: ValueId<'shape>, istate: IState<'shape>) -> Self {
         Frame {
             data: PtrUninit::new(id.ptr as *mut u8),
             shape: id.shape,
@@ -117,7 +117,7 @@ where
     }
 }
 
-impl fmt::Debug for Frame {
+impl<'shape> fmt::Debug for Frame<'shape> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Frame")
             .field("shape", &DisplayToDebug(&self.shape))
@@ -130,9 +130,9 @@ impl fmt::Debug for Frame {
     }
 }
 
-impl Frame {
+impl<'shape> Frame<'shape> {
     /// Returns the value ID for a frame
-    pub(crate) fn id(&self) -> ValueId {
+    pub(crate) fn id(&self) -> ValueId<'shape> {
         ValueId::new(self.shape, self.data.as_byte_ptr())
     }
 
@@ -236,7 +236,10 @@ impl Frame {
 }
 
 /// Returns true if the frame is fully initialized
-pub(crate) fn is_fully_initialized(shape: &'static Shape, istate: &IState) -> bool {
+pub(crate) fn is_fully_initialized<'shape>(
+    shape: &'shape Shape<'shape>,
+    istate: &IState<'shape>,
+) -> bool {
     match shape.ty {
         Type::User(UserType::Struct(sd)) => istate.fields.are_all_set(sd.fields.len()),
         Type::User(UserType::Enum(_)) => match istate.variant.as_ref() {

@@ -5,7 +5,7 @@ use owo_colors::OwoColorize;
 use crate::trace;
 use crate::{ISet, ReflectError, Wip};
 
-impl Wip<'_> {
+impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     /// Selects a variant of an enum by index.
     ///
     /// # Arguments
@@ -16,7 +16,7 @@ impl Wip<'_> {
     ///
     /// * `Ok(Self)` if the variant was successfully selected.
     /// * `Err(ReflectError)` if the current frame is not an enum or the variant index is out of bounds.
-    pub fn variant(mut self, index: usize) -> Result<Self, ReflectError> {
+    pub fn variant(mut self, index: usize) -> Result<Self, ReflectError<'shape>> {
         let frame = self.frames.last_mut().unwrap();
         let shape = frame.shape;
         let Type::User(UserType::Enum(def)) = shape.ty else {
