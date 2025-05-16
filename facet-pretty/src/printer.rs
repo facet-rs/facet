@@ -418,7 +418,11 @@ impl PrettyPrinter {
                                             // well we can print a string slice, that's no issue.
                                             // `Peek` implements `Display` which forwards to the
                                             // `Display` implementation of the underlying type.
-                                            write!(f, "{}", item.value.yellow())?;
+                                            if self.use_colors {
+                                                write!(f, "{}", item.value.yellow())?;
+                                            } else {
+                                                write!(f, "{}", item.value)?;
+                                            }
                                             handled = true;
                                         }
                                     },

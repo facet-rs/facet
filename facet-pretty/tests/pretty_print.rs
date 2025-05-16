@@ -148,3 +148,9 @@ fn test_tuple() {
         .trim()
     );
 }
+
+#[test]
+fn test_str() {
+    let printer = PrettyPrinter::new().with_colors(false);
+    assert_eq!(printer.format(&"hello").to_string(), r#"hello"#.trim());
+}
