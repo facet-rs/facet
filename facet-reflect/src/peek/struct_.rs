@@ -34,7 +34,7 @@ impl<'mem, 'facet_lifetime, 'shape> PeekStruct<'mem, 'facet_lifetime, 'shape> {
 
     /// Returns the value of the field at the given index
     #[inline(always)]
-    pub fn field(&self, index: usize) -> Result<Peek<'mem, 'facet_lifetime>, FieldError> {
+    pub fn field(&self, index: usize) -> Result<Peek<'mem, 'facet_lifetime, 'shape>, FieldError> {
         self.ty
             .fields
             .get(index)
@@ -50,7 +50,10 @@ impl<'mem, 'facet_lifetime, 'shape> PeekStruct<'mem, 'facet_lifetime, 'shape> {
 
     /// Gets the value of the field with the given name
     #[inline]
-    pub fn field_by_name(&self, name: &str) -> Result<Peek<'mem, 'facet_lifetime>, FieldError> {
+    pub fn field_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Peek<'mem, 'facet_lifetime, 'shape>, FieldError> {
         for (i, field) in self.ty.fields.iter().enumerate() {
             if field.name == name {
                 return self.field(i);
@@ -60,10 +63,14 @@ impl<'mem, 'facet_lifetime, 'shape> PeekStruct<'mem, 'facet_lifetime, 'shape> {
     }
 }
 
-impl<'mem, 'facet_lifetime> HasFields<'mem, 'facet_lifetime> for PeekStruct<'mem, 'facet_lifetime> {
+impl<'mem, 'facet_lifetime, 'shape> HasFields<'mem, 'facet_lifetime, 'shape>
+    for PeekStruct<'mem, 'facet_lifetime, 'shape>
+{
     /// Iterates over all fields in this struct, providing both name and value
     #[inline]
-    fn fields(&self) -> impl DoubleEndedIterator<Item = (Field, Peek<'mem, 'facet_lifetime>)> {
+    fn fields(
+        &self,
+    ) -> impl DoubleEndedIterator<Item = (Field, Peek<'mem, 'facet_lifetime, 'shape>)> {
         (0..self.field_count()).filter_map(|i| {
             let field = self.ty.fields.get(i).copied()?;
             let value = self.field(i).ok()?;
@@ -76,14 +83,16 @@ impl<'mem, 'facet_lifetime> HasFields<'mem, 'facet_lifetime> for PeekStruct<'mem
 ///
 /// This trait allows code to be written generically over both structs and enums
 /// that provide field access and iteration capabilities.
-pub trait HasFields<'mem, 'facet_lifetime> {
+pub trait HasFields<'mem, 'facet_lifetime, 'shape> {
     /// Iterates over all fields in this type, providing both field metadata and value
-    fn fields(&self) -> impl DoubleEndedIterator<Item = (Field, Peek<'mem, 'facet_lifetime>)>;
+    fn fields(
+        &self,
+    ) -> impl DoubleEndedIterator<Item = (Field, Peek<'mem, 'facet_lifetime, 'shape>)>;
 
     /// Iterates over fields in this type that should be included when it is serialized
     fn fields_for_serialize(
         &self,
-    ) -> impl DoubleEndedIterator<Item = (Field, Peek<'mem, 'facet_lifetime>)> {
+    ) -> impl DoubleEndedIterator<Item = (Field, Peek<'mem, 'facet_lifetime, 'shape>)> {
         // This is a default implementation that filters out fields with `skip_serializing`
         // attribute and handles field flattening.
         self.fields()

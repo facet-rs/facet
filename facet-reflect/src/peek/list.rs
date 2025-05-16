@@ -3,14 +3,14 @@ use core::fmt::Debug;
 use facet_core::ListDef;
 
 /// Iterator over a `PeekList`
-pub struct PeekListIter<'mem, 'facet_lifetime> {
-    list: PeekList<'mem, 'facet_lifetime>,
+pub struct PeekListIter<'mem, 'facet_lifetime, 'shape> {
+    list: PeekList<'mem, 'facet_lifetime, 'shape>,
     index: usize,
     len: usize,
 }
 
-impl<'mem, 'facet_lifetime> Iterator for PeekListIter<'mem, 'facet_lifetime> {
-    type Item = Peek<'mem, 'facet_lifetime>;
+impl<'mem, 'facet_lifetime, 'shape> Iterator for PeekListIter<'mem, 'facet_lifetime, 'shape> {
+    type Item = Peek<'mem, 'facet_lifetime, 'shape>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.index >= self.len {
@@ -27,11 +27,11 @@ impl<'mem, 'facet_lifetime> Iterator for PeekListIter<'mem, 'facet_lifetime> {
     }
 }
 
-impl ExactSizeIterator for PeekListIter<'_, '_> {}
+impl ExactSizeIterator for PeekListIter<'_, '_, '_> {}
 
-impl<'mem, 'facet_lifetime> IntoIterator for &'mem PeekList<'mem, 'facet_lifetime> {
-    type Item = Peek<'mem, 'facet_lifetime>;
-    type IntoIter = PeekListIter<'mem, 'facet_lifetime>;
+impl<'mem, 'facet_lifetime, 'shape> IntoIterator for &'mem PeekList<'mem, 'facet_lifetime, 'shape> {
+    type Item = Peek<'mem, 'facet_lifetime, 'shape>;
+    type IntoIter = PeekListIter<'mem, 'facet_lifetime, 'shape>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
@@ -40,20 +40,20 @@ impl<'mem, 'facet_lifetime> IntoIterator for &'mem PeekList<'mem, 'facet_lifetim
 
 /// Lets you read from a list (implements read-only [`facet_core::ListVTable`] proxies)
 #[derive(Clone, Copy)]
-pub struct PeekList<'mem, 'facet_lifetime> {
-    pub(crate) value: Peek<'mem, 'facet_lifetime>,
+pub struct PeekList<'mem, 'facet_lifetime, 'shape> {
+    pub(crate) value: Peek<'mem, 'facet_lifetime, 'shape>,
     pub(crate) def: ListDef,
 }
 
-impl Debug for PeekList<'_, '_> {
+impl Debug for PeekList<'_, '_, '_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("PeekList").finish_non_exhaustive()
     }
 }
 
-impl<'mem, 'facet_lifetime> PeekList<'mem, 'facet_lifetime> {
+impl<'mem, 'facet_lifetime, 'shape> PeekList<'mem, 'facet_lifetime, 'shape> {
     /// Creates a new peek list
-    pub fn new(value: Peek<'mem, 'facet_lifetime>, def: ListDef) -> Self {
+    pub fn new(value: Peek<'mem, 'facet_lifetime, 'shape>, def: ListDef) -> Self {
         Self { value, def }
     }
 
@@ -67,7 +67,7 @@ impl<'mem, 'facet_lifetime> PeekList<'mem, 'facet_lifetime> {
         self.len() == 0
     }
     /// Get an item from the list at the specified index
-    pub fn get(&self, index: usize) -> Option<Peek<'mem, 'facet_lifetime>> {
+    pub fn get(&self, index: usize) -> Option<Peek<'mem, 'facet_lifetime, 'shape>> {
         if index >= self.len() {
             return None;
         }
@@ -85,7 +85,7 @@ impl<'mem, 'facet_lifetime> PeekList<'mem, 'facet_lifetime> {
     }
 
     /// Returns an iterator over the list
-    pub fn iter(self) -> PeekListIter<'mem, 'facet_lifetime> {
+    pub fn iter(self) -> PeekListIter<'mem, 'facet_lifetime, 'shape> {
         PeekListIter {
             list: self,
             index: 0,

@@ -69,7 +69,7 @@ pub type SkipSerializingIfFn = for<'mem> unsafe fn(value: PtrConst<'mem>) -> boo
 
 impl<'shape> Field<'shape> {
     /// Returns the shape of the inner type
-    pub const fn shape(&self) -> &'static Shape<'shape> {
+    pub const fn shape(&self) -> &'shape Shape<'shape> {
         self.shape
     }
 

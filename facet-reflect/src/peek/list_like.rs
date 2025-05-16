@@ -40,8 +40,8 @@ pub struct PeekListLikeIter<'mem, 'facet_lifetime> {
     len: usize,
 }
 
-impl<'mem, 'facet_lifetime> Iterator for PeekListLikeIter<'mem, 'facet_lifetime> {
-    type Item = Peek<'mem, 'facet_lifetime>;
+impl<'mem, 'facet_lifetime, 'shape> Iterator for PeekListLikeIter<'mem, 'facet_lifetime, 'shape> {
+    type Item = Peek<'mem, 'facet_lifetime, 'shape>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.index >= self.len {

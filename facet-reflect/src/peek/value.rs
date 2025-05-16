@@ -64,7 +64,7 @@ impl<'mem, 'facet_lifetime, 'shape> Peek<'mem, 'facet_lifetime, 'shape> {
     /// This function is unsafe because it doesn't check if the provided data
     /// and shape are compatible. The caller must ensure that the data is valid
     /// for the given shape.
-    pub unsafe fn unchecked_new(data: PtrConst<'mem>, shape: &'static Shape) -> Self {
+    pub unsafe fn unchecked_new(data: PtrConst<'mem>, shape: &'shape Shape<'shape>) -> Self {
         Self {
             data,
             shape,
@@ -160,7 +160,7 @@ impl<'mem, 'facet_lifetime, 'shape> Peek<'mem, 'facet_lifetime, 'shape> {
 
     /// Returns the shape
     #[inline(always)]
-    pub const fn shape(&self) -> &'static Shape {
+    pub const fn shape(&self) -> &'shape Shape<'shape> {
         self.shape
     }
 
@@ -212,7 +212,9 @@ impl<'mem, 'facet_lifetime, 'shape> Peek<'mem, 'facet_lifetime, 'shape> {
     }
 
     /// Tries to identify this value as a struct
-    pub fn into_struct(self) -> Result<PeekStruct<'mem, 'facet_lifetime>, ReflectError<'shape>> {
+    pub fn into_struct(
+        self,
+    ) -> Result<PeekStruct<'mem, 'facet_lifetime, 'shape>, ReflectError<'shape>> {
         if let Type::User(UserType::Struct(ty)) = self.shape.ty {
             Ok(PeekStruct { value: self, ty })
         } else {
@@ -224,7 +226,9 @@ impl<'mem, 'facet_lifetime, 'shape> Peek<'mem, 'facet_lifetime, 'shape> {
     }
 
     /// Tries to identify this value as an enum
-    pub fn into_enum(self) -> Result<PeekEnum<'mem, 'facet_lifetime>, ReflectError> {
+    pub fn into_enum(
+        self,
+    ) -> Result<PeekEnum<'mem, 'facet_lifetime, 'shape>, ReflectError<'shape>> {
         if let Type::User(UserType::Enum(ty)) = self.shape.ty {
             Ok(PeekEnum { value: self, ty })
         } else {
@@ -236,7 +240,7 @@ impl<'mem, 'facet_lifetime, 'shape> Peek<'mem, 'facet_lifetime, 'shape> {
     }
 
     /// Tries to identify this value as a map
-    pub fn into_map(self) -> Result<PeekMap<'mem, 'facet_lifetime>, ReflectError> {
+    pub fn into_map(self) -> Result<PeekMap<'mem, 'facet_lifetime, 'shape>, ReflectError<'shape>> {
         if let Def::Map(def) = self.shape.def {
             Ok(PeekMap { value: self, def })
         } else {
@@ -248,7 +252,9 @@ impl<'mem, 'facet_lifetime, 'shape> Peek<'mem, 'facet_lifetime, 'shape> {
     }
 
     /// Tries to identify this value as a list
-    pub fn into_list(self) -> Result<PeekList<'mem, 'facet_lifetime>, ReflectError> {
+    pub fn into_list(
+        self,
+    ) -> Result<PeekList<'mem, 'facet_lifetime, 'shape>, ReflectError<'shape>> {
         if let Def::List(def) = self.shape.def {
             return Ok(PeekList { value: self, def });
         }
@@ -260,7 +266,9 @@ impl<'mem, 'facet_lifetime, 'shape> Peek<'mem, 'facet_lifetime, 'shape> {
     }
 
     /// Tries to identify this value as a list, array or slice
-    pub fn into_list_like(self) -> Result<PeekListLike<'mem, 'facet_lifetime>, ReflectError> {
+    pub fn into_list_like(
+        self,
+    ) -> Result<PeekListLike<'mem, 'facet_lifetime, 'shape>, ReflectError<'shape>> {
         match self.shape.def {
             Def::List(def) => Ok(PeekListLike::new(self, ListLikeDef::List(def))),
             Def::Array(def) => Ok(PeekListLike::new(self, ListLikeDef::Array(def))),
@@ -299,7 +307,7 @@ impl<'mem, 'facet_lifetime, 'shape> Peek<'mem, 'facet_lifetime, 'shape> {
     /// Tries to identify this value as a smart pointer
     pub fn into_smart_pointer(
         self,
-    ) -> Result<PeekSmartPointer<'mem, 'facet_lifetime>, ReflectError> {
+    ) -> Result<PeekSmartPointer<'mem, 'facet_lifetime, 'shape>, ReflectError<'shape>> {
         if let Def::SmartPointer(def) = self.shape.def {
             Ok(PeekSmartPointer { value: self, def })
         } else {
@@ -311,7 +319,9 @@ impl<'mem, 'facet_lifetime, 'shape> Peek<'mem, 'facet_lifetime, 'shape> {
     }
 
     /// Tries to identify this value as an option
-    pub fn into_option(self) -> Result<super::PeekOption<'mem, 'facet_lifetime>, ReflectError> {
+    pub fn into_option(
+        self,
+    ) -> Result<super::PeekOption<'mem, 'facet_lifetime, 'shape>, ReflectError<'shape>> {
         if let Def::Option(def) = self.shape.def {
             Ok(super::PeekOption { value: self, def })
         } else {
@@ -323,7 +333,9 @@ impl<'mem, 'facet_lifetime, 'shape> Peek<'mem, 'facet_lifetime, 'shape> {
     }
 
     /// Tries to identify this value as a tuple
-    pub fn into_tuple(self) -> Result<PeekTuple<'mem, 'facet_lifetime>, ReflectError> {
+    pub fn into_tuple(
+        self,
+    ) -> Result<PeekTuple<'mem, 'facet_lifetime, 'shape>, ReflectError<'shape>> {
         if let Type::Sequence(SequenceType::Tuple(ty)) = self.shape.ty {
             Ok(PeekTuple { value: self, ty })
         } else {

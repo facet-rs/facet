@@ -48,7 +48,7 @@ pub struct Shape<'shape> {
 
     /// Functional definition of the value: details for scalars, functions for inserting values into
     /// a map, or fetching a value from a list.
-    pub def: Def,
+    pub def: Def<'shape>,
 
     /// Generic parameters for the shape
     pub type_params: &'shape [TypeParam<'shape>],
@@ -187,7 +187,7 @@ pub struct ShapeBuilder<'shape> {
     id: Option<ConstTypeId>,
     layout: Option<ShapeLayout>,
     vtable: &'shape ValueVTable,
-    def: Def,
+    def: Def<'shape>,
     ty: Option<Type<'shape>>,
     type_params: &'shape [TypeParam<'shape>],
     doc: &'shape [&'shape str],
@@ -235,7 +235,7 @@ impl<'shape> ShapeBuilder<'shape> {
 
     /// Sets the `def` field of the `ShapeBuilder`.
     #[inline]
-    pub const fn def(mut self, def: Def) -> Self {
+    pub const fn def(mut self, def: Def<'shape>) -> Self {
         self.def = def;
         self
     }
