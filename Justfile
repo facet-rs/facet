@@ -162,8 +162,8 @@ docker-build-push:
     # Build tests image using stable Rust
     echo -e "\033[1;36m🔨 Building tests image with stable Rust...\033[0m"
     docker build \
-        --build-arg BASE_IMAGE=rust:1.86-slim-bookworm \
-        --build-arg RUSTUP_TOOLCHAIN=1.86 \
+        --build-arg BASE_IMAGE=rust:1.87-slim-bookworm \
+        --build-arg RUSTUP_TOOLCHAIN=1.87 \
         -t "${IMAGE_NAME}:${TAG}" \
         -t "${IMAGE_NAME}:latest" \
         -f Dockerfile \
@@ -200,8 +200,8 @@ docker-build-push-linux-amd64:
     echo -e "\033[1;36m🔨 Building tests image with stable Rust...\033[0m"
     docker build \
         --platform linux/amd64 \
-        --build-arg BASE_IMAGE=rust:1.86-slim-bookworm \
-        --build-arg RUSTUP_TOOLCHAIN=1.86 \
+        --build-arg BASE_IMAGE=rust:1.87-slim-bookworm \
+        --build-arg RUSTUP_TOOLCHAIN=1.87 \
         -t "${IMAGE_NAME}:${TAG}-amd64" \
         -t "${IMAGE_NAME}:latest-amd64" \
         -f Dockerfile \

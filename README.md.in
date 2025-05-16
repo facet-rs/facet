@@ -25,10 +25,6 @@ Some format crates (like `facet-toml`) first deserialize to a DOM, and _then_
 to partial structs — this is not as efficient as it could be, but it's a good
 first step.
 
-Rust 1.86.0 has a compile error if you just import Facet but don't use it, see
-<https://github.com/facet-rs/facet/issues/75>. This is fixed in nightly and will
-no longer be a problem with the next major Rust version.
-
 `type_eq` is not const, thus preventing many useful things in `const fn`, see
 <https://github.com/facet-rs/facet/issues/98>. Language changes are needed
 to address that.

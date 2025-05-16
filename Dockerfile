@@ -1,5 +1,5 @@
 # Allow selecting base image at build time
-ARG BASE_IMAGE=rust:1.86-slim-bookworm
+ARG BASE_IMAGE=rust:1.87-slim-bookworm
 FROM ${BASE_IMAGE} AS builder
 
 ARG RUSTUP_TOOLCHAIN

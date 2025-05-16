@@ -1,7 +1,7 @@
 {
   description = "facet devel";
 
-  # Unstable required until Rust 1.86 is on stable
+  # Unstable required until Rust 1.87 is on stable
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
   # shell.nix compatibility
