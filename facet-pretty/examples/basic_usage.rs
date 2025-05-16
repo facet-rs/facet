@@ -2,8 +2,8 @@ use facet::Facet;
 use facet_pretty::FacetPretty;
 
 #[derive(Debug, Facet)]
-struct Person {
-    name: String,
+struct Person<'a> {
+    name: &'a str,
     age: u32,
     address: Address,
 }
@@ -23,7 +23,7 @@ fn main() {
     };
 
     let person = Person {
-        name: "Alice".to_string(),
+        name: "Alice",
         age: 30,
         address,
     };

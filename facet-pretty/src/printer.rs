@@ -10,7 +10,8 @@ use std::{collections::HashMap, hash::DefaultHasher};
 use yansi::Paint as _;
 
 use facet_core::{
-    Def, Facet, FieldFlags, PointerType, SequenceType, StructKind, Type, TypeNameOpts, UserType,
+    Def, Facet, FieldFlags, PointerType, PrimitiveType, SequenceType, StructKind, TextualType,
+    Type, TypeNameOpts, UserType,
 };
 use facet_reflect::{Peek, ValueId};
 
@@ -403,6 +404,34 @@ impl PrettyPrinter {
                             // Just print the type name for function pointers
                             self.write_type_name(f, &item.value)?;
                             write!(f, " /* function pointer (not yet supported) */")?;
+                        }
+                        (_, Type::Pointer(PointerType::Reference(rd))) => {
+                            let target = (rd.target)();
+                            let mut handled = false;
+                            match target.ty {
+                                Type::Primitive(primitive_type) => match primitive_type {
+                                    PrimitiveType::Boolean => {}
+                                    PrimitiveType::Numeric(numeric_type) => {}
+                                    PrimitiveType::Textual(textual_type) => match textual_type {
+                                        TextualType::Char => todo!(),
+                                        TextualType::Str => {
+                                            // well we can print a string slice, that's no issue.
+                                            // `Peek` implements `Display` which forwards to the
+                                            // `Display` implementation of the underlying type.
+                                            write!(f, "{}", item.value.yellow())?;
+                                            handled = true;
+                                        }
+                                    },
+                                    PrimitiveType::Never => {}
+                                },
+                                Type::Sequence(sequence_type) => {}
+                                Type::User(user_type) => {}
+                                Type::Pointer(pointer_type) => {}
+                                _ => {}
+                            }
+                            if !handled {
+                                write!(f, "unsupported type: {:?}", item.value)?;
+                            }
                         }
                         _ => {
                             write!(f, "unsupported peek variant: {:?}", item.value)?;
