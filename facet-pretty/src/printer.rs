@@ -249,36 +249,45 @@ impl PrettyPrinter {
                             stack.push_back(item);
                         }
                         (Def::List(_), _) => {
-                            let list = item.value.into_list().unwrap();
-                            // When recursing into a list, always increment format_depth
-                            // Only increment type_depth if we're moving to a different address
-                            let new_type_depth =
-                                // Incrementing type_depth for all list operations
-                                item.type_depth + 1; // Always increment type_depth for list operations
-
-                            // Print the list name
-                            self.write_type_name(f, &item.value)?;
-
-                            if list.def().t().is_type::<u8>() && self.list_u8_as_bytes {
-                                // Push back the item with the next state to continue processing list items
-                                item.state = StackState::ProcessBytesItem { item_index: 0 };
-                                writeln!(f)?;
-                                write!(f, " ")?;
-
-                                // TODO: write all the bytes here instead?
-                            } else {
-                                // Push back the item with the next state to continue processing list items
-                                item.state = StackState::ProcessSeqItem {
-                                    item_index: 0,
-                                    kind: SeqKind::List,
-                                };
-                                self.write_punctuation(f, " [")?;
-                                writeln!(f)?;
+                            self.handle_list(&mut stack, item, f)?;
+                            continue;
+                        }
+                        (_, Type::Pointer(PointerType::Reference(r))) => {
+                            'handle: {
+                                let target = (r.target)();
+                                match target.ty {
+                                    Type::Sequence(
+                                        SequenceType::Slice(_) | SequenceType::Array(_),
+                                    ) => {
+                                        self.handle_list(&mut stack, item, f)?;
+                                        break 'handle;
+                                    }
+                                    Type::Primitive(primitive_type) => match primitive_type {
+                                        PrimitiveType::Boolean => {}
+                                        PrimitiveType::Numeric(_numeric_type) => {}
+                                        PrimitiveType::Textual(textual_type) => {
+                                            match textual_type {
+                                                TextualType::Char => todo!(),
+                                                TextualType::Str => {
+                                                    // well we can print a string slice, that's no issue.
+                                                    // `Peek` implements `Display` which forwards to the
+                                                    // `Display` implementation of the underlying type.
+                                                    if self.use_colors {
+                                                        write!(f, "{}", item.value.yellow())?;
+                                                    } else {
+                                                        write!(f, "{}", item.value)?;
+                                                    }
+                                                    break 'handle;
+                                                }
+                                            }
+                                        }
+                                        PrimitiveType::Never => {}
+                                    },
+                                    _ => {
+                                        write!(f, "unsupported reference type: {:?}", item.value)?;
+                                    }
+                                }
                             }
-
-                            item.format_depth += 1;
-                            item.type_depth = new_type_depth;
-                            stack.push_back(item);
                         }
                         (_, Type::Sequence(SequenceType::Tuple(..))) => {
                             self.write_type_name(f, &item.value)?;
@@ -404,38 +413,6 @@ impl PrettyPrinter {
                             // Just print the type name for function pointers
                             self.write_type_name(f, &item.value)?;
                             write!(f, " /* function pointer (not yet supported) */")?;
-                        }
-                        (_, Type::Pointer(PointerType::Reference(rd))) => {
-                            let target = (rd.target)();
-                            let mut handled = false;
-                            match target.ty {
-                                Type::Primitive(primitive_type) => match primitive_type {
-                                    PrimitiveType::Boolean => {}
-                                    PrimitiveType::Numeric(_numeric_type) => {}
-                                    PrimitiveType::Textual(textual_type) => match textual_type {
-                                        TextualType::Char => todo!(),
-                                        TextualType::Str => {
-                                            // well we can print a string slice, that's no issue.
-                                            // `Peek` implements `Display` which forwards to the
-                                            // `Display` implementation of the underlying type.
-                                            if self.use_colors {
-                                                write!(f, "{}", item.value.yellow())?;
-                                            } else {
-                                                write!(f, "{}", item.value)?;
-                                            }
-                                            handled = true;
-                                        }
-                                    },
-                                    PrimitiveType::Never => {}
-                                },
-                                Type::Sequence(_sequence_type) => {}
-                                Type::User(_user_type) => {}
-                                Type::Pointer(_pointer_type) => {}
-                                _ => {}
-                            }
-                            if !handled {
-                                write!(f, "unsupported type: {:?}", item.value)?;
-                            }
                         }
                         _ => {
                             write!(f, "unsupported peek variant: {:?}", item.value)?;
@@ -788,6 +765,46 @@ impl PrettyPrinter {
                 }
             }
         }
+
+        Ok(())
+    }
+
+    fn handle_list<'a, 'facet_lifetime>(
+        &self,
+        stack: &mut VecDeque<StackItem<'a, 'facet_lifetime>>,
+        mut item: StackItem<'a, 'facet_lifetime>,
+        f: &mut impl Write,
+    ) -> fmt::Result {
+        let list = item.value.into_list().unwrap();
+        // When recursing into a list, always increment format_depth
+        // Only increment type_depth if we're moving to a different address
+        let new_type_depth =
+            // Incrementing type_depth for all list operations
+            item.type_depth + 1; // Always increment type_depth for list operations
+
+        // Print the list name
+        self.write_type_name(f, &item.value)?;
+
+        if list.def().t().is_type::<u8>() && self.list_u8_as_bytes {
+            // Push back the item with the next state to continue processing list items
+            item.state = StackState::ProcessBytesItem { item_index: 0 };
+            writeln!(f)?;
+            write!(f, " ")?;
+
+            // TODO: write all the bytes here instead?
+        } else {
+            // Push back the item with the next state to continue processing list items
+            item.state = StackState::ProcessSeqItem {
+                item_index: 0,
+                kind: SeqKind::List,
+            };
+            self.write_punctuation(f, " [")?;
+            writeln!(f)?;
+        }
+
+        item.format_depth += 1;
+        item.type_depth = new_type_depth;
+        stack.push_back(item);
 
         Ok(())
     }
