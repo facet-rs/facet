@@ -73,8 +73,8 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                 vtable
             };
 
-            const SHAPE: &'static Shape = &const {
-                fn inner_shape() -> &'static Shape {
+            const SHAPE: &'static Shape<'static> = &const {
+                fn inner_shape() -> &'static Shape<'static> {
                     <$float as Facet>::SHAPE
                 }
 
@@ -172,8 +172,8 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                 vtable
             };
 
-            const SHAPE: &'static Shape = &const {
-                fn inner_shape() -> &'static Shape {
+            const SHAPE: &'static Shape<'static> = &const {
+                fn inner_shape() -> &'static Shape<'static> {
                     <$float as Facet>::SHAPE
                 }
 

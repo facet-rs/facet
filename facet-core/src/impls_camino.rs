@@ -41,9 +41,9 @@ unsafe impl Facet<'_> for Utf8PathBuf {
         vtable
     };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         // Function to return inner type's shape
-        fn inner_shape() -> &'static Shape {
+        fn inner_shape() -> &'static Shape<'static> {
             <String as Facet>::SHAPE
         }
 
@@ -83,7 +83,7 @@ unsafe impl Facet<'_> for Utf8Path {
         vtable
     };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_unsized::<Self>()
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(

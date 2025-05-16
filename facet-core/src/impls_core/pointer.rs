@@ -45,7 +45,7 @@ macro_rules! impl_facet_for_pointer {
                     .build()
             };
 
-            const SHAPE: &'static Shape = &const {
+            const SHAPE: &'static Shape<'static> = &const {
                 $shape
                     .type_params(&[TypeParam {
                         name: "T",

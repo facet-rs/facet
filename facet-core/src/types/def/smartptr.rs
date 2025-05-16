@@ -14,13 +14,13 @@ pub struct SmartPointerDef {
     pub vtable: &'static SmartPointerVTable,
 
     /// shape of the inner type of the smart pointer, if not opaque
-    pub pointee: Option<fn() -> &'static Shape>,
+    pub pointee: Option<fn() -> &'static Shape<'static>>,
 
     /// shape of the corresponding strong pointer, if this pointer is weak
-    pub weak: Option<fn() -> &'static Shape>,
+    pub weak: Option<fn() -> &'static Shape<'static>>,
 
     /// shape of the corresponding weak pointer, if this pointer is strong
-    pub strong: Option<fn() -> &'static Shape>,
+    pub strong: Option<fn() -> &'static Shape<'static>>,
 
     /// Flags representing various characteristics of the smart pointer
     pub flags: SmartPointerFlags,
@@ -63,11 +63,11 @@ impl SmartPointerDef {
 #[derive(Debug)]
 pub struct SmartPointerDefBuilder {
     vtable: Option<&'static SmartPointerVTable>,
-    pointee: Option<fn() -> &'static Shape>,
+    pointee: Option<fn() -> &'static Shape<'static>>,
     flags: Option<SmartPointerFlags>,
     known: Option<KnownSmartPointer>,
-    weak: Option<fn() -> &'static Shape>,
-    strong: Option<fn() -> &'static Shape>,
+    weak: Option<fn() -> &'static Shape<'static>>,
+    strong: Option<fn() -> &'static Shape<'static>>,
 }
 
 impl SmartPointerDefBuilder {
@@ -94,7 +94,7 @@ impl SmartPointerDefBuilder {
 
     /// Sets the shape of the inner type of the smart pointer.
     #[must_use]
-    pub const fn pointee(mut self, pointee: fn() -> &'static Shape) -> Self {
+    pub const fn pointee(mut self, pointee: fn() -> &'static Shape<'static>) -> Self {
         self.pointee = Some(pointee);
         self
     }
@@ -115,14 +115,14 @@ impl SmartPointerDefBuilder {
 
     /// Sets the shape of the corresponding weak pointer, if this pointer is strong.
     #[must_use]
-    pub const fn weak(mut self, weak: fn() -> &'static Shape) -> Self {
+    pub const fn weak(mut self, weak: fn() -> &'static Shape<'static>) -> Self {
         self.weak = Some(weak);
         self
     }
 
     /// Sets the shape of the corresponding strong pointer, if this pointer is weak
     #[must_use]
-    pub const fn strong(mut self, strong: fn() -> &'static Shape) -> Self {
+    pub const fn strong(mut self, strong: fn() -> &'static Shape<'static>) -> Self {
         self.strong = Some(strong);
         self
     }

@@ -75,7 +75,7 @@ pub unsafe trait Facet<'a>: 'a {
     /// The shape of this type
     ///
     /// Shape embeds all other constants of this trait.
-    const SHAPE: &'static Shape;
+    const SHAPE: &'static Shape<'static>;
 
     /// Function pointers to perform various operations: print the full type
     /// name (with generic type parameters), use the Display implementation,

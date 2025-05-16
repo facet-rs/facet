@@ -8,7 +8,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for core::ptr::NonNull<T> {
     const VTABLE: &'static ValueVTable =
         &const { value_vtable!(core::ptr::NonNull<T>, |f, _opts| write!(f, "NonNull")) };
 
-    const SHAPE: &'static crate::Shape = &const {
+    const SHAPE: &'static crate::Shape<'static> = &const {
         crate::Shape::builder_for_sized::<Self>()
             .type_params(&[crate::TypeParam {
                 name: "T",

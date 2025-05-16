@@ -5,13 +5,13 @@ use super::Shape;
 /// Describes all pointer types
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
-pub enum PointerType {
+pub enum PointerType<'shape> {
     /// Describees bound const and mut references (`&`/`&mut`)
-    Reference(ValuePointerType),
+    Reference(ValuePointerType<'shape>),
     /// Describes raw pointers
     ///
     /// Dereferencing invalid raw pointers may lead to undefined behavior
-    Raw(ValuePointerType),
+    Raw(ValuePointerType<'shape>),
     /// Describes function pointers
     Function(FunctionPointerDef),
 }
@@ -20,7 +20,7 @@ pub enum PointerType {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
 #[non_exhaustive]
-pub struct ValuePointerType {
+pub struct ValuePointerType<'shape> {
     /// Is the pointer mutable or not.
     pub mutable: bool,
 
@@ -38,12 +38,12 @@ pub struct ValuePointerType {
     ///
     /// This needs to be indirect (behind a function), in order to allow recursive types without
     /// overflowing the const-eval system.
-    pub target: fn() -> &'static Shape,
+    pub target: fn() -> &'shape Shape<'shape>,
 }
 
-impl ValuePointerType {
+impl<'shape> ValuePointerType<'shape> {
     /// Returns the shape of the pointer's pointee.
-    pub fn target(&self) -> &'static Shape {
+    pub fn target(&self) -> &'shape Shape<'shape> {
         (self.target)()
     }
 }

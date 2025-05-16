@@ -92,9 +92,9 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
         vtable
     };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         // Function to return inner type's shape
-        fn inner_shape<'a, T: Facet<'a>>() -> &'static Shape {
+        fn inner_shape<'a, T: Facet<'a>>() -> &'static Shape<'static> {
             T::SHAPE
         }
 

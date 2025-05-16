@@ -2,7 +2,7 @@ use crate::{ConstTypeId, Facet, Field, Shape, StructType, Type, VTableView, Valu
 use core::{alloc::Layout, mem};
 
 unsafe impl<'a, Idx: Facet<'a>> Facet<'a> for core::ops::Range<Idx> {
-    const SHAPE: &'static crate::Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .type_params(&[crate::TypeParam {
                 name: "Idx",

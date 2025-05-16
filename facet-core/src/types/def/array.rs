@@ -11,7 +11,7 @@ pub struct ArrayDef {
     pub vtable: &'static ArrayVTable,
 
     /// shape of the items in the array
-    pub t: &'static Shape,
+    pub t: &'static Shape<'static>,
 
     /// The length of the array
     pub n: usize,
@@ -32,7 +32,7 @@ impl ArrayDef {
 /// Builder for ArrayDef
 pub struct ArrayDefBuilder {
     vtable: Option<&'static ArrayVTable>,
-    t: Option<&'static Shape>,
+    t: Option<&'static Shape<'static>>,
     n: Option<usize>,
 }
 

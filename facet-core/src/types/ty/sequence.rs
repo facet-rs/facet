@@ -3,29 +3,32 @@ use super::{Field, Shape};
 /// Describes built-in sequence type (tuple, array, slice)
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-pub enum SequenceType {
+pub enum SequenceType<'shape> {
     /// Tuple (`(T0, T1, ...)`)
-    Tuple(TupleType),
+    Tuple(TupleType<'shape>),
+
     /// Array (`[T; N]`)
-    Array(ArrayType),
+    Array(ArrayType<'shape>),
+
     /// Slice (`[T]`)
-    Slice(SliceType),
+    Slice(SliceType<'shape>),
 }
 
 /// Describes a tuple (`(T0, T1, ...)`)
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-pub struct TupleType {
+pub struct TupleType<'shape> {
     /// Fields of the slice, with offsets
-    pub fields: &'static [Field],
+    pub fields: &'shape [Field<'shape>],
 }
 
 /// Describes a fixed-size array (`[T; N]`)
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-pub struct ArrayType {
+pub struct ArrayType<'shape> {
     /// Shape of the underlying object stored on array
-    pub t: &'static Shape,
+    pub t: &'shape Shape<'shape>,
+
     /// Constatnt length of the array
     pub n: usize,
 }
@@ -33,7 +36,7 @@ pub struct ArrayType {
 /// Describes a slice (`[T]`)
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-pub struct SliceType {
+pub struct SliceType<'shape> {
     /// Shape of the underlying object stored on slice
-    pub t: &'static Shape,
+    pub t: &'shape Shape<'shape>,
 }

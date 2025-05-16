@@ -7,7 +7,7 @@ unsafe impl Facet<'_> for alloc::string::String {
     const VTABLE: &'static ValueVTable =
         &const { value_vtable!(alloc::string::String, |f, _opts| write!(f, "String")) };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()
@@ -28,7 +28,7 @@ unsafe impl<'a> Facet<'a> for alloc::borrow::Cow<'a, str> {
         ))
     };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()

@@ -180,10 +180,10 @@ pub enum TryFromError {
     /// The target shape has a conversion implementation, but it doesn't support converting from this specific source shape
     UnsupportedSourceShape {
         /// The source shape that failed to convert
-        src_shape: &'static Shape,
+        src_shape: &'static Shape<'static>,
 
         /// The shapes that the `TryFrom` implementation supports
-        expected: &'static [&'static Shape],
+        expected: &'static [&'static Shape<'static>],
     },
     /// `!Sized` type
     Unsized,

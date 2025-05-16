@@ -3,13 +3,13 @@ use super::{EnumType, StructType, UnionType};
 /// User-defined types (structs, enums, unions)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(C)]
-pub enum UserType {
+pub enum UserType<'shape> {
     /// Describes a `struct`
-    Struct(StructType),
+    Struct(StructType<'shape>),
     /// Describes an `enum`
-    Enum(EnumType),
+    Enum(EnumType<'shape>),
     /// Describes a `union`
-    Union(UnionType),
+    Union(UnionType<'shape>),
     /// Special variant for representing external types with unknown internal representation.
     Opaque,
 }

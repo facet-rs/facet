@@ -49,9 +49,9 @@ unsafe impl Facet<'_> for Ulid {
         vtable
     };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         // Return the Shape of the inner type (String)
-        fn inner_shape() -> &'static Shape {
+        fn inner_shape() -> &'static Shape<'static> {
             <String as Facet>::SHAPE
         }
 

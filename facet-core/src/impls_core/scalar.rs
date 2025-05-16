@@ -7,7 +7,7 @@ unsafe impl Facet<'_> for ConstTypeId {
     const VTABLE: &'static ValueVTable =
         &const { value_vtable!(ConstTypeId, |f, _opts| write!(f, "ConstTypeId")) };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()
@@ -27,7 +27,7 @@ unsafe impl Facet<'_> for core::any::TypeId {
     const VTABLE: &'static ValueVTable =
         &const { value_vtable!(core::any::TypeId, |f, _opts| write!(f, "TypeId")) };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()
@@ -42,7 +42,7 @@ unsafe impl Facet<'_> for core::any::TypeId {
 unsafe impl Facet<'_> for () {
     const VTABLE: &'static ValueVTable = &const { value_vtable!((), |f, _opts| write!(f, "()")) };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()
@@ -61,7 +61,7 @@ unsafe impl<'a, T: ?Sized + 'a> Facet<'a> for core::marker::PhantomData<T> {
     const VTABLE: &'static ValueVTable =
         &const { value_vtable!((), |f, _opts| write!(f, "PhantomData")) };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()
@@ -81,7 +81,7 @@ unsafe impl Facet<'_> for char {
     const VTABLE: &'static ValueVTable =
         &const { value_vtable!(char, |f, _opts| write!(f, "char")) };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()
@@ -98,7 +98,7 @@ unsafe impl Facet<'_> for str {
     const VTABLE: &'static ValueVTable =
         &const { value_vtable!(&str, |f, _opts| write!(f, "str")) };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_unsized::<Self>()
             .ty(Type::Primitive(PrimitiveType::Textual(TextualType::Str)))
             .def(Def::Scalar(
@@ -114,7 +114,7 @@ unsafe impl Facet<'_> for bool {
     const VTABLE: &'static ValueVTable =
         &const { value_vtable!(bool, |f, _opts| write!(f, "bool")) };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()
@@ -264,7 +264,7 @@ macro_rules! impl_facet_for_integer {
                 vtable
             };
 
-            const SHAPE: &'static Shape = &const {
+            const SHAPE: &'static Shape<'static> = &const {
                 Shape::builder_for_sized::<Self>()
                     .ty(Type::Primitive(PrimitiveType::Numeric(
                         NumericType::Integer {
@@ -368,9 +368,9 @@ macro_rules! impl_facet_for_integer {
                 vtable
             };
 
-            const SHAPE: &'static Shape = &const {
+            const SHAPE: &'static Shape<'static> = &const {
                 // Function to return inner type's shape
-                fn inner_shape() -> &'static Shape {
+                fn inner_shape() -> &'static Shape<'static> {
                     <$type as Facet>::SHAPE
                 }
 
@@ -679,7 +679,7 @@ unsafe impl Facet<'_> for f32 {
         vtable
     };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .ty(Type::Primitive(PrimitiveType::Numeric(NumericType::Float)))
             .def(Def::Scalar(
@@ -735,7 +735,7 @@ unsafe impl Facet<'_> for f64 {
         vtable
     };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .ty(Type::Primitive(PrimitiveType::Numeric(NumericType::Float)))
             .def(Def::Scalar(
@@ -763,7 +763,7 @@ unsafe impl Facet<'_> for core::net::SocketAddr {
     const VTABLE: &'static ValueVTable =
         &const { value_vtable!(core::net::SocketAddr, |f, _opts| write!(f, "SocketAddr")) };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
@@ -779,7 +779,7 @@ unsafe impl Facet<'_> for core::net::IpAddr {
     const VTABLE: &'static ValueVTable =
         &const { value_vtable!(core::net::IpAddr, |f, _opts| write!(f, "IpAddr")) };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
@@ -795,7 +795,7 @@ unsafe impl Facet<'_> for core::net::Ipv4Addr {
     const VTABLE: &'static ValueVTable =
         &const { value_vtable!(core::net::Ipv4Addr, |f, _opts| write!(f, "Ipv4Addr")) };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
@@ -811,7 +811,7 @@ unsafe impl Facet<'_> for core::net::Ipv6Addr {
     const VTABLE: &'static ValueVTable =
         &const { value_vtable!(core::net::Ipv6Addr, |f, _opts| write!(f, "Ipv6Addr")) };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(

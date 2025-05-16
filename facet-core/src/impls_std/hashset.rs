@@ -91,7 +91,7 @@ where
         builder.build()
     };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .type_params(&[
                 TypeParam {

@@ -11,7 +11,7 @@ pub struct SliceDef {
     pub vtable: &'static SliceVTable,
 
     /// shape of the items in the slice
-    pub t: &'static Shape,
+    pub t: &'static Shape<'static>,
 }
 
 impl SliceDef {
@@ -29,7 +29,7 @@ impl SliceDef {
 /// Builder for SliceDef
 pub struct SliceDefBuilder {
     vtable: Option<&'static SliceVTable>,
-    t: Option<&'static Shape>,
+    t: Option<&'static Shape<'static>>,
 }
 
 impl SliceDefBuilder {

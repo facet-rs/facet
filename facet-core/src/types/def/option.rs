@@ -11,7 +11,7 @@ pub struct OptionDef {
     pub vtable: &'static OptionVTable,
 
     /// shape of the inner type of the option
-    pub t: &'static Shape,
+    pub t: &'static Shape<'static>,
 }
 
 impl OptionDef {
@@ -29,7 +29,7 @@ impl OptionDef {
 /// Builder for OptionDef
 pub struct OptionDefBuilder {
     vtable: Option<&'static OptionVTable>,
-    t: Option<&'static Shape>,
+    t: Option<&'static Shape<'static>>,
 }
 
 impl OptionDefBuilder {

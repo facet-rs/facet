@@ -55,9 +55,9 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::boxed::Box<T> {
         vtable
     };
 
-    const SHAPE: &'static crate::Shape = &const {
+    const SHAPE: &'static crate::Shape<'static> = &const {
         // Function to return inner type's shape
-        fn inner_shape<'a, T: Facet<'a>>() -> &'static Shape {
+        fn inner_shape<'a, T: Facet<'a>>() -> &'static Shape<'static> {
             T::SHAPE
         }
 

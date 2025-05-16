@@ -149,9 +149,9 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for alloc::sync::Arc<T> {
         vtable
     };
 
-    const SHAPE: &'static crate::Shape = &const {
+    const SHAPE: &'static crate::Shape<'static> = &const {
         // Function to return inner type's shape
-        fn inner_shape<'a, T: Facet<'a> + ?Sized>() -> &'static Shape {
+        fn inner_shape<'a, T: Facet<'a> + ?Sized>() -> &'static Shape<'static> {
             T::SHAPE
         }
 
@@ -250,9 +250,9 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for alloc::sync::Weak<T> {
         })
     };
 
-    const SHAPE: &'static crate::Shape = &const {
+    const SHAPE: &'static crate::Shape<'static> = &const {
         // Function to return inner type's shape
-        fn inner_shape<'a, T: Facet<'a> + ?Sized>() -> &'static Shape {
+        fn inner_shape<'a, T: Facet<'a> + ?Sized>() -> &'static Shape<'static> {
             T::SHAPE
         }
 
