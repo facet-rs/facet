@@ -43,7 +43,7 @@ unsafe impl Facet<'_> for Zoned {
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
-                    .affinity(ScalarAffinity::time().build())
+                    .affinity(&const { ScalarAffinity::time().build() })
                     .build(),
             ))
             .build()
@@ -89,7 +89,7 @@ unsafe impl Facet<'_> for Timestamp {
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
-                    .affinity(ScalarAffinity::time().build())
+                    .affinity(&const { ScalarAffinity::time().build() })
                     .build(),
             ))
             .build()
@@ -133,7 +133,7 @@ unsafe impl Facet<'_> for DateTime {
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
-                    .affinity(ScalarAffinity::time().build())
+                    .affinity(&const { ScalarAffinity::time().build() })
                     .build(),
             ))
             .build()

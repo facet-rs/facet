@@ -9,7 +9,7 @@ unsafe impl Facet<'_> for std::path::PathBuf {
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
-                    .affinity(ScalarAffinity::path().build())
+                    .affinity(&const { ScalarAffinity::path().build() })
                     .build(),
             ))
             .build()
@@ -24,7 +24,7 @@ unsafe impl Facet<'_> for std::path::Path {
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
-                    .affinity(ScalarAffinity::path().build())
+                    .affinity(&const { ScalarAffinity::path().build() })
                     .build(),
             ))
             .build()

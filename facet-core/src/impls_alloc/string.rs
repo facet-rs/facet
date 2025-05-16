@@ -12,7 +12,7 @@ unsafe impl Facet<'_> for alloc::string::String {
             .def(Def::Scalar(
                 ScalarDef::builder()
                     // `String` is always on the heap
-                    .affinity(ScalarAffinity::string().max_inline_length(0).build())
+                    .affinity(&const { ScalarAffinity::string().max_inline_length(0).build() })
                     .build(),
             ))
             .ty(Type::User(UserType::Opaque))
@@ -32,7 +32,7 @@ unsafe impl<'a> Facet<'a> for alloc::borrow::Cow<'a, str> {
         Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()
-                    .affinity(ScalarAffinity::string().build())
+                    .affinity(&const { ScalarAffinity::string().build() })
                     .build(),
             ))
             .ty(Type::User(UserType::Opaque))

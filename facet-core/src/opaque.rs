@@ -16,7 +16,7 @@ unsafe impl<'a, T: 'a> Facet<'a> for Opaque<T> {
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
-                    .affinity(ScalarAffinity::opaque().build())
+                    .affinity(&const { ScalarAffinity::opaque().build() })
                     .build(),
             ))
             .build()

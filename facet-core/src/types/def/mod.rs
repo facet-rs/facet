@@ -44,7 +44,7 @@ pub enum Def<'shape> {
     /// You can interact with them through [`ValueVTable`].
     ///
     /// e.g. `u32`, `String`, `bool`, `SocketAddr`, etc.
-    Scalar(ScalarDef),
+    Scalar(ScalarDef<'shape>),
 
     /// Map — keys are dynamic (and strings, sorry), values are homogeneous
     ///
@@ -83,7 +83,7 @@ pub enum Def<'shape> {
 #[expect(clippy::result_large_err, reason = "See comment of expect above Def")]
 impl<'shape> Def<'shape> {
     /// Returns the `ScalarDef` wrapped in an `Ok` if this is a [`Def::Scalar`].
-    pub fn into_scalar(self) -> Result<ScalarDef, Self> {
+    pub fn into_scalar(self) -> Result<ScalarDef<'shape>, Self> {
         match self {
             Self::Scalar(def) => Ok(def),
             _ => Err(self),

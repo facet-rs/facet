@@ -51,7 +51,7 @@ unsafe impl Facet<'_> for Utf8PathBuf {
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
-                    .affinity(ScalarAffinity::path().build())
+                    .affinity(&const { ScalarAffinity::path().build() })
                     .build(),
             ))
             .inner(inner_shape)
@@ -88,7 +88,7 @@ unsafe impl Facet<'_> for Utf8Path {
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
-                    .affinity(ScalarAffinity::path().build())
+                    .affinity(&const { ScalarAffinity::path().build() })
                     .build(),
             ))
             .build()
