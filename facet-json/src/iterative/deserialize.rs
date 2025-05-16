@@ -15,13 +15,6 @@ pub(crate) fn from_slice<'input: 'facet, 'facet, T: Facet<'facet>>(
     facet_deserialize::deserialize(input, crate::Json)
 }
 
-pub(crate) fn from_str_static_error<'input: 'facet, 'facet, T: Facet<'facet>>(
-    input: &'input str,
-) -> Result<T, DeserError<'input>> {
-    let input = input.as_bytes();
-    facet_deserialize::deserialize(input, crate::Json).map_err(|e| e.into_owned())
-}
-
 impl Format for crate::Json {
     type Input<'input> = [u8];
 
