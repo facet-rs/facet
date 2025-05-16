@@ -126,6 +126,7 @@ pub type DefaultInPlaceFnTyped<T> = for<'mem> fn(target: TypedPtrUninit<'mem, T>
 /// same pointer wrapped in an [`PtrMut`]. If parsing fails, it returns `Err` with an error.
 pub type ParseFn =
     for<'mem> unsafe fn(s: &str, target: PtrUninit<'mem>) -> Result<PtrMut<'mem>, ParseError>;
+
 /// Function to parse a value from a string.
 ///
 /// If both [`DisplayFn`] and [`ParseFn`] are set, we should be able to round-trip the value.
@@ -157,39 +158,45 @@ impl core::error::Error for ParseError {}
 /// The `target` parameter has the correct layout and alignment, but points to
 /// uninitialized memory. If this function succeeds, it should return `Ok` with the
 /// same pointer wrapped in an [`PtrMut`]. If conversion fails, it returns `Err` with an error.
-pub type TryFromFn = for<'src, 'mem> unsafe fn(
-    source: PtrConst<'src>,
-    source_shape: &'static Shape,
-    target: PtrUninit<'mem>,
-) -> Result<PtrMut<'mem>, TryFromError>;
+pub type TryFromFn =
+    for<'src, 'mem, 'shape> unsafe fn(
+        source: PtrConst<'src>,
+        source_shape: &'shape Shape<'shape>,
+        target: PtrUninit<'mem>,
+    ) -> Result<PtrMut<'mem>, TryFromError<'shape>>;
+
 /// Function to try converting from another type
-pub type TryFromFnTyped<T> = for<'src, 'mem> fn(
-    source: &'src T,
-    source_shape: &'static Shape,
-    target: TypedPtrUninit<'mem, T>,
-) -> Result<&'mem mut T, TryFromError>;
+pub type TryFromFnTyped<T> =
+    for<'src, 'mem, 'shape> fn(
+        source: &'src T,
+        source_shape: &'shape Shape<'shape>,
+        target: TypedPtrUninit<'mem, T>,
+    ) -> Result<&'mem mut T, TryFromError<'shape>>;
 
 /// Error type for TryFrom conversion failures
 #[non_exhaustive]
 #[derive(Debug, PartialEq, Clone)]
-pub enum TryFromError {
+pub enum TryFromError<'shape> {
     /// Generic conversion error
     Generic(&'static str),
+
     /// The target shape doesn't implement conversion from any source shape (no try_from in vtable)
     Unimplemented,
+
     /// The target shape has a conversion implementation, but it doesn't support converting from this specific source shape
     UnsupportedSourceShape {
         /// The source shape that failed to convert
-        src_shape: &'static Shape,
+        src_shape: &'shape Shape<'shape>,
 
         /// The shapes that the `TryFrom` implementation supports
-        expected: &'static [&'static Shape],
+        expected: &'shape [&'shape Shape<'shape>],
     },
+
     /// `!Sized` type
     Unsized,
 }
 
-impl core::fmt::Display for TryFromError {
+impl<'shape> core::fmt::Display for TryFromError<'shape> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             TryFromError::Generic(msg) => write!(f, "{}", msg),
@@ -216,9 +223,9 @@ impl core::fmt::Display for TryFromError {
     }
 }
 
-impl core::error::Error for TryFromError {}
+impl<'shape> core::error::Error for TryFromError<'shape> {}
 
-impl From<UnsizedError> for TryFromError {
+impl<'shape> From<UnsizedError> for TryFromError<'shape> {
     fn from(_value: UnsizedError) -> Self {
         Self::Unsized
     }

@@ -23,16 +23,16 @@ use yaml_rust2::{
 use yansi::Paint as _;
 
 /// Serializer for YAML values.
-pub struct YamlSerializer {
+pub struct YamlSerializer<'shape> {
     /// Current stack of where we are in the tree.
-    key_stack: Vec<Cow<'static, str>>,
+    key_stack: Vec<Cow<'shape, str>>,
     /// YAML document tree.
     yaml: Yaml,
     /// What type the current item is.
     current: KeyOrValue,
 }
 
-impl YamlSerializer {
+impl<'shape> YamlSerializer<'shape> {
     /// Create a new serialzer.
     pub fn new() -> Self {
         Self {
@@ -86,7 +86,7 @@ impl YamlSerializer {
     }
 
     /// Create a new empty item at the key.
-    fn push_key(&mut self, key: Cow<'static, str>, type_name: &'static str) {
+    fn push_key(&mut self, key: Cow<'shape, str>, type_name: &'static str) {
         #[cfg(feature = "log")]
         log::trace!("Push {type_name} {}", self.display_full_key());
         #[cfg(not(feature = "log"))]
@@ -103,7 +103,7 @@ impl YamlSerializer {
     }
 
     /// Pop the current key, which means the item is finished.
-    fn pop_key(&mut self, type_name: &'static str) -> Option<Cow<'static, str>> {
+    fn pop_key(&mut self, type_name: &'static str) -> Option<Cow<'shape, str>> {
         #[cfg(feature = "log")]
         log::trace!("Pop {type_name} {}", self.display_full_key());
         #[cfg(not(feature = "log"))]
@@ -161,13 +161,13 @@ impl YamlSerializer {
     }
 }
 
-impl Default for YamlSerializer {
+impl<'shape> Default for YamlSerializer<'shape> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Serializer for YamlSerializer {
+impl<'shape> Serializer<'shape> for YamlSerializer<'shape> {
     type Error = YamlSerError;
 
     fn serialize_u64(&mut self, value: u64) -> Result<(), Self::Error> {
@@ -229,7 +229,7 @@ impl Serializer for YamlSerializer {
     fn serialize_unit_variant(
         &mut self,
         _variant_index: usize,
-        _variant_name: &'static str,
+        _variant_name: &'shape str,
     ) -> Result<(), Self::Error> {
         todo!()
     }
@@ -252,7 +252,7 @@ impl Serializer for YamlSerializer {
         Ok(())
     }
 
-    fn serialize_field_name(&mut self, name: &'static str) -> Result<(), Self::Error> {
+    fn serialize_field_name(&mut self, name: &'shape str) -> Result<(), Self::Error> {
         self.push_key(Cow::Borrowed(name), "field");
 
         Ok(())

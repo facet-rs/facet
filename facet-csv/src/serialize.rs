@@ -4,7 +4,7 @@ use facet_serialize::{Serializer, serialize_iterative};
 use std::io::{self, Write};
 
 /// Serializes a value to CSV
-pub fn to_string<'a, T: Facet<'a>>(value: &T) -> String {
+pub fn to_string<'a, T: Facet<'a>>(value: &'a T) -> String {
     let peek = Peek::new(value);
     let mut output = Vec::new();
     let mut serializer = CsvSerializer::new(&mut output);
@@ -13,7 +13,7 @@ pub fn to_string<'a, T: Facet<'a>>(value: &T) -> String {
 }
 
 /// Serializes a Peek instance to CSV
-pub fn peek_to_string(peek: &Peek<'_, '_>) -> String {
+pub fn peek_to_string<'a>(peek: &'a Peek<'_, 'a, '_>) -> String {
     let mut output = Vec::new();
     let mut serializer = CsvSerializer::new(&mut output);
     serialize_iterative(*peek, &mut serializer).unwrap();
@@ -21,14 +21,14 @@ pub fn peek_to_string(peek: &Peek<'_, '_>) -> String {
 }
 
 /// Serializes a value to a writer in CSV format
-pub fn to_writer<'a, T: Facet<'a>, W: Write>(value: &T, writer: &mut W) -> io::Result<()> {
+pub fn to_writer<'a, T: Facet<'a>, W: Write>(value: &'a T, writer: &mut W) -> io::Result<()> {
     let peek = Peek::new(value);
     let mut serializer = CsvSerializer::new(writer);
     serialize_iterative(peek, &mut serializer)
 }
 
 /// Serializes a Peek instance to a writer in CSV format
-pub fn peek_to_writer<W: Write>(peek: &Peek<'_, '_>, writer: &mut W) -> io::Result<()> {
+pub fn peek_to_writer<'a, W: Write>(peek: &'a Peek<'_, 'a, '_>, writer: &mut W) -> io::Result<()> {
     let mut serializer = CsvSerializer::new(writer);
     serialize_iterative(*peek, &mut serializer)
 }
@@ -94,7 +94,7 @@ where
     }
 }
 
-impl<W> Serializer for CsvSerializer<W>
+impl<'shape, W> Serializer<'shape> for CsvSerializer<W>
 where
     W: Write,
 {
@@ -125,7 +125,7 @@ where
         unimplemented!("Maps are not implemented yet in CSV")
     }
 
-    fn serialize_field_name(&mut self, _name: &'static str) -> Result<(), Self::Error> {
+    fn serialize_field_name(&mut self, _name: &str) -> Result<(), Self::Error> {
         // field names are not serialized in CSV
         Ok(())
     }
@@ -133,7 +133,7 @@ where
     fn serialize_unit_variant(
         &mut self,
         _variant_index: usize,
-        _variant_name: &'static str,
+        _variant_name: &str,
     ) -> Result<(), Self::Error> {
         // unit variants should not serialize to anything
         Ok(())

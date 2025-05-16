@@ -7,11 +7,11 @@ unsafe impl Facet<'_> for ConstTypeId {
     const VTABLE: &'static ValueVTable =
         &const { value_vtable!(ConstTypeId, |f, _opts| write!(f, "ConstTypeId")) };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()
-                    .affinity(ScalarAffinity::opaque().build())
+                    .affinity(&const { ScalarAffinity::opaque().build() })
                     .build(),
             ))
             .ty(Type::User(UserType::Struct(StructType {
@@ -27,11 +27,11 @@ unsafe impl Facet<'_> for core::any::TypeId {
     const VTABLE: &'static ValueVTable =
         &const { value_vtable!(core::any::TypeId, |f, _opts| write!(f, "TypeId")) };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()
-                    .affinity(ScalarAffinity::opaque().build())
+                    .affinity(&const { ScalarAffinity::opaque().build() })
                     .build(),
             ))
             .ty(Type::User(UserType::Opaque))
@@ -42,11 +42,11 @@ unsafe impl Facet<'_> for core::any::TypeId {
 unsafe impl Facet<'_> for () {
     const VTABLE: &'static ValueVTable = &const { value_vtable!((), |f, _opts| write!(f, "()")) };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()
-                    .affinity(ScalarAffinity::empty().build())
+                    .affinity(&const { ScalarAffinity::empty().build() })
                     .build(),
             ))
             .ty(Type::Sequence(SequenceType::Tuple(TupleType {
@@ -61,11 +61,11 @@ unsafe impl<'a, T: ?Sized + 'a> Facet<'a> for core::marker::PhantomData<T> {
     const VTABLE: &'static ValueVTable =
         &const { value_vtable!((), |f, _opts| write!(f, "PhantomData")) };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()
-                    .affinity(ScalarAffinity::empty().build())
+                    .affinity(&const { ScalarAffinity::empty().build() })
                     .build(),
             ))
             .ty(Type::User(UserType::Struct(StructType {
@@ -81,11 +81,11 @@ unsafe impl Facet<'_> for char {
     const VTABLE: &'static ValueVTable =
         &const { value_vtable!(char, |f, _opts| write!(f, "char")) };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()
-                    .affinity(ScalarAffinity::char().build())
+                    .affinity(&const { ScalarAffinity::char().build() })
                     .build(),
             ))
             .ty(Type::Primitive(PrimitiveType::Textual(TextualType::Char)))
@@ -98,12 +98,12 @@ unsafe impl Facet<'_> for str {
     const VTABLE: &'static ValueVTable =
         &const { value_vtable!(&str, |f, _opts| write!(f, "str")) };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_unsized::<Self>()
             .ty(Type::Primitive(PrimitiveType::Textual(TextualType::Str)))
             .def(Def::Scalar(
                 ScalarDef::builder()
-                    .affinity(ScalarAffinity::string().build())
+                    .affinity(&const { ScalarAffinity::string().build() })
                     .build(),
             ))
             .build()
@@ -114,11 +114,11 @@ unsafe impl Facet<'_> for bool {
     const VTABLE: &'static ValueVTable =
         &const { value_vtable!(bool, |f, _opts| write!(f, "bool")) };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .def(Def::Scalar(
                 ScalarDef::builder()
-                    .affinity(ScalarAffinity::boolean().build())
+                    .affinity(&const { ScalarAffinity::boolean().build() })
                     .build(),
             ))
             .ty(Type::Primitive(PrimitiveType::Boolean))
@@ -264,7 +264,7 @@ macro_rules! impl_facet_for_integer {
                 vtable
             };
 
-            const SHAPE: &'static Shape = &const {
+            const SHAPE: &'static Shape<'static> = &const {
                 Shape::builder_for_sized::<Self>()
                     .ty(Type::Primitive(PrimitiveType::Numeric(
                         NumericType::Integer {
@@ -281,11 +281,11 @@ macro_rules! impl_facet_for_integer {
         unsafe impl<'a> Facet<'a> for NonZero<$type> {
             const VTABLE: &'static ValueVTable = &const {
                 // Define conversion functions for transparency
-                unsafe fn try_from<'dst>(
+                unsafe fn try_from<'shape, 'dst>(
                     src_ptr: PtrConst<'_>,
-                    src_shape: &'static Shape,
+                    src_shape: &'shape Shape<'shape>,
                     dst: PtrUninit<'dst>,
-                ) -> Result<PtrMut<'dst>, TryFromError> {
+                ) -> Result<PtrMut<'dst>, TryFromError<'shape>> {
                     if src_shape == <$type as Facet>::SHAPE {
                         // Get the inner value and check that it's non-zero
                         let value = unsafe { *src_ptr.get::<$type>() };
@@ -343,23 +343,6 @@ macro_rules! impl_facet_for_integer {
                     stringify!($type)
                 ));
 
-                // Keep existing try_from for compatibility
-                vtable.try_from = Some(|source, source_shape, dest| {
-                    if source_shape == Self::SHAPE {
-                        return Ok(unsafe { dest.copy_from(source, source_shape)? });
-                    }
-                    if source_shape == <$type>::SHAPE {
-                        let value: $type = *unsafe { source.get::<$type>() };
-                        let nz = NonZero::new(value)
-                            .ok_or_else(|| TryFromError::Generic("value must be non-zero"))?;
-                        return Ok(unsafe { dest.put::<NonZero<$type>>(nz) });
-                    }
-                    Err(TryFromError::UnsupportedSourceShape {
-                        src_shape: source_shape,
-                        expected: &[Self::SHAPE, <$type>::SHAPE],
-                    })
-                });
-
                 // Add our new transparency functions
                 vtable.try_from = Some(try_from);
                 vtable.try_into_inner = Some(try_into_inner);
@@ -368,9 +351,9 @@ macro_rules! impl_facet_for_integer {
                 vtable
             };
 
-            const SHAPE: &'static Shape = &const {
+            const SHAPE: &'static Shape<'static> = &const {
                 // Function to return inner type's shape
-                fn inner_shape() -> &'static Shape {
+                fn inner_shape() -> &'static Shape<'static> {
                     <$type as Facet>::SHAPE
                 }
 
@@ -461,172 +444,219 @@ static MAX_NZ_ISIZE: NonZero<isize> = NonZero::<isize>::MAX;
 
 impl_facet_for_integer!(
     u8,
-    ScalarAffinity::number()
-        .unsigned_integer(8)
-        .min(PtrConst::new(&raw const MIN_U8))
-        .max(PtrConst::new(&raw const MAX_U8))
-        .build(),
-    ScalarAffinity::number()
-        .unsigned_integer(8)
-        .min(PtrConst::new(&raw const MIN_NZ_U8))
-        .max(PtrConst::new(&raw const MAX_NZ_U8))
-        .build()
+    &const {
+        ScalarAffinity::number()
+            .unsigned_integer(8)
+            .min(PtrConst::new(&raw const MIN_U8))
+            .max(PtrConst::new(&raw const MAX_U8))
+            .build()
+    },
+    &const {
+        ScalarAffinity::number()
+            .unsigned_integer(8)
+            .min(PtrConst::new(&raw const MIN_NZ_U8))
+            .max(PtrConst::new(&raw const MAX_NZ_U8))
+            .build()
+    }
 );
 
 impl_facet_for_integer!(
     i8,
-    ScalarAffinity::number()
-        .signed_integer(8)
-        .min(PtrConst::new(&raw const MIN_I8))
-        .max(PtrConst::new(&raw const MAX_I8))
-        .build(),
-    ScalarAffinity::number()
-        .signed_integer(8)
-        .min(PtrConst::new(&raw const MIN_NZ_I8))
-        .max(PtrConst::new(&raw const MAX_NZ_I8))
-        .build()
+    &const {
+        ScalarAffinity::number()
+            .signed_integer(8)
+            .min(PtrConst::new(&raw const MIN_I8))
+            .max(PtrConst::new(&raw const MAX_I8))
+            .build()
+    },
+    &const {
+        ScalarAffinity::number()
+            .signed_integer(8)
+            .min(PtrConst::new(&raw const MIN_NZ_I8))
+            .max(PtrConst::new(&raw const MAX_NZ_I8))
+            .build()
+    }
 );
 
 impl_facet_for_integer!(
     u16,
-    ScalarAffinity::number()
-        .unsigned_integer(16)
-        .min(PtrConst::new(&raw const MIN_U16))
-        .max(PtrConst::new(&raw const MAX_U16))
-        .build(),
-    ScalarAffinity::number()
-        .unsigned_integer(16)
-        .min(PtrConst::new(&raw const MIN_NZ_U16))
-        .max(PtrConst::new(&raw const MAX_NZ_U16))
-        .build()
+    &const {
+        ScalarAffinity::number()
+            .unsigned_integer(16)
+            .min(PtrConst::new(&raw const MIN_U16))
+            .max(PtrConst::new(&raw const MAX_U16))
+            .build()
+    },
+    &const {
+        ScalarAffinity::number()
+            .unsigned_integer(16)
+            .min(PtrConst::new(&raw const MIN_NZ_U16))
+            .max(PtrConst::new(&raw const MAX_NZ_U16))
+            .build()
+    }
 );
 
 impl_facet_for_integer!(
     i16,
-    ScalarAffinity::number()
-        .signed_integer(16)
-        .min(PtrConst::new(&raw const MIN_I16))
-        .max(PtrConst::new(&raw const MAX_I16))
-        .build(),
-    ScalarAffinity::number()
-        .signed_integer(16)
-        .min(PtrConst::new(&raw const MIN_NZ_I16))
-        .max(PtrConst::new(&raw const MAX_NZ_I16))
-        .build()
+    &const {
+        ScalarAffinity::number()
+            .signed_integer(16)
+            .min(PtrConst::new(&raw const MIN_I16))
+            .max(PtrConst::new(&raw const MAX_I16))
+            .build()
+    },
+    &const {
+        ScalarAffinity::number()
+            .signed_integer(16)
+            .min(PtrConst::new(&raw const MIN_NZ_I16))
+            .max(PtrConst::new(&raw const MAX_NZ_I16))
+            .build()
+    }
 );
 
 impl_facet_for_integer!(
     u32,
-    ScalarAffinity::number()
-        .unsigned_integer(32)
-        .min(PtrConst::new(&raw const MIN_U32))
-        .max(PtrConst::new(&raw const MAX_U32))
-        .build(),
-    ScalarAffinity::number()
-        .unsigned_integer(32)
-        .min(PtrConst::new(&raw const MIN_NZ_U32))
-        .max(PtrConst::new(&raw const MAX_NZ_U32))
-        .build()
+    &const {
+        ScalarAffinity::number()
+            .unsigned_integer(32)
+            .min(PtrConst::new(&raw const MIN_U32))
+            .max(PtrConst::new(&raw const MAX_U32))
+            .build()
+    },
+    &const {
+        ScalarAffinity::number()
+            .unsigned_integer(32)
+            .min(PtrConst::new(&raw const MIN_NZ_U32))
+            .max(PtrConst::new(&raw const MAX_NZ_U32))
+            .build()
+    }
 );
 
 impl_facet_for_integer!(
     i32,
-    ScalarAffinity::number()
-        .signed_integer(32)
-        .min(PtrConst::new(&raw const MIN_I32))
-        .max(PtrConst::new(&raw const MAX_I32))
-        .build(),
-    ScalarAffinity::number()
-        .signed_integer(32)
-        .min(PtrConst::new(&raw const MIN_NZ_I32))
-        .max(PtrConst::new(&raw const MAX_NZ_I32))
-        .build()
+    &const {
+        ScalarAffinity::number()
+            .signed_integer(32)
+            .min(PtrConst::new(&raw const MIN_I32))
+            .max(PtrConst::new(&raw const MAX_I32))
+            .build()
+    },
+    &const {
+        ScalarAffinity::number()
+            .signed_integer(32)
+            .min(PtrConst::new(&raw const MIN_NZ_I32))
+            .max(PtrConst::new(&raw const MAX_NZ_I32))
+            .build()
+    }
 );
 
 impl_facet_for_integer!(
     u64,
-    ScalarAffinity::number()
-        .unsigned_integer(64)
-        .min(PtrConst::new(&raw const MIN_U64))
-        .max(PtrConst::new(&raw const MAX_U64))
-        .build(),
-    ScalarAffinity::number()
-        .unsigned_integer(64)
-        .min(PtrConst::new(&raw const MIN_NZ_U64))
-        .max(PtrConst::new(&raw const MAX_NZ_U64))
-        .build()
+    &const {
+        ScalarAffinity::number()
+            .unsigned_integer(64)
+            .min(PtrConst::new(&raw const MIN_U64))
+            .max(PtrConst::new(&raw const MAX_U64))
+            .build()
+    },
+    &const {
+        ScalarAffinity::number()
+            .unsigned_integer(64)
+            .min(PtrConst::new(&raw const MIN_NZ_U64))
+            .max(PtrConst::new(&raw const MAX_NZ_U64))
+            .build()
+    }
 );
 
 impl_facet_for_integer!(
     i64,
-    ScalarAffinity::number()
-        .signed_integer(64)
-        .min(PtrConst::new(&raw const MIN_I64))
-        .max(PtrConst::new(&raw const MAX_I64))
-        .build(),
-    ScalarAffinity::number()
-        .signed_integer(64)
-        .min(PtrConst::new(&raw const MIN_NZ_I64))
-        .max(PtrConst::new(&raw const MAX_NZ_I64))
-        .build()
+    &const {
+        ScalarAffinity::number()
+            .signed_integer(64)
+            .min(PtrConst::new(&raw const MIN_I64))
+            .max(PtrConst::new(&raw const MAX_I64))
+            .build()
+    },
+    &const {
+        ScalarAffinity::number()
+            .signed_integer(64)
+            .min(PtrConst::new(&raw const MIN_NZ_I64))
+            .max(PtrConst::new(&raw const MAX_NZ_I64))
+            .build()
+    }
 );
 
 impl_facet_for_integer!(
     u128,
-    ScalarAffinity::number()
-        .unsigned_integer(128)
-        .min(PtrConst::new(&raw const MIN_U128))
-        .max(PtrConst::new(&raw const MAX_U128))
-        .build(),
-    ScalarAffinity::number()
-        .unsigned_integer(128)
-        .min(PtrConst::new(&raw const MIN_NZ_U128))
-        .max(PtrConst::new(&raw const MAX_NZ_U128))
-        .build()
+    &const {
+        ScalarAffinity::number()
+            .unsigned_integer(128)
+            .min(PtrConst::new(&raw const MIN_U128))
+            .max(PtrConst::new(&raw const MAX_U128))
+            .build()
+    },
+    &const {
+        ScalarAffinity::number()
+            .unsigned_integer(128)
+            .min(PtrConst::new(&raw const MIN_NZ_U128))
+            .max(PtrConst::new(&raw const MAX_NZ_U128))
+            .build()
+    }
 );
 
 impl_facet_for_integer!(
     i128,
-    ScalarAffinity::number()
-        .signed_integer(128)
-        .min(PtrConst::new(&raw const MIN_I128))
-        .max(PtrConst::new(&raw const MAX_I128))
-        .build(),
-    ScalarAffinity::number()
-        .signed_integer(128)
-        .min(PtrConst::new(&raw const MIN_NZ_I128))
-        .max(PtrConst::new(&raw const MAX_NZ_I128))
-        .build()
+    &const {
+        ScalarAffinity::number()
+            .signed_integer(128)
+            .min(PtrConst::new(&raw const MIN_I128))
+            .max(PtrConst::new(&raw const MAX_I128))
+            .build()
+    },
+    &const {
+        ScalarAffinity::number()
+            .signed_integer(128)
+            .min(PtrConst::new(&raw const MIN_NZ_I128))
+            .max(PtrConst::new(&raw const MAX_NZ_I128))
+            .build()
+    }
 );
 
 impl_facet_for_integer!(
     usize,
-    ScalarAffinity::number()
-        .unsigned_integer(core::mem::size_of::<usize>() * 8)
-        .min(PtrConst::new(&raw const MIN_USIZE))
-        .max(PtrConst::new(&raw const MAX_USIZE))
-        .build(),
-    ScalarAffinity::number()
-        .unsigned_integer(core::mem::size_of::<usize>() * 8)
-        .min(PtrConst::new(&raw const MIN_NZ_USIZE))
-        .max(PtrConst::new(&raw const MAX_NZ_USIZE))
-        .build()
+    &const {
+        ScalarAffinity::number()
+            .unsigned_integer(core::mem::size_of::<usize>() * 8)
+            .min(PtrConst::new(&raw const MIN_USIZE))
+            .max(PtrConst::new(&raw const MAX_USIZE))
+            .build()
+    },
+    &const {
+        ScalarAffinity::number()
+            .unsigned_integer(core::mem::size_of::<usize>() * 8)
+            .min(PtrConst::new(&raw const MIN_NZ_USIZE))
+            .max(PtrConst::new(&raw const MAX_NZ_USIZE))
+            .build()
+    }
 );
 
 impl_facet_for_integer!(
     isize,
-    ScalarAffinity::number()
-        .signed_integer(core::mem::size_of::<isize>() * 8)
-        .min(PtrConst::new(&raw const MIN_ISIZE))
-        .max(PtrConst::new(&raw const MAX_ISIZE))
-        .build(),
-    ScalarAffinity::number()
-        .signed_integer(core::mem::size_of::<isize>() * 8)
-        .min(PtrConst::new(&raw const MIN_NZ_ISIZE))
-        .max(PtrConst::new(&raw const MAX_NZ_ISIZE))
-        .build()
+    &const {
+        ScalarAffinity::number()
+            .signed_integer(core::mem::size_of::<isize>() * 8)
+            .min(PtrConst::new(&raw const MIN_ISIZE))
+            .max(PtrConst::new(&raw const MAX_ISIZE))
+            .build()
+    },
+    &const {
+        ScalarAffinity::number()
+            .signed_integer(core::mem::size_of::<isize>() * 8)
+            .min(PtrConst::new(&raw const MIN_NZ_ISIZE))
+            .max(PtrConst::new(&raw const MAX_NZ_ISIZE))
+            .build()
+    }
 );
-
 // Constants for f32
 static MIN_F32: f32 = f32::MIN;
 static MAX_F32: f32 = f32::MAX;
@@ -679,23 +709,25 @@ unsafe impl Facet<'_> for f32 {
         vtable
     };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .ty(Type::Primitive(PrimitiveType::Numeric(NumericType::Float)))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(
-                        ScalarAffinity::number()
-                            .float(1, 8, f32::MANTISSA_DIGITS as usize - 1, false)
-                            .min(PtrConst::new(&raw const MIN_F32))
-                            .max(PtrConst::new(&raw const MAX_F32))
-                            .positive_infinity(PtrConst::new(&raw const POSITIVE_INFINITY_F32))
-                            .negative_infinity(PtrConst::new(&raw const NEGATIVE_INFINITY_F32))
-                            .nan_sample(PtrConst::new(&raw const NAN_F32))
-                            .positive_zero(PtrConst::new(&raw const POSITIVE_ZERO_F32))
-                            .negative_zero(PtrConst::new(&raw const NEGATIVE_ZERO_F32))
-                            .epsilon(PtrConst::new(&raw const EPSILON_F32))
-                            .build(),
+                        &const {
+                            ScalarAffinity::number()
+                                .float(1, 8, f32::MANTISSA_DIGITS as usize - 1, false)
+                                .min(PtrConst::new(&raw const MIN_F32))
+                                .max(PtrConst::new(&raw const MAX_F32))
+                                .positive_infinity(PtrConst::new(&raw const POSITIVE_INFINITY_F32))
+                                .negative_infinity(PtrConst::new(&raw const NEGATIVE_INFINITY_F32))
+                                .nan_sample(PtrConst::new(&raw const NAN_F32))
+                                .positive_zero(PtrConst::new(&raw const POSITIVE_ZERO_F32))
+                                .negative_zero(PtrConst::new(&raw const NEGATIVE_ZERO_F32))
+                                .epsilon(PtrConst::new(&raw const EPSILON_F32))
+                                .build()
+                        },
                     )
                     .build(),
             ))
@@ -735,23 +767,25 @@ unsafe impl Facet<'_> for f64 {
         vtable
     };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .ty(Type::Primitive(PrimitiveType::Numeric(NumericType::Float)))
             .def(Def::Scalar(
                 ScalarDef::builder()
                     .affinity(
-                        ScalarAffinity::number()
-                            .float(1, 11, f64::MANTISSA_DIGITS as usize - 1, false)
-                            .min(PtrConst::new(&raw const MIN_F64))
-                            .max(PtrConst::new(&raw const MAX_F64))
-                            .positive_infinity(PtrConst::new(&raw const POSITIVE_INFINITY_F64))
-                            .negative_infinity(PtrConst::new(&raw const NEGATIVE_INFINITY_F64))
-                            .nan_sample(PtrConst::new(&raw const NAN_F64))
-                            .positive_zero(PtrConst::new(&raw const POSITIVE_ZERO_F64))
-                            .negative_zero(PtrConst::new(&raw const NEGATIVE_ZERO_F64))
-                            .epsilon(PtrConst::new(&raw const EPSILON_F64))
-                            .build(),
+                        &const {
+                            ScalarAffinity::number()
+                                .float(1, 11, f64::MANTISSA_DIGITS as usize - 1, false)
+                                .min(PtrConst::new(&raw const MIN_F64))
+                                .max(PtrConst::new(&raw const MAX_F64))
+                                .positive_infinity(PtrConst::new(&raw const POSITIVE_INFINITY_F64))
+                                .negative_infinity(PtrConst::new(&raw const NEGATIVE_INFINITY_F64))
+                                .nan_sample(PtrConst::new(&raw const NAN_F64))
+                                .positive_zero(PtrConst::new(&raw const POSITIVE_ZERO_F64))
+                                .negative_zero(PtrConst::new(&raw const NEGATIVE_ZERO_F64))
+                                .epsilon(PtrConst::new(&raw const EPSILON_F64))
+                                .build()
+                        },
                     )
                     .build(),
             ))
@@ -763,12 +797,12 @@ unsafe impl Facet<'_> for core::net::SocketAddr {
     const VTABLE: &'static ValueVTable =
         &const { value_vtable!(core::net::SocketAddr, |f, _opts| write!(f, "SocketAddr")) };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
-                    .affinity(ScalarAffinity::socket_addr().build())
+                    .affinity(&const { ScalarAffinity::socket_addr().build() })
                     .build(),
             ))
             .build()
@@ -779,12 +813,12 @@ unsafe impl Facet<'_> for core::net::IpAddr {
     const VTABLE: &'static ValueVTable =
         &const { value_vtable!(core::net::IpAddr, |f, _opts| write!(f, "IpAddr")) };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
-                    .affinity(ScalarAffinity::ip_addr().build())
+                    .affinity(&const { ScalarAffinity::ip_addr().build() })
                     .build(),
             ))
             .build()
@@ -795,12 +829,12 @@ unsafe impl Facet<'_> for core::net::Ipv4Addr {
     const VTABLE: &'static ValueVTable =
         &const { value_vtable!(core::net::Ipv4Addr, |f, _opts| write!(f, "Ipv4Addr")) };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
-                    .affinity(ScalarAffinity::ip_addr().build())
+                    .affinity(&const { ScalarAffinity::ip_addr().build() })
                     .build(),
             ))
             .build()
@@ -811,12 +845,12 @@ unsafe impl Facet<'_> for core::net::Ipv6Addr {
     const VTABLE: &'static ValueVTable =
         &const { value_vtable!(core::net::Ipv6Addr, |f, _opts| write!(f, "Ipv6Addr")) };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
-                    .affinity(ScalarAffinity::ip_addr().build())
+                    .affinity(&const { ScalarAffinity::ip_addr().build() })
                     .build(),
             ))
             .build()

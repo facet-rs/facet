@@ -25,8 +25,8 @@ fn covariant_works() {
         token: CovariantLifetime<'a>,
     }
 
-    fn scope<'a>(token: CovariantLifetime<'a>) -> Result<Wrapper<'a>, ReflectError> {
-        Wip::<'a>::alloc::<Wrapper<'a>>()?
+    fn scope<'a>(token: CovariantLifetime<'a>) -> Result<Wrapper<'a>, ReflectError<'static>> {
+        Wip::<'a, 'static>::alloc::<Wrapper<'a>>()?
             .field_named("token")?
             .put(token)?
             .pop()?
@@ -45,8 +45,8 @@ fn contravariant_works() {
         token: ContravariantLifetime<'a>,
     }
 
-    fn scope<'a>(token: ContravariantLifetime<'a>) -> Result<Wrapper<'a>, ReflectError> {
-        Wip::<'a>::alloc::<Wrapper<'a>>()?
+    fn scope<'a>(token: ContravariantLifetime<'a>) -> Result<Wrapper<'a>, ReflectError<'static>> {
+        Wip::<'a, 'static>::alloc::<Wrapper<'a>>()?
             .field_named("token")?
             .put(token)?
             .pop()?
@@ -65,8 +65,8 @@ fn invariant_works() {
         token: InvariantLifetime<'a>,
     }
 
-    fn scope<'a>(token: InvariantLifetime<'a>) -> Result<Wrapper<'a>, ReflectError> {
-        Wip::<'a>::alloc::<Wrapper<'a>>()?
+    fn scope<'a>(token: InvariantLifetime<'a>) -> Result<Wrapper<'a>, ReflectError<'static>> {
+        Wip::<'a, 'static>::alloc::<Wrapper<'a>>()?
             .field_named("token")?
             .put(token)?
             .pop()?

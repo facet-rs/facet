@@ -10,7 +10,7 @@ use log::trace;
 /// # Example
 /// ```
 /// use facet::Facet;
-/// use facet_msgpack::from_str;
+/// use facet_msgpack::from_slice;
 ///
 /// #[derive(Debug, Facet, PartialEq)]
 /// struct User {
@@ -25,23 +25,15 @@ use log::trace;
 ///     0x73, 0x65, 0x72, 0x31, 0x32, 0x33
 /// ];
 ///
-/// let user: User = from_str(&msgpack_data).unwrap();
+/// let user: User = from_slice(&msgpack_data).unwrap();
 /// assert_eq!(user, User { id: 42, username: "user123".to_string() });
 /// ```
 pub fn from_slice<'input: 'facet, 'facet, T: Facet<'facet>>(
     msgpack: &'input [u8],
-) -> Result<T, DecodeError> {
-    from_slice_value(Wip::alloc::<T>()?, msgpack)?
+) -> Result<T, DecodeError<'static>> {
+    from_slice_value(msgpack, Wip::alloc::<T>()?)?
         .materialize::<T>()
         .map_err(|e| DecodeError::UnsupportedType(e.to_string()))
-}
-
-/// Alias for from_slice for backward compatibility
-#[deprecated(since = "0.1.0", note = "Use from_slice instead")]
-pub fn from_str<'input: 'facet, 'facet, T: Facet<'facet>>(
-    msgpack: &'input [u8],
-) -> Result<T, DecodeError> {
-    from_slice(msgpack)
 }
 
 /// Deserializes MessagePack-encoded data into a Facet value.
@@ -83,11 +75,10 @@ pub fn from_str<'input: 'facet, 'facet, T: Facet<'facet>>(
 /// # MessagePack Format
 /// This implementation follows the MessagePack specification:
 /// <https://github.com/msgpack/msgpack/blob/master/spec.md>
-#[allow(clippy::needless_lifetimes)]
-pub fn from_slice_value<'mem>(
-    wip: Wip<'mem>,
-    msgpack: &'mem [u8],
-) -> Result<HeapValue<'mem>, DecodeError> {
+pub fn from_slice_value<'facet, 'shape>(
+    msgpack: &[u8],
+    wip: Wip<'facet, 'shape>,
+) -> Result<HeapValue<'facet, 'shape>, DecodeError<'shape>> {
     let mut decoder = Decoder::new(msgpack);
     decoder
         .deserialize_value(wip)?
@@ -100,14 +91,14 @@ struct Decoder<'input> {
     offset: usize,
 }
 
-impl<'input> Decoder<'input> {
+impl<'input, 'shape> Decoder<'input> {
     fn new(input: &'input [u8]) -> Self {
         Decoder { input, offset: 0 }
     }
 
     /// Decodes a single byte from the input.
     /// This is a low-level method used by other decoders.
-    fn decode_u8(&mut self) -> Result<u8, DecodeError> {
+    fn decode_u8(&mut self) -> Result<u8, DecodeError<'static>> {
         if self.offset >= self.input.len() {
             return Err(DecodeError::InsufficientData);
         }
@@ -118,7 +109,7 @@ impl<'input> Decoder<'input> {
 
     /// Decodes a 16-bit unsigned integer in big-endian byte order.
     /// This is a low-level method used by other decoders.
-    fn decode_u16(&mut self) -> Result<u16, DecodeError> {
+    fn decode_u16(&mut self) -> Result<u16, DecodeError<'static>> {
         if self.offset + 2 > self.input.len() {
             return Err(DecodeError::InsufficientData);
         }
@@ -130,7 +121,7 @@ impl<'input> Decoder<'input> {
 
     /// Decodes a 32-bit unsigned integer in big-endian byte order.
     /// This is a low-level method used by other decoders.
-    fn decode_u32(&mut self) -> Result<u32, DecodeError> {
+    fn decode_u32(&mut self) -> Result<u32, DecodeError<'static>> {
         if self.offset + 4 > self.input.len() {
             return Err(DecodeError::InsufficientData);
         }
@@ -149,7 +140,7 @@ impl<'input> Decoder<'input> {
     /// - uint64 (0xcf): 64-bit unsigned integer (big-endian)
     ///
     /// Ref: <https://github.com/msgpack/msgpack/blob/master/spec.md#int-format-family>
-    fn decode_u64(&mut self) -> Result<u64, DecodeError> {
+    fn decode_u64(&mut self) -> Result<u64, DecodeError<'static>> {
         match self.decode_u8()? {
             MSGPACK_UINT8 => Ok(self.decode_u8()? as u64),
             MSGPACK_UINT16 => Ok(self.decode_u16()? as u64),
@@ -177,7 +168,7 @@ impl<'input> Decoder<'input> {
     /// - str32 (0xdb): string up to 4294967295 bytes
     ///
     /// Ref: <https://github.com/msgpack/msgpack/blob/master/spec.md#formats-str>
-    fn decode_string(&mut self) -> Result<String, DecodeError> {
+    fn decode_string(&mut self) -> Result<String, DecodeError<'static>> {
         let prefix = self.decode_u8()?;
 
         let len = match prefix {
@@ -205,7 +196,7 @@ impl<'input> Decoder<'input> {
     /// - map32 (0xdf): map with up to 4294967295 elements
     ///
     /// Ref: <https://github.com/msgpack/msgpack/blob/master/spec.md#formats-map>
-    fn decode_map_len(&mut self) -> Result<usize, DecodeError> {
+    fn decode_map_len(&mut self) -> Result<usize, DecodeError<'static>> {
         let prefix = self.decode_u8()?;
 
         match prefix {
@@ -224,7 +215,7 @@ impl<'input> Decoder<'input> {
     ///
     /// Ref: <https://github.com/msgpack/msgpack/blob/master/spec.md#formats-array>
     #[allow(dead_code)]
-    fn decode_array_len(&mut self) -> Result<usize, DecodeError> {
+    fn decode_array_len(&mut self) -> Result<usize, DecodeError<'static>> {
         let prefix = self.decode_u8()?;
 
         match prefix {
@@ -241,7 +232,7 @@ impl<'input> Decoder<'input> {
     /// - false (0xc2): boolean false
     ///
     /// Ref: <https://github.com/msgpack/msgpack/blob/master/spec.md#formats-bool>
-    fn decode_bool(&mut self) -> Result<bool, DecodeError> {
+    fn decode_bool(&mut self) -> Result<bool, DecodeError<'static>> {
         match self.decode_u8()? {
             MSGPACK_TRUE => Ok(true),
             MSGPACK_FALSE => Ok(false),
@@ -255,7 +246,7 @@ impl<'input> Decoder<'input> {
     ///
     /// Ref: <https://github.com/msgpack/msgpack/blob/master/spec.md#formats-nil>
     #[allow(dead_code)]
-    fn decode_nil(&mut self) -> Result<(), DecodeError> {
+    fn decode_nil(&mut self) -> Result<(), DecodeError<'static>> {
         match self.decode_u8()? {
             MSGPACK_NIL => Ok(()),
             _ => Err(DecodeError::UnexpectedType),
@@ -265,7 +256,7 @@ impl<'input> Decoder<'input> {
     /// Peeks at the next byte to check if it's a nil value without advancing the offset.
     /// Returns true if the next value is nil, false otherwise.
     #[allow(dead_code)]
-    fn peek_nil(&mut self) -> Result<bool, DecodeError> {
+    fn peek_nil(&mut self) -> Result<bool, DecodeError<'static>> {
         if self.offset >= self.input.len() {
             return Err(DecodeError::InsufficientData);
         }
@@ -274,7 +265,7 @@ impl<'input> Decoder<'input> {
 
     /// Peeks at the next byte to check if it's a string value without advancing the offset.
     /// Returns true if the next value is a string, false otherwise.
-    fn peek_string(&mut self) -> Result<bool, DecodeError> {
+    fn peek_string(&mut self) -> Result<bool, DecodeError<'static>> {
         if self.offset >= self.input.len() {
             return Err(DecodeError::InsufficientData);
         }
@@ -287,7 +278,7 @@ impl<'input> Decoder<'input> {
 
     /// Skips a MessagePack value of any type.
     /// This is used when encountering unknown field names in a struct.
-    fn skip_value(&mut self) -> Result<(), DecodeError> {
+    fn skip_value(&mut self) -> Result<(), DecodeError<'static>> {
         let prefix = self.decode_u8()?;
 
         match prefix {
@@ -416,7 +407,10 @@ impl<'input> Decoder<'input> {
         }
     }
 
-    fn deserialize_value(&mut self, mut wip: Wip<'input>) -> Result<Wip<'input>, DecodeError> {
+    fn deserialize_value<'facet>(
+        &mut self,
+        mut wip: Wip<'facet, 'shape>,
+    ) -> Result<Wip<'facet, 'shape>, DecodeError<'shape>> {
         let shape = wip.shape();
         trace!("Deserializing {:?}", shape);
 

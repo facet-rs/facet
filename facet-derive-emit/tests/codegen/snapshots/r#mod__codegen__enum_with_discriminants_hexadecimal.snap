@@ -10,7 +10,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Color {
     const VTABLE: &'static ::facet::ValueVTable = &const {
         ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "Color"))
     };
-    const SHAPE: &'static ::facet::Shape = &const {
+    const SHAPE: &'static ::facet::Shape<'static> = &const {
         let __facet_variants: &'static [::facet::Variant] = &const {
             [
                 ::facet::Variant::builder()

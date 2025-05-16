@@ -14,7 +14,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithAttributes {
         ));
         vtable
     };
-    const SHAPE: &'static ::facet::Shape = &const {
+    const SHAPE: &'static ::facet::Shape<'static> = &const {
         let fields: &'static [::facet::Field] = &const {
             [
                 {

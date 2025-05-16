@@ -19,10 +19,10 @@ impl<'mem> PtrUninit<'mem> {
     /// - The source pointer must be valid for reads of `len` bytes
     /// - This pointer must be valid for writes of `len` bytes and properly aligned
     /// - The regions may not overlap
-    pub unsafe fn copy_from<'src>(
+    pub unsafe fn copy_from<'src, 'shape>(
         self,
         src: PtrConst<'src>,
-        shape: &'static Shape,
+        shape: &'shape Shape<'shape>,
     ) -> Result<PtrMut<'mem>, UnsizedError> {
         let layout = shape.layout.sized_layout()?;
         // SAFETY: The caller is responsible for upholding the invariants:

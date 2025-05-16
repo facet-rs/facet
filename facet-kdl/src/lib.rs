@@ -28,20 +28,20 @@ use kdl::{KdlDocument, KdlError as KdlParseError};
 
 /// Error type for KDL deserialization.
 #[derive(Debug)]
-pub struct KdlError {
-    kind: KdlErrorKind,
+pub struct KdlError<'shape> {
+    kind: KdlErrorKind<'shape>,
 }
 
-impl Display for KdlError {
+impl Display for KdlError<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
         let kind = &self.kind;
         write!(f, "{kind}")
     }
 }
-impl Error for KdlError {}
+impl Error for KdlError<'_> {}
 
 // FIXME: Replace this with a proper constructor once there is other information to put into `KdlError`!
-impl<K: Into<KdlErrorKind>> From<K> for KdlError {
+impl<'shape, K: Into<KdlErrorKind<'shape>>> From<K> for KdlError<'shape> {
     fn from(value: K) -> Self {
         let kind = value.into();
         KdlError { kind }
@@ -49,14 +49,14 @@ impl<K: Into<KdlErrorKind>> From<K> for KdlError {
 }
 
 #[derive(Debug)]
-enum KdlErrorKind {
-    InvalidDocumentShape(&'static Def),
+enum KdlErrorKind<'shape> {
+    InvalidDocumentShape(&'shape Def<'shape>),
     MissingNodes(Vec<String>),
     Parse(KdlParseError),
-    Reflect(ReflectError),
+    Reflect(ReflectError<'shape>),
 }
 
-impl Display for KdlErrorKind {
+impl Display for KdlErrorKind<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             KdlErrorKind::InvalidDocumentShape(def) => {
@@ -69,14 +69,14 @@ impl Display for KdlErrorKind {
     }
 }
 
-impl From<KdlParseError> for KdlErrorKind {
+impl From<KdlParseError> for KdlErrorKind<'_> {
     fn from(value: KdlParseError) -> Self {
         Self::Parse(value)
     }
 }
 
-impl From<ReflectError> for KdlErrorKind {
-    fn from(value: ReflectError) -> Self {
+impl<'shape> From<ReflectError<'shape>> for KdlErrorKind<'shape> {
+    fn from(value: ReflectError<'shape>) -> Self {
         Self::Reflect(value)
     }
 }
@@ -88,10 +88,10 @@ struct KdlDeserializer<'input> {
     kdl: &'input str,
 }
 
-type Result<T> = std::result::Result<T, KdlError>;
+type Result<'shape, T> = std::result::Result<T, KdlError<'shape>>;
 
-impl<'input, 'facet> KdlDeserializer<'input> {
-    fn from_str<T: Facet<'facet>>(kdl: &'input str) -> Result<T> {
+impl<'input, 'facet, 'shape> KdlDeserializer<'input> {
+    fn from_str<T: Facet<'facet>>(kdl: &'input str) -> Result<'shape, T> {
         log::trace!("Entering `from_str` method");
 
         // PERF: This definitely isn't zero-copy, so it might be worth seeing if that's something that can be added to
@@ -117,9 +117,9 @@ impl<'input, 'facet> KdlDeserializer<'input> {
 
     fn deserialize_document(
         &mut self,
-        wip: Wip<'facet>,
+        wip: Wip<'facet, 'shape>,
         document: KdlDocument,
-    ) -> Result<Wip<'facet>> {
+    ) -> Result<'shape, Wip<'facet, 'shape>> {
         log::trace!("Entering `deserialize_document` method");
 
         // First check the type system (Type)
@@ -155,9 +155,9 @@ impl<'input, 'facet> KdlDeserializer<'input> {
 
     fn deserialize_node(
         &mut self,
-        mut wip: Wip<'facet>,
+        mut wip: Wip<'facet, 'shape>,
         mut document: KdlDocument,
-    ) -> Result<Wip<'facet>> {
+    ) -> Result<'shape, Wip<'facet, 'shape>> {
         log::trace!("Entering `deserialize_node` method");
 
         // TODO: Correctly generate that error and write a constructor that gets rid of the `.to_owned()`?
@@ -167,7 +167,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             .ok_or_else(|| KdlErrorKind::MissingNodes(vec!["TODO".to_owned()]))?;
         log::trace!("Popped node from `KdlDocument`: {node:#?}");
 
-        wip = wip.field_named(&node.name().to_string())?;
+        wip = wip.field_named(node.name().value())?;
         log::trace!(
             "Node matched expected child; New def: {:#?}",
             wip.shape().def
@@ -200,7 +200,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
 /// "#;
 /// let val: MyStruct = from_str(kdl)?;
 /// ```
-pub fn from_str<'input, 'facet, T>(kdl: &'input str) -> Result<T>
+pub fn from_str<'input, 'facet, 'shape, T>(kdl: &'input str) -> Result<'shape, T>
 where
     T: Facet<'facet>,
     'input: 'facet,

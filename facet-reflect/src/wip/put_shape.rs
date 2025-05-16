@@ -7,13 +7,13 @@ use crate::{debug, trace};
 
 use super::Wip;
 
-impl<'facet_lifetime> Wip<'facet_lifetime> {
+impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     /// Puts a value from a `PtrConst` with the given shape into the current frame.
     pub fn put_shape(
         mut self,
         src: PtrConst<'_>,
-        src_shape: &'static Shape,
-    ) -> Result<Wip<'facet_lifetime>, ReflectError> {
+        src_shape: &'shape Shape<'shape>,
+    ) -> Result<Wip<'facet_lifetime, 'shape>, ReflectError<'shape>> {
         let Some(frame) = self.frames.last_mut() else {
             return Err(ReflectError::OperationFailed {
                 shape: src_shape,

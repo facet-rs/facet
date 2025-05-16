@@ -10,11 +10,11 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
         unsafe impl<'a> Facet<'a> for OrderedFloat<$float> {
             const VTABLE: &'static ValueVTable = &const {
                 // Define conversion functions for transparency
-                unsafe fn try_from<'dst>(
+                unsafe fn try_from<'shape, 'dst>(
                     src_ptr: PtrConst<'_>,
-                    src_shape: &'static Shape,
+                    src_shape: &'shape Shape<'shape>,
                     dst: PtrUninit<'dst>,
-                ) -> Result<PtrMut<'dst>, TryFromError> {
+                ) -> Result<PtrMut<'dst>, TryFromError<'shape>> {
                     if src_shape == <$float as Facet>::SHAPE {
                         // Get the inner value and wrap as OrderedFloat
                         let value = unsafe { src_ptr.get::<$float>() };
@@ -73,8 +73,8 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                 vtable
             };
 
-            const SHAPE: &'static Shape = &const {
-                fn inner_shape() -> &'static Shape {
+            const SHAPE: &'static Shape<'static> = &const {
+                fn inner_shape() -> &'static Shape<'static> {
                     <$float as Facet>::SHAPE
                 }
 
@@ -89,7 +89,7 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                     .def(Def::Scalar(
                         ScalarDef::builder()
                             // Affinity: use number affinity as inner's
-                            .affinity(ScalarAffinity::opaque().build())
+                            .affinity(&const { ScalarAffinity::opaque().build() })
                             .build(),
                     ))
                     .inner(inner_shape)
@@ -100,11 +100,11 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
         unsafe impl<'a> Facet<'a> for NotNan<$float> {
             const VTABLE: &'static ValueVTable = &const {
                 // Conversion from inner float type to NotNan<$float>
-                unsafe fn try_from<'dst>(
+                unsafe fn try_from<'shape, 'dst>(
                     src_ptr: PtrConst<'_>,
-                    src_shape: &'static Shape,
+                    src_shape: &'shape Shape<'shape>,
                     dst: PtrUninit<'dst>,
-                ) -> Result<PtrMut<'dst>, TryFromError> {
+                ) -> Result<PtrMut<'dst>, TryFromError<'shape>> {
                     if src_shape == <$float as Facet>::SHAPE {
                         // Get the inner value and check that it's not NaN
                         let value = unsafe { *src_ptr.get::<$float>() };
@@ -172,8 +172,8 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                 vtable
             };
 
-            const SHAPE: &'static Shape = &const {
-                fn inner_shape() -> &'static Shape {
+            const SHAPE: &'static Shape<'static> = &const {
+                fn inner_shape() -> &'static Shape<'static> {
                     <$float as Facet>::SHAPE
                 }
 
@@ -181,7 +181,7 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                     .ty(Type::User(UserType::Opaque))
                     .def(Def::Scalar(
                         ScalarDef::builder()
-                            .affinity(ScalarAffinity::opaque().build())
+                            .affinity(&const { ScalarAffinity::opaque().build() })
                             .build(),
                     ))
                     .inner(inner_shape)

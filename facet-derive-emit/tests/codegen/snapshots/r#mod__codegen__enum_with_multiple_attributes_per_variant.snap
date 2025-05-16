@@ -13,7 +13,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
             "ConfigValue"
         ))
     };
-    const SHAPE: &'static ::facet::Shape = &const {
+    const SHAPE: &'static ::facet::Shape<'static> = &const {
         #[repr(C)]
         #[allow(non_snake_case, dead_code)]
         struct __Shadow_RustRepr_Tuple_for_ConfigValue_Text<'__facet> {

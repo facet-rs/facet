@@ -60,7 +60,7 @@ pub enum ScalarType {
 
 impl ScalarType {
     /// Infer the type from a shape definition.
-    pub fn try_from_shape(shape: &'static Shape) -> Option<Self> {
+    pub fn try_from_shape(shape: &Shape<'_>) -> Option<Self> {
         #[cfg(feature = "alloc")]
         if shape.id == ConstTypeId::of::<alloc::string::String>() {
             return Some(ScalarType::String);

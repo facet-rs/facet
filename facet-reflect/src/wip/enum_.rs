@@ -5,7 +5,7 @@ use owo_colors::OwoColorize;
 use crate::trace;
 use crate::{ISet, ReflectError, Wip};
 
-impl Wip<'_> {
+impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     /// Selects a variant of an enum by index.
     ///
     /// # Arguments
@@ -16,7 +16,7 @@ impl Wip<'_> {
     ///
     /// * `Ok(Self)` if the variant was successfully selected.
     /// * `Err(ReflectError)` if the current frame is not an enum or the variant index is out of bounds.
-    pub fn variant(mut self, index: usize) -> Result<Self, ReflectError> {
+    pub fn variant(mut self, index: usize) -> Result<Self, ReflectError<'shape>> {
         let frame = self.frames.last_mut().unwrap();
         let shape = frame.shape;
         let Type::User(UserType::Enum(def)) = shape.ty else {
@@ -93,7 +93,7 @@ impl Wip<'_> {
     ///
     /// * `Ok(Self)` if the variant was successfully selected.
     /// * `Err(ReflectError)` if the current frame is not an enum or no variant with the given name exists.
-    pub fn variant_named(self, name: &str) -> Result<Self, ReflectError> {
+    pub fn variant_named(self, name: &str) -> Result<Self, ReflectError<'shape>> {
         let frame = self.frames.last().unwrap();
         let shape = frame.shape;
         let Type::User(UserType::Enum(def)) = shape.ty else {
@@ -125,7 +125,7 @@ impl Wip<'_> {
     ///
     /// * `Some(index, variant)` if a variant with the given name exists.
     /// * `None` if the current frame is not an enum or no variant with the given name exists.
-    pub fn find_variant(&self, name: &str) -> Option<(usize, Variant)> {
+    pub fn find_variant(&self, name: &str) -> Option<(usize, Variant<'shape>)> {
         let frame = self.frames.last()?;
         if let Type::User(UserType::Enum(def)) = frame.shape.ty {
             def.variants
@@ -144,7 +144,7 @@ impl Wip<'_> {
     ///
     /// * `Some(variant)` if the current frame is an enum and a variant has been selected.
     /// * `None` if the current frame is not an enum or no variant has been selected yet.
-    pub fn selected_variant(&self) -> Option<Variant> {
+    pub fn selected_variant(&self) -> Option<Variant<'shape>> {
         let frame = self.frames.last()?;
         frame.istate.variant
     }

@@ -4,7 +4,7 @@ use super::{Field, Repr};
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
 #[non_exhaustive]
-pub struct StructType {
+pub struct StructType<'shape> {
     /// Representation of the struct's data
     pub repr: Repr,
 
@@ -12,24 +12,24 @@ pub struct StructType {
     pub kind: StructKind,
 
     /// all fields, in declaration order (not necessarily in memory order)
-    pub fields: &'static [Field],
+    pub fields: &'shape [Field<'shape>],
 }
 
-impl StructType {
+impl<'shape> StructType<'shape> {
     /// Returns a builder for StructType
-    pub const fn builder() -> StructBuilder {
+    pub const fn builder() -> StructBuilder<'shape> {
         StructBuilder::new()
     }
 }
 
 /// Builder for StructType
-pub struct StructBuilder {
+pub struct StructBuilder<'shape> {
     repr: Option<Repr>,
     kind: Option<StructKind>,
-    fields: &'static [Field],
+    fields: &'shape [Field<'shape>],
 }
 
-impl StructBuilder {
+impl<'shape> StructBuilder<'shape> {
     /// Creates a new StructBuilder
     #[allow(clippy::new_without_default)]
     pub const fn new() -> Self {
@@ -76,7 +76,7 @@ impl StructBuilder {
     }
 
     /// Builds the StructType
-    pub const fn build(self) -> StructType {
+    pub const fn build(self) -> StructType<'shape> {
         StructType {
             repr: self.repr.unwrap(),
             kind: self.kind.unwrap(),

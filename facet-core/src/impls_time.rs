@@ -43,12 +43,12 @@ unsafe impl Facet<'_> for UtcDateTime {
         vtable
     };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
-                    .affinity(ScalarAffinity::time().build())
+                    .affinity(&const { ScalarAffinity::time().build() })
                     .build(),
             ))
             .build()
@@ -94,12 +94,12 @@ unsafe impl Facet<'_> for OffsetDateTime {
         vtable
     };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
-                    .affinity(ScalarAffinity::time().build())
+                    .affinity(&const { ScalarAffinity::time().build() })
                     .build(),
             ))
             .build()

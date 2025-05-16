@@ -4,7 +4,7 @@ use super::{Repr, StructType};
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
 #[non_exhaustive]
-pub struct EnumType {
+pub struct EnumType<'shape> {
     /// Representation of the enum's data
     pub repr: Repr,
 
@@ -12,24 +12,24 @@ pub struct EnumType {
     pub enum_repr: EnumRepr,
 
     /// all variants for this enum
-    pub variants: &'static [Variant],
+    pub variants: &'shape [Variant<'shape>],
 }
 
-impl EnumType {
+impl<'shape> EnumType<'shape> {
     /// Returns a builder for EnumDef
-    pub const fn builder() -> EnumDefBuilder {
+    pub const fn builder() -> EnumDefBuilder<'shape> {
         EnumDefBuilder::new()
     }
 }
 
 /// Builder for EnumDef
-pub struct EnumDefBuilder {
+pub struct EnumDefBuilder<'shape> {
     repr: Option<Repr>,
     enum_repr: Option<EnumRepr>,
-    variants: Option<&'static [Variant]>,
+    variants: Option<&'shape [Variant<'shape>]>,
 }
 
-impl EnumDefBuilder {
+impl<'shape> EnumDefBuilder<'shape> {
     /// Creates a new EnumDefBuilder
     #[allow(clippy::new_without_default)]
     pub const fn new() -> Self {
@@ -59,7 +59,7 @@ impl EnumDefBuilder {
     }
 
     /// Builds the EnumDef
-    pub const fn build(self) -> EnumType {
+    pub const fn build(self) -> EnumType<'shape> {
         EnumType {
             repr: self.repr.unwrap(),
             enum_repr: self.enum_repr.unwrap(),
@@ -72,28 +72,28 @@ impl EnumDefBuilder {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
 #[non_exhaustive]
-pub struct Variant {
+pub struct Variant<'shape> {
     /// Name of the jariant, e.g. `Foo` for `enum FooBar { Foo, Bar }`
-    pub name: &'static str,
+    pub name: &'shape str,
 
     /// Discriminant value (if available). Might fit in a u8, etc.
     pub discriminant: Option<i64>,
 
     /// Attributes set for this variant via the derive macro
-    pub attributes: &'static [VariantAttribute],
+    pub attributes: &'shape [VariantAttribute<'shape>],
 
     /// Fields for this variant (empty if unit, number-named if tuple).
     /// IMPORTANT: the offset for the fields already takes into account the size & alignment of the
     /// discriminant.
-    pub data: StructType,
+    pub data: StructType<'shape>,
 
     /// Doc comment for the variant
-    pub doc: &'static [&'static str],
+    pub doc: &'shape [&'shape str],
 }
 
-impl Variant {
+impl<'shape> Variant<'shape> {
     /// Returns a builder for Variant
-    pub const fn builder() -> VariantBuilder {
+    pub const fn builder() -> VariantBuilder<'shape> {
         VariantBuilder::new()
     }
 
@@ -106,15 +106,15 @@ impl Variant {
 }
 
 /// Builder for Variant
-pub struct VariantBuilder {
-    name: Option<&'static str>,
+pub struct VariantBuilder<'shape> {
+    name: Option<&'shape str>,
     discriminant: Option<i64>,
-    attributes: &'static [VariantAttribute],
-    data: Option<StructType>,
-    doc: &'static [&'static str],
+    attributes: &'shape [VariantAttribute<'shape>],
+    data: Option<StructType<'shape>>,
+    doc: &'shape [&'shape str],
 }
 
-impl VariantBuilder {
+impl<'shape> VariantBuilder<'shape> {
     /// Creates a new VariantBuilder
     #[allow(clippy::new_without_default)]
     pub const fn new() -> Self {
@@ -146,7 +146,7 @@ impl VariantBuilder {
     }
 
     /// Sets the fields for the Variant
-    pub const fn data(mut self, data: StructType) -> Self {
+    pub const fn data(mut self, data: StructType<'shape>) -> Self {
         self.data = Some(data);
         self
     }
@@ -158,7 +158,7 @@ impl VariantBuilder {
     }
 
     /// Builds the Variant
-    pub const fn build(self) -> Variant {
+    pub const fn build(self) -> Variant<'shape> {
         Variant {
             name: self.name.unwrap(),
             discriminant: self.discriminant,
@@ -173,9 +173,9 @@ impl VariantBuilder {
 #[non_exhaustive]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
-pub enum VariantAttribute {
+pub enum VariantAttribute<'shape> {
     /// Custom field attribute containing arbitrary text
-    Arbitrary(&'static str),
+    Arbitrary(&'shape str),
 }
 
 /// All possible representations for Rust enums — ie. the type/size of the discriminant

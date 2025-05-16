@@ -2,18 +2,20 @@ use facet::Facet;
 use facet_reflect::{ReflectError, Wip};
 
 #[derive(Debug, Facet)]
-struct ContravariantLifetime<'a> {
-    _pd: std::marker::PhantomData<fn(&'a ())>,
+struct ContravariantLifetime<'facet> {
+    _pd: std::marker::PhantomData<fn(&'facet ())>,
 }
 
 fn main() {
     #[derive(Debug, Facet)]
-    struct Wrapper<'a> {
-        token: ContravariantLifetime<'a>,
+    struct Wrapper<'facet> {
+        token: ContravariantLifetime<'facet>,
     }
 
-    fn scope<'a>(token: ContravariantLifetime<'static>) -> Result<Wrapper<'a>, ReflectError> {
-        Wip::<'a>::alloc::<Wrapper<'a>>()?
+    fn scope<'facet>(
+        token: ContravariantLifetime<'static>,
+    ) -> Result<Wrapper<'facet>, ReflectError<'static>> {
+        Wip::<'facet, 'static>::alloc::<Wrapper<'facet>>()?
             .field_named("token")?
             .put(token)?
             .pop()?

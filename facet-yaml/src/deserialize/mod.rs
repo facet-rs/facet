@@ -52,7 +52,10 @@ fn yaml_to_u64(ty: &Yaml) -> Result<u64, AnyErr> {
     }
 }
 
-fn from_str_value<'a>(wip: Wip<'a>, yaml: &str) -> Result<Wip<'a>, AnyErr> {
+fn from_str_value<'facet, 'shape>(
+    wip: Wip<'facet, 'shape>,
+    yaml: &str,
+) -> Result<Wip<'facet, 'shape>, AnyErr> {
     let docs = YamlLoader::load_from_str(yaml).map_err(|e| e.to_string())?;
     if docs.len() != 1 {
         return Err("Expected exactly one YAML document".into());
@@ -60,7 +63,10 @@ fn from_str_value<'a>(wip: Wip<'a>, yaml: &str) -> Result<Wip<'a>, AnyErr> {
     deserialize_value(wip, &docs[0])
 }
 
-fn deserialize_value<'a>(mut wip: Wip<'a>, value: &Yaml) -> Result<Wip<'a>, AnyErr> {
+fn deserialize_value<'facet, 'shape>(
+    mut wip: Wip<'facet, 'shape>,
+    value: &Yaml,
+) -> Result<Wip<'facet, 'shape>, AnyErr> {
     // Get both the direct shape and innermost shape (for transparent types)
     let shape = wip.shape();
     let innermost_shape = wip.innermost_shape();
@@ -348,7 +354,10 @@ fn deserialize_value<'a>(mut wip: Wip<'a>, value: &Yaml) -> Result<Wip<'a>, AnyE
     Ok(wip)
 }
 
-fn deserialize_as_list<'a>(mut wip: Wip<'a>, value: &Yaml) -> Result<Wip<'a>, AnyErr> {
+fn deserialize_as_list<'facet, 'shape>(
+    mut wip: Wip<'facet, 'shape>,
+    value: &Yaml,
+) -> Result<Wip<'facet, 'shape>, AnyErr> {
     #[cfg(feature = "log")]
     log::debug!("deserialize_as_list: shape={}", wip.shape());
 
@@ -381,7 +390,10 @@ fn deserialize_as_list<'a>(mut wip: Wip<'a>, value: &Yaml) -> Result<Wip<'a>, An
     }
 }
 
-fn deserialize_as_map<'a>(mut wip: Wip<'a>, value: &Yaml) -> Result<Wip<'a>, AnyErr> {
+fn deserialize_as_map<'facet, 'shape>(
+    mut wip: Wip<'facet, 'shape>,
+    value: &Yaml,
+) -> Result<Wip<'facet, 'shape>, AnyErr> {
     if let Yaml::Hash(hash) = value {
         // Handle empty map
         if hash.is_empty() {

@@ -14,7 +14,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
             "EnumWithAttributes"
         ))
     };
-    const SHAPE: &'static ::facet::Shape = &const {
+    const SHAPE: &'static ::facet::Shape<'static> = &const {
         #[repr(C)]
         #[allow(non_snake_case, dead_code)]
         struct __Shadow_RustRepr_Tuple_for_EnumWithAttributes_InternalVariant<'__facet> {

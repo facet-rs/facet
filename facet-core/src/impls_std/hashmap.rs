@@ -117,7 +117,7 @@ where
         builder.build()
     };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .type_params(&[
                 TypeParam {
@@ -221,12 +221,12 @@ unsafe impl Facet<'_> for RandomState {
     const VTABLE: &'static ValueVTable =
         &const { value_vtable!((), |f, _opts| write!(f, "RandomState")) };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
-                    .affinity(ScalarAffinity::opaque().build())
+                    .affinity(&const { ScalarAffinity::opaque().build() })
                     .build(),
             ))
             .build()

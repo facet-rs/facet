@@ -60,9 +60,9 @@ unsafe impl Facet<'_> for Url {
         vtable
     };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         // Function to return inner type's shape
-        fn inner_shape() -> &'static Shape {
+        fn inner_shape() -> &'static Shape<'static> {
             <String as Facet>::SHAPE
         }
 
@@ -70,7 +70,7 @@ unsafe impl Facet<'_> for Url {
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
-                    .affinity(ScalarAffinity::url().build())
+                    .affinity(&const { ScalarAffinity::url().build() })
                     .build(),
             ))
             .inner(inner_shape)

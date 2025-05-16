@@ -26,7 +26,7 @@ impl From<core::fmt::Error> for DebugError {
     }
 }
 
-impl<W> Serializer for DebugSerializer<W>
+impl<'shape, W> Serializer<'shape> for DebugSerializer<W>
 where
     W: core::fmt::Write,
 {
@@ -185,7 +185,7 @@ where
     fn serialize_unit_variant(
         &mut self,
         _variant_index: usize,
-        variant_name: &'static str,
+        variant_name: &str,
     ) -> Result<(), Self::Error> {
         self.write_comma()?;
         write!(self.writer, "\"{}\"", variant_name)?;
@@ -235,7 +235,7 @@ where
         Ok(())
     }
 
-    fn serialize_field_name(&mut self, name: &'static str) -> Result<(), Self::Error> {
+    fn serialize_field_name(&mut self, name: &str) -> Result<(), Self::Error> {
         self.write_comma()?;
         write!(self.writer, "\"{}\":", name)?;
         if let Some(need_comma) = self.need_comma.last_mut() {

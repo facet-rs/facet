@@ -6,37 +6,37 @@ use super::Shape;
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
 #[non_exhaustive]
-pub struct ArrayDef {
+pub struct ArrayDef<'shape> {
     /// vtable for interacting with the array
-    pub vtable: &'static ArrayVTable,
+    pub vtable: &'shape ArrayVTable,
 
     /// shape of the items in the array
-    pub t: &'static Shape,
+    pub t: &'shape Shape<'shape>,
 
     /// The length of the array
     pub n: usize,
 }
 
-impl ArrayDef {
+impl<'shape> ArrayDef<'shape> {
     /// Returns a builder for ArrayDef
-    pub const fn builder() -> ArrayDefBuilder {
+    pub const fn builder() -> ArrayDefBuilder<'shape> {
         ArrayDefBuilder::new()
     }
 
     /// Returns the shape of the items in the array
-    pub fn t(&self) -> &'static Shape {
+    pub fn t(&self) -> &'shape Shape<'shape> {
         self.t
     }
 }
 
 /// Builder for ArrayDef
-pub struct ArrayDefBuilder {
-    vtable: Option<&'static ArrayVTable>,
-    t: Option<&'static Shape>,
+pub struct ArrayDefBuilder<'shape> {
+    vtable: Option<&'shape ArrayVTable>,
+    t: Option<&'shape Shape<'shape>>,
     n: Option<usize>,
 }
 
-impl ArrayDefBuilder {
+impl<'shape> ArrayDefBuilder<'shape> {
     /// Creates a new ArrayDefBuilder
     #[allow(clippy::new_without_default)]
     pub const fn new() -> Self {
@@ -48,13 +48,13 @@ impl ArrayDefBuilder {
     }
 
     /// Sets the vtable for the ArrayDef
-    pub const fn vtable(mut self, vtable: &'static ArrayVTable) -> Self {
+    pub const fn vtable(mut self, vtable: &'shape ArrayVTable) -> Self {
         self.vtable = Some(vtable);
         self
     }
 
     /// Sets the item shape for the ArrayDef
-    pub const fn t(mut self, t: &'static Shape) -> Self {
+    pub const fn t(mut self, t: &'shape Shape<'shape>) -> Self {
         self.t = Some(t);
         self
     }
@@ -66,7 +66,7 @@ impl ArrayDefBuilder {
     }
 
     /// Builds the ArrayDef
-    pub const fn build(self) -> ArrayDef {
+    pub const fn build(self) -> ArrayDef<'shape> {
         ArrayDef {
             vtable: self.vtable.unwrap(),
             t: self.t.unwrap(),

@@ -77,9 +77,12 @@ impl Cli {
 }
 
 /// Parse command line arguments into a Facet-compatible type
-pub fn from_slice<'input: 'facet, 'facet, T: Facet<'facet>>(
+pub fn from_slice<'input, 'facet, 'shape, T: Facet<'facet>>(
     args: &'input [&'input str],
-) -> Result<T, DeserError<'input>> {
+) -> Result<T, DeserError<'input, 'shape>>
+where
+    'input: 'facet + 'shape,
+{
     facet_deserialize::deserialize(args, Cli)
 }
 
@@ -90,17 +93,21 @@ impl Format for Cli {
         "args"
     }
 
-    fn next<'input, 'facet>(
+    fn next<'input, 'facet, 'shape>(
         &mut self,
-        nd: NextData<'input, 'facet, Self::Input<'input>>,
+        nd: NextData<'input, 'facet, 'shape, Self::Input<'input>>,
         expectation: Expectation,
     ) -> NextResult<
         'input,
         'facet,
+        'shape,
         Spanned<Outcome<'input>>,
-        Spanned<DeserErrorKind>,
+        Spanned<DeserErrorKind<'shape>>,
         Self::Input<'input>,
-    > {
+    >
+    where
+        'shape: 'input,
+    {
         let arg_idx = nd.start();
         let shape = nd.wip.shape();
         let args = nd.input();
@@ -396,10 +403,20 @@ impl Format for Cli {
         }
     }
 
-    fn skip<'input, 'facet>(
+    fn skip<'input, 'facet, 'shape>(
         &mut self,
-        nd: NextData<'input, 'facet, Self::Input<'input>>,
-    ) -> NextResult<'input, 'facet, Span, Spanned<DeserErrorKind>, Self::Input<'input>> {
+        nd: NextData<'input, 'facet, 'shape, Self::Input<'input>>,
+    ) -> NextResult<
+        'input,
+        'facet,
+        'shape,
+        Span,
+        Spanned<DeserErrorKind<'shape>>,
+        Self::Input<'input>,
+    >
+    where
+        'shape: 'input,
+    {
         let arg_idx = nd.start();
         let args = nd.input();
 

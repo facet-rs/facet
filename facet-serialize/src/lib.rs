@@ -27,7 +27,7 @@ fn variant_is_newtype_like(variant: &facet_core::Variant) -> bool {
 
 /// A trait for implementing format-specific serialization logic.
 /// The core iterative serializer uses this trait to output data.
-pub trait Serializer {
+pub trait Serializer<'shape> {
     /// The error type returned by serialization methods
     type Error;
 
@@ -77,7 +77,7 @@ pub trait Serializer {
     fn serialize_unit_variant(
         &mut self,
         variant_index: usize,
-        variant_name: &'static str,
+        variant_name: &'shape str,
     ) -> Result<(), Self::Error>;
 
     /// Begin serializing an object/map-like value.
@@ -92,7 +92,7 @@ pub trait Serializer {
     /// # Arguments
     ///
     /// * `name` - The field or key name to serialize.
-    fn serialize_field_name(&mut self, name: &'static str) -> Result<(), Self::Error>;
+    fn serialize_field_name(&mut self, name: &'shape str) -> Result<(), Self::Error>;
 
     /// Begin serializing an array/sequence-like value.
     ///
@@ -224,8 +224,8 @@ pub trait Serializer {
 
 /// Task items for the serialization stack.
 #[derive(Debug)]
-enum SerializeTask<'mem, 'facet> {
-    Value(Peek<'mem, 'facet>, Option<Field>),
+enum SerializeTask<'mem, 'facet, 'shape> {
+    Value(Peek<'mem, 'facet, 'shape>, Option<Field<'shape>>),
     // End markers
     EndObject,
     EndArray,
@@ -234,23 +234,27 @@ enum SerializeTask<'mem, 'facet> {
     EndMapValue,
     EndField,
     // Tasks to push sub-elements onto the stack
-    ObjectFields(PeekStruct<'mem, 'facet>),
-    ArrayItems(PeekListLike<'mem, 'facet>),
-    TupleStructFields(PeekStruct<'mem, 'facet>),
-    TupleFields(PeekTuple<'mem, 'facet>),
-    MapEntries(PeekMap<'mem, 'facet>),
+    ObjectFields(PeekStruct<'mem, 'facet, 'shape>),
+    ArrayItems(PeekListLike<'mem, 'facet, 'shape>),
+    TupleStructFields(PeekStruct<'mem, 'facet, 'shape>),
+    TupleFields(PeekTuple<'mem, 'facet, 'shape>),
+    MapEntries(PeekMap<'mem, 'facet, 'shape>),
     // Field-related tasks
-    SerializeFieldName(&'static str),
-    SerializeMapKey(Peek<'mem, 'facet>),
-    SerializeMapValue(Peek<'mem, 'facet>),
+    SerializeFieldName(&'shape str),
+    SerializeMapKey(Peek<'mem, 'facet, 'shape>),
+    SerializeMapValue(Peek<'mem, 'facet, 'shape>),
 }
 
 /// Serializes a `Peek` value using the provided `Serializer`.
 ///
 /// This function uses an iterative approach with a stack to avoid recursion depth limits.
-pub fn serialize_iterative<S>(peek: Peek<'_, '_>, serializer: &mut S) -> Result<(), S::Error>
+pub fn serialize_iterative<'mem, 'facet, 'shape, S>(
+    peek: Peek<'mem, 'facet, 'shape>,
+    serializer: &mut S,
+) -> Result<(), S::Error>
 where
-    S: Serializer,
+    S: Serializer<'shape>,
+    'mem: 'facet,
 {
     let mut stack = Vec::new();
     stack.push(SerializeTask::Value(peek, None));
@@ -706,7 +710,10 @@ where
 /// Extension trait to simplify calling the generic serializer.
 pub trait Serialize<'a>: Facet<'a> {
     /// Serialize this value using the provided `Serializer`.
-    fn serialize<S: Serializer>(&self, serializer: &mut S) -> Result<(), S::Error>;
+    fn serialize<'shape, S: Serializer<'shape>>(
+        &'a self,
+        serializer: &mut S,
+    ) -> Result<(), S::Error>;
 }
 
 impl<'a, T> Serialize<'a> for T
@@ -714,7 +721,10 @@ where
     T: Facet<'a>,
 {
     /// Serialize this value using the provided `Serializer`.
-    fn serialize<S: Serializer>(&self, serializer: &mut S) -> Result<(), S::Error> {
+    fn serialize<'shape, S: Serializer<'shape>>(
+        &'a self,
+        serializer: &mut S,
+    ) -> Result<(), S::Error> {
         let peek = Peek::new(self);
         serialize_iterative(peek, serializer)
     }

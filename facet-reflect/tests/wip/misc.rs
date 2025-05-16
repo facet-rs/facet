@@ -707,7 +707,7 @@ fn gh_354_leak_1() {
         b: String,
     }
 
-    fn leak1() -> Result<(), ReflectError> {
+    fn leak1() -> Result<(), ReflectError<'static>> {
         Wip::alloc::<Foo>()?
             .field_named("a")?
             .put(String::from("Hello, World!"))?
@@ -727,7 +727,7 @@ fn gh_354_leak_2() {
         b: String,
     }
 
-    fn leak2() -> Result<(), ReflectError> {
+    fn leak2() -> Result<(), ReflectError<'static>> {
         Wip::alloc::<Foo>()?
             .field_named("a")?
             .put(String::from("Hello, World!"))?

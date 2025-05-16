@@ -20,16 +20,16 @@ use toml_edit::{DocumentMut, Item, Table, Value};
 use yansi::Paint as _;
 
 /// Serializer for TOML values.
-pub struct TomlSerializer {
+pub struct TomlSerializer<'shape> {
     /// The TOML document.
     document: DocumentMut,
     /// Current stack of where we are in the tree.
-    key_stack: Vec<Cow<'static, str>>,
+    key_stack: Vec<Cow<'shape, str>>,
     /// What type the current item is.
     current: KeyOrValue,
 }
 
-impl TomlSerializer {
+impl<'shape> TomlSerializer<'shape> {
     /// Create a new serialzer.
     pub fn new() -> Self {
         Self {
@@ -96,7 +96,7 @@ impl TomlSerializer {
     }
 
     /// Create a new empty item at the key.
-    fn push_key(&mut self, key: Cow<'static, str>, type_name: &'static str) {
+    fn push_key(&mut self, key: Cow<'shape, str>, type_name: &'static str) {
         // Push empty item
         self.item_mut()
             .as_table_mut()
@@ -137,13 +137,13 @@ impl TomlSerializer {
     }
 }
 
-impl Default for TomlSerializer {
+impl<'shape> Default for TomlSerializer<'shape> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Serializer for TomlSerializer {
+impl<'shape> Serializer<'shape> for TomlSerializer<'shape> {
     type Error = TomlSerError;
 
     fn serialize_u64(&mut self, value: u64) -> Result<(), Self::Error> {
@@ -205,7 +205,7 @@ impl Serializer for TomlSerializer {
     fn serialize_unit_variant(
         &mut self,
         _variant_index: usize,
-        _variant_name: &'static str,
+        _variant_name: &'shape str,
     ) -> Result<(), Self::Error> {
         todo!()
     }
@@ -236,7 +236,7 @@ impl Serializer for TomlSerializer {
         Ok(())
     }
 
-    fn serialize_field_name(&mut self, name: &'static str) -> Result<(), Self::Error> {
+    fn serialize_field_name(&mut self, name: &'shape str) -> Result<(), Self::Error> {
         self.push_key(Cow::Borrowed(name), "field");
 
         Ok(())

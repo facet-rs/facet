@@ -11,12 +11,12 @@ unsafe impl<'a, T: 'a> Facet<'a> for Opaque<T> {
     const VTABLE: &'static ValueVTable =
         &const { value_vtable!((), |f, _opts| write!(f, "Opaque")) };
 
-    const SHAPE: &'static Shape = &const {
+    const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
-                    .affinity(ScalarAffinity::opaque().build())
+                    .affinity(&const { ScalarAffinity::opaque().build() })
                     .build(),
             ))
             .build()

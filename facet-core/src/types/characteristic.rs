@@ -54,7 +54,7 @@ pub enum Characteristic {
 
 impl Characteristic {
     /// Checks if all shapes have the given characteristic.
-    pub const fn all(self, shapes: &'static [&'static Shape]) -> bool {
+    pub const fn all(self, shapes: &[&Shape]) -> bool {
         let mut i = 0;
         while i < shapes.len() {
             if !shapes[i].is(self) {
@@ -66,7 +66,7 @@ impl Characteristic {
     }
 
     /// Checks if any shape has the given characteristic.
-    pub const fn any(self, shapes: &'static [&'static Shape]) -> bool {
+    pub const fn any(self, shapes: &[&Shape]) -> bool {
         let mut i = 0;
         while i < shapes.len() {
             if shapes[i].is(self) {
@@ -78,7 +78,7 @@ impl Characteristic {
     }
 
     /// Checks if none of the shapes have the given characteristic.
-    pub const fn none(self, shapes: &'static [&'static Shape]) -> bool {
+    pub const fn none(self, shapes: &[&Shape]) -> bool {
         let mut i = 0;
         while i < shapes.len() {
             if shapes[i].is(self) {
@@ -90,9 +90,9 @@ impl Characteristic {
     }
 }
 
-impl Shape {
+impl<'shape> Shape<'shape> {
     /// Checks if a shape has the given characteristic.
-    pub const fn is(&'static self, characteristic: Characteristic) -> bool {
+    pub const fn is(&self, characteristic: Characteristic) -> bool {
         match characteristic {
             // Marker traits
             Characteristic::Send => self.vtable.marker_traits.contains(MarkerTraits::SEND),
@@ -115,67 +115,67 @@ impl Shape {
     }
 
     /// Check if this shape implements the Send trait
-    pub const fn is_send(&'static self) -> bool {
+    pub const fn is_send(&self) -> bool {
         self.is(Characteristic::Send)
     }
 
     /// Check if this shape implements the Sync trait
-    pub const fn is_sync(&'static self) -> bool {
+    pub const fn is_sync(&self) -> bool {
         self.is(Characteristic::Sync)
     }
 
     /// Check if this shape implements the Copy trait
-    pub const fn is_copy(&'static self) -> bool {
+    pub const fn is_copy(&self) -> bool {
         self.is(Characteristic::Copy)
     }
 
     /// Check if this shape implements the Eq trait
-    pub const fn is_eq(&'static self) -> bool {
+    pub const fn is_eq(&self) -> bool {
         self.is(Characteristic::Eq)
     }
 
     /// Check if this shape implements the Clone trait
-    pub const fn is_clone(&'static self) -> bool {
+    pub const fn is_clone(&self) -> bool {
         self.is(Characteristic::Clone)
     }
 
     /// Check if this shape implements the Display trait
-    pub const fn is_display(&'static self) -> bool {
+    pub const fn is_display(&self) -> bool {
         self.vtable.display.is_some()
     }
 
     /// Check if this shape implements the Debug trait
-    pub const fn is_debug(&'static self) -> bool {
+    pub const fn is_debug(&self) -> bool {
         self.is(Characteristic::Debug)
     }
 
     /// Check if this shape implements the PartialEq trait
-    pub const fn is_partial_eq(&'static self) -> bool {
+    pub const fn is_partial_eq(&self) -> bool {
         self.is(Characteristic::PartialEq)
     }
 
     /// Check if this shape implements the PartialOrd trait
-    pub const fn is_partial_ord(&'static self) -> bool {
+    pub const fn is_partial_ord(&self) -> bool {
         self.is(Characteristic::PartialOrd)
     }
 
     /// Check if this shape implements the Ord trait
-    pub const fn is_ord(&'static self) -> bool {
+    pub const fn is_ord(&self) -> bool {
         self.is(Characteristic::Ord)
     }
 
     /// Check if this shape implements the Hash trait
-    pub const fn is_hash(&'static self) -> bool {
+    pub const fn is_hash(&self) -> bool {
         self.is(Characteristic::Hash)
     }
 
     /// Check if this shape implements the Default trait
-    pub const fn is_default(&'static self) -> bool {
+    pub const fn is_default(&self) -> bool {
         self.is(Characteristic::Default)
     }
 
     /// Check if this shape implements the FromStr trait
-    pub const fn is_from_str(&'static self) -> bool {
+    pub const fn is_from_str(&self) -> bool {
         self.is(Characteristic::FromStr)
     }
 

@@ -30,13 +30,13 @@ pub use pointer::*;
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
 #[non_exhaustive]
-pub enum Type {
+pub enum Type<'shape> {
     /// Built-in primitive.
     Primitive(PrimitiveType),
     /// Sequence (tuple, array, slice).
-    Sequence(SequenceType),
+    Sequence(SequenceType<'shape>),
     /// User-defined type (struct, enum, union).
-    User(UserType),
+    User(UserType<'shape>),
     /// Pointer type (reference, raw, function pointer).
-    Pointer(PointerType),
+    Pointer(PointerType<'shape>),
 }

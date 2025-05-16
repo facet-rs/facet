@@ -4,18 +4,18 @@ use facet_core::TupleType;
 use super::Peek;
 
 /// Field index and associated peek value
-pub type TupleField<'mem, 'facet_lifetime> = (usize, Peek<'mem, 'facet_lifetime>);
+pub type TupleField<'mem, 'facet_lifetime, 'shape> = (usize, Peek<'mem, 'facet_lifetime, 'shape>);
 
 /// Lets you read from a tuple
 #[derive(Clone, Copy)]
-pub struct PeekTuple<'mem, 'facet_lifetime> {
+pub struct PeekTuple<'mem, 'facet_lifetime, 'shape> {
     /// Original peek value
-    pub(crate) value: Peek<'mem, 'facet_lifetime>,
+    pub(crate) value: Peek<'mem, 'facet_lifetime, 'shape>,
     /// Tuple type information
-    pub(crate) ty: TupleType,
+    pub(crate) ty: TupleType<'shape>,
 }
 
-impl Debug for PeekTuple<'_, '_> {
+impl Debug for PeekTuple<'_, '_, '_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("PeekTuple")
             .field("type", &self.ty)
@@ -23,7 +23,7 @@ impl Debug for PeekTuple<'_, '_> {
     }
 }
 
-impl<'mem, 'facet_lifetime> PeekTuple<'mem, 'facet_lifetime> {
+impl<'mem, 'facet_lifetime, 'shape> PeekTuple<'mem, 'facet_lifetime, 'shape> {
     /// Get the number of fields in this tuple
     pub fn len(&self) -> usize {
         self.ty.fields.len()
@@ -35,7 +35,7 @@ impl<'mem, 'facet_lifetime> PeekTuple<'mem, 'facet_lifetime> {
     }
 
     /// Access a field by index
-    pub fn field(&self, index: usize) -> Option<Peek<'mem, 'facet_lifetime>> {
+    pub fn field(&self, index: usize) -> Option<Peek<'mem, 'facet_lifetime, 'shape>> {
         if index >= self.len() {
             return None;
         }
@@ -52,17 +52,17 @@ impl<'mem, 'facet_lifetime> PeekTuple<'mem, 'facet_lifetime> {
     /// Iterate over all fields
     pub fn fields(
         &self,
-    ) -> impl DoubleEndedIterator<Item = TupleField<'mem, 'facet_lifetime>> + '_ {
+    ) -> impl DoubleEndedIterator<Item = TupleField<'mem, 'facet_lifetime, 'shape>> + '_ {
         (0..self.len()).filter_map(|i| self.field(i).map(|p| (i, p)))
     }
 
     /// Type information
-    pub fn ty(&self) -> TupleType {
+    pub fn ty(&self) -> TupleType<'shape> {
         self.ty
     }
 
     /// Internal peek value
-    pub fn value(&self) -> Peek<'mem, 'facet_lifetime> {
+    pub fn value(&self) -> Peek<'mem, 'facet_lifetime, 'shape> {
         self.value
     }
 }

@@ -4,71 +4,71 @@ use owo_colors::OwoColorize;
 /// Errors that can occur when reflecting on types.
 #[derive(Debug, PartialEq, Clone)]
 #[non_exhaustive]
-pub enum ReflectError {
+pub enum ReflectError<'shape> {
     /// Tried to set an enum to a variant that does not exist
     NoSuchVariant {
         /// The enum definition containing all known variants.
-        enum_type: EnumType,
+        enum_type: EnumType<'shape>,
     },
 
     /// Tried to get the wrong shape out of a value — e.g. we were manipulating
     /// a `String`, but `.get()` was called with a `u64` or something.
     WrongShape {
         /// The expected shape of the value.
-        expected: &'static Shape,
+        expected: &'shape Shape<'shape>,
         /// The actual shape of the value.
-        actual: &'static Shape,
+        actual: &'shape Shape<'shape>,
     },
 
     /// Attempted to perform an operation that expected a struct or something
     WasNotA {
         /// The name of the expected type.
-        expected: &'static str,
+        expected: &'shape str,
 
         /// The type we got instead
-        actual: &'static Shape,
+        actual: &'shape Shape<'shape>,
     },
 
     /// A field was not initialized during build
     UninitializedField {
         /// The shape containing the field
-        shape: &'static Shape,
+        shape: &'shape Shape<'shape>,
         /// The name of the field that wasn't initialized
-        field_name: &'static str,
+        field_name: &'shape str,
     },
 
     /// A field in an enum variant was not initialized during build
     UninitializedEnumField {
         /// The enum shape
-        shape: &'static Shape,
+        shape: &'shape Shape<'shape>,
         /// The name of the field that wasn't initialized
-        field_name: &'static str,
+        field_name: &'shape str,
         /// The name of the variant containing the field
-        variant_name: &'static str,
+        variant_name: &'shape str,
     },
 
     /// An enum had no variant selected during build
     NoVariantSelected {
         /// The enum shape
-        shape: &'static Shape,
+        shape: &'shape Shape<'shape>,
     },
 
     /// A scalar value was not initialized during build
     UninitializedValue {
         /// The scalar shape
-        shape: &'static Shape,
+        shape: &'shape Shape<'shape>,
     },
 
     /// An invariant of the reflection system was violated.
     InvariantViolation {
         /// The invariant that was violated.
-        invariant: &'static str,
+        invariant: &'shape str,
     },
 
     /// Attempted to set a value to its default, but the value doesn't implement `Default`.
     MissingCharacteristic {
         /// The shape of the value that doesn't implement `Default`.
-        shape: &'static Shape,
+        shape: &'shape Shape<'shape>,
         /// The characteristic that is missing.
         characteristic: Characteristic,
     },
@@ -76,15 +76,15 @@ pub enum ReflectError {
     /// An operation failed for a given shape
     OperationFailed {
         /// The shape of the value for which the operation failed.
-        shape: &'static Shape,
+        shape: &'shape Shape<'shape>,
         /// The name of the operation that failed.
-        operation: &'static str,
+        operation: &'shape str,
     },
 
     /// An error occurred when attempting to access or modify a field.
     FieldError {
         /// The shape of the value containing the field.
-        shape: &'static Shape,
+        shape: &'shape Shape<'shape>,
         /// The specific error that occurred with the field.
         field_error: FieldError,
     },
@@ -95,31 +95,31 @@ pub enum ReflectError {
     /// An error occured while putting
     TryFromError {
         /// The shape of the value being converted from.
-        src_shape: &'static Shape,
+        src_shape: &'shape Shape<'shape>,
 
         /// The shape of the value being converted to.
-        dst_shape: &'static Shape,
+        dst_shape: &'shape Shape<'shape>,
 
         /// The inner error
-        inner: TryFromError,
+        inner: TryFromError<'shape>,
     },
 
     /// A shape has a `default` attribute, but no implementation of the `Default` trait.
     DefaultAttrButNoDefaultImpl {
         /// The shape of the value that has a `default` attribute but no default implementation.
-        shape: &'static Shape,
+        shape: &'shape Shape<'shape>,
     },
 
     /// The type is unsized
     Unsized {
         /// The shape for the type that is unsized
-        shape: &'static Shape,
+        shape: &'shape Shape<'shape>,
     },
 
     /// Array not fully initialized during build
     ArrayNotFullyInitialized {
         /// The shape of the array
-        shape: &'static Shape,
+        shape: &'shape Shape<'shape>,
         /// The number of elements pushed
         pushed_count: usize,
         /// The expected array size
@@ -129,7 +129,7 @@ pub enum ReflectError {
     /// Array index out of bounds
     ArrayIndexOutOfBounds {
         /// The shape of the array
-        shape: &'static Shape,
+        shape: &'shape Shape<'shape>,
         /// The index that was out of bounds
         index: usize,
         /// The array size
@@ -137,7 +137,7 @@ pub enum ReflectError {
     },
 }
 
-impl core::fmt::Display for ReflectError {
+impl core::fmt::Display for ReflectError<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             ReflectError::NoSuchVariant { enum_type } => {
@@ -252,4 +252,4 @@ impl core::fmt::Display for ReflectError {
     }
 }
 
-impl core::error::Error for ReflectError {}
+impl core::error::Error for ReflectError<'_> {}

@@ -9,11 +9,11 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Wrapper {
     const VTABLE: &'static ::facet::ValueVTable = &const {
         let mut vtable =
             ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "Wrapper"));
-        unsafe fn try_from<'src, 'dst>(
+        unsafe fn try_from<'shape, 'src, 'dst>(
             src_ptr: ::facet::PtrConst<'src>,
-            src_shape: &'static ::facet::Shape,
+            src_shape: &'shape ::facet::Shape<'shape>,
             dst: ::facet::PtrUninit<'dst>,
-        ) -> Result<::facet::PtrMut<'dst>, ::facet::TryFromError> {
+        ) -> Result<::facet::PtrMut<'dst>, ::facet::TryFromError<'shape>> {
             match <u32 as ::facet::Facet>::SHAPE.vtable.try_from {
                 Some(inner_try) => unsafe { (inner_try)(src_ptr, src_shape, dst) },
                 None => {
@@ -46,7 +46,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Wrapper {
         vtable.try_borrow_inner = Some(try_borrow_inner);
         vtable
     };
-    const SHAPE: &'static ::facet::Shape = &const {
+    const SHAPE: &'static ::facet::Shape<'static> = &const {
         let fields: &'static [::facet::Field] = &const {
             [{
                 ::facet::Field::builder()
@@ -56,7 +56,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Wrapper {
                     .build()
             }]
         };
-        fn inner_shape() -> &'static ::facet::Shape {
+        fn inner_shape() -> &'static ::facet::Shape<'static> {
             <u32 as ::facet::Facet>::SHAPE
         }
         ::facet::Shape::builder_for_sized::<Self>()

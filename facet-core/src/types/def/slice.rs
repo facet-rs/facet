@@ -6,33 +6,32 @@ use super::Shape;
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
 #[non_exhaustive]
-pub struct SliceDef {
+pub struct SliceDef<'shape> {
     /// vtable for interacting with the slice
-    pub vtable: &'static SliceVTable,
-
+    pub vtable: &'shape SliceVTable,
     /// shape of the items in the slice
-    pub t: &'static Shape,
+    pub t: &'shape Shape<'shape>,
 }
 
-impl SliceDef {
+impl<'shape> SliceDef<'shape> {
     /// Returns a builder for SliceDef
-    pub const fn builder() -> SliceDefBuilder {
+    pub const fn builder() -> SliceDefBuilder<'shape> {
         SliceDefBuilder::new()
     }
 
     /// Returns the shape of the items in the slice
-    pub const fn t(&self) -> &'static Shape {
+    pub const fn t(&self) -> &'shape Shape<'shape> {
         self.t
     }
 }
 
 /// Builder for SliceDef
-pub struct SliceDefBuilder {
-    vtable: Option<&'static SliceVTable>,
-    t: Option<&'static Shape>,
+pub struct SliceDefBuilder<'shape> {
+    vtable: Option<&'shape SliceVTable>,
+    t: Option<&'shape Shape<'shape>>,
 }
 
-impl SliceDefBuilder {
+impl<'shape> SliceDefBuilder<'shape> {
     /// Creates a new SliceDefBuilder
     #[allow(clippy::new_without_default)]
     pub const fn new() -> Self {
@@ -43,19 +42,19 @@ impl SliceDefBuilder {
     }
 
     /// Sets the vtable for the SliceDef
-    pub const fn vtable(mut self, vtable: &'static SliceVTable) -> Self {
+    pub const fn vtable(mut self, vtable: &'shape SliceVTable) -> Self {
         self.vtable = Some(vtable);
         self
     }
 
     /// Sets the item shape for the SliceDef
-    pub const fn t(mut self, t: &'static Shape) -> Self {
+    pub const fn t(mut self, t: &'shape Shape<'shape>) -> Self {
         self.t = Some(t);
         self
     }
 
     /// Builds the SliceDef
-    pub const fn build(self) -> SliceDef {
+    pub const fn build(self) -> SliceDef<'shape> {
         SliceDef {
             vtable: self.vtable.unwrap(),
             t: self.t.unwrap(),

@@ -9,11 +9,11 @@ use crate::{
 unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for alloc::sync::Arc<T> {
     const VTABLE: &'static ValueVTable = &const {
         // Define the functions for transparent conversion between Arc<T> and T
-        unsafe fn try_from<'a, 'src, 'dst, T: Facet<'a> + ?Sized>(
+        unsafe fn try_from<'a, 'shape, 'src, 'dst, T: Facet<'a> + ?Sized>(
             src_ptr: PtrConst<'src>,
-            src_shape: &'static Shape,
+            src_shape: &'shape Shape<'shape>,
             dst: PtrUninit<'dst>,
-        ) -> Result<PtrMut<'dst>, TryFromError> {
+        ) -> Result<PtrMut<'dst>, TryFromError<'shape>> {
             if src_shape.id != T::SHAPE.id {
                 return Err(TryFromError::UnsupportedSourceShape {
                     src_shape,
@@ -149,9 +149,9 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for alloc::sync::Arc<T> {
         vtable
     };
 
-    const SHAPE: &'static crate::Shape = &const {
+    const SHAPE: &'static crate::Shape<'static> = &const {
         // Function to return inner type's shape
-        fn inner_shape<'a, T: Facet<'a> + ?Sized>() -> &'static Shape {
+        fn inner_shape<'a, T: Facet<'a> + ?Sized>() -> &'static Shape<'static> {
             T::SHAPE
         }
 
@@ -250,9 +250,9 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for alloc::sync::Weak<T> {
         })
     };
 
-    const SHAPE: &'static crate::Shape = &const {
+    const SHAPE: &'static crate::Shape<'static> = &const {
         // Function to return inner type's shape
-        fn inner_shape<'a, T: Facet<'a> + ?Sized>() -> &'static Shape {
+        fn inner_shape<'a, T: Facet<'a> + ?Sized>() -> &'static Shape<'static> {
             T::SHAPE
         }
 

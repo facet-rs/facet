@@ -12,24 +12,24 @@ use super::{
 
 /// A unique identifier for a peek value
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ValueId {
-    pub(crate) shape: &'static Shape,
+pub struct ValueId<'shape> {
+    pub(crate) shape: &'shape Shape<'shape>,
     pub(crate) ptr: *const u8,
 }
 
-impl ValueId {
-    pub(crate) fn new(shape: &'static Shape, ptr: *const u8) -> Self {
+impl<'shape> ValueId<'shape> {
+    pub(crate) fn new(shape: &'shape Shape<'shape>, ptr: *const u8) -> Self {
         Self { shape, ptr }
     }
 }
 
-impl core::fmt::Display for ValueId {
+impl core::fmt::Display for ValueId<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}@{:p}", self.shape, self.ptr)
     }
 }
 
-impl core::fmt::Debug for ValueId {
+impl core::fmt::Debug for ValueId<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         core::fmt::Display::fmt(self, f)
     }
@@ -37,17 +37,17 @@ impl core::fmt::Debug for ValueId {
 
 /// Lets you read from a value (implements read-only [`ValueVTable`] proxies)
 #[derive(Clone, Copy)]
-pub struct Peek<'mem, 'facet_lifetime> {
+pub struct Peek<'mem, 'facet, 'shape> {
     /// Underlying data
     pub(crate) data: PtrConst<'mem>,
 
     /// Shape of the value
-    pub(crate) shape: &'static Shape,
+    pub(crate) shape: &'shape Shape<'shape>,
 
-    invariant: PhantomData<fn(&'facet_lifetime ()) -> &'facet_lifetime ()>,
+    invariant: PhantomData<fn(&'facet ()) -> &'facet ()>,
 }
 
-impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
+impl<'mem, 'facet_lifetime, 'shape> Peek<'mem, 'facet_lifetime, 'shape> {
     /// Creates a new `PeekValue` instance for a value of type `T`.
     pub fn new<T: Facet<'facet_lifetime>>(t: &'mem T) -> Self {
         Self {
@@ -64,7 +64,7 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
     /// This function is unsafe because it doesn't check if the provided data
     /// and shape are compatible. The caller must ensure that the data is valid
     /// for the given shape.
-    pub unsafe fn unchecked_new(data: PtrConst<'mem>, shape: &'static Shape) -> Self {
+    pub unsafe fn unchecked_new(data: PtrConst<'mem>, shape: &'shape Shape<'shape>) -> Self {
         Self {
             data,
             shape,
@@ -74,18 +74,18 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
 
     /// Returns the vtable
     #[inline(always)]
-    pub fn vtable(&self) -> &'static ValueVTable {
+    pub fn vtable(&self) -> &'shape ValueVTable {
         self.shape.vtable
     }
 
     /// Returns a unique identifier for this value, usable for cycle detection
-    pub fn id(&self) -> ValueId {
+    pub fn id(&self) -> ValueId<'shape> {
         ValueId::new(self.shape, self.data.as_byte_ptr())
     }
 
     /// Returns true if the two values are pointer-equal
     #[inline]
-    pub fn ptr_eq(&self, other: &Peek<'_, '_>) -> bool {
+    pub fn ptr_eq(&self, other: &Peek<'_, '_, '_>) -> bool {
         self.data.as_byte_ptr() == other.data.as_byte_ptr()
     }
 
@@ -95,7 +95,7 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
     ///
     /// `false` if equality comparison is not supported for this scalar type
     #[inline]
-    pub fn eq(&self, other: &Peek<'_, '_>) -> Option<bool> {
+    pub fn eq(&self, other: &Peek<'_, '_, '_>) -> Option<bool> {
         unsafe {
             self.shape
                 .vtable
@@ -110,7 +110,7 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
     ///
     /// `None` if comparison is not supported for this scalar type
     #[inline]
-    pub fn partial_cmp(&self, other: &Peek<'_, '_>) -> Option<Ordering> {
+    pub fn partial_cmp(&self, other: &Peek<'_, '_, '_>) -> Option<Ordering> {
         unsafe {
             self.shape
                 .vtable
@@ -160,7 +160,7 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
 
     /// Returns the shape
     #[inline(always)]
-    pub const fn shape(&self) -> &'static Shape {
+    pub const fn shape(&self) -> &'shape Shape<'shape> {
         self.shape
     }
 
@@ -180,7 +180,7 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
     /// # Panics
     ///
     /// Panics if the shape doesn't match the type `T`.
-    pub fn get<T: Facet<'facet_lifetime>>(&self) -> Result<&T, ReflectError> {
+    pub fn get<T: Facet<'facet_lifetime>>(&self) -> Result<&T, ReflectError<'shape>> {
         if self.shape != T::SHAPE {
             Err(ReflectError::WrongShape {
                 expected: self.shape,
@@ -212,7 +212,9 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
     }
 
     /// Tries to identify this value as a struct
-    pub fn into_struct(self) -> Result<PeekStruct<'mem, 'facet_lifetime>, ReflectError> {
+    pub fn into_struct(
+        self,
+    ) -> Result<PeekStruct<'mem, 'facet_lifetime, 'shape>, ReflectError<'shape>> {
         if let Type::User(UserType::Struct(ty)) = self.shape.ty {
             Ok(PeekStruct { value: self, ty })
         } else {
@@ -224,7 +226,9 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
     }
 
     /// Tries to identify this value as an enum
-    pub fn into_enum(self) -> Result<PeekEnum<'mem, 'facet_lifetime>, ReflectError> {
+    pub fn into_enum(
+        self,
+    ) -> Result<PeekEnum<'mem, 'facet_lifetime, 'shape>, ReflectError<'shape>> {
         if let Type::User(UserType::Enum(ty)) = self.shape.ty {
             Ok(PeekEnum { value: self, ty })
         } else {
@@ -236,7 +240,7 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
     }
 
     /// Tries to identify this value as a map
-    pub fn into_map(self) -> Result<PeekMap<'mem, 'facet_lifetime>, ReflectError> {
+    pub fn into_map(self) -> Result<PeekMap<'mem, 'facet_lifetime, 'shape>, ReflectError<'shape>> {
         if let Def::Map(def) = self.shape.def {
             Ok(PeekMap { value: self, def })
         } else {
@@ -248,7 +252,9 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
     }
 
     /// Tries to identify this value as a list
-    pub fn into_list(self) -> Result<PeekList<'mem, 'facet_lifetime>, ReflectError> {
+    pub fn into_list(
+        self,
+    ) -> Result<PeekList<'mem, 'facet_lifetime, 'shape>, ReflectError<'shape>> {
         if let Def::List(def) = self.shape.def {
             return Ok(PeekList { value: self, def });
         }
@@ -260,7 +266,9 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
     }
 
     /// Tries to identify this value as a list, array or slice
-    pub fn into_list_like(self) -> Result<PeekListLike<'mem, 'facet_lifetime>, ReflectError> {
+    pub fn into_list_like(
+        self,
+    ) -> Result<PeekListLike<'mem, 'facet_lifetime, 'shape>, ReflectError<'shape>> {
         match self.shape.def {
             Def::List(def) => Ok(PeekListLike::new(self, ListLikeDef::List(def))),
             Def::Array(def) => Ok(PeekListLike::new(self, ListLikeDef::Array(def))),
@@ -299,7 +307,7 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
     /// Tries to identify this value as a smart pointer
     pub fn into_smart_pointer(
         self,
-    ) -> Result<PeekSmartPointer<'mem, 'facet_lifetime>, ReflectError> {
+    ) -> Result<PeekSmartPointer<'mem, 'facet_lifetime, 'shape>, ReflectError<'shape>> {
         if let Def::SmartPointer(def) = self.shape.def {
             Ok(PeekSmartPointer { value: self, def })
         } else {
@@ -311,7 +319,9 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
     }
 
     /// Tries to identify this value as an option
-    pub fn into_option(self) -> Result<super::PeekOption<'mem, 'facet_lifetime>, ReflectError> {
+    pub fn into_option(
+        self,
+    ) -> Result<super::PeekOption<'mem, 'facet_lifetime, 'shape>, ReflectError<'shape>> {
         if let Def::Option(def) = self.shape.def {
             Ok(super::PeekOption { value: self, def })
         } else {
@@ -323,7 +333,9 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
     }
 
     /// Tries to identify this value as a tuple
-    pub fn into_tuple(self) -> Result<PeekTuple<'mem, 'facet_lifetime>, ReflectError> {
+    pub fn into_tuple(
+        self,
+    ) -> Result<PeekTuple<'mem, 'facet_lifetime, 'shape>, ReflectError<'shape>> {
         if let Type::Sequence(SequenceType::Tuple(ty)) = self.shape.ty {
             Ok(PeekTuple { value: self, ty })
         } else {
@@ -362,7 +374,7 @@ impl<'mem, 'facet_lifetime> Peek<'mem, 'facet_lifetime> {
     }
 }
 
-impl core::fmt::Display for Peek<'_, '_> {
+impl<'mem, 'facet_lifetime, 'shape> core::fmt::Display for Peek<'mem, 'facet_lifetime, 'shape> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if let Some(display_fn) = self.vtable().display {
             unsafe { display_fn(self.data, f) }
@@ -372,7 +384,7 @@ impl core::fmt::Display for Peek<'_, '_> {
     }
 }
 
-impl core::fmt::Debug for Peek<'_, '_> {
+impl<'mem, 'facet_lifetime, 'shape> core::fmt::Debug for Peek<'mem, 'facet_lifetime, 'shape> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if let Some(debug_fn) = self.vtable().debug {
             unsafe { debug_fn(self.data, f) }
@@ -382,7 +394,7 @@ impl core::fmt::Debug for Peek<'_, '_> {
     }
 }
 
-impl core::cmp::PartialEq for Peek<'_, '_> {
+impl<'mem, 'facet_lifetime, 'shape> core::cmp::PartialEq for Peek<'mem, 'facet_lifetime, 'shape> {
     fn eq(&self, other: &Self) -> bool {
         if self.shape != other.shape {
             return false;
@@ -395,7 +407,7 @@ impl core::cmp::PartialEq for Peek<'_, '_> {
     }
 }
 
-impl core::cmp::PartialOrd for Peek<'_, '_> {
+impl<'mem, 'facet_lifetime, 'shape> core::cmp::PartialOrd for Peek<'mem, 'facet_lifetime, 'shape> {
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         if self.shape != other.shape {
             return None;
@@ -405,7 +417,7 @@ impl core::cmp::PartialOrd for Peek<'_, '_> {
     }
 }
 
-impl core::hash::Hash for Peek<'_, '_> {
+impl<'mem, 'facet_lifetime, 'shape> core::hash::Hash for Peek<'mem, 'facet_lifetime, 'shape> {
     fn hash<H: core::hash::Hasher>(&self, hasher: &mut H) {
         if let Some(hash_fn) = self.shape.vtable.hash {
             let hasher_opaque = PtrMut::new(hasher);

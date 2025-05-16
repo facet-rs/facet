@@ -14,9 +14,9 @@ use facet_reflect::ReflectError;
 use yansi::Paint as _;
 
 /// Any error from deserializing TOML.
-pub struct TomlDeError<'input> {
+pub struct TomlDeError<'input, 'shape> {
     /// Type of error.
-    pub kind: TomlDeErrorKind,
+    pub kind: TomlDeErrorKind<'shape>,
     /// Reference to the TOML source.
     #[cfg_attr(not(feature = "rich-diagnostics"), allow(dead_code))]
     toml: &'input str,
@@ -27,11 +27,11 @@ pub struct TomlDeError<'input> {
     path: String,
 }
 
-impl<'input> TomlDeError<'input> {
+impl<'input, 'shape> TomlDeError<'input, 'shape> {
     /// Create a new error.
     pub fn new(
         toml: &'input str,
-        kind: TomlDeErrorKind,
+        kind: TomlDeErrorKind<'shape>,
         span: Option<Range<usize>>,
         path: String,
     ) -> Self {
@@ -88,14 +88,14 @@ impl<'input> TomlDeError<'input> {
 }
 
 #[cfg(not(feature = "rich-diagnostics"))]
-impl core::fmt::Display for TomlDeError<'_> {
+impl<'shape> core::fmt::Display for TomlDeError<'_, 'shape> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{} in path {}", self.message(), self.path)
     }
 }
 
 #[cfg(feature = "rich-diagnostics")]
-impl core::fmt::Display for TomlDeError<'_> {
+impl<'shape> core::fmt::Display for TomlDeError<'_, 'shape> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // Don't print the TOML source if no span is set
         let Some(span) = &self.span else {
@@ -132,9 +132,9 @@ impl core::fmt::Display for TomlDeError<'_> {
     }
 }
 
-impl core::error::Error for TomlDeError<'_> {}
+impl<'shape> core::error::Error for TomlDeError<'_, 'shape> {}
 
-impl core::fmt::Debug for TomlDeError<'_> {
+impl<'shape> core::fmt::Debug for TomlDeError<'_, 'shape> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         core::fmt::Display::fmt(self, f)
     }
@@ -142,9 +142,9 @@ impl core::fmt::Debug for TomlDeError<'_> {
 
 /// Type of error.
 #[derive(Debug, PartialEq)]
-pub enum TomlDeErrorKind {
+pub enum TomlDeErrorKind<'shape> {
     /// Any error from facet.
-    GenericReflect(ReflectError),
+    GenericReflect(ReflectError<'shape>),
     /// Parsing TOML document error.
     GenericTomlError(String),
     /// Parsing a TOML type as a Rust type failed.
@@ -152,7 +152,7 @@ pub enum TomlDeErrorKind {
         /// TOML type that failed to convert.
         toml_type_name: &'static str,
         /// Rust that type didn't match the TOML type.
-        rust_type: &'static Shape,
+        rust_type: &'shape Shape<'shape>,
         /// Explanation why it failed.
         reason: Option<String>,
     },
@@ -166,11 +166,11 @@ pub enum TomlDeErrorKind {
     /// Found a TOML type that we don't know how to handle.
     UnrecognizedType(&'static str),
     /// Found a Rust scalar type that we don't know how to handle.
-    UnrecognizedScalar(&'static Shape),
+    UnrecognizedScalar(&'shape Shape<'shape>),
     /// Rust value is not a valid key.
-    InvalidKey(&'static Shape),
+    InvalidKey(&'shape Shape<'shape>),
     /// Expected a TOML field with the specified name, but couldn't find it.
-    ExpectedFieldWithName(&'static str),
+    ExpectedFieldWithName(&'shape str),
     /// Expected at least one field, got zero.
     ExpectedAtLeastOneField,
     /// Expected a single value, got multiple field.

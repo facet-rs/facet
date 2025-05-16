@@ -17,7 +17,10 @@ use log::debug;
 pub(crate) fn to_string<'mem, 'facet, T: Facet<'facet>>(
     value: &'mem T,
     recursion_depth: usize,
-) -> String {
+) -> String
+where
+    'mem: 'facet,
+{
     let peek = Peek::new(value);
     let mut out = Vec::new();
     peek_to_writer(peek, None, recursion_depth, &mut out).unwrap();
@@ -25,31 +28,40 @@ pub(crate) fn to_string<'mem, 'facet, T: Facet<'facet>>(
 }
 
 /// Serializes a Peek instance to JSON
-pub(crate) fn peek_to_string<'facet: 'input, 'input: 'facet>(
-    peek: Peek<'input, 'facet>,
+pub(crate) fn peek_to_string<'input, 'facet, 'shape>(
+    peek: Peek<'input, 'facet, 'shape>,
     recursion_depth: usize,
-) -> String {
+) -> String
+where
+    'input: 'facet,
+{
     let mut out = Vec::new();
     peek_to_writer(peek, None, recursion_depth, &mut out).unwrap();
     String::from_utf8(out).unwrap()
 }
 
 /// Serializes a value to a writer in JSON format
-pub(crate) fn to_writer<'mem: 'facet, 'facet, T: Facet<'facet>, W: Write>(
+pub(crate) fn to_writer<'mem, 'facet, 'shape, T: Facet<'facet>, W: Write>(
     value: &'mem T,
     writer: &mut W,
-) -> io::Result<()> {
+) -> io::Result<()>
+where
+    'mem: 'facet,
+{
     let peek = Peek::new(value);
     peek_to_writer(peek, None, 0, writer)
 }
 
 /// Serializes a Peek instance to a writer in JSON format
-pub(crate) fn peek_to_writer<W: Write>(
-    peek: Peek<'_, '_>,
+pub(crate) fn peek_to_writer<'mem, 'facet, 'shape, W: Write>(
+    peek: Peek<'mem, 'facet, 'shape>,
     maybe_field: Option<&Field>,
     recursion_depth: usize,
     output: &mut W,
-) -> io::Result<()> {
+) -> io::Result<()>
+where
+    'mem: 'facet,
+{
     use facet_core::Def::*;
     if recursion_depth > crate::MAX_RECURSION_DEPTH {
         return crate::iterative::peek_to_writer(peek, output);

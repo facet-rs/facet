@@ -119,7 +119,7 @@ where
         builder.build()
     };
 
-    const SHAPE: &'static crate::Shape = &const {
+    const SHAPE: &'static crate::Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .type_params(&[
                 crate::TypeParam {

@@ -182,7 +182,7 @@ macro_rules! impl_facet_for_tuple {
                 builder.build()
             };
 
-            const SHAPE: &'static Shape = &const {
+            const SHAPE: &'static Shape<'static> = &const {
                 Shape::builder_for_sized::<Self>()
                     .ty(Type::Sequence(SequenceType::Tuple(TupleType {
                         fields: &const {[

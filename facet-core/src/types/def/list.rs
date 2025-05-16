@@ -6,32 +6,32 @@ use super::{IterVTable, Shape};
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
 #[non_exhaustive]
-pub struct ListDef {
+pub struct ListDef<'shape> {
     /// vtable for interacting with the list
-    pub vtable: &'static ListVTable,
+    pub vtable: &'shape ListVTable,
     /// shape of the items in the list
-    pub t: fn() -> &'static Shape,
+    pub t: fn() -> &'shape Shape<'shape>,
 }
 
-impl ListDef {
+impl<'shape> ListDef<'shape> {
     /// Returns a builder for ListDef
-    pub const fn builder() -> ListDefBuilder {
+    pub const fn builder() -> ListDefBuilder<'shape> {
         ListDefBuilder::new()
     }
 
     /// Returns the shape of the items in the list
-    pub fn t(&self) -> &'static Shape {
+    pub fn t(&self) -> &'shape Shape<'shape> {
         (self.t)()
     }
 }
 
 /// Builder for ListDef
-pub struct ListDefBuilder {
-    vtable: Option<&'static ListVTable>,
-    t: Option<fn() -> &'static Shape>,
+pub struct ListDefBuilder<'shape> {
+    vtable: Option<&'shape ListVTable>,
+    t: Option<fn() -> &'shape Shape<'shape>>,
 }
 
-impl ListDefBuilder {
+impl<'shape> ListDefBuilder<'shape> {
     /// Creates a new ListDefBuilder
     #[allow(clippy::new_without_default)]
     pub const fn new() -> Self {
@@ -42,19 +42,19 @@ impl ListDefBuilder {
     }
 
     /// Sets the vtable for the ListDef
-    pub const fn vtable(mut self, vtable: &'static ListVTable) -> Self {
+    pub const fn vtable(mut self, vtable: &'shape ListVTable) -> Self {
         self.vtable = Some(vtable);
         self
     }
 
     /// Sets the item shape for the ListDef
-    pub const fn t(mut self, t: fn() -> &'static Shape) -> Self {
+    pub const fn t(mut self, t: fn() -> &'shape Shape<'shape>) -> Self {
         self.t = Some(t);
         self
     }
 
     /// Builds the ListDef
-    pub const fn build(self) -> ListDef {
+    pub const fn build(self) -> ListDef<'shape> {
         ListDef {
             vtable: self.vtable.unwrap(),
             t: self.t.unwrap(),
