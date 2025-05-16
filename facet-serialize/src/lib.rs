@@ -263,8 +263,7 @@ where
                 if cpeek
                     .shape()
                     .attributes
-                    .iter()
-                    .any(|attr| *attr == ShapeAttribute::Transparent)
+                    .contains(&ShapeAttribute::Transparent)
                 {
                     let old_shape = cpeek.shape();
 

@@ -69,31 +69,27 @@ impl Wip<'_> {
             }
 
             // 3. If this is a container type like an array, make sure its internal state reflects that it's complete
-            match frame.shape.def {
-                Def::Array(array_def) => {
-                    // For arrays, they're only fully initialized if all elements are populated
-                    let current_index = frame.istate.list_index.unwrap_or(0);
+            if let Def::Array(array_def) = frame.shape.def {
+                // For arrays, they're only fully initialized if all elements are populated
+                let current_index = frame.istate.list_index.unwrap_or(0);
+                trace!(
+                    "[{}] Array {} has {}/{} elements populated",
+                    self.frames.len(),
+                    frame_shape.blue(),
+                    current_index.yellow(),
+                    array_def.n.green()
+                );
+
+                if current_index == array_def.n {
                     trace!(
-                        "[{}] Array {} has {}/{} elements populated",
+                        "[{}] Array {} fully populated with {} elements, marking as initialized",
                         self.frames.len(),
                         frame_shape.blue(),
-                        current_index.yellow(),
                         array_def.n.green()
                     );
-
-                    if current_index == array_def.n {
-                        trace!(
-                            "[{}] Array {} fully populated with {} elements, marking as initialized",
-                            self.frames.len(),
-                            frame_shape.blue(),
-                            array_def.n.green()
-                        );
-                        // Mark the array itself as initialized (field 0)
-                        frame.istate.fields.set(0);
-                    }
+                    // Mark the array itself as initialized (field 0)
+                    frame.istate.fields.set(0);
                 }
-                // Add other container types here if needed
-                _ => {}
             }
         }
 

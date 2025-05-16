@@ -36,7 +36,6 @@ pub use scalar::*;
 #[non_exhaustive]
 // this enum is only ever going to be owned in static space,
 // right?
-#[expect(clippy::large_enum_variant)]
 pub enum Def {
     /// Undefined - you can interact with the type through [`Type`] and [`ValueVTable`].
     Undefined,

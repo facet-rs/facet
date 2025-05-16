@@ -164,14 +164,10 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                     } else {
                         let mut attrs_list = Vec::new();
                         for attr in &pv.attrs.facet {
-                            match attr {
-                                PFacetAttr::Arbitrary { content } => {
-                                    attrs_list.push(
-                                        quote! { ::facet::VariantAttribute::Arbitrary(#content) },
-                                    );
-                                }
-                                // Add other variant attributes if needed
-                                _ => {}
+                            if let PFacetAttr::Arbitrary { content } = attr {
+                                attrs_list.push(
+                                    quote! { ::facet::VariantAttribute::Arbitrary(#content) },
+                                );
                             }
                         }
                         if attrs_list.is_empty() {
@@ -384,14 +380,10 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                     } else {
                         let mut attrs_list = Vec::new();
                         for attr in &pv.attrs.facet {
-                            match attr {
-                                PFacetAttr::Arbitrary { content } => {
-                                    attrs_list.push(
-                                        quote! { ::facet::VariantAttribute::Arbitrary(#content) },
-                                    );
-                                }
-                                // Add other variant attributes if needed
-                                _ => {}
+                            if let PFacetAttr::Arbitrary { content } = attr {
+                                attrs_list.push(
+                                    quote! { ::facet::VariantAttribute::Arbitrary(#content) },
+                                );
                             }
                         }
                         if attrs_list.is_empty() {

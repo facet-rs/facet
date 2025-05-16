@@ -49,8 +49,7 @@ impl<W: Write> Serializer for MessagePackSerializer<'_, W> {
 
     // TODO: Implement serialize_u128 if needed for MessagePack, otherwise return error or panic
     fn serialize_u128(&mut self, _value: u128) -> Result<(), Self::Error> {
-        Err(io::Error::new(
-            io::ErrorKind::Other,
+        Err(io::Error::other(
             "u128 is not directly supported by MessagePack",
         ))
     }
@@ -83,8 +82,7 @@ impl<W: Write> Serializer for MessagePackSerializer<'_, W> {
 
     // TODO: Implement serialize_i128 if needed for MessagePack, otherwise return error or panic
     fn serialize_i128(&mut self, _value: i128) -> Result<(), Self::Error> {
-        Err(io::Error::new(
-            io::ErrorKind::Other,
+        Err(io::Error::other(
             "i128 is not directly supported by MessagePack",
         ))
     }
@@ -156,10 +154,7 @@ impl<W: Write> Serializer for MessagePackSerializer<'_, W> {
             // MessagePack doesn't have an indefinite length map marker.
             // This might require buffering or a different approach if the length is unknown.
             // For now, assume length is always known by `facet-serialize`.
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                "MessagePack requires map length upfront",
-            ))
+            Err(io::Error::other("MessagePack requires map length upfront"))
         }
     }
 
@@ -174,8 +169,7 @@ impl<W: Write> Serializer for MessagePackSerializer<'_, W> {
         if let Some(l) = len {
             write_array_len(self.writer, l)
         } else {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
+            Err(io::Error::other(
                 "MessagePack requires array length upfront",
             ))
         }
@@ -193,10 +187,7 @@ impl<W: Write> Serializer for MessagePackSerializer<'_, W> {
         if let Some(l) = len {
             write_map_len(self.writer, l)
         } else {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                "MessagePack requires map length upfront",
-            ))
+            Err(io::Error::other("MessagePack requires map length upfront"))
         }
     }
 

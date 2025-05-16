@@ -50,7 +50,7 @@ impl<K: Into<KdlErrorKind>> From<K> for KdlError {
 
 #[derive(Debug)]
 enum KdlErrorKind {
-    InvalidDocumentShape(Def),
+    InvalidDocumentShape(&'static Def),
     MissingNodes(Vec<String>),
     Parse(KdlParseError),
     Reflect(ReflectError),
@@ -140,7 +140,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 // FIXME: For example, this feels like maybe it should take a `KdlNode` and not a `KdlDocument`?
                 return self.deserialize_node(wip, document);
             } else {
-                return Err(KdlErrorKind::InvalidDocumentShape(wip.shape().def).into());
+                return Err(KdlErrorKind::InvalidDocumentShape(&wip.shape().def).into());
             }
         }
 

@@ -177,10 +177,9 @@ fn serialize_scalar<W: Write>(scalar_def: &ScalarDef, writer: &mut W) -> std::io
             write!(writer, "\"type\": \"boolean\"")?;
             Ok(())
         }
-        _ => Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("facet-jsonschema: nsupported scalar type: {scalar_def:#?}"),
-        )),
+        _ => Err(std::io::Error::other(format!(
+            "facet-jsonschema: nsupported scalar type: {scalar_def:#?}"
+        ))),
     }
 }
 

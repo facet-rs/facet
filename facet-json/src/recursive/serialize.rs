@@ -58,8 +58,7 @@ pub(crate) fn peek_to_writer<W: Write>(
     let peek = if peek
         .shape()
         .attributes
-        .iter()
-        .any(|attr| *attr == ShapeAttribute::Transparent)
+        .contains(&ShapeAttribute::Transparent)
     {
         let old_shape = peek.shape();
 
