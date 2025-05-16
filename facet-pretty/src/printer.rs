@@ -411,7 +411,7 @@ impl PrettyPrinter {
                             match target.ty {
                                 Type::Primitive(primitive_type) => match primitive_type {
                                     PrimitiveType::Boolean => {}
-                                    PrimitiveType::Numeric(numeric_type) => {}
+                                    PrimitiveType::Numeric(_numeric_type) => {}
                                     PrimitiveType::Textual(textual_type) => match textual_type {
                                         TextualType::Char => todo!(),
                                         TextualType::Str => {
@@ -424,9 +424,9 @@ impl PrettyPrinter {
                                     },
                                     PrimitiveType::Never => {}
                                 },
-                                Type::Sequence(sequence_type) => {}
-                                Type::User(user_type) => {}
-                                Type::Pointer(pointer_type) => {}
+                                Type::Sequence(_sequence_type) => {}
+                                Type::User(_user_type) => {}
+                                Type::Pointer(_pointer_type) => {}
                                 _ => {}
                             }
                             if !handled {
