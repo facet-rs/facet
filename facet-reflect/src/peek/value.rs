@@ -79,7 +79,7 @@ impl<'mem, 'facet_lifetime, 'shape> Peek<'mem, 'facet_lifetime, 'shape> {
     }
 
     /// Returns a unique identifier for this value, usable for cycle detection
-    pub fn id(&self) -> ValueId {
+    pub fn id(&self) -> ValueId<'shape> {
         ValueId::new(self.shape, self.data.as_byte_ptr())
     }
 

@@ -819,9 +819,9 @@ impl PrettyPrinter {
         let color = self.color_generator.generate_color(hash);
 
         // Display the value
-        struct DisplayWrapper<'a, 'facet_lifetime>(&'a Peek<'a, 'facet_lifetime>);
+        struct DisplayWrapper<'a, 'facet_lifetime, 'shape>(&'a Peek<'a, 'facet_lifetime, 'shape>);
 
-        impl fmt::Display for DisplayWrapper<'_, '_> {
+        impl fmt::Display for DisplayWrapper<'_, '_, '_> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 if self.0.shape().is_display() {
                     write!(f, "{}", self.0)?;
@@ -856,9 +856,9 @@ impl PrettyPrinter {
 
     /// Write styled type name to formatter
     fn write_type_name<W: fmt::Write>(&self, f: &mut W, peek: &Peek) -> fmt::Result {
-        struct TypeNameWriter<'a, 'facet_lifetime>(&'a Peek<'a, 'facet_lifetime>);
+        struct TypeNameWriter<'a, 'facet_lifetime, 'shape>(&'a Peek<'a, 'facet_lifetime, 'shape>);
 
-        impl core::fmt::Display for TypeNameWriter<'_, '_> {
+        impl core::fmt::Display for TypeNameWriter<'_, '_, '_> {
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                 self.0.type_name(f, TypeNameOpts::infinite())
             }
