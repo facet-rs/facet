@@ -3,6 +3,8 @@ use core::hash::Hash as _;
 
 use alloc::vec::Vec;
 
+type VecIterator<'mem, T> = core::slice::Iter<'mem, T>;
+
 unsafe impl<'a, T> Facet<'a> for Vec<T>
 where
     T: Facet<'a>,
@@ -123,6 +125,30 @@ where
                                     let vec = ptr.as_mut::<Self>();
                                     PtrMut::new(vec.as_mut_ptr())
                                 })
+                                .iter_vtable(
+                                    IterVTable::builder()
+                                        .init_with_value(|ptr| unsafe {
+                                            let vec = ptr.get::<Self>();
+                                            let iter: VecIterator<T> = vec.iter();
+                                            let iter_state = Box::new(iter);
+                                            PtrMut::new(Box::into_raw(iter_state) as *mut u8)
+                                        })
+                                        .next(|iter_ptr| unsafe {
+                                            let state = iter_ptr.as_mut::<VecIterator<'_, T>>();
+                                            state.next().map(|value| PtrConst::new(value))
+                                        })
+                                        .next_back(|iter_ptr| unsafe {
+                                            let state = iter_ptr.as_mut::<VecIterator<'_, T>>();
+                                            state.next_back().map(|value| PtrConst::new(value))
+                                        })
+                                        .dealloc(|iter_ptr| unsafe {
+                                            drop(Box::from_raw(
+                                                iter_ptr.as_ptr::<VecIterator<'_, T>>()
+                                                    as *mut VecIterator<'_, T>,
+                                            ));
+                                        })
+                                        .build(),
+                                )
                                 .build()
                         },
                     )

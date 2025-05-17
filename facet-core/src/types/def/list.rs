@@ -1,6 +1,6 @@
 use crate::ptr::{PtrConst, PtrMut, PtrUninit};
 
-use super::Shape;
+use super::{IterVTable, Shape};
 
 /// Fields for list types
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -122,6 +122,9 @@ pub struct ListVTable {
 
     /// cf. [`ListAsMutPtrFn`]
     pub as_mut_ptr: ListAsMutPtrFn,
+
+    /// Virtual table for list iterator operations
+    pub iter_vtable: IterVTable<PtrConst<'static>>,
 }
 
 impl ListVTable {
@@ -138,6 +141,7 @@ pub struct ListVTableBuilder {
     len: Option<ListLenFn>,
     as_ptr: Option<ListAsPtrFn>,
     as_mut_ptr: Option<ListAsMutPtrFn>,
+    iter_vtable: Option<IterVTable<PtrConst<'static>>>,
 }
 
 impl ListVTableBuilder {
@@ -150,6 +154,7 @@ impl ListVTableBuilder {
             len: None,
             as_ptr: None,
             as_mut_ptr: None,
+            iter_vtable: None,
         }
     }
 
@@ -183,6 +188,12 @@ impl ListVTableBuilder {
         self
     }
 
+    /// Sets the iter_vtable field
+    pub const fn iter_vtable(mut self, vtable: IterVTable<PtrConst<'static>>) -> Self {
+        self.iter_vtable = Some(vtable);
+        self
+    }
+
     /// Builds the [`ListVTable`] from the current state of the builder.
     ///
     /// # Panics
@@ -195,6 +206,7 @@ impl ListVTableBuilder {
             len: self.len.unwrap(),
             as_ptr: self.as_ptr.unwrap(),
             as_mut_ptr: self.as_mut_ptr.unwrap(),
+            iter_vtable: self.iter_vtable.unwrap(),
         }
     }
 }
