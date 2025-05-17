@@ -70,7 +70,7 @@ unsafe impl Facet<'_> for Url {
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
-                    .affinity(ScalarAffinity::url().build())
+                    .affinity(&const { ScalarAffinity::url().build() })
                     .build(),
             ))
             .inner(inner_shape)

@@ -101,7 +101,7 @@ pub enum ReflectError<'shape> {
         dst_shape: &'shape Shape<'shape>,
 
         /// The inner error
-        inner: TryFromError,
+        inner: TryFromError<'shape>,
     },
 
     /// A shape has a `default` attribute, but no implementation of the `Default` trait.
