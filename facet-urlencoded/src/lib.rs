@@ -70,7 +70,7 @@ mod tests;
 /// ```
 pub fn from_str<'input: 'facet, 'facet, T: Facet<'facet>>(
     urlencoded: &'input str,
-) -> Result<T, UrlEncodedError> {
+) -> Result<T, UrlEncodedError<'facet>> {
     let val = from_str_value(Wip::alloc::<T>()?, urlencoded)?;
     Ok(val.materialize::<T>()?)
 }
@@ -78,10 +78,10 @@ pub fn from_str<'input: 'facet, 'facet, T: Facet<'facet>>(
 /// Deserializes a URL encoded form data string into an heap-allocated value.
 ///
 /// This is the lower-level function that works with `Wip` directly.
-fn from_str_value<'mem>(
-    wip: Wip<'mem>,
+fn from_str_value<'mem, 'shape>(
+    wip: Wip<'mem, 'shape>,
     urlencoded: &str,
-) -> Result<HeapValue<'mem>, UrlEncodedError> {
+) -> Result<HeapValue<'mem, 'shape>, UrlEncodedError<'shape>> {
     trace!("Starting URL encoded form data deserialization");
 
     // Parse the URL encoded string into key-value pairs
@@ -177,10 +177,10 @@ impl NestedValues {
 }
 
 /// Deserialize a value recursively using the nested values
-fn deserialize_value<'mem>(
-    wip: Wip<'mem>,
+fn deserialize_value<'mem, 'shape>(
+    wip: Wip<'mem, 'shape>,
     values: &NestedValues,
-) -> Result<HeapValue<'mem>, UrlEncodedError> {
+) -> Result<HeapValue<'mem, 'shape>, UrlEncodedError<'shape>> {
     let shape = wip.shape();
     match shape.ty {
         Type::User(UserType::Struct(_)) => {
@@ -223,11 +223,11 @@ fn deserialize_value<'mem>(
 }
 
 /// Helper function to deserialize a scalar field
-fn deserialize_scalar_field<'mem>(
+fn deserialize_scalar_field<'mem, 'shape>(
     key: &str,
     value: &str,
-    wip: Wip<'mem>,
-) -> Result<Wip<'mem>, UrlEncodedError> {
+    wip: Wip<'mem, 'shape>,
+) -> Result<Wip<'mem, 'shape>, UrlEncodedError<'shape>> {
     match wip.shape().def {
         Def::Scalar(_sd) => {
             let wip = if wip.shape().is_type::<String>() {
@@ -260,11 +260,11 @@ fn deserialize_scalar_field<'mem>(
 }
 
 /// Helper function to deserialize a nested field
-fn deserialize_nested_field<'mem>(
+fn deserialize_nested_field<'mem, 'shape>(
     key: &str,
     nested_values: &NestedValues,
-    wip: Wip<'mem>,
-) -> Result<Wip<'mem>, UrlEncodedError> {
+    wip: Wip<'mem, 'shape>,
+) -> Result<Wip<'mem, 'shape>, UrlEncodedError<'shape>> {
     let shape = wip.shape();
     match shape.ty {
         Type::User(UserType::Struct(_)) => {
@@ -306,7 +306,7 @@ fn deserialize_nested_field<'mem>(
 /// Errors that can occur during URL encoded form data deserialization.
 #[derive(Debug)]
 #[non_exhaustive]
-pub enum UrlEncodedError {
+pub enum UrlEncodedError<'shape> {
     /// The field value couldn't be parsed as a number.
     InvalidNumber(String, String),
     /// The shape is not supported for deserialization.
@@ -314,16 +314,16 @@ pub enum UrlEncodedError {
     /// The type is not supported for deserialization.
     UnsupportedType(String),
     /// Reflection error
-    ReflectError(facet_reflect::ReflectError),
+    ReflectError(facet_reflect::ReflectError<'shape>),
 }
 
-impl From<facet_reflect::ReflectError> for UrlEncodedError {
-    fn from(err: facet_reflect::ReflectError) -> Self {
+impl<'shape> From<facet_reflect::ReflectError<'shape>> for UrlEncodedError<'shape> {
+    fn from(err: facet_reflect::ReflectError<'shape>) -> Self {
         UrlEncodedError::ReflectError(err)
     }
 }
 
-impl core::fmt::Display for UrlEncodedError {
+impl<'shape> core::fmt::Display for UrlEncodedError<'shape> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             UrlEncodedError::InvalidNumber(field, value) => {
@@ -342,4 +342,4 @@ impl core::fmt::Display for UrlEncodedError {
     }
 }
 
-impl std::error::Error for UrlEncodedError {}
+impl<'shape> std::error::Error for UrlEncodedError<'shape> {}
