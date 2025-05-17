@@ -37,14 +37,14 @@ impl core::fmt::Debug for ValueId<'_> {
 
 /// Lets you read from a value (implements read-only [`ValueVTable`] proxies)
 #[derive(Clone, Copy)]
-pub struct Peek<'mem, 'facet_lifetime, 'shape> {
+pub struct Peek<'mem, 'facet, 'shape> {
     /// Underlying data
     pub(crate) data: PtrConst<'mem>,
 
     /// Shape of the value
     pub(crate) shape: &'shape Shape<'shape>,
 
-    invariant: PhantomData<fn(&'facet_lifetime ()) -> &'facet_lifetime ()>,
+    invariant: PhantomData<fn(&'facet ()) -> &'facet ()>,
 }
 
 impl<'mem, 'facet_lifetime, 'shape> Peek<'mem, 'facet_lifetime, 'shape> {

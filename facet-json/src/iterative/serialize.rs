@@ -4,7 +4,13 @@ use log::debug;
 use std::io::{self, Write};
 
 /// Serializes a Peek instance to a writer in JSON format
-pub(crate) fn peek_to_writer<W: Write>(peek: Peek<'_, '_>, writer: &mut W) -> io::Result<()> {
+pub(crate) fn peek_to_writer<'mem, 'facet, 'shape, W: Write>(
+    peek: Peek<'mem, 'facet, 'shape>,
+    writer: &mut W,
+) -> io::Result<()>
+where
+    'mem: 'facet,
+{
     let mut serializer = JsonSerializer::new(writer);
     serialize_iterative(peek, &mut serializer)
 }
@@ -80,7 +86,7 @@ where
     }
 }
 
-impl<W> Serializer for JsonSerializer<W>
+impl<'shape, W> Serializer<'shape> for JsonSerializer<W>
 where
     W: Write,
 {
@@ -209,7 +215,7 @@ where
     fn serialize_unit_variant(
         &mut self,
         _variant_index: usize,
-        variant_name: &'static str,
+        variant_name: &'shape str,
     ) -> Result<(), Self::Error> {
         self.start_value()?;
         crate::write_json_string(&mut self.writer, variant_name)?;
@@ -269,7 +275,7 @@ where
         self.end_object()
     }
 
-    fn serialize_field_name(&mut self, name: &'static str) -> Result<(), Self::Error> {
+    fn serialize_field_name(&mut self, name: &'shape str) -> Result<(), Self::Error> {
         // Handle object key comma logic
         if let Some(StackItem::ObjectItem { object_state }) = self.stack.last_mut() {
             match object_state {

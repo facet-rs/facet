@@ -6,12 +6,12 @@ use super::HasFields;
 
 /// Lets you read from an enum (implements read-only enum operations)
 #[derive(Clone, Copy)]
-pub struct PeekEnum<'mem, 'facet_lifetime, 'shape> {
+pub struct PeekEnum<'mem, 'facet, 'shape> {
     /// The internal data storage for the enum
     ///
     /// Note that this stores both the discriminant and the variant data
     /// (if any), and the layout depends on the enum representation.
-    pub(crate) value: Peek<'mem, 'facet_lifetime, 'shape>,
+    pub(crate) value: Peek<'mem, 'facet, 'shape>,
 
     /// The definition of the enum.
     pub(crate) ty: EnumType<'shape>,
@@ -45,8 +45,8 @@ pub fn peek_enum_variants<'shape>(shape: &'shape Shape) -> Option<&'shape [Varia
     peek_enum(shape).map(|enum_def| enum_def.variants)
 }
 
-impl<'mem, 'facet_lifetime, 'shape> core::ops::Deref for PeekEnum<'mem, 'facet_lifetime, 'shape> {
-    type Target = Peek<'mem, 'facet_lifetime, 'shape>;
+impl<'mem, 'facet, 'shape> core::ops::Deref for PeekEnum<'mem, 'facet, 'shape> {
+    type Target = Peek<'mem, 'facet, 'shape>;
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
@@ -54,7 +54,7 @@ impl<'mem, 'facet_lifetime, 'shape> core::ops::Deref for PeekEnum<'mem, 'facet_l
     }
 }
 
-impl<'mem, 'facet_lifetime, 'shape> PeekEnum<'mem, 'facet_lifetime, 'shape> {
+impl<'mem, 'facet, 'shape> PeekEnum<'mem, 'facet, 'shape> {
     /// Returns the enum definition
     #[inline(always)]
     pub fn ty(self) -> EnumType<'shape> {
@@ -204,10 +204,7 @@ impl<'mem, 'facet_lifetime, 'shape> PeekEnum<'mem, 'facet_lifetime, 'shape> {
     // variant_data has been removed to reduce unsafe code exposure
 
     /// Returns a PeekValue handle to a field of a tuple or struct variant by index
-    pub fn field(
-        self,
-        index: usize,
-    ) -> Result<Option<Peek<'mem, 'facet_lifetime, 'shape>>, VariantError> {
+    pub fn field(self, index: usize) -> Result<Option<Peek<'mem, 'facet, 'shape>>, VariantError> {
         let variant = self.active_variant()?;
         let fields = &variant.data.fields;
 
@@ -236,7 +233,7 @@ impl<'mem, 'facet_lifetime, 'shape> PeekEnum<'mem, 'facet_lifetime, 'shape> {
     pub fn field_by_name(
         self,
         field_name: &str,
-    ) -> Result<Option<Peek<'mem, 'facet_lifetime, 'shape>>, VariantError> {
+    ) -> Result<Option<Peek<'mem, 'facet, 'shape>>, VariantError> {
         let index_opt = self.field_index(field_name)?;
         match index_opt {
             Some(index) => self.field(index),
@@ -245,14 +242,13 @@ impl<'mem, 'facet_lifetime, 'shape> PeekEnum<'mem, 'facet_lifetime, 'shape> {
     }
 }
 
-impl<'mem, 'facet_lifetime, 'shape> HasFields<'mem, 'facet_lifetime, 'shape>
-    for PeekEnum<'mem, 'facet_lifetime, 'shape>
+impl<'mem, 'facet, 'shape> HasFields<'mem, 'facet, 'shape> for PeekEnum<'mem, 'facet, 'shape>
 where
-    'mem: 'facet_lifetime,
+    'mem: 'facet,
 {
     fn fields(
         &self,
-    ) -> impl DoubleEndedIterator<Item = (Field<'shape>, Peek<'mem, 'facet_lifetime, 'shape>)> {
+    ) -> impl DoubleEndedIterator<Item = (Field<'shape>, Peek<'mem, 'facet, 'shape>)> {
         // Get the active variant and its fields
         let variant = match self.active_variant() {
             Ok(v) => v,

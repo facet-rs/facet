@@ -55,8 +55,8 @@ enum SeqKind {
 }
 
 /// Stack item for iterative traversal
-struct StackItem<'a, 'facet_lifetime, 'shape> {
-    value: Peek<'a, 'facet_lifetime, 'shape>,
+struct StackItem<'mem, 'facet, 'shape> {
+    value: Peek<'mem, 'facet, 'shape>,
     format_depth: usize,
     type_depth: usize,
     state: StackState,
@@ -769,10 +769,10 @@ impl PrettyPrinter {
         Ok(())
     }
 
-    fn handle_list<'a, 'facet_lifetime, 'shape>(
+    fn handle_list<'mem, 'facet, 'shape>(
         &self,
-        stack: &mut VecDeque<StackItem<'a, 'facet_lifetime, 'shape>>,
-        mut item: StackItem<'a, 'facet_lifetime, 'shape>,
+        stack: &mut VecDeque<StackItem<'mem, 'facet, 'shape>>,
+        mut item: StackItem<'mem, 'facet, 'shape>,
         f: &mut impl Write,
     ) -> fmt::Result {
         let list = item.value.into_list_like().unwrap();
@@ -819,7 +819,7 @@ impl PrettyPrinter {
         let color = self.color_generator.generate_color(hash);
 
         // Display the value
-        struct DisplayWrapper<'a, 'facet_lifetime, 'shape>(&'a Peek<'a, 'facet_lifetime, 'shape>);
+        struct DisplayWrapper<'mem, 'facet, 'shape>(&'mem Peek<'mem, 'facet, 'shape>);
 
         impl fmt::Display for DisplayWrapper<'_, '_, '_> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -856,7 +856,7 @@ impl PrettyPrinter {
 
     /// Write styled type name to formatter
     fn write_type_name<W: fmt::Write>(&self, f: &mut W, peek: &Peek) -> fmt::Result {
-        struct TypeNameWriter<'a, 'facet_lifetime, 'shape>(&'a Peek<'a, 'facet_lifetime, 'shape>);
+        struct TypeNameWriter<'mem, 'facet, 'shape>(&'mem Peek<'mem, 'facet, 'shape>);
 
         impl core::fmt::Display for TypeNameWriter<'_, '_, '_> {
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

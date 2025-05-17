@@ -9,17 +9,13 @@ use log::trace;
 
 use crate::tokenizer::{Token, TokenError, TokenErrorKind, Tokenizer};
 
-pub(crate) fn from_slice<'input: 'facet, 'facet, T: Facet<'facet>>(
+pub(crate) fn from_slice<'input, 'facet, 'shape, T: Facet<'facet>>(
     input: &'input [u8],
-) -> Result<T, DeserError<'input>> {
+) -> Result<T, DeserError<'input, 'shape>>
+where
+    'input: 'facet,
+{
     facet_deserialize::deserialize(input, crate::Json)
-}
-
-pub(crate) fn from_str_static_error<'input: 'facet, 'facet, T: Facet<'facet>>(
-    input: &'input str,
-) -> Result<T, DeserError<'input>> {
-    let input = input.as_bytes();
-    facet_deserialize::deserialize(input, crate::Json).map_err(|e| e.into_owned())
 }
 
 impl Format for crate::Json {
@@ -29,11 +25,14 @@ impl Format for crate::Json {
         "json"
     }
 
-    fn next<'input, 'facet>(
+    fn next<'input, 'facet, 'shape>(
         &mut self,
-        nd: NextData<'input, 'facet>,
+        nd: NextData<'input, 'facet, 'shape>,
         mut expectation: Expectation,
-    ) -> NextResult<'input, 'facet, Spanned<Outcome<'input>>, Spanned<DeserErrorKind>> {
+    ) -> NextResult<'input, 'facet, 'shape, Spanned<Outcome<'input>>, Spanned<DeserErrorKind<'shape>>>
+    where
+        'shape: 'input,
+    {
         let input = &nd.input()[nd.start()..];
         let mut tokenizer = Tokenizer::new(input);
 
@@ -158,10 +157,13 @@ impl Format for crate::Json {
         }
     }
 
-    fn skip<'input, 'facet>(
+    fn skip<'input, 'facet, 'shape>(
         &mut self,
-        nd: NextData<'input, 'facet>,
-    ) -> NextResult<'input, 'facet, Span, Spanned<DeserErrorKind>> {
+        nd: NextData<'input, 'facet, 'shape>,
+    ) -> NextResult<'input, 'facet, 'shape, Span, Spanned<DeserErrorKind<'shape>>>
+    where
+        'shape: 'input,
+    {
         trace!("Starting skip at offset {}", nd.start());
         let input = &nd.input()[nd.start()..];
         let mut tokenizer = Tokenizer::new(input);
@@ -234,7 +236,7 @@ impl Format for crate::Json {
     }
 }
 
-fn convert_token_error(err: TokenError) -> Spanned<DeserErrorKind> {
+fn convert_token_error(err: TokenError) -> Spanned<DeserErrorKind<'static>> {
     match err.kind {
         TokenErrorKind::UnexpectedCharacter(c) => DeserErrorKind::UnexpectedChar {
             got: c,

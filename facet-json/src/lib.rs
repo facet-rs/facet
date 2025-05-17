@@ -24,58 +24,65 @@ const MAX_RECURSION_DEPTH: usize = 100;
 
 /// Deserialize JSON from a given byte slice
 #[cfg(feature = "std")]
-pub fn from_slice<'input: 'facet, 'facet, T: Facet<'facet>>(
+pub fn from_slice<'input, 'facet, 'shape, T: Facet<'facet>>(
     input: &'input [u8],
-) -> Result<T, DeserError<'input>> {
+) -> Result<T, DeserError<'input, 'shape>>
+where
+    'input: 'facet,
+{
     recursive::from_slice(input, 0)
 }
 
 /// Deserialize JSON from a given string
 #[cfg(feature = "std")]
-pub fn from_str<'input: 'facet, 'facet, T: Facet<'facet>>(
+pub fn from_str<'input, 'facet, 'shape, T: Facet<'facet>>(
     input: &'input str,
-) -> Result<T, DeserError<'input>> {
+) -> Result<T, DeserError<'input, 'shape>>
+where
+    'input: 'facet,
+{
     recursive::from_str(input, 0)
-}
-
-/// Deserialize JSON from a given string, converting any dynamic error into a static one.
-///
-/// This function attempts to deserialize a type `T` implementing `Facet` from the input string slice.
-/// If deserialization fails, the error is converted into an owned, static error type to avoid lifetime issues.
-#[cfg(feature = "std")]
-pub fn from_str_static_error<'input: 'facet, 'facet, T: Facet<'facet>>(
-    input: &'input str,
-) -> Result<T, DeserError<'input>> {
-    recursive::from_str_static_error(input, 0)
 }
 
 /// Serializes a value to JSON
 #[cfg(feature = "std")]
-pub fn to_string<'facet, T: Facet<'facet>>(value: &T) -> String {
+pub fn to_string<'input, 'facet, T: Facet<'facet>>(value: &'input T) -> String
+where
+    'input: 'facet,
+{
     recursive::to_string(value, 0)
 }
 
 /// Serializes a Peek instance to JSON
 #[cfg(feature = "std")]
-pub fn peek_to_string<'facet: 'input, 'input: 'facet>(peek: Peek<'input, 'facet>) -> String {
+pub fn peek_to_string<'input, 'facet, 'shape>(peek: Peek<'input, 'facet, 'shape>) -> String
+where
+    'input: 'facet,
+{
     recursive::peek_to_string(peek, 0)
 }
 
 /// Serializes a value to a writer in JSON format
 #[cfg(feature = "std")]
-pub fn to_writer<'mem: 'facet, 'facet, T: Facet<'facet>, W: Write>(
+pub fn to_writer<'mem, 'facet, T: Facet<'facet>, W: Write>(
     value: &'mem T,
     writer: &mut W,
-) -> io::Result<()> {
+) -> io::Result<()>
+where
+    'mem: 'facet,
+{
     recursive::to_writer(value, writer)
 }
 
 /// Serializes a Peek instance to a writer in JSON format
 #[cfg(feature = "std")]
-pub fn peek_to_writer<'mem: 'facet, 'facet, W: Write>(
-    peek: Peek<'mem, 'facet>,
+pub fn peek_to_writer<'mem, 'facet, 'shape, W: Write>(
+    peek: Peek<'mem, 'facet, 'shape>,
     writer: &mut W,
-) -> io::Result<()> {
+) -> io::Result<()>
+where
+    'mem: 'facet,
+{
     recursive::peek_to_writer(peek, None, 0, writer)
 }
 
