@@ -1,8 +1,8 @@
-use facet_core::{EnumRepr, EnumType, Field, Shape, UserType, Variant};
+use facet_core::{EnumRepr, EnumType, Shape, UserType, Variant};
 
 use crate::{Peek, trace};
 
-use super::HasFields;
+use super::{FieldIter, HasFields};
 
 /// Lets you read from an enum (implements read-only enum operations)
 #[derive(Clone, Copy)]
@@ -243,29 +243,8 @@ impl<'mem, 'facet, 'shape> PeekEnum<'mem, 'facet, 'shape> {
 }
 
 impl<'mem, 'facet, 'shape> HasFields<'mem, 'facet, 'shape> for PeekEnum<'mem, 'facet, 'shape> {
-    fn fields(
-        &self,
-    ) -> impl DoubleEndedIterator<Item = (Field<'shape>, Peek<'mem, 'facet, 'shape>)> {
-        // Get the active variant and its fields
-        let variant = match self.active_variant() {
-            Ok(v) => v,
-            Err(e) => panic!("Cannot get active variant: {:?}", e),
-        };
-        let fields = &variant.data.fields;
-
-        // Create an iterator that yields the field definition and field value
-        (0..fields.len()).filter_map(move |i| {
-            // Get the field definition
-            let field = fields[i];
-            // Get the field value
-            let field_value = match self.field(i) {
-                Ok(Some(v)) => v,
-                Ok(None) => return None,
-                Err(e) => panic!("Cannot get field: {:?}", e),
-            };
-            // Return the field definition and value
-            Some((field, field_value))
-        })
+    fn fields(&self) -> FieldIter<'mem, 'facet, 'shape> {
+        FieldIter::new_enum(*self)
     }
 }
 

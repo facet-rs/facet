@@ -1,8 +1,8 @@
-use facet_core::{Field, FieldError, StructType};
+use facet_core::{FieldError, StructType};
 
 use crate::Peek;
 
-use super::HasFields;
+use super::{FieldIter, HasFields};
 
 /// Lets you read from a struct (implements read-only struct operations)
 #[derive(Clone, Copy)]
@@ -64,13 +64,7 @@ impl<'mem, 'facet, 'shape> PeekStruct<'mem, 'facet, 'shape> {
 impl<'mem, 'facet, 'shape> HasFields<'mem, 'facet, 'shape> for PeekStruct<'mem, 'facet, 'shape> {
     /// Iterates over all fields in this struct, providing both name and value
     #[inline]
-    fn fields(
-        &self,
-    ) -> impl DoubleEndedIterator<Item = (Field<'shape>, Peek<'mem, 'facet, 'shape>)> {
-        (0..self.field_count()).filter_map(|i| {
-            let field = self.ty.fields.get(i).copied()?;
-            let value = self.field(i).ok()?;
-            Some((field, value))
-        })
+    fn fields(&self) -> FieldIter<'mem, 'facet, 'shape> {
+        FieldIter::new_struct(*self)
     }
 }
