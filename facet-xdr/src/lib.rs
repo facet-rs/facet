@@ -58,7 +58,7 @@ struct XdrSerializer<'w, W: Write> {
     writer: &'w mut W,
 }
 
-impl<W: Write> Serializer for XdrSerializer<'_, W> {
+impl<'shape, W: Write> Serializer<'shape> for XdrSerializer<'_, W> {
     type Error = XdrSerError;
 
     fn serialize_u32(&mut self, value: u32) -> Result<(), Self::Error> {
@@ -151,7 +151,7 @@ impl<W: Write> Serializer for XdrSerializer<'_, W> {
     fn serialize_unit_variant(
         &mut self,
         _variant_index: usize,
-        _variant_name: &'static str,
+        _variant_name: &'shape str,
     ) -> Result<(), Self::Error> {
         Ok(())
     }
@@ -160,7 +160,7 @@ impl<W: Write> Serializer for XdrSerializer<'_, W> {
         Ok(())
     }
 
-    fn serialize_field_name(&mut self, _name: &'static str) -> Result<(), Self::Error> {
+    fn serialize_field_name(&mut self, _name: &'shape str) -> Result<(), Self::Error> {
         Ok(())
     }
 
@@ -272,13 +272,13 @@ enum DeserializeTask {
     Pop(PopReason),
 }
 
-struct XdrDeserializerStack<'r> {
-    input: &'r [u8],
+struct XdrDeserializerStack<'input> {
+    input: &'input [u8],
     pos: usize,
     stack: Vec<DeserializeTask>,
 }
 
-impl<'r> XdrDeserializerStack<'r> {
+impl<'shape, 'input> XdrDeserializerStack<'input> {
     fn next_u32(&mut self) -> Result<u32, XdrDeserError> {
         assert_eq!(self.pos % 4, 0);
         if self.input[self.pos..].len() < 4 {
@@ -299,7 +299,7 @@ impl<'r> XdrDeserializerStack<'r> {
         Ok(u64::from_be_bytes(bytes.try_into().unwrap()))
     }
 
-    fn next_data(&mut self, expected_len: Option<u32>) -> Result<&'r [u8], XdrDeserError> {
+    fn next_data(&mut self, expected_len: Option<u32>) -> Result<&'input [u8], XdrDeserError> {
         let len = self.next_u32()? as usize;
         if let Some(expected_len) = expected_len {
             assert_eq!(len, expected_len as usize);
@@ -313,7 +313,7 @@ impl<'r> XdrDeserializerStack<'r> {
         Ok(data)
     }
 
-    fn next<'f>(&mut self, wip: Wip<'f>) -> Result<Wip<'f>, XdrDeserError> {
+    fn next<'f>(&mut self, wip: Wip<'f, 'shape>) -> Result<Wip<'f, 'shape>, XdrDeserError> {
         match (wip.shape().def, wip.shape().ty) {
             (Def::Scalar(sd), _) => match sd.affinity {
                 ScalarAffinity::Number(na) => match na.bits {
@@ -495,7 +495,10 @@ impl<'r> XdrDeserializerStack<'r> {
 }
 
 /// Deserialize an XDR slice given some some [`Wip`] into a [`HeapValue`]
-pub fn deserialize_wip<'f>(input: &[u8], mut wip: Wip<'f>) -> Result<HeapValue<'f>, XdrDeserError> {
+pub fn deserialize_wip<'facet, 'shape>(
+    input: &[u8],
+    mut wip: Wip<'facet, 'shape>,
+) -> Result<HeapValue<'facet, 'shape>, XdrDeserError> {
     let mut runner = XdrDeserializerStack {
         input,
         pos: 0,
