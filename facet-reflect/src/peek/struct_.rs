@@ -67,7 +67,6 @@ impl<'mem, 'facet_lifetime, 'shape> HasFields<'mem, 'facet_lifetime, 'shape>
     for PeekStruct<'mem, 'facet_lifetime, 'shape>
 where
     'mem: 'facet_lifetime,
-    'facet_lifetime: 'shape,
 {
     /// Iterates over all fields in this struct, providing both name and value
     #[inline]
@@ -88,7 +87,6 @@ where
 /// that provide field access and iteration capabilities.
 pub trait HasFields<'mem, 'facet_lifetime, 'shape>
 where
-    'facet_lifetime: 'shape,
     'mem: 'facet_lifetime,
 {
     /// Iterates over all fields in this type, providing both field metadata and value

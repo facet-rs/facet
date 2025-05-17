@@ -248,7 +248,6 @@ impl<'mem, 'facet_lifetime, 'shape> PeekEnum<'mem, 'facet_lifetime, 'shape> {
 impl<'mem, 'facet_lifetime, 'shape> HasFields<'mem, 'facet_lifetime, 'shape>
     for PeekEnum<'mem, 'facet_lifetime, 'shape>
 where
-    'facet_lifetime: 'shape,
     'mem: 'facet_lifetime,
 {
     fn fields(

@@ -136,10 +136,7 @@ pub enum FrameMode {
 ///
 /// * `'facet_lifetime`: The lifetime of borrowed values within the structure
 /// * `'shape`: The lifetime of the Shape structure itself (often 'static)
-pub struct Wip<'facet_lifetime, 'shape>
-where
-    'facet_lifetime: 'shape,
-{
+pub struct Wip<'facet_lifetime, 'shape> {
     /// stack of frames to keep track of deeply nested initialization
     frames: alloc::vec::Vec<Frame<'shape>>,
 
@@ -149,10 +146,7 @@ where
     invariant: PhantomData<fn(&'facet_lifetime ()) -> &'facet_lifetime ()>,
 }
 
-impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape>
-where
-    'facet_lifetime: 'shape, // Ensure 'facet_lifetime outlives 'shape
-{
+impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     /// Puts the value from a Peek into the current frame.
     pub fn put_peek(
         self,

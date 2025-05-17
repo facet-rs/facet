@@ -7,10 +7,7 @@ use crate::{debug, trace};
 
 use super::Wip;
 
-impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape>
-where
-    'facet_lifetime: 'shape, // Ensure 'facet_lifetime outlives 'shape
-{
+impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     /// Puts a value from a `PtrConst` with the given shape into the current frame.
     pub fn put_shape(
         mut self,
