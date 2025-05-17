@@ -117,6 +117,16 @@ where
                                     let vec = ptr.get::<Self>();
                                     vec.len()
                                 })
+                                .get(|ptr, index| unsafe {
+                                    let vec = ptr.get::<Self>();
+                                    let item = vec.get(index)?;
+                                    Some(PtrConst::new(item))
+                                })
+                                .get_mut(|ptr, index| unsafe {
+                                    let vec = ptr.as_mut::<Self>();
+                                    let item = vec.get_mut(index)?;
+                                    Some(PtrMut::new(item))
+                                })
                                 .as_ptr(|ptr| unsafe {
                                     let vec = ptr.get::<Self>();
                                     PtrConst::new(vec.as_ptr())
