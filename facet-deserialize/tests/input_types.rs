@@ -30,15 +30,16 @@ mod tests {
         /// Rather than actually parsing input bytes, this implementation simulates
         /// a parsing process by returning a fixed sequence of tokens based on the
         /// current position in the input.
-        fn next<'input, 'facet>(
+        fn next<'input, 'facet, 'shape>(
             &mut self,
-            nd: NextData<'input, 'facet, Self::Input<'input>>,
+            nd: NextData<'input, 'facet, 'shape, Self::Input<'input>>,
             _exp: Expectation,
         ) -> NextResult<
             'input,
             'facet,
+            'shape,
             Spanned<Outcome<'input>>,
-            Spanned<DeserErrorKind>,
+            Spanned<DeserErrorKind<'shape>>,
             Self::Input<'input>,
         > {
             // Use the start position to determine which token to return
@@ -124,11 +125,17 @@ mod tests {
         }
 
         /// Minimal implementation of the skip method required by the Format trait.
-        fn skip<'input, 'facet>(
+        fn skip<'input, 'facet, 'shape>(
             &mut self,
-            nd: NextData<'input, 'facet, Self::Input<'input>>,
-        ) -> NextResult<'input, 'facet, Span, Spanned<DeserErrorKind>, Self::Input<'input>>
-        {
+            nd: NextData<'input, 'facet, 'shape, Self::Input<'input>>,
+        ) -> NextResult<
+            'input,
+            'facet,
+            'shape,
+            Span,
+            Spanned<DeserErrorKind<'shape>>,
+            Self::Input<'input>,
+        > {
             // Simply advance the position by 1
             let position = nd.start();
             let span = Span::new(position, 1);
@@ -171,15 +178,16 @@ mod tests {
         ///
         /// Simulates parsing of arguments in the pattern:
         /// ["--nom", "test"]
-        fn next<'input, 'facet>(
+        fn next<'input, 'facet, 'shape>(
             &mut self,
-            nd: NextData<'input, 'facet, Self::Input<'input>>,
+            nd: NextData<'input, 'facet, 'shape, Self::Input<'input>>,
             exp: Expectation,
         ) -> NextResult<
             'input,
             'facet,
+            'shape,
             Spanned<Outcome<'input>>,
-            Spanned<DeserErrorKind>,
+            Spanned<DeserErrorKind<'shape>>,
             Self::Input<'input>,
         > {
             // Use the start position and expectation to determine which token to return
@@ -296,11 +304,17 @@ mod tests {
             }
         }
 
-        fn skip<'input, 'facet>(
+        fn skip<'input, 'facet, 'shape>(
             &mut self,
-            nd: NextData<'input, 'facet, Self::Input<'input>>,
-        ) -> NextResult<'input, 'facet, Span, Spanned<DeserErrorKind>, Self::Input<'input>>
-        {
+            nd: NextData<'input, 'facet, 'shape, Self::Input<'input>>,
+        ) -> NextResult<
+            'input,
+            'facet,
+            'shape,
+            Span,
+            Spanned<DeserErrorKind<'shape>>,
+            Self::Input<'input>,
+        > {
             // Simply return a span that advances the position
             let position = nd.start();
             let span = Span::new(position, 1); // Length 1 to advance position
