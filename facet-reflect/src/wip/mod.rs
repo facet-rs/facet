@@ -686,10 +686,7 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     /// * `None` if the current frame is not a struct or an enum with a selected variant,
     ///   or if the field doesn't exist.
     pub fn field_index(&self, name: &str) -> Option<usize> {
-        fn find_field_index<'shape>(
-            fields: &'shape [facet_core::Field],
-            name: &str,
-        ) -> Option<usize> {
+        fn find_field_index(fields: &[facet_core::Field], name: &str) -> Option<usize> {
             fields.iter().position(|f| f.name == name)
         }
 

@@ -36,7 +36,7 @@ pub fn peek_enum<'shape>(shape: &'shape Shape) -> Option<EnumType<'shape>> {
 }
 
 /// Returns the enum representation if the shape represents an enum, None otherwise
-pub fn peek_enum_repr<'shape>(shape: &'shape Shape) -> Option<EnumRepr> {
+pub fn peek_enum_repr(shape: &Shape) -> Option<EnumRepr> {
     peek_enum(shape).map(|enum_def| enum_def.enum_repr)
 }
 

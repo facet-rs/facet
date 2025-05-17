@@ -108,7 +108,6 @@ where
                     if let Ok(struct_peek) = peek.into_struct() {
                         struct_peek
                             .fields_for_serialize()
-                            .into_iter()
                             .for_each(|item| flattened.push(item));
                     } else if let Ok(enum_peek) = peek.into_enum() {
                         // normally we'd serialize to something like:
