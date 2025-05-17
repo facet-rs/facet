@@ -571,7 +571,9 @@ where
                                 stack.push(SerializeTask::EndArray);
 
                                 // Push fields in reverse order for tuple variant
-                                for (field, field_peek) in peek_enum.fields_for_serialize().rev() {
+                                let fields_for_serialize =
+                                    peek_enum.fields_for_serialize().collect::<Vec<_>>();
+                                for (field, field_peek) in fields_for_serialize.into_iter().rev() {
                                     stack.push(SerializeTask::Value(field_peek, Some(field)));
                                 }
                             } else {
@@ -581,7 +583,9 @@ where
                                 stack.push(SerializeTask::EndObject);
 
                                 // Push fields in reverse order for struct variant
-                                for (field, field_peek) in peek_enum.fields_for_serialize().rev() {
+                                let fields_for_serialize =
+                                    peek_enum.fields_for_serialize().collect::<Vec<_>>();
+                                for (field, field_peek) in fields_for_serialize.into_iter().rev() {
                                     stack.push(SerializeTask::EndField);
                                     stack.push(SerializeTask::Value(field_peek, Some(field)));
                                     stack.push(SerializeTask::SerializeFieldName(field.name));
@@ -623,7 +627,8 @@ where
             // --- Pushing sub-elements onto the stack ---
             SerializeTask::ObjectFields(peek_struct) => {
                 // Push fields in reverse order for stack processing
-                for (field, field_peek) in peek_struct.fields_for_serialize().rev() {
+                let fields_for_serialize = peek_struct.fields_for_serialize().collect::<Vec<_>>();
+                for (field, field_peek) in fields_for_serialize.into_iter().rev() {
                     stack.push(SerializeTask::EndField);
                     stack.push(SerializeTask::Value(field_peek, Some(field)));
                     stack.push(SerializeTask::SerializeFieldName(field.name));
@@ -631,7 +636,8 @@ where
             }
             SerializeTask::TupleStructFields(peek_struct) => {
                 // Push fields in reverse order
-                for (field, field_peek) in peek_struct.fields_for_serialize().rev() {
+                let fields_for_serialize = peek_struct.fields_for_serialize().collect::<Vec<_>>();
+                for (field, field_peek) in fields_for_serialize.into_iter().rev() {
                     stack.push(SerializeTask::Value(field_peek, Some(field)));
                 }
             }
