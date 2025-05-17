@@ -43,6 +43,19 @@ impl<'mem, 'facet_lifetime> Iterator for PeekListIter<'mem, 'facet_lifetime> {
 
 impl ExactSizeIterator for PeekListIter<'_, '_> {}
 
+impl Drop for PeekListIter<'_, '_> {
+    fn drop(&mut self) {
+        match self.state {
+            PeekListIterState::Iter { iter } => unsafe {
+                (self.def.vtable.iter_vtable.dealloc)(iter)
+            },
+            PeekListIterState::Ptr { .. } => {
+                // Nothing to do
+            }
+        }
+    }
+}
+
 impl<'mem, 'facet_lifetime> IntoIterator for &'mem PeekList<'mem, 'facet_lifetime> {
     type Item = Peek<'mem, 'facet_lifetime>;
     type IntoIter = PeekListIter<'mem, 'facet_lifetime>;

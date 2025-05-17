@@ -92,6 +92,17 @@ enum PeekListLikeIterState<'mem> {
     },
 }
 
+impl Drop for PeekListLikeIterState<'_> {
+    fn drop(&mut self) {
+        match self {
+            Self::Iter { iter, vtable } => unsafe { (vtable.dealloc)(*iter) },
+            Self::Ptr { .. } => {
+                // Nothing to do
+            }
+        }
+    }
+}
+
 /// Lets you read from a list, array or slice
 #[derive(Clone, Copy)]
 pub struct PeekListLike<'mem, 'facet_lifetime> {
