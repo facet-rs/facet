@@ -10,7 +10,7 @@ use crate::{FrameMode, ReflectError};
 
 use super::{Frame, Wip};
 
-impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
+impl<'facet, 'shape> Wip<'facet, 'shape> {
     /// Pops the current frame — goes back up one level
     pub fn pop(mut self) -> Result<Self, ReflectError<'shape>> {
         let frame = match self.pop_inner()? {

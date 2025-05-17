@@ -2,15 +2,15 @@ use facet_core::{OptionDef, OptionVTable};
 
 /// Lets you read from an option (implements read-only option operations)
 #[derive(Clone, Copy)]
-pub struct PeekOption<'mem, 'facet_lifetime, 'shape> {
+pub struct PeekOption<'mem, 'facet, 'shape> {
     /// the underlying value
-    pub(crate) value: crate::Peek<'mem, 'facet_lifetime, 'shape>,
+    pub(crate) value: crate::Peek<'mem, 'facet, 'shape>,
 
     /// the definition of the option
     pub(crate) def: OptionDef<'shape>,
 }
 
-impl<'mem, 'facet_lifetime, 'shape> PeekOption<'mem, 'facet_lifetime, 'shape> {
+impl<'mem, 'facet, 'shape> PeekOption<'mem, 'facet, 'shape> {
     /// Returns the option definition
     #[inline(always)]
     pub fn def(self) -> OptionDef<'shape> {
@@ -36,7 +36,7 @@ impl<'mem, 'facet_lifetime, 'shape> PeekOption<'mem, 'facet_lifetime, 'shape> {
     }
 
     /// Returns the inner value as a Peek if the option is Some, None otherwise
-    pub fn value(self) -> Option<crate::Peek<'mem, 'facet_lifetime, 'shape>> {
+    pub fn value(self) -> Option<crate::Peek<'mem, 'facet, 'shape>> {
         unsafe {
             (self.vtable().get_value_fn)(self.value.data())
                 .map(|inner_data| crate::Peek::unchecked_new(inner_data, self.def.t()))

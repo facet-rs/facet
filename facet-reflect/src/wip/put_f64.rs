@@ -5,9 +5,9 @@ use core::num::{
 };
 use facet_core::{Def, ScalarAffinity};
 
-impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape>
+impl<'facet, 'shape> Wip<'facet, 'shape>
 where
-    'facet_lifetime: 'shape, // Ensure 'facet_lifetime outlives 'shape
+    'facet: 'shape,
 {
     /// Returns true if the current frame can accept a f64 into a supported numeric type.
     pub fn can_put_f64(&self) -> bool {

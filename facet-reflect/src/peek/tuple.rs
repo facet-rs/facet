@@ -4,13 +4,13 @@ use facet_core::TupleType;
 use super::Peek;
 
 /// Field index and associated peek value
-pub type TupleField<'mem, 'facet_lifetime, 'shape> = (usize, Peek<'mem, 'facet_lifetime, 'shape>);
+pub type TupleField<'mem, 'facet, 'shape> = (usize, Peek<'mem, 'facet, 'shape>);
 
 /// Lets you read from a tuple
 #[derive(Clone, Copy)]
-pub struct PeekTuple<'mem, 'facet_lifetime, 'shape> {
+pub struct PeekTuple<'mem, 'facet, 'shape> {
     /// Original peek value
-    pub(crate) value: Peek<'mem, 'facet_lifetime, 'shape>,
+    pub(crate) value: Peek<'mem, 'facet, 'shape>,
     /// Tuple type information
     pub(crate) ty: TupleType<'shape>,
 }
@@ -23,7 +23,7 @@ impl Debug for PeekTuple<'_, '_, '_> {
     }
 }
 
-impl<'mem, 'facet_lifetime, 'shape> PeekTuple<'mem, 'facet_lifetime, 'shape> {
+impl<'mem, 'facet, 'shape> PeekTuple<'mem, 'facet, 'shape> {
     /// Get the number of fields in this tuple
     pub fn len(&self) -> usize {
         self.ty.fields.len()
@@ -35,7 +35,7 @@ impl<'mem, 'facet_lifetime, 'shape> PeekTuple<'mem, 'facet_lifetime, 'shape> {
     }
 
     /// Access a field by index
-    pub fn field(&self, index: usize) -> Option<Peek<'mem, 'facet_lifetime, 'shape>> {
+    pub fn field(&self, index: usize) -> Option<Peek<'mem, 'facet, 'shape>> {
         if index >= self.len() {
             return None;
         }
@@ -50,9 +50,7 @@ impl<'mem, 'facet_lifetime, 'shape> PeekTuple<'mem, 'facet_lifetime, 'shape> {
     }
 
     /// Iterate over all fields
-    pub fn fields(
-        &self,
-    ) -> impl DoubleEndedIterator<Item = TupleField<'mem, 'facet_lifetime, 'shape>> + '_ {
+    pub fn fields(&self) -> impl DoubleEndedIterator<Item = TupleField<'mem, 'facet, 'shape>> + '_ {
         (0..self.len()).filter_map(|i| self.field(i).map(|p| (i, p)))
     }
 
@@ -62,7 +60,7 @@ impl<'mem, 'facet_lifetime, 'shape> PeekTuple<'mem, 'facet_lifetime, 'shape> {
     }
 
     /// Internal peek value
-    pub fn value(&self) -> Peek<'mem, 'facet_lifetime, 'shape> {
+    pub fn value(&self) -> Peek<'mem, 'facet, 'shape> {
         self.value
     }
 }

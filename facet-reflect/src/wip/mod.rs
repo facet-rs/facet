@@ -199,8 +199,8 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
     unsafe fn mark_moved_out_of(&mut self, frame: &mut Frame<'shape>) {
         // Recursively mark `istates` entries as MOVED and deallocate. Needed because
         // descendant values might be tracked separately in `istates`.
-        unsafe fn mark_subtree_moved<'facet_lifetime, 'shape>(
-            wip: &mut Wip<'facet_lifetime, 'shape>,
+        unsafe fn mark_subtree_moved<'facet, 'shape>(
+            wip: &mut Wip<'facet, 'shape>,
             id: ValueId<'shape>,
         ) {
             // Function requires unsafe due to pointer manipulation and potential deallocation.

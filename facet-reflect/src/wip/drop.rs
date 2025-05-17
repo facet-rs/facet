@@ -7,7 +7,7 @@ use owo_colors::OwoColorize;
 use super::Wip;
 use crate::{FrameFlags, FrameMode, Guard, ValueId, trace, wip::frame::Frame};
 
-impl<'facet_lifetime, 'shape> Drop for Wip<'facet_lifetime, 'shape> {
+impl<'facet, 'shape> Drop for Wip<'facet, 'shape> {
     fn drop(&mut self) {
         trace!("🧹🧹🧹 WIP is dropping");
 

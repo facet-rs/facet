@@ -7,13 +7,13 @@ use facet_core::{Facet, PtrConst, PtrMut, Shape};
 use owo_colors::OwoColorize as _;
 
 /// A type-erased value stored on the heap
-pub struct HeapValue<'facet_lifetime, 'shape> {
+pub struct HeapValue<'facet, 'shape> {
     pub(crate) guard: Option<Guard>,
     pub(crate) shape: &'shape Shape<'shape>,
-    pub(crate) phantom: PhantomData<&'facet_lifetime ()>,
+    pub(crate) phantom: PhantomData<&'facet ()>,
 }
 
-impl<'facet_lifetime, 'shape> Drop for HeapValue<'facet_lifetime, 'shape> {
+impl<'facet, 'shape> Drop for HeapValue<'facet, 'shape> {
     fn drop(&mut self) {
         if let Some(guard) = self.guard.take() {
             if let Some(drop_fn) = self.shape.vtable.drop_in_place {
@@ -24,14 +24,14 @@ impl<'facet_lifetime, 'shape> Drop for HeapValue<'facet_lifetime, 'shape> {
     }
 }
 
-impl<'facet_lifetime, 'shape> HeapValue<'facet_lifetime, 'shape> {
+impl<'facet, 'shape> HeapValue<'facet, 'shape> {
     /// Returns a peek that allows exploring the heap value.
-    pub fn peek(&self) -> Peek<'_, 'facet_lifetime, 'shape> {
+    pub fn peek(&self) -> Peek<'_, 'facet, 'shape> {
         unsafe { Peek::unchecked_new(PtrConst::new(self.guard.as_ref().unwrap().ptr), self.shape) }
     }
 
     /// Turn this heapvalue into a concrete type
-    pub fn materialize<T: Facet<'facet_lifetime>>(mut self) -> Result<T, ReflectError<'shape>> {
+    pub fn materialize<T: Facet<'facet>>(mut self) -> Result<T, ReflectError<'shape>> {
         if self.shape != T::SHAPE {
             return Err(ReflectError::WrongShape {
                 expected: self.shape,
@@ -47,7 +47,7 @@ impl<'facet_lifetime, 'shape> HeapValue<'facet_lifetime, 'shape> {
     }
 }
 
-impl<'facet_lifetime, 'shape> HeapValue<'facet_lifetime, 'shape> {
+impl<'facet, 'shape> HeapValue<'facet, 'shape> {
     /// Formats the value using its Display implementation, if available
     pub fn fmt_display(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if let Some(display_fn) = self.shape.vtable.display {
@@ -67,19 +67,19 @@ impl<'facet_lifetime, 'shape> HeapValue<'facet_lifetime, 'shape> {
     }
 }
 
-impl<'facet_lifetime, 'shape> core::fmt::Display for HeapValue<'facet_lifetime, 'shape> {
+impl<'facet, 'shape> core::fmt::Display for HeapValue<'facet, 'shape> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.fmt_display(f)
     }
 }
 
-impl<'facet_lifetime, 'shape> core::fmt::Debug for HeapValue<'facet_lifetime, 'shape> {
+impl<'facet, 'shape> core::fmt::Debug for HeapValue<'facet, 'shape> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.fmt_debug(f)
     }
 }
 
-impl<'facet_lifetime, 'shape> PartialEq for HeapValue<'facet_lifetime, 'shape> {
+impl<'facet, 'shape> PartialEq for HeapValue<'facet, 'shape> {
     fn eq(&self, other: &Self) -> bool {
         if self.shape != other.shape {
             return false;
@@ -97,7 +97,7 @@ impl<'facet_lifetime, 'shape> PartialEq for HeapValue<'facet_lifetime, 'shape> {
     }
 }
 
-impl<'facet_lifetime, 'shape> PartialOrd for HeapValue<'facet_lifetime, 'shape> {
+impl<'facet, 'shape> PartialOrd for HeapValue<'facet, 'shape> {
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         if self.shape != other.shape {
             return None;

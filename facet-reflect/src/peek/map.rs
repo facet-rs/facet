@@ -68,9 +68,9 @@ impl<'mem, 'facet, 'shape> core::fmt::Debug for PeekMap<'mem, 'facet, 'shape> {
     }
 }
 
-impl<'mem, 'facet_lifetime, 'shape> PeekMap<'mem, 'facet_lifetime, 'shape> {
+impl<'mem, 'facet, 'shape> PeekMap<'mem, 'facet, 'shape> {
     /// Constructor
-    pub fn new(value: Peek<'mem, 'facet_lifetime, 'shape>, def: MapDef<'shape>) -> Self {
+    pub fn new(value: Peek<'mem, 'facet, 'shape>, def: MapDef<'shape>) -> Self {
         Self { value, def }
     }
 
@@ -85,7 +85,7 @@ impl<'mem, 'facet_lifetime, 'shape> PeekMap<'mem, 'facet_lifetime, 'shape> {
     }
 
     /// Check if the map contains a key
-    pub fn contains_key(&self, key: &impl facet_core::Facet<'facet_lifetime>) -> bool {
+    pub fn contains_key(&self, key: &impl facet_core::Facet<'facet>) -> bool {
         unsafe {
             let key_ptr = PtrConst::new(key);
             (self.def.vtable.contains_key_fn)(self.value.data(), key_ptr)
@@ -95,8 +95,8 @@ impl<'mem, 'facet_lifetime, 'shape> PeekMap<'mem, 'facet_lifetime, 'shape> {
     /// Get a value from the map for the given key
     pub fn get<'k>(
         &self,
-        key: &'k impl facet_core::Facet<'facet_lifetime>,
-    ) -> Option<Peek<'mem, 'facet_lifetime, 'shape>> {
+        key: &'k impl facet_core::Facet<'facet>,
+    ) -> Option<Peek<'mem, 'facet, 'shape>> {
         unsafe {
             let key_ptr = PtrConst::new(key);
             let value_ptr = (self.def.vtable.get_value_ptr_fn)(self.value.data(), key_ptr)?;
@@ -105,7 +105,7 @@ impl<'mem, 'facet_lifetime, 'shape> PeekMap<'mem, 'facet_lifetime, 'shape> {
     }
 
     /// Returns an iterator over the key-value pairs in the map
-    pub fn iter(self) -> PeekMapIter<'mem, 'facet_lifetime, 'shape> {
+    pub fn iter(self) -> PeekMapIter<'mem, 'facet, 'shape> {
         let iter_init_with_value_fn = self.def.vtable.iter_vtable.init_with_value.unwrap();
         let iter = unsafe { iter_init_with_value_fn(self.value.data()) };
         PeekMapIter { map: self, iter }

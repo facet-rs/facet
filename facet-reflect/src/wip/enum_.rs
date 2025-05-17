@@ -5,7 +5,7 @@ use owo_colors::OwoColorize;
 use crate::trace;
 use crate::{ISet, ReflectError, Wip};
 
-impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
+impl<'facet, 'shape> Wip<'facet, 'shape> {
     /// Selects a variant of an enum by index.
     ///
     /// # Arguments
