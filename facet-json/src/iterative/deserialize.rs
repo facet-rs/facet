@@ -1,10 +1,10 @@
 use alloc::{borrow::Cow, format};
 
 use facet_core::Facet;
-pub use facet_deserialize::{DeserError, DeserErrorKind};
 use facet_deserialize::{
-    Expectation, Format, NextData, NextResult, Outcome, Scalar, Span, Spannable, Spanned,
+    Cooked, Expectation, Format, NextData, NextResult, Outcome, Scalar, Span, Spannable, Spanned,
 };
+pub use facet_deserialize::{DeserError, DeserErrorKind};
 use log::trace;
 
 use crate::tokenizer::{Token, TokenError, TokenErrorKind, Tokenizer};
@@ -15,14 +15,25 @@ pub(crate) fn from_slice<'input, 'facet, 'shape, T: Facet<'facet>>(
 where
     'input: 'facet,
 {
-    facet_deserialize::deserialize(input, crate::Json)
+    facet_deserialize::deserialize(input, &mut crate::Json)
 }
 
 impl Format for crate::Json {
     type Input<'input> = [u8];
+    type SpanType = Cooked;
 
     fn source(&self) -> &'static str {
         "json"
+    }
+
+    /// Convert a Span from this format's Raw form to Cooked form
+    /// Since JSON format already uses Cooked spans, just return the span
+    fn cook_span<'a>(
+        &self,
+        span: Span<Self::SpanType>,
+        _input: &'a Self::Input<'a>,
+    ) -> Span<Cooked> {
+        span
     }
 
     fn next<'input, 'facet, 'shape>(

@@ -3,8 +3,8 @@ use alloc::string::ToString;
 use core::fmt;
 use facet_core::{Facet, FieldAttribute, Type, UserType};
 use facet_deserialize::{
-    DeserError, DeserErrorKind, Expectation, Format, NextData, NextResult, Outcome, Scalar, Span,
-    Spanned,
+    Cooked, DeserError, DeserErrorKind, Expectation, Format, NextData, NextResult, Outcome, Raw,
+    Scalar, Span, Spanned,
 };
 
 /// Command-line argument format for Facet deserialization
@@ -76,6 +76,26 @@ impl Cli {
     }
 }
 
+/// Helper to determine if a span is already character-based
+fn is_span_already_char_based(error: &DeserError) -> bool {
+    matches!(
+        error.kind,
+        DeserErrorKind::MissingValue { .. }
+            | DeserErrorKind::UnsupportedType { .. }
+            | DeserErrorKind::UnknownField { .. }
+    )
+}
+
+/// Converts an argument-index-based span to a character-based span.
+fn convert_arg_span_to_char_span(args: &[&str], span: Span) -> Span {
+    Cli::char_span(
+        args,
+        span.start().min(args.len().saturating_sub(1)),
+        None,
+        None,
+    )
+}
+
 /// Parse command line arguments into a Facet-compatible type
 pub fn from_slice<'input, 'facet, 'shape, T: Facet<'facet>>(
     args: &'input [&'input str],
@@ -83,14 +103,40 @@ pub fn from_slice<'input, 'facet, 'shape, T: Facet<'facet>>(
 where
     'input: 'facet + 'shape,
 {
-    facet_deserialize::deserialize(args, Cli)
+    match facet_deserialize::deserialize(args, &mut Cli) {
+        Ok(value) => Ok(value),
+        Err(error) => {
+            if is_span_already_char_based(&error) {
+                Err(error)
+            } else {
+                let new_span = convert_arg_span_to_char_span(args, error.span);
+                Err(DeserError {
+                    input: error.input,
+                    span: new_span,
+                    kind: error.kind,
+                    source_id: error.source_id,
+                })
+            }
+        }
+    }
 }
 
 impl Format for Cli {
     type Input<'input> = [&'input str];
+    type SpanType = Raw;
 
     fn source(&self) -> &'static str {
         "args"
+    }
+
+    fn cook_span<'a>(&self, span: Span<Raw>, args: &'a Self::Input<'a>) -> Span<Cooked> {
+        // CLI-specific span conversion logic
+        Self::char_span(
+            args,
+            span.start().min(args.len().saturating_sub(1)),
+            None,
+            None,
+        )
     }
 
     fn next<'input, 'facet, 'shape>(

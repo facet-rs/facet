@@ -8,16 +8,17 @@ use facet_reflect::{ReflectError, VariantError};
 use owo_colors::OwoColorize;
 
 use crate::debug::InputDebug;
-use crate::{Outcome, Span};
+//use crate::{Cooked, Format, Outcome, Span, cook_span_dispatch};
+use crate::{Cooked, Outcome, Span};
 
 /// A JSON parse error, with context. Never would've guessed huh.
 #[derive(Debug)]
-pub struct DeserError<'input, 'shape> {
+pub struct DeserError<'input, 'shape, C = Cooked> {
     /// The input associated with the error.
     pub input: alloc::borrow::Cow<'input, [u8]>,
 
     /// Where the error occured
-    pub span: Span,
+    pub span: Span<C>,
 
     /// The specific error that occurred while parsing the JSON.
     pub kind: DeserErrorKind<'shape>,
@@ -26,9 +27,9 @@ pub struct DeserError<'input, 'shape> {
     pub source_id: &'static str,
 }
 
-impl<'shape> DeserError<'_, 'shape> {
+impl<'input, 'shape, C> DeserError<'input, 'shape, C> {
     /// Converts the error into an owned error.
-    pub fn into_owned(self) -> DeserError<'static, 'shape> {
+    pub fn into_owned(self) -> DeserError<'static, 'shape, C> {
         DeserError {
             input: self.input.into_owned().into(),
             span: self.span,
@@ -37,10 +38,16 @@ impl<'shape> DeserError<'_, 'shape> {
         }
     }
 
+    // pub fn with_span<D>(mut self, span: Span<D>) -> DeserError<'input, D> {
     /// Sets the span of this error
-    pub fn with_span(mut self, span: Span) -> Self {
-        self.span = span;
-        self
+    pub fn with_span<D>(self, span: Span<D>) -> DeserError<'input, 'shape, D> {
+        // self.span = span;
+        DeserError {
+            input: self.input,
+            span,
+            kind: self.kind,
+            source_id: self.source_id,
+        }
     }
 }
 
@@ -134,12 +141,12 @@ pub enum DeserErrorKind<'shape> {
     VariantError(VariantError),
 }
 
-impl<'input, 'shape> DeserError<'input, 'shape> {
+impl<'input, 'shape, C> DeserError<'input, 'shape, C> {
     /// Creates a new deser error, preserving input and location context for accurate reporting.
     pub fn new<I>(
         kind: DeserErrorKind<'shape>,
         input: &'input I,
-        span: Span,
+        span: Span<C>,
         source_id: &'static str,
     ) -> Self
     where
@@ -164,7 +171,7 @@ impl<'input, 'shape> DeserError<'input, 'shape> {
     pub(crate) fn new_reflect<I>(
         e: ReflectError<'shape>,
         input: &'input I,
-        span: Span,
+        span: Span<C>,
         source_id: &'static str,
     ) -> Self
     where
@@ -173,21 +180,21 @@ impl<'input, 'shape> DeserError<'input, 'shape> {
         DeserError::new(DeserErrorKind::ReflectError(e), input, span, source_id)
     }
 
-    // /// Give the caller full control
-    // pub fn with_source<I>(
-    //     kind: DeserErrorKind,
-    //     input: &'input I,
-    //     span: Span,
-    //     source_id: &'static str,
-    // ) -> Self
+    // /// Converts this error's span to a Cooked span
+    // pub fn with_cooked_span<F>(
+    //     self,
+    //     format: &F,
+    //     input: &'input F::Input<'input>,
+    // ) -> DeserError<'input, Cooked>
     // where
-    //     I: ?Sized + 'input + InputDebug,
+    //     F: Format,
     // {
-    //     Self {
-    //         input: input.as_cow(),
-    //         span,
-    //         kind,
-    //         source_id,
+    //     let cooked_span = cook_span_dispatch!(format, self.span, input);
+    //     DeserError {
+    //         input: self.input,
+    //         span: cooked_span,
+    //         kind: self.kind,
+    //         source_id: self.source_id,
     //     }
     // }
 
@@ -198,13 +205,13 @@ impl<'input, 'shape> DeserError<'input, 'shape> {
     }
 
     /// Provides a human-friendly message wrapper to improve error readability.
-    pub fn message(&self) -> DeserErrorMessage<'_, '_> {
+    pub fn message(&self) -> DeserErrorMessage<'_, '_, C> {
         DeserErrorMessage(self)
     }
 }
 
 /// A wrapper type for displaying deser error messages
-pub struct DeserErrorMessage<'input, 'shape>(&'input DeserError<'input, 'shape>);
+pub struct DeserErrorMessage<'input, 'shape, C = Cooked>(&'input DeserError<'input, 'shape, C>);
 
 impl core::fmt::Display for DeserErrorMessage<'_, '_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
