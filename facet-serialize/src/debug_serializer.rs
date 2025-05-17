@@ -26,7 +26,7 @@ impl From<core::fmt::Error> for DebugError {
     }
 }
 
-impl<W> Serializer for DebugSerializer<W>
+impl<'shape, W> Serializer<'shape> for DebugSerializer<W>
 where
     W: core::fmt::Write,
 {

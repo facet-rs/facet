@@ -777,7 +777,7 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     }
 
     /// Tries to parse the current frame's value from a string
-    pub fn parse(mut self, s: &'facet_lifetime str) -> Result<Self, ReflectError<'shape>> {
+    pub fn parse<'ínput>(mut self, s: &'ínput str) -> Result<Self, ReflectError<'shape>> {
         let Some(frame) = self.frames.last_mut() else {
             return Err(ReflectError::OperationFailed {
                 shape: <()>::SHAPE,

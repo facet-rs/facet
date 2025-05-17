@@ -92,7 +92,7 @@ pub trait Serializer<'shape> {
     /// # Arguments
     ///
     /// * `name` - The field or key name to serialize.
-    fn serialize_field_name(&mut self, name: &str) -> Result<(), Self::Error>;
+    fn serialize_field_name(&mut self, name: &'shape str) -> Result<(), Self::Error>;
 
     /// Begin serializing an array/sequence-like value.
     ///

@@ -170,7 +170,7 @@ pub enum TomlDeErrorKind<'shape> {
     /// Rust value is not a valid key.
     InvalidKey(&'shape Shape<'shape>),
     /// Expected a TOML field with the specified name, but couldn't find it.
-    ExpectedFieldWithName(&'static str),
+    ExpectedFieldWithName(&'shape str),
     /// Expected at least one field, got zero.
     ExpectedAtLeastOneField,
     /// Expected a single value, got multiple field.

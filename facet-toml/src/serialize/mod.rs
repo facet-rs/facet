@@ -143,7 +143,7 @@ impl<'shape> Default for TomlSerializer<'shape> {
     }
 }
 
-impl<'shape> Serializer for TomlSerializer<'shape> {
+impl<'shape> Serializer<'shape> for TomlSerializer<'shape> {
     type Error = TomlSerError;
 
     fn serialize_u64(&mut self, value: u64) -> Result<(), Self::Error> {
@@ -205,7 +205,7 @@ impl<'shape> Serializer for TomlSerializer<'shape> {
     fn serialize_unit_variant(
         &mut self,
         _variant_index: usize,
-        variant_name: &'shape str,
+        _variant_name: &'shape str,
     ) -> Result<(), Self::Error> {
         todo!()
     }
@@ -236,7 +236,7 @@ impl<'shape> Serializer for TomlSerializer<'shape> {
         Ok(())
     }
 
-    fn serialize_field_name(&mut self, name: &str) -> Result<(), Self::Error> {
+    fn serialize_field_name(&mut self, name: &'shape str) -> Result<(), Self::Error> {
         self.push_key(Cow::Borrowed(name), "field");
 
         Ok(())
