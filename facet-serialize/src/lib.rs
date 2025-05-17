@@ -27,7 +27,7 @@ fn variant_is_newtype_like(variant: &facet_core::Variant) -> bool {
 
 /// A trait for implementing format-specific serialization logic.
 /// The core iterative serializer uses this trait to output data.
-pub trait Serializer {
+pub trait Serializer<'shape> {
     /// The error type returned by serialization methods
     type Error;
 
@@ -77,7 +77,7 @@ pub trait Serializer {
     fn serialize_unit_variant(
         &mut self,
         variant_index: usize,
-        variant_name: &str,
+        variant_name: &'shape str,
     ) -> Result<(), Self::Error>;
 
     /// Begin serializing an object/map-like value.
@@ -253,7 +253,7 @@ pub fn serialize_iterative<'mem, 'facet, 'shape, S>(
     serializer: &mut S,
 ) -> Result<(), S::Error>
 where
-    S: Serializer,
+    S: Serializer<'shape>,
     'mem: 'facet,
 {
     let mut stack = Vec::new();
@@ -710,7 +710,10 @@ where
 /// Extension trait to simplify calling the generic serializer.
 pub trait Serialize<'a>: Facet<'a> {
     /// Serialize this value using the provided `Serializer`.
-    fn serialize<S: Serializer>(&'a self, serializer: &mut S) -> Result<(), S::Error>;
+    fn serialize<'shape, S: Serializer<'shape>>(
+        &'a self,
+        serializer: &mut S,
+    ) -> Result<(), S::Error>;
 }
 
 impl<'a, T> Serialize<'a> for T
@@ -718,7 +721,10 @@ where
     T: Facet<'a>,
 {
     /// Serialize this value using the provided `Serializer`.
-    fn serialize<S: Serializer>(&'a self, serializer: &mut S) -> Result<(), S::Error> {
+    fn serialize<'shape, S: Serializer<'shape>>(
+        &'a self,
+        serializer: &mut S,
+    ) -> Result<(), S::Error> {
         let peek = Peek::new(self);
         serialize_iterative(peek, serializer)
     }
