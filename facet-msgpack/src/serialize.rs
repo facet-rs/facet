@@ -21,7 +21,7 @@ struct MessagePackSerializer<'w, W: Write> {
 }
 
 // Implement the Serializer trait for MessagePackSerializer
-impl<W: Write> Serializer for MessagePackSerializer<'_, W> {
+impl<'shape, W: Write> Serializer<'shape> for MessagePackSerializer<'_, W> {
     type Error = io::Error; // Use io::Error as the error type
 
     // Implement all methods required by the Serializer trait
@@ -140,7 +140,7 @@ impl<W: Write> Serializer for MessagePackSerializer<'_, W> {
     fn serialize_unit_variant(
         &mut self,
         _variant_index: usize,
-        variant_name: &'static str,
+        variant_name: &'shape str,
     ) -> Result<(), Self::Error> {
         trace!("Serializing unit variant: {}", variant_name);
         write_str(self.writer, variant_name)
@@ -198,7 +198,7 @@ impl<W: Write> Serializer for MessagePackSerializer<'_, W> {
     }
 
     // Field names are serialized as strings (keys) in MessagePack maps
-    fn serialize_field_name(&mut self, name: &'static str) -> Result<(), Self::Error> {
+    fn serialize_field_name(&mut self, name: &'shape str) -> Result<(), Self::Error> {
         trace!("Serializing field name: {}", name);
         write_str(self.writer, name)
     }
