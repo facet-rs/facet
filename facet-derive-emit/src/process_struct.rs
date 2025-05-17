@@ -338,11 +338,11 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
 
             quote! {
                 // Define the try_from function for the value vtable
-                unsafe fn try_from<'src, 'dst>(
+                unsafe fn try_from<'shape, 'src, 'dst>(
                     src_ptr: ::facet::PtrConst<'src>,
-                    src_shape: &'static ::facet::Shape,
+                    src_shape: &'shape ::facet::Shape<'shape>,
                     dst: ::facet::PtrUninit<'dst>
-                ) -> Result<::facet::PtrMut<'dst>, ::facet::TryFromError> {
+                ) -> Result<::facet::PtrMut<'dst>, ::facet::TryFromError<'shape>> {
                     match <#inner_field_type as ::facet::Facet>::SHAPE.vtable.try_from {
                         Some(inner_try) => unsafe { (inner_try)(src_ptr, src_shape, dst) },
                         None => {
@@ -416,14 +416,14 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
             let ty = &inner_field.ty;
             quote! {
                 // Function to return inner type's shape
-                fn inner_shape() -> &'static ::facet::Shape {
+                fn inner_shape() -> &'static ::facet::Shape<'static> {
                     <#ty as ::facet::Facet>::SHAPE
                 }
             }
         } else {
             // Transparent ZST case
             quote! {
-                fn inner_shape() -> &'static ::facet::Shape {
+                fn inner_shape() -> &'static ::facet::Shape<'static> {
                     <() as ::facet::Facet>::SHAPE // Inner shape is unit
                 }
             }
