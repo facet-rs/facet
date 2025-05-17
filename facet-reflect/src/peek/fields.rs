@@ -5,7 +5,7 @@ use facet_core::{Field, FieldFlags};
 use crate::Peek;
 use alloc::{vec, vec::Vec};
 
-use super::{PeekEnum, PeekStruct};
+use super::{PeekEnum, PeekStruct, PeekTuple};
 
 /// Trait for types that have field methods
 ///
@@ -16,9 +16,7 @@ pub trait HasFields<'mem, 'facet, 'shape> {
     fn fields(&self) -> FieldIter<'mem, 'facet, 'shape>;
 
     /// Iterates over fields in this type that should be included when it is serialized
-    fn fields_for_serialize(
-        &self,
-    ) -> impl Iterator<Item = (Field<'shape>, Peek<'mem, 'facet, 'shape>)> {
+    fn fields_for_serialize(&self) -> FieldsForSerializeIter<'mem, 'facet, 'shape> {
         FieldsForSerializeIter {
             stack: vec![self.fields()],
         }
@@ -33,6 +31,7 @@ pub struct FieldIter<'mem, 'facet, 'shape> {
 
 enum FieldIterState<'mem, 'facet, 'shape> {
     Struct(PeekStruct<'mem, 'facet, 'shape>),
+    Tuple(PeekTuple<'mem, 'facet, 'shape>),
     Enum {
         peek_enum: PeekEnum<'mem, 'facet, 'shape>,
         fields: &'shape [Field<'shape>],
@@ -68,6 +67,13 @@ impl<'mem, 'facet, 'shape> FieldIter<'mem, 'facet, 'shape> {
         }
     }
 
+    pub(crate) fn new_tuple(tuple: PeekTuple<'mem, 'facet, 'shape>) -> Self {
+        Self {
+            range: 0..tuple.len(),
+            state: FieldIterState::Tuple(tuple),
+        }
+    }
+
     fn get_field_by_index(
         &self,
         index: usize,
@@ -76,6 +82,11 @@ impl<'mem, 'facet, 'shape> FieldIter<'mem, 'facet, 'shape> {
             FieldIterState::Struct(peek_struct) => {
                 let field = peek_struct.ty.fields.get(index).copied()?;
                 let value = peek_struct.field(index).ok()?;
+                Some((field, value))
+            }
+            FieldIterState::Tuple(peek_tuple) => {
+                let field = peek_tuple.ty.fields.get(index).copied()?;
+                let value = peek_tuple.field(index)?;
                 Some((field, value))
             }
             FieldIterState::Enum { peek_enum, fields } => {

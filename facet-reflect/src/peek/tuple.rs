@@ -1,7 +1,7 @@
 use core::fmt::Debug;
 use facet_core::TupleType;
 
-use super::Peek;
+use super::{FieldIter, Peek};
 
 /// Field index and associated peek value
 pub type TupleField<'mem, 'facet, 'shape> = (usize, Peek<'mem, 'facet, 'shape>);
@@ -50,8 +50,8 @@ impl<'mem, 'facet, 'shape> PeekTuple<'mem, 'facet, 'shape> {
     }
 
     /// Iterate over all fields
-    pub fn fields(&self) -> impl DoubleEndedIterator<Item = TupleField<'mem, 'facet, 'shape>> + '_ {
-        (0..self.len()).filter_map(|i| self.field(i).map(|p| (i, p)))
+    pub fn fields(&self) -> FieldIter<'mem, 'facet, 'shape> {
+        FieldIter::new_tuple(*self)
     }
 
     /// Type information
