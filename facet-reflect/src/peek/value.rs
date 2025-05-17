@@ -180,7 +180,7 @@ impl<'mem, 'facet_lifetime, 'shape> Peek<'mem, 'facet_lifetime, 'shape> {
     /// # Panics
     ///
     /// Panics if the shape doesn't match the type `T`.
-    pub fn get<T: Facet<'facet_lifetime>>(&self) -> Result<&T, ReflectError> {
+    pub fn get<T: Facet<'facet_lifetime>>(&self) -> Result<&T, ReflectError<'shape>> {
         if self.shape != T::SHAPE {
             Err(ReflectError::WrongShape {
                 expected: self.shape,
@@ -374,7 +374,7 @@ impl<'mem, 'facet_lifetime, 'shape> Peek<'mem, 'facet_lifetime, 'shape> {
     }
 }
 
-impl core::fmt::Display for Peek<'_, '_> {
+impl<'mem, 'facet_lifetime, 'shape> core::fmt::Display for Peek<'mem, 'facet_lifetime, 'shape> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if let Some(display_fn) = self.vtable().display {
             unsafe { display_fn(self.data, f) }
@@ -384,7 +384,7 @@ impl core::fmt::Display for Peek<'_, '_> {
     }
 }
 
-impl core::fmt::Debug for Peek<'_, '_> {
+impl<'mem, 'facet_lifetime, 'shape> core::fmt::Debug for Peek<'mem, 'facet_lifetime, 'shape> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if let Some(debug_fn) = self.vtable().debug {
             unsafe { debug_fn(self.data, f) }
@@ -394,7 +394,7 @@ impl core::fmt::Debug for Peek<'_, '_> {
     }
 }
 
-impl core::cmp::PartialEq for Peek<'_, '_> {
+impl<'mem, 'facet_lifetime, 'shape> core::cmp::PartialEq for Peek<'mem, 'facet_lifetime, 'shape> {
     fn eq(&self, other: &Self) -> bool {
         if self.shape != other.shape {
             return false;
@@ -407,7 +407,7 @@ impl core::cmp::PartialEq for Peek<'_, '_> {
     }
 }
 
-impl core::cmp::PartialOrd for Peek<'_, '_> {
+impl<'mem, 'facet_lifetime, 'shape> core::cmp::PartialOrd for Peek<'mem, 'facet_lifetime, 'shape> {
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         if self.shape != other.shape {
             return None;
@@ -417,7 +417,7 @@ impl core::cmp::PartialOrd for Peek<'_, '_> {
     }
 }
 
-impl core::hash::Hash for Peek<'_, '_> {
+impl<'mem, 'facet_lifetime, 'shape> core::hash::Hash for Peek<'mem, 'facet_lifetime, 'shape> {
     fn hash<H: core::hash::Hasher>(&self, hasher: &mut H) {
         if let Some(hash_fn) = self.shape.vtable.hash {
             let hasher_opaque = PtrMut::new(hasher);

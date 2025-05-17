@@ -11,11 +11,11 @@ use crate::{
 unsafe impl Facet<'_> for Utf8PathBuf {
     const VTABLE: &'static ValueVTable = &const {
         // Define the functions for transparent conversion between Utf8PathBuf and String
-        unsafe fn try_from<'dst>(
+        unsafe fn try_from<'shape, 'dst>(
             src_ptr: PtrConst<'_>,
-            src_shape: &'static Shape,
+            src_shape: &'shape Shape<'shape>,
             dst: PtrUninit<'dst>,
-        ) -> Result<PtrMut<'dst>, TryFromError> {
+        ) -> Result<PtrMut<'dst>, TryFromError<'shape>> {
             if src_shape.id != <String as Facet>::SHAPE.id {
                 return Err(TryFromError::UnsupportedSourceShape {
                     src_shape,
@@ -62,11 +62,11 @@ unsafe impl Facet<'_> for Utf8PathBuf {
 unsafe impl Facet<'_> for Utf8Path {
     const VTABLE: &'static ValueVTable = &const {
         // Allows conversion from &str to &Utf8Path
-        unsafe fn try_from<'src, 'dst>(
+        unsafe fn try_from<'shape, 'src, 'dst>(
             src_ptr: PtrConst<'src>,
-            src_shape: &'static Shape,
+            src_shape: &'shape Shape<'shape>,
             dst: PtrUninit<'dst>,
-        ) -> Result<PtrMut<'dst>, TryFromError> {
+        ) -> Result<PtrMut<'dst>, TryFromError<'shape>> {
             if src_shape.id != <&'src str as Facet>::SHAPE.id {
                 return Err(TryFromError::UnsupportedSourceShape {
                     src_shape,

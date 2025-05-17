@@ -58,7 +58,7 @@ pub struct Shape<'shape> {
     pub doc: &'shape [&'shape str],
 
     /// Attributes that can be applied to a shape
-    pub attributes: &'shape [ShapeAttribute],
+    pub attributes: &'shape [ShapeAttribute<'shape>],
 
     /// As far as serialization and deserialization goes, we consider that this shape is a wrapper
     /// for that shape This is true for "newtypes" like `NonZero`, wrappers like `Utf8PathBuf`,
@@ -112,7 +112,7 @@ impl core::error::Error for UnsizedError {}
 
 /// An attribute that can be applied to a shape
 #[derive(Debug, PartialEq)]
-pub enum ShapeAttribute {
+pub enum ShapeAttribute<'shape> {
     /// Reject deserialization upon encountering an unknown key.
     DenyUnknownFields,
     /// Indicates that, when deserializing, fields from this shape that are
@@ -124,9 +124,9 @@ pub enum ShapeAttribute {
     /// from `T` and converted back to `T`
     Transparent,
     /// Specifies a case conversion rule for all fields or variants
-    RenameAll(&'static str),
+    RenameAll(&'shape str),
     /// Custom field attribute containing arbitrary text
-    Arbitrary(&'static str),
+    Arbitrary(&'shape str),
 }
 
 impl<'shape> Shape<'shape> {
@@ -145,14 +145,14 @@ impl<'shape> Shape<'shape> {
     }
 
     /// Check if this shape is of the given type
-    pub fn is_type<Other: Facet<'static>>(&'static self) -> bool {
+    pub fn is_type<Other: Facet<'shape>>(&self) -> bool {
         let l = self;
         let r = Other::SHAPE;
         l == r
     }
 
     /// Assert that this shape is of the given type, panicking if it's not
-    pub fn assert_type<Other: Facet<'static>>(&'static self) {
+    pub fn assert_type<Other: Facet<'shape>>(&self) {
         assert!(
             self.is_type::<Other>(),
             "Type mismatch: expected {}, found {self}",
@@ -161,17 +161,17 @@ impl<'shape> Shape<'shape> {
     }
 
     /// See [`ShapeAttribute::DenyUnknownFields`]
-    pub fn has_deny_unknown_fields_attr(&'static self) -> bool {
+    pub fn has_deny_unknown_fields_attr(&self) -> bool {
         self.attributes.contains(&ShapeAttribute::DenyUnknownFields)
     }
 
     /// See [`ShapeAttribute::Default`]
-    pub fn has_default_attr(&'static self) -> bool {
+    pub fn has_default_attr(&self) -> bool {
         self.attributes.contains(&ShapeAttribute::Default)
     }
 
     /// See [`ShapeAttribute::RenameAll`]
-    pub fn get_rename_all_attr(&'static self) -> Option<&'static str> {
+    pub fn get_rename_all_attr(&self) -> Option<&str> {
         self.attributes.iter().find_map(|attr| {
             if let ShapeAttribute::RenameAll(rule) = attr {
                 Some(*rule)
@@ -191,7 +191,7 @@ pub struct ShapeBuilder<'shape> {
     ty: Option<Type<'shape>>,
     type_params: &'shape [TypeParam<'shape>],
     doc: &'shape [&'shape str],
-    attributes: &'shape [ShapeAttribute],
+    attributes: &'shape [ShapeAttribute<'shape>],
     inner: Option<fn() -> &'shape Shape<'shape>>,
 }
 
@@ -319,12 +319,12 @@ impl core::hash::Hash for Shape<'_> {
 
 impl Shape<'_> {
     /// Check if this shape is of the given type
-    pub fn is_shape(&'static self, other: &'static Shape) -> bool {
+    pub fn is_shape(&self, other: &Shape<'_>) -> bool {
         self == other
     }
 
     /// Assert that this shape is equal to the given shape, panicking if it's not
-    pub fn assert_shape(&'static self, other: &'static Shape) {
+    pub fn assert_shape(&self, other: &Shape<'_>) {
         assert!(
             self.is_shape(other),
             "Shape mismatch: expected {other}, found {self}",

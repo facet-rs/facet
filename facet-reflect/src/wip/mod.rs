@@ -136,7 +136,10 @@ pub enum FrameMode {
 ///
 /// * `'facet_lifetime`: The lifetime of borrowed values within the structure
 /// * `'shape`: The lifetime of the Shape structure itself (often 'static)
-pub struct Wip<'facet_lifetime, 'shape> {
+pub struct Wip<'facet_lifetime, 'shape>
+where
+    'facet_lifetime: 'shape,
+{
     /// stack of frames to keep track of deeply nested initialization
     frames: alloc::vec::Vec<Frame<'shape>>,
 
@@ -146,7 +149,10 @@ pub struct Wip<'facet_lifetime, 'shape> {
     invariant: PhantomData<fn(&'facet_lifetime ()) -> &'facet_lifetime ()>,
 }
 
-impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
+impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape>
+where
+    'facet_lifetime: 'shape, // Ensure 'facet_lifetime outlives 'shape
+{
     /// Puts the value from a Peek into the current frame.
     pub fn put_peek(
         self,
@@ -308,14 +314,14 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     }
 
     /// Returns the shape of the current frame
-    pub fn shape(&self) -> &'static Shape {
+    pub fn shape(&self) -> &'shape Shape<'shape> {
         self.frames.last().expect("must have frames left").shape
     }
 
     /// Returns the innermost shape for the current frame
     /// If the current shape is a transparent wrapper, this returns the shape of the wrapped type
     /// Otherwise, returns the current shape
-    pub fn innermost_shape(&self) -> &'static Shape {
+    pub fn innermost_shape(&self) -> &'shape Shape<'shape> {
         let mut current_shape = self.shape();
 
         // Keep unwrapping as long as we find inner shapes
@@ -340,7 +346,7 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     }
 
     /// Asserts everything is initialized and that invariants are upheld (if any)
-    pub fn build(mut self) -> Result<HeapValue<'facet_lifetime>, ReflectError<'shape>> {
+    pub fn build(mut self) -> Result<HeapValue<'facet_lifetime, 'shape>, ReflectError<'shape>> {
         debug!("[{}] ⚒️ It's BUILD time", self.frames.len());
 
         // 1. Require that there is exactly one frame on the stack (the root frame)
@@ -591,7 +597,7 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     /// * `Ok(Self)` if the field was successfully selected and pushed.
     /// * `Err(ReflectError)` if the current frame is not a struct or an enum with a selected variant,
     ///   or if the field doesn't exist.
-    pub fn field(mut self, index: usize) -> Result<Self, ReflectError> {
+    pub fn field(mut self, index: usize) -> Result<Self, ReflectError<'shape>> {
         let frame = self.frames.last_mut().unwrap();
         let shape = frame.shape;
 
@@ -686,7 +692,10 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     /// * `None` if the current frame is not a struct or an enum with a selected variant,
     ///   or if the field doesn't exist.
     pub fn field_index(&self, name: &str) -> Option<usize> {
-        fn find_field_index(fields: &'static [facet_core::Field], name: &str) -> Option<usize> {
+        fn find_field_index<'shape>(
+            fields: &'shape [facet_core::Field],
+            name: &str,
+        ) -> Option<usize> {
             fields.iter().position(|f| f.name == name)
         }
 
@@ -712,7 +721,7 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     /// * `Ok(Self)` if the field was successfully selected and pushed.
     /// * `Err(ReflectError)` if the current frame is not a struct or an enum with a selected variant,
     ///   or if the field doesn't exist.
-    pub fn field_named(self, name: &str) -> Result<Self, ReflectError> {
+    pub fn field_named(self, name: &'shape str) -> Result<Self, ReflectError<'shape>> {
         let frame = self.frames.last().unwrap();
         let shape = frame.shape;
 
@@ -747,7 +756,7 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     pub fn put<T: Facet<'facet_lifetime>>(
         self,
         t: T,
-    ) -> Result<Wip<'facet_lifetime>, ReflectError> {
+    ) -> Result<Wip<'facet_lifetime, 'shape>, ReflectError<'shape>> {
         let shape = T::SHAPE;
         let ptr_const = PtrConst::new(&t as *const T as *const u8);
         let res = self.put_shape(ptr_const, shape);
@@ -768,7 +777,7 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     pub fn try_put<T: Facet<'facet_lifetime>>(
         self,
         t: T,
-    ) -> Result<Wip<'facet_lifetime>, ReflectError> {
+    ) -> Result<Wip<'facet_lifetime, 'shape>, ReflectError<'shape>> {
         let shape = T::SHAPE;
         let ptr_const = PtrConst::new(&t as *const T as *const u8);
         let res = self.put_shape(ptr_const, shape);
@@ -777,7 +786,7 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     }
 
     /// Tries to parse the current frame's value from a string
-    pub fn parse(mut self, s: &str) -> Result<Self, ReflectError> {
+    pub fn parse(mut self, s: &'facet_lifetime str) -> Result<Self, ReflectError<'shape>> {
         let Some(frame) = self.frames.last_mut() else {
             return Err(ReflectError::OperationFailed {
                 shape: <()>::SHAPE,
@@ -813,7 +822,10 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     }
 
     /// Puts a value using a provided DefaultInPlaceFn in the current frame.
-    pub fn put_from_fn(mut self, default_in_place: DefaultInPlaceFn) -> Result<Self, ReflectError> {
+    pub fn put_from_fn(
+        mut self,
+        default_in_place: DefaultInPlaceFn,
+    ) -> Result<Self, ReflectError<'shape>> {
         let Some(frame) = self.frames.last_mut() else {
             return Err(ReflectError::OperationFailed {
                 shape: <()>::SHAPE,
@@ -849,7 +861,7 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     }
 
     /// Puts the default value in the current frame.
-    pub fn put_default(self) -> Result<Self, ReflectError> {
+    pub fn put_default(self) -> Result<Self, ReflectError<'shape>> {
         let Some(frame) = self.frames.last() else {
             return Err(ReflectError::OperationFailed {
                 shape: <()>::SHAPE,
@@ -871,9 +883,9 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     /// Marks a field as initialized in the parent frame.
     fn mark_field_as_initialized(
         &mut self,
-        shape: &'static Shape,
+        shape: &'shape Shape<'shape>,
         index: Option<usize>,
-    ) -> Result<(), ReflectError> {
+    ) -> Result<(), ReflectError<'shape>> {
         if let Some(index) = index {
             let parent_index = self.frames.len().saturating_sub(2);
             #[cfg(feature = "log")]
@@ -916,7 +928,7 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     }
 
     /// Returns the shape of the element type for a list/array
-    pub fn element_shape(&self) -> Result<&'static Shape, ReflectError> {
+    pub fn element_shape(&self) -> Result<&'shape Shape<'shape>, ReflectError<'shape>> {
         let frame = self.frames.last().unwrap();
         let shape = frame.shape;
 
@@ -930,7 +942,7 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     }
 
     /// Returns the shape of the key type for a map
-    pub fn key_shape(&self) -> Result<&'static Shape, ReflectError> {
+    pub fn key_shape(&self) -> Result<&'shape Shape<'shape>, ReflectError<'shape>> {
         let frame = self.frames.last().unwrap();
         let shape = frame.shape;
 
@@ -944,7 +956,7 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     }
 
     /// Creates an empty list without pushing any elements
-    pub fn put_empty_list(mut self) -> Result<Self, ReflectError> {
+    pub fn put_empty_list(mut self) -> Result<Self, ReflectError<'shape>> {
         let Some(frame) = self.frames.last_mut() else {
             return Err(ReflectError::OperationFailed {
                 shape: <()>::SHAPE,
@@ -984,7 +996,7 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     }
 
     /// Creates an empty map without pushing any entries
-    pub fn put_empty_map(mut self) -> Result<Self, ReflectError> {
+    pub fn put_empty_map(mut self) -> Result<Self, ReflectError<'shape>> {
         let Some(frame) = self.frames.last_mut() else {
             return Err(ReflectError::OperationFailed {
                 shape: <()>::SHAPE,
@@ -1014,11 +1026,13 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
             frame.mark_fully_initialized();
         }
 
-        let shape = frame.shape;
-        let index = frame.field_index_in_parent;
-
-        // Mark the field as initialized
-        self.mark_field_as_initialized(shape, index)?;
+        // Mark the field as initialized directly
+        if let Some(index) = frame.field_index_in_parent {
+            let parent_index = self.frames.len().saturating_sub(2);
+            if let Some(parent) = self.frames.get_mut(parent_index) {
+                parent.istate.fields.set(index);
+            }
+        }
 
         Ok(self)
     }
@@ -1027,7 +1041,7 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     /// allowing elements to be added one by one.
     /// For lists/arrays, initializes an empty container if needed.
     /// For tuple structs/variants, does nothing (expects subsequent `push` calls).
-    pub fn begin_pushback(mut self) -> Result<Self, ReflectError> {
+    pub fn begin_pushback(mut self) -> Result<Self, ReflectError<'shape>> {
         let Some(frame) = self.frames.last_mut() else {
             return Err(ReflectError::OperationFailed {
                 shape: <()>::SHAPE,
@@ -1096,7 +1110,7 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     }
 
     /// Begins insertion mode for a map, allowing key-value pairs to be added one by one
-    pub fn begin_map_insert(mut self) -> Result<Self, ReflectError> {
+    pub fn begin_map_insert(mut self) -> Result<Self, ReflectError<'shape>> {
         let Some(frame) = self.frames.last_mut() else {
             return Err(ReflectError::OperationFailed {
                 shape: <()>::SHAPE,
@@ -1135,7 +1149,7 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     ///
     /// This creates a new frame for the element. When this frame is popped,
     /// the element will be added to the list or the corresponding tuple field will be set.
-    pub fn push(mut self) -> Result<Self, ReflectError> {
+    pub fn push(mut self) -> Result<Self, ReflectError<'shape>> {
         // Get mutable access to the top frame early, we might need it for list_index
         let frame_len = self.frames.len();
         let frame = self
@@ -1148,18 +1162,17 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
         let seq_shape = frame.shape;
 
         // Determine element shape and context string based on the container type
-        let (element_shape, context_str): (&'static Shape, &'static str) =
+        let (element_shape, context_str): (&'shape Shape<'shape>, &'shape str) =
             match (seq_shape.ty, seq_shape.def) {
-                (_, Def::List(_)) => {
+                (_, Def::List(list_def)) => {
                     // Check list initialization *before* getting element shape
                     if !frame.istate.fields.has(0) {
                         // Replicate original recursive call pattern to handle initialization
                         // Drop mutable borrow of frame before recursive call
                         return self.begin_pushback()?.push();
                     }
-                    // List is initialized, get element shape (requires immutable self)
-                    // Drop mutable borrow of frame before calling immutable method
-                    let shape = self.element_shape()?;
+                    // Get element shape directly from the list definition
+                    let shape = list_def.t();
                     (shape, "list")
                 }
                 (_, Def::Array(array_def)) => {
@@ -1308,7 +1321,7 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     }
 
     /// Prepare to push the `Some(T)` variant of an `Option<T>`.
-    pub fn push_some(mut self) -> Result<Self, ReflectError> {
+    pub fn push_some(mut self) -> Result<Self, ReflectError<'shape>> {
         // Make sure we're initializing an option
         let frame = self.frames.last().unwrap();
         let option_shape = frame.shape;
@@ -1362,7 +1375,7 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     ///  3. Pops the frame
     ///  4. Sets the parent option to its default value (i.e., None)
     ///  5. Pops the parent option (which is the actual `Option<T>`, but no longer in option mode)
-    pub fn pop_some_push_none(mut self) -> Result<Self, ReflectError> {
+    pub fn pop_some_push_none(mut self) -> Result<Self, ReflectError<'shape>> {
         // 1. Option frame must exist
         let Some(frame) = self.frames.last_mut() else {
             return Err(ReflectError::OperationFailed {
@@ -1443,7 +1456,7 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     ///
     /// This creates a new frame for the key. After setting the key value,
     /// call `push_map_value` to create a frame for the corresponding value.
-    pub fn push_map_key(mut self) -> Result<Self, ReflectError> {
+    pub fn push_map_key(mut self) -> Result<Self, ReflectError<'shape>> {
         // Make sure we're initializing a map
         let frame = self.frames.last().unwrap();
         let map_shape = frame.shape;
@@ -1460,8 +1473,11 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
             self = self.begin_map_insert()?;
         }
 
-        // Get the key type
-        let key_shape = self.key_shape()?;
+        // Get the key type directly from the map definition
+        let key_shape = match map_shape.def {
+            Def::Map(map_def) => map_def.k(),
+            _ => unreachable!("Already checked map type above"),
+        };
 
         // Allocate memory for the key
         let key_data = key_shape
@@ -1491,7 +1507,7 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     ///
     /// This should be called after pushing and initializing a key frame.
     /// When the value frame is popped, the key-value pair will be added to the map.
-    pub fn push_map_value(mut self) -> Result<Self, ReflectError> {
+    pub fn push_map_value(mut self) -> Result<Self, ReflectError<'shape>> {
         trace!("Wants to push map value. Frames = ");
         #[cfg(feature = "log")]
         for (i, f) in self.frames.iter().enumerate() {
@@ -1577,7 +1593,7 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     /// Evict a frame from istates, along with all its children
     /// (because we're about to use `drop_in_place` on it — not
     /// yet though, we need to know the variant for enums, etc.)
-    pub(crate) fn evict_tree(&mut self, frame: Frame) -> Frame {
+    pub(crate) fn evict_tree(&mut self, frame: Frame<'shape>) -> Frame<'shape> {
         match frame.shape.ty {
             Type::User(UserType::Struct(sd)) => {
                 for f in sd.fields {

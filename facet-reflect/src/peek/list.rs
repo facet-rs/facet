@@ -42,7 +42,7 @@ impl<'mem, 'facet_lifetime, 'shape> IntoIterator for &'mem PeekList<'mem, 'facet
 #[derive(Clone, Copy)]
 pub struct PeekList<'mem, 'facet_lifetime, 'shape> {
     pub(crate) value: Peek<'mem, 'facet_lifetime, 'shape>,
-    pub(crate) def: ListDef,
+    pub(crate) def: ListDef<'shape>,
 }
 
 impl Debug for PeekList<'_, '_, '_> {
@@ -53,7 +53,7 @@ impl Debug for PeekList<'_, '_, '_> {
 
 impl<'mem, 'facet_lifetime, 'shape> PeekList<'mem, 'facet_lifetime, 'shape> {
     /// Creates a new peek list
-    pub fn new(value: Peek<'mem, 'facet_lifetime, 'shape>, def: ListDef) -> Self {
+    pub fn new(value: Peek<'mem, 'facet_lifetime, 'shape>, def: ListDef<'shape>) -> Self {
         Self { value, def }
     }
 
@@ -94,7 +94,7 @@ impl<'mem, 'facet_lifetime, 'shape> PeekList<'mem, 'facet_lifetime, 'shape> {
     }
 
     /// Def getter
-    pub fn def(&self) -> ListDef {
+    pub fn def(&self) -> ListDef<'shape> {
         self.def
     }
 }

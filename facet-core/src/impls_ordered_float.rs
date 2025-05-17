@@ -12,9 +12,9 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                 // Define conversion functions for transparency
                 unsafe fn try_from<'dst>(
                     src_ptr: PtrConst<'_>,
-                    src_shape: &'static Shape,
+                    src_shape: &'shape Shape<'shape>,
                     dst: PtrUninit<'dst>,
-                ) -> Result<PtrMut<'dst>, TryFromError> {
+                ) -> Result<PtrMut<'dst>, TryFromError<'shape>> {
                     if src_shape == <$float as Facet>::SHAPE {
                         // Get the inner value and wrap as OrderedFloat
                         let value = unsafe { src_ptr.get::<$float>() };

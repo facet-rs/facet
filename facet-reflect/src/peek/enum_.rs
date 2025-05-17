@@ -247,10 +247,13 @@ impl<'mem, 'facet_lifetime, 'shape> PeekEnum<'mem, 'facet_lifetime, 'shape> {
 
 impl<'mem, 'facet_lifetime, 'shape> HasFields<'mem, 'facet_lifetime, 'shape>
     for PeekEnum<'mem, 'facet_lifetime, 'shape>
+where
+    'facet_lifetime: 'shape,
+    'mem: 'facet_lifetime,
 {
     fn fields(
         &self,
-    ) -> impl DoubleEndedIterator<Item = (Field, Peek<'mem, 'facet_lifetime, 'shape>)> {
+    ) -> impl DoubleEndedIterator<Item = (Field<'shape>, Peek<'mem, 'facet_lifetime, 'shape>)> {
         // Get the active variant and its fields
         let variant = match self.active_variant() {
             Ok(v) => v,

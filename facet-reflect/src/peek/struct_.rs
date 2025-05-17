@@ -65,12 +65,15 @@ impl<'mem, 'facet_lifetime, 'shape> PeekStruct<'mem, 'facet_lifetime, 'shape> {
 
 impl<'mem, 'facet_lifetime, 'shape> HasFields<'mem, 'facet_lifetime, 'shape>
     for PeekStruct<'mem, 'facet_lifetime, 'shape>
+where
+    'mem: 'facet_lifetime,
+    'facet_lifetime: 'shape,
 {
     /// Iterates over all fields in this struct, providing both name and value
     #[inline]
     fn fields(
         &self,
-    ) -> impl DoubleEndedIterator<Item = (Field, Peek<'mem, 'facet_lifetime, 'shape>)> {
+    ) -> impl DoubleEndedIterator<Item = (Field<'shape>, Peek<'mem, 'facet_lifetime, 'shape>)> {
         (0..self.field_count()).filter_map(|i| {
             let field = self.ty.fields.get(i).copied()?;
             let value = self.field(i).ok()?;
@@ -83,26 +86,29 @@ impl<'mem, 'facet_lifetime, 'shape> HasFields<'mem, 'facet_lifetime, 'shape>
 ///
 /// This trait allows code to be written generically over both structs and enums
 /// that provide field access and iteration capabilities.
-pub trait HasFields<'mem, 'facet_lifetime, 'shape> {
+pub trait HasFields<'mem, 'facet_lifetime, 'shape>
+where
+    'facet_lifetime: 'shape,
+    'mem: 'facet_lifetime,
+{
     /// Iterates over all fields in this type, providing both field metadata and value
     fn fields(
         &self,
-    ) -> impl DoubleEndedIterator<Item = (Field, Peek<'mem, 'facet_lifetime, 'shape>)>;
+    ) -> impl DoubleEndedIterator<Item = (Field<'shape>, Peek<'mem, 'facet_lifetime, 'shape>)>;
 
     /// Iterates over fields in this type that should be included when it is serialized
-    fn fields_for_serialize(
-        &self,
-    ) -> impl DoubleEndedIterator<Item = (Field, Peek<'mem, 'facet_lifetime, 'shape>)> {
+    fn fields_for_serialize(&self) -> Vec<(Field<'shape>, Peek<'mem, 'facet_lifetime, 'shape>)> {
         // This is a default implementation that filters out fields with `skip_serializing`
         // attribute and handles field flattening.
         self.fields()
             .filter(|(field, peek)| !unsafe { field.should_skip_serializing(peek.data()) })
-            .flat_map(|(mut field, peek)| {
+            .flat_map(move |(mut field, peek)| {
                 if field.flags.contains(FieldFlags::FLATTEN) {
                     let mut flattened = Vec::new();
                     if let Ok(struct_peek) = peek.into_struct() {
                         struct_peek
                             .fields_for_serialize()
+                            .into_iter()
                             .for_each(|item| flattened.push(item));
                     } else if let Ok(enum_peek) = peek.into_enum() {
                         // normally we'd serialize to something like:
@@ -128,10 +134,11 @@ pub trait HasFields<'mem, 'facet_lifetime, 'shape> {
                         // TODO: fail more gracefully
                         panic!("cannot flatten a {}", field.shape())
                     }
-                    flattened.into_iter()
+                    flattened
                 } else {
-                    vec![(field, peek)].into_iter()
+                    vec![(field, peek)]
                 }
             })
+            .collect()
     }
 }

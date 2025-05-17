@@ -93,7 +93,7 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     ///
     /// * `Ok(Self)` if the variant was successfully selected.
     /// * `Err(ReflectError)` if the current frame is not an enum or no variant with the given name exists.
-    pub fn variant_named(self, name: &str) -> Result<Self, ReflectError> {
+    pub fn variant_named(self, name: &str) -> Result<Self, ReflectError<'shape>> {
         let frame = self.frames.last().unwrap();
         let shape = frame.shape;
         let Type::User(UserType::Enum(def)) = shape.ty else {

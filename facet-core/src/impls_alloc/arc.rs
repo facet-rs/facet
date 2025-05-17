@@ -9,11 +9,11 @@ use crate::{
 unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for alloc::sync::Arc<T> {
     const VTABLE: &'static ValueVTable = &const {
         // Define the functions for transparent conversion between Arc<T> and T
-        unsafe fn try_from<'a, 'src, 'dst, T: Facet<'a> + ?Sized>(
+        unsafe fn try_from<'a, 'shape, 'src, 'dst, T: Facet<'a> + ?Sized>(
             src_ptr: PtrConst<'src>,
-            src_shape: &'static Shape,
+            src_shape: &'shape Shape<'shape>,
             dst: PtrUninit<'dst>,
-        ) -> Result<PtrMut<'dst>, TryFromError> {
+        ) -> Result<PtrMut<'dst>, TryFromError<'shape>> {
             if src_shape.id != T::SHAPE.id {
                 return Err(TryFromError::UnsupportedSourceShape {
                     src_shape,

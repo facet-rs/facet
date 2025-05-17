@@ -7,11 +7,11 @@ use crate::{
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::rc::Rc<T> {
     const VTABLE: &'static ValueVTable = &const {
         // Define the functions for transparent conversion between Rc<T> and T
-        unsafe fn try_from<'a, 'src, 'dst, T: Facet<'a>>(
+        unsafe fn try_from<'a, 'shape, 'src, 'dst, T: Facet<'a>>(
             src_ptr: PtrConst<'src>,
-            src_shape: &'static Shape,
+            src_shape: &'shape Shape<'shape>,
             dst: PtrUninit<'dst>,
-        ) -> Result<PtrMut<'dst>, TryFromError> {
+        ) -> Result<PtrMut<'dst>, TryFromError<'shape>> {
             if src_shape.id != T::SHAPE.id {
                 return Err(TryFromError::UnsupportedSourceShape {
                     src_shape,

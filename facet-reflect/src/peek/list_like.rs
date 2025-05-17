@@ -5,26 +5,26 @@ use core::fmt::Debug;
 
 /// Fields for types which act like lists
 #[derive(Clone, Copy)]
-pub enum ListLikeDef {
+pub enum ListLikeDef<'shape> {
     /// Ordered list of heterogenous values, variable size
     ///
     /// e.g. `Vec<T>`
-    List(facet_core::ListDef),
+    List(facet_core::ListDef<'shape>),
 
     /// Fixed-size array of heterogenous values
     ///
     /// e.g. `[T; 32]`
-    Array(facet_core::ArrayDef),
+    Array(facet_core::ArrayDef<'shape>),
 
     /// Slice — a reference to a contiguous sequence of elements
     ///
     /// e.g. `&[T]`
-    Slice(facet_core::SliceDef),
+    Slice(facet_core::SliceDef<'shape>),
 }
 
-impl ListLikeDef {
+impl<'shape> ListLikeDef<'shape> {
     /// Returns the shape of the items in the list
-    pub fn t(&self) -> &'static Shape {
+    pub fn t(&self) -> &'shape Shape<'shape> {
         match self {
             ListLikeDef::List(v) => v.t(),
             ListLikeDef::Array(v) => v.t(),
@@ -34,8 +34,8 @@ impl ListLikeDef {
 }
 
 /// Iterator over a `PeekListLike`
-pub struct PeekListLikeIter<'mem, 'facet_lifetime> {
-    list: PeekListLike<'mem, 'facet_lifetime>,
+pub struct PeekListLikeIter<'mem, 'facet_lifetime, 'shape> {
+    list: PeekListLike<'mem, 'facet_lifetime, 'shape>,
     index: usize,
     len: usize,
 }
@@ -58,11 +58,16 @@ impl<'mem, 'facet_lifetime, 'shape> Iterator for PeekListLikeIter<'mem, 'facet_l
     }
 }
 
-impl ExactSizeIterator for PeekListLikeIter<'_, '_> {}
+impl<'mem, 'facet_lifetime, 'shape> ExactSizeIterator
+    for PeekListLikeIter<'mem, 'facet_lifetime, 'shape>
+{
+}
 
-impl<'mem, 'facet_lifetime> IntoIterator for &'mem PeekListLike<'mem, 'facet_lifetime> {
-    type Item = Peek<'mem, 'facet_lifetime>;
-    type IntoIter = PeekListLikeIter<'mem, 'facet_lifetime>;
+impl<'mem, 'facet_lifetime, 'shape> IntoIterator
+    for &'mem PeekListLike<'mem, 'facet_lifetime, 'shape>
+{
+    type Item = Peek<'mem, 'facet_lifetime, 'shape>;
+    type IntoIter = PeekListLikeIter<'mem, 'facet_lifetime, 'shape>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
@@ -71,22 +76,22 @@ impl<'mem, 'facet_lifetime> IntoIterator for &'mem PeekListLike<'mem, 'facet_lif
 
 /// Lets you read from a list, array or slice
 #[derive(Clone, Copy)]
-pub struct PeekListLike<'mem, 'facet_lifetime> {
-    pub(crate) value: Peek<'mem, 'facet_lifetime>,
-    pub(crate) def: ListLikeDef,
+pub struct PeekListLike<'mem, 'facet_lifetime, 'shape> {
+    pub(crate) value: Peek<'mem, 'facet_lifetime, 'shape>,
+    pub(crate) def: ListLikeDef<'shape>,
     len: usize,
     as_ptr: unsafe fn(this: PtrConst) -> PtrConst,
 }
 
-impl Debug for PeekListLike<'_, '_> {
+impl<'mem, 'facet_lifetime, 'shape> Debug for PeekListLike<'mem, 'facet_lifetime, 'shape> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("PeekListLike").finish_non_exhaustive()
     }
 }
 
-impl<'mem, 'facet_lifetime> PeekListLike<'mem, 'facet_lifetime> {
+impl<'mem, 'facet_lifetime, 'shape> PeekListLike<'mem, 'facet_lifetime, 'shape> {
     /// Creates a new peek list
-    pub fn new(value: Peek<'mem, 'facet_lifetime>, def: ListLikeDef) -> Self {
+    pub fn new(value: Peek<'mem, 'facet_lifetime, 'shape>, def: ListLikeDef<'shape>) -> Self {
         let (len, as_ptr_fn) = match def {
             ListLikeDef::List(v) => (unsafe { (v.vtable.len)(value.data()) }, v.vtable.as_ptr),
             ListLikeDef::Slice(v) => (unsafe { (v.vtable.len)(value.data()) }, v.vtable.as_ptr),
@@ -115,7 +120,7 @@ impl<'mem, 'facet_lifetime> PeekListLike<'mem, 'facet_lifetime> {
     /// # Panics
     ///
     /// Panics if the index is out of bounds
-    pub fn get(&self, index: usize) -> Option<Peek<'mem, 'facet_lifetime>> {
+    pub fn get(&self, index: usize) -> Option<Peek<'mem, 'facet_lifetime, 'shape>> {
         if index >= self.len() {
             return None;
         }
@@ -139,7 +144,7 @@ impl<'mem, 'facet_lifetime> PeekListLike<'mem, 'facet_lifetime> {
     }
 
     /// Returns an iterator over the list
-    pub fn iter(self) -> PeekListLikeIter<'mem, 'facet_lifetime> {
+    pub fn iter(self) -> PeekListLikeIter<'mem, 'facet_lifetime, 'shape> {
         PeekListLikeIter {
             list: self,
             index: 0,
@@ -148,7 +153,7 @@ impl<'mem, 'facet_lifetime> PeekListLike<'mem, 'facet_lifetime> {
     }
 
     /// Def getter
-    pub fn def(&self) -> ListLikeDef {
+    pub fn def(&self) -> ListLikeDef<'shape> {
         self.def
     }
 }

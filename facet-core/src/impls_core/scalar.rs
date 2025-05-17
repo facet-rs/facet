@@ -281,11 +281,11 @@ macro_rules! impl_facet_for_integer {
         unsafe impl<'a> Facet<'a> for NonZero<$type> {
             const VTABLE: &'static ValueVTable = &const {
                 // Define conversion functions for transparency
-                unsafe fn try_from<'dst>(
+                unsafe fn try_from<'shape, 'dst>(
                     src_ptr: PtrConst<'_>,
-                    src_shape: &'static Shape,
+                    src_shape: &'shape Shape<'shape>,
                     dst: PtrUninit<'dst>,
-                ) -> Result<PtrMut<'dst>, TryFromError> {
+                ) -> Result<PtrMut<'dst>, TryFromError<'shape>> {
                     if src_shape == <$type as Facet>::SHAPE {
                         // Get the inner value and check that it's non-zero
                         let value = unsafe { *src_ptr.get::<$type>() };
@@ -342,23 +342,6 @@ macro_rules! impl_facet_for_integer {
                     "NonZero<{}>",
                     stringify!($type)
                 ));
-
-                // Keep existing try_from for compatibility
-                vtable.try_from = Some(|source, source_shape, dest| {
-                    if source_shape == Self::SHAPE {
-                        return Ok(unsafe { dest.copy_from(source, source_shape)? });
-                    }
-                    if source_shape == <$type>::SHAPE {
-                        let value: $type = *unsafe { source.get::<$type>() };
-                        let nz = NonZero::new(value)
-                            .ok_or_else(|| TryFromError::Generic("value must be non-zero"))?;
-                        return Ok(unsafe { dest.put::<NonZero<$type>>(nz) });
-                    }
-                    Err(TryFromError::UnsupportedSourceShape {
-                        src_shape: source_shape,
-                        expected: &[Self::SHAPE, <$type>::SHAPE],
-                    })
-                });
 
                 // Add our new transparency functions
                 vtable.try_from = Some(try_from);
