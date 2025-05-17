@@ -125,7 +125,7 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     ///
     /// * `Some(index, variant)` if a variant with the given name exists.
     /// * `None` if the current frame is not an enum or no variant with the given name exists.
-    pub fn find_variant(&self, name: &str) -> Option<(usize, Variant)> {
+    pub fn find_variant(&self, name: &str) -> Option<(usize, Variant<'shape>)> {
         let frame = self.frames.last()?;
         if let Type::User(UserType::Enum(def)) = frame.shape.ty {
             def.variants
@@ -144,7 +144,7 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     ///
     /// * `Some(variant)` if the current frame is an enum and a variant has been selected.
     /// * `None` if the current frame is not an enum or no variant has been selected yet.
-    pub fn selected_variant(&self) -> Option<Variant> {
+    pub fn selected_variant(&self) -> Option<Variant<'shape>> {
         let frame = self.frames.last()?;
         frame.istate.variant
     }

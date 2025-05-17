@@ -184,7 +184,7 @@ pub trait Format {
         'facet,
         'shape,
         Spanned<Outcome<'input>>,
-        Spanned<DeserErrorKind>,
+        Spanned<DeserErrorKind<'shape>>,
         Self::Input<'input>,
     >;
 
@@ -192,7 +192,14 @@ pub trait Format {
     fn skip<'input, 'facet, 'shape>(
         &mut self,
         nd: NextData<'input, 'facet, 'shape, Self::Input<'input>>,
-    ) -> NextResult<'input, 'facet, 'shape, Span, Spanned<DeserErrorKind>, Self::Input<'input>>;
+    ) -> NextResult<
+        'input,
+        'facet,
+        'shape,
+        Span,
+        Spanned<DeserErrorKind<'shape>>,
+        Self::Input<'input>,
+    >;
 }
 
 /// Instructions guiding the parsing flow, indicating the next expected action or token.
@@ -242,7 +249,7 @@ pub fn deserialize<'input, 'facet, 'shape, T, F>(
 ) -> Result<T, DeserError<'input, 'shape>>
 where
     T: Facet<'facet>,
-    F: Format,
+    F: Format + 'shape,
     F::Input<'input>: InputDebug,
     'input: 'facet,
     'input: 'shape,
@@ -257,7 +264,7 @@ where
 
 /// Deserializes a working-in-progress value into a fully materialized heap value.
 /// This function drives the parsing loop until the entire input is consumed and the value is complete.
-pub fn deserialize_wip<'input, 'facet, 'shape, F>(
+pub fn deserialize_wip<'input, 'facet, 'shape, F: 'shape>(
     mut wip: Wip<'facet, 'shape>,
     input: &'input F::Input<'input>,
     mut format: F,
@@ -266,6 +273,7 @@ where
     F: Format,
     F::Input<'input>: InputDebug,
     'input: 'facet,
+    'input: 'shape,
 {
     // This struct is just a bundle of the state that we need to pass around all the time.
     let mut runner = StackRunner {
@@ -643,9 +651,9 @@ where
     /// Internal common handler for GotScalar outcome, to deduplicate code.
     fn handle_scalar<'facet>(
         &self,
-        wip: Wip<'facet>,
+        wip: Wip<'facet, 'shape>,
         scalar: Scalar<'input>,
-    ) -> Result<Wip<'facet>, DeserError<'input>>
+    ) -> Result<Wip<'facet, 'shape>, DeserError<'input, 'shape>>
     where
         'input: 'facet, // 'input outlives 'facet
     {
@@ -693,9 +701,9 @@ where
     /// Handle value parsing
     fn value<'facet>(
         &mut self,
-        mut wip: Wip<'facet>,
+        mut wip: Wip<'facet, 'shape>,
         outcome: Spanned<Outcome<'input>>,
-    ) -> Result<Wip<'facet>, DeserError<'input>>
+    ) -> Result<Wip<'facet, 'shape>, DeserError<'input, 'shape>>
     where
         'input: 'facet, // 'input must outlive 'facet
     {
@@ -847,9 +855,9 @@ where
 
     fn object_key_or_object_close<'facet>(
         &mut self,
-        mut wip: Wip<'facet>,
+        mut wip: Wip<'facet, 'shape>,
         outcome: Spanned<Outcome<'input>>,
-    ) -> Result<Wip<'facet>, DeserError<'input>>
+    ) -> Result<Wip<'facet, 'shape>, DeserError<'input, 'shape>>
     where
         'input: 'facet,
     {
@@ -1024,9 +1032,9 @@ where
 
     fn list_item_or_list_close<'facet>(
         &mut self,
-        mut wip: Wip<'facet>,
+        mut wip: Wip<'facet, 'shape>,
         outcome: Spanned<Outcome<'input>>,
-    ) -> Result<Wip<'facet>, DeserError<'input>>
+    ) -> Result<Wip<'facet, 'shape>, DeserError<'input, 'shape>>
     where
         'input: 'facet,
     {

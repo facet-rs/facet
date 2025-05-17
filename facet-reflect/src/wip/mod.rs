@@ -1724,7 +1724,7 @@ where
     }
 
     /// Returns true if the field at the given index is set (initialized) in the current frame.
-    pub fn is_field_set(&self, index: usize) -> Result<bool, ReflectError> {
+    pub fn is_field_set(&self, index: usize) -> Result<bool, ReflectError<'shape>> {
         let frame = self.frames.last().ok_or(ReflectError::OperationFailed {
             shape: <()>::SHAPE,
             operation: "tried to check if field is set, but there was no frame",

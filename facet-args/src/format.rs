@@ -77,9 +77,12 @@ impl Cli {
 }
 
 /// Parse command line arguments into a Facet-compatible type
-pub fn from_slice<'input: 'facet, 'facet, T: Facet<'facet>>(
+pub fn from_slice<'input: 'facet, 'facet, 'shape, T: Facet<'facet>>(
     args: &'input [&'input str],
-) -> Result<T, DeserError<'input>> {
+) -> Result<T, DeserError<'input, 'shape>>
+where
+    'input: 'shape,
+{
     facet_deserialize::deserialize(args, Cli)
 }
 
