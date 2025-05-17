@@ -11,7 +11,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Foo {
             ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "Foo"));
         vtable
     };
-    const SHAPE: &'static ::facet::Shape = &const {
+    const SHAPE: &'static ::facet::Shape<'static> = &const {
         let fields: &'static [::facet::Field] = &const { [] };
         ::facet::Shape::builder_for_sized::<Self>()
             .ty(::facet::Type::User(::facet::UserType::Struct(

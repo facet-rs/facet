@@ -12,7 +12,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for TestEnum {
             f, "TestEnum"
         ))
     };
-    const SHAPE: &'static ::facet::Shape = &const {
+    const SHAPE: &'static ::facet::Shape<'static> = &const {
         let __facet_variants: &'static [::facet::Variant] = &const {
             [
                 ::facet::Variant::builder()

@@ -15,7 +15,7 @@ where
         ));
         vtable
     };
-    const SHAPE: &'static ::facet::Shape = &const {
+    const SHAPE: &'static ::facet::Shape<'static> = &const {
         let fields: &'static [::facet::Field] = &const {
             [
                 {
