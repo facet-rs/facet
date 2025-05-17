@@ -4,6 +4,7 @@ use alloc::{
     format,
     string::{String, ToString},
 };
+use facet_reflect::ReflectError;
 
 /// Any error
 #[derive(Debug, Clone)]
@@ -29,8 +30,8 @@ impl From<&str> for AnyErr {
     }
 }
 
-impl From<facet_reflect::ReflectError> for AnyErr {
-    fn from(value: facet_reflect::ReflectError) -> Self {
+impl<'shape> From<ReflectError<'shape>> for AnyErr {
+    fn from(value: ReflectError) -> Self {
         Self(format!("Reflection error: {value}"))
     }
 }
