@@ -41,7 +41,10 @@ mod tests {
             Spanned<Outcome<'input>>,
             Spanned<DeserErrorKind<'shape>>,
             Self::Input<'input>,
-        > {
+        >
+        where
+            'shape: 'input,
+        {
             // Use the start position to determine which token to return
             let position = nd.start();
             let input = nd.input();
@@ -135,7 +138,10 @@ mod tests {
             Span,
             Spanned<DeserErrorKind<'shape>>,
             Self::Input<'input>,
-        > {
+        >
+        where
+            'shape: 'input,
+        {
             // Simply advance the position by 1
             let position = nd.start();
             let span = Span::new(position, 1);
@@ -189,7 +195,10 @@ mod tests {
             Spanned<Outcome<'input>>,
             Spanned<DeserErrorKind<'shape>>,
             Self::Input<'input>,
-        > {
+        >
+        where
+            'shape: 'input,
+        {
             // Use the start position and expectation to determine which token to return
             let position = nd.start();
             let input = nd.input();
@@ -314,7 +323,10 @@ mod tests {
             Span,
             Spanned<DeserErrorKind<'shape>>,
             Self::Input<'input>,
-        > {
+        >
+        where
+            'shape: 'input,
+        {
             // Simply return a span that advances the position
             let position = nd.start();
             let span = Span::new(position, 1); // Length 1 to advance position
