@@ -80,7 +80,6 @@ pub enum Def<'shape> {
     SmartPointer(SmartPointerDef<'shape>),
 }
 
-#[expect(clippy::result_large_err, reason = "See comment of expect above Def")]
 impl<'shape> Def<'shape> {
     /// Returns the `ScalarDef` wrapped in an `Ok` if this is a [`Def::Scalar`].
     pub fn into_scalar(self) -> Result<ScalarDef<'shape>, Self> {

@@ -55,8 +55,8 @@ enum SeqKind {
 }
 
 /// Stack item for iterative traversal
-struct StackItem<'a, 'facet_lifetime> {
-    value: Peek<'a, 'facet_lifetime>,
+struct StackItem<'a, 'facet_lifetime, 'shape> {
+    value: Peek<'a, 'facet_lifetime, 'shape>,
     format_depth: usize,
     type_depth: usize,
     state: StackState,
@@ -114,7 +114,7 @@ impl PrettyPrinter {
     }
 
     /// Format a value to a string
-    pub fn format_peek(&self, value: Peek<'_, '_>) -> String {
+    pub fn format_peek(&self, value: Peek<'_, '_, '_>) -> String {
         let mut output = String::new();
         self.format_peek_internal(value, &mut output, &mut HashMap::new())
             .expect("Formatting failed");
@@ -122,11 +122,11 @@ impl PrettyPrinter {
     }
 
     /// Internal method to format a Peek value
-    pub(crate) fn format_peek_internal(
+    pub(crate) fn format_peek_internal<'shape>(
         &self,
-        initial_value: Peek<'_, '_>,
+        initial_value: Peek<'_, '_, 'shape>,
         f: &mut impl Write,
-        visited: &mut HashMap<ValueId, usize>,
+        visited: &mut HashMap<ValueId<'shape>, usize>,
     ) -> fmt::Result {
         // Create a queue for our stack items
         let mut stack = VecDeque::new();
@@ -769,10 +769,10 @@ impl PrettyPrinter {
         Ok(())
     }
 
-    fn handle_list<'a, 'facet_lifetime>(
+    fn handle_list<'a, 'facet_lifetime, 'shape>(
         &self,
-        stack: &mut VecDeque<StackItem<'a, 'facet_lifetime>>,
-        mut item: StackItem<'a, 'facet_lifetime>,
+        stack: &mut VecDeque<StackItem<'a, 'facet_lifetime, 'shape>>,
+        mut item: StackItem<'a, 'facet_lifetime, 'shape>,
         f: &mut impl Write,
     ) -> fmt::Result {
         let list = item.value.into_list_like().unwrap();

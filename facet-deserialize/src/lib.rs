@@ -186,7 +186,9 @@ pub trait Format {
         Spanned<Outcome<'input>>,
         Spanned<DeserErrorKind<'shape>>,
         Self::Input<'input>,
-    >;
+    >
+    where
+        'shape: 'input;
 
     /// Skip the next value; used to ignore an input.
     fn skip<'input, 'facet, 'shape>(
@@ -199,7 +201,9 @@ pub trait Format {
         Span,
         Spanned<DeserErrorKind<'shape>>,
         Self::Input<'input>,
-    >;
+    >
+    where
+        'shape: 'input;
 }
 
 /// Instructions guiding the parsing flow, indicating the next expected action or token.
@@ -252,7 +256,7 @@ where
     F: Format + 'shape,
     F::Input<'input>: InputDebug,
     'input: 'facet,
-    'input: 'shape,
+    'shape: 'input,
 {
     let source = format.source();
     let wip = Wip::alloc_shape(T::SHAPE)
@@ -264,16 +268,16 @@ where
 
 /// Deserializes a working-in-progress value into a fully materialized heap value.
 /// This function drives the parsing loop until the entire input is consumed and the value is complete.
-pub fn deserialize_wip<'input, 'facet, 'shape, F: 'shape>(
+pub fn deserialize_wip<'input, 'facet, 'shape, F>(
     mut wip: Wip<'facet, 'shape>,
     input: &'input F::Input<'input>,
     mut format: F,
 ) -> Result<HeapValue<'facet, 'shape>, DeserError<'input, 'shape>>
 where
-    F: Format,
+    F: Format + 'shape,
     F::Input<'input>: InputDebug,
     'input: 'facet,
-    'input: 'shape,
+    'shape: 'input,
 {
     // This struct is just a bundle of the state that we need to pass around all the time.
     let mut runner = StackRunner {

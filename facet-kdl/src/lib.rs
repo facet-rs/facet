@@ -49,8 +49,8 @@ impl<K: Into<KdlErrorKind>> From<K> for KdlError {
 }
 
 #[derive(Debug)]
-enum KdlErrorKind {
-    InvalidDocumentShape(&'static Def),
+enum KdlErrorKind<'shape> {
+    InvalidDocumentShape(&'shape Def<'shape>),
     MissingNodes(Vec<String>),
     Parse(KdlParseError),
     Reflect(ReflectError),
