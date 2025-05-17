@@ -76,7 +76,7 @@ impl<'mem, 'facet_lifetime> PeekList<'mem, 'facet_lifetime> {
             return None;
         };
 
-        let data = unsafe { (self.def.vtable.as_ptr)(self.value.data()) };
+        let data = unsafe { (self.def.vtable.as_ptr.unwrap())(self.value.data()) };
 
         // SAFETY: we verify index bounds at the start of the function
         let item_ptr = unsafe { data.field(layout.size() * index) };

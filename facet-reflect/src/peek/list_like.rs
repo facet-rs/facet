@@ -88,7 +88,10 @@ impl<'mem, 'facet_lifetime> PeekListLike<'mem, 'facet_lifetime> {
     /// Creates a new peek list
     pub fn new(value: Peek<'mem, 'facet_lifetime>, def: ListLikeDef) -> Self {
         let (len, as_ptr_fn) = match def {
-            ListLikeDef::List(v) => (unsafe { (v.vtable.len)(value.data()) }, v.vtable.as_ptr),
+            ListLikeDef::List(v) => (
+                unsafe { (v.vtable.len)(value.data()) },
+                v.vtable.as_ptr.unwrap(),
+            ),
             ListLikeDef::Slice(v) => (unsafe { (v.vtable.len)(value.data()) }, v.vtable.as_ptr),
             ListLikeDef::Array(v) => (v.n, v.vtable.as_ptr),
         };

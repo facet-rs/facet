@@ -118,10 +118,12 @@ pub struct ListVTable {
     pub len: ListLenFn,
 
     /// cf. [`ListAsPtrFn`]
-    pub as_ptr: ListAsPtrFn,
+    /// Only available for types that can be accessed as a contiguous array
+    pub as_ptr: Option<ListAsPtrFn>,
 
     /// cf. [`ListAsMutPtrFn`]
-    pub as_mut_ptr: ListAsMutPtrFn,
+    /// Only available for types that can be accessed as a contiguous array
+    pub as_mut_ptr: Option<ListAsMutPtrFn>,
 
     /// Virtual table for list iterator operations
     pub iter_vtable: IterVTable<PtrConst<'static>>,
@@ -204,8 +206,8 @@ impl ListVTableBuilder {
             init_in_place_with_capacity: self.init_in_place_with_capacity,
             push: self.push.unwrap(),
             len: self.len.unwrap(),
-            as_ptr: self.as_ptr.unwrap(),
-            as_mut_ptr: self.as_mut_ptr.unwrap(),
+            as_ptr: self.as_ptr,
+            as_mut_ptr: self.as_mut_ptr,
             iter_vtable: self.iter_vtable.unwrap(),
         }
     }
