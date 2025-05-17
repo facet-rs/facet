@@ -97,7 +97,9 @@ where
     ) -> impl DoubleEndedIterator<Item = (Field<'shape>, Peek<'mem, 'facet_lifetime, 'shape>)>;
 
     /// Iterates over fields in this type that should be included when it is serialized
-    fn fields_for_serialize(&self) -> Vec<(Field<'shape>, Peek<'mem, 'facet_lifetime, 'shape>)> {
+    fn fields_for_serialize(
+        &self,
+    ) -> impl DoubleEndedIterator<Item = (Field<'shape>, Peek<'mem, 'facet_lifetime, 'shape>)> {
         // This is a default implementation that filters out fields with `skip_serializing`
         // attribute and handles field flattening.
         self.fields()
@@ -139,6 +141,5 @@ where
                     vec![(field, peek)]
                 }
             })
-            .collect()
     }
 }
