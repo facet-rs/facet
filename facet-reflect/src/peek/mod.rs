@@ -9,6 +9,9 @@ pub use struct_::*;
 mod enum_;
 pub use enum_::*;
 
+mod fields;
+pub use fields::*;
+
 mod list;
 pub use list::*;
 
