@@ -712,7 +712,7 @@ impl<'facet_lifetime, 'shape> Wip<'facet_lifetime, 'shape> {
     /// * `Ok(Self)` if the field was successfully selected and pushed.
     /// * `Err(ReflectError)` if the current frame is not a struct or an enum with a selected variant,
     ///   or if the field doesn't exist.
-    pub fn field_named(self, name: &'shape str) -> Result<Self, ReflectError<'shape>> {
+    pub fn field_named(self, name: &str) -> Result<Self, ReflectError<'shape>> {
         let frame = self.frames.last().unwrap();
         let shape = frame.shape;
 
