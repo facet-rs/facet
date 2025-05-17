@@ -1,6 +1,7 @@
 use crate::*;
 use core::hash::Hash as _;
 
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 type VecIterator<'mem, T> = core::slice::Iter<'mem, T>;
