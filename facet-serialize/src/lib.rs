@@ -14,7 +14,9 @@ use facet_core::{
     Def, Facet, Field, PointerType, ScalarAffinity, SequenceType, ShapeAttribute, StructKind, Type,
     UserType,
 };
-use facet_reflect::{HasFields, Peek, PeekListLike, PeekMap, PeekStruct, PeekTuple, ScalarType};
+use facet_reflect::{
+    FieldIter, FieldsForSerializeIter, HasFields, Peek, PeekListLikeIter, PeekMapIter, ScalarType,
+};
 use log::{debug, trace};
 
 mod debug_serializer;
@@ -223,22 +225,37 @@ pub trait Serializer<'shape> {
 // --- Iterative Serialization Logic ---
 
 /// Task items for the serialization stack.
-#[derive(Debug)]
 enum SerializeTask<'mem, 'facet, 'shape> {
     Value(Peek<'mem, 'facet, 'shape>, Option<Field<'shape>>),
+    Object {
+        entries: FieldsForSerializeIter<'mem, 'facet, 'shape>,
+        first: bool,
+        len: usize,
+    },
+    Array {
+        items: PeekListLikeIter<'mem, 'facet, 'shape>,
+        first: bool,
+    },
+    Map {
+        entries: PeekMapIter<'mem, 'facet, 'shape>,
+        first: bool,
+        len: usize,
+    },
+    TupleStruct {
+        items: FieldsForSerializeIter<'mem, 'facet, 'shape>,
+        first: bool,
+        len: usize,
+    },
+    Tuple {
+        items: FieldIter<'mem, 'facet, 'shape>,
+        first: bool,
+    },
     // End markers
     EndObject,
     EndArray,
-    EndMap,
     EndMapKey,
     EndMapValue,
     EndField,
-    // Tasks to push sub-elements onto the stack
-    ObjectFields(PeekStruct<'mem, 'facet, 'shape>),
-    ArrayItems(PeekListLike<'mem, 'facet, 'shape>),
-    TupleStructFields(PeekStruct<'mem, 'facet, 'shape>),
-    TupleFields(PeekTuple<'mem, 'facet, 'shape>),
-    MapEntries(PeekMap<'mem, 'facet, 'shape>),
     // Field-related tasks
     SerializeFieldName(&'shape str),
     SerializeMapKey(Peek<'mem, 'facet, 'shape>),
@@ -385,10 +402,10 @@ where
                             serializer.serialize_bytes(cpeek.get::<Vec<u8>>().unwrap())?
                         } else {
                             let peek_list = cpeek.into_list_like().unwrap();
-                            let len = peek_list.len();
-                            serializer.start_array(Some(len))?;
-                            stack.push(SerializeTask::EndArray);
-                            stack.push(SerializeTask::ArrayItems(peek_list));
+                            stack.push(SerializeTask::Array {
+                                items: peek_list.iter(),
+                                first: true,
+                            });
                         }
                     }
                     (Def::Array(ad), _) => {
@@ -402,10 +419,10 @@ where
                             serializer.serialize_bytes(&bytes)?;
                         } else {
                             let peek_list = cpeek.into_list_like().unwrap();
-                            let len = peek_list.len();
-                            serializer.start_array(Some(len))?;
-                            stack.push(SerializeTask::EndArray);
-                            stack.push(SerializeTask::ArrayItems(peek_list));
+                            stack.push(SerializeTask::Array {
+                                items: peek_list.iter(),
+                                first: true,
+                            });
                         }
                     }
                     (Def::Slice(sd), _) => {
@@ -413,18 +430,20 @@ where
                             serializer.serialize_bytes(cpeek.get::<&[u8]>().unwrap())?
                         } else {
                             let peek_list = cpeek.into_list_like().unwrap();
-                            let len = peek_list.len();
-                            serializer.start_array(Some(len))?;
-                            stack.push(SerializeTask::EndArray);
-                            stack.push(SerializeTask::ArrayItems(peek_list));
+                            stack.push(SerializeTask::Array {
+                                items: peek_list.iter(),
+                                first: true,
+                            });
                         }
                     }
                     (Def::Map(_), _) => {
                         let peek_map = cpeek.into_map().unwrap();
                         let len = peek_map.len();
-                        serializer.start_map(Some(len))?;
-                        stack.push(SerializeTask::EndMap);
-                        stack.push(SerializeTask::MapEntries(peek_map));
+                        stack.push(SerializeTask::Map {
+                            entries: peek_map.iter(),
+                            first: true,
+                            len,
+                        });
                     }
                     (Def::Option(_), _) => {
                         let opt = cpeek.into_option().unwrap();
@@ -458,9 +477,11 @@ where
                                 let fields = peek_struct.fields_for_serialize().count();
                                 debug!("  Serializing {} fields as array", fields);
 
-                                serializer.start_array(Some(fields))?;
-                                stack.push(SerializeTask::EndArray);
-                                stack.push(SerializeTask::TupleStructFields(peek_struct));
+                                stack.push(SerializeTask::TupleStruct {
+                                    items: peek_struct.fields_for_serialize(),
+                                    first: true,
+                                    len: fields,
+                                });
                                 trace!(
                                     "  Pushed TupleStructFields to stack, will handle {} fields",
                                     fields
@@ -472,9 +493,15 @@ where
                                 let fields = peek_struct.fields_for_serialize().count();
                                 debug!("  Serializing {} fields as object", fields);
 
-                                serializer.start_object(Some(fields))?;
-                                stack.push(SerializeTask::EndObject);
-                                stack.push(SerializeTask::ObjectFields(peek_struct));
+                                // FIXME
+                                // serializer.start_object(Some(fields))?;
+                                // stack.push(SerializeTask::EndObject);
+                                // stack.push(SerializeTask::ObjectFields(peek_struct));
+                                stack.push(SerializeTask::Object {
+                                    entries: peek_struct.fields_for_serialize(),
+                                    first: true,
+                                    len: fields,
+                                });
                                 trace!(
                                     "  Pushed ObjectFields to stack, will handle {} fields",
                                     fields
@@ -493,9 +520,10 @@ where
                             let count = peek_tuple.len();
                             debug!("  Tuple fields count: {}", count);
 
-                            serializer.start_array(Some(count))?;
-                            stack.push(SerializeTask::EndArray);
-                            stack.push(SerializeTask::TupleFields(peek_tuple));
+                            stack.push(SerializeTask::Tuple {
+                                items: peek_tuple.fields(),
+                                first: true,
+                            });
                             trace!(
                                 "  Pushed TupleFields to stack for tuple, will handle {} fields",
                                 count
@@ -508,10 +536,10 @@ where
                             );
 
                             if let Ok(peek_list_like) = cpeek.into_list_like() {
-                                let count = peek_list_like.len();
-                                serializer.start_array(Some(count))?;
-                                stack.push(SerializeTask::EndArray);
-                                stack.push(SerializeTask::ArrayItems(peek_list_like));
+                                stack.push(SerializeTask::Array {
+                                    items: peek_list_like.iter(),
+                                    first: true,
+                                });
                                 trace!("  Pushed ArrayItems to stack for tuple serialization",);
                             } else {
                                 // Final fallback - create an empty array
@@ -519,7 +547,7 @@ where
                                     "  Could not convert tuple to list-like either, using empty array"
                                 );
                                 serializer.start_array(Some(0))?;
-                                stack.push(SerializeTask::EndArray);
+                                serializer.end_array()?;
                                 trace!("  Warning: Tuple serialization fallback to empty array");
                             }
                         }
@@ -624,49 +652,103 @@ where
                 }
             }
 
-            // --- Pushing sub-elements onto the stack ---
-            SerializeTask::ObjectFields(peek_struct) => {
-                // Push fields in reverse order for stack processing
-                let fields_for_serialize = peek_struct.fields_for_serialize().collect::<Vec<_>>();
-                for (field, field_peek) in fields_for_serialize.into_iter().rev() {
-                    stack.push(SerializeTask::EndField);
-                    stack.push(SerializeTask::Value(field_peek, Some(field)));
-                    stack.push(SerializeTask::SerializeFieldName(field.name));
+            SerializeTask::Object {
+                mut entries,
+                first,
+                len,
+            } => {
+                if first {
+                    serializer.start_object(Some(len))?;
                 }
-            }
-            SerializeTask::TupleStructFields(peek_struct) => {
-                // Push fields in reverse order
-                let fields_for_serialize = peek_struct.fields_for_serialize().collect::<Vec<_>>();
-                for (field, field_peek) in fields_for_serialize.into_iter().rev() {
-                    stack.push(SerializeTask::Value(field_peek, Some(field)));
-                }
-            }
-            SerializeTask::TupleFields(peek_tuple) => {
-                // Push fields in reverse order
-                for (_, field_peek) in peek_tuple.fields().rev() {
-                    // Get the innermost peek value - this is essential for proper serialization
-                    // to unwrap transparent wrappers and get to the actual value
-                    let innermost_peek = field_peek.innermost_peek();
 
-                    // Push the innermost peek to the stack
-                    stack.push(SerializeTask::Value(innermost_peek, None));
-                }
-                trace!("  Pushed {} tuple fields to stack", peek_tuple.len());
+                let Some((field, value)) = entries.next() else {
+                    serializer.end_object()?;
+                    continue;
+                };
+
+                stack.push(SerializeTask::Object {
+                    entries,
+                    first: false,
+                    len,
+                });
+                stack.push(SerializeTask::EndField);
+                stack.push(SerializeTask::Value(value, Some(field)));
+                stack.push(SerializeTask::SerializeFieldName(field.name));
             }
-            SerializeTask::ArrayItems(peek_list) => {
-                // Push items in reverse order
-                let items: Vec<_> = peek_list.iter().collect();
-                for item_peek in items.into_iter().rev() {
-                    stack.push(SerializeTask::Value(item_peek, None));
+            SerializeTask::Array { mut items, first } => {
+                if first {
+                    serializer.start_array(Some(items.len()))?;
                 }
+
+                let Some(value) = items.next() else {
+                    serializer.end_array()?;
+                    continue;
+                };
+
+                stack.push(SerializeTask::Array {
+                    items,
+                    first: false,
+                });
+                stack.push(SerializeTask::Value(value, None));
             }
-            SerializeTask::MapEntries(peek_map) => {
-                // Push entries in reverse order (key, value pairs)
-                let entries = peek_map.iter().collect::<Vec<_>>();
-                for (key_peek, value_peek) in entries.into_iter().rev() {
-                    stack.push(SerializeTask::SerializeMapValue(value_peek));
-                    stack.push(SerializeTask::SerializeMapKey(key_peek));
+            SerializeTask::Map {
+                mut entries,
+                first,
+                len,
+            } => {
+                if first {
+                    serializer.start_map(Some(len))?;
                 }
+
+                let Some((key, value)) = entries.next() else {
+                    serializer.end_map()?;
+                    continue;
+                };
+
+                stack.push(SerializeTask::Map {
+                    entries,
+                    first: false,
+                    len,
+                });
+                stack.push(SerializeTask::SerializeMapValue(value));
+                stack.push(SerializeTask::SerializeMapKey(key));
+            }
+            SerializeTask::TupleStruct {
+                mut items,
+                first,
+                len,
+            } => {
+                if first {
+                    serializer.start_array(Some(len))?;
+                }
+
+                let Some((field, value)) = items.next() else {
+                    serializer.end_array()?;
+                    continue;
+                };
+
+                stack.push(SerializeTask::TupleStruct {
+                    items,
+                    first: false,
+                    len,
+                });
+                stack.push(SerializeTask::Value(value, Some(field)));
+            }
+            SerializeTask::Tuple { mut items, first } => {
+                if first {
+                    serializer.start_array(Some(items.len()))?;
+                }
+
+                let Some((field, value)) = items.next() else {
+                    serializer.end_array()?;
+                    continue;
+                };
+
+                stack.push(SerializeTask::Tuple {
+                    items,
+                    first: false,
+                });
+                stack.push(SerializeTask::Value(value, Some(field)));
             }
 
             // --- Field name and map key/value handling ---
@@ -690,9 +772,6 @@ where
             }
             SerializeTask::EndArray => {
                 serializer.end_array()?;
-            }
-            SerializeTask::EndMap => {
-                serializer.end_map()?;
             }
             SerializeTask::EndMapKey => {
                 serializer.end_map_key()?;
