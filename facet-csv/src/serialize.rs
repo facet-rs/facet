@@ -94,7 +94,7 @@ where
     }
 }
 
-impl<W> Serializer for CsvSerializer<W>
+impl<'shape, W> Serializer<'shape> for CsvSerializer<W>
 where
     W: Write,
 {
