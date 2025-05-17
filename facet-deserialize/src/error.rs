@@ -12,7 +12,7 @@ use crate::{Outcome, Span};
 
 /// A JSON parse error, with context. Never would've guessed huh.
 #[derive(Debug)]
-pub struct DeserError<'input> {
+pub struct DeserError<'input, 'shape> {
     /// The input associated with the error.
     pub input: alloc::borrow::Cow<'input, [u8]>,
 
@@ -20,15 +20,15 @@ pub struct DeserError<'input> {
     pub span: Span,
 
     /// The specific error that occurred while parsing the JSON.
-    pub kind: DeserErrorKind,
+    pub kind: DeserErrorKind<'shape>,
 
     /// The source identifier for error reporting
     pub source_id: &'static str,
 }
 
-impl DeserError<'_> {
+impl<'shape> DeserError<'_, 'shape> {
     /// Converts the error into an owned error.
-    pub fn into_owned(self) -> DeserError<'static> {
+    pub fn into_owned(self) -> DeserError<'static, 'shape> {
         DeserError {
             input: self.input.into_owned().into(),
             span: self.span,
@@ -46,7 +46,7 @@ impl DeserError<'_> {
 
 /// An error kind for JSON parsing.
 #[derive(Debug, PartialEq, Clone)]
-pub enum DeserErrorKind {
+pub enum DeserErrorKind<'shape> {
     /// An unexpected byte was encountered in the input.
     UnexpectedByte {
         /// The byte that was found.
@@ -54,6 +54,7 @@ pub enum DeserErrorKind {
         /// The expected value as a string description.
         wanted: &'static str,
     },
+
     /// An unexpected character was encountered in the input.
     UnexpectedChar {
         /// The character that was found.
@@ -61,6 +62,7 @@ pub enum DeserErrorKind {
         /// The expected value as a string description.
         wanted: &'static str,
     },
+
     /// An unexpected outcome was encountered in the input.
     UnexpectedOutcome {
         /// The outcome that was found.
@@ -68,11 +70,13 @@ pub enum DeserErrorKind {
         /// The expected value as a string description.
         wanted: &'static str,
     },
+
     /// The input ended unexpectedly while parsing JSON.
     UnexpectedEof {
         /// The expected value as a string description.
         wanted: &'static str,
     },
+
     /// Indicates a value was expected to follow an element in the input.
     MissingValue {
         /// Describes what type of value was expected.
@@ -80,49 +84,60 @@ pub enum DeserErrorKind {
         /// The element that requires the missing value.
         field: String,
     },
+
     /// A required struct field was missing at the end of JSON input.
     MissingField(&'static str),
+
     /// A number is out of range.
     NumberOutOfRange(f64),
+
     /// An unexpected String was encountered in the input.
     StringAsNumber(String),
+
     /// An unexpected field name was encountered in the input.
     UnknownField {
         /// The name of the field that was not recognized
         field_name: String,
+
         /// The shape definition where the unknown field was encountered
-        shape: &'static Shape,
+        shape: &'shape Shape<'shape>,
     },
+
     /// A string that could not be built into valid UTF-8 Unicode
     InvalidUtf8(String),
+
     /// An error occurred while reflecting a type.
-    ReflectError(ReflectError),
+    ReflectError(ReflectError<'shape>),
+
     /// Some feature is not yet implemented (under development).
     Unimplemented(&'static str),
+
     /// An unsupported type was encountered.
     UnsupportedType {
         /// The shape we got
-        got: &'static Shape,
+        got: &'shape Shape<'shape>,
 
         /// The shape we wanted
         wanted: &'static str,
     },
+
     /// An enum variant name that doesn't exist in the enum definition.
     NoSuchVariant {
         /// The name of the variant that was not found
         name: String,
 
         /// The enum shape definition where the variant was looked up
-        enum_shape: &'static Shape,
+        enum_shape: &'shape Shape<'shape>,
     },
+
     /// An error occurred when reflecting an enum variant (index) from a user type.
     VariantError(VariantError),
 }
 
-impl<'input> DeserError<'input> {
+impl<'input, 'shape> DeserError<'input, 'shape> {
     /// Creates a new deser error, preserving input and location context for accurate reporting.
     pub fn new<I>(
-        kind: DeserErrorKind,
+        kind: DeserErrorKind<'shape>,
         input: &'input I,
         span: Span,
         source_id: &'static str,
@@ -147,7 +162,7 @@ impl<'input> DeserError<'input> {
 
     /// Constructs a reflection-related deser error, keeping contextual information intact.
     pub(crate) fn new_reflect<I>(
-        e: ReflectError,
+        e: ReflectError<'shape>,
         input: &'input I,
         span: Span,
         source_id: &'static str,
@@ -183,15 +198,15 @@ impl<'input> DeserError<'input> {
     }
 
     /// Provides a human-friendly message wrapper to improve error readability.
-    pub fn message(&self) -> DeserErrorMessage<'_> {
+    pub fn message(&self) -> DeserErrorMessage<'_, '_> {
         DeserErrorMessage(self)
     }
 }
 
 /// A wrapper type for displaying deser error messages
-pub struct DeserErrorMessage<'a>(&'a DeserError<'a>);
+pub struct DeserErrorMessage<'input, 'shape>(&'input DeserError<'input, 'shape>);
 
-impl core::fmt::Display for DeserErrorMessage<'_> {
+impl core::fmt::Display for DeserErrorMessage<'_, '_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match &self.0.kind {
             DeserErrorKind::UnexpectedByte { got, wanted } => write!(
@@ -281,14 +296,14 @@ impl core::fmt::Display for DeserErrorMessage<'_> {
 }
 
 #[cfg(not(feature = "rich-diagnostics"))]
-impl core::fmt::Display for DeserError<'_> {
+impl core::fmt::Display for DeserError<'_, '_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{} at byte {}", self.message(), self.span.start(),)
     }
 }
 
 #[cfg(feature = "rich-diagnostics")]
-impl core::fmt::Display for DeserError<'_> {
+impl core::fmt::Display for DeserError<'_, '_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let Ok(input_str) = core::str::from_utf8(&self.input[..]) else {
             return write!(f, "(JSON input was invalid UTF-8)");
@@ -366,4 +381,4 @@ impl core::fmt::Display for DeserError<'_> {
     }
 }
 
-impl core::error::Error for DeserError<'_> {}
+impl core::error::Error for DeserError<'_, '_> {}
