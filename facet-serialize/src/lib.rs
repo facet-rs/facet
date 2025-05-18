@@ -493,10 +493,6 @@ where
                                 let fields = peek_struct.fields_for_serialize().count();
                                 debug!("  Serializing {} fields as object", fields);
 
-                                // FIXME
-                                // serializer.start_object(Some(fields))?;
-                                // stack.push(SerializeTask::EndObject);
-                                // stack.push(SerializeTask::ObjectFields(peek_struct));
                                 stack.push(SerializeTask::Object {
                                     entries: peek_struct.fields_for_serialize(),
                                     first: true,
