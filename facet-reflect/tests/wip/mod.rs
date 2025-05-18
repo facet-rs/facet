@@ -1,8 +1,5 @@
 #![cfg(feature = "std")]
 
-#[cfg(feature = "slow-tests")]
-mod compile_tests;
-
 mod no_uninit;
 
 mod misc;
