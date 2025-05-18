@@ -44,7 +44,7 @@ pub struct Peek<'mem, 'facet, 'shape> {
     /// Shape of the value
     pub(crate) shape: &'shape Shape<'shape>,
 
-    invariant: PhantomData<fn(&'facet ()) -> &'facet ()>,
+    phantom: PhantomData<&'facet ()>,
 }
 
 impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
@@ -53,7 +53,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
         Self {
             data: PtrConst::new(t as *const T),
             shape: T::SHAPE,
-            invariant: PhantomData,
+            phantom: PhantomData,
         }
     }
 
@@ -68,7 +68,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
         Self {
             data,
             shape,
-            invariant: PhantomData,
+            phantom: PhantomData,
         }
     }
 
@@ -358,7 +358,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
                 current_peek = Peek {
                     data: inner_data,
                     shape: inner_shape(),
-                    invariant: PhantomData,
+                    phantom: PhantomData,
                 };
             }
         }

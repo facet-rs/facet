@@ -60,10 +60,7 @@ impl<'mem, 'facet, 'shape> PeekStruct<'mem, 'facet, 'shape> {
     }
 }
 
-impl<'mem, 'facet, 'shape> HasFields<'mem, 'facet, 'shape> for PeekStruct<'mem, 'facet, 'shape>
-where
-    'mem: 'facet,
-{
+impl<'mem, 'facet, 'shape> HasFields<'mem, 'facet, 'shape> for PeekStruct<'mem, 'facet, 'shape> {
     /// Iterates over all fields in this struct, providing both name and value
     #[inline]
     fn fields(
@@ -81,10 +78,7 @@ where
 ///
 /// This trait allows code to be written generically over both structs and enums
 /// that provide field access and iteration capabilities.
-pub trait HasFields<'mem, 'facet, 'shape>
-where
-    'mem: 'facet,
-{
+pub trait HasFields<'mem, 'facet, 'shape> {
     /// Iterates over all fields in this type, providing both field metadata and value
     fn fields(
         &self,

@@ -242,10 +242,7 @@ impl<'mem, 'facet, 'shape> PeekEnum<'mem, 'facet, 'shape> {
     }
 }
 
-impl<'mem, 'facet, 'shape> HasFields<'mem, 'facet, 'shape> for PeekEnum<'mem, 'facet, 'shape>
-where
-    'mem: 'facet,
-{
+impl<'mem, 'facet, 'shape> HasFields<'mem, 'facet, 'shape> for PeekEnum<'mem, 'facet, 'shape> {
     fn fields(
         &self,
     ) -> impl DoubleEndedIterator<Item = (Field<'shape>, Peek<'mem, 'facet, 'shape>)> {

@@ -254,7 +254,6 @@ pub fn serialize_iterative<'mem, 'facet, 'shape, S>(
 ) -> Result<(), S::Error>
 where
     S: Serializer<'shape>,
-    'mem: 'facet,
 {
     let mut stack = Vec::new();
     stack.push(SerializeTask::Value(peek, None));

@@ -55,10 +55,7 @@ where
 
 /// Serializes a Peek instance to JSON
 #[cfg(feature = "std")]
-pub fn peek_to_string<'input, 'facet, 'shape>(peek: Peek<'input, 'facet, 'shape>) -> String
-where
-    'input: 'facet,
-{
+pub fn peek_to_string<'input, 'facet, 'shape>(peek: Peek<'input, 'facet, 'shape>) -> String {
     recursive::peek_to_string(peek, 0)
 }
 
@@ -67,10 +64,7 @@ where
 pub fn to_writer<'mem, 'facet, T: Facet<'facet>, W: Write>(
     value: &'mem T,
     writer: &mut W,
-) -> io::Result<()>
-where
-    'mem: 'facet,
-{
+) -> io::Result<()> {
     recursive::to_writer(value, writer)
 }
 
@@ -79,10 +73,7 @@ where
 pub fn peek_to_writer<'mem, 'facet, 'shape, W: Write>(
     peek: Peek<'mem, 'facet, 'shape>,
     writer: &mut W,
-) -> io::Result<()>
-where
-    'mem: 'facet,
-{
+) -> io::Result<()> {
     recursive::peek_to_writer(peek, None, 0, writer)
 }
 

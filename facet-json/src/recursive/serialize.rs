@@ -17,10 +17,7 @@ use log::debug;
 pub(crate) fn to_string<'mem, 'facet, T: Facet<'facet>>(
     value: &'mem T,
     recursion_depth: usize,
-) -> String
-where
-    'mem: 'facet,
-{
+) -> String {
     let peek = Peek::new(value);
     let mut out = Vec::new();
     peek_to_writer(peek, None, recursion_depth, &mut out).unwrap();
@@ -31,10 +28,7 @@ where
 pub(crate) fn peek_to_string<'input, 'facet, 'shape>(
     peek: Peek<'input, 'facet, 'shape>,
     recursion_depth: usize,
-) -> String
-where
-    'input: 'facet,
-{
+) -> String {
     let mut out = Vec::new();
     peek_to_writer(peek, None, recursion_depth, &mut out).unwrap();
     String::from_utf8(out).unwrap()
@@ -44,10 +38,7 @@ where
 pub(crate) fn to_writer<'mem, 'facet, 'shape, T: Facet<'facet>, W: Write>(
     value: &'mem T,
     writer: &mut W,
-) -> io::Result<()>
-where
-    'mem: 'facet,
-{
+) -> io::Result<()> {
     let peek = Peek::new(value);
     peek_to_writer(peek, None, 0, writer)
 }
@@ -58,10 +49,7 @@ pub(crate) fn peek_to_writer<'mem, 'facet, 'shape, W: Write>(
     maybe_field: Option<&Field>,
     recursion_depth: usize,
     output: &mut W,
-) -> io::Result<()>
-where
-    'mem: 'facet,
-{
+) -> io::Result<()> {
     use facet_core::Def::*;
     if recursion_depth > crate::MAX_RECURSION_DEPTH {
         return crate::iterative::peek_to_writer(peek, output);

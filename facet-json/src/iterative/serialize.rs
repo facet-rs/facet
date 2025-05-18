@@ -7,10 +7,7 @@ use std::io::{self, Write};
 pub(crate) fn peek_to_writer<'mem, 'facet, 'shape, W: Write>(
     peek: Peek<'mem, 'facet, 'shape>,
     writer: &mut W,
-) -> io::Result<()>
-where
-    'mem: 'facet,
-{
+) -> io::Result<()> {
     let mut serializer = JsonSerializer::new(writer);
     serialize_iterative(peek, &mut serializer)
 }
