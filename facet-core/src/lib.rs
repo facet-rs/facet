@@ -32,6 +32,9 @@ mod impls_alloc;
 #[cfg(feature = "std")]
 mod impls_std;
 
+#[cfg(feature = "bytes")]
+mod impls_bytes;
+
 #[cfg(feature = "camino")]
 mod impls_camino;
 
