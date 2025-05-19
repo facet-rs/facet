@@ -159,8 +159,13 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                                 frame_len,
                                 parent_shape.blue()
                             );
+
+                            let Some(push) = list_vtable.push else {
+                                panic!("Tried to push into list {parent_shape} but it's immutable");
+                            };
+
                             unsafe {
-                                (list_vtable.push)(
+                                push(
                                     PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
                                     PtrMut::new(frame.data.as_mut_byte_ptr()),
                                 );

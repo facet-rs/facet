@@ -128,7 +128,8 @@ pub struct ListVTable {
     pub init_in_place_with_capacity: Option<ListInitInPlaceWithCapacityFn>,
 
     /// cf. [`ListPushFn`]
-    pub push: ListPushFn,
+    /// Only available for mutable lists
+    pub push: Option<ListPushFn>,
 
     /// cf. [`ListLenFn`]
     pub len: ListLenFn,
@@ -137,7 +138,8 @@ pub struct ListVTable {
     pub get: ListGetFn,
 
     /// cf. [`ListGetMutFn`]
-    pub get_mut: ListGetMutFn,
+    /// Only available for mutable lists
+    pub get_mut: Option<ListGetMutFn>,
 
     /// cf. [`ListAsPtrFn`]
     /// Only available for types that can be accessed as a contiguous array
@@ -242,10 +244,10 @@ impl ListVTableBuilder {
     pub const fn build(self) -> ListVTable {
         ListVTable {
             init_in_place_with_capacity: self.init_in_place_with_capacity,
-            push: self.push.unwrap(),
+            push: self.push,
             len: self.len.unwrap(),
             get: self.get.unwrap(),
-            get_mut: self.get_mut.unwrap(),
+            get_mut: self.get_mut,
             as_ptr: self.as_ptr,
             as_mut_ptr: self.as_mut_ptr,
             iter_vtable: self.iter_vtable.unwrap(),
