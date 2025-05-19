@@ -46,10 +46,7 @@ where
 
 /// Serializes a value to JSON
 #[cfg(feature = "std")]
-pub fn to_string<'input, 'facet, T: Facet<'facet>>(value: &'input T) -> String
-where
-    'input: 'facet,
-{
+pub fn to_string<'input, 'facet, T: Facet<'facet>>(value: &'input T) -> String {
     recursive::to_string(value, 0)
 }
 
