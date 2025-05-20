@@ -17,3 +17,12 @@ fn string_mut_ref() {
 
     assert_eq!(format!("{peek}"), "abc");
 }
+
+#[test]
+fn str_ref_ref() {
+    let s = "abc";
+    let r = &s;
+    let peek = Peek::new::<&&str>(&r);
+
+    assert_eq!(format!("{peek}"), "abc");
+}
