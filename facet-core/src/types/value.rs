@@ -424,7 +424,7 @@ impl core::hash::Hasher for HasherProxy<'_> {
 
 bitflags! {
     /// Bitflags for common marker traits that a type may implement
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct MarkerTraits: u8 {
         /// Indicates that the type implements the [`Eq`] marker trait
         const EQ = 1 << 0;

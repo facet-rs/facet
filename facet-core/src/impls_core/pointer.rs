@@ -125,11 +125,16 @@ impl_facet_for_pointer!(
     Reference: &'a T
         => Shape::builder_for_sized::<Self>()
         => {
+            let mut marker_traits = MarkerTraits::COPY.union(MarkerTraits::UNPIN);
+            if T::SHAPE.vtable.marker_traits.contains(MarkerTraits::EQ) {
+                marker_traits = marker_traits.union(MarkerTraits::EQ);
+            }
+            if T::SHAPE.vtable.marker_traits.contains(MarkerTraits::SYNC) {
+                marker_traits = marker_traits.union(MarkerTraits::SEND).union(MarkerTraits::SYNC);
+            }
+
             let mut builder = ValueVTable::builder::<Self>()
-                .marker_traits(
-                    MarkerTraits::UNPIN
-                        .union(MarkerTraits::COPY)
-                )
+                .marker_traits(marker_traits)
                 .clone_into(|src, dst| unsafe { dst.put(core::ptr::read(src)) });
 
             // Forward trait methods to the underlying type if it implements them
@@ -188,10 +193,19 @@ impl_facet_for_pointer!(
     Reference: &'a mut T
         => Shape::builder_for_sized::<Self>()
         => {
+            let mut marker_traits = MarkerTraits::UNPIN;
+            if T::SHAPE.vtable.marker_traits.contains(MarkerTraits::EQ) {
+                marker_traits = marker_traits.union(MarkerTraits::EQ);
+            }
+            if T::SHAPE.vtable.marker_traits.contains(MarkerTraits::SEND) {
+                marker_traits = marker_traits.union(MarkerTraits::SEND);
+            }
+            if T::SHAPE.vtable.marker_traits.contains(MarkerTraits::SYNC) {
+                marker_traits = marker_traits.union(MarkerTraits::SYNC);
+            }
+
             let mut builder = ValueVTable::builder::<Self>()
-                .marker_traits(
-                    MarkerTraits::UNPIN
-                );
+                .marker_traits(marker_traits);
 
             // Forward trait methods to the underlying type if it implements them
             if T::VTABLE.debug.is_some() {
