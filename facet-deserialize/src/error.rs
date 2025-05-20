@@ -284,13 +284,91 @@ impl core::fmt::Display for DeserError<'_, '_> {
 #[cfg(feature = "rich-diagnostics")]
 impl core::fmt::Display for DeserError<'_, '_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let Ok(input_str) = core::str::from_utf8(&self.input[..]) else {
+        // Try to convert input to utf8 for source display, otherwise fallback to error
+        let Ok(orig_input_str) = core::str::from_utf8(&self.input[..]) else {
             return write!(f, "(JSON input was invalid UTF-8)");
         };
 
         let source_id = self.source_id;
-        let span_start = self.span.start();
-        let span_end = self.span.end();
+        let mut span_start = self.span.start();
+        let mut span_end = self.span.end();
+        use alloc::borrow::Cow;
+        let mut input_str: Cow<'_, str> = Cow::Borrowed(orig_input_str);
+
+        // --- Context-sensitive truncation logic ---
+        // When the error occurs very far into a huge (often one-line) input,
+        // such as minified JSON, it's annoying to display hundreds or thousands of
+        // preceding and trailing characters. Instead, we seek to trim the displayed
+        // "source" to just enough around the offending line/location, but only if
+        // we can do this cleanly.
+        //
+        // Our approach:
+        // - Find the full line that `span_start` is within, using memchr for newlines before and after.
+        // - Only proceed if both `span_start` and `span_end` are within this line (i.e., error doesn't span lines).
+        // - If there are more than 180 characters before/after the span on this line, truncate to show
+        //   "...<80 chars>SPANTEXT<80 chars>..." and adjust the display offsets to ensure ariadne points
+        //   to the correct span inside the trimmed display.
+        //
+        // Rationale: this avoids a sea of whitespace for extremely long lines (common in compact JSON).
+
+        {
+            // Find the line bounds containing span_start
+            let bytes = self.input.as_ref();
+            let line_start = bytes[..span_start]
+                .iter()
+                .rposition(|&b| b == b'\n')
+                .map(|pos| pos + 1)
+                .unwrap_or(0);
+            let line_end = bytes[span_start..]
+                .iter()
+                .position(|&b| b == b'\n')
+                .map(|pos| span_start + pos)
+                .unwrap_or(bytes.len());
+
+            // Check if span fits within one line
+            if span_end <= line_end {
+                // How much context do we have before and after the span in this line?
+                let before_chars = span_start - line_start;
+                let after_chars = line_end.saturating_sub(span_end);
+
+                // Only trim if context is long enough
+                if before_chars > 180 || after_chars > 180 {
+                    let trim_left = if before_chars > 180 {
+                        before_chars - 80
+                    } else {
+                        0
+                    };
+                    let trim_right = if after_chars > 180 {
+                        after_chars - 80
+                    } else {
+                        0
+                    };
+
+                    let new_start = line_start + trim_left;
+                    let new_end = line_end - trim_right;
+
+                    let truncated = &orig_input_str[new_start..new_end];
+
+                    let left_ellipsis = if trim_left > 0 { "…" } else { "" };
+                    let right_ellipsis = if trim_right > 0 { "…" } else { "" };
+
+                    let mut buf = String::with_capacity(
+                        left_ellipsis.len() + truncated.len() + right_ellipsis.len(),
+                    );
+                    buf.push_str(left_ellipsis);
+                    buf.push_str(truncated);
+                    buf.push_str(right_ellipsis);
+
+                    // Adjust span offsets to align with the trimmed string
+                    span_start = span_start - new_start + left_ellipsis.len();
+                    span_end = span_end - new_start + left_ellipsis.len();
+
+                    input_str = Cow::Owned(buf);
+                    // Done!
+                }
+            }
+            // If the span goes across lines or we cannot cleanly trim, display the full input as fallback
+        }
 
         let mut report = Report::build(ReportKind::Error, (source_id, span_start..span_end))
             .with_config(Config::new().with_index_type(IndexType::Byte));

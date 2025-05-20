@@ -185,3 +185,19 @@ fn test_deserialize_tuple_empty_nested_2x_from_1tup_nested_2x() {
     let err = result.unwrap_err();
     insta::assert_snapshot!(err);
 }
+
+#[test]
+fn test_long_input_before_error() {
+    let json_data = format!("[{}],", "239587293876.13968719284792837498,".repeat(64));
+    let result: Result<Vec<f64>, _> = from_str(&json_data);
+    let err = result.unwrap_err();
+    insta::assert_snapshot!(err);
+}
+
+#[test]
+fn test_long_input_after_error() {
+    let json_data = format!("42,{}", "239587293876.13968719284792837498,".repeat(64));
+    let result: Result<Vec<f64>, _> = from_str(&json_data);
+    let err = result.unwrap_err();
+    insta::assert_snapshot!(err);
+}
