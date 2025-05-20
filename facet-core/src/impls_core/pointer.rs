@@ -140,45 +140,45 @@ impl_facet_for_pointer!(
             // Forward trait methods to the underlying type if it implements them
             if T::VTABLE.debug.is_some() {
                 builder = builder.debug(|value, f| {
-                    let target_ptr = crate::PtrConst::new(value);
+                    let target_ptr = crate::PtrConst::new(*value);
                     unsafe { (T::VTABLE.debug.unwrap())(target_ptr, f) }
                 });
             }
 
             if T::VTABLE.display.is_some() {
                 builder = builder.display(|value, f| {
-                    let target_ptr = crate::PtrConst::new(value);
+                    let target_ptr = crate::PtrConst::new(*value);
                     unsafe { (T::VTABLE.display.unwrap())(target_ptr, f) }
                 });
             }
 
             if T::VTABLE.eq.is_some() {
                 builder = builder.eq(|a, b| {
-                    let a_ptr = crate::PtrConst::new(a);
-                    let b_ptr = crate::PtrConst::new(b);
+                    let a_ptr = crate::PtrConst::new(*a);
+                    let b_ptr = crate::PtrConst::new(*b);
                     unsafe { (T::VTABLE.eq.unwrap())(a_ptr, b_ptr) }
                 });
             }
 
             if T::VTABLE.partial_ord.is_some() {
                 builder = builder.partial_ord(|a, b| {
-                    let a_ptr = crate::PtrConst::new(a);
-                    let b_ptr = crate::PtrConst::new(b);
+                    let a_ptr = crate::PtrConst::new(*a);
+                    let b_ptr = crate::PtrConst::new(*b);
                     unsafe { (T::VTABLE.partial_ord.unwrap())(a_ptr, b_ptr) }
                 });
             }
 
             if T::VTABLE.ord.is_some() {
                 builder = builder.ord(|a, b| {
-                    let a_ptr = crate::PtrConst::new(a);
-                    let b_ptr = crate::PtrConst::new(b);
+                    let a_ptr = crate::PtrConst::new(*a);
+                    let b_ptr = crate::PtrConst::new(*b);
                     unsafe { (T::VTABLE.ord.unwrap())(a_ptr, b_ptr) }
                 });
             }
 
             if T::VTABLE.hash.is_some() {
                 builder = builder.hash(|value, hasher_this, hasher_write_fn| {
-                    let target_ptr = crate::PtrConst::new(value);
+                    let target_ptr = crate::PtrConst::new(*value);
                     unsafe { (T::VTABLE.hash.unwrap())(target_ptr, hasher_this, hasher_write_fn) }
                 });
             }
@@ -210,45 +210,45 @@ impl_facet_for_pointer!(
             // Forward trait methods to the underlying type if it implements them
             if T::VTABLE.debug.is_some() {
                 builder = builder.debug(|value, f| {
-                    let target_ptr = crate::PtrConst::new(value);
+                    let target_ptr = crate::PtrConst::new(*value);
                     unsafe { (T::VTABLE.debug.unwrap())(target_ptr, f) }
                 });
             }
 
             if T::VTABLE.display.is_some() {
                 builder = builder.display(|value, f| {
-                    let target_ptr = crate::PtrConst::new(value);
+                    let target_ptr = crate::PtrConst::new(*value);
                     unsafe { (T::VTABLE.display.unwrap())(target_ptr, f) }
                 });
             }
 
             if T::VTABLE.eq.is_some() {
                 builder = builder.eq(|a, b| {
-                    let a_ptr = crate::PtrConst::new(a);
-                    let b_ptr = crate::PtrConst::new(b);
+                    let a_ptr = crate::PtrConst::new(*a);
+                    let b_ptr = crate::PtrConst::new(*b);
                     unsafe { (T::VTABLE.eq.unwrap())(a_ptr, b_ptr) }
                 });
             }
 
             if T::VTABLE.partial_ord.is_some() {
                 builder = builder.partial_ord(|a, b| {
-                    let a_ptr = crate::PtrConst::new(a);
-                    let b_ptr = crate::PtrConst::new(b);
+                    let a_ptr = crate::PtrConst::new(*a);
+                    let b_ptr = crate::PtrConst::new(*b);
                     unsafe { (T::VTABLE.partial_ord.unwrap())(a_ptr, b_ptr) }
                 });
             }
 
             if T::VTABLE.ord.is_some() {
                 builder = builder.ord(|a, b| {
-                    let a_ptr = crate::PtrConst::new(a);
-                    let b_ptr = crate::PtrConst::new(b);
+                    let a_ptr = crate::PtrConst::new(*a);
+                    let b_ptr = crate::PtrConst::new(*b);
                     unsafe { (T::VTABLE.ord.unwrap())(a_ptr, b_ptr) }
                 });
             }
 
             if T::VTABLE.hash.is_some() {
                 builder = builder.hash(|value, hasher_this, hasher_write_fn| {
-                    let target_ptr = crate::PtrConst::new(value);
+                    let target_ptr = crate::PtrConst::new(*value);
                     unsafe { (T::VTABLE.hash.unwrap())(target_ptr, hasher_this, hasher_write_fn) }
                 });
             }
