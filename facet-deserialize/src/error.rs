@@ -311,6 +311,8 @@ impl core::fmt::Display for DeserError<'_, '_> {
         //
         // Rationale: this avoids a sea of whitespace for extremely long lines (common in compact JSON).
 
+        let mut did_truncate = false;
+
         {
             // Find the line bounds containing span_start
             let bytes = self.input.as_ref();
@@ -364,10 +366,20 @@ impl core::fmt::Display for DeserError<'_, '_> {
                     span_end = span_end - new_start + left_ellipsis.len();
 
                     input_str = Cow::Owned(buf);
+
+                    did_truncate = true; // mark that truncation occurred
                     // Done!
                 }
             }
             // If the span goes across lines or we cannot cleanly trim, display the full input as fallback
+        }
+
+        if did_truncate {
+            writeln!(
+                f,
+                "{}",
+                "WARNING: Input was truncated for display. Byte indexes in the error below do not match original input.".yellow().bold()
+            )?;
         }
 
         let mut report = Report::build(ReportKind::Error, (source_id, span_start..span_end))
