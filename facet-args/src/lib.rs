@@ -9,5 +9,10 @@ extern crate alloc;
 /// CLI argument format implementation for facet-deserialize
 pub mod format;
 
+pub(crate) mod arg;
+pub(crate) mod fields;
+pub(crate) mod parse;
+pub(crate) mod results;
+
 #[allow(unused)]
 pub use format::from_slice;
