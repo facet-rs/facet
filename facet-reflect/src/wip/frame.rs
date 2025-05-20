@@ -143,25 +143,15 @@ impl<'shape> Frame<'shape> {
 
     // Safety: only call if is fully initialized
     pub(crate) unsafe fn drop_and_dealloc_if_needed(mut self) {
-        trace!(
-            "[Frame::drop] Dropping frame for shape {} at {:p}",
-            self.shape.blue(),
-            self.data.as_byte_ptr()
-        );
         if let Some(drop_in_place) = self.shape.vtable.drop_in_place {
             unsafe {
                 trace!(
-                    "[Frame::drop] Invoking drop_in_place for shape {} at {:p}",
+                    "Invoking drop_in_place for shape {} at {:p}",
                     self.shape.green(),
                     self.data.as_byte_ptr()
                 );
                 drop_in_place(self.data.assume_init());
             }
-        } else {
-            trace!(
-                "[Frame::drop] No drop_in_place function for shape {}",
-                self.shape.blue(),
-            );
         }
         self.dealloc_if_needed();
     }
@@ -169,11 +159,10 @@ impl<'shape> Frame<'shape> {
     /// Marks the frame as fully initialized
     pub(crate) unsafe fn mark_fully_initialized(&mut self) {
         trace!(
-            "[{}] Marking frame as fully initialized: shape={}, type={:?}, def={:?}",
+            "[{}] Marking {:?} frame for {} as fully initialized",
             self.istate.depth,
+            self.istate.mode,
             self.shape.blue(),
-            self.shape.ty,
-            self.shape.def
         );
 
         // Special case for arrays - need to set list_index to the array length
@@ -225,10 +214,6 @@ impl<'shape> Frame<'shape> {
                 }
             }
             _ => {
-                trace!(
-                    "[{}] Setting scalar field (0) as initialized",
-                    self.istate.depth
-                );
                 self.istate.fields.set(0);
             }
         }

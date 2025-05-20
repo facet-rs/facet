@@ -288,6 +288,8 @@ pub enum PopReason {
     ListVal,
     /// Ending a `Some()` in an option
     Some,
+    /// Ending a smart pointer (ie. wrapping a `T` back into a `Box<T>`, or `Arc<T>` etc.)
+    SmartPointer,
 }
 
 mod deser_impl {
@@ -826,8 +828,9 @@ where
             }
             _ => {
                 trace!(
-                    "Thing being popped is not a container I guess (it's a {})",
-                    wip.shape()
+                    "Thing being popped is not a container I guess (it's a {}, innermost is {})",
+                    wip.shape(),
+                    wip.innermost_shape()
                 );
             }
         }
@@ -894,7 +897,7 @@ where
         'input: 'facet, // 'input must outlive 'facet
     {
         trace!(
-            "Handling value at {} (innermost {})",
+            "Handling value of type {} (innermost {})",
             wip.shape().blue(),
             wip.innermost_shape().yellow()
         );
@@ -905,10 +908,18 @@ where
             }
             _ => {
                 if matches!(wip.shape().def, Def::Option(_)) {
-                    // TODO: Update option handling
                     trace!("Starting Some(_) option for {}", wip.shape().blue());
                     wip = wip.push_some().map_err(|e| self.reflect_err(e))?;
                     self.stack.push(Instruction::Pop(PopReason::Some));
+                }
+                if let Def::SmartPointer(inner) = wip.shape().def {
+                    trace!(
+                        "Starting smart pointer for {} (inner is {:?})",
+                        wip.shape().blue(),
+                        inner.yellow()
+                    );
+                    wip = wip.push_pointee().map_err(|e| self.reflect_err(e))?;
+                    self.stack.push(Instruction::Pop(PopReason::SmartPointer));
                 }
             }
         }
@@ -988,7 +999,7 @@ where
                 wip = wip.pop().map_err(|e| self.reflect_err(e))?;
             }
             Outcome::ObjectStarted => {
-                let shape = wip.innermost_shape();
+                let shape = wip.shape();
                 match shape.def {
                     Def::Map(_md) => {
                         trace!("Object starting for map value ({})!", shape.blue());
@@ -1063,6 +1074,11 @@ where
                             trace!("It's a struct field");
                             wip = wip.field(index).map_err(|e| self.reflect_err(e))?;
                         } else {
+                            trace!(
+                                "Did not find direct field match in innermost shape {}",
+                                shape.blue()
+                            );
+
                             // Check for flattened fields
                             let mut found_in_flatten = false;
                             for (index, field) in sd.fields.iter().enumerate() {
@@ -1240,10 +1256,7 @@ where
                 trace!("Before push, wip.shape is {}", wip.shape().blue());
 
                 // Special handling for tuples - we need to identify if we're in a tuple context
-                let is_tuple = matches!(
-                    wip.innermost_shape().ty,
-                    Type::Sequence(SequenceType::Tuple(_))
-                );
+                let is_tuple = matches!(wip.shape().ty, Type::Sequence(SequenceType::Tuple(_)));
 
                 if is_tuple {
                     trace!("Handling list item for a tuple type");

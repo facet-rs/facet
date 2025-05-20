@@ -36,14 +36,19 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for alloc::sync::Arc<T> {
             // We'll create a new memory location, copy the value, then create an Arc from it
             let size_of_arc_header = core::mem::size_of::<usize>() * 2;
 
-            // Allocate memory for the Arc header plus the value
-            let arc_layout = unsafe {
-                Layout::from_size_align_unchecked(
-                    size_of_arc_header + layout.size(),
-                    layout.align(),
-                )
-            };
-            let mem = unsafe { alloc::alloc::alloc(arc_layout) };
+            // Use Layout::extend to combine header and value layout with correct alignment and padding
+            let header_layout =
+                Layout::from_size_align(size_of_arc_header, core::mem::align_of::<usize>())
+                    .unwrap();
+            let (arc_layout, value_offset) = header_layout.extend(layout).unwrap();
+
+            // To ensure that our allocation is correct for the Arc memory model,
+            // round up the allocation to the next multiple of 8 (Arc's alignment)
+            let adjusted_size = (arc_layout.size() + 7) & !7;
+            let final_layout =
+                unsafe { Layout::from_size_align_unchecked(adjusted_size, arc_layout.align()) };
+
+            let mem = unsafe { alloc::alloc::alloc(final_layout) };
 
             unsafe {
                 // Copy the Arc header (refcounts, vtable pointer, etc.) from a dummy Arc<()>
@@ -51,16 +56,16 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for alloc::sync::Arc<T> {
                 let header_start = (Arc::as_ptr(&dummy_arc) as *const u8).sub(size_of_arc_header);
                 core::ptr::copy_nonoverlapping(header_start, mem, size_of_arc_header);
 
-                // Copy the source value into the memory area just after the Arc header
+                // Copy the source value into the memory area at the correct value offset after the Arc header
                 core::ptr::copy_nonoverlapping(
                     src_ptr.as_byte_ptr(),
-                    mem.add(size_of_arc_header),
+                    mem.add(value_offset),
                     layout.size(),
                 );
             }
 
             // Create an Arc from our allocated and initialized memory
-            let ptr = unsafe { mem.add(size_of_arc_header) };
+            let ptr = unsafe { mem.add(value_offset) };
             let t_ptr: *mut T = unsafe { core::mem::transmute_copy(&ptr) };
             let arc = unsafe { Arc::from_raw(t_ptr) };
 

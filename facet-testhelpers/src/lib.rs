@@ -47,9 +47,62 @@ impl Log for SimpleLogger {
 /// Installs color-backtrace (except on miri), and sets up a simple logger.
 pub fn setup() {
     #[cfg(not(miri))]
-    color_eyre::install().expect("Failed to set up color-eyre");
-    #[cfg(not(miri))]
-    color_backtrace::install();
+    {
+        use color_eyre::config::HookBuilder;
+        use regex::Regex;
+        use std::sync::LazyLock;
+
+        /// This regex is used to filter out unwanted frames in error backtraces.
+        /// It ignores panic frames, test runners, and a few threading details.
+        ///
+        /// Regex: ^(std::panic|core::panic|test::run_test|__pthread_cond_wait|Thread::new::thread_start)
+        static IGNORE_FRAMES: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(r"^(std::panic|core::panic|test::run_test|__pthread_cond_wait|std::sys::(pal|backtrace)|std::thread::Builder|core::ops::function|test::__rust_begin_short_backtrace|<core::panic::|<alloc::boxed::Box<F,A> as core::ops::function::FnOnce<Args>>::call_once)")
+                .unwrap()
+        });
+
+        // color-eyre filter
+        let eyre_filter = {
+            move |frames: &mut Vec<&color_eyre::config::Frame>| {
+                frames.retain(|frame| {
+                    frame
+                        .name
+                        .as_ref()
+                        .map(|n| !IGNORE_FRAMES.is_match(&n.to_string()))
+                        .unwrap_or(true)
+                });
+            }
+        };
+
+        HookBuilder::default()
+            .add_frame_filter(Box::new(eyre_filter))
+            .install()
+            .expect("Failed to set up color-eyre");
+
+        // color-backtrace filter
+        {
+            use color_backtrace::{BacktracePrinter, Frame};
+
+            // The frame filter must be Fn(&mut Vec<&Frame>)
+            let filter = move |frames: &mut Vec<&Frame>| {
+                frames.retain(|frame| {
+                    frame
+                        .name
+                        .as_ref()
+                        .map(|name| !IGNORE_FRAMES.is_match(name))
+                        .unwrap_or(true)
+                });
+            };
+
+            // Build and install custom BacktracePrinter with our filter.
+            // Use StandardStream to provide a WriteColor.
+            let stderr = color_backtrace::termcolor::StandardStream::stderr(
+                color_backtrace::termcolor::ColorChoice::Auto,
+            );
+            let printer = BacktracePrinter::new().add_frame_filter(Box::new(filter));
+            printer.install(Box::new(stderr));
+        }
+    }
 
     let logger = Box::new(SimpleLogger);
     log::set_boxed_logger(logger).unwrap();

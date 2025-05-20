@@ -128,6 +128,8 @@ pub enum FrameMode {
     /// Frame represents the None variant of an option (no allocation needed)
     /// Any `put` should fail
     OptionNone,
+    /// Frame represents a smart pointer value (Box, Rc, Arc, etc.)
+    SmartPointee,
 }
 
 /// A work-in-progress heap-allocated value
@@ -641,36 +643,32 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
             // we didn't have to allocate that field, it's a struct field, so it's not allocated
             istate: IState::new(self.frames.len(), FrameMode::Field, FrameFlags::EMPTY),
         };
+
         debug!(
-            "[{}] Selecting field {} ({}#{}) of {}",
+            "[{}] Selecting field {}::{}: {} (#{})",
             self.frames.len(),
-            field.name.blue(),
+            shape.blue(),
+            field.name.yellow(),
             field.shape().green(),
             index.yellow(),
-            shape.blue(),
         );
         if let Some(iset) = self.istates.remove(&frame.id()) {
             trace!(
-                "[{}] Restoring saved state for {} (istate.mode = {:?}, istate.fields = {:?}, istate.flags = {:?}, istate.depth = {:?})",
+                "[{}] Restoring saved state for {}::{}: {} (#{}) (istate.mode = {:?}, istate.fields = {:?}, istate.flags = {:?}, istate.depth = {:?})",
                 self.frames.len(),
-                frame.id().shape.blue(),
+                shape.blue(),
+                field.name.yellow(),
+                field.shape().green(),
+                index.yellow(),
                 iset.mode,
                 iset.fields,
                 iset.flags,
                 iset.depth
             );
             frame.istate = iset;
-        } else {
-            trace!(
-                "[{}] no saved state for field {} ({}#{}) of {}",
-                self.frames.len(),
-                field.name.blue(),
-                field.shape().green(),
-                index.yellow(),
-                shape.blue(),
-            );
         }
         self.frames.push(frame);
+
         Ok(self)
     }
 
@@ -724,6 +722,12 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                     operation: "tried to access a field by name but no variant was selected",
                 });
             }
+        }
+
+        // For smart pointers, require a .push_pointee() call first
+        if let Def::SmartPointer(_) = shape.def {
+            // If you try to select a field on a smart pointer directly, error unless you have first called push_pointee
+            return Err(ReflectError::MissingPushPointee { shape });
         }
 
         let index = self.field_index(name).ok_or(ReflectError::FieldError {
@@ -834,9 +838,7 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
 
         unsafe {
             default_in_place(frame.data);
-            trace!("Marking frame as fully initialized...");
             frame.mark_fully_initialized();
-            trace!("Marking frame as fully initialized... done!");
         }
 
         let shape = frame.shape;
@@ -1354,6 +1356,59 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         Ok(self)
     }
 
+    /// Prepare to push a smart pointer's pointee (the value pointed to by Box, Arc, Rc, etc.).
+    ///
+    /// This allocates a new frame and memory for the pointee, so it can be initialized piecemeal.
+    pub fn push_pointee(mut self) -> Result<Self, ReflectError<'shape>> {
+        // Ensure current frame is a smart pointer type with a pointee.
+        let frame = self.frames.last().unwrap();
+        let smart_ptr_shape = frame.shape;
+
+        // Check if this is a SmartPointer (e.g., Box<T>, Rc<T>, etc.)
+        let Def::SmartPointer(smart_ptr_def) = smart_ptr_shape.def else {
+            return Err(ReflectError::WasNotA {
+                expected: "smart pointer (pointee type)",
+                actual: smart_ptr_shape,
+            });
+        };
+
+        // Get the shape of the pointed-to (inner) type.
+        let Some(pointee_fn) = smart_ptr_def.pointee else {
+            return Err(ReflectError::OperationFailed {
+                shape: smart_ptr_shape,
+                operation: "smart pointer does not specify a pointee type",
+            });
+        };
+        let inner_shape = pointee_fn();
+
+        // Allocate memory for the pointee value.
+        let inner_data = inner_shape
+            .allocate()
+            .map_err(|_| ReflectError::Unsized { shape: inner_shape })?;
+
+        // Create and push a new frame for the pointee value.
+        let inner_frame = Frame {
+            data: inner_data,
+            shape: inner_shape,
+            field_index_in_parent: None, // not relevant for pointer contents
+            istate: IState::new(
+                self.frames.len(),
+                FrameMode::SmartPointee, // This variant should now exist in FrameMode
+                FrameFlags::ALLOCATED,
+            ),
+        };
+
+        trace!(
+            "[{}] Pushing smart pointer pointee frame for {}",
+            self.frames.len(),
+            smart_ptr_shape.blue(),
+        );
+
+        self.frames.push(inner_frame);
+
+        Ok(self)
+    }
+
     /// Pops a not-yet-initialized option frame, setting it to None in the parent
     ///
     /// This is used to set an option to None instead of Some.
@@ -1678,6 +1733,9 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                 }
                 FrameMode::OptionNone => {
                     path.push_str(".none");
+                }
+                FrameMode::SmartPointee => {
+                    path.push_str(".*");
                 }
                 FrameMode::Root => {
                     // Root doesn't add to the path

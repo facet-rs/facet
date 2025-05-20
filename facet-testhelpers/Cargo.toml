@@ -10,6 +10,7 @@ categories = ["development-tools::testing", "development-tools"]
 description = "A collection of testing helpers and utilities for facet"
 
 [dependencies]
+backtrace = "0.3.75"
 color-backtrace = { version = "0.7.0", default-features = false, features = [
     "use-btparse-crate",
 ] }
@@ -17,3 +18,4 @@ color-eyre = { version = "0.6.4", default-features = false, features = [] }
 facet-testhelpers-macros = { version = "0.1.0", path = "../facet-testhelpers-macros" }
 log = { version = "0.4.27", features = ["std"] }
 owo-colors = "4.2.0"
+regex = "1.11.1"

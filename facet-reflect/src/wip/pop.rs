@@ -13,7 +13,7 @@ use super::{Frame, Wip};
 impl<'facet, 'shape> Wip<'facet, 'shape> {
     /// Pops the current frame — goes back up one level
     pub fn pop(mut self) -> Result<Self, ReflectError<'shape>> {
-        let frame = match self.pop_inner()? {
+        let mut frame = match self.pop_inner()? {
             Some(frame) => frame,
             None => {
                 return Err(ReflectError::InvariantViolation {
@@ -22,8 +22,52 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
             }
         };
 
-        self.track(frame);
-        Ok(self)
+        if let FrameMode::SmartPointee = frame.istate.mode {
+            let parent_frame = match self.frames.last_mut() {
+                Some(parent_frame) => parent_frame,
+                None => {
+                    return Err(ReflectError::InvariantViolation {
+                        invariant: "popping a smart pointee frame without a parent frame to put it in.",
+                    });
+                }
+            };
+            trace!("Popping smart pointee frame!",);
+            trace!(
+                "This frame shape = {}, fully_initialized = {}",
+                frame.shape.cyan(),
+                if frame.is_fully_initialized() {
+                    "✅"
+                } else {
+                    "❌"
+                }
+            );
+            trace!(
+                "Parent frame shape = {}, mode = {:?}, fully_initialized = {}, flags = {:?}",
+                parent_frame.shape.blue(),
+                parent_frame.istate.mode,
+                if parent_frame.is_fully_initialized() {
+                    "✅"
+                } else {
+                    "❌"
+                },
+                parent_frame.istate.flags.bright_magenta()
+            );
+
+            if !frame.is_fully_initialized() {
+                return Err(ReflectError::UninitializedValue {
+                    shape: parent_frame.shape,
+                });
+            }
+
+            let src = unsafe { frame.data.assume_init() };
+            let src_shape = frame.shape;
+            let res = self.put_shape(src.as_const(), src_shape);
+            frame.dealloc_if_needed();
+            res
+        } else {
+            self.track(frame);
+            Ok(self)
+        }
     }
 
     fn pop_inner(&mut self) -> Result<Option<Frame<'shape>>, ReflectError<'shape>> {

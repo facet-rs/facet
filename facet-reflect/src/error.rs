@@ -89,6 +89,13 @@ pub enum ReflectError<'shape> {
         field_error: FieldError,
     },
 
+    /// Indicates that we try to access a field on an `Arc<T>`, for example, and the field might exist
+    /// on the T, but you need to do push_pointee first when using the WIP API.
+    MissingPushPointee {
+        /// The smart pointer (`Arc<T>`, `Box<T>` etc.) shape on which field was caleld
+        shape: &'shape Shape<'shape>,
+    },
+
     /// An unknown error occurred.
     Unknown,
 
@@ -205,6 +212,15 @@ impl core::fmt::Display for ReflectError<'_> {
             }
             ReflectError::FieldError { shape, field_error } => {
                 write!(f, "Field error for shape {}: {}", shape.red(), field_error)
+            }
+            ReflectError::MissingPushPointee { shape } => {
+                write!(
+                    f,
+                    "Tried to access a field on smart pointer '{}', but you need to call {} first to work with the value it points to (and pop it with {} later)",
+                    shape.blue(),
+                    ".push_pointee()".yellow(),
+                    ".pop()".yellow()
+                )
             }
             ReflectError::Unknown => write!(f, "Unknown error"),
             ReflectError::TryFromError {
