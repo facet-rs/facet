@@ -146,7 +146,7 @@ impl<'input> DeserError<'input> {
     // }
 
     /// Constructs a reflection-related deser error, keeping contextual information intact.
-    pub(crate) fn new_reflect<I>(
+    pub fn new_reflect<I>(
         e: ReflectError,
         input: &'input I,
         span: Span,

@@ -27,7 +27,7 @@ const MAX_RECURSION_DEPTH: usize = 100;
 pub fn from_slice<'input: 'facet, 'facet, T: Facet<'facet>>(
     input: &'input [u8],
 ) -> Result<T, DeserError<'input>> {
-    recursive::from_slice(input, 0)
+    recursive::from_slice(input)
 }
 
 /// Deserialize JSON from a given string
@@ -35,7 +35,7 @@ pub fn from_slice<'input: 'facet, 'facet, T: Facet<'facet>>(
 pub fn from_str<'input: 'facet, 'facet, T: Facet<'facet>>(
     input: &'input str,
 ) -> Result<T, DeserError<'input>> {
-    recursive::from_str(input, 0)
+    recursive::from_str(input)
 }
 
 /// Deserialize JSON from a given string, converting any dynamic error into a static one.

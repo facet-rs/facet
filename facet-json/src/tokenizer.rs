@@ -110,6 +110,10 @@ impl<'input> Tokenizer<'input> {
         Tokenizer { input, pos: 0 }
     }
 
+    pub fn get_input(&self) -> &'input [u8] {
+        self.input
+    }
+
     /// Return the next spanned token or a TokenizeError
     pub fn next_token(&mut self) -> TokenizeResult {
         self.skip_whitespace();
