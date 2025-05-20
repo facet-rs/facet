@@ -418,6 +418,7 @@ where
             Instruction::Pop(PopReason::TopLevel),
             Instruction::Value(ValueReason::TopLevel),
         ],
+        substack: Substack::new(),
         last_span: Span::new(0, 0),
         format_source: format.source(),
     };
@@ -575,6 +576,9 @@ pub struct StackRunner<'input, C = Cooked, I: ?Sized + 'input = [u8]> {
 
     /// Stack of parsing instructions guiding the control flow.
     pub stack: Vec<Instruction>,
+
+    /// Subspan storage, if the format uses them.
+    pub substack: Substack<C>,
 
     /// Span of the last processed token, for accurate error reporting.
     pub last_span: Span<C>,

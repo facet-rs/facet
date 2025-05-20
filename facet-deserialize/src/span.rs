@@ -1,3 +1,4 @@
+use alloc::vec::Vec;
 use core::fmt;
 use core::marker::PhantomData;
 
@@ -103,3 +104,100 @@ impl<C> Clone for Span<C> {
 }
 
 impl<C> Copy for Span<C> {}
+
+/// A Subspan variant of a Span
+#[derive(Debug, PartialEq)]
+pub struct Subspan {
+    /// Offset from parent span's start
+    pub offset: usize,
+    /// Length of the subspan
+    pub len: usize,
+    /// Optional metadata (like delimiter information)
+    pub meta: Option<SubspanMeta>,
+}
+
+/// Metadata about a subspan, providing context for how the subspan relates
+/// to the parent span or other subspans.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SubspanMeta {
+    /// Indicates the subspan is part of a delimited sequence,
+    /// storing the delimiter character (e.g., ',' in "1,2,3")
+    Delimiter(char),
+
+    /// Indicates the subspan represents one side of a key-value pair
+    /// (e.g., in "--key=value" or "-k=val")
+    KeyValue,
+    // Other metadata cases as needed...
+}
+
+/// Container for subspans based on span type
+pub struct Substack<C> {
+    spans: Option<Vec<Subspan>>,
+    _marker: PhantomData<C>,
+}
+
+impl<C> Substack<C> {
+    /// Initialise subspan stack as None
+    pub fn new() -> Self {
+        Substack {
+            spans: None,
+            _marker: PhantomData,
+        }
+    }
+
+    /// Get all stored spans
+    pub fn get(&self) -> &[Subspan] {
+        match &self.spans {
+            Some(spans) => spans,
+            None => &[], // Return empty slice if no spans are stored
+        }
+    }
+}
+
+impl<C> Default for Substack<C> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Substack<Raw> {
+    /// Add a subspan for Raw spans
+    pub fn add(&mut self, offset: usize, len: usize, meta: Option<SubspanMeta>) {
+        if self.spans.is_none() {
+            self.spans = Some(Vec::new());
+        }
+
+        if let Some(spans) = &mut self.spans {
+            spans.push(Subspan { offset, len, meta });
+        }
+    }
+
+    /// Add a simple subspan with just offset and length
+    pub fn add_simple(&mut self, offset: usize, len: usize) {
+        self.add(offset, len, None);
+    }
+
+    /// Add a delimiter subspan
+    pub fn add_delimiter(&mut self, offset: usize, len: usize, delimiter: char) {
+        self.add(offset, len, Some(SubspanMeta::Delimiter(delimiter)));
+    }
+
+    /// Add a key-value subspan
+    pub fn add_key_value(&mut self, offset: usize, len: usize) {
+        self.add(offset, len, Some(SubspanMeta::KeyValue));
+    }
+}
+
+impl Substack<Cooked> {
+    /// Add a span for Cooked spans (does nothing)
+    pub fn add(&mut self, _offset: usize, _len: usize, _meta: Option<SubspanMeta>) {}
+
+    /// Add a simple subspan (does nothing for Cooked)
+    pub fn add_simple(&mut self, _offset: usize, _len: usize) {}
+
+    /// Add a delimiter subspan (does nothing for Cooked)
+    pub fn add_delimiter(&mut self, _offset: usize, _len: usize, _delimiter: char) {}
+
+    /// Add a key-value subspan (does nothing for Cooked)
+    pub fn add_key_value(&mut self, _offset: usize, _len: usize) {}
+}
