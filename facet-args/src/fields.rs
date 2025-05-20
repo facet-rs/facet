@@ -148,7 +148,7 @@ pub(crate) fn create_unknown_field_error<'shape>(
     }
 }
 
-pub(crate) fn handle_unset_bool_field<'shape>(
+pub(crate) fn handle_unset_bool_field_error<'shape>(
     field_name_opt: Option<&'shape str>,
     span: Span<Raw>,
 ) -> Result<Spanned<Outcome<'shape>, Raw>, Spanned<DeserErrorKind<'shape>, Raw>> {

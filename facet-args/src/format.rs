@@ -57,11 +57,19 @@ impl Format for Cli {
         let shape = nd.wip.shape();
         let args = nd.input();
 
+        let stay_put = Span::new(arg_idx, 0);
+        let step_forth = Span::new(arg_idx, 1);
+
+        let span = match expectation {
+            Expectation::Value => stay_put,
+            Expectation::ObjectKeyOrObjectClose
+            | Expectation::ObjectVal
+            | Expectation::ListItemOrListClose => step_forth,
+        };
+
         let result = match expectation {
             // Top-level value
             Expectation::Value => {
-                let span = Span::new(arg_idx, 0);
-
                 // Check if it's a struct type
                 wrap_outcome_result(validate_struct_type(shape), Outcome::ObjectStarted, span)
             }
@@ -71,8 +79,6 @@ impl Format for Cli {
                 /* Check if we have more arguments */
                 if arg_idx < args.len() {
                     let arg = args[arg_idx];
-                    let span = Span::new(arg_idx, 1);
-                    let error_span = Span::new(arg_idx, 0);
 
                     // Parse the argument type
                     match ArgType::parse(arg) {
@@ -81,38 +87,25 @@ impl Format for Cli {
                             wrap_string_result(
                                 validate_field(&key, shape, &nd.wip).map(|_| key),
                                 span,
-                                error_span,
                             )
                         }
                         ArgType::ShortFlag(key) => {
                             // Convert short argument to field name via shape
-                            wrap_field_result(
-                                find_field_by_short_flag(key, shape),
-                                span,
-                                error_span,
-                            )
+                            wrap_field_result(find_field_by_short_flag(key, shape), span)
                         }
                         ArgType::Positional => {
                             // Handle positional argument
-                            wrap_field_result(
-                                find_positional_field(shape, &nd.wip),
-                                Span::new(arg_idx, 0), // TODO: just pass as span?
-                                error_span,
-                            )
+                            wrap_field_result(find_positional_field(shape, &nd.wip), stay_put)
                         }
                         ArgType::None => {
                             // Handle empty argument (shouldn't happen normally)
                             let err = create_unknown_field_error("empty argument", shape);
-                            Err(Spanned {
-                                node: err,
-                                span: error_span,
-                            })
+                            Err(Spanned { node: err, span })
                         }
                     }
                 } else {
                     // EOF: inject implicit-false-if-absent bool flags, if there are any
-                    let span = Span::new(arg_idx, 0);
-                    handle_unset_bool_field(find_unset_bool_field(shape, &nd.wip), span)
+                    handle_unset_bool_field_error(find_unset_bool_field(shape, &nd.wip), span)
                 }
             }
 
@@ -122,19 +115,11 @@ impl Format for Cli {
                 if shape.is_type::<bool>() {
                     // Handle boolean values (true if we have an arg, false if EOF)
                     let has_arg = arg_idx < args.len();
-                    wrap_result(
-                        handle_bool_value(has_arg),
-                        Outcome::Scalar,
-                        Span::new(arg_idx, 0),
-                        Span::new(arg_idx, 0),
-                    )
+                    wrap_result(handle_bool_value(has_arg), Outcome::Scalar, stay_put)
                 } else {
                     // For non-boolean types, validate and parse the value
                     match validate_value_available(arg_idx, args) {
-                        Ok(arg) => {
-                            let span = Span::new(arg_idx, 1);
-                            Ok(parse_scalar(arg, span))
-                        }
+                        Ok(arg) => Ok(parse_scalar(arg, span)),
                         Err(err) => Err(Spanned {
                             node: err,
                             span: Span::new(arg_idx.saturating_sub(1), 0),
@@ -150,13 +135,13 @@ impl Format for Cli {
                     // End the list
                     Ok(Spanned {
                         node: Outcome::ListEnded,
-                        span: Span::new(arg_idx, 0),
+                        span,
                     })
                 } else {
                     // Process the next item
                     Ok(Spanned {
                         node: Outcome::Scalar(Scalar::String(Cow::Borrowed(args[arg_idx]))),
-                        span: Span::new(arg_idx, 1),
+                        span: step_forth,
                     })
                 }
             }
@@ -182,21 +167,21 @@ impl Format for Cli {
     {
         let arg_idx = nd.start();
         let args = nd.input();
+        let span = Span::new(arg_idx, 1);
 
-        if arg_idx < args.len() {
+        let result = if arg_idx < args.len() {
             // Simply skip one position
-            (nd, Ok(Span::new(arg_idx, 1)))
+            Ok(span)
         } else {
             // No argument to skip
-            (
-                nd,
-                Err(Spanned {
-                    node: DeserErrorKind::UnexpectedEof {
-                        wanted: "argument to skip",
-                    },
-                    span: Span::new(arg_idx, 1),
-                }),
-            )
-        }
+            Err(Spanned {
+                node: DeserErrorKind::UnexpectedEof {
+                    wanted: "argument to skip",
+                },
+                span,
+            })
+        };
+
+        (nd, result)
     }
 }
