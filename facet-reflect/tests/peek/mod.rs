@@ -5,6 +5,7 @@ mod list;
 mod list_like;
 mod map;
 mod option;
+mod reference;
 mod smartptr;
 mod struct_;
 mod value;
