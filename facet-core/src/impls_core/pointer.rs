@@ -75,23 +75,23 @@ impl_facet_for_pointer!(
         => Shape::builder_for_sized::<Self>()
             .inner(|| T::SHAPE)
         => ValueVTable::builder::<Self>()
-            .marker_traits(
+            .marker_traits(||
                 MarkerTraits::EQ
                     .union(MarkerTraits::COPY)
                     .union(MarkerTraits::UNPIN),
             )
-            .debug(fmt::Debug::fmt)
-            .clone_into(|src, dst| unsafe { dst.put(*src) })
-            .eq(|left, right| left.cast::<()>().eq(&right.cast::<()>()))
-            .partial_ord(|&left, &right| {
+            .debug(|| Some(fmt::Debug::fmt))
+            .clone_into(|| Some(|src, dst| unsafe { dst.put(*src) }))
+            .eq(|| Some(|left, right| left.cast::<()>().eq(&right.cast::<()>())))
+            .partial_ord(|| Some(|&left, &right| {
                 left.cast::<()>().partial_cmp(&right.cast::<()>())
-            })
-            .ord(|&left, &right| left.cast::<()>().cmp(&right.cast::<()>()))
-            .hash(|value, hasher_this, hasher_write_fn| {
+            }))
+            .ord(|| Some(|&left, &right| left.cast::<()>().cmp(&right.cast::<()>())))
+            .hash(|| Some(|value, hasher_this, hasher_write_fn| {
                 value.hash(&mut unsafe {
                     HasherProxy::new(hasher_this, hasher_write_fn)
                 })
-            })
+            }))
         => Raw, false
 );
 
@@ -101,23 +101,23 @@ impl_facet_for_pointer!(
         => Shape::builder_for_sized::<Self>()
             .inner(|| T::SHAPE)
         => ValueVTable::builder::<Self>()
-            .marker_traits(
+            .marker_traits(||
                 MarkerTraits::EQ
                     .union(MarkerTraits::COPY)
                     .union(MarkerTraits::UNPIN),
             )
-            .debug(fmt::Debug::fmt)
-            .clone_into(|src, dst| unsafe { dst.put(*src) })
-            .eq(|left, right| left.cast::<()>().eq(&right.cast::<()>()))
-            .partial_ord(|&left, &right| {
+            .debug(|| Some(fmt::Debug::fmt))
+            .clone_into(|| Some(|src, dst| unsafe { dst.put(*src) }))
+            .eq(|| Some(|left, right| left.cast::<()>().eq(&right.cast::<()>())))
+            .partial_ord(|| Some(|&left, &right| {
                 left.cast::<()>().partial_cmp(&right.cast::<()>())
-            })
-            .ord(|&left, &right| left.cast::<()>().cmp(&right.cast::<()>()))
-            .hash(|value, hasher_this, hasher_write_fn| {
+            }))
+            .ord(|| Some(|&left, &right| left.cast::<()>().cmp(&right.cast::<()>())))
+            .hash(|| Some(|value, hasher_this, hasher_write_fn| {
                 value.hash(&mut unsafe {
                     HasherProxy::new(hasher_this, hasher_write_fn)
                 })
-            })
+            }))
         => Raw, true
 );
 
@@ -126,60 +126,81 @@ impl_facet_for_pointer!(
     Reference: &'a T
         => Shape::builder_for_sized::<Self>()
         => {
-            let mut marker_traits = MarkerTraits::COPY.union(MarkerTraits::UNPIN);
-            if T::SHAPE.vtable.marker_traits.contains(MarkerTraits::EQ) {
-                marker_traits = marker_traits.union(MarkerTraits::EQ);
-            }
-            if T::SHAPE.vtable.marker_traits.contains(MarkerTraits::SYNC) {
-                marker_traits = marker_traits.union(MarkerTraits::SEND).union(MarkerTraits::SYNC);
-            }
-
             let mut builder = ValueVTable::builder::<Self>()
-                .marker_traits(marker_traits)
-                .clone_into(|src, dst| unsafe { dst.put(core::ptr::read(src)) });
+                .marker_traits(|| {
+                    let mut marker_traits = MarkerTraits::COPY.union(MarkerTraits::UNPIN);
+                    if T::SHAPE.vtable.marker_traits().contains(MarkerTraits::EQ) {
+                        marker_traits = marker_traits.union(MarkerTraits::EQ);
+                    }
+                    if T::SHAPE.vtable.marker_traits().contains(MarkerTraits::SYNC) {
+                        marker_traits = marker_traits.union(MarkerTraits::SEND).union(MarkerTraits::SYNC);
+                    }
+
+                    marker_traits
+                })
+                .clone_into(|| Some(|src, dst| unsafe { dst.put(core::ptr::read(src)) }));
 
             // Forward trait methods to the underlying type if it implements them
-            if T::VTABLE.debug.is_some() {
-                builder = builder.debug(|value, f| {
-                    let debug_fn = unsafe { transmute::<DebugFn, DebugFnTyped<T>>(T::VTABLE.debug.unwrap()) };
-                    debug_fn(*value, f)
-                });
-            }
-
-            if T::VTABLE.display.is_some() {
-                builder = builder.display(|value, f| {
-                    let display_fn = unsafe { transmute::<DisplayFn, DisplayFnTyped<T>>(T::VTABLE.display.unwrap()) };
-                    display_fn(*value, f)
-                });
-            }
-
-            if T::VTABLE.eq.is_some() {
-                builder = builder.eq(|a, b| {
-                    let eq_fn = unsafe { transmute::<PartialEqFn, PartialEqFnTyped<T>>(T::VTABLE.eq.unwrap()) };
-                    eq_fn(*a, *b)
-                });
-            }
-
-            if T::VTABLE.partial_ord.is_some() {
-                builder = builder.partial_ord(|a, b| {
-                    let partial_ord_fn = unsafe { transmute::<PartialOrdFn, PartialOrdFnTyped<T>>(T::VTABLE.partial_ord.unwrap()) };
-                    partial_ord_fn(*a, *b)
-                });
-            }
-
-            if T::VTABLE.ord.is_some() {
-                builder = builder.ord(|a, b| {
-                    let ord_fn = unsafe { transmute::<CmpFn, CmpFnTyped<T>>(T::VTABLE.ord.unwrap()) };
-                    ord_fn(*a, *b)
-                });
-            }
-
-            if T::VTABLE.hash.is_some() {
-                builder = builder.hash(|value, hasher_this, hasher_write_fn| {
-                    let hash_fn = unsafe { transmute::<HashFn, HashFnTyped<T>>(T::VTABLE.hash.unwrap()) };
-                    hash_fn(*value, hasher_this, hasher_write_fn)
-                });
-            }
+            builder = builder.debug(|| {
+                if (T::VTABLE.debug)().is_some() {
+                    Some(|value, f| {
+                        let debug_fn = unsafe { transmute::<DebugFn, DebugFnTyped<T>>((T::VTABLE.debug)().unwrap()) };
+                        debug_fn(*value, f)
+                    })
+                } else {
+                    None
+                }
+            });
+            builder = builder.display(|| {
+                if (T::VTABLE.display)().is_some() {
+                    Some(|value, f| {
+                        let display_fn = unsafe { transmute::<DisplayFn, DisplayFnTyped<T>>((T::VTABLE.display)().unwrap()) };
+                        display_fn(*value, f)
+                    })
+                } else {
+                    None
+                }
+            });
+            builder = builder.eq(|| {
+                if (T::VTABLE.eq)().is_some() {
+                    Some(|a, b| {
+                        let eq_fn = unsafe { transmute::<PartialEqFn, PartialEqFnTyped<T>>((T::VTABLE.eq)().unwrap()) };
+                        eq_fn(*a, *b)
+                    })
+                } else {
+                    None
+                }
+            });
+            builder = builder.partial_ord(|| {
+                if (T::VTABLE.partial_ord)().is_some() {
+                    Some(|a, b| {
+                        let partial_ord_fn = unsafe { transmute::<PartialOrdFn, PartialOrdFnTyped<T>>((T::VTABLE.partial_ord)().unwrap()) };
+                        partial_ord_fn(*a, *b)
+                    })
+                } else {
+                    None
+                }
+            });
+            builder = builder.ord(|| {
+                if (T::VTABLE.ord)().is_some() {
+                    Some(|a, b| {
+                        let ord_fn = unsafe { transmute::<CmpFn, CmpFnTyped<T>>((T::VTABLE.ord)().unwrap()) };
+                        ord_fn(*a, *b)
+                    })
+                } else {
+                    None
+                }
+            });
+            builder = builder.hash(|| {
+                if (T::VTABLE.hash)().is_some() {
+                    Some(|value, hasher_this, hasher_write_fn| {
+                        let hash_fn = unsafe { transmute::<HashFn, HashFnTyped<T>>((T::VTABLE.hash)().unwrap()) };
+                        hash_fn(*value, hasher_this, hasher_write_fn)
+                    })
+                } else {
+                    None
+                }
+            });
 
             builder
         }
@@ -191,62 +212,83 @@ impl_facet_for_pointer!(
     Reference: &'a mut T
         => Shape::builder_for_sized::<Self>()
         => {
-            let mut marker_traits = MarkerTraits::UNPIN;
-            if T::SHAPE.vtable.marker_traits.contains(MarkerTraits::EQ) {
-                marker_traits = marker_traits.union(MarkerTraits::EQ);
-            }
-            if T::SHAPE.vtable.marker_traits.contains(MarkerTraits::SEND) {
-                marker_traits = marker_traits.union(MarkerTraits::SEND);
-            }
-            if T::SHAPE.vtable.marker_traits.contains(MarkerTraits::SYNC) {
-                marker_traits = marker_traits.union(MarkerTraits::SYNC);
-            }
-
             let mut builder = ValueVTable::builder::<Self>()
-                .marker_traits(marker_traits);
+                .marker_traits(|| {
+                    let mut marker_traits = MarkerTraits::UNPIN;
+                    if T::SHAPE.vtable.marker_traits().contains(MarkerTraits::EQ) {
+                        marker_traits = marker_traits.union(MarkerTraits::EQ);
+                    }
+                    if T::SHAPE.vtable.marker_traits().contains(MarkerTraits::SEND) {
+                        marker_traits = marker_traits.union(MarkerTraits::SEND);
+                    }
+                    if T::SHAPE.vtable.marker_traits().contains(MarkerTraits::SYNC) {
+                        marker_traits = marker_traits.union(MarkerTraits::SYNC);
+                    }
+
+                    marker_traits
+                });
 
             // Forward trait methods to the underlying type if it implements them
-            if T::VTABLE.debug.is_some() {
-                builder = builder.debug(|value, f| {
-                    let debug_fn = unsafe { transmute::<DebugFn, DebugFnTyped<T>>(T::VTABLE.debug.unwrap()) };
-                    debug_fn(*value, f)
-                });
-            }
-
-            if T::VTABLE.display.is_some() {
-                builder = builder.display(|value, f| {
-                    let display_fn = unsafe { transmute::<DisplayFn, DisplayFnTyped<T>>(T::VTABLE.display.unwrap()) };
-                    display_fn(*value, f)
-                });
-            }
-
-            if T::VTABLE.eq.is_some() {
-                builder = builder.eq(|a, b| {
-                    let eq_fn = unsafe { transmute::<PartialEqFn, PartialEqFnTyped<T>>(T::VTABLE.eq.unwrap()) };
-                    eq_fn(*a, *b)
-                });
-            }
-
-            if T::VTABLE.partial_ord.is_some() {
-                builder = builder.partial_ord(|a, b| {
-                    let partial_ord_fn = unsafe { transmute::<PartialOrdFn, PartialOrdFnTyped<T>>(T::VTABLE.partial_ord.unwrap()) };
-                    partial_ord_fn(*a, *b)
-                });
-            }
-
-            if T::VTABLE.ord.is_some() {
-                builder = builder.ord(|a, b| {
-                    let ord_fn = unsafe { transmute::<CmpFn, CmpFnTyped<T>>(T::VTABLE.ord.unwrap()) };
-                    ord_fn(*a, *b)
-                });
-            }
-
-            if T::VTABLE.hash.is_some() {
-                builder = builder.hash(|value, hasher_this, hasher_write_fn| {
-                    let hash_fn = unsafe { transmute::<HashFn, HashFnTyped<T>>(T::VTABLE.hash.unwrap()) };
-                    hash_fn(*value, hasher_this, hasher_write_fn)
-                });
-            }
+            builder = builder.debug(|| {
+                if (T::VTABLE.debug)().is_some() {
+                    Some(|value, f| {
+                        let debug_fn = unsafe { transmute::<DebugFn, DebugFnTyped<T>>((T::VTABLE.debug)().unwrap()) };
+                        debug_fn(*value, f)
+                    })
+                } else {
+                    None
+                }
+            });
+            builder = builder.display(|| {
+                if (T::VTABLE.display)().is_some() {
+                    Some(|value, f| {
+                        let display_fn = unsafe { transmute::<DisplayFn, DisplayFnTyped<T>>((T::VTABLE.display)().unwrap()) };
+                        display_fn(*value, f)
+                    })
+                } else {
+                    None
+                }
+            });
+            builder = builder.eq(|| {
+                if (T::VTABLE.eq)().is_some() {
+                    Some(|a, b| {
+                        let eq_fn = unsafe { transmute::<PartialEqFn, PartialEqFnTyped<T>>((T::VTABLE.eq)().unwrap()) };
+                        eq_fn(*a, *b)
+                    })
+                } else {
+                    None
+                }
+            });
+            builder = builder.partial_ord(|| {
+                if (T::VTABLE.partial_ord)().is_some() {
+                    Some(|a, b| {
+                        let partial_ord_fn = unsafe { transmute::<PartialOrdFn, PartialOrdFnTyped<T>>((T::VTABLE.partial_ord)().unwrap()) };
+                        partial_ord_fn(*a, *b)
+                    })
+                } else {
+                    None
+                }
+            });
+            builder = builder.ord(|| {
+                if (T::VTABLE.ord)().is_some() {
+                    Some(|a, b| {
+                        let ord_fn = unsafe { transmute::<CmpFn, CmpFnTyped<T>>((T::VTABLE.ord)().unwrap()) };
+                        ord_fn(*a, *b)
+                    })
+                } else {
+                    None
+                }
+            });
+            builder = builder.hash(|| {
+                if (T::VTABLE.hash)().is_some() {
+                    Some(|value, hasher_this, hasher_write_fn| {
+                        let hash_fn = unsafe { transmute::<HashFn, HashFnTyped<T>>((T::VTABLE.hash)().unwrap()) };
+                        hash_fn(*value, hasher_this, hasher_write_fn)
+                    })
+                } else {
+                    None
+                }
+            });
 
             builder
         }

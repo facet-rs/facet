@@ -14,12 +14,12 @@ where
     let mut facts: HashSet<Fact> = HashSet::new();
     let value_vtable = T::SHAPE.vtable;
     let traits = [
-        ("Debug", value_vtable.debug.is_some()),
-        ("Display", value_vtable.display.is_some()),
-        ("Default", value_vtable.default_in_place.is_some()),
-        ("Eq", value_vtable.eq.is_some()),
-        ("Ord", value_vtable.ord.is_some()),
-        ("Clone", value_vtable.clone_into.is_some()),
+        ("Debug", (value_vtable.debug)().is_some()),
+        ("Display", (value_vtable.display)().is_some()),
+        ("Default", (value_vtable.default_in_place)().is_some()),
+        ("Eq", (value_vtable.eq)().is_some()),
+        ("Ord", (value_vtable.ord)().is_some()),
+        ("Clone", (value_vtable.clone_into)().is_some()),
     ];
     let trait_str = traits
         .iter()
@@ -38,7 +38,7 @@ where
     let r = Peek::new(val2);
 
     // Format display representation
-    if l.shape().vtable.display.is_some() {
+    if (l.shape().vtable.display)().is_some() {
         facts.insert(Fact::Display);
         eprintln!(
             "Display:   {}",
@@ -47,7 +47,7 @@ where
     }
 
     // Format debug representation
-    if l.shape().vtable.debug.is_some() {
+    if (l.shape().vtable.debug)().is_some() {
         facts.insert(Fact::Debug);
         eprintln!(
             "Debug:     {}",
@@ -94,13 +94,19 @@ where
     }
 
     // Test clone
-    if l.shape().vtable.clone_into.is_some() {
+    if (l.shape().vtable.clone_into)().is_some() {
         facts.insert(Fact::Clone);
         eprintln!("Clone:     Implemented");
     }
 
     // Marker traits
-    facts.extend(l.shape().vtable.marker_traits.iter().map(Fact::MarkerTrait));
+    facts.extend(
+        l.shape()
+            .vtable
+            .marker_traits()
+            .iter()
+            .map(Fact::MarkerTrait),
+    );
 
     facts
 }

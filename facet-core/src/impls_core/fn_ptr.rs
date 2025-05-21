@@ -68,31 +68,31 @@ macro_rules! impl_facet_for_fn_ptr {
                     .type_name(|f, opts| {
                         write_type_name_list(f, opts, $abi, &[$($args::SHAPE),*], R::SHAPE)
                     })
-                    .debug(|data, f| fmt::Debug::fmt(data, f))
-                    .clone_into(|src, dst| unsafe { dst.put(src.clone()) })
-                    .marker_traits(
+                    .debug(|| Some(|data, f| fmt::Debug::fmt(data, f)))
+                    .clone_into(|| Some(|src, dst| unsafe { dst.put(src.clone()) }))
+                    .marker_traits(||
                         MarkerTraits::EQ
                             .union(MarkerTraits::SEND)
                             .union(MarkerTraits::SYNC)
                             .union(MarkerTraits::COPY)
                             .union(MarkerTraits::UNPIN)
                     )
-                    .eq(|&left, &right| {
+                    .eq(|| Some(|&left, &right| {
                         fn_addr_eq(left, right)
-                    })
-                    .partial_ord(|left, right| {
+                    }))
+                    .partial_ord(|| Some(|left, right| {
                         #[allow(unpredictable_function_pointer_comparisons)]
                         left.partial_cmp(right)
-                    })
-                    .ord(|left, right| {
+                    }))
+                    .ord(|| Some(|left, right| {
                         #[allow(unpredictable_function_pointer_comparisons)]
                         left.cmp(right)
-                    })
-                    .hash(|value, hasher_this, hasher_write_fn| {
+                    }))
+                    .hash(|| Some(|value, hasher_this, hasher_write_fn| {
                         value.hash(&mut unsafe {
                                 HasherProxy::new(hasher_this, hasher_write_fn)
                             })
-                    })
+                    }))
                     .build()
             };
 

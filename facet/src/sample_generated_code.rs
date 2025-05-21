@@ -32,93 +32,109 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkStruct {
         let mut vtable = const {
             let mut builder = ::facet_core::ValueVTable::builder::<Self>()
                 .type_name(|f, _opts| ::core::fmt::Write::write_str(f, "KitchenSinkStruct"));
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
+            builder = builder.display(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::fmt::Display> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|data, f| {
+                        use ::facet_core::spez::*;
+                        (&&Spez(data)).spez_display(f)
+                    })
+                } else {
+                    None
                 }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::fmt::Display> Wrapper<T> {
-                    const IMPLS: bool = true;
+            });
+            builder = builder.debug(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::fmt::Debug> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|data, f| {
+                        use ::facet_core::spez::*;
+                        (&&Spez(data)).spez_debug(f)
+                    })
+                } else {
+                    None
                 }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.display(|data, f| {
-                    use ::facet_core::spez::*;
-                    (&&Spez(data)).spez_display(f)
-                });
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
+            });
+            builder = builder.default_in_place(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::default::Default> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|target| unsafe {
+                        use ::facet_core::spez::*;
+                        (&&SpezEmpty::<Self>::SPEZ)
+                            .spez_default_in_place(target.into())
+                            .as_mut()
+                    })
+                } else {
+                    None
                 }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::fmt::Debug> Wrapper<T> {
-                    const IMPLS: bool = true;
+            });
+            builder = builder.clone_into(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::clone::Clone> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|src, dst| unsafe {
+                        use ::facet_core::spez::*;
+                        (&&Spez(src)).spez_clone_into(dst.into()).as_mut()
+                    })
+                } else {
+                    None
                 }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.debug(|data, f| {
-                    use ::facet_core::spez::*;
-                    (&&Spez(data)).spez_debug(f)
-                });
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
-                }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::default::Default> Wrapper<T> {
-                    const IMPLS: bool = true;
-                }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.default_in_place(|target| unsafe {
-                    use ::facet_core::spez::*;
-                    (&&SpezEmpty::<Self>::SPEZ)
-                        .spez_default_in_place(target.into())
-                        .as_mut()
-                });
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
-                }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::clone::Clone> Wrapper<T> {
-                    const IMPLS: bool = true;
-                }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.clone_into(|src, dst| unsafe {
-                    use ::facet_core::spez::*;
-                    (&&Spez(src)).spez_clone_into(dst.into()).as_mut()
-                });
-            }
-            {
+            });
+            builder = builder.marker_traits(|| {
                 let mut traits = ::facet_core::MarkerTraits::empty();
                 if {
                     /// Fallback trait with `False` for `IMPLS` if the type does not
@@ -210,116 +226,138 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkStruct {
                 } {
                     traits = traits.union(::facet_core::MarkerTraits::UNPIN);
                 }
-                builder = builder.marker_traits(traits);
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
+                traits
+            });
+            builder = builder.eq(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::cmp::PartialEq> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|left, right| {
+                        use ::facet_core::spez::*;
+                        (&&Spez(left)).spez_eq(&&Spez(right))
+                    })
+                } else {
+                    None
                 }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::cmp::PartialEq> Wrapper<T> {
-                    const IMPLS: bool = true;
+            });
+            builder = builder.partial_ord(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::cmp::PartialOrd> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|left, right| {
+                        use ::facet_core::spez::*;
+                        (&&Spez(left)).spez_partial_cmp(&&Spez(right))
+                    })
+                } else {
+                    None
                 }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.eq(|left, right| {
-                    use ::facet_core::spez::*;
-                    (&&Spez(left)).spez_eq(&&Spez(right))
-                });
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
+            });
+            builder = builder.ord(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::cmp::Ord> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|left, right| {
+                        use ::facet_core::spez::*;
+                        (&&Spez(left)).spez_cmp(&&Spez(right))
+                    })
+                } else {
+                    None
                 }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::cmp::PartialOrd> Wrapper<T> {
-                    const IMPLS: bool = true;
+            });
+            builder = builder.hash(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::hash::Hash> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|value, hasher_this, hasher_write_fn| {
+                        use ::facet_core::HasherProxy;
+                        use ::facet_core::spez::*;
+                        (&&Spez(value)).spez_hash(&mut unsafe {
+                            HasherProxy::new(hasher_this, hasher_write_fn)
+                        })
+                    })
+                } else {
+                    None
                 }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.partial_ord(|left, right| {
-                    use ::facet_core::spez::*;
-                    (&&Spez(left)).spez_partial_cmp(&&Spez(right))
-                });
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
+            });
+            builder = builder.parse(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::str::FromStr> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|s, target| {
+                        use ::facet_core::spez::*;
+                        let res =
+                            unsafe { (&&SpezEmpty::<Self>::SPEZ).spez_parse(s, target.into()) };
+                        res.map(|res| unsafe { res.as_mut() })
+                    })
+                } else {
+                    None
                 }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::cmp::Ord> Wrapper<T> {
-                    const IMPLS: bool = true;
-                }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.ord(|left, right| {
-                    use ::facet_core::spez::*;
-                    (&&Spez(left)).spez_cmp(&&Spez(right))
-                });
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
-                }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::hash::Hash> Wrapper<T> {
-                    const IMPLS: bool = true;
-                }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.hash(|value, hasher_this, hasher_write_fn| {
-                    use ::facet_core::HasherProxy;
-                    use ::facet_core::spez::*;
-                    (&&Spez(value))
-                        .spez_hash(&mut unsafe { HasherProxy::new(hasher_this, hasher_write_fn) })
-                });
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
-                }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::str::FromStr> Wrapper<T> {
-                    const IMPLS: bool = true;
-                }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.parse(|s, target| {
-                    use ::facet_core::spez::*;
-                    let res = unsafe { (&&SpezEmpty::<Self>::SPEZ).spez_parse(s, target.into()) };
-                    res.map(|res| unsafe { res.as_mut() })
-                });
-            }
+            });
             builder.build()
         };
         vtable
@@ -431,93 +469,109 @@ unsafe impl<'__facet> crate::Facet<'__facet> for Point {
         let mut vtable = const {
             let mut builder = ::facet_core::ValueVTable::builder::<Self>()
                 .type_name(|f, _opts| ::core::fmt::Write::write_str(f, "Point"));
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
+            builder = builder.display(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::fmt::Display> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|data, f| {
+                        use ::facet_core::spez::*;
+                        (&&Spez(data)).spez_display(f)
+                    })
+                } else {
+                    None
                 }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::fmt::Display> Wrapper<T> {
-                    const IMPLS: bool = true;
+            });
+            builder = builder.debug(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::fmt::Debug> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|data, f| {
+                        use ::facet_core::spez::*;
+                        (&&Spez(data)).spez_debug(f)
+                    })
+                } else {
+                    None
                 }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.display(|data, f| {
-                    use ::facet_core::spez::*;
-                    (&&Spez(data)).spez_display(f)
-                });
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
+            });
+            builder = builder.default_in_place(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::default::Default> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|target| unsafe {
+                        use ::facet_core::spez::*;
+                        (&&SpezEmpty::<Self>::SPEZ)
+                            .spez_default_in_place(target.into())
+                            .as_mut()
+                    })
+                } else {
+                    None
                 }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::fmt::Debug> Wrapper<T> {
-                    const IMPLS: bool = true;
+            });
+            builder = builder.clone_into(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::clone::Clone> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|src, dst| unsafe {
+                        use ::facet_core::spez::*;
+                        (&&Spez(src)).spez_clone_into(dst.into()).as_mut()
+                    })
+                } else {
+                    None
                 }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.debug(|data, f| {
-                    use ::facet_core::spez::*;
-                    (&&Spez(data)).spez_debug(f)
-                });
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
-                }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::default::Default> Wrapper<T> {
-                    const IMPLS: bool = true;
-                }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.default_in_place(|target| unsafe {
-                    use ::facet_core::spez::*;
-                    (&&SpezEmpty::<Self>::SPEZ)
-                        .spez_default_in_place(target.into())
-                        .as_mut()
-                });
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
-                }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::clone::Clone> Wrapper<T> {
-                    const IMPLS: bool = true;
-                }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.clone_into(|src, dst| unsafe {
-                    use ::facet_core::spez::*;
-                    (&&Spez(src)).spez_clone_into(dst.into()).as_mut()
-                });
-            }
-            {
+            });
+            builder = builder.marker_traits(|| {
                 let mut traits = ::facet_core::MarkerTraits::empty();
                 if {
                     /// Fallback trait with `False` for `IMPLS` if the type does not
@@ -609,116 +663,138 @@ unsafe impl<'__facet> crate::Facet<'__facet> for Point {
                 } {
                     traits = traits.union(::facet_core::MarkerTraits::UNPIN);
                 }
-                builder = builder.marker_traits(traits);
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
+                traits
+            });
+            builder = builder.eq(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::cmp::PartialEq> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|left, right| {
+                        use ::facet_core::spez::*;
+                        (&&Spez(left)).spez_eq(&&Spez(right))
+                    })
+                } else {
+                    None
                 }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::cmp::PartialEq> Wrapper<T> {
-                    const IMPLS: bool = true;
+            });
+            builder = builder.partial_ord(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::cmp::PartialOrd> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|left, right| {
+                        use ::facet_core::spez::*;
+                        (&&Spez(left)).spez_partial_cmp(&&Spez(right))
+                    })
+                } else {
+                    None
                 }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.eq(|left, right| {
-                    use ::facet_core::spez::*;
-                    (&&Spez(left)).spez_eq(&&Spez(right))
-                });
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
+            });
+            builder = builder.ord(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::cmp::Ord> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|left, right| {
+                        use ::facet_core::spez::*;
+                        (&&Spez(left)).spez_cmp(&&Spez(right))
+                    })
+                } else {
+                    None
                 }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::cmp::PartialOrd> Wrapper<T> {
-                    const IMPLS: bool = true;
+            });
+            builder = builder.hash(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::hash::Hash> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|value, hasher_this, hasher_write_fn| {
+                        use ::facet_core::HasherProxy;
+                        use ::facet_core::spez::*;
+                        (&&Spez(value)).spez_hash(&mut unsafe {
+                            HasherProxy::new(hasher_this, hasher_write_fn)
+                        })
+                    })
+                } else {
+                    None
                 }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.partial_ord(|left, right| {
-                    use ::facet_core::spez::*;
-                    (&&Spez(left)).spez_partial_cmp(&&Spez(right))
-                });
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
+            });
+            builder = builder.parse(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::str::FromStr> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|s, target| {
+                        use ::facet_core::spez::*;
+                        let res =
+                            unsafe { (&&SpezEmpty::<Self>::SPEZ).spez_parse(s, target.into()) };
+                        res.map(|res| unsafe { res.as_mut() })
+                    })
+                } else {
+                    None
                 }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::cmp::Ord> Wrapper<T> {
-                    const IMPLS: bool = true;
-                }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.ord(|left, right| {
-                    use ::facet_core::spez::*;
-                    (&&Spez(left)).spez_cmp(&&Spez(right))
-                });
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
-                }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::hash::Hash> Wrapper<T> {
-                    const IMPLS: bool = true;
-                }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.hash(|value, hasher_this, hasher_write_fn| {
-                    use ::facet_core::HasherProxy;
-                    use ::facet_core::spez::*;
-                    (&&Spez(value))
-                        .spez_hash(&mut unsafe { HasherProxy::new(hasher_this, hasher_write_fn) })
-                });
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
-                }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::str::FromStr> Wrapper<T> {
-                    const IMPLS: bool = true;
-                }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.parse(|s, target| {
-                    use ::facet_core::spez::*;
-                    let res = unsafe { (&&SpezEmpty::<Self>::SPEZ).spez_parse(s, target.into()) };
-                    res.map(|res| unsafe { res.as_mut() })
-                });
-            }
+            });
             builder.build()
         };
         vtable
@@ -824,93 +900,109 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
         const {
             let mut builder = ::facet_core::ValueVTable::builder::<Self>()
                 .type_name(|f, _opts| ::core::fmt::Write::write_str(f, "KitchenSinkEnum"));
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
+            builder = builder.display(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::fmt::Display> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|data, f| {
+                        use ::facet_core::spez::*;
+                        (&&Spez(data)).spez_display(f)
+                    })
+                } else {
+                    None
                 }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::fmt::Display> Wrapper<T> {
-                    const IMPLS: bool = true;
+            });
+            builder = builder.debug(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::fmt::Debug> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|data, f| {
+                        use ::facet_core::spez::*;
+                        (&&Spez(data)).spez_debug(f)
+                    })
+                } else {
+                    None
                 }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.display(|data, f| {
-                    use ::facet_core::spez::*;
-                    (&&Spez(data)).spez_display(f)
-                });
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
+            });
+            builder = builder.default_in_place(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::default::Default> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|target| unsafe {
+                        use ::facet_core::spez::*;
+                        (&&SpezEmpty::<Self>::SPEZ)
+                            .spez_default_in_place(target.into())
+                            .as_mut()
+                    })
+                } else {
+                    None
                 }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::fmt::Debug> Wrapper<T> {
-                    const IMPLS: bool = true;
+            });
+            builder = builder.clone_into(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::clone::Clone> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|src, dst| unsafe {
+                        use ::facet_core::spez::*;
+                        (&&Spez(src)).spez_clone_into(dst.into()).as_mut()
+                    })
+                } else {
+                    None
                 }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.debug(|data, f| {
-                    use ::facet_core::spez::*;
-                    (&&Spez(data)).spez_debug(f)
-                });
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
-                }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::default::Default> Wrapper<T> {
-                    const IMPLS: bool = true;
-                }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.default_in_place(|target| unsafe {
-                    use ::facet_core::spez::*;
-                    (&&SpezEmpty::<Self>::SPEZ)
-                        .spez_default_in_place(target.into())
-                        .as_mut()
-                });
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
-                }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::clone::Clone> Wrapper<T> {
-                    const IMPLS: bool = true;
-                }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.clone_into(|src, dst| unsafe {
-                    use ::facet_core::spez::*;
-                    (&&Spez(src)).spez_clone_into(dst.into()).as_mut()
-                });
-            }
-            {
+            });
+            builder = builder.marker_traits(|| {
                 let mut traits = ::facet_core::MarkerTraits::empty();
                 if {
                     /// Fallback trait with `False` for `IMPLS` if the type does not
@@ -1002,116 +1094,138 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                 } {
                     traits = traits.union(::facet_core::MarkerTraits::UNPIN);
                 }
-                builder = builder.marker_traits(traits);
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
+                traits
+            });
+            builder = builder.eq(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::cmp::PartialEq> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|left, right| {
+                        use ::facet_core::spez::*;
+                        (&&Spez(left)).spez_eq(&&Spez(right))
+                    })
+                } else {
+                    None
                 }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::cmp::PartialEq> Wrapper<T> {
-                    const IMPLS: bool = true;
+            });
+            builder = builder.partial_ord(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::cmp::PartialOrd> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|left, right| {
+                        use ::facet_core::spez::*;
+                        (&&Spez(left)).spez_partial_cmp(&&Spez(right))
+                    })
+                } else {
+                    None
                 }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.eq(|left, right| {
-                    use ::facet_core::spez::*;
-                    (&&Spez(left)).spez_eq(&&Spez(right))
-                });
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
+            });
+            builder = builder.ord(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::cmp::Ord> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|left, right| {
+                        use ::facet_core::spez::*;
+                        (&&Spez(left)).spez_cmp(&&Spez(right))
+                    })
+                } else {
+                    None
                 }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::cmp::PartialOrd> Wrapper<T> {
-                    const IMPLS: bool = true;
+            });
+            builder = builder.hash(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::hash::Hash> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|value, hasher_this, hasher_write_fn| {
+                        use ::facet_core::HasherProxy;
+                        use ::facet_core::spez::*;
+                        (&&Spez(value)).spez_hash(&mut unsafe {
+                            HasherProxy::new(hasher_this, hasher_write_fn)
+                        })
+                    })
+                } else {
+                    None
                 }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.partial_ord(|left, right| {
-                    use ::facet_core::spez::*;
-                    (&&Spez(left)).spez_partial_cmp(&&Spez(right))
-                });
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
+            });
+            builder = builder.parse(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::str::FromStr> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|s, target| {
+                        use ::facet_core::spez::*;
+                        let res =
+                            unsafe { (&&SpezEmpty::<Self>::SPEZ).spez_parse(s, target.into()) };
+                        res.map(|res| unsafe { res.as_mut() })
+                    })
+                } else {
+                    None
                 }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::cmp::Ord> Wrapper<T> {
-                    const IMPLS: bool = true;
-                }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.ord(|left, right| {
-                    use ::facet_core::spez::*;
-                    (&&Spez(left)).spez_cmp(&&Spez(right))
-                });
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
-                }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::hash::Hash> Wrapper<T> {
-                    const IMPLS: bool = true;
-                }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.hash(|value, hasher_this, hasher_write_fn| {
-                    use ::facet_core::HasherProxy;
-                    use ::facet_core::spez::*;
-                    (&&Spez(value))
-                        .spez_hash(&mut unsafe { HasherProxy::new(hasher_this, hasher_write_fn) })
-                });
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
-                }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::str::FromStr> Wrapper<T> {
-                    const IMPLS: bool = true;
-                }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.parse(|s, target| {
-                    use ::facet_core::spez::*;
-                    let res = unsafe { (&&SpezEmpty::<Self>::SPEZ).spez_parse(s, target.into()) };
-                    res.map(|res| unsafe { res.as_mut() })
-                });
-            }
+            });
             builder.build()
         }
     };
@@ -1432,93 +1546,109 @@ unsafe impl<'__facet> crate::Facet<'__facet> for SubEnum {
         const {
             let mut builder = ::facet_core::ValueVTable::builder::<Self>()
                 .type_name(|f, _opts| ::core::fmt::Write::write_str(f, "SubEnum"));
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
+            builder = builder.display(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::fmt::Display> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|data, f| {
+                        use ::facet_core::spez::*;
+                        (&&Spez(data)).spez_display(f)
+                    })
+                } else {
+                    None
                 }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::fmt::Display> Wrapper<T> {
-                    const IMPLS: bool = true;
+            });
+            builder = builder.debug(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::fmt::Debug> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|data, f| {
+                        use ::facet_core::spez::*;
+                        (&&Spez(data)).spez_debug(f)
+                    })
+                } else {
+                    None
                 }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.display(|data, f| {
-                    use ::facet_core::spez::*;
-                    (&&Spez(data)).spez_display(f)
-                });
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
+            });
+            builder = builder.default_in_place(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::default::Default> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|target| unsafe {
+                        use ::facet_core::spez::*;
+                        (&&SpezEmpty::<Self>::SPEZ)
+                            .spez_default_in_place(target.into())
+                            .as_mut()
+                    })
+                } else {
+                    None
                 }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::fmt::Debug> Wrapper<T> {
-                    const IMPLS: bool = true;
+            });
+            builder = builder.clone_into(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::clone::Clone> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|src, dst| unsafe {
+                        use ::facet_core::spez::*;
+                        (&&Spez(src)).spez_clone_into(dst.into()).as_mut()
+                    })
+                } else {
+                    None
                 }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.debug(|data, f| {
-                    use ::facet_core::spez::*;
-                    (&&Spez(data)).spez_debug(f)
-                });
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
-                }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::default::Default> Wrapper<T> {
-                    const IMPLS: bool = true;
-                }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.default_in_place(|target| unsafe {
-                    use ::facet_core::spez::*;
-                    (&&SpezEmpty::<Self>::SPEZ)
-                        .spez_default_in_place(target.into())
-                        .as_mut()
-                });
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
-                }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::clone::Clone> Wrapper<T> {
-                    const IMPLS: bool = true;
-                }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.clone_into(|src, dst| unsafe {
-                    use ::facet_core::spez::*;
-                    (&&Spez(src)).spez_clone_into(dst.into()).as_mut()
-                });
-            }
-            {
+            });
+            builder = builder.marker_traits(|| {
                 let mut traits = ::facet_core::MarkerTraits::empty();
                 if {
                     /// Fallback trait with `False` for `IMPLS` if the type does not
@@ -1610,116 +1740,138 @@ unsafe impl<'__facet> crate::Facet<'__facet> for SubEnum {
                 } {
                     traits = traits.union(::facet_core::MarkerTraits::UNPIN);
                 }
-                builder = builder.marker_traits(traits);
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
+                traits
+            });
+            builder = builder.eq(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::cmp::PartialEq> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|left, right| {
+                        use ::facet_core::spez::*;
+                        (&&Spez(left)).spez_eq(&&Spez(right))
+                    })
+                } else {
+                    None
                 }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::cmp::PartialEq> Wrapper<T> {
-                    const IMPLS: bool = true;
+            });
+            builder = builder.partial_ord(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::cmp::PartialOrd> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|left, right| {
+                        use ::facet_core::spez::*;
+                        (&&Spez(left)).spez_partial_cmp(&&Spez(right))
+                    })
+                } else {
+                    None
                 }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.eq(|left, right| {
-                    use ::facet_core::spez::*;
-                    (&&Spez(left)).spez_eq(&&Spez(right))
-                });
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
+            });
+            builder = builder.ord(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::cmp::Ord> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|left, right| {
+                        use ::facet_core::spez::*;
+                        (&&Spez(left)).spez_cmp(&&Spez(right))
+                    })
+                } else {
+                    None
                 }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::cmp::PartialOrd> Wrapper<T> {
-                    const IMPLS: bool = true;
+            });
+            builder = builder.hash(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::hash::Hash> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|value, hasher_this, hasher_write_fn| {
+                        use ::facet_core::HasherProxy;
+                        use ::facet_core::spez::*;
+                        (&&Spez(value)).spez_hash(&mut unsafe {
+                            HasherProxy::new(hasher_this, hasher_write_fn)
+                        })
+                    })
+                } else {
+                    None
                 }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.partial_ord(|left, right| {
-                    use ::facet_core::spez::*;
-                    (&&Spez(left)).spez_partial_cmp(&&Spez(right))
-                });
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
+            });
+            builder = builder.parse(|| {
+                if {
+                    /// Fallback trait with `False` for `IMPLS` if the type does not
+                    /// implement the given trait.
+                    trait DoesNotImpl {
+                        const IMPLS: bool = false;
+                    }
+                    impl<T: ?Sized> DoesNotImpl for T {}
+                    /// Concrete type with `True` for `IMPLS` if the type implements the
+                    /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                    struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                    #[allow(dead_code)]
+                    impl<T: ?Sized + core::str::FromStr> Wrapper<T> {
+                        const IMPLS: bool = true;
+                    }
+                    <Wrapper<Self>>::IMPLS
+                } {
+                    Some(|s, target| {
+                        use ::facet_core::spez::*;
+                        let res =
+                            unsafe { (&&SpezEmpty::<Self>::SPEZ).spez_parse(s, target.into()) };
+                        res.map(|res| unsafe { res.as_mut() })
+                    })
+                } else {
+                    None
                 }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::cmp::Ord> Wrapper<T> {
-                    const IMPLS: bool = true;
-                }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.ord(|left, right| {
-                    use ::facet_core::spez::*;
-                    (&&Spez(left)).spez_cmp(&&Spez(right))
-                });
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
-                }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::hash::Hash> Wrapper<T> {
-                    const IMPLS: bool = true;
-                }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.hash(|value, hasher_this, hasher_write_fn| {
-                    use ::facet_core::HasherProxy;
-                    use ::facet_core::spez::*;
-                    (&&Spez(value))
-                        .spez_hash(&mut unsafe { HasherProxy::new(hasher_this, hasher_write_fn) })
-                });
-            }
-            if {
-                /// Fallback trait with `False` for `IMPLS` if the type does not
-                /// implement the given trait.
-                trait DoesNotImpl {
-                    const IMPLS: bool = false;
-                }
-                impl<T: ?Sized> DoesNotImpl for T {}
-                /// Concrete type with `True` for `IMPLS` if the type implements the
-                /// given trait. Otherwise, it falls back to `DoesNotImpl`.
-                struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
-                #[allow(dead_code)]
-                impl<T: ?Sized + core::str::FromStr> Wrapper<T> {
-                    const IMPLS: bool = true;
-                }
-                <Wrapper<Self>>::IMPLS
-            } {
-                builder = builder.parse(|s, target| {
-                    use ::facet_core::spez::*;
-                    let res = unsafe { (&&SpezEmpty::<Self>::SPEZ).spez_parse(s, target.into()) };
-                    res.map(|res| unsafe { res.as_mut() })
-                });
-            }
+            });
             builder.build()
         }
     };

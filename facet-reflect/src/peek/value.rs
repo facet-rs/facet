@@ -96,12 +96,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     /// `false` if equality comparison is not supported for this scalar type
     #[inline]
     pub fn eq(&self, other: &Peek<'_, '_, '_>) -> Option<bool> {
-        unsafe {
-            self.shape
-                .vtable
-                .eq
-                .map(|eq_fn| eq_fn(self.data, other.data))
-        }
+        unsafe { (self.shape.vtable.eq)().map(|eq_fn| eq_fn(self.data, other.data)) }
     }
 
     /// Compares this scalar with another and returns their ordering
@@ -112,9 +107,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     #[inline]
     pub fn partial_cmp(&self, other: &Peek<'_, '_, '_>) -> Option<Ordering> {
         unsafe {
-            self.shape
-                .vtable
-                .partial_ord
+            (self.shape.vtable.partial_ord)()
                 .and_then(|partial_ord_fn| partial_ord_fn(self.data, other.data))
         }
     }
@@ -127,7 +120,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     #[inline(always)]
     pub fn hash<H: core::hash::Hasher>(&self, hasher: &mut H) -> bool {
         unsafe {
-            if let Some(hash_fn) = self.shape.vtable.hash {
+            if let Some(hash_fn) = (self.shape.vtable.hash)() {
                 let hasher_opaque = PtrMut::new(hasher);
                 hash_fn(self.data, hasher_opaque, |opaque, bytes| {
                     opaque.as_mut::<H>().write(bytes)
@@ -346,7 +339,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     pub fn innermost_peek(self) -> Self {
         let mut current_peek = self;
         while let (Some(try_borrow_inner_fn), Some(inner_shape)) = (
-            current_peek.shape.vtable.try_borrow_inner,
+            (current_peek.shape.vtable.try_borrow_inner)(),
             current_peek.shape.inner,
         ) {
             unsafe {
@@ -368,7 +361,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
 
 impl<'mem, 'facet, 'shape> core::fmt::Display for Peek<'mem, 'facet, 'shape> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if let Some(display_fn) = self.vtable().display {
+        if let Some(display_fn) = (self.vtable().display)() {
             unsafe { display_fn(self.data, f) }
         } else {
             write!(f, "⟨{}⟩", self.shape)
@@ -378,7 +371,7 @@ impl<'mem, 'facet, 'shape> core::fmt::Display for Peek<'mem, 'facet, 'shape> {
 
 impl<'mem, 'facet, 'shape> core::fmt::Debug for Peek<'mem, 'facet, 'shape> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if let Some(debug_fn) = self.vtable().debug {
+        if let Some(debug_fn) = (self.vtable().debug)() {
             unsafe { debug_fn(self.data, f) }
         } else {
             write!(f, "⟨{}⟩", self.shape)
@@ -391,7 +384,7 @@ impl<'mem, 'facet, 'shape> core::cmp::PartialEq for Peek<'mem, 'facet, 'shape> {
         if self.shape != other.shape {
             return false;
         }
-        let eq_fn = match self.shape.vtable.eq {
+        let eq_fn = match (self.shape.vtable.eq)() {
             Some(eq_fn) => eq_fn,
             None => return false,
         };
@@ -404,14 +397,14 @@ impl<'mem, 'facet, 'shape> core::cmp::PartialOrd for Peek<'mem, 'facet, 'shape> 
         if self.shape != other.shape {
             return None;
         }
-        let partial_ord_fn = self.shape.vtable.partial_ord?;
+        let partial_ord_fn = (self.shape.vtable.partial_ord)()?;
         unsafe { partial_ord_fn(self.data, other.data) }
     }
 }
 
 impl<'mem, 'facet, 'shape> core::hash::Hash for Peek<'mem, 'facet, 'shape> {
     fn hash<H: core::hash::Hasher>(&self, hasher: &mut H) {
-        if let Some(hash_fn) = self.shape.vtable.hash {
+        if let Some(hash_fn) = (self.shape.vtable.hash)() {
             let hasher_opaque = PtrMut::new(hasher);
             unsafe {
                 hash_fn(self.data, hasher_opaque, |opaque, bytes| {

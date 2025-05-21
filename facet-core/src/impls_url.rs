@@ -54,9 +54,9 @@ unsafe impl Facet<'_> for Url {
         }
 
         let mut vtable = value_vtable!(Url, |f, _opts| write!(f, "Url"));
-        vtable.parse = Some(parse);
-        vtable.try_into_inner = Some(try_into_inner);
-        vtable.try_borrow_inner = Some(try_borrow_inner);
+        vtable.parse = || Some(parse);
+        vtable.try_into_inner = || Some(try_into_inner);
+        vtable.try_borrow_inner = || Some(try_borrow_inner);
         vtable
     };
 

@@ -123,7 +123,7 @@ pub(crate) fn peek_to_writer<'mem, 'facet, 'shape, W: Write>(
                         | ScalarAffinity::Path(_)
                         | ScalarAffinity::ULID(_)
                         | ScalarAffinity::UUID(_) => {
-                            if let Some(_display) = scalar_peek.shape().vtable.display {
+                            if let Some(_display) = (scalar_peek.shape().vtable.display)() {
                                 // Use display formatting if available
                                 crate::write_json_string(output, &scalar_peek.to_string())
                             } else {

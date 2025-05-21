@@ -52,9 +52,9 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::rc::Rc<T> {
             }
             Ok(())
         });
-        vtable.try_from = Some(try_from::<T>);
-        vtable.try_into_inner = Some(try_into_inner::<T>);
-        vtable.try_borrow_inner = Some(try_borrow_inner::<T>);
+        vtable.try_from = || Some(try_from::<T>);
+        vtable.try_into_inner = || Some(try_into_inner::<T>);
+        vtable.try_borrow_inner = || Some(try_borrow_inner::<T>);
         vtable
     };
 
@@ -202,10 +202,7 @@ mod tests {
         assert_eq!(unsafe { borrowed_ptr.get::<String>() }, "example");
 
         // Get the function pointer for dropping the Rc
-        let drop_fn = rc_shape
-            .vtable
-            .drop_in_place
-            .expect("Rc<T> should have drop_in_place");
+        let drop_fn = (rc_shape.vtable.drop_in_place)().expect("Rc<T> should have drop_in_place");
 
         // Drop the Rc in place
         // SAFETY: rc_ptr points to a valid Rc<String>
@@ -263,8 +260,8 @@ mod tests {
         assert_eq!(unsafe { borrowed_ptr.get::<String>() }, "example");
 
         // 4. Drop everything and free memory
-        let rc_drop_fn = rc_shape.vtable.drop_in_place.unwrap();
-        let weak_drop_fn = weak_shape.vtable.drop_in_place.unwrap();
+        let rc_drop_fn = (rc_shape.vtable.drop_in_place)().unwrap();
+        let weak_drop_fn = (weak_shape.vtable.drop_in_place)().unwrap();
 
         unsafe {
             // Drop Rcs
@@ -311,7 +308,7 @@ mod tests {
         let weak1_ptr = unsafe { downgrade_into_fn(rc1_ptr, weak1_uninit_ptr) };
 
         // 3. Drop and free the strong pointer (rc1)
-        let rc_drop_fn = rc_shape.vtable.drop_in_place.unwrap();
+        let rc_drop_fn = (rc_shape.vtable.drop_in_place)().unwrap();
         unsafe {
             rc_drop_fn(rc1_ptr);
             rc_shape.deallocate_mut(rc1_ptr)?;
@@ -330,7 +327,7 @@ mod tests {
         );
 
         // 5. Clean up: Deallocate the memory intended for the failed upgrade and drop/deallocate the weak pointer
-        let weak_drop_fn = weak_shape.vtable.drop_in_place.unwrap();
+        let weak_drop_fn = (weak_shape.vtable.drop_in_place)().unwrap();
         unsafe {
             // Deallocate the *uninitialized* memory allocated for the failed upgrade attempt
             rc_shape.deallocate_uninit(rc2_uninit_ptr)?;

@@ -16,13 +16,13 @@ where
 {
     const VTABLE: &'static ValueVTable = &const {
         let mut builder = ValueVTable::builder::<Self>()
-            .marker_traits({
+            .marker_traits(|| {
                 let arg_dependent_traits = MarkerTraits::SEND
                     .union(MarkerTraits::SYNC)
                     .union(MarkerTraits::EQ);
                 arg_dependent_traits
-                    .intersection(V::SHAPE.vtable.marker_traits)
-                    .intersection(K::SHAPE.vtable.marker_traits)
+                    .intersection(V::SHAPE.vtable.marker_traits())
+                    .intersection(K::SHAPE.vtable.marker_traits())
                     // only depends on `A` which we are not generic over (yet)
                     .union(MarkerTraits::UNPIN)
             })
@@ -38,77 +38,95 @@ where
                 }
             });
 
-        if K::SHAPE.vtable.debug.is_some() && V::SHAPE.vtable.debug.is_some() {
-            builder = builder.debug(|value, f| {
-                let k_debug = <VTableView<K>>::of().debug().unwrap();
-                let v_debug = <VTableView<V>>::of().debug().unwrap();
-                write!(f, "{{")?;
-                for (i, (key, val)) in value.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
+        builder = builder.debug(|| {
+            if (K::VTABLE.debug)().is_some() && (V::VTABLE.debug)().is_some() {
+                Some(|value, f| {
+                    let k_debug = <VTableView<K>>::of().debug().unwrap();
+                    let v_debug = <VTableView<V>>::of().debug().unwrap();
+                    write!(f, "{{")?;
+                    for (i, (key, val)) in value.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
+                        (k_debug)(key, f)?;
+                        write!(f, ": ")?;
+                        (v_debug)(val, f)?;
                     }
-                    (k_debug)(key, f)?;
-                    write!(f, ": ")?;
-                    (v_debug)(val, f)?;
-                }
-                write!(f, "}}")
-            })
-        }
+                    write!(f, "}}")
+                })
+            } else {
+                None
+            }
+        });
 
-        builder = builder.default_in_place(|target| unsafe { target.put(Self::default()) });
+        builder =
+            builder.default_in_place(|| Some(|target| unsafe { target.put(Self::default()) }));
 
-        if V::SHAPE.vtable.clone_into.is_some() && K::SHAPE.vtable.clone_into.is_some() {
-            builder = builder.clone_into(|src, dst| unsafe {
-                let mut new_map = BTreeMap::new();
+        builder = builder.clone_into(|| {
+            if (K::SHAPE.vtable.clone_into)().is_some() && (V::SHAPE.vtable.clone_into)().is_some()
+            {
+                Some(|src, dst| unsafe {
+                    let mut new_map = BTreeMap::new();
 
-                let k_clone_into = <VTableView<K>>::of().clone_into().unwrap();
-                let v_clone_into = <VTableView<V>>::of().clone_into().unwrap();
+                    let k_clone_into = <VTableView<K>>::of().clone_into().unwrap();
+                    let v_clone_into = <VTableView<V>>::of().clone_into().unwrap();
 
-                for (k, v) in src {
-                    use crate::TypedPtrUninit;
-                    use core::mem::MaybeUninit;
+                    for (k, v) in src {
+                        use crate::TypedPtrUninit;
+                        use core::mem::MaybeUninit;
 
-                    let mut new_k = MaybeUninit::<K>::uninit();
-                    let mut new_v = MaybeUninit::<V>::uninit();
+                        let mut new_k = MaybeUninit::<K>::uninit();
+                        let mut new_v = MaybeUninit::<V>::uninit();
 
-                    let uninit_k = TypedPtrUninit::new(new_k.as_mut_ptr());
-                    let uninit_v = TypedPtrUninit::new(new_v.as_mut_ptr());
+                        let uninit_k = TypedPtrUninit::new(new_k.as_mut_ptr());
+                        let uninit_v = TypedPtrUninit::new(new_v.as_mut_ptr());
 
-                    (k_clone_into)(k, uninit_k);
-                    (v_clone_into)(v, uninit_v);
+                        (k_clone_into)(k, uninit_k);
+                        (v_clone_into)(v, uninit_v);
 
-                    new_map.insert(new_k.assume_init(), new_v.assume_init());
-                }
+                        new_map.insert(new_k.assume_init(), new_v.assume_init());
+                    }
 
-                dst.put(new_map)
-            });
-        }
+                    dst.put(new_map)
+                })
+            } else {
+                None
+            }
+        });
 
-        if V::SHAPE.vtable.eq.is_some() {
-            builder = builder.eq(|a, b| {
-                let v_eq = <VTableView<V>>::of().eq().unwrap();
-                a.len() == b.len()
-                    && a.iter().all(|(key_a, val_a)| {
-                        b.get(key_a).is_some_and(|val_b| (v_eq)(val_a, val_b))
-                    })
-            });
-        }
+        builder = builder.eq(|| {
+            if (V::SHAPE.vtable.eq)().is_some() {
+                Some(|a, b| {
+                    let v_eq = <VTableView<V>>::of().eq().unwrap();
+                    a.len() == b.len()
+                        && a.iter().all(|(key_a, val_a)| {
+                            b.get(key_a).is_some_and(|val_b| (v_eq)(val_a, val_b))
+                        })
+                })
+            } else {
+                None
+            }
+        });
 
-        if K::SHAPE.vtable.hash.is_some() && V::SHAPE.vtable.hash.is_some() {
-            builder = builder.hash(|map, hasher_this, hasher_write_fn| unsafe {
-                use crate::HasherProxy;
-                use core::hash::Hash;
+        builder = builder.hash(|| {
+            if (K::SHAPE.vtable.hash)().is_some() && (V::SHAPE.vtable.hash)().is_some() {
+                Some(|map, hasher_this, hasher_write_fn| unsafe {
+                    use crate::HasherProxy;
+                    use core::hash::Hash;
 
-                let k_hash = <VTableView<K>>::of().hash().unwrap();
-                let v_hash = <VTableView<V>>::of().hash().unwrap();
-                let mut hasher = HasherProxy::new(hasher_this, hasher_write_fn);
-                map.len().hash(&mut hasher);
-                for (k, v) in map {
-                    (k_hash)(k, hasher_this, hasher_write_fn);
-                    (v_hash)(v, hasher_this, hasher_write_fn);
-                }
-            });
-        }
+                    let k_hash = <VTableView<K>>::of().hash().unwrap();
+                    let v_hash = <VTableView<V>>::of().hash().unwrap();
+                    let mut hasher = HasherProxy::new(hasher_this, hasher_write_fn);
+                    map.len().hash(&mut hasher);
+                    for (k, v) in map {
+                        (k_hash)(k, hasher_this, hasher_write_fn);
+                        (v_hash)(v, hasher_this, hasher_write_fn);
+                    }
+                })
+            } else {
+                None
+            }
+        });
 
         builder.build()
     };

@@ -143,7 +143,7 @@ impl<'shape> Frame<'shape> {
 
     // Safety: only call if is fully initialized
     pub(crate) unsafe fn drop_and_dealloc_if_needed(mut self) {
-        if let Some(drop_in_place) = self.shape.vtable.drop_in_place {
+        if let Some(drop_in_place) = (self.shape.vtable.drop_in_place)() {
             unsafe {
                 trace!(
                     "Invoking drop_in_place for shape {} at {:p}",

@@ -40,12 +40,14 @@ unsafe impl Facet<'_> for Ulid {
         }
 
         let mut vtable = value_vtable!(Ulid, |f, _opts| write!(f, "Ulid"));
-        vtable.parse = Some(|s, target| match Ulid::from_string(s) {
-            Ok(ulid) => Ok(unsafe { target.put(ulid) }),
-            Err(_) => Err(ParseError::Generic("ULID parsing failed")),
-        });
-        vtable.try_from = Some(try_from);
-        vtable.try_into_inner = Some(try_into_inner);
+        vtable.parse = || {
+            Some(|s, target| match Ulid::from_string(s) {
+                Ok(ulid) => Ok(unsafe { target.put(ulid) }),
+                Err(_) => Err(ParseError::Generic("ULID parsing failed")),
+            })
+        };
+        vtable.try_from = || Some(try_from);
+        vtable.try_into_inner = || Some(try_into_inner);
         vtable
     };
 

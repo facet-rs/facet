@@ -48,14 +48,18 @@ unsafe impl<'a, Idx: Facet<'a>> Facet<'a> for core::ops::Range<Idx> {
             Ok(())
         });
 
-        if Idx::SHAPE.is_debug() {
-            builder = builder.debug(|this, f| {
-                (<VTableView<Idx>>::of().debug().unwrap())(&this.start, f)?;
-                write!(f, "..")?;
-                (<VTableView<Idx>>::of().debug().unwrap())(&this.end, f)?;
-                Ok(())
-            });
-        }
+        builder = builder.debug(|| {
+            if Idx::SHAPE.is_debug() {
+                Some(|this, f| {
+                    (<VTableView<Idx>>::of().debug().unwrap())(&this.start, f)?;
+                    write!(f, "..")?;
+                    (<VTableView<Idx>>::of().debug().unwrap())(&this.end, f)?;
+                    Ok(())
+                })
+            } else {
+                None
+            }
+        });
 
         builder.build()
     };

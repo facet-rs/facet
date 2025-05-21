@@ -41,12 +41,14 @@ unsafe impl Facet<'_> for Uuid {
         }
 
         let mut vtable = value_vtable!(Uuid, |f, _opts| write!(f, "Uuid"));
-        vtable.parse = Some(|s, target| match Uuid::parse_str(s) {
-            Ok(uuid) => Ok(unsafe { target.put(uuid) }),
-            Err(_) => Err(ParseError::Generic("UUID parsing failed")),
-        });
-        vtable.try_from = Some(try_from);
-        vtable.try_into_inner = Some(try_into_inner);
+        vtable.parse = || {
+            Some(|s, target| match Uuid::parse_str(s) {
+                Ok(uuid) => Ok(unsafe { target.put(uuid) }),
+                Err(_) => Err(ParseError::Generic("UUID parsing failed")),
+            })
+        };
+        vtable.try_from = || Some(try_from);
+        vtable.try_into_inner = || Some(try_into_inner);
         vtable
     };
 

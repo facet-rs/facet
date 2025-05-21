@@ -91,93 +91,128 @@ macro_rules! impl_facet_for_tuple {
                     .type_name(|f, opts| {
                         write_type_name_list(f, opts, "(", ", ", ")", &[$($elems::SHAPE),+])
                     })
-                    .drop_in_place(|data| unsafe { data.drop_in_place::<Self>() })
-                    .marker_traits(
+                    .drop_in_place(|| Some(|data| unsafe { data.drop_in_place::<Self>() }))
+                    .marker_traits(||
                         MarkerTraits::all()
-                            $(.intersection($elems::SHAPE.vtable.marker_traits))+
+                            $(.intersection($elems::SHAPE.vtable.marker_traits()))+
                     );
 
-                let elem_shapes = const { &[$($elems::SHAPE),+] };
-                if Characteristic::Debug.all(elem_shapes) {
-                    builder = builder.debug(|value, f| {
-                        impl_facet_for_tuple! {
-                            debug on f {
-                                $(
-                                    (<VTableView<$elems>>::of().debug().unwrap())(
-                                        &value.$idx,
-                                        f,
-                                    )?;
-                                )+
+                builder = builder.debug(|| {
+                    let elem_shapes = const { &[$($elems::SHAPE),+] };
+                    if Characteristic::Debug.all(elem_shapes) {
+                        Some(|value, f| {
+                            impl_facet_for_tuple! {
+                                debug on f {
+                                    $(
+                                        (<VTableView<$elems>>::of().debug().unwrap())(
+                                            &value.$idx,
+                                            f,
+                                        )?;
+                                    )+
+                                }
                             }
-                        }
-                    });
-                }
+                        })
+                    } else {
+                        None
+                    }
+                });
 
-                if Characteristic::Default.all(elem_shapes) {
-                    builder = builder.default_in_place(|mut dst| {
-                        $(
-                            unsafe {
-                                (<VTableView<$elems>>::of().default_in_place().unwrap())(
-                                    dst.field_uninit_at(mem::offset_of!(Self, $idx))
+                builder = builder.default_in_place(|| {
+                    let elem_shapes = const { &[$($elems::SHAPE),+] };
+                    if Characteristic::all_default(elem_shapes) {
+                        Some(|mut dst| {
+                            $(
+                                unsafe {
+                                    (<VTableView<$elems>>::of().default_in_place().unwrap())(
+                                        dst.field_uninit_at(mem::offset_of!(Self, $idx))
+                                    );
+                                }
+                            )+
+
+                            unsafe { dst.assume_init() }
+                        })
+                    } else {
+                        None
+                    }
+                });
+
+                // builder = builder.clone_into(|| {
+                //     let elem_shapes = const { &[$($elems::SHAPE),+] };
+                //     if Characteristic::Clone.all(elem_shapes) {
+                //         Some(|src, dst| {
+                //             $({
+                //                 let offset = mem::offset_of!(Self, $idx);
+                //                 unsafe {
+                //                     (<VTableView<$elems>>::of().clone_into().unwrap())(
+                //                         src.field(offset),
+                //                         dst.field_uninit_at(offset),
+                //                     );
+                //                 }
+                //             })+
+
+                //             unsafe { dst.assume_init() }
+                //         })
+                //     } else {
+                //         None
+                //     }
+                // });
+
+
+                builder = builder.eq(|| {
+                    let elem_shapes = const { &[$($elems::SHAPE),+] };
+                    if Characteristic::all_partial_eq(elem_shapes) {
+                        Some(|a, b| impl_facet_for_tuple! {
+                            ord on ($($elems.$idx,)+),
+                            eq(a, b),
+                            eq = true
+                        })
+                    } else {
+                        None
+                    }
+                });
+
+                builder = builder.partial_ord(|| {
+                    let elem_shapes = const { &[$($elems::SHAPE),+] };
+                    if Characteristic::all_partial_ord(elem_shapes) {
+                        Some(|a, b| impl_facet_for_tuple! {
+                            ord on ($($elems.$idx,)+),
+                            partial_ord(a, b),
+                            eq = Some(Ordering::Equal)
+                        })
+                    } else {
+                        None
+                    }
+                });
+
+                builder = builder.ord(|| {
+                    let elem_shapes = const { &[$($elems::SHAPE),+] };
+                    if Characteristic::all_ord(elem_shapes) {
+                        Some(|a, b| impl_facet_for_tuple! {
+                            ord on ($($elems.$idx,)+),
+                            ord(a, b),
+                            eq = Ordering::Equal
+                        })
+                    } else {
+                        None
+                    }
+                });
+
+                builder = builder.hash(|| {
+                    let elem_shapes = const { &[$($elems::SHAPE),+] };
+                    if Characteristic::all_hash(elem_shapes) {
+                        Some(|value, hasher_this, hasher_write_fn| {
+                            $(
+                                (<VTableView<$elems>>::of().hash().unwrap())(
+                                    &value.$idx,
+                                    hasher_this,
+                                    hasher_write_fn,
                                 );
-                            }
-                        )+
-
-                        unsafe { dst.assume_init() }
-                    });
-                }
-
-            //     if Characteristic::Clone.all(elem_shapes) {
-            //          builder = builder.clone_into(|src, dst| {
-            //             $({
-            //                 let offset = mem::offset_of!(Self, $idx);
-            //                 unsafe {
-            //                     (<VTableView<$elems>>::of().clone_into().unwrap())(
-            //                         src.field(offset),
-            //                         dst.field_uninit_at(offset),
-            //                     );
-            //                 }
-            //             })+
-
-            //             unsafe { dst.assume_init() }
-            //         });
-            //    }
-
-                if Characteristic::PartialEq.all(elem_shapes) {
-                    builder = builder.eq(|a, b| impl_facet_for_tuple! {
-                        ord on ($($elems.$idx,)+),
-                        eq(a, b),
-                        eq = true
-                    });
-                }
-
-                if Characteristic::PartialOrd.all(elem_shapes) {
-                    builder = builder.partial_ord(|a, b| impl_facet_for_tuple! {
-                        ord on ($($elems.$idx,)+),
-                        partial_ord(a, b),
-                        eq = Some(Ordering::Equal)
-                    });
-                }
-
-                if Characteristic::Ord.all(elem_shapes) {
-                    builder = builder.ord(|a, b| impl_facet_for_tuple! {
-                        ord on ($($elems.$idx,)+),
-                        ord(a, b),
-                        eq = Ordering::Equal
-                    });
-                }
-
-                if Characteristic::Hash.all(elem_shapes) {
-                    builder = builder.hash(|value, hasher_this, hasher_write_fn| {
-                        $(
-                            (<VTableView<$elems>>::of().hash().unwrap())(
-                                &value.$idx,
-                                hasher_this,
-                                hasher_write_fn,
-                            );
-                        )+
-                   });
-                }
+                            )+
+                        })
+                    } else {
+                        None
+                    }
+                });
 
                 builder.build()
             };

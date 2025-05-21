@@ -54,7 +54,7 @@ pub enum Characteristic {
 
 impl Characteristic {
     /// Checks if all shapes have the given characteristic.
-    pub const fn all(self, shapes: &[&Shape]) -> bool {
+    pub fn all(self, shapes: &[&Shape]) -> bool {
         let mut i = 0;
         while i < shapes.len() {
             if !shapes[i].is(self) {
@@ -66,7 +66,7 @@ impl Characteristic {
     }
 
     /// Checks if any shape has the given characteristic.
-    pub const fn any(self, shapes: &[&Shape]) -> bool {
+    pub fn any(self, shapes: &[&Shape]) -> bool {
         let mut i = 0;
         while i < shapes.len() {
             if shapes[i].is(self) {
@@ -78,10 +78,70 @@ impl Characteristic {
     }
 
     /// Checks if none of the shapes have the given characteristic.
-    pub const fn none(self, shapes: &[&Shape]) -> bool {
+    pub fn none(self, shapes: &[&Shape]) -> bool {
         let mut i = 0;
         while i < shapes.len() {
             if shapes[i].is(self) {
+                return false;
+            }
+            i += 1;
+        }
+        true
+    }
+
+    /// Checks if all shapes have the `Default` characteristic
+    pub fn all_default(shapes: &[&Shape]) -> bool {
+        let mut i = 0;
+        while i < shapes.len() {
+            if !shapes[i].is_default() {
+                return false;
+            }
+            i += 1;
+        }
+        true
+    }
+
+    /// Checks if all shapes have the `PartialEq` characteristic
+    pub fn all_partial_eq(shapes: &[&Shape]) -> bool {
+        let mut i = 0;
+        while i < shapes.len() {
+            if !shapes[i].is_partial_eq() {
+                return false;
+            }
+            i += 1;
+        }
+        true
+    }
+
+    /// Checks if all shapes have the `PartialOrd` characteristic
+    pub fn all_partial_ord(shapes: &[&Shape]) -> bool {
+        let mut i = 0;
+        while i < shapes.len() {
+            if !shapes[i].is_partial_ord() {
+                return false;
+            }
+            i += 1;
+        }
+        true
+    }
+
+    /// Checks if all shapes have the `Ord` characteristic
+    pub fn all_ord(shapes: &[&Shape]) -> bool {
+        let mut i = 0;
+        while i < shapes.len() {
+            if !shapes[i].is_ord() {
+                return false;
+            }
+            i += 1;
+        }
+        true
+    }
+
+    /// Checks if all shapes have the `Hash` characteristic
+    pub fn all_hash(shapes: &[&Shape]) -> bool {
+        let mut i = 0;
+        while i < shapes.len() {
+            if !shapes[i].is_hash() {
                 return false;
             }
             i += 1;
@@ -92,90 +152,90 @@ impl Characteristic {
 
 impl<'shape> Shape<'shape> {
     /// Checks if a shape has the given characteristic.
-    pub const fn is(&self, characteristic: Characteristic) -> bool {
+    pub fn is(&self, characteristic: Characteristic) -> bool {
         match characteristic {
             // Marker traits
-            Characteristic::Send => self.vtable.marker_traits.contains(MarkerTraits::SEND),
-            Characteristic::Sync => self.vtable.marker_traits.contains(MarkerTraits::SYNC),
-            Characteristic::Copy => self.vtable.marker_traits.contains(MarkerTraits::COPY),
-            Characteristic::Eq => self.vtable.marker_traits.contains(MarkerTraits::EQ),
-            Characteristic::Unpin => self.vtable.marker_traits.contains(MarkerTraits::UNPIN),
+            Characteristic::Send => self.vtable.marker_traits().contains(MarkerTraits::SEND),
+            Characteristic::Sync => self.vtable.marker_traits().contains(MarkerTraits::SYNC),
+            Characteristic::Copy => self.vtable.marker_traits().contains(MarkerTraits::COPY),
+            Characteristic::Eq => self.vtable.marker_traits().contains(MarkerTraits::EQ),
+            Characteristic::Unpin => self.vtable.marker_traits().contains(MarkerTraits::UNPIN),
 
             // Functionality traits
-            Characteristic::Clone => self.vtable.clone_into.is_some(),
-            Characteristic::Display => self.vtable.display.is_some(),
-            Characteristic::Debug => self.vtable.debug.is_some(),
-            Characteristic::PartialEq => self.vtable.eq.is_some(),
-            Characteristic::PartialOrd => self.vtable.partial_ord.is_some(),
-            Characteristic::Ord => self.vtable.ord.is_some(),
-            Characteristic::Hash => self.vtable.hash.is_some(),
-            Characteristic::Default => self.vtable.default_in_place.is_some(),
-            Characteristic::FromStr => self.vtable.parse.is_some(),
+            Characteristic::Clone => (self.vtable.clone_into)().is_some(),
+            Characteristic::Display => (self.vtable.display)().is_some(),
+            Characteristic::Debug => (self.vtable.debug)().is_some(),
+            Characteristic::PartialEq => (self.vtable.eq)().is_some(),
+            Characteristic::PartialOrd => (self.vtable.partial_ord)().is_some(),
+            Characteristic::Ord => (self.vtable.ord)().is_some(),
+            Characteristic::Hash => (self.vtable.hash)().is_some(),
+            Characteristic::Default => (self.vtable.default_in_place)().is_some(),
+            Characteristic::FromStr => (self.vtable.parse)().is_some(),
         }
     }
 
     /// Check if this shape implements the Send trait
-    pub const fn is_send(&self) -> bool {
+    pub fn is_send(&self) -> bool {
         self.is(Characteristic::Send)
     }
 
     /// Check if this shape implements the Sync trait
-    pub const fn is_sync(&self) -> bool {
+    pub fn is_sync(&self) -> bool {
         self.is(Characteristic::Sync)
     }
 
     /// Check if this shape implements the Copy trait
-    pub const fn is_copy(&self) -> bool {
+    pub fn is_copy(&self) -> bool {
         self.is(Characteristic::Copy)
     }
 
     /// Check if this shape implements the Eq trait
-    pub const fn is_eq(&self) -> bool {
+    pub fn is_eq(&self) -> bool {
         self.is(Characteristic::Eq)
     }
 
     /// Check if this shape implements the Clone trait
-    pub const fn is_clone(&self) -> bool {
+    pub fn is_clone(&self) -> bool {
         self.is(Characteristic::Clone)
     }
 
     /// Check if this shape implements the Display trait
-    pub const fn is_display(&self) -> bool {
-        self.vtable.display.is_some()
+    pub fn is_display(&self) -> bool {
+        (self.vtable.display)().is_some()
     }
 
     /// Check if this shape implements the Debug trait
-    pub const fn is_debug(&self) -> bool {
+    pub fn is_debug(&self) -> bool {
         self.is(Characteristic::Debug)
     }
 
     /// Check if this shape implements the PartialEq trait
-    pub const fn is_partial_eq(&self) -> bool {
+    pub fn is_partial_eq(&self) -> bool {
         self.is(Characteristic::PartialEq)
     }
 
     /// Check if this shape implements the PartialOrd trait
-    pub const fn is_partial_ord(&self) -> bool {
+    pub fn is_partial_ord(&self) -> bool {
         self.is(Characteristic::PartialOrd)
     }
 
     /// Check if this shape implements the Ord trait
-    pub const fn is_ord(&self) -> bool {
+    pub fn is_ord(&self) -> bool {
         self.is(Characteristic::Ord)
     }
 
     /// Check if this shape implements the Hash trait
-    pub const fn is_hash(&self) -> bool {
+    pub fn is_hash(&self) -> bool {
         self.is(Characteristic::Hash)
     }
 
     /// Check if this shape implements the Default trait
-    pub const fn is_default(&self) -> bool {
+    pub fn is_default(&self) -> bool {
         self.is(Characteristic::Default)
     }
 
     /// Check if this shape implements the FromStr trait
-    pub const fn is_from_str(&self) -> bool {
+    pub fn is_from_str(&self) -> bool {
         self.is(Characteristic::FromStr)
     }
 

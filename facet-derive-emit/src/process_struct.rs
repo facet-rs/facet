@@ -301,7 +301,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                     true
                 }
 
-                vtable.invariants = Some(invariants);
+                vtable.invariants = || Some(invariants);
             }
         } else {
             quote! {}
@@ -343,7 +343,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                     src_shape: &'shape ::facet::Shape<'shape>,
                     dst: ::facet::PtrUninit<'dst>
                 ) -> Result<::facet::PtrMut<'dst>, ::facet::TryFromError<'shape>> {
-                    match <#inner_field_type as ::facet::Facet>::SHAPE.vtable.try_from {
+                    match (<#inner_field_type as ::facet::Facet>::SHAPE.vtable.try_from)() {
                         Some(inner_try) => unsafe { (inner_try)(src_ptr, src_shape, dst) },
                         None => {
                             // Otherwise, check if source shape is exactly the inner shape
@@ -359,7 +359,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                         }
                     }
                 }
-                vtable.try_from = Some(try_from);
+                vtable.try_from = || Some(try_from);
 
                 // Define the try_into_inner function for the value vtable
                 unsafe fn try_into_inner<'src, 'dst>(
@@ -369,7 +369,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                     let wrapper = unsafe { src_ptr.get::<#struct_name_ident #bgp_without_bounds>() };
                     Ok(unsafe { dst.put(wrapper.0.clone()) }) // Assume tuple struct field 0
                 }
-                vtable.try_into_inner = Some(try_into_inner);
+                vtable.try_into_inner = || Some(try_into_inner);
 
                 // Define the try_borrow_inner function for the value vtable
                 unsafe fn try_borrow_inner<'src>(
@@ -380,7 +380,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                     // Return a pointer to the inner value (field 0)
                     Ok(::facet::PtrConst::new(&wrapper.0 as *const _ as *const u8))
                 }
-                vtable.try_borrow_inner = Some(try_borrow_inner);
+                vtable.try_borrow_inner = || Some(try_borrow_inner);
             }
         } else {
             // Transparent ZST struct (like struct Unit;)
@@ -400,7 +400,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                          })
                      }
                 }
-                 vtable.try_from = Some(try_from);
+                vtable.try_from = || Some(try_from);
 
                 // ZSTs cannot be meaningfully borrowed or converted *into* an inner value
                 // try_into_inner and try_borrow_inner remain None

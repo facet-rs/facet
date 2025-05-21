@@ -37,7 +37,7 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                 // If the source shape matches the inner shape, we need to build the outer (transparent) wrapper
                 if src_shape == inner_shape {
                     // Look for a try_from_inner function in the vtable
-                    if let Some(try_from_fn) = frame.shape.vtable.try_from {
+                    if let Some(try_from_fn) = (frame.shape.vtable.try_from)() {
                         match unsafe { (try_from_fn)(src, src_shape, frame.data) } {
                             Ok(_) => {
                                 unsafe {
@@ -77,7 +77,7 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
             }
 
             // Maybe there's a `TryFrom` impl?
-            if let Some(try_from) = frame.shape.vtable.try_from {
+            if let Some(try_from) = (frame.shape.vtable.try_from)() {
                 match unsafe { try_from(src, src_shape, frame.data) } {
                     Ok(_) => {
                         unsafe {
@@ -185,7 +185,7 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                             }
 
                             // Then check if field's type has a try_from impl that can convert from src_shape
-                            if let Some(try_from) = field.shape().vtable.try_from {
+                            if let Some(try_from) = (field.shape().vtable.try_from)() {
                                 debug!(
                                     "Found uninitialized field {} with try_from for type {}",
                                     i.blue(),
@@ -280,7 +280,7 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                             }
 
                             // Then check if field's type has a try_from impl that can convert from src_shape
-                            if let Some(try_from) = field.shape().vtable.try_from {
+                            if let Some(try_from) = (field.shape().vtable.try_from)() {
                                 debug!(
                                     "Found uninitialized field {} in enum variant '{}' with try_from for type {}",
                                     i.blue(),
@@ -342,7 +342,7 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                 Type::User(UserType::Struct(sd)) => {
                     for (i, field) in sd.fields.iter().enumerate() {
                         if frame.istate.fields.has(i) {
-                            if let Some(drop_fn) = field.shape().vtable.drop_in_place {
+                            if let Some(drop_fn) = (field.shape().vtable.drop_in_place)() {
                                 unsafe {
                                     let field_ptr = frame.data.as_mut_byte_ptr().add(field.offset);
                                     drop_fn(PtrMut::new(field_ptr));
@@ -355,7 +355,7 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                     if let Some(variant) = &frame.istate.variant {
                         for (i, field) in variant.data.fields.iter().enumerate() {
                             if frame.istate.fields.has(i) {
-                                if let Some(drop_fn) = field.shape().vtable.drop_in_place {
+                                if let Some(drop_fn) = (field.shape().vtable.drop_in_place)() {
                                     unsafe {
                                         let field_ptr =
                                             frame.data.as_mut_byte_ptr().add(field.offset);
@@ -370,7 +370,7 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                     // For scalar types and other non-struct/enum, attempt to drop the field in place if initialized
                     if frame.istate.fields.is_any_set() {
                         debug!("Scalar type was set...");
-                        if let Some(drop_fn) = frame.shape.vtable.drop_in_place {
+                        if let Some(drop_fn) = (frame.shape.vtable.drop_in_place)() {
                             debug!("And it has a drop fn, dropping now!");
                             unsafe {
                                 drop_fn(frame.data.assume_init());

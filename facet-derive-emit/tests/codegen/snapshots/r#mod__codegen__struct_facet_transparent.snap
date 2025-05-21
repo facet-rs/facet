@@ -1,5 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
+assertion_line: 1072
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(transparent)]\n        struct Wrapper(u32);\n        \"#)"
 ---
 #[used]
@@ -14,7 +15,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Wrapper {
             src_shape: &'shape ::facet::Shape<'shape>,
             dst: ::facet::PtrUninit<'dst>,
         ) -> Result<::facet::PtrMut<'dst>, ::facet::TryFromError<'shape>> {
-            match <u32 as ::facet::Facet>::SHAPE.vtable.try_from {
+            match (<u32 as ::facet::Facet>::SHAPE.vtable.try_from)() {
                 Some(inner_try) => unsafe { (inner_try)(src_ptr, src_shape, dst) },
                 None => {
                     if src_shape != <u32 as ::facet::Facet>::SHAPE {
@@ -28,7 +29,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Wrapper {
                 }
             }
         }
-        vtable.try_from = Some(try_from);
+        vtable.try_from = || Some(try_from);
         unsafe fn try_into_inner<'src, 'dst>(
             src_ptr: ::facet::PtrMut<'src>,
             dst: ::facet::PtrUninit<'dst>,
@@ -36,14 +37,14 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Wrapper {
             let wrapper = unsafe { src_ptr.get::<Wrapper>() };
             Ok(unsafe { dst.put(wrapper.0.clone()) })
         }
-        vtable.try_into_inner = Some(try_into_inner);
+        vtable.try_into_inner = || Some(try_into_inner);
         unsafe fn try_borrow_inner<'src>(
             src_ptr: ::facet::PtrConst<'src>,
         ) -> Result<::facet::PtrConst<'src>, ::facet::TryBorrowInnerError> {
             let wrapper = unsafe { src_ptr.get::<Wrapper>() };
             Ok(::facet::PtrConst::new(&wrapper.0 as *const _ as *const u8))
         }
-        vtable.try_borrow_inner = Some(try_borrow_inner);
+        vtable.try_borrow_inner = || Some(try_borrow_inner);
         vtable
     };
     const SHAPE: &'static ::facet::Shape<'static> = &const {

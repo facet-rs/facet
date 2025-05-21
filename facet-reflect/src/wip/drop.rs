@@ -148,7 +148,7 @@ impl<'facet, 'shape> Drop for Wip<'facet, 'shape> {
                                     // that means it's fully initialized and we need to drop it
                                     unsafe {
                                         if let Some(drop_in_place) =
-                                            field_shape.vtable.drop_in_place
+                                            (field_shape.vtable.drop_in_place)()
                                         {
                                             drop_in_place(field_ptr);
                                         }
