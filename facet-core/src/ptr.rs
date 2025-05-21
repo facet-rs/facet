@@ -245,7 +245,7 @@ impl<'mem> PtrConst<'mem> {
     /// of the correct type, and be valid for lifetime `'mem`.
     ///
     /// It's encouraged to take the address of something with `&raw const x`, rather than `&x`
-    pub const fn new<T: ?Sized>(ptr: *const T) -> Self {
+    pub const fn new<T>(ptr: *const T) -> Self {
         unsafe { Self(NonNull::new_unchecked(ptr as *mut u8), PhantomData) }
     }
 
@@ -259,7 +259,7 @@ impl<'mem> PtrConst<'mem> {
     /// # Safety
     ///
     /// Must be called with the original type T that was used to create this pointer
-    pub const unsafe fn as_ptr<T: ?Sized>(self) -> *const T {
+    pub const unsafe fn as_ptr<T>(self) -> *const T {
         if core::mem::size_of::<*const T>() == core::mem::size_of::<*const u8>() {
             unsafe { core::mem::transmute_copy(&(self.0.as_ptr())) }
         } else {

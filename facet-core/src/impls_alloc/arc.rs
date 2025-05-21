@@ -6,7 +6,7 @@ use crate::{
     TryIntoInnerError, Type, UserType, ValueVTable, value_vtable,
 };
 
-unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for alloc::sync::Arc<T> {
+unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
     const VTABLE: &'static ValueVTable = &const {
         // Define the functions for transparent conversion between Arc<T> and T
         unsafe fn try_from<'a, 'shape, 'src, 'dst, T: Facet<'a> + ?Sized>(
@@ -129,7 +129,7 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for alloc::sync::Arc<T> {
             }
         }
 
-        unsafe fn try_borrow_inner<'a, 'src, T: Facet<'a> + ?Sized>(
+        unsafe fn try_borrow_inner<'a, 'src, T: Facet<'a>>(
             src_ptr: PtrConst<'src>,
         ) -> Result<PtrConst<'src>, TryBorrowInnerError> {
             let arc = unsafe { src_ptr.get::<alloc::sync::Arc<T>>() };
@@ -240,7 +240,7 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for alloc::sync::Arc<T> {
     };
 }
 
-unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for alloc::sync::Weak<T> {
+unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Weak<T> {
     const VTABLE: &'static ValueVTable = &const {
         value_vtable!(alloc::sync::Weak<T>, |f, opts| {
             write!(f, "Weak")?;
