@@ -1,4 +1,4 @@
-use crate::arg::ArgType;
+use crate::arg::{ArgType, extract_subspan};
 use crate::fields::*;
 use crate::parse::parse_scalar;
 use crate::results::*;
@@ -56,6 +56,8 @@ impl Format for Cli {
         let arg_idx = nd.start();
         let shape = nd.wip.shape();
         let args = nd.input();
+        let subspans = nd.substack().get();
+        let has_subspans = !subspans.is_empty();
 
         let stay_put = Span::new(arg_idx, 0);
         let step_forth = Span::new(arg_idx, 1);
@@ -80,18 +82,36 @@ impl Format for Cli {
                 if arg_idx < args.len() {
                     let arg = args[arg_idx];
 
+                    // Check if we need to resegment an arg with '='
+                    if arg.starts_with("-") && arg.contains('=') && !has_subspans {
+                        // This is an argument with '=' that needs resegmentation
+                        if let Some(key_value_subspans) = create_key_value_subspans(arg) {
+                            return (nd, wrap_resegmented_result(key_value_subspans, stay_put));
+                        }
+                    }
+
+                    // Regular argument or subspan processing
+                    let effective_arg = if has_subspans {
+                        extract_subspan(&subspans[0], arg)
+                    } else {
+                        arg
+                    };
+
                     // Parse the argument type
-                    match ArgType::parse(arg) {
+                    match ArgType::parse(effective_arg) {
                         ArgType::LongFlag(key) => {
                             // Validate field exists
                             wrap_string_result(
                                 validate_field(&key, shape, &nd.wip).map(|_| key),
-                                span,
+                                if has_subspans { stay_put } else { span },
                             )
                         }
                         ArgType::ShortFlag(key) => {
                             // Convert short argument to field name via shape
-                            wrap_field_result(find_field_by_short_flag(key, shape), span)
+                            wrap_field_result(
+                                find_field_by_short_flag(key, shape),
+                                if has_subspans { stay_put } else { span },
+                            )
                         }
                         ArgType::Positional => {
                             // Handle positional argument
@@ -117,14 +137,39 @@ impl Format for Cli {
                     let has_arg = arg_idx < args.len();
                     wrap_result(handle_bool_value(has_arg), Outcome::Scalar, stay_put)
                 } else {
-                    // For non-boolean types, validate and parse the value
-                    match validate_value_available(arg_idx, args) {
-                        Ok(arg) => Ok(parse_scalar(arg, span)),
-                        Err(err) => Err(Spanned {
-                            node: err,
-                            span: Span::new(arg_idx.saturating_sub(1), 0),
-                        }),
-                    }
+                    // For non-boolean types, check if we have subspans
+                    let result = if has_subspans && arg_idx < args.len() {
+                        let arg = args[arg_idx];
+                        let subspan = &subspans[1];
+                        let arg_type: ArgType = (subspan, arg).into();
+
+                        // If this isn't a flag type (neither ShortFlag nor LongFlag), use it as a value
+                        match arg_type {
+                            ArgType::ShortFlag(_) | ArgType::LongFlag(_) => {
+                                // It's a flag, not a value - continue to validation
+                                None
+                            }
+                            _ => {
+                                // Extract the actual substring to use
+                                let part = extract_subspan(subspan, arg);
+                                Some(Ok(parse_scalar(part, span)))
+                            }
+                        }
+                    } else {
+                        None
+                    };
+
+                    // Use the result from above if available, otherwise fall back to regular validation
+                    result.unwrap_or_else(|| {
+                        // No usable subspans, fall back to regular validation
+                        match validate_value_available(arg_idx, args) {
+                            Ok(arg) => Ok(parse_scalar(arg, span)),
+                            Err(err) => Err(Spanned {
+                                node: err,
+                                span: Span::new(arg_idx.saturating_sub(1), 0),
+                            }),
+                        }
+                    })
                 }
             }
 

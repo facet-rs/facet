@@ -1,5 +1,5 @@
 use alloc::borrow::Cow;
-use facet_deserialize::{DeserErrorKind, Outcome, Raw, Scalar, Span, Spanned};
+use facet_deserialize::{DeserErrorKind, Outcome, Raw, Scalar, Span, Spanned, Subspan};
 
 /// General purpose wrapper for results
 pub(crate) fn wrap_result<'input, 'shape, T>(
@@ -43,4 +43,15 @@ pub(crate) fn wrap_field_result<'shape>(
         |s| Outcome::Scalar(Scalar::String(s)),
         span,
     )
+}
+
+/// Convenience wrapper for creating a Resegmented outcome with subspans
+pub(crate) fn wrap_resegmented_result<'input, 'shape>(
+    subspans: Vec<Subspan>,
+    span: Span<Raw>,
+) -> Result<Spanned<Outcome<'input>, Raw>, Spanned<DeserErrorKind<'shape>, Raw>> {
+    Ok(Spanned {
+        node: Outcome::Resegmented(subspans),
+        span,
+    })
 }

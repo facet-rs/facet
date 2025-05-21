@@ -184,3 +184,78 @@ fn test_inf_float_parsing() {
     let args: Args = facet_args::from_slice(&["--rate", "infinity"])?;
     assert_eq!(args.rate, f64::INFINITY);
 }
+
+#[test]
+fn test_short_rename() {
+    #[derive(Facet, Debug)]
+    struct Args {
+        #[facet(named, short, rename = "j")]
+        concurrency: i64,
+    }
+    let args: Args = facet_args::from_slice(&["-j", "4"])?;
+    assert_eq!(args.concurrency, 4);
+}
+
+#[test]
+fn test_bool_str_before() {
+    #[derive(Facet, Debug)]
+    struct Args {
+        #[facet(named)]
+        foo: bool,
+        #[facet(named)]
+        hello: String,
+    }
+    let args: Args = facet_args::from_slice(&["--foo", "--hello", "world"])?;
+    assert!(args.foo);
+    assert_eq!(args.hello, "world".to_string());
+}
+
+// Weird failures (known bugs: TODO fix)
+
+#[test]
+#[ignore]
+fn test_bool_str_mix_middle() {
+    #[derive(Facet, Debug)]
+    struct Args {
+        #[facet(named)]
+        foo: bool,
+        #[facet(named)]
+        hello: String,
+        #[facet(named)]
+        bar: bool,
+    }
+    let args: Args = facet_args::from_slice(&["--foo", "--hello", "world", "--bar"])?;
+    assert!(args.foo);
+    assert_eq!(args.hello, "world".to_string());
+    assert!(args.bar);
+}
+
+#[test]
+#[ignore]
+fn test_bool_str_after() {
+    #[derive(Facet, Debug)]
+    struct Args {
+        #[facet(named)]
+        hello: String,
+        #[facet(named)]
+        bar: bool,
+    }
+    let args: Args = facet_args::from_slice(&["--hello", "world", "--bar"])?;
+    assert_eq!(args.hello, "world".to_string());
+    assert!(args.bar);
+}
+
+// The bug is unique to bools
+#[test]
+fn test_int_str_after() {
+    #[derive(Facet, Debug)]
+    struct Args {
+        #[facet(named)]
+        hello: String,
+        #[facet(named)]
+        baz: i64,
+    }
+    let args: Args = facet_args::from_slice(&["--hello", "world", "--baz", "2"])?;
+    assert_eq!(args.hello, "world".to_string());
+    assert_eq!(args.baz, 2);
+}

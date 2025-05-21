@@ -75,6 +75,8 @@ pub enum Outcome<'input> {
     ObjectStarted,
     /// Ending an object/map.
     ObjectEnded,
+    /// Resegmenting input into subspans.
+    Resegmented(Vec<Subspan>),
 }
 
 impl<'input> From<Scalar<'input>> for Outcome<'input> {
@@ -94,6 +96,7 @@ impl fmt::Display for Outcome<'_> {
             Outcome::ListEnded => write!(f, "list end"),
             Outcome::ObjectStarted => write!(f, "object start"),
             Outcome::ObjectEnded => write!(f, "object end"),
+            Outcome::Resegmented(_) => write!(f, "resegment"),
         }
     }
 }
@@ -130,6 +133,17 @@ impl Outcome<'_> {
             Outcome::ListEnded => Outcome::ListEnded,
             Outcome::ObjectStarted => Outcome::ObjectStarted,
             Outcome::ObjectEnded => Outcome::ObjectEnded,
+            Outcome::Resegmented(subspans) => {
+                let owned_subspans = subspans
+                    .into_iter()
+                    .map(|s| Subspan {
+                        offset: s.offset,
+                        len: s.len,
+                        meta: s.meta,
+                    })
+                    .collect();
+                Outcome::Resegmented(owned_subspans)
+            }
         }
     }
 }
@@ -165,6 +179,11 @@ where
     pub fn start(&self) -> usize {
         self.start
     }
+
+    /// Access the substack
+    pub fn substack(&self) -> &Substack<C> {
+        &self.runner.substack
+    }
 }
 
 /// The result of advancing the parser: updated state and parse outcome or error.
@@ -181,7 +200,7 @@ pub trait Format {
     type Input<'input>: ?Sized;
 
     /// The type of span used by this format (Raw or Cooked)
-    type SpanType: Debug + 'static;
+    type SpanType: Debug + SubstackBehavior + 'static;
 
     /// The lowercase source ID of the format, used for error reporting.
     fn source(&self) -> &'static str;
@@ -266,6 +285,8 @@ pub enum Instruction {
     ObjectKeyOrObjectClose,
     /// Expect a list item or the end of a list.
     ListItemOrListClose,
+    /// Triggers clearing a substack.
+    SubstackClose,
 }
 
 /// Reasons for expecting a value, reflecting the current parse context.
@@ -407,6 +428,7 @@ pub fn deserialize_wip<'input, 'facet, 'shape, F>(
 ) -> Result<HeapValue<'facet, 'shape>, DeserError<'input, 'shape, Cooked>>
 where
     F: Format + 'shape,
+    F::SpanType: SubstackBehavior,
     F::Input<'input>: InputDebug,
     Span<F::SpanType>: ToCooked<'input, F>,
     'input: 'facet,
@@ -446,7 +468,19 @@ where
                     source_id: error.source_id,
                 }
             })?;
+            if F::SpanType::USES_SUBSTACK {
+                if !$runner.substack.get().is_empty() {
+                    trace!("Substack: {}", "carried".cyan());
+                } else {
+                    trace!("Substack: {}", "-".red());
+                }
+            }
             $runner.last_span = outcome.span;
+            if F::SpanType::USES_SUBSTACK {
+                if let Outcome::Resegmented(subspans) = &outcome.node {
+                    $runner.substack = subspans.clone().into();
+                }
+            }
             $wip = $runner.$method($wip, outcome).map_err(|error| {
                 DeserError {
                     input:  error.input,
@@ -474,7 +508,7 @@ where
             None => unreachable!("Instruction stack is empty"),
         };
 
-        trace!("[{frame_count}] Instruction {:?}", insn.yellow());
+        trace!("[{frame_count}] Instruction {:?}", insn.bright_red());
 
         match insn {
             Instruction::Pop(reason) => {
@@ -534,6 +568,9 @@ where
                     Expectation::ListItemOrListClose,
                     list_item_or_list_close
                 );
+            }
+            Instruction::SubstackClose => {
+                runner.substack.clear();
             }
             Instruction::SkipValue => {
                 // Call F::skip to skip over the next value in the input
@@ -614,6 +651,11 @@ where
         mut wip: Wip<'facet, 'shape>,
         reason: PopReason,
     ) -> Result<Wip<'facet, 'shape>, DeserError<'input, 'shape, C>> {
+        trace!(
+            "--- STACK has {:?} {}",
+            self.stack.green(),
+            "(POP)".bright_yellow()
+        );
         trace!("Popping because {:?}", reason.yellow());
 
         let container_shape = wip.shape();
@@ -897,6 +939,11 @@ where
         'input: 'facet, // 'input must outlive 'facet
     {
         trace!(
+            "--- STACK has {:?} {}",
+            self.stack.green(),
+            "(VALUE)".bright_yellow()
+        );
+        trace!(
             "Handling value of type {} (innermost {})",
             wip.shape().blue(),
             wip.innermost_shape().yellow()
@@ -926,6 +973,7 @@ where
 
         match outcome.node {
             Outcome::Scalar(s) => {
+                trace!("Parsed scalar value: {}", s.cyan());
                 wip = self.handle_scalar(wip, s)?;
             }
             Outcome::ListStarted => {
@@ -1045,6 +1093,15 @@ where
 
                 self.stack.push(Instruction::ObjectKeyOrObjectClose);
             }
+            Outcome::Resegmented(subspans) => {
+                trace!("Resegmented with {} subspans (value)", subspans.len());
+                // Push an instruction to process the current argument again
+                // (but this time it will use the subspan from the substack)
+                // self.stack.push(Instruction::ObjectKeyOrObjectClose);
+                // 1) Go back to expecting another value
+                // self.stack.push(Instruction::Pop(PopReason::ObjectVal));
+                // self.stack.push(Instruction::Value(ValueReason::ObjectVal));
+            }
             Outcome::ObjectEnded => todo!(),
         }
         Ok(wip)
@@ -1058,6 +1115,12 @@ where
     where
         'input: 'facet,
     {
+        trace!(
+            "STACK: {:?} {}",
+            self.stack.green(),
+            "(OK/OC)".bright_yellow()
+        );
+        trace!("SUBSTACK: {:?}", self.substack.get().bright_green());
         match outcome.node {
             Outcome::Scalar(Scalar::String(key)) => {
                 trace!("Parsed object key: {}", key.cyan());
@@ -1065,6 +1128,7 @@ where
                 let mut ignore = false;
                 let mut needs_pop = true;
                 let mut handled_by_flatten = false;
+                let has_substack = !self.substack.get().is_empty();
 
                 let shape = wip.innermost_shape();
                 match shape.ty {
@@ -1210,11 +1274,21 @@ where
                     if needs_pop && !handled_by_flatten {
                         trace!("Pushing Pop insn to stack (ObjectVal)");
                         self.stack.push(Instruction::Pop(PopReason::ObjectVal));
+                        if has_substack {
+                            trace!("Pushing SubstackClose insn to stack");
+                            self.stack.push(Instruction::SubstackClose);
+                        }
                     } else if handled_by_flatten {
                         // We need two pops for flattened fields - one for the field itself,
                         // one for the containing struct
                         trace!("Pushing Pop insn to stack (ObjectVal) for flattened field");
                         self.stack.push(Instruction::Pop(PopReason::ObjectVal));
+                        // Can't tell yet if this is needed, not required for tests (yet),
+                        // but if we did need it I think it would go in the middle, for the field:
+                        // if has_substack {
+                        //     trace!("Pushing SubstackClose insn to stack");
+                        //     self.stack.push(Instruction::SubstackClose);
+                        // }
                         self.stack.push(Instruction::Pop(PopReason::ObjectVal));
                     }
                     self.stack.push(Instruction::Value(ValueReason::ObjectVal));
@@ -1223,6 +1297,16 @@ where
             }
             Outcome::ObjectEnded => {
                 trace!("Object closing");
+                Ok(wip)
+            }
+            Outcome::Resegmented(subspans) => {
+                trace!(
+                    "Resegmented into {} subspans ({:?}) - obj. key/close",
+                    subspans.len(),
+                    subspans
+                );
+                // stay in the same state: parse another 'object key'
+                self.stack.push(Instruction::ObjectKeyOrObjectClose);
                 Ok(wip)
             }
             _ => Err(self.err(DeserErrorKind::UnexpectedOutcome {
@@ -1240,6 +1324,11 @@ where
     where
         'input: 'facet,
     {
+        trace!(
+            "--- STACK has {:?} {}",
+            self.stack.green(),
+            "(LI/LC)".bright_yellow()
+        );
         match outcome.node {
             Outcome::ListEnded => {
                 trace!("List close");

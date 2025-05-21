@@ -106,7 +106,7 @@ impl<C> Clone for Span<C> {
 impl<C> Copy for Span<C> {}
 
 /// A Subspan variant of a Span
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Subspan {
     /// Offset from parent span's start
     pub offset: usize,
@@ -118,7 +118,7 @@ pub struct Subspan {
 
 /// Metadata about a subspan, providing context for how the subspan relates
 /// to the parent span or other subspans.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum SubspanMeta {
     /// Indicates the subspan is part of a delimited sequence,
     /// storing the delimiter character (e.g., ',' in "1,2,3")
@@ -152,11 +152,36 @@ impl<C> Substack<C> {
             None => &[], // Return empty slice if no spans are stored
         }
     }
+
+    /// Pop the most recently added subspan
+    pub fn pop(&mut self) -> Option<Subspan> {
+        if let Some(spans) = &mut self.spans {
+            spans.pop()
+        } else {
+            None
+        }
+    }
+
+    /// Clear all subspans
+    pub fn clear(&mut self) {
+        if let Some(spans) = &mut self.spans {
+            spans.clear();
+        }
+    }
 }
 
 impl<C> Default for Substack<C> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl<C> From<Vec<Subspan>> for Substack<C> {
+    fn from(subspans: Vec<Subspan>) -> Self {
+        Substack {
+            spans: Some(subspans),
+            _marker: PhantomData,
+        }
     }
 }
 
@@ -200,4 +225,19 @@ impl Substack<Cooked> {
 
     /// Add a key-value subspan (does nothing for Cooked)
     pub fn add_key_value(&mut self, _offset: usize, _len: usize) {}
+}
+
+/// This trait allows the compiler to optimize away `Substack`-related code
+/// for formats with span types that don't use subspans, making it zero-cost.
+pub trait SubstackBehavior {
+    /// Whether to use subspans in the `deserialize_wip` instruction stack loop.
+    const USES_SUBSTACK: bool;
+}
+
+impl SubstackBehavior for Raw {
+    const USES_SUBSTACK: bool = true;
+}
+
+impl SubstackBehavior for Cooked {
+    const USES_SUBSTACK: bool = false;
 }

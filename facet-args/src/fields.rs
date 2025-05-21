@@ -1,7 +1,9 @@
 use alloc::borrow::Cow;
 use alloc::string::ToString;
 use facet_core::{FieldAttribute, Shape, Type, UserType};
-use facet_deserialize::{DeserErrorKind, Outcome, Raw, Scalar, Span, Spanned};
+use facet_deserialize::{
+    DeserErrorKind, Outcome, Raw, Scalar, Span, Spanned, Subspan, SubspanMeta,
+};
 use facet_reflect::Wip;
 
 pub(crate) fn validate_field<'facet, 'shape>(
@@ -59,6 +61,19 @@ pub(crate) fn find_unset_bool_field<'facet, 'shape>(
         }
     }
     None
+}
+
+pub(crate) fn handle_unset_bool_field_error<'shape>(
+    field_name_opt: Option<&'shape str>,
+    span: Span<Raw>,
+) -> Result<Spanned<Outcome<'shape>, Raw>, Spanned<DeserErrorKind<'shape>, Raw>> {
+    Ok(Spanned {
+        node: match field_name_opt {
+            Some(field_name) => Outcome::Scalar(Scalar::String(Cow::Borrowed(field_name))),
+            None => Outcome::ObjectEnded,
+        },
+        span,
+    })
 }
 
 pub(crate) fn find_field_by_short_flag<'shape>(
@@ -148,15 +163,64 @@ pub(crate) fn create_unknown_field_error<'shape>(
     }
 }
 
-pub(crate) fn handle_unset_bool_field_error<'shape>(
-    field_name_opt: Option<&'shape str>,
-    span: Span<Raw>,
-) -> Result<Spanned<Outcome<'shape>, Raw>, Spanned<DeserErrorKind<'shape>, Raw>> {
-    Ok(Spanned {
-        node: match field_name_opt {
-            Some(field_name) => Outcome::Scalar(Scalar::String(Cow::Borrowed(field_name))),
-            None => Outcome::ObjectEnded,
-        },
-        span,
-    })
+/// Create subspans by splitting at all occurrences of a delimiter
+pub(crate) fn create_delimited_subspans(
+    arg: &str,
+    delimiter: char,
+    meta: Option<SubspanMeta>,
+) -> Vec<Subspan> {
+    // Find all positions of the delimiter
+    let positions: Vec<usize> = arg.match_indices(delimiter).map(|(idx, _)| idx).collect();
+
+    // Create ranges between delimiters
+    let ranges = {
+        let mut ranges = Vec::with_capacity(positions.len() + 1);
+
+        // First range: from start to first delimiter (or end if no delimiters)
+        let first_end = positions.first().copied().unwrap_or(arg.len());
+        ranges.push(0..first_end);
+
+        // Middle ranges: between consecutive delimiters
+        for window in positions.windows(2) {
+            let start = window[0] + delimiter.len_utf8();
+            let end = window[1];
+            ranges.push(start..end);
+        }
+
+        // Last range: from last delimiter to end (if there were any delimiters)
+        if let Some(&last_pos) = positions.last() {
+            ranges.push((last_pos + delimiter.len_utf8())..arg.len());
+        }
+
+        ranges
+    };
+
+    // Map ranges to subspans
+    ranges
+        .into_iter()
+        .map(|range| Subspan {
+            offset: range.start,
+            len: range.end - range.start,
+            meta,
+        })
+        .collect()
+}
+
+/// Create key-value subspans from an argument with an equals sign
+pub(crate) fn create_key_value_subspans(arg: &str) -> Option<Vec<Subspan>> {
+    if arg.contains('=') {
+        Some(create_delimited_subspans(
+            arg,
+            '=',
+            Some(SubspanMeta::KeyValue),
+        ))
+    } else {
+        None
+    }
+}
+
+#[allow(unused)]
+/// Create comma-separated value subspans
+pub(crate) fn create_csv_subspans(arg: &str) -> Vec<Subspan> {
+    create_delimited_subspans(arg, ',', Some(SubspanMeta::Delimiter(',')))
 }
