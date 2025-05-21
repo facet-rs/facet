@@ -1084,11 +1084,14 @@ fn test_mut_ref() {
     let ref1 = &mut ptr1;
     let ref2 = &mut ptr2;
 
-    // TODO: Figure out why normal `check_facts` doesn't work here
-    check_facts_no_cmp(
+    check_facts(
         ref1,
         ref2,
-        FactBuilder::new().debug().build(),
+        FactBuilder::new()
+            .debug()
+            .equal_and(true)
+            .ord_and(Ordering::Equal)
+            .build(),
         TypedMarkerTraits::new().eq().unpin(),
     );
 }
