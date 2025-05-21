@@ -5,7 +5,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::{
     Def, Facet, PtrConst, PtrMut, PtrUninit, ScalarAffinity, ScalarDef, Shape, TryFromError,
-    TryIntoInnerError, Type, UserType, ValueVTable, value_vtable,
+    TryIntoInnerError, Type, UserType, ValueVTable, value_vtable, value_vtable_unsized,
 };
 
 unsafe impl Facet<'_> for Utf8PathBuf {
@@ -78,7 +78,7 @@ unsafe impl Facet<'_> for Utf8Path {
             Ok(unsafe { dst.put(path) })
         }
 
-        let mut vtable = value_vtable!(&Utf8Path, |f, _opts| write!(f, "Utf8Path"));
+        let mut vtable = value_vtable_unsized!(Utf8Path, |f, _opts| write!(f, "Utf8Path"));
         vtable.try_from = Some(try_from);
         vtable
     };
