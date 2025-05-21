@@ -1,8 +1,9 @@
-use core::{fmt, hash::Hash};
+use core::{fmt, hash::Hash, mem::transmute};
 
 use crate::{
-    Facet, HasherProxy, MarkerTraits, PointerType, Shape, Type, TypeParam, ValuePointerType,
-    ValueVTable,
+    CmpFn, CmpFnTyped, DebugFn, DebugFnTyped, DisplayFn, DisplayFnTyped, Facet, HashFn,
+    HashFnTyped, HasherProxy, MarkerTraits, PartialEqFn, PartialEqFnTyped, PartialOrdFn,
+    PartialOrdFnTyped, PointerType, Shape, Type, TypeParam, ValuePointerType, ValueVTable,
 };
 
 macro_rules! impl_facet_for_pointer {
@@ -140,46 +141,43 @@ impl_facet_for_pointer!(
             // Forward trait methods to the underlying type if it implements them
             if T::VTABLE.debug.is_some() {
                 builder = builder.debug(|value, f| {
-                    let target_ptr = crate::PtrConst::new(*value);
-                    unsafe { (T::VTABLE.debug.unwrap())(target_ptr, f) }
+                    let debug_fn = unsafe { transmute::<DebugFn, DebugFnTyped<T>>(T::VTABLE.debug.unwrap()) };
+                    debug_fn(*value, f)
                 });
             }
 
             if T::VTABLE.display.is_some() {
                 builder = builder.display(|value, f| {
-                    let target_ptr = crate::PtrConst::new(*value);
-                    unsafe { (T::VTABLE.display.unwrap())(target_ptr, f) }
+                    let display_fn = unsafe { transmute::<DisplayFn, DisplayFnTyped<T>>(T::VTABLE.display.unwrap()) };
+                    display_fn(*value, f)
                 });
             }
 
             if T::VTABLE.eq.is_some() {
                 builder = builder.eq(|a, b| {
-                    let a_ptr = crate::PtrConst::new(*a);
-                    let b_ptr = crate::PtrConst::new(*b);
-                    unsafe { (T::VTABLE.eq.unwrap())(a_ptr, b_ptr) }
+                    let eq_fn = unsafe { transmute::<PartialEqFn, PartialEqFnTyped<T>>(T::VTABLE.eq.unwrap()) };
+                    eq_fn(*a, *b)
                 });
             }
 
             if T::VTABLE.partial_ord.is_some() {
                 builder = builder.partial_ord(|a, b| {
-                    let a_ptr = crate::PtrConst::new(*a);
-                    let b_ptr = crate::PtrConst::new(*b);
-                    unsafe { (T::VTABLE.partial_ord.unwrap())(a_ptr, b_ptr) }
+                    let partial_ord_fn = unsafe { transmute::<PartialOrdFn, PartialOrdFnTyped<T>>(T::VTABLE.partial_ord.unwrap()) };
+                    partial_ord_fn(*a, *b)
                 });
             }
 
             if T::VTABLE.ord.is_some() {
                 builder = builder.ord(|a, b| {
-                    let a_ptr = crate::PtrConst::new(*a);
-                    let b_ptr = crate::PtrConst::new(*b);
-                    unsafe { (T::VTABLE.ord.unwrap())(a_ptr, b_ptr) }
+                    let ord_fn = unsafe { transmute::<CmpFn, CmpFnTyped<T>>(T::VTABLE.ord.unwrap()) };
+                    ord_fn(*a, *b)
                 });
             }
 
             if T::VTABLE.hash.is_some() {
                 builder = builder.hash(|value, hasher_this, hasher_write_fn| {
-                    let target_ptr = crate::PtrConst::new(*value);
-                    unsafe { (T::VTABLE.hash.unwrap())(target_ptr, hasher_this, hasher_write_fn) }
+                    let hash_fn = unsafe { transmute::<HashFn, HashFnTyped<T>>(T::VTABLE.hash.unwrap()) };
+                    hash_fn(*value, hasher_this, hasher_write_fn)
                 });
             }
 
@@ -210,46 +208,43 @@ impl_facet_for_pointer!(
             // Forward trait methods to the underlying type if it implements them
             if T::VTABLE.debug.is_some() {
                 builder = builder.debug(|value, f| {
-                    let target_ptr = crate::PtrConst::new(*value);
-                    unsafe { (T::VTABLE.debug.unwrap())(target_ptr, f) }
+                    let debug_fn = unsafe { transmute::<DebugFn, DebugFnTyped<T>>(T::VTABLE.debug.unwrap()) };
+                    debug_fn(*value, f)
                 });
             }
 
             if T::VTABLE.display.is_some() {
                 builder = builder.display(|value, f| {
-                    let target_ptr = crate::PtrConst::new(*value);
-                    unsafe { (T::VTABLE.display.unwrap())(target_ptr, f) }
+                    let display_fn = unsafe { transmute::<DisplayFn, DisplayFnTyped<T>>(T::VTABLE.display.unwrap()) };
+                    display_fn(*value, f)
                 });
             }
 
             if T::VTABLE.eq.is_some() {
                 builder = builder.eq(|a, b| {
-                    let a_ptr = crate::PtrConst::new(*a);
-                    let b_ptr = crate::PtrConst::new(*b);
-                    unsafe { (T::VTABLE.eq.unwrap())(a_ptr, b_ptr) }
+                    let eq_fn = unsafe { transmute::<PartialEqFn, PartialEqFnTyped<T>>(T::VTABLE.eq.unwrap()) };
+                    eq_fn(*a, *b)
                 });
             }
 
             if T::VTABLE.partial_ord.is_some() {
                 builder = builder.partial_ord(|a, b| {
-                    let a_ptr = crate::PtrConst::new(*a);
-                    let b_ptr = crate::PtrConst::new(*b);
-                    unsafe { (T::VTABLE.partial_ord.unwrap())(a_ptr, b_ptr) }
+                    let partial_ord_fn = unsafe { transmute::<PartialOrdFn, PartialOrdFnTyped<T>>(T::VTABLE.partial_ord.unwrap()) };
+                    partial_ord_fn(*a, *b)
                 });
             }
 
             if T::VTABLE.ord.is_some() {
                 builder = builder.ord(|a, b| {
-                    let a_ptr = crate::PtrConst::new(*a);
-                    let b_ptr = crate::PtrConst::new(*b);
-                    unsafe { (T::VTABLE.ord.unwrap())(a_ptr, b_ptr) }
+                    let ord_fn = unsafe { transmute::<CmpFn, CmpFnTyped<T>>(T::VTABLE.ord.unwrap()) };
+                    ord_fn(*a, *b)
                 });
             }
 
             if T::VTABLE.hash.is_some() {
                 builder = builder.hash(|value, hasher_this, hasher_write_fn| {
-                    let target_ptr = crate::PtrConst::new(*value);
-                    unsafe { (T::VTABLE.hash.unwrap())(target_ptr, hasher_this, hasher_write_fn) }
+                    let hash_fn = unsafe { transmute::<HashFn, HashFnTyped<T>>(T::VTABLE.hash.unwrap()) };
+                    hash_fn(*value, hasher_this, hasher_write_fn)
                 });
             }
 

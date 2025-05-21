@@ -563,6 +563,11 @@ impl ValueVTable {
     pub const fn builder<T>() -> ValueVTableBuilder<T> {
         ValueVTableBuilder::new()
     }
+
+    /// Creates a new [`ValueVTableBuilderUnsized`]
+    pub const fn builder_unsized<T: ?Sized>() -> ValueVTableBuilderUnsized<T> {
+        ValueVTableBuilderUnsized::new()
+    }
 }
 
 /// A typed view of a [`ValueVTable`].
@@ -973,6 +978,178 @@ impl<T> ValueVTableBuilder<T> {
             } else {
                 None
             },
+        }
+    }
+}
+
+/// Builds a [`ValueVTable`] for a `!Sized` type
+pub struct ValueVTableBuilderUnsized<T: ?Sized> {
+    type_name: Option<TypeNameFn>,
+    display: Option<DisplayFnTyped<T>>,
+    debug: Option<DebugFnTyped<T>>,
+    marker_traits: MarkerTraits,
+    eq: Option<PartialEqFnTyped<T>>,
+    partial_ord: Option<PartialOrdFnTyped<T>>,
+    ord: Option<CmpFnTyped<T>>,
+    hash: Option<HashFnTyped<T>>,
+    invariants: Option<InvariantsFnTyped<T>>,
+    try_borrow_inner: Option<TryBorrowInnerFnTyped<T>>,
+    _pd: PhantomData<T>,
+}
+
+impl<T: ?Sized> ValueVTableBuilderUnsized<T> {
+    /// Creates a new [`ValueVTableBuilder`] with all fields set to `None`.
+    #[allow(clippy::new_without_default)]
+    pub const fn new() -> Self {
+        Self {
+            type_name: None,
+            display: None,
+            debug: None,
+            marker_traits: MarkerTraits::empty(),
+            eq: None,
+            partial_ord: None,
+            ord: None,
+            hash: None,
+            invariants: None,
+            try_borrow_inner: None,
+            _pd: PhantomData,
+        }
+    }
+
+    /// Sets the type name function for this builder.
+    pub const fn type_name(mut self, type_name: TypeNameFn) -> Self {
+        self.type_name = Some(type_name);
+        self
+    }
+
+    /// Sets the display function for this builder.
+    pub const fn display(mut self, display: DisplayFnTyped<T>) -> Self {
+        self.display = Some(display);
+        self
+    }
+
+    /// Sets the display function for this builder if Some.
+    pub const fn display_maybe(mut self, display: Option<DisplayFnTyped<T>>) -> Self {
+        self.display = display;
+        self
+    }
+
+    /// Sets the debug function for this builder.
+    pub const fn debug(mut self, debug: DebugFnTyped<T>) -> Self {
+        self.debug = Some(debug);
+        self
+    }
+
+    /// Sets the debug function for this builder if Some.
+    pub const fn debug_maybe(mut self, debug: Option<DebugFnTyped<T>>) -> Self {
+        self.debug = debug;
+        self
+    }
+
+    /// Sets the marker traits for this builder.
+    pub const fn marker_traits(mut self, marker_traits: MarkerTraits) -> Self {
+        self.marker_traits = marker_traits;
+        self
+    }
+
+    /// Sets the eq function for this builder.
+    pub const fn eq(mut self, eq: PartialEqFnTyped<T>) -> Self {
+        self.eq = Some(eq);
+        self
+    }
+
+    /// Sets the eq function for this builder if Some.
+    pub const fn eq_maybe(mut self, eq: Option<PartialEqFnTyped<T>>) -> Self {
+        self.eq = eq;
+        self
+    }
+
+    /// Sets the partial_ord function for this builder.
+    pub const fn partial_ord(mut self, partial_ord: PartialOrdFnTyped<T>) -> Self {
+        self.partial_ord = Some(partial_ord);
+        self
+    }
+
+    /// Sets the partial_ord function for this builder if Some.
+    pub const fn partial_ord_maybe(mut self, partial_ord: Option<PartialOrdFnTyped<T>>) -> Self {
+        self.partial_ord = partial_ord;
+        self
+    }
+
+    /// Sets the ord function for this builder.
+    pub const fn ord(mut self, ord: CmpFnTyped<T>) -> Self {
+        self.ord = Some(ord);
+        self
+    }
+
+    /// Sets the ord function for this builder if Some.
+    pub const fn ord_maybe(mut self, ord: Option<CmpFnTyped<T>>) -> Self {
+        self.ord = ord;
+        self
+    }
+
+    /// Sets the hash function for this builder.
+    pub const fn hash(mut self, hash: HashFnTyped<T>) -> Self {
+        self.hash = Some(hash);
+        self
+    }
+
+    /// Sets the hash function for this builder if Some.
+    pub const fn hash_maybe(mut self, hash: Option<HashFnTyped<T>>) -> Self {
+        self.hash = hash;
+        self
+    }
+
+    /// Sets the invariants function for this builder.
+    pub const fn invariants(mut self, invariants: InvariantsFnTyped<T>) -> Self {
+        self.invariants = Some(invariants);
+        self
+    }
+
+    /// Sets the borrow_inner function for this builder.
+    pub const fn try_borrow_inner(mut self, try_borrow_inner: TryBorrowInnerFnTyped<T>) -> Self {
+        self.try_borrow_inner = Some(try_borrow_inner);
+        self
+    }
+
+    /// Builds the [`ValueVTable`] from the current state of the builder.
+    pub const fn build(self) -> ValueVTable {
+        ValueVTable {
+            type_name: self.type_name.unwrap(),
+            marker_traits: self.marker_traits,
+            invariants: unsafe {
+                mem::transmute::<Option<InvariantsFnTyped<T>>, Option<InvariantsFn>>(
+                    self.invariants,
+                )
+            },
+            display: unsafe {
+                mem::transmute::<Option<DisplayFnTyped<T>>, Option<DisplayFn>>(self.display)
+            },
+            debug: unsafe {
+                mem::transmute::<Option<DebugFnTyped<T>>, Option<DebugFn>>(self.debug)
+            },
+            default_in_place: None,
+            clone_into: None,
+            eq: unsafe {
+                mem::transmute::<Option<PartialEqFnTyped<T>>, Option<PartialEqFn>>(self.eq)
+            },
+            partial_ord: unsafe {
+                mem::transmute::<Option<PartialOrdFnTyped<T>>, Option<PartialOrdFn>>(
+                    self.partial_ord,
+                )
+            },
+            ord: unsafe { mem::transmute::<Option<CmpFnTyped<T>>, Option<CmpFn>>(self.ord) },
+            hash: unsafe { mem::transmute::<Option<HashFnTyped<T>>, Option<HashFn>>(self.hash) },
+            parse: None,
+            try_from: None,
+            try_into_inner: None,
+            try_borrow_inner: unsafe {
+                mem::transmute::<Option<TryBorrowInnerFnTyped<T>>, Option<TryBorrowInnerFn>>(
+                    self.try_borrow_inner,
+                )
+            },
+            // TODO: Add support for this
+            drop_in_place: None,
         }
     }
 }

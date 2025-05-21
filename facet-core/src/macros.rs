@@ -140,3 +140,83 @@ macro_rules! value_vtable {
         }
     };
 }
+
+/// Similar to `value_vtable!` macro but for `!Sized` types.
+#[macro_export]
+macro_rules! value_vtable_unsized {
+    ($type_name:ty, $type_name_fn:expr) => {
+        const {
+            let mut builder = $crate::ValueVTable::builder_unsized::<$type_name>()
+                .type_name($type_name_fn);
+
+            if $crate::spez::impls!($type_name: core::fmt::Display) {
+                builder = builder.display(|data, f| {
+                    use $crate::spez::*;
+                    (&&Spez(data)).spez_display(f)
+                });
+            }
+
+            if $crate::spez::impls!($type_name: core::fmt::Debug) {
+                builder = builder.debug(|data, f| {
+                    use $crate::spez::*;
+                    (&&Spez(data)).spez_debug(f)
+                });
+            }
+
+            {
+                let mut traits = $crate::MarkerTraits::empty();
+                if $crate::spez::impls!($type_name: core::cmp::Eq) {
+                    traits = traits.union($crate::MarkerTraits::EQ);
+                }
+                if $crate::spez::impls!($type_name: core::marker::Send) {
+                    traits = traits.union($crate::MarkerTraits::SEND);
+                }
+                if $crate::spez::impls!($type_name: core::marker::Sync) {
+                    traits = traits.union($crate::MarkerTraits::SYNC);
+                }
+                if $crate::spez::impls!($type_name: core::marker::Copy) {
+                    traits = traits.union($crate::MarkerTraits::COPY);
+                }
+                if $crate::spez::impls!($type_name: core::marker::Unpin) {
+                    traits = traits.union($crate::MarkerTraits::UNPIN);
+                }
+                builder = builder.marker_traits(traits);
+            }
+
+            if $crate::spez::impls!($type_name: core::cmp::PartialEq) {
+                builder = builder.eq(|left, right| {
+                    use $crate::spez::*;
+                    (&&Spez(left))
+                        .spez_eq(&&Spez(right))
+                });
+            }
+
+            if $crate::spez::impls!($type_name: core::cmp::PartialOrd) {
+                builder = builder.partial_ord(|left, right| {
+                    use $crate::spez::*;
+                    (&&Spez(left))
+                        .spez_partial_cmp(&&Spez(right))
+                });
+            }
+
+            if $crate::spez::impls!($type_name: core::cmp::Ord) {
+                builder = builder.ord(|left, right| {
+                    use $crate::spez::*;
+                    (&&Spez(left))
+                        .spez_cmp(&&Spez(right))
+                });
+            }
+
+            if $crate::spez::impls!($type_name: core::hash::Hash) {
+                builder = builder.hash(|value, hasher_this, hasher_write_fn| {
+                    use $crate::spez::*;
+                    use $crate::HasherProxy;
+                    (&&Spez(value))
+                        .spez_hash(&mut unsafe { HasherProxy::new(hasher_this, hasher_write_fn) })
+                });
+            }
+
+            builder.build()
+        }
+    };
+}

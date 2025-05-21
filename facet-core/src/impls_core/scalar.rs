@@ -94,9 +94,8 @@ unsafe impl Facet<'_> for char {
 }
 
 unsafe impl Facet<'_> for str {
-    // Intentionally &str, since str is a DST.
     const VTABLE: &'static ValueVTable =
-        &const { value_vtable!(&str, |f, _opts| write!(f, "str")) };
+        &const { value_vtable_unsized!(str, |f, _opts| write!(f, "str")) };
 
     const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_unsized::<Self>()

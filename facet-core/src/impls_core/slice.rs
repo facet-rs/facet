@@ -5,7 +5,7 @@ where
     T: Facet<'a>,
 {
     const VTABLE: &'static ValueVTable = &const {
-        let mut builder = ValueVTable::builder::<&Self>()
+        let mut builder = ValueVTable::builder_unsized::<Self>()
             .type_name(|f, opts| {
                 if let Some(opts) = opts.for_children() {
                     write!(f, "[")?;
@@ -15,13 +15,7 @@ where
                     write!(f, "[⋯]")
                 }
             })
-            .marker_traits(T::SHAPE.vtable.marker_traits)
-            .default_in_place(|ptr| unsafe { ptr.put(&[]) })
-            .clone_into(|src, dst| unsafe {
-                // This works because we're cloning a shared reference (&[T]), not the actual slice data.
-                // We're just copying the fat pointer (ptr + length) that makes up the slice reference.
-                dst.put(src)
-            });
+            .marker_traits(T::SHAPE.vtable.marker_traits);
 
         if T::SHAPE.vtable.debug.is_some() {
             builder = builder.debug(|value, f| {
