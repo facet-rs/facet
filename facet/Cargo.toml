@@ -44,4 +44,6 @@ cargo-husky = { version = "1.5.0", default-features = false, features = [
 ] }
 eyre = { version = "0.6.12", default-features = false }
 facet-reflect = { path = "../facet-reflect" }
+facet-testhelpers = { path = "../facet-testhelpers" }
 ordered-float = { version = "5.0.0", default-features = false }
+owo-colors = "4.2.1"

@@ -15,7 +15,7 @@ where
                     write!(f, "[⋯]")
                 }
             })
-            .marker_traits(T::SHAPE.vtable.marker_traits);
+            .marker_traits(T::SHAPE.vtable.marker_traits.difference(MarkerTraits::COPY));
 
         if T::SHAPE.vtable.debug.is_some() {
             builder = builder.debug(|value, f| {

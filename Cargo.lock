@@ -354,7 +354,9 @@ dependencies = [
  "facet-core",
  "facet-derive",
  "facet-reflect",
+ "facet-testhelpers 0.17.4",
  "ordered-float",
+ "owo-colors",
  "static_assertions",
 ]
 

@@ -571,8 +571,8 @@ impl ValueVTable {
 }
 
 /// A typed view of a [`ValueVTable`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct VTableView<T>(&'static ValueVTable, PhantomData<T>);
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub struct VTableView<T: ?Sized>(&'static ValueVTable, PhantomData<T>);
 
 impl<'a, T: crate::Facet<'a> + ?Sized> VTableView<&'a mut T> {
     /// Fetches the vtable for the type.
@@ -588,7 +588,7 @@ impl<'a, T: crate::Facet<'a> + ?Sized> VTableView<&'a T> {
     }
 }
 
-impl<'a, T: crate::Facet<'a>> VTableView<T> {
+impl<'a, T: crate::Facet<'a> + ?Sized> VTableView<T> {
     /// Fetches the vtable for the type.
     pub fn of() -> Self {
         Self(T::SHAPE.vtable, PhantomData)
@@ -596,13 +596,13 @@ impl<'a, T: crate::Facet<'a>> VTableView<T> {
 
     /// cf. [`TypeNameFn`]
     #[inline(always)]
-    pub fn type_name(self) -> TypeNameFn {
+    pub fn type_name(&self) -> TypeNameFn {
         self.0.type_name
     }
 
     /// cf. [`InvariantsFn`]
     #[inline(always)]
-    pub fn invariants(self) -> Option<InvariantsFnTyped<T>> {
+    pub fn invariants(&self) -> Option<InvariantsFnTyped<T>> {
         self.0.invariants.map(|invariants| unsafe {
             mem::transmute::<InvariantsFn, InvariantsFnTyped<T>>(invariants)
         })
@@ -610,7 +610,7 @@ impl<'a, T: crate::Facet<'a>> VTableView<T> {
 
     /// cf. [`DisplayFn`]
     #[inline(always)]
-    pub fn display(self) -> Option<DisplayFnTyped<T>> {
+    pub fn display(&self) -> Option<DisplayFnTyped<T>> {
         self.0
             .display
             .map(|display| unsafe { mem::transmute::<DisplayFn, DisplayFnTyped<T>>(display) })
@@ -618,31 +618,15 @@ impl<'a, T: crate::Facet<'a>> VTableView<T> {
 
     /// cf. [`DebugFn`]
     #[inline(always)]
-    pub fn debug(self) -> Option<DebugFnTyped<T>> {
+    pub fn debug(&self) -> Option<DebugFnTyped<T>> {
         self.0
             .debug
             .map(|debug| unsafe { mem::transmute::<DebugFn, DebugFnTyped<T>>(debug) })
     }
 
-    /// cf. [`DefaultInPlaceFn`]
-    #[inline(always)]
-    pub fn default_in_place(self) -> Option<DefaultInPlaceFnTyped<T>> {
-        self.0.default_in_place.map(|default_in_place| unsafe {
-            mem::transmute::<DefaultInPlaceFn, DefaultInPlaceFnTyped<T>>(default_in_place)
-        })
-    }
-
-    /// cf. [`CloneIntoFn`]
-    #[inline(always)]
-    pub fn clone_into(self) -> Option<CloneIntoFnTyped<T>> {
-        self.0.clone_into.map(|clone_into| unsafe {
-            mem::transmute::<CloneIntoFn, CloneIntoFnTyped<T>>(clone_into)
-        })
-    }
-
     /// cf. [`PartialEqFn`] for equality comparison
     #[inline(always)]
-    pub fn eq(self) -> Option<PartialEqFnTyped<T>> {
+    pub fn eq(&self) -> Option<PartialEqFnTyped<T>> {
         self.0
             .eq
             .map(|eq| unsafe { mem::transmute::<PartialEqFn, PartialEqFnTyped<T>>(eq) })
@@ -650,7 +634,7 @@ impl<'a, T: crate::Facet<'a>> VTableView<T> {
 
     /// cf. [`PartialOrdFn`] for partial ordering comparison
     #[inline(always)]
-    pub fn partial_ord(self) -> Option<PartialOrdFnTyped<T>> {
+    pub fn partial_ord(&self) -> Option<PartialOrdFnTyped<T>> {
         self.0.partial_ord.map(|partial_ord| unsafe {
             mem::transmute::<PartialOrdFn, PartialOrdFnTyped<T>>(partial_ord)
         })
@@ -658,7 +642,7 @@ impl<'a, T: crate::Facet<'a>> VTableView<T> {
 
     /// cf. [`CmpFn`] for total ordering
     #[inline(always)]
-    pub fn ord(self) -> Option<CmpFnTyped<T>> {
+    pub fn ord(&self) -> Option<CmpFnTyped<T>> {
         self.0
             .ord
             .map(|ord| unsafe { mem::transmute::<CmpFn, CmpFnTyped<T>>(ord) })
@@ -666,15 +650,43 @@ impl<'a, T: crate::Facet<'a>> VTableView<T> {
 
     /// cf. [`HashFn`]
     #[inline(always)]
-    pub fn hash(self) -> Option<HashFnTyped<T>> {
+    pub fn hash(&self) -> Option<HashFnTyped<T>> {
         self.0
             .hash
             .map(|hash| unsafe { mem::transmute::<HashFn, HashFnTyped<T>>(hash) })
     }
 
+    /// cf. [`TryBorrowInnerFn`]
+    ///
+    /// This is used by transparent types to efficiently access the inner value without copying.
+    #[inline(always)]
+    pub fn try_borrow_inner(&self) -> Option<TryBorrowInnerFnTyped<T>> {
+        self.0.try_borrow_inner.map(|try_borrow_inner| unsafe {
+            mem::transmute::<TryBorrowInnerFn, TryBorrowInnerFnTyped<T>>(try_borrow_inner)
+        })
+    }
+}
+
+impl<'a, T: crate::Facet<'a>> VTableView<T> {
+    /// cf. [`DefaultInPlaceFn`]
+    #[inline(always)]
+    pub fn default_in_place(&self) -> Option<DefaultInPlaceFnTyped<T>> {
+        self.0.default_in_place.map(|default_in_place| unsafe {
+            mem::transmute::<DefaultInPlaceFn, DefaultInPlaceFnTyped<T>>(default_in_place)
+        })
+    }
+
+    /// cf. [`CloneIntoFn`]
+    #[inline(always)]
+    pub fn clone_into(&self) -> Option<CloneIntoFnTyped<T>> {
+        self.0.clone_into.map(|clone_into| unsafe {
+            mem::transmute::<CloneIntoFn, CloneIntoFnTyped<T>>(clone_into)
+        })
+    }
+
     /// cf. [`ParseFn`]
     #[inline(always)]
-    pub fn parse(self) -> Option<ParseFnTyped<T>> {
+    pub fn parse(&self) -> Option<ParseFnTyped<T>> {
         self.0
             .parse
             .map(|parse| unsafe { mem::transmute::<ParseFn, ParseFnTyped<T>>(parse) })
@@ -692,7 +704,7 @@ impl<'a, T: crate::Facet<'a>> VTableView<T> {
     ///   * etc.
     ///
     #[inline(always)]
-    pub fn try_from(self) -> Option<TryFromFnTyped<T>> {
+    pub fn try_from(&self) -> Option<TryFromFnTyped<T>> {
         self.0
             .try_from
             .map(|try_from| unsafe { mem::transmute::<TryFromFn, TryFromFnTyped<T>>(try_from) })
@@ -703,19 +715,9 @@ impl<'a, T: crate::Facet<'a>> VTableView<T> {
     /// This is used by transparent types to convert the wrapper type into its inner value.
     /// Primarily used during serialization.
     #[inline(always)]
-    pub fn try_into_inner(self) -> Option<TryIntoInnerFnTyped<T>> {
+    pub fn try_into_inner(&self) -> Option<TryIntoInnerFnTyped<T>> {
         self.0.try_into_inner.map(|try_into_inner| unsafe {
             mem::transmute::<TryIntoInnerFn, TryIntoInnerFnTyped<T>>(try_into_inner)
-        })
-    }
-
-    /// cf. [`TryBorrowInnerFn`]
-    ///
-    /// This is used by transparent types to efficiently access the inner value without copying.
-    #[inline(always)]
-    pub fn try_borrow_inner(self) -> Option<TryBorrowInnerFnTyped<T>> {
-        self.0.try_borrow_inner.map(|try_borrow_inner| unsafe {
-            mem::transmute::<TryBorrowInnerFn, TryBorrowInnerFnTyped<T>>(try_borrow_inner)
         })
     }
 }
