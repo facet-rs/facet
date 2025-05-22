@@ -17,7 +17,7 @@ where
     T: Facet<'a> + core::cmp::Eq + core::cmp::Ord,
 {
     const VTABLE: &'static ValueVTable = &const {
-        let mut builder = ValueVTable::builder::<Self>()
+        ValueVTable::builder::<Self>()
             .marker_traits(|| {
                 MarkerTraits::SEND
                     .union(MarkerTraits::SYNC)
@@ -35,70 +35,66 @@ where
                 }
             })
             .default_in_place(|| Some(|target| unsafe { target.put(Self::default()) }))
-            .eq(|| Some(|a, b| a == b));
-
-        builder = builder.debug(|| {
-            if (T::SHAPE.vtable.debug)().is_some() {
-                Some(|value, f| {
-                    let t_debug = <VTableView<T>>::of().debug().unwrap();
-                    write!(f, "{{")?;
-                    for (i, item) in value.iter().enumerate() {
-                        if i > 0 {
-                            write!(f, ", ")?;
+            .eq(|| Some(|a, b| a == b))
+            .debug(|| {
+                if (T::SHAPE.vtable.debug)().is_some() {
+                    Some(|value, f| {
+                        let t_debug = <VTableView<T>>::of().debug().unwrap();
+                        write!(f, "{{")?;
+                        for (i, item) in value.iter().enumerate() {
+                            if i > 0 {
+                                write!(f, ", ")?;
+                            }
+                            (t_debug)(item, f)?;
                         }
-                        (t_debug)(item, f)?;
-                    }
-                    write!(f, "}}")
-                })
-            } else {
-                None
-            }
-        });
+                        write!(f, "}}")
+                    })
+                } else {
+                    None
+                }
+            })
+            .clone_into(|| {
+                if (T::SHAPE.vtable.clone_into)().is_some() {
+                    Some(|src, dst| unsafe {
+                        let set = src;
+                        let mut new_set = BTreeSet::new();
 
-        builder = builder.clone_into(|| {
-            if (T::SHAPE.vtable.clone_into)().is_some() {
-                Some(|src, dst| unsafe {
-                    let set = src;
-                    let mut new_set = BTreeSet::new();
+                        let t_clone_into = <VTableView<T>>::of().clone_into().unwrap();
 
-                    let t_clone_into = <VTableView<T>>::of().clone_into().unwrap();
+                        for item in set {
+                            use crate::TypedPtrUninit;
+                            use core::mem::MaybeUninit;
 
-                    for item in set {
-                        use crate::TypedPtrUninit;
-                        use core::mem::MaybeUninit;
+                            let mut new_item = MaybeUninit::<T>::uninit();
+                            let uninit_item = TypedPtrUninit::new(new_item.as_mut_ptr());
 
-                        let mut new_item = MaybeUninit::<T>::uninit();
-                        let uninit_item = TypedPtrUninit::new(new_item.as_mut_ptr());
+                            (t_clone_into)(item, uninit_item);
 
-                        (t_clone_into)(item, uninit_item);
+                            new_set.insert(new_item.assume_init());
+                        }
 
-                        new_set.insert(new_item.assume_init());
-                    }
-
-                    dst.put(new_set)
-                })
-            } else {
-                None
-            }
-        });
-
-        builder = builder.hash(|| {
-            if (T::SHAPE.vtable.hash)().is_some() {
-                Some(|set, hasher_this, hasher_write_fn| unsafe {
-                    use crate::HasherProxy;
-                    let t_hash = <VTableView<T>>::of().hash().unwrap();
-                    let mut hasher = HasherProxy::new(hasher_this, hasher_write_fn);
-                    set.len().hash(&mut hasher);
-                    for item in set {
-                        (t_hash)(item, hasher_this, hasher_write_fn);
-                    }
-                })
-            } else {
-                None
-            }
-        });
-
-        builder.build()
+                        dst.put(new_set)
+                    })
+                } else {
+                    None
+                }
+            })
+            .hash(|| {
+                if (T::SHAPE.vtable.hash)().is_some() {
+                    Some(|set, hasher_this, hasher_write_fn| unsafe {
+                        use crate::HasherProxy;
+                        let t_hash = <VTableView<T>>::of().hash().unwrap();
+                        let mut hasher = HasherProxy::new(hasher_this, hasher_write_fn);
+                        set.len().hash(&mut hasher);
+                        for item in set {
+                            (t_hash)(item, hasher_this, hasher_write_fn);
+                        }
+                    })
+                } else {
+                    None
+                }
+            })
+            .build()
     };
 
     const SHAPE: &'static Shape<'static> = &const {

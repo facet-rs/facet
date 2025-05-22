@@ -5,7 +5,7 @@ where
     T: Facet<'a>,
 {
     const VTABLE: &'static ValueVTable = &const {
-        let mut builder = ValueVTable::builder_unsized::<Self>()
+        ValueVTable::builder_unsized::<Self>()
             .type_name(|f, opts| {
                 if let Some(opts) = opts.for_children() {
                     write!(f, "[")?;
@@ -20,86 +20,84 @@ where
                     .vtable
                     .marker_traits()
                     .difference(MarkerTraits::COPY)
-            });
-
-        builder = builder.debug(|| {
-            if (T::SHAPE.vtable.debug)().is_some() {
-                Some(|value, f| {
-                    write!(f, "[")?;
-                    for (i, item) in value.iter().enumerate() {
-                        if i > 0 {
-                            write!(f, ", ")?;
+            })
+            .debug(|| {
+                if (T::SHAPE.vtable.debug)().is_some() {
+                    Some(|value, f| {
+                        write!(f, "[")?;
+                        for (i, item) in value.iter().enumerate() {
+                            if i > 0 {
+                                write!(f, ", ")?;
+                            }
+                            (<VTableView<T>>::of().debug().unwrap())(item, f)?;
                         }
-                        (<VTableView<T>>::of().debug().unwrap())(item, f)?;
-                    }
-                    write!(f, "]")
-                })
-            } else {
-                None
-            }
-        });
-        builder = builder.eq(|| {
-            if (T::SHAPE.vtable.eq)().is_some() {
-                Some(|a, b| {
-                    if a.len() != b.len() {
-                        return false;
-                    }
-                    for (x, y) in a.iter().zip(b.iter()) {
-                        if !(<VTableView<T>>::of().eq().unwrap())(x, y) {
+                        write!(f, "]")
+                    })
+                } else {
+                    None
+                }
+            })
+            .eq(|| {
+                if (T::SHAPE.vtable.eq)().is_some() {
+                    Some(|a, b| {
+                        if a.len() != b.len() {
                             return false;
                         }
-                    }
-                    true
-                })
-            } else {
-                None
-            }
-        });
-        builder = builder.partial_ord(|| {
-            if (T::SHAPE.vtable.partial_ord)().is_some() {
-                Some(|a, b| {
-                    for (x, y) in a.iter().zip(b.iter()) {
-                        let ord = (<VTableView<T>>::of().partial_ord().unwrap())(x, y);
-                        match ord {
-                            Some(core::cmp::Ordering::Equal) => continue,
-                            Some(order) => return Some(order),
-                            None => return None,
+                        for (x, y) in a.iter().zip(b.iter()) {
+                            if !(<VTableView<T>>::of().eq().unwrap())(x, y) {
+                                return false;
+                            }
                         }
-                    }
-                    a.len().partial_cmp(&b.len())
-                })
-            } else {
-                None
-            }
-        });
-        builder = builder.ord(|| {
-            if (T::SHAPE.vtable.ord)().is_some() {
-                Some(|a, b| {
-                    for (x, y) in a.iter().zip(b.iter()) {
-                        let ord = (<VTableView<T>>::of().ord().unwrap())(x, y);
-                        if ord != core::cmp::Ordering::Equal {
-                            return ord;
+                        true
+                    })
+                } else {
+                    None
+                }
+            })
+            .partial_ord(|| {
+                if (T::SHAPE.vtable.partial_ord)().is_some() {
+                    Some(|a, b| {
+                        for (x, y) in a.iter().zip(b.iter()) {
+                            let ord = (<VTableView<T>>::of().partial_ord().unwrap())(x, y);
+                            match ord {
+                                Some(core::cmp::Ordering::Equal) => continue,
+                                Some(order) => return Some(order),
+                                None => return None,
+                            }
                         }
-                    }
-                    a.len().cmp(&b.len())
-                })
-            } else {
-                None
-            }
-        });
-        builder = builder.hash(|| {
-            if (T::SHAPE.vtable.hash)().is_some() {
-                Some(|value, state, hasher| {
-                    for item in value.iter() {
-                        (<VTableView<T>>::of().hash().unwrap())(item, state, hasher);
-                    }
-                })
-            } else {
-                None
-            }
-        });
-
-        builder.build()
+                        a.len().partial_cmp(&b.len())
+                    })
+                } else {
+                    None
+                }
+            })
+            .ord(|| {
+                if (T::SHAPE.vtable.ord)().is_some() {
+                    Some(|a, b| {
+                        for (x, y) in a.iter().zip(b.iter()) {
+                            let ord = (<VTableView<T>>::of().ord().unwrap())(x, y);
+                            if ord != core::cmp::Ordering::Equal {
+                                return ord;
+                            }
+                        }
+                        a.len().cmp(&b.len())
+                    })
+                } else {
+                    None
+                }
+            })
+            .hash(|| {
+                if (T::SHAPE.vtable.hash)().is_some() {
+                    Some(|value, state, hasher| {
+                        for item in value.iter() {
+                            (<VTableView<T>>::of().hash().unwrap())(item, state, hasher);
+                        }
+                    })
+                } else {
+                    None
+                }
+            })
+            .build()
     };
 
     const SHAPE: &'static Shape<'static> = &const {
