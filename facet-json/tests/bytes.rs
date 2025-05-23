@@ -6,6 +6,24 @@ use facet_json::to_string;
 use facet_testhelpers::test;
 
 #[test]
+fn json_read_bytes() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct FooBar {
+        data: Bytes,
+    }
+
+    let json = r#"{"data":[1, 2, 3, 4, 255]}"#;
+
+    let s: FooBar = from_str(json)?;
+    assert_eq!(
+        s,
+        FooBar {
+            data: Bytes::from_iter([1, 2, 3, 4, 255]),
+        }
+    );
+}
+
+#[test]
 fn json_read_bytes_mut() {
     #[derive(Facet, Debug, PartialEq)]
     struct FooBar {
