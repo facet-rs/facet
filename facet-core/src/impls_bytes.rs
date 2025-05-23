@@ -3,19 +3,37 @@ use alloc::boxed::Box;
 use bytes::{BufMut as _, Bytes, BytesMut};
 
 use crate::{
-    Def, Facet, IterVTable, ListDef, ListVTable, PtrConst, PtrMut, Shape, Type, UserType,
-    ValueVTable, value_vtable,
+    Def, Facet, IterVTable, ListDef, ListVTable, PtrConst, PtrMut, PtrUninit, Shape, Type,
+    UserType, ValueVTable, value_vtable,
 };
 
 type BytesIterator<'mem> = core::slice::Iter<'mem, u8>;
 
 unsafe impl Facet<'_> for Bytes {
-    const VTABLE: &'static ValueVTable =
-        &const { value_vtable!(Bytes, |f, _opts| write!(f, "Bytes")) };
+    const VTABLE: &'static ValueVTable = &const {
+        let mut vtable = value_vtable!(Bytes, |f, _opts| write!(f, "Bytes"));
+        vtable.try_from = Some(
+            |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
+                if source_shape.is_type::<BytesMut>() {
+                    let source = unsafe { source.read::<BytesMut>() };
+                    let bytes = source.freeze();
+                    Ok(unsafe { target.put(bytes) })
+                } else {
+                    Err(crate::TryFromError::UnsupportedSourceShape {
+                        src_shape: source_shape,
+                        expected: &[Bytes::SHAPE],
+                    })
+                }
+            },
+        );
+
+        vtable
+    };
 
     const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .ty(Type::User(UserType::Opaque))
+            .inner(|| BytesMut::SHAPE)
             .def(Def::List(
                 ListDef::builder()
                     .vtable(
