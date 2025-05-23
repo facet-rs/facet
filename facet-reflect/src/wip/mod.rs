@@ -130,6 +130,8 @@ pub enum FrameMode {
     OptionNone,
     /// Frame represents a smart pointer value (Box, Rc, Arc, etc.)
     SmartPointee,
+    /// Frame represents the inner value of a wrapper type
+    Inner,
 }
 
 /// A work-in-progress heap-allocated value
@@ -1409,6 +1411,50 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         Ok(self)
     }
 
+    /// Prepare to push the inner value of a wrapper type (i.e. a type that specifies an `inner` shape).
+    /// For example, this will push into newtype wrappers or smart pointers.
+    pub fn push_inner(mut self) -> Result<Self, ReflectError<'shape>> {
+        // Get the shape of the current frame
+        let frame = self.frames.last().unwrap();
+        let outer_shape = frame.shape;
+
+        // Get the inner shape of the current frame
+        let Some(inner_fn) = outer_shape.inner else {
+            return Err(ReflectError::WasNotA {
+                expected: "wrapper type",
+                actual: outer_shape,
+            });
+        };
+        let inner_shape = inner_fn();
+
+        // Allocate memory for the inner value.
+        let inner_data = inner_shape
+            .allocate()
+            .map_err(|_| ReflectError::Unsized { shape: inner_shape })?;
+
+        // Create and push a new frame for the inner value.
+        let inner_frame = Frame {
+            data: inner_data,
+            shape: inner_shape,
+            field_index_in_parent: None, // not relevant for pointer contents
+            istate: IState::new(
+                self.frames.len(),
+                FrameMode::Inner, // This variant should now exist in FrameMode
+                FrameFlags::ALLOCATED,
+            ),
+        };
+
+        trace!(
+            "[{}] Pushing wrapped inner frame for {}",
+            self.frames.len(),
+            outer_shape.blue(),
+        );
+
+        self.frames.push(inner_frame);
+
+        Ok(self)
+    }
+
     /// Pops a not-yet-initialized option frame, setting it to None in the parent
     ///
     /// This is used to set an option to None instead of Some.
@@ -1734,7 +1780,7 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                 FrameMode::OptionNone => {
                     path.push_str(".none");
                 }
-                FrameMode::SmartPointee => {
+                FrameMode::SmartPointee | FrameMode::Inner => {
                     path.push_str(".*");
                 }
                 FrameMode::Root => {

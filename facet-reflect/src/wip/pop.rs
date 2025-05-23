@@ -22,16 +22,19 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
             }
         };
 
-        if let FrameMode::SmartPointee = frame.istate.mode {
+        if matches!(
+            frame.istate.mode,
+            FrameMode::SmartPointee | FrameMode::Inner
+        ) {
             let parent_frame = match self.frames.last_mut() {
                 Some(parent_frame) => parent_frame,
                 None => {
                     return Err(ReflectError::InvariantViolation {
-                        invariant: "popping a smart pointee frame without a parent frame to put it in.",
+                        invariant: "popping a wrapper frame without a parent frame to put it in.",
                     });
                 }
             };
-            trace!("Popping smart pointee frame!",);
+            trace!("Popping wrapper frame with mode {:?}!", frame.istate.mode);
             trace!(
                 "This frame shape = {}, fully_initialized = {}",
                 frame.shape.cyan(),
