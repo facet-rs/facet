@@ -67,7 +67,7 @@ It's important to understand when this specialization technique can and cannot b
 
 2. **Not suitable for generic types**: For types with generic parameters (like `HashMap<K, V>`), this approach doesn't work well because the specialization cannot be done based on properties of the generic parameters.
 
-3. **Alternative for generic types**: For generic types, we instead leverage the fact that `SHAPE` is a `const` associated value that can be queried in `const` contexts. This allows us to perform compile-time checks and conditional logic based on properties of the generic parameters.
+3. **Alternative for generic types**: For generic types, we instead determine some attributes conditionally at runtime by querying various properties of the `SHAPE` value associated with each of the generic parameters.
 
 For example, in a generic implementation like `HashMap<K, V>`, we directly access the marker traits of `K::SHAPE` and `V::SHAPE` at compile time to determine what traits to implement for the containing type.
 
@@ -79,7 +79,7 @@ Let's examine how the `PartialOrd` trait is conditionally implemented using both
 
 ### Generic Type Example: Array Implementation
 
-For arrays like `[T; 1]`, we need to check if the inner type `T` implements `PartialOrd`. Since this is a generic type, we use compile-time evaluation of `SHAPE`:
+For arrays like `[T; 1]`, we need to check if the inner type `T` implements `PartialOrd`. Since this is a generic type, we use a runtime condition based on the `SHAPE` value:
 
 ```rust
 # use facet::{PtrConst, Shape, Facet};
@@ -87,19 +87,21 @@ For arrays like `[T; 1]`, we need to check if the inner type `T` implements `Par
 fn create_array_shape<'a, T: Facet<'a>>() {
     let vtable = {
         // Implementation of partial_ord for arrays
-        let partial_ord = if T::SHAPE.vtable.partial_ord.is_some() {
-            Some(|a: PtrConst, b: PtrConst| {
-                let a = unsafe { a.get::<[T; 1]>() };
-                let b = unsafe { b.get::<[T; 1]>() };
-                unsafe {
-                    (T::SHAPE.vtable.partial_ord.unwrap_unchecked())(
-                        PtrConst::new(&a[0]),
-                        PtrConst::new(&b[0]),
-                    )
-                }
-            })
-        } else {
-            None
+        let partial_ord = || {
+            if (T::SHAPE.vtable.partial_ord)().is_some() {
+                Some(|a: PtrConst, b: PtrConst| {
+                    let a = unsafe { a.get::<[T; 1]>() };
+                    let b = unsafe { b.get::<[T; 1]>() };
+                    unsafe {
+                        ((T::SHAPE.vtable.partial_ord)().unwrap_unchecked())(
+                            PtrConst::new(&a[0]),
+                            PtrConst::new(&b[0]),
+                        )
+                    }
+                })
+            } else {
+                None
+            }
         };
         // Rest of vtable implementation...
     };
@@ -107,12 +109,12 @@ fn create_array_shape<'a, T: Facet<'a>>() {
 ```
 
 Here's what's happening:
-1. We check if `T::SHAPE.vtable.partial_ord` is `Some`, which tells us if `T` implements `PartialOrd`
-2. If it does, we provide a `partial_ord` implementation that:
+1. We check if `T::SHAPE.vtable.partial_ord` returns `Some`, which tells us if `T` implements `PartialOrd`
+2. If it does, we return our `partial_ord` function that:
    - Extracts arrays from opaque pointers
    - Gets the first element from each array
    - Delegates to the inner type's `partial_ord` implementation
-3. If `T` doesn't implement `PartialOrd`, we set `partial_ord` to `None`
+3. If `T` doesn't implement `PartialOrd`, we instead return `None` for our `partial_ord` function
 
 ### Non-Generic Type: Using `value_vtable` Macro
 
