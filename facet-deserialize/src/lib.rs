@@ -290,6 +290,8 @@ pub enum PopReason {
     Some,
     /// Ending a smart pointer (ie. wrapping a `T` back into a `Box<T>`, or `Arc<T>` etc.)
     SmartPointer,
+    /// Ending a wrapper value such as a newtype
+    Wrapper,
 }
 
 mod deser_impl {
@@ -896,32 +898,55 @@ where
     where
         'input: 'facet, // 'input must outlive 'facet
     {
-        trace!(
-            "Handling value of type {} (innermost {})",
-            wip.shape().blue(),
-            wip.innermost_shape().yellow()
-        );
+        let original_shape = wip.shape();
+        trace!("Handling value of type {}", original_shape.blue());
 
-        match outcome.node {
-            Outcome::Scalar(Scalar::Null) => {
-                return wip.put_default().map_err(|e| self.reflect_err(e));
-            }
-            _ => {
-                if matches!(wip.shape().def, Def::Option(_)) {
-                    trace!("Starting Some(_) option for {}", wip.shape().blue());
-                    wip = wip.push_some().map_err(|e| self.reflect_err(e))?;
-                    self.stack.push(Instruction::Pop(PopReason::Some));
-                }
-                if let Def::SmartPointer(inner) = wip.shape().def {
+        // Handle null values
+        if matches!(outcome.node, Outcome::Scalar(Scalar::Null)) {
+            return wip.put_default().map_err(|e| self.reflect_err(e));
+        }
+
+        // Resolve the innermost value to deserialize
+        loop {
+            if matches!(wip.shape().def, Def::Option(_)) {
+                trace!("  Starting Some(_) option for {}", wip.shape().blue());
+                wip = wip.push_some().map_err(|e| self.reflect_err(e))?;
+                self.stack.push(Instruction::Pop(PopReason::Some));
+            } else if let Def::SmartPointer(inner) = wip.shape().def {
+                if let Some(pointee) = inner.pointee() {
                     trace!(
-                        "Starting smart pointer for {} (inner is {:?})",
+                        "  Starting smart pointer for {} (pointee is {})",
                         wip.shape().blue(),
-                        inner.yellow()
+                        pointee.yellow(),
                     );
-                    wip = wip.push_pointee().map_err(|e| self.reflect_err(e))?;
-                    self.stack.push(Instruction::Pop(PopReason::SmartPointer));
+                } else {
+                    trace!(
+                        "  Starting smart pointer for {} (no pointee)",
+                        wip.shape().blue()
+                    );
                 }
+                wip = wip.push_pointee().map_err(|e| self.reflect_err(e))?;
+                self.stack.push(Instruction::Pop(PopReason::SmartPointer));
+            } else if let Some(inner_fn) = wip.shape().inner {
+                let inner = inner_fn();
+                trace!(
+                    "  Starting wrapped value for {} (inner is {})",
+                    wip.shape().blue(),
+                    inner.yellow()
+                );
+                wip = wip.push_inner().map_err(|e| self.reflect_err(e))?;
+                self.stack.push(Instruction::Pop(PopReason::Wrapper));
+            } else {
+                break;
             }
+        }
+
+        if wip.shape() != original_shape {
+            trace!(
+                "Handling shape {} as innermost {}",
+                original_shape.blue(),
+                wip.shape().yellow()
+            );
         }
 
         match outcome.node {
