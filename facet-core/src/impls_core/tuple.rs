@@ -214,9 +214,7 @@ macro_rules! impl_facet_for_tuple {
                         let fields = [
                             $(field_in_type!(Self, $idx),)+
                         ];
-                        if fields.len() == 0 {
-                            "()"
-                        } else if fields.len() == 1 {
+                        if fields.len() == 1 {
                             "(_)"
                         } else {
                             "(⋯)"

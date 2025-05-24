@@ -89,11 +89,17 @@ impl_facet_for_pointer!(
         => Shape::builder_for_sized::<Self>()
             .inner(|| T::SHAPE)
         => ValueVTable::builder::<Self>()
-            .marker_traits(||
-                MarkerTraits::EQ
+            .marker_traits(|| {
+                let mut marker_traits = MarkerTraits::EQ
                     .union(MarkerTraits::COPY)
-                    .union(MarkerTraits::UNPIN),
-            )
+                    .union(MarkerTraits::UNPIN);
+
+                if T::SHAPE.vtable.marker_traits().contains(MarkerTraits::REF_UNWIND_SAFE) {
+                    marker_traits = marker_traits.union(MarkerTraits::UNWIND_SAFE).union(MarkerTraits::REF_UNWIND_SAFE);
+                }
+
+                marker_traits
+            })
             .debug(|| Some(fmt::Debug::fmt))
             .clone_into(|| Some(|src, dst| unsafe { dst.put(*src) }))
             .eq(|| Some(|left, right| left.cast::<()>().eq(&right.cast::<()>())))
@@ -115,11 +121,17 @@ impl_facet_for_pointer!(
         => Shape::builder_for_sized::<Self>()
             .inner(|| T::SHAPE)
         => ValueVTable::builder::<Self>()
-            .marker_traits(||
-                MarkerTraits::EQ
+            .marker_traits(|| {
+                let mut marker_traits = MarkerTraits::EQ
                     .union(MarkerTraits::COPY)
-                    .union(MarkerTraits::UNPIN),
-            )
+                    .union(MarkerTraits::UNPIN);
+
+                if T::SHAPE.vtable.marker_traits().contains(MarkerTraits::REF_UNWIND_SAFE) {
+                    marker_traits = marker_traits.union(MarkerTraits::UNWIND_SAFE).union(MarkerTraits::REF_UNWIND_SAFE);
+                }
+
+                marker_traits
+            })
             .debug(|| Some(fmt::Debug::fmt))
             .clone_into(|| Some(|src, dst| unsafe { dst.put(*src) }))
             .eq(|| Some(|left, right| left.cast::<()>().eq(&right.cast::<()>())))
@@ -148,6 +160,9 @@ impl_facet_for_pointer!(
                     }
                     if T::SHAPE.vtable.marker_traits().contains(MarkerTraits::SYNC) {
                         marker_traits = marker_traits.union(MarkerTraits::SEND).union(MarkerTraits::SYNC);
+                    }
+                    if T::SHAPE.vtable.marker_traits().contains(MarkerTraits::REF_UNWIND_SAFE) {
+                        marker_traits = marker_traits.union(MarkerTraits::UNWIND_SAFE).union(MarkerTraits::REF_UNWIND_SAFE);
                     }
 
                     marker_traits
@@ -234,6 +249,9 @@ impl_facet_for_pointer!(
                     if T::SHAPE.vtable.marker_traits().contains(MarkerTraits::SYNC) {
                         marker_traits = marker_traits.union(MarkerTraits::SYNC);
                     }
+                    if T::SHAPE.vtable.marker_traits().contains(MarkerTraits::REF_UNWIND_SAFE) {
+                        marker_traits = marker_traits.union(MarkerTraits::REF_UNWIND_SAFE);
+                    }
 
                     marker_traits
                 })
@@ -300,3 +318,33 @@ impl_facet_for_pointer!(
         }
         => Reference, true
 );
+
+#[cfg(test)]
+mod test {
+    use core::panic::{RefUnwindSafe, UnwindSafe};
+    use impls::impls;
+
+    #[allow(unused)]
+    const fn assert_impls_unwind_safe<T: UnwindSafe>() {}
+    #[allow(unused)]
+    const fn assert_impls_ref_unwind_safe<T: RefUnwindSafe>() {}
+
+    #[allow(unused)]
+    const fn ref_unwind_safe<T: RefUnwindSafe>() {
+        assert_impls_unwind_safe::<&T>();
+        assert_impls_ref_unwind_safe::<&T>();
+
+        assert_impls_ref_unwind_safe::<&mut T>();
+
+        assert_impls_unwind_safe::<*const T>();
+        assert_impls_ref_unwind_safe::<*const T>();
+
+        assert_impls_unwind_safe::<*mut T>();
+        assert_impls_ref_unwind_safe::<*mut T>();
+    }
+
+    #[test]
+    fn mut_ref_not_unwind_safe() {
+        assert!(impls!(&mut (): !UnwindSafe));
+    }
+}

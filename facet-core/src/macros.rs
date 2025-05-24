@@ -103,6 +103,12 @@ macro_rules! value_vtable {
                     if $crate::spez::impls!($type_name: core::marker::Unpin) {
                         traits = traits.union($crate::MarkerTraits::UNPIN);
                     }
+                    if $crate::spez::impls!($type_name: core::panic::UnwindSafe) {
+                        traits = traits.union($crate::MarkerTraits::UNWIND_SAFE);
+                    }
+                    if $crate::spez::impls!($type_name: core::panic::RefUnwindSafe) {
+                        traits = traits.union($crate::MarkerTraits::REF_UNWIND_SAFE);
+                    }
 
                     traits
                 })
@@ -210,6 +216,12 @@ macro_rules! value_vtable_unsized {
                     }
                     if $crate::spez::impls!($type_name: core::marker::Unpin) {
                         traits = traits.union($crate::MarkerTraits::UNPIN);
+                    }
+                    if $crate::spez::impls!($type_name: core::panic::UnwindSafe) {
+                        traits = traits.union($crate::MarkerTraits::UNWIND_SAFE);
+                    }
+                    if $crate::spez::impls!($type_name: core::panic::RefUnwindSafe) {
+                        traits = traits.union($crate::MarkerTraits::REF_UNWIND_SAFE);
                     }
 
                     traits

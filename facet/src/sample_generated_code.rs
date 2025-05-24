@@ -226,6 +226,42 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkStruct {
                     } {
                         traits = traits.union(::facet_core::MarkerTraits::UNPIN);
                     }
+                    if {
+                        /// Fallback trait with `False` for `IMPLS` if the type does not
+                        /// implement the given trait.
+                        trait DoesNotImpl {
+                            const IMPLS: bool = false;
+                        }
+                        impl<T: ?Sized> DoesNotImpl for T {}
+                        /// Concrete type with `True` for `IMPLS` if the type implements the
+                        /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                        #[allow(dead_code)]
+                        impl<T: ?Sized + core::panic::UnwindSafe> Wrapper<T> {
+                            const IMPLS: bool = true;
+                        }
+                        <Wrapper<Self>>::IMPLS
+                    } {
+                        traits = traits.union(::facet_core::MarkerTraits::UNWIND_SAFE);
+                    }
+                    if {
+                        /// Fallback trait with `False` for `IMPLS` if the type does not
+                        /// implement the given trait.
+                        trait DoesNotImpl {
+                            const IMPLS: bool = false;
+                        }
+                        impl<T: ?Sized> DoesNotImpl for T {}
+                        /// Concrete type with `True` for `IMPLS` if the type implements the
+                        /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                        #[allow(dead_code)]
+                        impl<T: ?Sized + core::panic::RefUnwindSafe> Wrapper<T> {
+                            const IMPLS: bool = true;
+                        }
+                        <Wrapper<Self>>::IMPLS
+                    } {
+                        traits = traits.union(::facet_core::MarkerTraits::REF_UNWIND_SAFE);
+                    }
                     traits
                 })
                 .eq(|| {
@@ -664,6 +700,42 @@ unsafe impl<'__facet> crate::Facet<'__facet> for Point {
                     } {
                         traits = traits.union(::facet_core::MarkerTraits::UNPIN);
                     }
+                    if {
+                        /// Fallback trait with `False` for `IMPLS` if the type does not
+                        /// implement the given trait.
+                        trait DoesNotImpl {
+                            const IMPLS: bool = false;
+                        }
+                        impl<T: ?Sized> DoesNotImpl for T {}
+                        /// Concrete type with `True` for `IMPLS` if the type implements the
+                        /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                        #[allow(dead_code)]
+                        impl<T: ?Sized + core::panic::UnwindSafe> Wrapper<T> {
+                            const IMPLS: bool = true;
+                        }
+                        <Wrapper<Self>>::IMPLS
+                    } {
+                        traits = traits.union(::facet_core::MarkerTraits::UNWIND_SAFE);
+                    }
+                    if {
+                        /// Fallback trait with `False` for `IMPLS` if the type does not
+                        /// implement the given trait.
+                        trait DoesNotImpl {
+                            const IMPLS: bool = false;
+                        }
+                        impl<T: ?Sized> DoesNotImpl for T {}
+                        /// Concrete type with `True` for `IMPLS` if the type implements the
+                        /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                        #[allow(dead_code)]
+                        impl<T: ?Sized + core::panic::RefUnwindSafe> Wrapper<T> {
+                            const IMPLS: bool = true;
+                        }
+                        <Wrapper<Self>>::IMPLS
+                    } {
+                        traits = traits.union(::facet_core::MarkerTraits::REF_UNWIND_SAFE);
+                    }
                     traits
                 })
                 .eq(|| {
@@ -1095,6 +1167,42 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                         <Wrapper<Self>>::IMPLS
                     } {
                         traits = traits.union(::facet_core::MarkerTraits::UNPIN);
+                    }
+                    if {
+                        /// Fallback trait with `False` for `IMPLS` if the type does not
+                        /// implement the given trait.
+                        trait DoesNotImpl {
+                            const IMPLS: bool = false;
+                        }
+                        impl<T: ?Sized> DoesNotImpl for T {}
+                        /// Concrete type with `True` for `IMPLS` if the type implements the
+                        /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                        #[allow(dead_code)]
+                        impl<T: ?Sized + core::panic::UnwindSafe> Wrapper<T> {
+                            const IMPLS: bool = true;
+                        }
+                        <Wrapper<Self>>::IMPLS
+                    } {
+                        traits = traits.union(::facet_core::MarkerTraits::UNWIND_SAFE);
+                    }
+                    if {
+                        /// Fallback trait with `False` for `IMPLS` if the type does not
+                        /// implement the given trait.
+                        trait DoesNotImpl {
+                            const IMPLS: bool = false;
+                        }
+                        impl<T: ?Sized> DoesNotImpl for T {}
+                        /// Concrete type with `True` for `IMPLS` if the type implements the
+                        /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                        #[allow(dead_code)]
+                        impl<T: ?Sized + core::panic::RefUnwindSafe> Wrapper<T> {
+                            const IMPLS: bool = true;
+                        }
+                        <Wrapper<Self>>::IMPLS
+                    } {
+                        traits = traits.union(::facet_core::MarkerTraits::REF_UNWIND_SAFE);
                     }
                     traits
                 })
@@ -1742,6 +1850,42 @@ unsafe impl<'__facet> crate::Facet<'__facet> for SubEnum {
                         <Wrapper<Self>>::IMPLS
                     } {
                         traits = traits.union(::facet_core::MarkerTraits::UNPIN);
+                    }
+                    if {
+                        /// Fallback trait with `False` for `IMPLS` if the type does not
+                        /// implement the given trait.
+                        trait DoesNotImpl {
+                            const IMPLS: bool = false;
+                        }
+                        impl<T: ?Sized> DoesNotImpl for T {}
+                        /// Concrete type with `True` for `IMPLS` if the type implements the
+                        /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                        #[allow(dead_code)]
+                        impl<T: ?Sized + core::panic::UnwindSafe> Wrapper<T> {
+                            const IMPLS: bool = true;
+                        }
+                        <Wrapper<Self>>::IMPLS
+                    } {
+                        traits = traits.union(::facet_core::MarkerTraits::UNWIND_SAFE);
+                    }
+                    if {
+                        /// Fallback trait with `False` for `IMPLS` if the type does not
+                        /// implement the given trait.
+                        trait DoesNotImpl {
+                            const IMPLS: bool = false;
+                        }
+                        impl<T: ?Sized> DoesNotImpl for T {}
+                        /// Concrete type with `True` for `IMPLS` if the type implements the
+                        /// given trait. Otherwise, it falls back to `DoesNotImpl`.
+                        struct Wrapper<T: ?Sized>(::core::marker::PhantomData<T>);
+                        #[allow(dead_code)]
+                        impl<T: ?Sized + core::panic::RefUnwindSafe> Wrapper<T> {
+                            const IMPLS: bool = true;
+                        }
+                        <Wrapper<Self>>::IMPLS
+                    } {
+                        traits = traits.union(::facet_core::MarkerTraits::REF_UNWIND_SAFE);
                     }
                     traits
                 })
