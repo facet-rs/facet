@@ -8,7 +8,11 @@ use crate::{
 
 unsafe impl Facet<'_> for UtcDateTime {
     const VTABLE: &'static ValueVTable = &const {
-        let mut vtable = value_vtable!(UtcDateTime, |f, _opts| write!(f, "UtcDateTime"));
+        let mut vtable = value_vtable!(UtcDateTime, |f, _opts| write!(
+            f,
+            "{}",
+            Self::SHAPE.type_identifier
+        ));
         vtable.try_from = || {
             Some(
                 |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
@@ -53,6 +57,7 @@ unsafe impl Facet<'_> for UtcDateTime {
 
     const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
+            .type_identifier("UtcDateTime")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
@@ -65,7 +70,11 @@ unsafe impl Facet<'_> for UtcDateTime {
 
 unsafe impl Facet<'_> for OffsetDateTime {
     const VTABLE: &'static ValueVTable = &const {
-        let mut vtable = value_vtable!(OffsetDateTime, |f, _opts| write!(f, "OffsetDateTime"));
+        let mut vtable = value_vtable!(OffsetDateTime, |f, _opts| write!(
+            f,
+            "{}",
+            Self::SHAPE.type_identifier
+        ));
         vtable.try_from = || {
             Some(
                 |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
@@ -111,6 +120,7 @@ unsafe impl Facet<'_> for OffsetDateTime {
 
     const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
+            .type_identifier("OffsetDateTime")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()

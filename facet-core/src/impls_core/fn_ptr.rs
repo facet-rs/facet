@@ -98,6 +98,7 @@ macro_rules! impl_facet_for_fn_ptr {
 
             const SHAPE: &'static Shape<'static> = &const {
                 Shape::builder_for_sized::<Self>()
+                    .type_identifier("fn")
                     .type_params(&[
                         $(TypeParam { name: stringify!($args), shape: || $args::SHAPE },)*
                     ])

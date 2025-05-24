@@ -10,7 +10,11 @@ const ZONED_ERROR: &str = "could not parse time-zone aware instant of time";
 
 unsafe impl Facet<'_> for Zoned {
     const VTABLE: &'static ValueVTable = &const {
-        let mut vtable = value_vtable!(Zoned, |f, _opts| write!(f, "Zoned"));
+        let mut vtable = value_vtable!(Zoned, |f, _opts| write!(
+            f,
+            "{}",
+            Self::SHAPE.type_identifier
+        ));
         vtable.try_from = || {
             Some(
                 |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
@@ -44,6 +48,7 @@ unsafe impl Facet<'_> for Zoned {
 
     const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
+            .type_identifier("Zoned")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
@@ -58,7 +63,11 @@ const TIMESTAMP_ERROR: &str = "could not parse timestamp";
 
 unsafe impl Facet<'_> for Timestamp {
     const VTABLE: &'static ValueVTable = &const {
-        let mut vtable = value_vtable!(Timestamp, |f, _opts| write!(f, "Timestamp"));
+        let mut vtable = value_vtable!(Timestamp, |f, _opts| write!(
+            f,
+            "{}",
+            Self::SHAPE.type_identifier
+        ));
         vtable.try_from = || {
             Some(
                 |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
@@ -94,6 +103,7 @@ unsafe impl Facet<'_> for Timestamp {
 
     const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
+            .type_identifier("Timestamp")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
@@ -108,7 +118,11 @@ const DATETIME_ERROR: &str = "could not parse civil datetime";
 
 unsafe impl Facet<'_> for DateTime {
     const VTABLE: &'static ValueVTable = &const {
-        let mut vtable = value_vtable!(DateTime, |f, _opts| write!(f, "DateTime"));
+        let mut vtable = value_vtable!(DateTime, |f, _opts| write!(
+            f,
+            "{}",
+            Self::SHAPE.type_identifier
+        ));
         vtable.try_from = || {
             Some(
                 |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
@@ -143,6 +157,7 @@ unsafe impl Facet<'_> for DateTime {
 
     const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
+            .type_identifier("DateTime")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()

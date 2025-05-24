@@ -1,5 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
+assertion_line: 585
 expression: "expand(r#\"\n        #[derive(Facet)]\n        pub struct DataPacket {\n            header: [u8; 16],\n            payload: Vec<u8>,\n            metadata: [MetadataTag; 4],\n        }\n        \"#)"
 ---
 #[used]
@@ -40,6 +41,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for DataPacket {
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("DataPacket")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
                     .repr(::facet::Repr::c())

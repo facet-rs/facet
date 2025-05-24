@@ -1,5 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
+assertion_line: 263
 expression: "expand(r#\"\n        /// This is an enum\n        #[derive(Facet)]\n        #[repr(u8)]\n        enum MyEnum {\n            #[allow(dead_code)]\n            A,\n            #[allow(dead_code)]\n            B,\n        }\n        \"#)"
 ---
 #[used]
@@ -36,6 +37,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for MyEnum {
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("MyEnum")
             .ty(::facet::Type::User(::facet::UserType::Enum(
                 ::facet::EnumType::builder()
                     .variants(__facet_variants)

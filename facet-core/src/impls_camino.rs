@@ -34,7 +34,11 @@ unsafe impl Facet<'_> for Utf8PathBuf {
             Ok(unsafe { dst.put(path.into_string()) })
         }
 
-        let mut vtable = value_vtable!(Utf8PathBuf, |f, _opts| write!(f, "Utf8PathBuf"));
+        let mut vtable = value_vtable!(Utf8PathBuf, |f, _opts| write!(
+            f,
+            "{}",
+            Self::SHAPE.type_identifier
+        ));
         vtable.parse = || Some(|s, target| Ok(unsafe { target.put(Utf8Path::new(s).to_owned()) }));
         vtable.try_from = || Some(try_from);
         vtable.try_into_inner = || Some(try_into_inner);
@@ -48,6 +52,7 @@ unsafe impl Facet<'_> for Utf8PathBuf {
         }
 
         Shape::builder_for_sized::<Self>()
+            .type_identifier("Utf8PathBuf")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()
@@ -78,13 +83,18 @@ unsafe impl Facet<'_> for Utf8Path {
             Ok(unsafe { dst.put(path) })
         }
 
-        let mut vtable = value_vtable_unsized!(Utf8Path, |f, _opts| write!(f, "Utf8Path"));
+        let mut vtable = value_vtable_unsized!(Utf8Path, |f, _opts| write!(
+            f,
+            "{}",
+            Self::SHAPE.type_identifier
+        ));
         vtable.try_from = || Some(try_from);
         vtable
     };
 
     const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_unsized::<Self>()
+            .type_identifier("Utf8Path")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()

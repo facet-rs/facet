@@ -48,6 +48,20 @@ macro_rules! impl_facet_for_pointer {
 
             const SHAPE: &'static Shape<'static> = &const {
                 $shape
+                    .type_identifier(
+                        const {
+                            let ptr_type = stringify!($ptr_type);
+                            let is_raw = ptr_type.len() == 3
+                                && ptr_type.as_bytes()[0] == b'R'
+                                && ptr_type.as_bytes()[1] == b'a'
+                                && ptr_type.as_bytes()[2] == b'w';
+                            if is_raw {
+                                if $mutable { "*mut _" } else { "*const _" }
+                            } else {
+                                if $mutable { "&mut _" } else { "&_" }
+                            }
+                        },
+                    )
                     .type_params(&[TypeParam {
                         name: "T",
                         shape: || T::SHAPE,

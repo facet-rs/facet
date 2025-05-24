@@ -1,5 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
+assertion_line: 1060
 expression: "expand(r#\"\n        #[derive(Facet)]\n        pub struct Test<T> {\n            pub(crate) a: T,\n        }\n        \"#)"
 ---
 #[automatically_derived]
@@ -23,6 +24,7 @@ where
             }]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("Test")
             .type_params(&[::facet::TypeParam {
                 name: "T",
                 shape: || <T as ::facet::Facet>::SHAPE,

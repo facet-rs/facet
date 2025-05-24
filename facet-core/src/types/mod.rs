@@ -50,6 +50,10 @@ pub struct Shape<'shape> {
     /// a map, or fetching a value from a list.
     pub def: Def<'shape>,
 
+    /// Identifier for a type: the type's name without generic parameters. To get the type's full
+    /// name with generic parameters, see [`ValueVTable::type_name`].
+    pub type_identifier: &'shape str,
+
     /// Generic parameters for the shape
     pub type_params: &'shape [TypeParam<'shape>],
 
@@ -189,6 +193,7 @@ pub struct ShapeBuilder<'shape> {
     vtable: &'shape ValueVTable,
     def: Def<'shape>,
     ty: Option<Type<'shape>>,
+    type_identifier: Option<&'shape str>,
     type_params: &'shape [TypeParam<'shape>],
     doc: &'shape [&'shape str],
     attributes: &'shape [ShapeAttribute<'shape>],
@@ -205,6 +210,7 @@ impl<'shape> ShapeBuilder<'shape> {
             vtable,
             def: Def::Undefined,
             ty: None,
+            type_identifier: None,
             type_params: &[],
             doc: &[],
             attributes: &[],
@@ -244,6 +250,13 @@ impl<'shape> ShapeBuilder<'shape> {
     #[inline]
     pub const fn ty(mut self, ty: Type<'shape>) -> Self {
         self.ty = Some(ty);
+        self
+    }
+
+    /// Sets the `type_identifier` field of the `ShapeBuilder`.
+    #[inline]
+    pub const fn type_identifier(mut self, type_identifier: &'shape str) -> Self {
+        self.type_identifier = Some(type_identifier);
         self
     }
 
@@ -292,6 +305,7 @@ impl<'shape> ShapeBuilder<'shape> {
             id: self.id.unwrap(),
             layout: self.layout.unwrap(),
             vtable: self.vtable,
+            type_identifier: self.type_identifier.unwrap(),
             type_params: self.type_params,
             def: self.def,
             ty: self.ty.unwrap(),

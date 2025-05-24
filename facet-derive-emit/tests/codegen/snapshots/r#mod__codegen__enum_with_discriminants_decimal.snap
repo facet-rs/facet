@@ -1,5 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
+assertion_line: 66
 expression: "expand(r#\"\n        #[repr(u8)]\n        #[derive(Facet)]\n        enum Test {\n          Red,\n          Blue = 7,\n          Green,\n          Yellow = 10,\n        }\n        \"#)"
 ---
 #[used]
@@ -56,6 +57,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Test {
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("Test")
             .ty(::facet::Type::User(::facet::UserType::Enum(
                 ::facet::EnumType::builder()
                     .variants(__facet_variants)

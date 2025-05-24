@@ -4,6 +4,7 @@ use core::{alloc::Layout, mem};
 unsafe impl<'a, Idx: Facet<'a>> Facet<'a> for core::ops::Range<Idx> {
     const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
+            .type_identifier("Range")
             .type_params(&[crate::TypeParam {
                 name: "Idx",
                 shape: || Idx::SHAPE,
@@ -38,7 +39,7 @@ unsafe impl<'a, Idx: Facet<'a>> Facet<'a> for core::ops::Range<Idx> {
     const VTABLE: &'static ValueVTable = &const {
         ValueVTable::builder::<Self>()
             .type_name(|f, opts| {
-                write!(f, "Range")?;
+                write!(f, "{}", Self::SHAPE.type_identifier)?;
                 if let Some(opts) = opts.for_children() {
                     write!(f, "<")?;
                     (Idx::SHAPE.vtable.type_name)(f, opts)?;

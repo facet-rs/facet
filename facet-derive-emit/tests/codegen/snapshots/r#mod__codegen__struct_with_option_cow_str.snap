@@ -1,5 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
+assertion_line: 1097
 expression: "expand(r#\"\n        #[derive(Facet)]\n        struct Foo<'a> {\n            #[facet(default)]\n            name: Option<Cow<'a, str>>,\n        }\n        \"#)"
 ---
 #[automatically_derived]
@@ -26,6 +27,7 @@ where
             }]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("Foo")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
                     .repr(::facet::Repr::c())

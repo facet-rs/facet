@@ -39,7 +39,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::boxed::Box<T> {
         }
 
         let mut vtable = value_vtable!(alloc::boxed::Box<T>, |f, opts| {
-            write!(f, "Box")?;
+            write!(f, "{}", Self::SHAPE.type_identifier)?;
             if let Some(opts) = opts.for_children() {
                 write!(f, "<")?;
                 (T::SHAPE.vtable.type_name)(f, opts)?;
@@ -62,6 +62,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::boxed::Box<T> {
         }
 
         crate::Shape::builder_for_sized::<Self>()
+            .type_identifier("Box")
             .type_params(&[crate::TypeParam {
                 name: "T",
                 shape: || T::SHAPE,

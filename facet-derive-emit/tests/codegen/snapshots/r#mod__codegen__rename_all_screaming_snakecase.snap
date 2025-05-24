@@ -1,5 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
+assertion_line: 931
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(rename_all = \"SCREAMING_SNAKE_CASE\")]\n        struct ScreamingSnakeCaseExample {\n            field_one: String,\n            field_two: String,\n        }\n        \"#)"
 ---
 #[used]
@@ -44,6 +45,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ScreamingSnakeCaseExample {
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("ScreamingSnakeCaseExample")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
                     .repr(::facet::Repr::c())

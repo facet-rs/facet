@@ -28,7 +28,7 @@ where
             })
             .type_name(|f, opts| {
                 if let Some(opts) = opts.for_children() {
-                    write!(f, "BTreeMap<")?;
+                    write!(f, "{}<", Self::SHAPE.type_identifier)?;
                     (K::SHAPE.vtable.type_name)(f, opts)?;
                     write!(f, ", ")?;
                     (V::SHAPE.vtable.type_name)(f, opts)?;
@@ -127,6 +127,7 @@ where
 
     const SHAPE: &'static crate::Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
+            .type_identifier("BTreeMap")
             .type_params(&[
                 crate::TypeParam {
                     name: "K",

@@ -14,11 +14,11 @@ where
         ValueVTable::builder::<Self>()
             .type_name(|f, opts| {
                 if let Some(opts) = opts.for_children() {
-                    write!(f, "Vec<")?;
+                    write!(f, "{}<", Self::SHAPE.type_identifier)?;
                     (T::SHAPE.vtable.type_name)(f, opts)?;
                     write!(f, ">")
                 } else {
-                    write!(f, "Vec<⋯>")
+                    write!(f, "{}<⋯>", Self::SHAPE.type_identifier)
                 }
             })
             .default_in_place(|| Some(|target| unsafe { target.put(Self::default()) }))
@@ -107,6 +107,7 @@ where
 
     const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
+            .type_identifier("Vec")
             .type_params(&[TypeParam {
                 name: "T",
                 shape: || T::SHAPE,

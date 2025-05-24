@@ -468,6 +468,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 #inner_shape_fn // Include inner_shape function if needed
 
                 ::facet::Shape::builder_for_sized::<Self>()
+                    .type_identifier(#struct_name_str)
                     #type_params // Still from parsed.generics
                     .ty(::facet::Type::User(::facet::UserType::Struct(::facet::StructType::builder()
                         .repr(::facet::Repr::c())

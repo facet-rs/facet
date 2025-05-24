@@ -61,6 +61,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Wrapper {
             <u32 as ::facet::Facet>::SHAPE
         }
         ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("Wrapper")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
                     .repr(::facet::Repr::c())

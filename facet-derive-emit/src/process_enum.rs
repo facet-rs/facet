@@ -576,6 +576,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                 ]};
 
                 ::facet::Shape::builder_for_sized::<Self>()
+                    .type_identifier(#enum_name_str)
                     #type_params
                     .ty(::facet::Type::User(::facet::UserType::Enum(::facet::EnumType::builder()
                             // Use variant expressions that just reference the shadow structs

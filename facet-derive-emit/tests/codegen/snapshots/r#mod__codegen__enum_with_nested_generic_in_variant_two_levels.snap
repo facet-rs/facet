@@ -1,5 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
+assertion_line: 759
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n        enum DeeplyNested<T> {\n            LevelOne(\n                Option<\n                    Result<\n                        Vec<T>,\n                        String\n                    >\n                >\n            ),\n            // Another variant to prove non-nested still works.\n            Simple(T),\n        }\n        \"#)"
 ---
 #[automatically_derived]
@@ -100,6 +101,7 @@ where
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("DeeplyNested")
             .type_params(&[::facet::TypeParam {
                 name: "T",
                 shape: || <T as ::facet::Facet>::SHAPE,

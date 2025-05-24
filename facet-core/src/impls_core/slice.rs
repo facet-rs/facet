@@ -102,6 +102,7 @@ where
 
     const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_unsized::<Self>()
+            .type_identifier("[_]")
             .type_params(&[TypeParam {
                 name: "T",
                 shape: || T::SHAPE,

@@ -1,5 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
+assertion_line: 1110
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n        pub(crate) enum LogLevel {\n            Debug,\n            Info,\n            Warn,\n            Error,\n        }\n        \"#)"
 ---
 #[used]
@@ -58,6 +59,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for LogLevel {
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("LogLevel")
             .ty(::facet::Type::User(::facet::UserType::Enum(
                 ::facet::EnumType::builder()
                     .variants(__facet_variants)

@@ -1,5 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
+assertion_line: 252
 expression: "expand(r#\"\n        /// what about \"quotes\"\n        #[derive(Facet)]\n        struct Foo {}\n        \"#)"
 ---
 #[used]
@@ -14,6 +15,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Foo {
     const SHAPE: &'static ::facet::Shape<'static> = &const {
         let fields: &'static [::facet::Field] = &const { [] };
         ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("Foo")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
                     .repr(::facet::Repr::c())

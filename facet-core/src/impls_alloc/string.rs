@@ -4,8 +4,13 @@ use crate::{
 
 #[cfg(feature = "alloc")]
 unsafe impl Facet<'_> for alloc::string::String {
-    const VTABLE: &'static ValueVTable =
-        &const { value_vtable!(alloc::string::String, |f, _opts| write!(f, "String")) };
+    const VTABLE: &'static ValueVTable = &const {
+        value_vtable!(alloc::string::String, |f, _opts| write!(
+            f,
+            "{}",
+            Self::SHAPE.type_identifier
+        ))
+    };
 
     const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
@@ -15,6 +20,7 @@ unsafe impl Facet<'_> for alloc::string::String {
                     .affinity(&const { ScalarAffinity::string().max_inline_length(0).build() })
                     .build(),
             ))
+            .type_identifier("String")
             .ty(Type::User(UserType::Opaque))
             .build()
     };
@@ -35,6 +41,7 @@ unsafe impl<'a> Facet<'a> for alloc::borrow::Cow<'a, str> {
                     .affinity(&const { ScalarAffinity::string().build() })
                     .build(),
             ))
+            .type_identifier("Cow")
             .ty(Type::User(UserType::Opaque))
             .build()
     };

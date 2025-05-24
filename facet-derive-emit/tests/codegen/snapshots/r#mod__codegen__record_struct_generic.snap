@@ -1,5 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
+assertion_line: 388
 expression: "expand(r#\"\n        #[derive(Facet)]\n        struct Blah<'a, T: Facet + core::hash::Hash, const C: usize = 3>\n        where\n            T: Debug, // Added a Debug bound for demonstration if needed, adjust as per Facet constraints\n        {\n            field: core::marker::PhantomData<&'a T>,\n            another: T,\n            constant_val: [u8; C],\n        }\n        \"#)"
 ---
 #[automatically_derived]
@@ -43,6 +44,7 @@ where
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("Blah")
             .type_params(&[::facet::TypeParam {
                 name: "T",
                 shape: || <T as ::facet::Facet>::SHAPE,

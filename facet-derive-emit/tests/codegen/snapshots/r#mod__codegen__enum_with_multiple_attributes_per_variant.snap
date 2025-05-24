@@ -1,5 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
+assertion_line: 1037
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n        enum ConfigValue {\n            #[facet(rename = \"TextValue\")]\n            Text(String),\n            #[facet(rename = \"NumberValue\")]\n            Number {\n                #[facet(rename = \"numValue\")]\n                value: f64,\n                #[facet(rename = \"unitName\", sensitive)]\n                unit: String,\n            },\n            #[facet(rename = \"BoolValue\")]\n            Boolean(bool),\n        }\n        \"#)"
 ---
 #[used]
@@ -145,6 +146,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("ConfigValue")
             .ty(::facet::Type::User(::facet::UserType::Enum(
                 ::facet::EnumType::builder()
                     .variants(__facet_variants)

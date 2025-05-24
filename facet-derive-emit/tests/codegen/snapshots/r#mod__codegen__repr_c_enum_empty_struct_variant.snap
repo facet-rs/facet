@@ -1,5 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
+assertion_line: 150
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(C)]\n        enum EnumWithEmptyStructVariant {\n            Variant1 { },\n        }\n        \"#)"
 ---
 #[used]
@@ -57,6 +58,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithEmptyStructVariant {
             }]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("EnumWithEmptyStructVariant")
             .ty(::facet::Type::User(::facet::UserType::Enum(
                 ::facet::EnumType::builder()
                     .variants(__facet_variants)

@@ -1,5 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
+assertion_line: 648
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(name = \"MyCoolEnum\", repr = \"u16\")]\n        #[repr(u16)] // Ensure repr matches if specified in facet attribute\n        enum EnumWithAttributes {\n            #[facet(name = \"FirstVariant\", discriminant = 10)]\n            VariantA,\n\n            #[facet(skip)]\n            InternalVariant(i32),\n\n            #[facet(deprecated = \"Use VariantD instead\")]\n            VariantC {\n                #[facet(sensitive)]\n                secret: String\n            },\n\n            VariantD {\n                 #[facet(default = forty_two())]\n                 value: i32\n            },\n        }\n        \"#)"
 ---
 #[used]
@@ -113,6 +114,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("EnumWithAttributes")
             .ty(::facet::Type::User(::facet::UserType::Enum(
                 ::facet::EnumType::builder()
                     .variants(__facet_variants)

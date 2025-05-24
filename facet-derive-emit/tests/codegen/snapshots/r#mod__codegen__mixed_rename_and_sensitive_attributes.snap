@@ -1,5 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
+assertion_line: 1019
 expression: "expand(r#\"\n        #[derive(Facet)]\n        struct User {\n            #[facet(rename = \"userName\")]\n            name: String,\n            #[facet(rename = \"userEmail\", sensitive)]\n            email: String,\n            #[facet(sensitive)]\n            password: String,\n        }\n        \"#)"
 ---
 #[used]
@@ -40,6 +41,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for User {
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("User")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
                     .repr(::facet::Repr::c())

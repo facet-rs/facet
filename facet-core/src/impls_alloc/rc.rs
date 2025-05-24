@@ -42,7 +42,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::rc::Rc<T> {
         }
 
         let mut vtable = value_vtable!(alloc::rc::Rc<T>, |f, opts| {
-            write!(f, "Rc")?;
+            write!(f, "{}", Self::SHAPE.type_identifier)?;
             if let Some(opts) = opts.for_children() {
                 write!(f, "<")?;
                 (T::SHAPE.vtable.type_name)(f, opts)?;
@@ -65,6 +65,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::rc::Rc<T> {
         }
 
         crate::Shape::builder_for_sized::<Self>()
+            .type_identifier("Rc")
             .type_params(&[crate::TypeParam {
                 name: "T",
                 shape: || T::SHAPE,
@@ -104,7 +105,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::rc::Rc<T> {
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::rc::Weak<T> {
     const VTABLE: &'static ValueVTable = &const {
         value_vtable!(alloc::rc::Weak<T>, |f, opts| {
-            write!(f, "Weak")?;
+            write!(f, "{}", Self::SHAPE.type_identifier)?;
             if let Some(opts) = opts.for_children() {
                 write!(f, "<")?;
                 (T::SHAPE.vtable.type_name)(f, opts)?;
@@ -123,6 +124,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::rc::Weak<T> {
         }
 
         crate::Shape::builder_for_sized::<Self>()
+            .type_identifier("Weak")
             .type_params(&[crate::TypeParam {
                 name: "T",
                 shape: || T::SHAPE,

@@ -443,6 +443,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkStruct {
             ]
         };
         crate::Shape::builder_for_sized::<Self>()
+            .type_identifier("KitchenSinkStruct")
             .ty(crate::Type::User(crate::UserType::Struct(
                 crate::StructType::builder()
                     .repr(crate::Repr::c())
@@ -834,6 +835,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for Point {
             ]
         };
         crate::Shape::builder_for_sized::<Self>()
+            .type_identifier("Point")
             .ty(crate::Type::User(crate::UserType::Struct(
                 crate::StructType::builder()
                     .repr(crate::Repr::c())
@@ -1511,6 +1513,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
             ]
         };
         crate::Shape::builder_for_sized::<Self>()
+            .type_identifier("KitchenSinkEnum")
             .ty(crate::Type::User(crate::UserType::Enum(
                 crate::EnumType::builder()
                     .variants(__facet_variants)
@@ -1986,6 +1989,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for SubEnum {
             ]
         };
         crate::Shape::builder_for_sized::<Self>()
+            .type_identifier("SubEnum")
             .ty(crate::Type::User(crate::UserType::Enum(
                 crate::EnumType::builder()
                     .variants(__facet_variants)

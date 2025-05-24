@@ -1,5 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
+assertion_line: 293
 expression: "expand(r#\"\n        #[derive(Facet)]\n        struct MyTupleStruct(\n            /// This is a documented field\n            u32,\n            /// This is another documented field\n            String,\n        );\n        \"#)"
 ---
 #[used]
@@ -35,6 +36,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for MyTupleStruct {
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("MyTupleStruct")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
                     .repr(::facet::Repr::c())

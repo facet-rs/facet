@@ -1,5 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
+assertion_line: 133
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(C)]\n        enum EnumWithVariants {\n            /// Comment A\n            Variant1,\n            /// Comment B\n            Variant2(i32),\n            Variant3 { field1: i32, field2: String },\n        }\n        \"#)"
 ---
 #[used]
@@ -164,6 +165,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithVariants {
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("EnumWithVariants")
             .ty(::facet::Type::User(::facet::UserType::Enum(
                 ::facet::EnumType::builder()
                     .variants(__facet_variants)

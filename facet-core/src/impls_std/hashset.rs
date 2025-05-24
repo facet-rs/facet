@@ -26,7 +26,7 @@ where
             })
             .type_name(|f, opts| {
                 if let Some(opts) = opts.for_children() {
-                    write!(f, "HashSet<")?;
+                    write!(f, "{}<", Self::SHAPE.type_identifier)?;
                     (T::SHAPE.vtable.type_name)(f, opts)?;
                     write!(f, ">")
                 } else {
@@ -99,6 +99,7 @@ where
 
     const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
+            .type_identifier("HashSet")
             .type_params(&[
                 TypeParam {
                     name: "T",

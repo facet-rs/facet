@@ -1,5 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
+assertion_line: 308
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n        enum CommentedEnum {\n            /// This is variant A\n            #[allow(dead_code)]\n            A,\n            /// This is variant B\n            /// with multiple lines\n            #[allow(dead_code)]\n            B(u32),\n            /// This is variant C\n            /// which has named fields\n            #[allow(dead_code)]\n            C {\n                /// This is field x\n                x: u32,\n                /// This is field y\n                y: String,\n            },\n        }\n        \"#)"
 ---
 #[used]
@@ -123,6 +124,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for CommentedEnum {
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("CommentedEnum")
             .ty(::facet::Type::User(::facet::UserType::Enum(
                 ::facet::EnumType::builder()
                     .variants(__facet_variants)

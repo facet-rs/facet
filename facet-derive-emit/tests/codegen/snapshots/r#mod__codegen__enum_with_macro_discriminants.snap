@@ -1,5 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
+assertion_line: 1083
 expression: "expand(r#\"\n        #[repr(u16)]\n        #[derive(Facet)]\n        enum TestEnum {\n            Value1 = test_macro!(1, 2),\n            Value2 = test_macro!(3, 4),\n        }\n        \"#)"
 ---
 #[used]
@@ -38,6 +39,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for TestEnum {
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("TestEnum")
             .ty(::facet::Type::User(::facet::UserType::Enum(
                 ::facet::EnumType::builder()
                     .variants(__facet_variants)

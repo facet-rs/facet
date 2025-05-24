@@ -60,7 +60,8 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                     Ok(PtrConst::new((&v.0) as *const $float as *const u8))
                 }
 
-                let mut vtable = value_vtable!((), |f, _opts| write!(f, "OrderedFloat"));
+                let mut vtable =
+                    value_vtable!((), |f, _opts| write!(f, "{}", Self::SHAPE.type_identifier));
                 vtable.parse = || {
                     // `OrderedFloat` is `repr(transparent)`
                     (<$float as Facet>::SHAPE.vtable.parse)()
@@ -77,6 +78,7 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                 }
 
                 Shape::builder_for_sized::<Self>()
+                    .type_identifier("OrderedFloat")
                     .ty(Type::User(UserType::Struct(
                         StructType::builder()
                             .repr(Repr::transparent())
@@ -153,7 +155,8 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                     ))
                 }
 
-                let mut vtable = value_vtable!((), |f, _opts| write!(f, "NotNan"));
+                let mut vtable =
+                    value_vtable!((), |f, _opts| write!(f, "{}", Self::SHAPE.type_identifier));
                 // Accept parsing as inner T, but enforce NotNan invariant
                 vtable.parse = || {
                     Some(|s, target| match s.parse::<$float>() {
@@ -180,6 +183,7 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                 }
 
                 Shape::builder_for_sized::<Self>()
+                    .type_identifier("NotNan")
                     .ty(Type::User(UserType::Opaque))
                     .def(Def::Scalar(
                         ScalarDef::builder()

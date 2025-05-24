@@ -1,5 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
+assertion_line: 946
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(rename_all = \"kebab-case\")]\n        struct KebabCaseExample {\n            field_one: String,\n            field_two: String,\n        }\n        \"#)"
 ---
 #[used]
@@ -34,6 +35,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for KebabCaseExample {
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("KebabCaseExample")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
                     .repr(::facet::Repr::c())

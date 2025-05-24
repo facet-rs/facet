@@ -11,7 +11,11 @@ type BytesIterator<'mem> = core::slice::Iter<'mem, u8>;
 
 unsafe impl Facet<'_> for Bytes {
     const VTABLE: &'static ValueVTable = &const {
-        let mut vtable = value_vtable!(Bytes, |f, _opts| write!(f, "Bytes"));
+        let mut vtable = value_vtable!(Bytes, |f, _opts| write!(
+            f,
+            "{}",
+            Self::SHAPE.type_identifier
+        ));
         vtable.try_from = || {
             Some(
                 |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
@@ -35,6 +39,7 @@ unsafe impl Facet<'_> for Bytes {
     const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .ty(Type::User(UserType::Opaque))
+            .type_identifier("Bytes")
             .inner(|| BytesMut::SHAPE)
             .def(Def::List(
                 ListDef::builder()
@@ -89,11 +94,17 @@ unsafe impl Facet<'_> for Bytes {
 }
 
 unsafe impl Facet<'_> for BytesMut {
-    const VTABLE: &'static ValueVTable =
-        &const { value_vtable!(BytesMut, |f, _opts| write!(f, "BytesMut")) };
+    const VTABLE: &'static ValueVTable = &const {
+        value_vtable!(BytesMut, |f, _opts| write!(
+            f,
+            "{}",
+            Self::SHAPE.type_identifier
+        ))
+    };
 
     const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
+            .type_identifier("BytesMut")
             .ty(Type::User(UserType::Opaque))
             .def(Def::List(
                 ListDef::builder()

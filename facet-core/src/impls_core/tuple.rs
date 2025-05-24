@@ -210,6 +210,18 @@ macro_rules! impl_facet_for_tuple {
 
             const SHAPE: &'static Shape<'static> = &const {
                 Shape::builder_for_sized::<Self>()
+                    .type_identifier(const {
+                        let fields = [
+                            $(field_in_type!(Self, $idx),)+
+                        ];
+                        if fields.len() == 0 {
+                            "()"
+                        } else if fields.len() == 1 {
+                            "(_)"
+                        } else {
+                            "(⋯)"
+                        }
+                    })
                     .ty(Type::Sequence(SequenceType::Tuple(TupleType {
                         fields: &const {[
                             $(field_in_type!(Self, $idx),)+

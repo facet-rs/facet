@@ -1,5 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
+assertion_line: 82
 expression: "expand(r#\"\n        #[repr(u16)]\n        #[derive(Facet)]\n        enum Color {\n          Red      = 0x01,\n          Blue     = 0x7F,\n          Green    = 0x80,\n          Yellow   = 0x10,\n          Magenta  = 0xfeed,\n          Cyan     = 0xBEEF,\n        }\n        \"#)"
 ---
 #[used]
@@ -76,6 +77,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Color {
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("Color")
             .ty(::facet::Type::User(::facet::UserType::Enum(
                 ::facet::EnumType::builder()
                     .variants(__facet_variants)

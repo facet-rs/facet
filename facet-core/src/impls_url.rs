@@ -53,7 +53,8 @@ unsafe impl Facet<'_> for Url {
             Ok(PtrConst::new(url.as_str().as_ptr()))
         }
 
-        let mut vtable = value_vtable!(Url, |f, _opts| write!(f, "Url"));
+        let mut vtable =
+            value_vtable!(Url, |f, _opts| write!(f, "{}", Self::SHAPE.type_identifier));
         vtable.parse = || Some(parse);
         vtable.try_into_inner = || Some(try_into_inner);
         vtable.try_borrow_inner = || Some(try_borrow_inner);
@@ -67,6 +68,7 @@ unsafe impl Facet<'_> for Url {
         }
 
         Shape::builder_for_sized::<Self>()
+            .type_identifier("Url")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()

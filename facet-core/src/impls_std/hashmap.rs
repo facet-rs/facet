@@ -30,13 +30,13 @@ where
             })
             .type_name(|f, opts| {
                 if let Some(opts) = opts.for_children() {
-                    write!(f, "HashMap<")?;
+                    write!(f, "{}<", Self::SHAPE.type_identifier)?;
                     (K::SHAPE.vtable.type_name)(f, opts)?;
                     write!(f, ", ")?;
                     (V::SHAPE.vtable.type_name)(f, opts)?;
                     write!(f, ">")
                 } else {
-                    write!(f, "HashMap<⋯>")
+                    write!(f, "{}<⋯>", Self::SHAPE.type_identifier)
                 }
             })
             .debug(|| {
@@ -128,6 +128,7 @@ where
 
     const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
+            .type_identifier("HashMap")
             .type_params(&[
                 TypeParam {
                     name: "K",
@@ -209,10 +210,11 @@ where
 
 unsafe impl Facet<'_> for RandomState {
     const VTABLE: &'static ValueVTable =
-        &const { value_vtable!((), |f, _opts| write!(f, "RandomState")) };
+        &const { value_vtable!((), |f, _opts| write!(f, "{}", Self::SHAPE.type_identifier)) };
 
     const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
+            .type_identifier("RandomState")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()

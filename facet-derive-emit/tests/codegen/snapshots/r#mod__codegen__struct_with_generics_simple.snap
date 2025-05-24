@@ -1,5 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
+assertion_line: 176
 expression: "expand(r#\"\n        #[derive(Facet)]\n        struct StructWithGenericsSimple<T, U> {\n            field1: T,\n            field2: U,\n        }\n        \"#)"
 ---
 #[automatically_derived]
@@ -27,6 +28,7 @@ where
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("StructWithGenericsSimple")
             .type_params(&[
                 ::facet::TypeParam {
                     name: "T",

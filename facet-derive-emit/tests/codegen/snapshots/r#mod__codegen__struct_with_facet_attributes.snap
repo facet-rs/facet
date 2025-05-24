@@ -1,5 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
+assertion_line: 628
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(name = \"MyCoolStruct\", deny_unknown_fields, version = 2)]\n        struct StructWithAttributes {\n            #[facet(name = \"identifier\", default = generate_id, sensitive)]\n            id: String,\n            #[facet(skip, version = 3)]\n            internal_data: Vec<u8>,\n            #[facet(deprecated = \"Use 'new_value' instead\")]\n            old_value: i32,\n            new_value: i32,\n        }\n        \"#)"
 ---
 #[used]
@@ -61,6 +62,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithAttributes {
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("StructWithAttributes")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
                     .repr(::facet::Repr::c())

@@ -39,7 +39,11 @@ unsafe impl Facet<'_> for Ulid {
             Ok(unsafe { dst.put(ulid.to_string()) })
         }
 
-        let mut vtable = value_vtable!(Ulid, |f, _opts| write!(f, "Ulid"));
+        let mut vtable = value_vtable!(Ulid, |f, _opts| write!(
+            f,
+            "{}",
+            Self::SHAPE.type_identifier
+        ));
         vtable.parse = || {
             Some(|s, target| match Ulid::from_string(s) {
                 Ok(ulid) => Ok(unsafe { target.put(ulid) }),
@@ -58,6 +62,7 @@ unsafe impl Facet<'_> for Ulid {
         }
 
         Shape::builder_for_sized::<Self>()
+            .type_identifier("Ulid")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar(
                 ScalarDef::builder()

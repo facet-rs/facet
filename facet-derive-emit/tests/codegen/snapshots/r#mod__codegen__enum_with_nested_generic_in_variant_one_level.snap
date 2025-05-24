@@ -1,5 +1,6 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
+assertion_line: 742
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n        enum OneLevelNested<T> {\n            VariantA(Result<T, String>),\n            VariantB(Option<T>),\n            // Also include a unit variant to check un-nested\n            Plain,\n        }\n        \"#)"
 ---
 #[automatically_derived]
@@ -116,6 +117,7 @@ where
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("OneLevelNested")
             .type_params(&[::facet::TypeParam {
                 name: "T",
                 shape: || <T as ::facet::Facet>::SHAPE,
