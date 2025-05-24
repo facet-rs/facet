@@ -161,7 +161,7 @@ where
     if vtable.display().is_some() {
         facts.insert(Fact::Display);
         eprintln!(
-            "Display:   {}",
+            "Display:    {}",
             format_args!("{} vs {}", l.style(REMARKABLE), r.style(REMARKABLE))
         );
     }
@@ -170,7 +170,7 @@ where
     if vtable.debug().is_some() {
         facts.insert(Fact::Debug);
         eprintln!(
-            "Debug:     {}",
+            "Debug:      {}",
             format_args!("{:?} vs {:?}", l.style(REMARKABLE), r.style(REMARKABLE))
         );
     }
@@ -185,7 +185,7 @@ where
             if eq_result { "==" } else { "!=" }.yellow(),
             r.style(REMARKABLE),
         );
-        eprintln!("Equality:  {}", eq_str);
+        eprintln!("Equality:   {}", eq_str);
     }
 
     // Test ordering
@@ -200,7 +200,7 @@ where
             ord_str(Some(cmp_result)).yellow(),
             r.style(REMARKABLE),
         );
-        eprintln!("Ordering:  {}", cmp_str);
+        eprintln!("PartialOrd: {}", cmp_str);
     }
 
     if let Some(cmp_fn) = vtable.partial_ord() {
@@ -214,7 +214,7 @@ where
             ord_str(cmp_result).yellow(),
             r.style(REMARKABLE),
         );
-        eprintln!("Ordering:  {}", cmp_str);
+        eprintln!("Ord:        {}", cmp_str);
     }
 
     // Test default_in_place
@@ -227,7 +227,7 @@ where
         let ptr = unsafe { ptr.assume_init() };
         let debug = unsafe { debug(T::VTABLE, ptr.ptr.as_const()) };
         eprintln!(
-            "Default:   {}",
+            "Default:    {}",
             format_args!("{:?}", debug).style(REMARKABLE)
         );
     }
@@ -243,7 +243,7 @@ where
         let ptr = unsafe { ptr.assume_init() };
         let debug = unsafe { debug(T::VTABLE, ptr.ptr.as_const()) };
         eprintln!(
-            "Clone:     {}",
+            "Clone:      {}",
             format_args!("{:?}", debug).style(REMARKABLE)
         );
     }
@@ -1322,11 +1322,12 @@ fn test_fn_ptr() {
 
 #[test]
 fn test_ptr() {
-    let mut unit = ();
+    let unit = ();
+    let ptr = &raw const unit;
 
     check_facts(
-        &&raw const unit,
-        &&raw const unit,
+        &ptr,
+        &ptr,
         FactBuilder::new()
             .debug()
             .clone()
@@ -1337,13 +1338,64 @@ fn test_ptr() {
     );
 
     check_facts(
-        &&raw mut unit,
-        &&raw mut unit,
+        &ptr.cast_mut(),
+        &ptr.cast_mut(),
         FactBuilder::new()
             .debug()
             .clone()
             .partial_eq_and(true)
             .correct_ord_and(Ordering::Equal)
+            .build(),
+        TypedMarkerTraits::new().eq().copy().unpin(),
+    );
+
+    let s = "abc";
+    let ptr = core::ptr::from_ref(s);
+
+    check_facts(
+        &ptr,
+        &ptr,
+        FactBuilder::new()
+            .debug()
+            .clone()
+            .partial_eq_and(true)
+            .correct_ord_and(Ordering::Equal)
+            .build(),
+        TypedMarkerTraits::new().eq().copy().unpin(),
+    );
+
+    check_facts(
+        &ptr.cast_mut(),
+        &ptr.cast_mut(),
+        FactBuilder::new()
+            .debug()
+            .clone()
+            .partial_eq_and(true)
+            .correct_ord_and(Ordering::Equal)
+            .build(),
+        TypedMarkerTraits::new().eq().copy().unpin(),
+    );
+
+    check_facts(
+        &ptr,
+        &&raw const s[..1],
+        FactBuilder::new()
+            .debug()
+            .clone()
+            .partial_eq_and(false)
+            .correct_ord_and(Ordering::Greater)
+            .build(),
+        TypedMarkerTraits::new().eq().copy().unpin(),
+    );
+
+    check_facts(
+        &ptr.cast_mut(),
+        &core::ptr::from_ref(&s[..1]).cast_mut(),
+        FactBuilder::new()
+            .debug()
+            .clone()
+            .partial_eq_and(false)
+            .correct_ord_and(Ordering::Greater)
             .build(),
         TypedMarkerTraits::new().eq().copy().unpin(),
     );
