@@ -436,9 +436,9 @@ bitflags! {
         const COPY = 1 << 3;
         /// Indicates that the type implements the [`Unpin`] marker trait
         const UNPIN = 1 << 4;
-        /// Indicates that the type implements the [`UnwindSafe`] marker trait
+        /// Indicates that the type implements the [`UnwindSafe`](core::panic::UnwindSafe) marker trait
         const UNWIND_SAFE = 1 << 5;
-        /// Indicates that the type implements the [`RefUnwindSafe`] marker trait
+        /// Indicates that the type implements the [`RefUnwindSafe`](core::panic::RefUnwindSafe) marker trait
         const REF_UNWIND_SAFE = 1 << 6;
     }
 }
@@ -568,12 +568,12 @@ impl ValueVTable {
         self.marker_traits().contains(MarkerTraits::UNPIN)
     }
 
-    /// Check if the type implements the [`UnwindSafe`] marker trait
+    /// Check if the type implements the [`UnwindSafe`](core::panic::UnwindSafe) marker trait
     pub fn is_unwind_safe(&self) -> bool {
         self.marker_traits().contains(MarkerTraits::UNWIND_SAFE)
     }
 
-    /// Check if the type implements the [`RefUnwindSafe`] marker trait
+    /// Check if the type implements the [`RefUnwindSafe`](core::panic::RefUnwindSafe) marker trait
     pub fn is_ref_unwind_safe(&self) -> bool {
         self.marker_traits().contains(MarkerTraits::REF_UNWIND_SAFE)
     }
