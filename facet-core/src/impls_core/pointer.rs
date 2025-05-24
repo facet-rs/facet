@@ -96,11 +96,16 @@ impl_facet_for_pointer!(
             )
             .debug(|| Some(fmt::Debug::fmt))
             .clone_into(|| Some(|src, dst| unsafe { dst.put(*src) }))
-            .eq(|| Some(|left, right| left.cast::<()>().eq(&right.cast::<()>())))
+            .eq(|| Some(|&left, &right| core::ptr::eq(left, right)))
             .partial_ord(|| Some(|&left, &right| {
-                left.cast::<()>().partial_cmp(&right.cast::<()>())
+                // https://github.com/rust-lang/rust/issues/141510
+                #[allow(ambiguous_wide_pointer_comparisons)]
+                left.partial_cmp(&right)
             }))
-            .ord(|| Some(|&left, &right| left.cast::<()>().cmp(&right.cast::<()>())))
+            .ord(|| Some(|&left, &right| {
+                #[allow(ambiguous_wide_pointer_comparisons)]
+                left.cmp(&right)
+            }))
             .hash(|| Some(|value, hasher_this, hasher_write_fn| {
                 value.hash(&mut unsafe {
                     HasherProxy::new(hasher_this, hasher_write_fn)
@@ -122,11 +127,16 @@ impl_facet_for_pointer!(
             )
             .debug(|| Some(fmt::Debug::fmt))
             .clone_into(|| Some(|src, dst| unsafe { dst.put(*src) }))
-            .eq(|| Some(|left, right| left.cast::<()>().eq(&right.cast::<()>())))
+            .eq(|| Some(|&left, &right| core::ptr::eq(left, right)))
             .partial_ord(|| Some(|&left, &right| {
-                left.cast::<()>().partial_cmp(&right.cast::<()>())
+                // https://github.com/rust-lang/rust/issues/141510
+                #[allow(ambiguous_wide_pointer_comparisons)]
+                left.partial_cmp(&right)
             }))
-            .ord(|| Some(|&left, &right| left.cast::<()>().cmp(&right.cast::<()>())))
+            .ord(|| Some(|&left, &right| {
+                #[allow(ambiguous_wide_pointer_comparisons)]
+                left.cmp(&right)
+            }))
             .hash(|| Some(|value, hasher_this, hasher_write_fn| {
                 value.hash(&mut unsafe {
                     HasherProxy::new(hasher_this, hasher_write_fn)
