@@ -23,7 +23,9 @@ where
                 let arg_dependent_traits = MarkerTraits::SEND
                     .union(MarkerTraits::SYNC)
                     .union(MarkerTraits::EQ)
-                    .union(MarkerTraits::UNPIN);
+                    .union(MarkerTraits::UNPIN)
+                    .union(MarkerTraits::UNWIND_SAFE)
+                    .union(MarkerTraits::REF_UNWIND_SAFE);
                 arg_dependent_traits
                     .intersection(V::SHAPE.vtable.marker_traits())
                     .intersection(K::SHAPE.vtable.marker_traits())

@@ -100,6 +100,8 @@ where
                     .union(MarkerTraits::SYNC)
                     .union(MarkerTraits::EQ)
                     .union(MarkerTraits::UNPIN)
+                    .union(MarkerTraits::UNWIND_SAFE)
+                    .union(MarkerTraits::REF_UNWIND_SAFE)
                     .intersection(T::SHAPE.vtable.marker_traits())
             })
             .build()

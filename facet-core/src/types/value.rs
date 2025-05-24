@@ -424,7 +424,7 @@ impl core::hash::Hasher for HasherProxy<'_> {
 
 bitflags! {
     /// Bitflags for common marker traits that a type may implement
-    #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+    #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct MarkerTraits: u8 {
         /// Indicates that the type implements the [`Eq`] marker trait
         const EQ = 1 << 0;
@@ -436,6 +436,10 @@ bitflags! {
         const COPY = 1 << 3;
         /// Indicates that the type implements the [`Unpin`] marker trait
         const UNPIN = 1 << 4;
+        /// Indicates that the type implements the [`UnwindSafe`] marker trait
+        const UNWIND_SAFE = 1 << 5;
+        /// Indicates that the type implements the [`RefUnwindSafe`] marker trait
+        const REF_UNWIND_SAFE = 1 << 6;
     }
 }
 
@@ -562,6 +566,16 @@ impl ValueVTable {
     /// Check if the type implements the [`Unpin`] marker trait
     pub fn is_unpin(&self) -> bool {
         self.marker_traits().contains(MarkerTraits::UNPIN)
+    }
+
+    /// Check if the type implements the [`UnwindSafe`] marker trait
+    pub fn is_unwind_safe(&self) -> bool {
+        self.marker_traits().contains(MarkerTraits::UNWIND_SAFE)
+    }
+
+    /// Check if the type implements the [`RefUnwindSafe`] marker trait
+    pub fn is_ref_unwind_safe(&self) -> bool {
+        self.marker_traits().contains(MarkerTraits::REF_UNWIND_SAFE)
     }
 
     /// Creates a new [`ValueVTableBuilder`]
