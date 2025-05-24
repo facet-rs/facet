@@ -51,9 +51,11 @@ where
                     None
                 }
             })
-            .eq(|| {
-                if (T::SHAPE.vtable.eq)().is_some() {
-                    Some(|a, b| zip(a, b).all(|(a, b)| (<VTableView<T>>::of().eq().unwrap())(a, b)))
+            .partial_eq(|| {
+                if (T::SHAPE.vtable.partial_eq)().is_some() {
+                    Some(|a, b| {
+                        zip(a, b).all(|(a, b)| (<VTableView<T>>::of().partial_eq().unwrap())(a, b))
+                    })
                 } else {
                     None
                 }

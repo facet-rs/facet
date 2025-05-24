@@ -90,10 +90,10 @@ where
                     None
                 }
             })
-            .eq(|| {
-                if (V::SHAPE.vtable.eq)().is_some() {
+            .partial_eq(|| {
+                if (V::SHAPE.vtable.partial_eq)().is_some() {
                     Some(|a, b| {
-                        let v_eq = <VTableView<V>>::of().eq().unwrap();
+                        let v_eq = <VTableView<V>>::of().partial_eq().unwrap();
                         a.len() == b.len()
                             && a.iter().all(|(key_a, val_a)| {
                                 b.get(key_a).is_some_and(|val_b| (v_eq)(val_a, val_b))

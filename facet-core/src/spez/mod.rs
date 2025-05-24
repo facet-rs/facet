@@ -258,10 +258,10 @@ pub trait SpezPartialEqYes {
     ///
     /// This method is called when the wrapped type implements `PartialEq`.
     /// It compares the inner values for equality.
-    fn spez_eq(&self, other: &Self) -> bool;
+    fn spez_partial_eq(&self, other: &Self) -> bool;
 }
 impl<T: PartialEq> SpezPartialEqYes for &Spez<T> {
-    fn spez_eq(&self, other: &Self) -> bool {
+    fn spez_partial_eq(&self, other: &Self) -> bool {
         self.0 == other.0
     }
 }
@@ -272,10 +272,10 @@ pub trait SpezPartialEqNo {
     ///
     /// This method is used as a fallback and is designed to be unreachable in practice.
     /// It's only selected when the wrapped type doesn't implement `PartialEq`.
-    fn spez_eq(&self, _other: &Self) -> bool;
+    fn spez_partial_eq(&self, _other: &Self) -> bool;
 }
 impl<T> SpezPartialEqNo for Spez<T> {
-    fn spez_eq(&self, _other: &Self) -> bool {
+    fn spez_partial_eq(&self, _other: &Self) -> bool {
         unreachable!()
     }
 }

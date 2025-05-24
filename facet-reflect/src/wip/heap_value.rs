@@ -84,7 +84,7 @@ impl<'facet, 'shape> PartialEq for HeapValue<'facet, 'shape> {
         if self.shape != other.shape {
             return false;
         }
-        if let Some(eq_fn) = (self.shape.vtable.eq)() {
+        if let Some(eq_fn) = (self.shape.vtable.partial_eq)() {
             unsafe {
                 eq_fn(
                     PtrConst::new(self.guard.as_ref().unwrap().ptr),

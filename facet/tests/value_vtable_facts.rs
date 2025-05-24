@@ -135,7 +135,7 @@ where
         ("Debug", (value_vtable.debug)().is_some()),
         ("Display", (value_vtable.display)().is_some()),
         ("Default", (value_vtable.default_in_place)().is_some()),
-        ("PartialEq", (value_vtable.eq)().is_some()),
+        ("PartialEq", (value_vtable.partial_eq)().is_some()),
         ("Ord", (value_vtable.ord)().is_some()),
         ("PartialOrd", (value_vtable.partial_ord)().is_some()),
         ("Clone", (value_vtable.clone_into)().is_some()),
@@ -176,7 +176,7 @@ where
     }
 
     // Test equality
-    if let Some(eq_fn) = vtable.eq() {
+    if let Some(eq_fn) = vtable.partial_eq() {
         let eq_result = eq_fn(val1, val2);
         facts.insert(Fact::PartialEqAnd { l_eq_r: eq_result });
         let eq_str = format!(

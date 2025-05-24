@@ -20,7 +20,7 @@ where
 /// Creates a `ValueVTable` for a given type.
 ///
 /// This macro generates a `ValueVTable` with implementations for various traits
-/// (Display, Debug, PartialEq, Eq, PartialOrd, Ord, Hash) if they are implemented for the given type.
+/// (Display, Debug, PartialEq, PartialOrd, Ord, Hash) if they are implemented for the given type.
 ///
 /// # Arguments
 ///
@@ -106,12 +106,12 @@ macro_rules! value_vtable {
 
                     traits
                 })
-                .eq(|| {
+                .partial_eq(|| {
                     if $crate::spez::impls!($type_name: core::cmp::PartialEq) {
                         Some(|left, right| {
                             use $crate::spez::*;
                             (&&Spez(left))
-                                .spez_eq(&&Spez(right))
+                                .spez_partial_eq(&&Spez(right))
                         })
                     } else {
                         None
@@ -214,12 +214,12 @@ macro_rules! value_vtable_unsized {
 
                     traits
                 })
-                .eq(|| {
+                .partial_eq(|| {
                     if $crate::spez::impls!($type_name: core::cmp::PartialEq) {
                         Some(|left, right| {
                             use $crate::spez::*;
                             (&&Spez(left))
-                                .spez_eq(&&Spez(right))
+                                .spez_partial_eq(&&Spez(right))
                         })
                     } else {
                         None

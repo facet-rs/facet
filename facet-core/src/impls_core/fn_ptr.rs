@@ -77,7 +77,7 @@ macro_rules! impl_facet_for_fn_ptr {
                             .union(MarkerTraits::COPY)
                             .union(MarkerTraits::UNPIN)
                     )
-                    .eq(|| Some(|&left, &right| {
+                    .partial_eq(|| Some(|&left, &right| {
                         fn_addr_eq(left, right)
                     }))
                     .partial_ord(|| Some(|left, right| {

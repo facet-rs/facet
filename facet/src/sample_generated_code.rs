@@ -228,7 +228,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkStruct {
                     }
                     traits
                 })
-                .eq(|| {
+                .partial_eq(|| {
                     if {
                         /// Fallback trait with `False` for `IMPLS` if the type does not
                         /// implement the given trait.
@@ -247,7 +247,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkStruct {
                     } {
                         Some(|left, right| {
                             use ::facet_core::spez::*;
-                            (&&Spez(left)).spez_eq(&&Spez(right))
+                            (&&Spez(left)).spez_partial_eq(&&Spez(right))
                         })
                     } else {
                         None
@@ -666,7 +666,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for Point {
                     }
                     traits
                 })
-                .eq(|| {
+                .partial_eq(|| {
                     if {
                         /// Fallback trait with `False` for `IMPLS` if the type does not
                         /// implement the given trait.
@@ -685,7 +685,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for Point {
                     } {
                         Some(|left, right| {
                             use ::facet_core::spez::*;
-                            (&&Spez(left)).spez_eq(&&Spez(right))
+                            (&&Spez(left)).spez_partial_eq(&&Spez(right))
                         })
                     } else {
                         None
@@ -1098,7 +1098,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                     }
                     traits
                 })
-                .eq(|| {
+                .partial_eq(|| {
                     if {
                         /// Fallback trait with `False` for `IMPLS` if the type does not
                         /// implement the given trait.
@@ -1117,7 +1117,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                     } {
                         Some(|left, right| {
                             use ::facet_core::spez::*;
-                            (&&Spez(left)).spez_eq(&&Spez(right))
+                            (&&Spez(left)).spez_partial_eq(&&Spez(right))
                         })
                     } else {
                         None
@@ -1745,7 +1745,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for SubEnum {
                     }
                     traits
                 })
-                .eq(|| {
+                .partial_eq(|| {
                     if {
                         /// Fallback trait with `False` for `IMPLS` if the type does not
                         /// implement the given trait.
@@ -1764,7 +1764,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for SubEnum {
                     } {
                         Some(|left, right| {
                             use ::facet_core::spez::*;
-                            (&&Spez(left)).spez_eq(&&Spez(right))
+                            (&&Spez(left)).spez_partial_eq(&&Spez(right))
                         })
                     } else {
                         None

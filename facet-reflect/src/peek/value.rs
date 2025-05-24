@@ -95,8 +95,8 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     ///
     /// `false` if equality comparison is not supported for this scalar type
     #[inline]
-    pub fn eq(&self, other: &Peek<'_, '_, '_>) -> Option<bool> {
-        unsafe { (self.shape.vtable.eq)().map(|eq_fn| eq_fn(self.data, other.data)) }
+    pub fn partial_eq(&self, other: &Peek<'_, '_, '_>) -> Option<bool> {
+        unsafe { (self.shape.vtable.partial_eq)().map(|eq_fn| eq_fn(self.data, other.data)) }
     }
 
     /// Compares this scalar with another and returns their ordering
@@ -384,7 +384,7 @@ impl<'mem, 'facet, 'shape> core::cmp::PartialEq for Peek<'mem, 'facet, 'shape> {
         if self.shape != other.shape {
             return false;
         }
-        let eq_fn = match (self.shape.vtable.eq)() {
+        let eq_fn = match (self.shape.vtable.partial_eq)() {
             Some(eq_fn) => eq_fn,
             None => return false,
         };

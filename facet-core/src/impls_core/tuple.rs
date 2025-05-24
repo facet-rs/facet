@@ -153,12 +153,12 @@ macro_rules! impl_facet_for_tuple {
                     //         None
                     //     }
                     // })
-                    .eq(|| {
+                    .partial_eq(|| {
                         let elem_shapes = const { &[$($elems::SHAPE),+] };
                         if Characteristic::all_partial_eq(elem_shapes) {
                             Some(|a, b| impl_facet_for_tuple! {
                                 ord on ($($elems.$idx,)+),
-                                eq(a, b),
+                                partial_eq(a, b),
                                 eq = true
                             })
                         } else {
