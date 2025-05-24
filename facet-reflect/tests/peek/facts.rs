@@ -17,7 +17,7 @@ where
         ("Debug", (value_vtable.debug)().is_some()),
         ("Display", (value_vtable.display)().is_some()),
         ("Default", (value_vtable.default_in_place)().is_some()),
-        ("Eq", (value_vtable.eq)().is_some()),
+        ("PartialEq", (value_vtable.partial_eq)().is_some()),
         ("Ord", (value_vtable.ord)().is_some()),
         ("Clone", (value_vtable.clone_into)().is_some()),
     ];
@@ -56,8 +56,8 @@ where
     }
 
     // Test equality
-    if let Some(eq_result) = l.eq(&r) {
-        facts.insert(Fact::EqualAnd { l_eq_r: eq_result });
+    if let Some(eq_result) = l.partial_eq(&r) {
+        facts.insert(Fact::PartialEqAnd { l_eq_r: eq_result });
         let eq_str = format!(
             "{:?} {} {:?}",
             l.style(REMARKABLE),
@@ -181,7 +181,7 @@ fn check_facts_no_cmp<'a, T>(
 
     let facts = collect_facts(&val1, &val1);
     for &fact in facts.iter() {
-        if let Fact::EqualAnd { .. } | Fact::OrdAnd { .. } = fact {
+        if let Fact::PartialEqAnd { .. } | Fact::OrdAnd { .. } = fact {
             expected_facts.insert(fact);
         }
     }
@@ -195,7 +195,7 @@ fn check_facts_no_cmp<'a, T>(
 pub struct FactBuilder {
     has_debug: bool,
     has_display: bool,
-    has_equal_and: Option<bool>,
+    has_partial_eq_and: Option<bool>,
     has_ord_and: Option<Ordering>,
     has_default: bool,
     has_clone: bool,
@@ -216,8 +216,8 @@ impl FactBuilder {
         self
     }
 
-    fn equal_and(mut self, l_eq_r: bool) -> Self {
-        self.has_equal_and = Some(l_eq_r);
+    fn partial_eq_and(mut self, l_eq_r: bool) -> Self {
+        self.has_partial_eq_and = Some(l_eq_r);
         self
     }
 
@@ -244,8 +244,8 @@ impl FactBuilder {
         if self.has_display {
             facts.insert(Fact::Display);
         }
-        if let Some(l_eq_r) = self.has_equal_and {
-            facts.insert(Fact::EqualAnd { l_eq_r });
+        if let Some(l_eq_r) = self.has_partial_eq_and {
+            facts.insert(Fact::PartialEqAnd { l_eq_r });
         }
         if let Some(l_ord_r) = self.has_ord_and {
             facts.insert(Fact::OrdAnd { l_ord_r });
@@ -326,7 +326,7 @@ impl<T> TypedMarkerTraits<T> {
 enum Fact {
     Debug,
     Display,
-    EqualAnd { l_eq_r: bool },
+    PartialEqAnd { l_eq_r: bool },
     OrdAnd { l_ord_r: Ordering },
     Default,
     Clone,
@@ -340,7 +340,7 @@ impl Display for Fact {
         match self {
             Fact::Debug => write!(f, "impl Debug"),
             Fact::Display => write!(f, "impl Display"),
-            Fact::EqualAnd { l_eq_r } => write!(
+            Fact::PartialEqAnd { l_eq_r } => write!(
                 f,
                 "impl Equal and l {} r",
                 if *l_eq_r { "==" } else { "!=" }
@@ -371,7 +371,7 @@ fn test_integer_traits() {
         FactBuilder::new()
             .debug()
             .display()
-            .equal_and(false)
+            .partial_eq_and(false)
             .ord_and(Ordering::Greater)
             .default()
             .clone()
@@ -386,7 +386,7 @@ fn test_integer_traits() {
         FactBuilder::new()
             .debug()
             .display()
-            .equal_and(true)
+            .partial_eq_and(true)
             .ord_and(Ordering::Equal)
             .default()
             .clone()
@@ -401,7 +401,7 @@ fn test_integer_traits() {
         FactBuilder::new()
             .debug()
             .display()
-            .equal_and(false)
+            .partial_eq_and(false)
             .ord_and(Ordering::Less)
             .default()
             .clone()
@@ -416,7 +416,7 @@ fn test_integer_traits() {
         FactBuilder::new()
             .debug()
             .display()
-            .equal_and(false)
+            .partial_eq_and(false)
             .ord_and(Ordering::Less)
             .default()
             .clone()
@@ -431,7 +431,7 @@ fn test_integer_traits() {
         FactBuilder::new()
             .debug()
             .display()
-            .equal_and(false)
+            .partial_eq_and(false)
             .ord_and(Ordering::Less)
             .default()
             .clone()
@@ -451,7 +451,7 @@ fn test_boolean_traits() {
         FactBuilder::new()
             .debug()
             .display()
-            .equal_and(false)
+            .partial_eq_and(false)
             .ord_and(Ordering::Greater)
             .default()
             .clone()
@@ -465,7 +465,7 @@ fn test_boolean_traits() {
         FactBuilder::new()
             .debug()
             .display()
-            .equal_and(true)
+            .partial_eq_and(true)
             .ord_and(Ordering::Equal)
             .default()
             .clone()
@@ -479,7 +479,7 @@ fn test_boolean_traits() {
         FactBuilder::new()
             .debug()
             .display()
-            .equal_and(false)
+            .partial_eq_and(false)
             .ord_and(Ordering::Less)
             .default()
             .clone()
@@ -493,7 +493,7 @@ fn test_boolean_traits() {
         FactBuilder::new()
             .debug()
             .display()
-            .equal_and(true)
+            .partial_eq_and(true)
             .ord_and(Ordering::Equal)
             .default()
             .clone()
@@ -511,7 +511,7 @@ fn test_floating_traits() {
         FactBuilder::new()
             .debug()
             .display()
-            .equal_and(false)
+            .partial_eq_and(false)
             .ord_and(Ordering::Greater)
             .default()
             .clone()
@@ -529,7 +529,7 @@ fn test_string_traits() {
         FactBuilder::new()
             .debug()
             .display()
-            .equal_and(false)
+            .partial_eq_and(false)
             .ord_and(Ordering::Less)
             .default()
             .clone()
@@ -544,7 +544,7 @@ fn test_string_traits() {
         FactBuilder::new()
             .debug()
             .display()
-            .equal_and(false)
+            .partial_eq_and(false)
             .ord_and(Ordering::Less)
             .clone()
             .build(),
@@ -559,7 +559,7 @@ fn test_string_traits() {
         FactBuilder::new()
             .debug()
             .display()
-            .equal_and(false)
+            .partial_eq_and(false)
             .ord_and(Ordering::Less)
             .clone()
             .default()
@@ -572,7 +572,7 @@ fn test_string_traits() {
         FactBuilder::new()
             .debug()
             .display()
-            .equal_and(false)
+            .partial_eq_and(false)
             .ord_and(Ordering::Less)
             .clone()
             .default()
@@ -585,7 +585,7 @@ fn test_string_traits() {
         FactBuilder::new()
             .debug()
             .display()
-            .equal_and(true)
+            .partial_eq_and(true)
             .ord_and(Ordering::Equal)
             .clone()
             .default()
@@ -602,7 +602,7 @@ fn test_slice_traits() {
         &[4, 5, 6][..],
         FactBuilder::new()
             .debug()
-            .equal_and(false)
+            .partial_eq_and(false)
             .ord_and(Ordering::Less)
             .clone()
             .build(),
@@ -615,7 +615,7 @@ fn test_slice_traits() {
         &["foo", "bar"][..],
         FactBuilder::new()
             .debug()
-            .equal_and(false)
+            .partial_eq_and(false)
             .ord_and(Ordering::Greater)
             .clone()
             .build(),
@@ -632,7 +632,7 @@ fn test_array_traits() {
         FactBuilder::new()
             .debug()
             .display()
-            .equal_and(true)
+            .partial_eq_and(true)
             .ord_and(Ordering::Equal)
             .default()
             .clone()
@@ -646,7 +646,7 @@ fn test_array_traits() {
         FactBuilder::new()
             .debug()
             .display()
-            .equal_and(false)
+            .partial_eq_and(false)
             .ord_and(Ordering::Greater)
             .default()
             .clone()
@@ -660,7 +660,7 @@ fn test_array_traits() {
         FactBuilder::new()
             .debug()
             .display()
-            .equal_and(false)
+            .partial_eq_and(false)
             .ord_and(Ordering::Less)
             .default()
             .clone()
@@ -674,7 +674,7 @@ fn test_array_traits() {
         FactBuilder::new()
             .debug()
             .display()
-            .equal_and(true)
+            .partial_eq_and(true)
             .ord_and(Ordering::Equal)
             .clone()
             .build(),
@@ -688,7 +688,7 @@ fn test_array_traits() {
         FactBuilder::new()
             .display()
             .debug()
-            .equal_and(false)
+            .partial_eq_and(false)
             .ord_and(Ordering::Less)
             .clone()
             .build(),
@@ -704,7 +704,7 @@ fn test_vecs() {
         vec![4, 5, 6],
         FactBuilder::new()
             .debug()
-            .equal_and(false)
+            .partial_eq_and(false)
             .default()
             .clone()
             .build(),
@@ -717,7 +717,7 @@ fn test_vecs() {
         vec!["foo".to_string(), "bar".to_string()],
         FactBuilder::new()
             .debug()
-            .equal_and(false)
+            .partial_eq_and(false)
             .default()
             .clone()
             .build(),
@@ -732,7 +732,7 @@ fn test_vecs() {
         vec2.clone(),
         FactBuilder::new()
             .debug()
-            .equal_and(true)
+            .partial_eq_and(true)
             .default()
             .clone()
             .build(),
@@ -746,7 +746,7 @@ fn test_vecs() {
         vec4.clone(),
         FactBuilder::new()
             .debug()
-            .equal_and(true)
+            .partial_eq_and(true)
             .default()
             .clone()
             .build(),
@@ -772,7 +772,7 @@ fn test_hashmaps() {
         map2.clone(),
         FactBuilder::new()
             .debug()
-            .equal_and(false)
+            .partial_eq_and(false)
             .default()
             .clone()
             .build(),
@@ -793,7 +793,7 @@ fn test_hashmaps() {
         map4.clone(),
         FactBuilder::new()
             .debug()
-            .equal_and(true)
+            .partial_eq_and(true)
             .default()
             .clone()
             .build(),
@@ -835,7 +835,7 @@ fn test_custom_structs() {
     check_facts(
         StructDebugEq { value: 42 },
         StructDebugEq { value: 24 },
-        FactBuilder::new().debug().equal_and(false).build(),
+        FactBuilder::new().debug().partial_eq_and(false).build(),
         TypedMarkerTraits::new().send().sync().unpin(),
     );
 
@@ -849,7 +849,7 @@ fn test_custom_structs() {
         StructAll { value: 24 },
         FactBuilder::new()
             .debug()
-            .equal_and(false)
+            .partial_eq_and(false)
             .ord_and(Ordering::Greater)
             .clone()
             .build(),
@@ -860,7 +860,7 @@ fn test_custom_structs() {
         StructAll { value: 90 },
         FactBuilder::new()
             .debug()
-            .equal_and(false)
+            .partial_eq_and(false)
             .ord_and(Ordering::Less)
             .clone()
             .build(),
@@ -871,7 +871,7 @@ fn test_custom_structs() {
         StructAll { value: 69 },
         FactBuilder::new()
             .debug()
-            .equal_and(true)
+            .partial_eq_and(true)
             .ord_and(Ordering::Equal)
             .clone()
             .build(),
@@ -909,7 +909,7 @@ fn test_tuple_structs() {
     check_facts(
         TupleEq(42, "Hello".to_string()),
         TupleEq(24, "World".to_string()),
-        FactBuilder::new().equal_and(false).build(),
+        FactBuilder::new().partial_eq_and(false).build(),
         TypedMarkerTraits::new().send().sync().unpin(),
     );
 
@@ -921,7 +921,7 @@ fn test_tuple_structs() {
         TupleAll(24, "World".to_string()),
         FactBuilder::new()
             .debug()
-            .equal_and(false)
+            .partial_eq_and(false)
             .ord_and(Ordering::Greater)
             .clone()
             .build(),
@@ -945,7 +945,7 @@ fn test_enums() {
         TestEnum::Variant1,
         FactBuilder::new()
             .debug()
-            .equal_and(true)
+            .partial_eq_and(true)
             .ord_and(Ordering::Equal)
             .clone()
             .build(),
@@ -958,7 +958,7 @@ fn test_enums() {
         TestEnum::Variant2(24),
         FactBuilder::new()
             .debug()
-            .equal_and(false)
+            .partial_eq_and(false)
             .ord_and(Ordering::Greater)
             .clone()
             .build(),
@@ -975,7 +975,7 @@ fn test_enums() {
         },
         FactBuilder::new()
             .debug()
-            .equal_and(false)
+            .partial_eq_and(false)
             .ord_and(Ordering::Less)
             .clone()
             .build(),
@@ -1022,7 +1022,7 @@ fn test_ptr() {
         FactBuilder::new()
             .debug()
             .clone()
-            .equal_and(true)
+            .partial_eq_and(true)
             .ord_and(Ordering::Equal)
             .build(),
         TypedMarkerTraits::new().eq().copy().unpin(),
@@ -1034,7 +1034,7 @@ fn test_ptr() {
         FactBuilder::new()
             .debug()
             .clone()
-            .equal_and(true)
+            .partial_eq_and(true)
             .ord_and(Ordering::Equal)
             .build(),
         TypedMarkerTraits::new().eq().copy().unpin(),
@@ -1049,7 +1049,7 @@ fn test_ref() {
         FactBuilder::new()
             .debug()
             .clone()
-            .equal_and(true)
+            .partial_eq_and(true)
             .ord_and(Ordering::Equal)
             .build(),
         TypedMarkerTraits::new().eq().send().sync().copy().unpin(),
@@ -1064,7 +1064,7 @@ fn test_ref() {
         FactBuilder::new()
             .debug()
             .clone()
-            .equal_and(true)
+            .partial_eq_and(true)
             .ord_and(Ordering::Equal)
             .build(),
         TypedMarkerTraits::new().eq().copy().unpin(),
@@ -1078,7 +1078,7 @@ fn test_mut_ref() {
         &mut (),
         FactBuilder::new()
             .debug()
-            .equal_and(true)
+            .partial_eq_and(true)
             .ord_and(Ordering::Equal)
             .build(),
         TypedMarkerTraits::new().eq().send().sync().unpin(),
@@ -1095,7 +1095,7 @@ fn test_mut_ref() {
         ref2,
         FactBuilder::new()
             .debug()
-            .equal_and(true)
+            .partial_eq_and(true)
             .ord_and(Ordering::Equal)
             .build(),
         TypedMarkerTraits::new().eq().unpin(),

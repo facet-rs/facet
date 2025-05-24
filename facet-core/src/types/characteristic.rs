@@ -165,7 +165,7 @@ impl<'shape> Shape<'shape> {
             Characteristic::Clone => (self.vtable.clone_into)().is_some(),
             Characteristic::Display => (self.vtable.display)().is_some(),
             Characteristic::Debug => (self.vtable.debug)().is_some(),
-            Characteristic::PartialEq => (self.vtable.eq)().is_some(),
+            Characteristic::PartialEq => (self.vtable.partial_eq)().is_some(),
             Characteristic::PartialOrd => (self.vtable.partial_ord)().is_some(),
             Characteristic::Ord => (self.vtable.ord)().is_some(),
             Characteristic::Hash => (self.vtable.hash)().is_some(),

@@ -34,7 +34,7 @@ where
                 }
             })
             .default_in_place(|| Some(|target| unsafe { target.put(Self::default()) }))
-            .eq(|| Some(|a, b| a == b))
+            .partial_eq(|| Some(|a, b| a == b))
             .debug(|| {
                 if (T::SHAPE.vtable.debug)().is_some() {
                     Some(|value, f| {

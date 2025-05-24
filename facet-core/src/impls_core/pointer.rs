@@ -96,7 +96,7 @@ impl_facet_for_pointer!(
             )
             .debug(|| Some(fmt::Debug::fmt))
             .clone_into(|| Some(|src, dst| unsafe { dst.put(*src) }))
-            .eq(|| Some(|left, right| left.cast::<()>().eq(&right.cast::<()>())))
+            .partial_eq(|| Some(|left, right| left.cast::<()>() == right.cast::<()>()))
             .partial_ord(|| Some(|&left, &right| {
                 left.cast::<()>().partial_cmp(&right.cast::<()>())
             }))
@@ -122,7 +122,7 @@ impl_facet_for_pointer!(
             )
             .debug(|| Some(fmt::Debug::fmt))
             .clone_into(|| Some(|src, dst| unsafe { dst.put(*src) }))
-            .eq(|| Some(|left, right| left.cast::<()>().eq(&right.cast::<()>())))
+            .partial_eq(|| Some(|left, right| left.cast::<()>() == right.cast::<()>()))
             .partial_ord(|| Some(|&left, &right| {
                 left.cast::<()>().partial_cmp(&right.cast::<()>())
             }))
@@ -173,10 +173,10 @@ impl_facet_for_pointer!(
                         None
                     }
                 })
-                .eq(|| {
-                    if (T::VTABLE.eq)().is_some() {
+                .partial_eq(|| {
+                    if (T::VTABLE.partial_eq)().is_some() {
                         Some(|a, b| {
-                            let eq_fn = unsafe { transmute::<PartialEqFn, PartialEqFnTyped<T>>((T::VTABLE.eq)().unwrap()) };
+                            let eq_fn = unsafe { transmute::<PartialEqFn, PartialEqFnTyped<T>>((T::VTABLE.partial_eq)().unwrap()) };
                             eq_fn(*a, *b)
                         })
                     } else {
@@ -257,10 +257,10 @@ impl_facet_for_pointer!(
                         None
                     }
                 })
-                .eq(|| {
-                    if (T::VTABLE.eq)().is_some() {
+                .partial_eq(|| {
+                    if (T::VTABLE.partial_eq)().is_some() {
                         Some(|a, b| {
-                            let eq_fn = unsafe { transmute::<PartialEqFn, PartialEqFnTyped<T>>((T::VTABLE.eq)().unwrap()) };
+                            let eq_fn = unsafe { transmute::<PartialEqFn, PartialEqFnTyped<T>>((T::VTABLE.partial_eq)().unwrap()) };
                             eq_fn(*a, *b)
                         })
                     } else {

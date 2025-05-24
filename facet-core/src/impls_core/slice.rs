@@ -37,14 +37,14 @@ where
                     None
                 }
             })
-            .eq(|| {
-                if (T::SHAPE.vtable.eq)().is_some() {
+            .partial_eq(|| {
+                if (T::SHAPE.vtable.partial_eq)().is_some() {
                     Some(|a, b| {
                         if a.len() != b.len() {
                             return false;
                         }
                         for (x, y) in a.iter().zip(b.iter()) {
-                            if !(<VTableView<T>>::of().eq().unwrap())(x, y) {
+                            if !(<VTableView<T>>::of().partial_eq().unwrap())(x, y) {
                                 return false;
                             }
                         }
