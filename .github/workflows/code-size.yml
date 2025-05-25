@@ -6,13 +6,14 @@ on:
   pull_request:
     branches: [main]
   merge_group:
-  # Allow manual triggering
   workflow_dispatch:
 
 jobs:
   measure-code-size:
     name: Measure Code Size
     runs-on: depot-ubuntu-24.04-32
+    permissions:
+      pull-requests: write
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
 
@@ -20,85 +21,25 @@ jobs:
       - name: Checkout current code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Fetch all history to compare with baseline
+          fetch-depth: 0
 
       - name: Setup Rust cache
         uses: Swatinem/rust-cache@v2
 
-      # - name: Install measurement tools
-      #   run: |
-      #     cargo install cargo-bloat --locked
-      #     cargo install cargo-llvm-lines --locked
-      #     cargo install cargo-binutils --locked
-      #     rustup component add llvm-tools-preview
-
       - name: Create output directory
         run: mkdir -p code-size-data
 
-      # Measure binary sizes
       - name: Build release binaries and measure sizes
         run: just code-size
 
-      # # Measure dependency bloat
-      # - name: Analyze dependency bloat
-      #   run: |
-      #     echo "# Dependency Bloat Analysis" > code-size-data/bloat-analysis.md
-      #     echo "## facet-core crate size" >> code-size-data/bloat-analysis.md
-      #     cargo bloat --release -p facet-core --crates >> code-size-data/bloat-analysis.md
-      #     echo "## facet-reflect crate size" >> code-size-data/bloat-analysis.md
-      #     cargo bloat --release -p facet-reflect --crates >> code-size-data/bloat-analysis.md
-
-      # Compare with baseline if this is a PR
-      # - name: Compare with baseline (main branch)
-      #   if: github.event_name == 'pull_request'
-      #   run: |
-      #     # Switch to main branch to get baseline measurements
-      #     git checkout origin/main
-      #     mkdir -p baseline-data
-
-      #     # Build and measure baseline
-      #     just gen
-
-      #     # Compare generated code size
-      #     echo "# Code Size Comparison" > code-size-data/comparison.md
-      #     echo "## Generated Code Size Changes" >> code-size-data/comparison.md
-      #     echo "| File | Before (bytes) | After (bytes) | Difference | % Change |" >> code-size-data/comparison.md
-      #     echo "|------|---------------|--------------|------------|----------|" >> code-size-data/comparison.md
-
-      #     # Find and compare generated files
-      #     find . -name "*_impls.rs" -o -name "*.generated.rs" | sort | while read -r file; do
-      #       baseline_size=$(wc -c < "$file")
-      #       echo "$file:$baseline_size" >> baseline-data/generated-sizes.txt
-      #     done
-
-      #     # Return to PR branch
-      #     git checkout -
-      #     just gen
-
-      #     # Create comparison report
-      #     while IFS=: read -r file baseline_size; do
-      #       if [[ -f "$file" ]]; then
-      #         current_size=$(wc -c < "$file")
-      #         diff=$((current_size - baseline_size))
-      #         if [[ $baseline_size -gt 0 ]]; then
-      #           percent_change=$(echo "scale=2; 100 * $diff / $baseline_size" | bc)
-      #           echo "| $file | $baseline_size | $current_size | $diff | ${percent_change}% |" >> code-size-data/comparison.md
-      #         else
-      #           echo "| $file | $baseline_size | $current_size | $diff | N/A |" >> code-size-data/comparison.md
-      #         fi
-      #       fi
-      #     done < baseline-data/generated-sizes.txt
-
-      # Upload artifacts for later use
       - name: Upload code size data
         uses: actions/upload-artifact@v4
         with:
-          name: code-size-data
-          path: code-size/data
+          name: code-size-data-binary-sizesmd
+          path: code-size/data/binary-sizes.md
           retention-days: 90
 
-      # Post results as PR comment if this is a PR
-      - name: Comment on PR with size changes
+      - name: Comment on PR with size
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
@@ -108,23 +49,11 @@ jobs:
 
             // Read comparison data
             let comment = '';
-            if (fs.existsSync('code-size-data/comparison.md')) {
-              comment = fs.readFileSync('code-size-data/comparison.md', 'utf8');
-            } else {
-              comment = '## Code Size Analysis\n\nNo significant code size changes detected.';
-            }
 
             // Add binary size data
-            if (fs.existsSync('code-size-data/binary-sizes.md')) {
-              comment += '\n\n' + fs.readFileSync('code-size-data/binary-sizes.md', 'utf8');
-            }
-
-            // Add bloat analysis summary
-            if (fs.existsSync('code-size-data/bloat-analysis.md')) {
-              // Only include the first few lines to keep the comment size reasonable
-              const bloatData = fs.readFileSync('code-size-data/bloat-analysis.md', 'utf8')
-                .split('\n').slice(0, 15).join('\n');
-              comment += '\n\n' + bloatData + '\n\n*(See workflow artifacts for full details)*';
+            const binarySizesPath = 'code-size-data-binary-sizesmd';
+            if (fs.existsSync(binarySizesPath)) {
+              comment += fs.readFileSync(binarySizesPath, 'utf8');
             }
 
             // Post comment
@@ -134,33 +63,3 @@ jobs:
               repo: context.repo.repo,
               body: comment
             });
-
-      # # Track code size history on main branch
-      # - name: Update code size history
-      #   if: github.ref == 'refs/heads/main'
-      #   run: |
-      #     # Create a summary file with timestamp
-      #     DATE=$(date +%Y-%m-%d)
-      #     COMMIT=$(git rev-parse --short HEAD)
-
-      #     echo "# Code Size Summary ($DATE, $COMMIT)" > code-size-data/summary.md
-
-      #     # Extract key metrics for historical tracking
-      #     echo "## Key Metrics" >> code-size-data/summary.md
-      #     echo "| Metric | Value |" >> code-size-data/summary.md
-      #     echo "|--------|-------|" >> code-size-data/summary.md
-
-      #     # Total generated code size
-      #     TOTAL_GEN_SIZE=$(find . -name "*_impls.rs" -o -name "*.generated.rs" | xargs wc -c 2>/dev/null | tail -n 1 | awk '{print $1}')
-      #     echo "| Total Generated Code Size | $TOTAL_GEN_SIZE bytes |" >> code-size-data/summary.md
-
-      #     # Total binary size
-      #     TOTAL_BIN_SIZE=$(find target/release -name "*.rlib" | xargs ls -l | awk '{sum += $5} END {print sum}')
-      #     echo "| Total Binary Size | $TOTAL_BIN_SIZE bytes |" >> code-size-data/summary.md
-
-      #     # Store this data point for historical tracking
-      #     mkdir -p .code-size-history
-      #     cp code-size-data/summary.md .code-size-history/size-$DATE-$COMMIT.md
-
-      #     # Optionally push this data to a separate branch for historical tracking
-      #     # (Requires additional setup and permissions)
