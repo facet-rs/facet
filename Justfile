@@ -10,6 +10,23 @@ set dotenv-load
 
 default: precommit prepush
 
+code-size:
+    #!/usr/bin/env -S bash -eu
+    mkdir -p code-size/data
+
+    cargo build --release --workspace
+    echo "# Binary Sizes" > code-size/data/binary-sizes.md
+    echo "| Crate                          | Size (bytes) |" >> code-size/data/binary-sizes.md
+    echo "|--------------------------------|--------------|" >> code-size/data/binary-sizes.md
+    find target/release -name "*.rlib" | sort | while read -r file; do
+      crate_name=$(basename "$file" | sed 's/lib\(.*\)-.*.rlib/\1/')
+      size=$(ls -l "$file" | awk '{print $5}')
+      printf "| %-30s | %-10s |\n" "$crate_name" "$size" >> code-size/data/binary-sizes.md
+    done
+
+    echo "Code size reports generated in code-size/data directory"
+    cat code-size/data/binary-sizes.md
+
 precommit: gen
 
 gen *args:
@@ -18,7 +35,7 @@ gen *args:
 prepush:
     cargo run -p facet-dev prepush
 
-ci: precommit prepush docs msrv miri
+ci: precommit prepush docs msrv miri code-size
 
 nostd:
     rustup target add thumbv8m.main-none-eabihf
@@ -146,6 +163,62 @@ msrv-power:
 
 docs:
     cargo doc --workspace --all-features --no-deps --document-private-items --keep-going
+
+# Compare code size with main branch
+code-size-diff:
+    #!/usr/bin/env -S bash -eu
+    # Get current branch
+    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+    if [[ "$CURRENT_BRANCH" == "main" ]]; then
+      echo "Cannot compare when already on main branch"
+      exit 1
+    fi
+
+    # Create temp directories
+    mkdir -p code-size-data/current
+    mkdir -p code-size-data/main
+
+    # Measure current branch
+    just gen
+    find . -name "*_impls.rs" -o -name "*.generated.rs" | sort | while read -r file; do
+      size=$(wc -c < "$file")
+      echo "$file:$size" >> code-size-data/current/generated-sizes.txt
+    done
+
+    # Switch to main and measure
+    git stash -u
+    git checkout main
+    just gen
+    find . -name "*_impls.rs" -o -name "*.generated.rs" | sort | while read -r file; do
+      size=$(wc -c < "$file")
+      echo "$file:$size" >> code-size-data/main/generated-sizes.txt
+    done
+
+    # Return to original branch
+    git checkout "$CURRENT_BRANCH"
+    git stash pop || true
+
+    # Generate comparison report
+    echo "# Code Size Comparison" > code-size-data/comparison.md
+    echo "## Generated Code Size Changes" >> code-size-data/comparison.md
+    echo "| File | Main (bytes) | Current (bytes) | Difference | % Change |" >> code-size-data/comparison.md
+    echo "|------|--------------|----------------|------------|----------|" >> code-size-data/comparison.md
+
+    while IFS=: read -r file main_size; do
+      current_size=$(grep "^$file:" code-size-data/current/generated-sizes.txt | cut -d: -f2)
+      if [[ -n "$current_size" ]]; then
+        diff=$((current_size - main_size))
+        if [[ $main_size -gt 0 ]]; then
+          percent_change=$(echo "scale=2; 100 * $diff / $main_size" | bc)
+          echo "| $file | $main_size | $current_size | $diff | ${percent_change}% |" >> code-size-data/comparison.md
+        else
+          echo "| $file | $main_size | $current_size | $diff | N/A |" >> code-size-data/comparison.md
+        fi
+      fi
+    done < code-size-data/main/generated-sizes.txt
+
+    # Print the report
+    cat code-size-data/comparison.md
 
 lockfile:
     cargo update --workspace --locked
