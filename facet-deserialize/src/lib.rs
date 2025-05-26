@@ -259,6 +259,19 @@ impl<'input, F: Format<SpanType = Raw, Input<'input> = [&'input str]>> ToCooked<
 {
     #[inline]
     fn to_cooked(self, _format: &F, input: &'input [&'input str]) -> Span<Cooked> {
+        if self.start >= input.len() {
+            // start points past the end of the args;
+            // use byte offset = total length of whole input minus 1, len = 1
+            let mut total_len = 0;
+            for (i, arg) in input.iter().enumerate() {
+                total_len += arg.len();
+                if i < input.len() - 1 {
+                    total_len += 1; // space after each arg except last
+                }
+            }
+            return Span::<Cooked>::new(total_len.saturating_sub(1), 1);
+        }
+
         // Calculate start position by summing lengths of preceding args plus spaces
         let mut start = 0;
         for arg in input.iter().take(self.start) {

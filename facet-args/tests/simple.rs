@@ -259,3 +259,23 @@ fn test_int_str_after() {
     assert_eq!(args.hello, "world".to_string());
     assert_eq!(args.baz, 2);
 }
+
+#[test]
+fn test_missing_required_arg() {
+    #[derive(Facet, Debug)]
+    struct Args {
+        #[facet(named)]
+        foo: String,
+        #[facet(named)]
+        bar: String,
+    }
+
+    // Only specify --foo, bar is missing
+    let args_result = facet_args::from_slice::<Args>(&["--foo", "hello"]);
+    assert!(
+        args_result.is_err(),
+        "Should error when required --bar is missing"
+    );
+    let err = args_result.unwrap_err();
+    insta::assert_snapshot!(err.to_string());
+}
