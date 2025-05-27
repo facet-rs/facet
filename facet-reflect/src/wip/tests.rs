@@ -25,7 +25,7 @@ fn f64_uninit() {
 #[test]
 fn f64_init() {
     let mut wip = Wip::alloc::<f64>()?;
-    wip.put::<f64>(6.241)?;
+    wip.set::<f64>(6.241)?;
     let hv = wip.build()?;
     assert_eq!(*hv, 6.241);
 }
@@ -39,7 +39,7 @@ fn option_uninit() {
 #[test]
 fn option_init() {
     let mut wip = Wip::alloc::<Option<f64>>()?;
-    wip.put::<Option<f64>>(Some(6.241))?;
+    wip.set::<Option<f64>>(Some(6.241))?;
     let hv = wip.build()?;
     assert_eq!(*hv, Some(6.241));
 }
@@ -66,7 +66,7 @@ fn struct_partially_uninit() {
 
     let mut wip = Wip::alloc::<FooBar>()?;
     wip.push_field("foo")?;
-    wip.put::<u64>(42)?;
+    wip.set::<u64>(42)?;
     wip.pop()?;
     assert_snapshot!(wip.build().unwrap_err());
 }
@@ -81,10 +81,10 @@ fn struct_fully_init() {
 
     let mut wip = Wip::alloc::<FooBar>()?;
     wip.push_field("foo")?;
-    wip.put::<u64>(42)?;
+    wip.set::<u64>(42)?;
     wip.pop()?;
     wip.push_field("bar")?;
-    wip.put::<bool>(true)?;
+    wip.set::<bool>(true)?;
     wip.pop()?;
     let hv = wip.build()?;
     assert_eq!(hv.foo, 42u64);
@@ -127,11 +127,11 @@ fn drop_partially_initialized_struct() {
         wip.push_field("first")?;
         assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 0, "No drops yet");
 
-        wip.put(NoisyDrop { value: 1 })?;
+        wip.set(NoisyDrop { value: 1 })?;
         assert_eq!(
             DROP_COUNT.load(Ordering::SeqCst),
             0,
-            "After put, the value should NOT be dropped yet"
+            "After set, the value should NOT be dropped yet"
         );
 
         wip.pop()?;
@@ -143,11 +143,11 @@ fn drop_partially_initialized_struct() {
 
         // Initialize second field
         wip.push_field("second")?;
-        wip.put(NoisyDrop { value: 2 })?;
+        wip.set(NoisyDrop { value: 2 })?;
         assert_eq!(
             DROP_COUNT.load(Ordering::SeqCst),
             0,
-            "After second put, still should have no drops"
+            "After second set, still should have no drops"
         );
 
         wip.pop()?;
@@ -202,7 +202,7 @@ fn drop_nested_partially_initialized() {
         // Start initializing inner struct
         wip.push_field("inner")?;
         wip.push_field("a")?;
-        wip.put(NoisyDrop { id: 1 })?;
+        wip.set(NoisyDrop { id: 1 })?;
         wip.pop()?;
 
         // Only initialize one field of inner, leave 'b' uninitialized
@@ -231,11 +231,11 @@ fn drop_with_copy_types() {
     let mut wip = Wip::alloc::<MixedTypes>()?;
 
     wip.push_field("copyable")?;
-    wip.put(42u64)?;
+    wip.set(42u64)?;
     wip.pop()?;
 
     wip.push_field("droppable")?;
-    wip.put("Hello".to_string())?;
+    wip.set("Hello".to_string())?;
     wip.pop()?;
 
     // Drop without initializing 'more_copy'
@@ -270,7 +270,7 @@ fn drop_fully_uninitialized() {
     DROP_COUNT.store(0, Ordering::SeqCst);
 
     {
-        let wip = Wip::alloc::<Container>()?;
+        let _wip = Wip::alloc::<Container>()?;
         // Drop immediately without initializing anything
     }
 
@@ -301,7 +301,7 @@ fn drop_after_successful_build() {
     DROP_COUNT.store(0, Ordering::SeqCst);
 
     let mut wip = Wip::alloc::<NoisyDrop>()?;
-    wip.put(NoisyDrop { value: 42 })?;
+    wip.set(NoisyDrop { value: 42 })?;
     let hv = wip.build()?;
 
     assert_eq!(
@@ -316,5 +316,106 @@ fn drop_after_successful_build() {
         DROP_COUNT.load(Ordering::SeqCst),
         1,
         "One drop after dropping HeapValue"
+    );
+}
+
+#[test]
+fn array_init() {
+    let mut wip = Wip::alloc::<[u32; 3]>()?;
+
+    // Initialize in order
+    wip.push_nth_element(0)?;
+    wip.set(42u32)?;
+    wip.pop()?;
+
+    wip.push_nth_element(1)?;
+    wip.set(43u32)?;
+    wip.pop()?;
+
+    wip.push_nth_element(2)?;
+    wip.set(44u32)?;
+    wip.pop()?;
+
+    let hv = wip.build()?;
+    assert_eq!(*hv, [42, 43, 44]);
+}
+
+#[test]
+fn array_init_out_of_order() {
+    let mut wip = Wip::alloc::<[u32; 3]>()?;
+
+    // Initialize out of order
+    wip.push_nth_element(2)?;
+    wip.set(44u32)?;
+    wip.pop()?;
+
+    wip.push_nth_element(0)?;
+    wip.set(42u32)?;
+    wip.pop()?;
+
+    wip.push_nth_element(1)?;
+    wip.set(43u32)?;
+    wip.pop()?;
+
+    let hv = wip.build()?;
+    assert_eq!(*hv, [42, 43, 44]);
+}
+
+#[test]
+fn array_partial_init() {
+    let mut wip = Wip::alloc::<[u32; 3]>()?;
+
+    // Initialize only two elements
+    wip.push_nth_element(0)?;
+    wip.set(42u32)?;
+    wip.pop()?;
+
+    wip.push_nth_element(2)?;
+    wip.set(44u32)?;
+    wip.pop()?;
+
+    // Should fail to build
+    assert_snapshot!(wip.build().unwrap_err());
+}
+
+#[test]
+fn drop_array_partially_initialized() {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Facet, Debug)]
+    struct NoisyDrop {
+        value: u64,
+    }
+
+    impl Drop for NoisyDrop {
+        fn drop(&mut self) {
+            DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+            println!("Dropping NoisyDrop with value: {}", self.value);
+        }
+    }
+
+    DROP_COUNT.store(0, Ordering::SeqCst);
+
+    {
+        let mut wip = Wip::alloc::<[NoisyDrop; 4]>()?;
+
+        // Initialize elements 0 and 2
+        wip.push_nth_element(0)?;
+        wip.set(NoisyDrop { value: 10 })?;
+        wip.pop()?;
+
+        wip.push_nth_element(2)?;
+        wip.set(NoisyDrop { value: 30 })?;
+        wip.pop()?;
+
+        // Drop without initializing elements 1 and 3
+    }
+
+    assert_eq!(
+        DROP_COUNT.load(Ordering::SeqCst),
+        2,
+        "Should drop only the two initialized array elements"
     );
 }

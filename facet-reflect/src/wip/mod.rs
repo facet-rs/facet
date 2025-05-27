@@ -5,7 +5,7 @@ mod iset;
 
 use crate::{ReflectError, trace};
 
-use core::{marker::PhantomData, num::NonZeroUsize};
+use core::marker::PhantomData;
 
 mod heap_value;
 use alloc::vec::Vec;
@@ -60,8 +60,10 @@ enum Tracker<'shape> {
 
     /// Partially initialized array
     Array {
-        /// Some array items are initialized (we only support in-order initialization)
-        count: NonZeroUsize,
+        /// Track which array elements are initialized (up to 63 elements)
+        iset: ISet,
+        /// If we're pushing another frame, this is set to the array index
+        current_child: Option<usize>,
     },
 
     /// Partially initialized struct/tuple-struct etc.
@@ -101,7 +103,19 @@ impl<'shape> Frame<'shape> {
         match self.tracker {
             Tracker::Uninit => Err(ReflectError::UninitializedValue { shape: self.shape }),
             Tracker::Init => Ok(()),
-            Tracker::Array { .. } => todo!(),
+            Tracker::Array { iset, .. } => {
+                match self.shape.ty {
+                    facet_core::Type::Sequence(facet_core::SequenceType::Array(array_def)) => {
+                        // Check if all array elements are initialized
+                        if (0..array_def.n).all(|idx| iset.get(idx)) {
+                            Ok(())
+                        } else {
+                            Err(ReflectError::UninitializedValue { shape: self.shape })
+                        }
+                    }
+                    _ => Err(ReflectError::UninitializedValue { shape: self.shape }),
+                }
+            }
             Tracker::Struct { iset, .. } => {
                 if iset.all_set() {
                     Ok(())
@@ -157,21 +171,21 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         })
     }
 
-    /// Puts a value wholesale into the current frame
-    pub fn put<T>(&mut self, value: T) -> Result<(), ReflectError<'shape>>
+    /// Sets a value wholesale into the current frame
+    pub fn set<T>(&mut self, value: T) -> Result<(), ReflectError<'shape>>
     where
         T: Facet<'shape>,
     {
-        // relay to put_shape — convert T into a ptr and shape, and call put_shape
+        // relay to set_shape — convert T into a ptr and shape, and call set_shape
         let ptr_const = PtrConst::new(&raw const value);
-        let result = self.put_shape(ptr_const, T::SHAPE);
+        let result = self.set_shape(ptr_const, T::SHAPE);
         // Prevent the value from being dropped since we've copied it
         core::mem::forget(value);
         result
     }
 
-    /// Puts a value into the current frame by shape, for shape-based operations
-    pub fn put_shape(
+    /// Sets a value into the current frame by shape, for shape-based operations
+    pub fn set_shape(
         &mut self,
         src_value: PtrConst<'_>,
         src_shape: &'shape Shape<'shape>,
@@ -289,6 +303,84 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         }
     }
 
+    /// Selects the nth element of an array by index
+    pub fn push_nth_element(&mut self, idx: usize) -> Result<(), ReflectError<'shape>> {
+        let frame = self.frames.last_mut().unwrap();
+        match frame.shape.ty {
+            facet_core::Type::Sequence(seq_type) => match seq_type {
+                facet_core::SequenceType::Array(array_def) => {
+                    if idx >= array_def.n {
+                        return Err(ReflectError::OperationFailed {
+                            shape: frame.shape,
+                            operation: "array index out of bounds",
+                        });
+                    }
+
+                    if array_def.n > 63 {
+                        return Err(ReflectError::OperationFailed {
+                            shape: frame.shape,
+                            operation: "arrays larger than 63 elements are not yet supported",
+                        });
+                    }
+
+                    // Ensure frame is in Array state
+                    if matches!(frame.tracker, Tracker::Uninit) {
+                        frame.tracker = Tracker::Array {
+                            iset: ISet::default(),
+                            current_child: None,
+                        };
+                    }
+
+                    match &mut frame.tracker {
+                        Tracker::Array {
+                            iset,
+                            current_child,
+                        } => {
+                            if iset.get(idx) {
+                                return Err(ReflectError::OperationFailed {
+                                    shape: frame.shape,
+                                    operation: "array element already initialized",
+                                });
+                            }
+
+                            *current_child = Some(idx);
+
+                            // Calculate the offset for this array element
+                            let element_layout = array_def
+                                .t
+                                .layout
+                                .sized_layout()
+                                .map_err(|_| ReflectError::Unsized { shape: array_def.t })?;
+                            let offset = element_layout.size() * idx;
+
+                            // Create a new frame for the array element
+                            let element_data = unsafe { frame.data.field_uninit_at(offset) };
+                            self.frames.push(Frame::new(
+                                element_data,
+                                array_def.t,
+                                FrameOwnership::Field,
+                            ));
+
+                            Ok(())
+                        }
+                        _ => Err(ReflectError::OperationFailed {
+                            shape: frame.shape,
+                            operation: "expected array tracker state",
+                        }),
+                    }
+                }
+                _ => Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "can only select elements from arrays",
+                }),
+            },
+            _ => Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "cannot select an element from this type",
+            }),
+        }
+    }
+
     /// Pops the current frame off the stack, indicating we're done initializing the current field.
     pub fn pop(&mut self) -> Result<(), ReflectError<'shape>> {
         if self.frames.len() <= 1 {
@@ -304,17 +396,28 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
 
         self.frames.pop();
 
-        // If in Tracker::Struct and current_child is Some(idx), set the child's iset bit and clear current_child.
+        // Update parent frame's tracking when popping from a child
         let parent_frame = self.frames.last_mut().unwrap();
-        if let Tracker::Struct {
-            iset,
-            current_child,
-        } = &mut parent_frame.tracker
-        {
-            if let Some(idx) = *current_child {
-                iset.set(idx);
-                *current_child = None;
+        match &mut parent_frame.tracker {
+            Tracker::Struct {
+                iset,
+                current_child,
+            } => {
+                if let Some(idx) = *current_child {
+                    iset.set(idx);
+                    *current_child = None;
+                }
             }
+            Tracker::Array {
+                iset,
+                current_child,
+            } => {
+                if let Some(idx) = *current_child {
+                    iset.set(idx);
+                    *current_child = None;
+                }
+            }
+            _ => {}
         }
 
         Ok(())
@@ -364,21 +467,21 @@ impl<'facet, 'shape, T> TypedWip<'facet, 'shape, T> {
         unsafe { Ok(heap_value.into_box_unchecked::<T>()) }
     }
 
-    /// Puts a value wholesale into the current frame
-    pub fn put<U>(&mut self, value: U) -> Result<(), ReflectError<'shape>>
+    /// Sets a value wholesale into the current frame
+    pub fn set<U>(&mut self, value: U) -> Result<(), ReflectError<'shape>>
     where
         U: Facet<'shape>,
     {
-        self.wip.put(value)
+        self.wip.set(value)
     }
 
-    /// Puts a value into the current frame by shape, for shape-based operations
-    pub fn put_shape(
+    /// Sets a value into the current frame by shape, for shape-based operations
+    pub fn set_shape(
         &mut self,
         src_value: PtrConst<'_>,
         src_shape: &'shape Shape<'shape>,
     ) -> Result<(), ReflectError<'shape>> {
-        self.wip.put_shape(src_value, src_shape)
+        self.wip.set_shape(src_value, src_shape)
     }
 
     /// Forwards field_named to the inner wip instance.
@@ -389,6 +492,11 @@ impl<'facet, 'shape, T> TypedWip<'facet, 'shape, T> {
     /// Forwards push_nth_field to the inner wip instance.
     pub fn push_nth_field(&mut self, idx: usize) -> Result<(), ReflectError<'shape>> {
         self.wip.push_nth_field(idx)
+    }
+
+    /// Forwards push_nth_element to the inner wip instance.
+    pub fn push_nth_element(&mut self, idx: usize) -> Result<(), ReflectError<'shape>> {
+        self.wip.push_nth_element(idx)
     }
 
     /// Forwards pop to the inner wip instance.
@@ -413,9 +521,27 @@ impl<'facet, 'shape> Drop for Wip<'facet, 'shape> {
                         unsafe { drop_fn(PtrMut::new(frame.data.as_mut_byte_ptr())) };
                     }
                 }
-                Tracker::Array { count } => {
-                    // TODO: Drop initialized array elements
-                    let _ = count;
+                Tracker::Array { iset, .. } => {
+                    // Drop initialized array elements
+                    match frame.shape.ty {
+                        facet_core::Type::Sequence(facet_core::SequenceType::Array(array_def)) => {
+                            let element_layout = array_def.t.layout.sized_layout().ok();
+                            if let Some(layout) = element_layout {
+                                for idx in 0..array_def.n {
+                                    if iset.get(idx) {
+                                        let offset = layout.size() * idx;
+                                        let element_ptr =
+                                            unsafe { frame.data.field_init_at(offset) };
+                                        if let Some(drop_fn) = (array_def.t.vtable.drop_in_place)()
+                                        {
+                                            unsafe { drop_fn(element_ptr) };
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
                 }
                 Tracker::Struct { iset, .. } => {
                     // Drop initialized struct fields

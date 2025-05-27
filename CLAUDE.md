@@ -29,6 +29,11 @@ When debugging serialization/deserialization issues, you can enable more verbose
 cargo nextest run -F facet-reflect/log my_test
 ```
 
+To run tests under Miri (the memory safety checker), use the nightly toolchain:
+```bash
+cargo +nightly miri nextest run -p facet-reflect test_name
+```
+
 ### Pre-commit Hooks
 
 When committing changes, facet-dev will run to check for code generation and formatting changes.
