@@ -70,3 +70,23 @@ fn struct_partially_uninit() {
     wip.pop()?;
     assert_snapshot!(wip.build().unwrap_err());
 }
+
+#[test]
+fn struct_fully_init() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct FooBar {
+        foo: u64,
+        bar: bool,
+    }
+
+    let mut wip = Wip::alloc::<FooBar>()?;
+    wip.push_field("foo")?;
+    wip.put::<u64>(42)?;
+    wip.pop()?;
+    wip.push_field("bar")?;
+    wip.put::<bool>(true)?;
+    wip.pop()?;
+    let hv = wip.build()?;
+    assert_eq!(hv.foo, 42u64);
+    assert_eq!(hv.bar, true);
+}
