@@ -30,7 +30,7 @@ impl ISet {
     }
 
     /// Checks if the bit at the given index is set.
-    pub fn has(&self, index: usize) -> bool {
+    pub fn get(&self, index: usize) -> bool {
         if index >= 64 {
             panic!("ISet can only track up to 64 fields. Index {index} is out of bounds.");
         }
@@ -38,7 +38,7 @@ impl ISet {
     }
 
     /// Returns true if all bits up to MAX_INDEX are set.
-    pub fn all(&self) -> bool {
+    pub fn all_set(&self) -> bool {
         self.flags == u64::MAX >> (63 - Self::MAX_INDEX)
     }
 }

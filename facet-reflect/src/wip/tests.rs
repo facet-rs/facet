@@ -24,8 +24,8 @@ fn f64_uninit() {
 
 #[test]
 fn f64_init() {
-    let wip = Wip::alloc::<f64>()?;
-    let wip = wip.put::<f64>(6.241)?;
+    let mut wip = Wip::alloc::<f64>()?;
+    wip.put::<f64>(6.241)?;
     let hv = wip.build()?;
     assert_eq!(*hv, 6.241);
 }
@@ -38,8 +38,8 @@ fn option_uninit() {
 
 #[test]
 fn option_init() {
-    let wip = Wip::alloc::<Option<f64>>()?;
-    let wip = wip.put::<Option<f64>>(Some(6.241))?;
+    let mut wip = Wip::alloc::<Option<f64>>()?;
+    wip.put::<Option<f64>>(Some(6.241))?;
     let hv = wip.build()?;
     assert_eq!(*hv, Some(6.241));
 }
@@ -64,9 +64,9 @@ fn struct_partially_uninit() {
         bar: bool,
     }
 
-    let wip = Wip::alloc::<FooBar>()?;
-    let wip = wip.field_named("foo")?;
-    let wip = wip.put::<u64>(42)?;
-    let wip = wip.pop()?;
+    let mut wip = Wip::alloc::<FooBar>()?;
+    wip.push_field("foo")?;
+    wip.put::<u64>(42)?;
+    wip.pop()?;
     assert_snapshot!(wip.build().unwrap_err());
 }

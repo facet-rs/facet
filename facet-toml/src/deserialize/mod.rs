@@ -162,7 +162,7 @@ fn deserialize_as_struct<'input, 'a, 'shape>(
     })?;
 
     for field in def.fields {
-        reflect!(wip, toml, item.span(), field_named(field.name));
+        reflect!(wip, toml, item.span(), push_field(field.name));
 
         // Find the matching TOML field
         let field_item = table.get(field.name);
@@ -335,7 +335,7 @@ fn build_enum_from_variant_name<'input, 'a, 'shape>(
 
     // Push all fields
     for (index, field) in variant.data.fields.iter().enumerate() {
-        reflect!(wip, toml, item.span(), field_named(field.name));
+        reflect!(wip, toml, item.span(), push_field(field.name));
 
         // Try to get the TOML value as a table to extract the field
         if let Some(table) = item.as_table_like() {

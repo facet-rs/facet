@@ -24,6 +24,9 @@ pub struct Wip<'facet, 'shape> {
     /// stack of frames to keep track of deeply nested initialization
     frames: Vec<Frame<'shape>>,
 
+    /// was this wip poisoned?
+    poisoned: bool,
+
     invariant: PhantomData<fn(&'facet ()) -> &'facet ()>,
 }
 
@@ -84,7 +87,31 @@ impl<'shape> Frame<'shape> {
             Tracker::Uninit => Err(ReflectError::UninitializedValue { shape: self.shape }),
             Tracker::Init => Ok(()),
             Tracker::Array { .. } => todo!(),
-            Tracker::Struct { .. } => todo!(),
+            Tracker::Struct { iset, .. } => {
+                if iset.all_set() {
+                    Ok(())
+                } else {
+                    // Attempt to find the first uninitialized field, if possible
+                    match self.shape.ty {
+                        facet_core::Type::User(facet_core::UserType::Struct(struct_type)) => {
+                            // Find index of the first bit not set
+                            let first_missing_idx =
+                                (0..struct_type.fields.len()).find(|&idx| !iset.get(idx));
+                            if let Some(missing_idx) = first_missing_idx {
+                                let field_name = struct_type.fields[missing_idx].name;
+                                Err(ReflectError::UninitializedField {
+                                    shape: self.shape,
+                                    field_name,
+                                })
+                            } else {
+                                // fallback, something went wrong
+                                Err(ReflectError::UninitializedValue { shape: self.shape })
+                            }
+                        }
+                        _ => Err(ReflectError::UninitializedValue { shape: self.shape }),
+                    }
+                }
+            }
             Tracker::Enum { .. } => todo!(),
         }
     }
@@ -99,6 +126,7 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
 
         Ok(Self {
             frames: vec![Frame::new(data, shape)],
+            poisoned: false,
             invariant: PhantomData,
         })
     }
@@ -115,7 +143,7 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
     }
 
     /// Puts a value wholesale into the current frame
-    pub fn put<T>(self, value: T) -> Result<Self, ReflectError<'shape>>
+    pub fn put<T>(&mut self, value: T) -> Result<(), ReflectError<'shape>>
     where
         T: Facet<'shape>,
     {
@@ -126,10 +154,10 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
 
     /// Puts a value into the current frame by shape, for shape-based operations
     pub fn put_shape(
-        mut self,
+        &mut self,
         src_value: PtrConst<'_>,
         src_shape: &'shape Shape<'shape>,
-    ) -> Result<Self, ReflectError<'shape>> {
+    ) -> Result<(), ReflectError<'shape>> {
         let fr = self.frames.last_mut().unwrap();
 
         if !fr.shape.is_shape(src_shape) {
@@ -146,7 +174,131 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         }
 
         fr.tracker = Tracker::Init;
-        Ok(self)
+        Ok(())
+    }
+
+    /// Selects a field of a struct with a given name
+    pub fn push_field(&mut self, field_name: &str) -> Result<(), ReflectError<'shape>> {
+        let frame = self.frames.last_mut().unwrap();
+        match frame.shape.ty {
+            facet_core::Type::Primitive(_) => Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "cannot select a field from a primitive type",
+            }),
+            facet_core::Type::Sequence(_) => Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "cannot select a field from a sequence type",
+            }),
+            facet_core::Type::User(user_type) => match user_type {
+                facet_core::UserType::Struct(struct_type) => {
+                    let idx = struct_type.fields.iter().position(|f| f.name == field_name);
+                    let idx = match idx {
+                        Some(idx) => idx,
+                        None => {
+                            return Err(ReflectError::OperationFailed {
+                                shape: frame.shape,
+                                operation: "field not found",
+                            });
+                        }
+                    };
+                    self.push_nth_field(idx)
+                }
+                facet_core::UserType::Enum(_) => {
+                    todo!("add support for selecting fields in enums")
+                }
+                facet_core::UserType::Union(_) => Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "unions are not supported yet",
+                }),
+                facet_core::UserType::Opaque => todo!(),
+            },
+            facet_core::Type::Pointer(_) => Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "cannot select a field from a pointer type",
+            }),
+            _ => todo!(),
+        }
+    }
+
+    /// Selects the nth field of a struct by index
+    pub fn push_nth_field(&mut self, idx: usize) -> Result<(), ReflectError<'shape>> {
+        let frame = self.frames.last_mut().unwrap();
+        match frame.shape.ty {
+            facet_core::Type::User(user_type) => match user_type {
+                facet_core::UserType::Struct(struct_type) => {
+                    if idx >= struct_type.fields.len() {
+                        return Err(ReflectError::OperationFailed {
+                            shape: frame.shape,
+                            operation: "field index out of bounds",
+                        });
+                    }
+                    let field = &struct_type.fields[idx];
+
+                    match &mut frame.tracker {
+                        Tracker::Uninit => {
+                            frame.tracker = Tracker::Struct {
+                                iset: ISet::new(struct_type.fields.len()),
+                                current_child: Some(idx),
+                            }
+                        }
+                        Tracker::Struct { current_child, .. } => {
+                            *current_child = Some(idx);
+                        }
+                        _ => unreachable!(),
+                    }
+
+                    // Push a new frame for this field onto the frames stack.
+                    let field_ptr = unsafe { frame.data.field_uninit_at(field.offset) };
+                    let field_shape = field.shape;
+                    self.frames.push(Frame::new(field_ptr, field_shape));
+
+                    Ok(())
+                }
+                facet_core::UserType::Enum(_) => {
+                    todo!("add support for selecting fields in enums")
+                }
+                facet_core::UserType::Union(_) => Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "unions are not supported yet",
+                }),
+                facet_core::UserType::Opaque => todo!(),
+            },
+            _ => Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "cannot select a field from this type",
+            }),
+        }
+    }
+
+    /// Pops the current frame off the stack, indicating we're done initializing the current field.
+    pub fn pop(&mut self) -> Result<(), ReflectError<'shape>> {
+        if self.frames.len() <= 1 {
+            // Never pop the last/root frame.
+            return Err(ReflectError::InvariantViolation {
+                invariant: "Wip::pop() called with only one frame on the stack",
+            });
+        }
+
+        // Require that the top frame is fully initialized before popping.
+        let frame = self.frames.last().unwrap();
+        frame.require_full_initialization()?;
+
+        self.frames.pop();
+
+        // If in Tracker::Struct and current_child is Some(idx), set the child's iset bit and clear current_child.
+        let parent_frame = self.frames.last_mut().unwrap();
+        if let Tracker::Struct {
+            iset,
+            current_child,
+        } = &mut parent_frame.tracker
+        {
+            if let Some(idx) = *current_child {
+                iset.set(idx);
+                *current_child = None;
+            }
+        }
+
+        Ok(())
     }
 
     /// Builds the value
@@ -194,26 +346,35 @@ impl<'facet, 'shape, T> TypedWip<'facet, 'shape, T> {
     }
 
     /// Puts a value wholesale into the current frame
-    pub fn put<U>(self, value: U) -> Result<Self, ReflectError<'shape>>
+    pub fn put<U>(&mut self, value: U) -> Result<(), ReflectError<'shape>>
     where
         U: Facet<'shape>,
     {
-        Ok(Self {
-            wip: self.wip.put(value)?,
-            phantom: PhantomData,
-        })
+        self.wip.put(value)
     }
 
     /// Puts a value into the current frame by shape, for shape-based operations
     pub fn put_shape(
-        self,
+        &mut self,
         src_value: PtrConst<'_>,
         src_shape: &'shape Shape<'shape>,
-    ) -> Result<Self, ReflectError<'shape>> {
-        Ok(Self {
-            wip: self.wip.put_shape(src_value, src_shape)?,
-            phantom: PhantomData,
-        })
+    ) -> Result<(), ReflectError<'shape>> {
+        self.wip.put_shape(src_value, src_shape)
+    }
+
+    /// Forwards field_named to the inner wip instance.
+    pub fn push_field(&mut self, field_name: &str) -> Result<(), ReflectError<'shape>> {
+        self.wip.push_field(field_name)
+    }
+
+    /// Forwards push_nth_field to the inner wip instance.
+    pub fn push_nth_field(&mut self, idx: usize) -> Result<(), ReflectError<'shape>> {
+        self.wip.push_nth_field(idx)
+    }
+
+    /// Forwards pop to the inner wip instance.
+    pub fn pop(&mut self) -> Result<(), ReflectError<'shape>> {
+        self.wip.pop()
     }
 }
 
