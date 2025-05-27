@@ -628,7 +628,7 @@ fn struct_with_facet_attributes() {
     insta::assert_snapshot!(expand(
         r#"
         #[derive(Facet)]
-        #[facet(name = "MyCoolStruct", deny_unknown_fields, version = 2)]
+        #[facet(name = "MyCoolStruct", deny_unknown_fields, version = 2, type_tag = "rs.facet.MyCoolStruct")]
         struct StructWithAttributes {
             #[facet(name = "identifier", default = generate_id, sensitive)]
             id: String,
@@ -648,7 +648,7 @@ fn enum_with_facet_attributes() {
     insta::assert_snapshot!(expand(
         r#"
         #[derive(Facet)]
-        #[facet(name = "MyCoolEnum", repr = "u16")]
+        #[facet(name = "MyCoolEnum", repr = "u16", type_tag = "rs.facet.MyCoolEnum")]
         #[repr(u16)] // Ensure repr matches if specified in facet attribute
         enum EnumWithAttributes {
             #[facet(name = "FirstVariant", discriminant = 10)]

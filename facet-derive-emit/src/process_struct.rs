@@ -113,7 +113,8 @@ pub(crate) fn gen_field_from_pfield(
             PFacetAttr::RenameAll { .. } => {} // Explicitly ignore rename attributes here
             PFacetAttr::Transparent
             | PFacetAttr::Invariants { .. }
-            | PFacetAttr::DenyUnknownFields => {}
+            | PFacetAttr::DenyUnknownFields
+            | PFacetAttr::TypeTag { .. } => {}
         }
     }
 
@@ -265,13 +266,23 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 | PFacetAttr::SkipSerializing
                 | PFacetAttr::SkipSerializingIf { .. }
                 | PFacetAttr::Flatten
-                | PFacetAttr::Child => {}
+                | PFacetAttr::Child
+                | PFacetAttr::TypeTag { .. } => {}
             }
         }
         if items.is_empty() {
             quote! {}
         } else {
             quote! { .attributes(&[#(#items),*]) }
+        }
+    };
+
+    // Type tag from PStruct
+    let type_tag_maybe = {
+        if let Some(type_tag) = ps.container.attrs.type_tag() {
+            quote! { .type_tag(#type_tag) }
+        } else {
+            quote! {}
         }
     };
 
@@ -488,6 +499,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                     #inner_setter // Use transparency flag from PStruct
                     #maybe_container_doc // From ps.container.attrs.doc
                     #container_attributes_tokens // From ps.container.attrs.facet
+                    #type_tag_maybe
                     .build()
             };
         }

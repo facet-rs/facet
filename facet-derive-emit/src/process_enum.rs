@@ -57,6 +57,14 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         }
     };
 
+    let type_tag_maybe = {
+        if let Some(type_tag) = pe.container.attrs.type_tag() {
+            quote! { .type_tag(#type_tag) }
+        } else {
+            quote! {}
+        }
+    };
+
     // Determine enum repr (already resolved by PEnum::parse())
     let valid_repr = &pe.repr;
 
@@ -588,6 +596,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                     ))
                     #maybe_container_doc
                     #container_attributes_tokens
+                    #type_tag_maybe
                     .build()
             };
         }

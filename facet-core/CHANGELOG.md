@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Add support for `Shape::type_tag`
+
 ## [0.27.6](https://github.com/facet-rs/facet/compare/facet-core-v0.27.5...facet-core-v0.27.6) - 2025-05-26
 
 ### Other

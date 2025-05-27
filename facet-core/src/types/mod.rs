@@ -64,6 +64,12 @@ pub struct Shape<'shape> {
     /// Attributes that can be applied to a shape
     pub attributes: &'shape [ShapeAttribute<'shape>],
 
+    /// Shape type tag, used to identify the type in self describing formats.
+    ///
+    /// For some formats, this is a fully or partially qualified name.
+    /// For other formats, this is a simple string or integer type.
+    pub type_tag: Option<&'shape str>,
+
     /// As far as serialization and deserialization goes, we consider that this shape is a wrapper
     /// for that shape This is true for "newtypes" like `NonZero`, wrappers like `Utf8PathBuf`,
     /// smart pointers like `Arc<T>`, etc.
@@ -197,6 +203,7 @@ pub struct ShapeBuilder<'shape> {
     type_params: &'shape [TypeParam<'shape>],
     doc: &'shape [&'shape str],
     attributes: &'shape [ShapeAttribute<'shape>],
+    type_tag: Option<&'shape str>,
     inner: Option<fn() -> &'shape Shape<'shape>>,
 }
 
@@ -214,6 +221,7 @@ impl<'shape> ShapeBuilder<'shape> {
             type_params: &[],
             doc: &[],
             attributes: &[],
+            type_tag: None,
             inner: None,
         }
     }
@@ -281,6 +289,13 @@ impl<'shape> ShapeBuilder<'shape> {
         self
     }
 
+    /// Sets the `type_tag` field of the `ShapeBuilder`.
+    #[inline]
+    pub const fn type_tag(mut self, type_tag: &'shape str) -> Self {
+        self.type_tag = Some(type_tag);
+        self
+    }
+
     /// Sets the `inner` field of the `ShapeBuilder`.
     ///
     /// This indicates that this shape is a transparent wrapper for another shape,
@@ -311,6 +326,7 @@ impl<'shape> ShapeBuilder<'shape> {
             ty: self.ty.unwrap(),
             doc: self.doc,
             attributes: self.attributes,
+            type_tag: self.type_tag,
             inner: self.inner,
         }
     }

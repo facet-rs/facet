@@ -84,6 +84,10 @@ pub enum PFacetAttr {
     /// Valid in field, enum variant, or container
     /// `#[facet(skip_serializing_if = "func")]` — skip serializing if the function returns true.
     SkipSerializingIf { expr: TokenStream },
+
+    /// Valid in container
+    /// `#[facet(type_tag = "com.example.MyType")]` — identify type by tag and serialize with this tag
+    TypeTag { content: String },
 }
 
 impl PFacetAttr {
@@ -135,6 +139,11 @@ impl PFacetAttr {
                 FacetInner::SkipSerializingIf(skip_if) => {
                     dest.push(PFacetAttr::SkipSerializingIf {
                         expr: skip_if.expr.to_token_stream(),
+                    });
+                }
+                FacetInner::TypeTag(type_tag) => {
+                    dest.push(PFacetAttr::TypeTag {
+                        content: type_tag.expr.as_str().to_string(),
                     });
                 }
             }
@@ -439,6 +448,15 @@ impl PAttrs {
         self.facet
             .iter()
             .any(|attr| matches!(attr, PFacetAttr::Transparent))
+    }
+
+    pub(crate) fn type_tag(&self) -> Option<&str> {
+        for attr in &self.facet {
+            if let PFacetAttr::TypeTag { content } = attr {
+                return Some(content);
+            }
+        }
+        None
     }
 }
 

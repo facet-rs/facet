@@ -50,6 +50,8 @@ keyword! {
     pub KSkipSerializing = "skip_serializing";
     /// The "skip_serializing_if" keyword.
     pub KSkipSerializingIf = "skip_serializing_if";
+    /// The "type_tag" keyword.
+    pub KTypeTag = "type_tag";
 }
 
 operator! {
@@ -155,6 +157,8 @@ unsynn! {
         SkipSerializing(SkipSerializingInner),
         /// A skip_serializing_if attribute that specifies a condition for skipping serialization.
         SkipSerializingIf(SkipSerializingIfInner),
+        /// A type_tag attribute that specifies the identifying tag for self describing formats
+        TypeTag(TypeTagInner),
         /// Any other attribute represented as a sequence of token trees.
         Arbitrary(VerbatimUntil<Comma>),
     }
@@ -187,13 +191,23 @@ unsynn! {
         pub expr: VerbatimUntil<Comma>,
     }
 
+    /// Inner value for #[facet(type_tag = ...)]
+    pub struct TypeTagInner {
+        /// The "type_tag" keyword.
+        pub _kw_type_tag: KTypeTag,
+        /// The equals sign '='.
+        pub _eq: Eq,
+        /// The value assigned, as a literal string.
+        pub expr: LiteralString,
+    }
+
     /// Inner value for #[facet(default = ...)]
     pub struct DefaultEqualsInner {
         /// The "default" keyword.
         pub _kw_default: KDefault,
         /// The equals sign '='.
         pub _eq: Eq,
-        /// The value assigned, as a literal string.
+        /// The value assigned, as verbatim until comma.
         pub expr: VerbatimUntil<Comma>,
     }
 
