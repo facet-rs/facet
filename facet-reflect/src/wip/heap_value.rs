@@ -155,4 +155,13 @@ impl<'facet, 'shape> HeapValue<'facet, 'shape> {
         core::mem::forget(guard);
         unsafe { Box::from_raw(ptr) }
     }
+
+    /// Unsafely get a reference to the underlying value as type T.
+    ///
+    /// # Safety
+    ///
+    /// Caller must guarantee that the underlying value is of type T.
+    pub unsafe fn as_ref<T>(&self) -> &T {
+        unsafe { &*(self.guard.as_ref().unwrap().ptr as *const T) }
+    }
 }

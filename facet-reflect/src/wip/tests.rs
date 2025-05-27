@@ -946,3 +946,122 @@ fn enum_partial_initialization_error() {
     let result = wip.build();
     assert!(result.is_err());
 }
+
+#[test]
+fn list_vec_basic() {
+    let mut wip = Wip::alloc::<Vec<i32>>()?;
+    wip.begin_pushback()?;
+
+    // Push first element
+    wip.push()?;
+    wip.set(42)?;
+    wip.pop()?;
+
+    // Push second element
+    wip.push()?;
+    wip.set(84)?;
+    wip.pop()?;
+
+    // Push third element
+    wip.push()?;
+    wip.set(126)?;
+    wip.pop()?;
+
+    let hv = wip.build()?;
+    let vec: &Vec<i32> = unsafe { hv.as_ref() };
+    assert_eq!(vec, &vec![42, 84, 126]);
+}
+
+#[test]
+fn list_vec_complex() {
+    #[derive(Debug, PartialEq, Clone, Facet)]
+    struct Person {
+        name: String,
+        age: u32,
+    }
+
+    let mut wip = Wip::alloc::<Vec<Person>>()?;
+    wip.begin_pushback()?;
+
+    // Push first person
+    wip.push()?;
+    wip.push_nth_field(0)?; // name
+    wip.set("Alice".to_string())?;
+    wip.pop()?;
+    wip.push_nth_field(1)?; // age
+    wip.set(30u32)?;
+    wip.pop()?;
+    wip.pop()?; // Done with first person
+
+    // Push second person
+    wip.push()?;
+    wip.push_nth_field(0)?; // name
+    wip.set("Bob".to_string())?;
+    wip.pop()?;
+    wip.push_nth_field(1)?; // age
+    wip.set(25u32)?;
+    wip.pop()?;
+    wip.pop()?; // Done with second person
+
+    let hv = wip.build()?;
+    let vec: &Vec<Person> = unsafe { hv.as_ref() };
+    assert_eq!(
+        vec,
+        &vec![
+            Person {
+                name: "Alice".to_string(),
+                age: 30
+            },
+            Person {
+                name: "Bob".to_string(),
+                age: 25
+            }
+        ]
+    );
+}
+
+#[test]
+fn list_vec_empty() {
+    let mut wip = Wip::alloc::<Vec<String>>()?;
+    wip.begin_pushback()?;
+    // Don't push any elements
+
+    let hv = wip.build()?;
+    let vec: &Vec<String> = unsafe { hv.as_ref() };
+    assert_eq!(vec, &Vec::<String>::new());
+}
+
+#[test]
+fn list_vec_nested() {
+    let mut wip = Wip::alloc::<Vec<Vec<i32>>>()?;
+    wip.begin_pushback()?;
+
+    // Push first inner vec
+    wip.push()?;
+    wip.begin_pushback()?;
+    wip.push()?;
+    wip.set(1)?;
+    wip.pop()?;
+    wip.push()?;
+    wip.set(2)?;
+    wip.pop()?;
+    wip.pop()?; // Done with first inner vec
+
+    // Push second inner vec
+    wip.push()?;
+    wip.begin_pushback()?;
+    wip.push()?;
+    wip.set(3)?;
+    wip.pop()?;
+    wip.push()?;
+    wip.set(4)?;
+    wip.pop()?;
+    wip.push()?;
+    wip.set(5)?;
+    wip.pop()?;
+    wip.pop()?; // Done with second inner vec
+
+    let hv = wip.build()?;
+    let vec: &Vec<Vec<i32>> = unsafe { hv.as_ref() };
+    assert_eq!(vec, &vec![vec![1, 2], vec![3, 4, 5]]);
+}

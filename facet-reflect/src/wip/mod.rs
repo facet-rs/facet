@@ -90,6 +90,14 @@ enum Tracker<'shape> {
         /// If we're pushing another frame, this is set to the field index
         current_child: Option<usize>,
     },
+
+    /// Partially initialized list (Vec, etc.)
+    List {
+        /// The list has been initialized with capacity
+        is_initialized: bool,
+        /// If we're pushing another frame for an element
+        current_child: bool,
+    },
 }
 
 impl<'shape> Frame<'shape> {
@@ -172,6 +180,13 @@ impl<'shape> Frame<'shape> {
                 }
             }
             Tracker::SmartPointer { is_initialized } => {
+                if is_initialized {
+                    Ok(())
+                } else {
+                    Err(ReflectError::UninitializedValue { shape: self.shape })
+                }
+            }
+            Tracker::List { is_initialized, .. } => {
                 if is_initialized {
                     Ok(())
                 } else {
@@ -769,6 +784,114 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         }
     }
 
+    /// Begins a pushback operation for a list (Vec, etc.)
+    /// This initializes the list with default capacity and allows pushing elements
+    pub fn begin_pushback(&mut self) -> Result<(), ReflectError<'shape>> {
+        let frame = self.frames.last_mut().unwrap();
+
+        // Check that we have a List
+        let list_def = match &frame.shape.def {
+            Def::List(list_def) => list_def,
+            _ => {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "begin_pushback can only be called on List types",
+                });
+            }
+        };
+
+        // Check that we have init_in_place_with_capacity function
+        let init_fn =
+            list_def
+                .vtable
+                .init_in_place_with_capacity
+                .ok_or(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "list type does not support initialization with capacity",
+                })?;
+
+        // Initialize the list with default capacity (0)
+        unsafe {
+            init_fn(frame.data, 0);
+        }
+
+        // Update tracker to List state
+        frame.tracker = Tracker::List {
+            is_initialized: true,
+            current_child: false,
+        };
+
+        Ok(())
+    }
+
+    /// Pushes an element to the list
+    /// The element should be set using `set()` or similar methods, then `pop()` to complete
+    pub fn push(&mut self) -> Result<(), ReflectError<'shape>> {
+        let frame = self.frames.last_mut().unwrap();
+
+        // Check that we have a List that's been initialized
+        let list_def = match &frame.shape.def {
+            Def::List(list_def) => list_def,
+            _ => {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "push can only be called on List types",
+                });
+            }
+        };
+
+        // Verify the tracker is in List state and initialized
+        match &mut frame.tracker {
+            Tracker::List {
+                is_initialized: true,
+                current_child,
+            } => {
+                if *current_child {
+                    return Err(ReflectError::OperationFailed {
+                        shape: frame.shape,
+                        operation: "already pushing an element, call pop() first",
+                    });
+                }
+                *current_child = true;
+            }
+            _ => {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "must call begin_pushback() before push()",
+                });
+            }
+        }
+
+        // Get the element shape
+        let element_shape = list_def.t();
+
+        // Allocate space for the new element
+        let element_layout =
+            element_shape
+                .layout
+                .sized_layout()
+                .map_err(|_| ReflectError::Unsized {
+                    shape: element_shape,
+                })?;
+        let element_ptr: *mut u8 = unsafe { std::alloc::alloc(element_layout) };
+
+        if element_ptr.is_null() {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "failed to allocate memory for list element",
+            });
+        }
+
+        // Push a new frame for the element
+        self.frames.push(Frame::new(
+            PtrUninit::new(element_ptr),
+            element_shape,
+            FrameOwnership::Owned,
+        ));
+
+        Ok(())
+    }
+
     /// Pops the current frame off the stack, indicating we're done initializing the current field.
     pub fn pop(&mut self) -> Result<(), ReflectError<'shape>> {
         if self.frames.len() <= 1 {
@@ -851,6 +974,49 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                 if let Some(idx) = *current_child {
                     data.set(idx);
                     *current_child = None;
+                }
+            }
+            Tracker::List {
+                is_initialized: true,
+                current_child,
+            } => {
+                if *current_child {
+                    // We just popped an element frame, now push it to the list
+                    if let Def::List(list_def) = parent_frame.shape.def {
+                        if let Some(push_fn) = list_def.vtable.push {
+                            // The child frame contained the element value
+                            let element_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
+
+                            // Use push to add element to the list
+                            unsafe {
+                                push_fn(
+                                    PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
+                                    element_ptr,
+                                );
+                            }
+
+                            // Deallocate the element's memory since push moved it
+                            if let FrameOwnership::Owned = popped_frame.ownership {
+                                if let Ok(layout) = popped_frame.shape.layout.sized_layout() {
+                                    if layout.size() > 0 {
+                                        unsafe {
+                                            alloc::alloc::dealloc(
+                                                popped_frame.data.as_mut_byte_ptr(),
+                                                layout,
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+
+                            *current_child = false;
+                        } else {
+                            return Err(ReflectError::OperationFailed {
+                                shape: parent_frame.shape,
+                                operation: "List missing push function",
+                            });
+                        }
+                    }
                 }
             }
             _ => {}
@@ -972,6 +1138,16 @@ impl<'facet, 'shape, T> TypedWip<'facet, 'shape, T> {
     pub fn push_nth_enum_field(&mut self, idx: usize) -> Result<(), ReflectError<'shape>> {
         self.wip.push_nth_enum_field(idx)
     }
+
+    /// Forwards begin_pushback to the inner wip instance.
+    pub fn begin_pushback(&mut self) -> Result<(), ReflectError<'shape>> {
+        self.wip.begin_pushback()
+    }
+
+    /// Forwards push to the inner wip instance.
+    pub fn push(&mut self) -> Result<(), ReflectError<'shape>> {
+        self.wip.push()
+    }
 }
 
 impl<'facet, 'shape> Drop for Wip<'facet, 'shape> {
@@ -1052,6 +1228,14 @@ impl<'facet, 'shape> Drop for Wip<'facet, 'shape> {
                     }
                     // Note: we don't deallocate the inner value here because
                     // the Box's drop will handle that
+                }
+                Tracker::List { is_initialized, .. } => {
+                    // Drop the initialized list
+                    if *is_initialized {
+                        if let Some(drop_fn) = (frame.shape.vtable.drop_in_place)() {
+                            unsafe { drop_fn(PtrMut::new(frame.data.as_mut_byte_ptr())) };
+                        }
+                    }
                 }
             }
 
