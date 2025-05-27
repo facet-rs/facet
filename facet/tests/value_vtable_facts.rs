@@ -24,7 +24,7 @@ impl<'mem> BoxPtrUninit<'mem> {
     // This will panic when `T` is not `Sized`.
     fn new_sized<'a, T: Facet<'a> + ?Sized>() -> Self {
         let layout = T::SHAPE.layout.sized_layout().expect("T must be Sized");
-        let drop_in_place = (T::VTABLE.drop_in_place)();
+        let drop_in_place = (T::VTABLE.sized().unwrap().drop_in_place)();
 
         let ptr = if layout.size() == 0 {
             core::ptr::without_provenance_mut(layout.align())
@@ -108,7 +108,7 @@ unsafe fn debug(vtable: &'static ValueVTable, ptr: PtrConst) -> impl Debug {
 
     impl<'a> Debug for Debugger<'a> {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-            match (self.0.display)() {
+            match self.0.sized().and_then(|s| (s.debug)()) {
                 Some(fun) => unsafe { fun(self.1, f) },
                 None => write!(f, "???"),
             }
@@ -134,13 +134,13 @@ where
     let mut facts: BTreeSet<Fact> = BTreeSet::new();
     let value_vtable = T::SHAPE.vtable;
     let traits = [
-        ("Debug", (value_vtable.debug)().is_some()),
-        ("Display", (value_vtable.display)().is_some()),
-        ("Default", (value_vtable.default_in_place)().is_some()),
-        ("PartialEq", (value_vtable.partial_eq)().is_some()),
-        ("Ord", (value_vtable.ord)().is_some()),
-        ("PartialOrd", (value_vtable.partial_ord)().is_some()),
-        ("Clone", (value_vtable.clone_into)().is_some()),
+        ("Debug", value_vtable.has_debug()),
+        ("Display", value_vtable.has_display()),
+        ("Default", value_vtable.has_default_in_place()),
+        ("PartialEq", value_vtable.has_partial_eq()),
+        ("Ord", value_vtable.has_ord()),
+        ("PartialOrd", value_vtable.has_partial_ord()),
+        ("Clone", value_vtable.has_clone_into()),
     ];
     let trait_str = traits
         .iter()
@@ -220,38 +220,40 @@ where
     }
 
     // Test default_in_place
-    if let Some(default_in_place) = (T::VTABLE.default_in_place)() {
-        facts.insert(Fact::Default);
+    if let Some(vtable) = T::VTABLE.sized() {
+        if let Some(default_in_place) = (vtable.default_in_place)() {
+            facts.insert(Fact::Default);
 
-        let ptr = BoxPtrUninit::new_sized::<T>();
+            let ptr = BoxPtrUninit::new_sized::<T>();
 
-        unsafe { default_in_place(ptr.ptr) };
-        let ptr = unsafe { ptr.assume_init() };
-        let debug = unsafe { debug(T::VTABLE, ptr.ptr.as_const()) };
-        eprintln!(
-            "Default:    {}",
-            format_args!("{:?}", debug).style(REMARKABLE)
-        );
-    }
+            unsafe { default_in_place(ptr.ptr) };
+            let ptr = unsafe { ptr.assume_init() };
+            let debug = unsafe { debug(T::VTABLE, ptr.ptr.as_const()) };
+            eprintln!(
+                "Default:    {}",
+                format_args!("{:?}", debug).style(REMARKABLE)
+            );
+        }
 
-    // Test clone
-    if let Some(clone_into) = (T::VTABLE.clone_into)() {
-        facts.insert(Fact::Clone);
+        // Test clone
+        if let Some(clone_into) = (vtable.clone_into)() {
+            facts.insert(Fact::Clone);
 
-        let src_ptr = PtrConst::new(core::ptr::from_ref(val1).cast::<u8>());
+            let src_ptr = PtrConst::new(core::ptr::from_ref(val1).cast::<u8>());
 
-        let ptr = BoxPtrUninit::new_sized::<T>();
-        unsafe { clone_into(src_ptr, ptr.ptr) };
-        let ptr = unsafe { ptr.assume_init() };
-        let debug = unsafe { debug(T::VTABLE, ptr.ptr.as_const()) };
-        eprintln!(
-            "Clone:      {}",
-            format_args!("{:?}", debug).style(REMARKABLE)
-        );
+            let ptr = BoxPtrUninit::new_sized::<T>();
+            unsafe { clone_into(src_ptr, ptr.ptr) };
+            let ptr = unsafe { ptr.assume_init() };
+            let debug = unsafe { debug(T::VTABLE, ptr.ptr.as_const()) };
+            eprintln!(
+                "Clone:      {}",
+                format_args!("{:?}", debug).style(REMARKABLE)
+            );
+        }
     }
 
     // Marker traits
-    facts.extend((T::VTABLE.marker_traits)().iter().map(Fact::MarkerTrait));
+    facts.extend(T::VTABLE.marker_traits().iter().map(Fact::MarkerTrait));
 
     facts
 }

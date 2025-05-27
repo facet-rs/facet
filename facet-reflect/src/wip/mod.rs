@@ -544,7 +544,7 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         // We have already checked root is fully initialized above, so we only need to check its invariants.
         let root_shape = root_frame.shape;
         let root_data = unsafe { root_frame.data.assume_init() };
-        if let Some(invariant_fn) = (root_shape.vtable.invariants)() {
+        if let Some(invariant_fn) = (root_shape.vtable.sized().unwrap().invariants)() {
             debug!(
                 "Checking invariants for root shape {} at {:p}",
                 root_shape.green(),
@@ -791,7 +791,7 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         let shape = frame.shape;
         let index = frame.field_index_in_parent;
 
-        let Some(parse_fn) = (frame.shape.vtable.parse)() else {
+        let Some(parse_fn) = (frame.shape.vtable.sized().unwrap().parse)() else {
             return Err(ReflectError::OperationFailed {
                 shape: frame.shape,
                 operation: "type does not implement Parse",
@@ -861,7 +861,7 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
             });
         };
 
-        let vtable = frame.shape.vtable;
+        let vtable = frame.shape.vtable.sized().unwrap();
         let Some(default_in_place) = (vtable.default_in_place)() else {
             return Err(ReflectError::OperationFailed {
                 shape: frame.shape,
@@ -963,7 +963,7 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
             });
         }
 
-        let vtable = frame.shape.vtable;
+        let vtable = frame.shape.vtable.sized().unwrap();
 
         // Initialize an empty list
         let Some(default_in_place) = (vtable.default_in_place)() else {
@@ -1003,7 +1003,7 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
             });
         }
 
-        let vtable = frame.shape.vtable;
+        let vtable = frame.shape.vtable.sized().unwrap();
 
         // Initialize an empty map
         let Some(default_in_place) = (vtable.default_in_place)() else {
@@ -1074,7 +1074,7 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
 
         // Initialize a list if necessary
         if is_list {
-            let vtable = frame.shape.vtable;
+            let vtable = frame.shape.vtable.sized().unwrap();
             // Initialize an empty list if it's not already marked as initialized (field 0)
             if !frame.istate.fields.has(0) {
                 let Some(default_in_place) = (vtable.default_in_place)() else {
@@ -1117,7 +1117,7 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
             });
         }
 
-        let vtable = frame.shape.vtable;
+        let vtable = frame.shape.vtable.sized().unwrap();
 
         // Initialize an empty map if it's not already initialized
         if !frame.istate.fields.has(0) {
@@ -1505,7 +1505,9 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
 
         // Safety: option frames are correctly sized, and data is valid
         unsafe {
-            if let Some(default_fn) = (parent_frame.shape.vtable.default_in_place)() {
+            if let Some(default_fn) =
+                (parent_frame.shape.vtable.sized().unwrap().default_in_place)()
+            {
                 default_fn(parent_frame.data);
             } else {
                 return Err(ReflectError::OperationFailed {

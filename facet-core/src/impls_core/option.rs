@@ -50,52 +50,55 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
             write!(f, "{}", Self::SHAPE.type_identifier)?;
             if let Some(opts) = opts.for_children() {
                 write!(f, "<")?;
-                (T::SHAPE.vtable.type_name)(f, opts)?;
+                (T::SHAPE.vtable.type_name())(f, opts)?;
                 write!(f, ">")?;
             } else {
                 write!(f, "<…>")?;
             }
             Ok(())
         });
+        {
+            let vtable = vtable.sized_mut().unwrap();
 
-        vtable.debug = || {
-            if T::SHAPE.is_debug() {
-                Some(|this, f| {
-                    let this = unsafe { this.get::<Self>() };
-                    if let Some(value) = &this {
-                        write!(f, "Some(")?;
-                        (<VTableView<T>>::of().debug().unwrap())(value, f)?;
-                        write!(f, ")")?;
-                    } else {
-                        write!(f, "None")?;
-                    }
-                    Ok(())
-                })
-            } else {
-                None
-            }
-        };
+            vtable.debug = || {
+                if T::SHAPE.is_debug() {
+                    Some(|this, f| {
+                        let this = unsafe { this.get::<Self>() };
+                        if let Some(value) = &this {
+                            write!(f, "Some(")?;
+                            (<VTableView<T>>::of().debug().unwrap())(value, f)?;
+                            write!(f, ")")?;
+                        } else {
+                            write!(f, "None")?;
+                        }
+                        Ok(())
+                    })
+                } else {
+                    None
+                }
+            };
 
-        vtable.parse = || {
-            if T::SHAPE.is_from_str() {
-                Some(|str, target| {
-                    let mut t = MaybeUninit::<T>::uninit();
-                    let parse = <VTableView<T>>::of().parse().unwrap();
-                    let _res = (parse)(str, TypedPtrUninit::new(t.as_mut_ptr()))?;
-                    // res points to t so we can't drop it yet. the option is not initialized though
-                    unsafe {
-                        target.put(Some(t.assume_init()));
-                        Ok(target.assume_init())
-                    }
-                })
-            } else {
-                None
-            }
-        };
+            vtable.parse = || {
+                if T::SHAPE.is_from_str() {
+                    Some(|str, target| {
+                        let mut t = MaybeUninit::<T>::uninit();
+                        let parse = <VTableView<T>>::of().parse().unwrap();
+                        let _res = (parse)(str, TypedPtrUninit::new(t.as_mut_ptr()))?;
+                        // res points to t so we can't drop it yet. the option is not initialized though
+                        unsafe {
+                            target.put(Some(t.assume_init()));
+                            Ok(target.assume_init())
+                        }
+                    })
+                } else {
+                    None
+                }
+            };
 
-        vtable.try_from = || Some(try_from::<T>);
-        vtable.try_into_inner = || Some(try_into_inner::<T>);
-        vtable.try_borrow_inner = || Some(try_borrow_inner::<T>);
+            vtable.try_from = || Some(try_from::<T>);
+            vtable.try_into_inner = || Some(try_into_inner::<T>);
+            vtable.try_borrow_inner = || Some(try_borrow_inner::<T>);
+        }
 
         vtable
     };

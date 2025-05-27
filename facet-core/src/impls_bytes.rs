@@ -16,7 +16,7 @@ unsafe impl Facet<'_> for Bytes {
             "{}",
             Self::SHAPE.type_identifier
         ));
-        vtable.try_from = || {
+        vtable.sized_mut().unwrap().try_from = || {
             Some(
                 |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
                     if source_shape.is_type::<BytesMut>() {

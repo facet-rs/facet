@@ -403,3 +403,31 @@ impl<'mem> PtrMut<'mem> {
         unsafe { self.drop_in_place::<T>().put(value) }
     }
 }
+
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct PtrWide {
+    ptr: NonNull<u8>,
+    metadata: usize,
+}
+
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+pub struct PtrUninitWide<'mem> {
+    ptr: PtrWide,
+    phantom: PhantomData<&'mem mut ()>,
+}
+
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+pub struct PtrConstWide<'mem> {
+    ptr: PtrWide,
+    phantom: PhantomData<&'mem ()>,
+}
+
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+pub struct PtrMutWide<'mem> {
+    ptr: PtrWide,
+    phantom: PhantomData<&'mem mut ()>,
+}
