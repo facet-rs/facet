@@ -184,6 +184,18 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         })
     }
 
+    /// Creates a Wip from an existing pointer and shape (used for nested initialization)
+    pub fn from_ptr(data: PtrUninit<'_>, shape: &'shape Shape<'shape>) -> Self {
+        // We need to convert the lifetime, which is safe because we're storing it in a frame
+        // that will manage the lifetime correctly
+        let data_static = PtrUninit::new(data.as_mut_byte_ptr());
+        Self {
+            frames: vec![Frame::new(data_static, shape, FrameOwnership::Field)],
+            poisoned: false,
+            invariant: PhantomData,
+        }
+    }
+
     /// Sets a value wholesale into the current frame
     pub fn set<T>(&mut self, value: T) -> Result<(), ReflectError<'shape>>
     where
@@ -219,6 +231,52 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         }
 
         fr.tracker = Tracker::Init;
+        Ok(())
+    }
+
+    /// Sets the current frame to its default value
+    pub fn set_default(&mut self) -> Result<(), ReflectError<'shape>> {
+        let frame = self.frames.last_mut().unwrap();
+
+        // Check if we need to drop an existing value
+        if matches!(frame.tracker, Tracker::Init) {
+            if let Some(drop_fn) = (frame.shape.vtable.drop_in_place)() {
+                unsafe { drop_fn(PtrMut::new(frame.data.as_mut_byte_ptr())) };
+            }
+        }
+
+        if let Some(default_fn) = (frame.shape.vtable.default_in_place)() {
+            // Initialize with default value
+            // SAFETY: frame.data points to uninitialized memory of the correct layout
+            unsafe { default_fn(frame.data) };
+            frame.tracker = Tracker::Init;
+            Ok(())
+        } else {
+            Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "type does not implement Default",
+            })
+        }
+    }
+
+    /// Sets the current frame using a function that initializes the value
+    pub fn set_from_function<F>(&mut self, f: F) -> Result<(), ReflectError<'shape>>
+    where
+        F: FnOnce(PtrUninit<'_>) -> Result<(), ReflectError<'shape>>,
+    {
+        let frame = self.frames.last_mut().unwrap();
+
+        // Drop existing value if initialized
+        if matches!(frame.tracker, Tracker::Init) {
+            if let Some(drop_fn) = (frame.shape.vtable.drop_in_place)() {
+                unsafe { drop_fn(PtrMut::new(frame.data.as_mut_byte_ptr())) };
+            }
+            frame.tracker = Tracker::Uninit;
+        }
+
+        // Call the function to initialize
+        f(frame.data)?;
+        frame.tracker = Tracker::Init;
         Ok(())
     }
 
@@ -286,7 +344,20 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                                 current_child: Some(idx),
                             }
                         }
-                        Tracker::Struct { current_child, .. } => {
+                        Tracker::Struct {
+                            iset,
+                            current_child,
+                        } => {
+                            // Check if this field was already initialized
+                            if iset.get(idx) {
+                                // Drop the existing value before re-initializing
+                                let field_ptr = unsafe { frame.data.field_init_at(field.offset) };
+                                if let Some(drop_fn) = (field.shape.vtable.drop_in_place)() {
+                                    unsafe { drop_fn(field_ptr) };
+                                }
+                                // Unset the bit so we can re-initialize
+                                iset.unset(idx);
+                            }
                             *current_child = Some(idx);
                         }
                         _ => unreachable!(),
@@ -637,6 +708,19 @@ impl<'facet, 'shape, T> TypedWip<'facet, 'shape, T> {
     /// Forwards pop to the inner wip instance.
     pub fn pop(&mut self) -> Result<(), ReflectError<'shape>> {
         self.wip.pop()
+    }
+
+    /// Forwards set_default to the inner wip instance.
+    pub fn set_default(&mut self) -> Result<(), ReflectError<'shape>> {
+        self.wip.set_default()
+    }
+
+    /// Forwards set_from_function to the inner wip instance.
+    pub fn set_from_function<F>(&mut self, f: F) -> Result<(), ReflectError<'shape>>
+    where
+        F: FnOnce(PtrUninit<'_>) -> Result<(), ReflectError<'shape>>,
+    {
+        self.wip.set_from_function(f)
     }
 }
 

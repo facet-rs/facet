@@ -2,6 +2,7 @@ use facet::Facet;
 use facet_testhelpers::test;
 
 use super::Wip;
+use crate::ReflectError;
 
 #[cfg(not(miri))]
 macro_rules! assert_snapshot {
@@ -89,6 +90,232 @@ fn struct_fully_init() {
     let hv = wip.build()?;
     assert_eq!(hv.foo, 42u64);
     assert_eq!(hv.bar, true);
+}
+
+#[test]
+fn struct_field_set_twice() {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Facet, Debug)]
+    struct DropTracker {
+        id: u64,
+    }
+
+    impl Drop for DropTracker {
+        fn drop(&mut self) {
+            DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+            println!("Dropping DropTracker with id: {}", self.id);
+        }
+    }
+
+    #[derive(Facet, Debug)]
+    struct Container {
+        tracker: DropTracker,
+        value: u64,
+    }
+
+    DROP_COUNT.store(0, Ordering::SeqCst);
+
+    let result = (|| -> Result<Box<Container>, ReflectError> {
+        let mut wip = Wip::alloc::<Container>()?;
+
+        // Set tracker field first time
+        wip.push_field("tracker")?;
+        wip.set(DropTracker { id: 1 })?;
+        wip.pop()?;
+
+        assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 0, "No drops yet");
+
+        // Set tracker field second time (should drop the previous value)
+        wip.push_field("tracker")?;
+        wip.set(DropTracker { id: 2 })?;
+        wip.pop()?;
+
+        assert_eq!(
+            DROP_COUNT.load(Ordering::SeqCst),
+            1,
+            "First DropTracker should have been dropped"
+        );
+
+        // Set value field
+        wip.push_field("value")?;
+        wip.set(100u64)?;
+        wip.pop()?;
+
+        wip.build()
+    })();
+
+    assert!(result.is_ok());
+    let container = result.unwrap();
+    assert_eq!(container.tracker.id, 2); // Should have the second value
+    assert_eq!(container.value, 100);
+
+    // Drop the container
+    drop(container);
+
+    assert_eq!(
+        DROP_COUNT.load(Ordering::SeqCst),
+        2,
+        "Both DropTrackers should have been dropped"
+    );
+}
+
+#[test]
+fn array_element_set_twice() {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Facet, Debug)]
+    struct DropTracker {
+        id: u64,
+    }
+
+    impl Drop for DropTracker {
+        fn drop(&mut self) {
+            DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+            println!("Dropping DropTracker with id: {}", self.id);
+        }
+    }
+
+    DROP_COUNT.store(0, Ordering::SeqCst);
+
+    let result = (|| -> Result<Box<[DropTracker; 3]>, ReflectError> {
+        let mut wip = Wip::alloc::<[DropTracker; 3]>()?;
+
+        // Set element 0
+        wip.push_nth_element(0)?;
+        wip.set(DropTracker { id: 1 })?;
+        wip.pop()?;
+
+        // Try to set element 0 again - currently this errors
+        wip.push_nth_element(0)?;
+        wip.set(DropTracker { id: 2 })?;
+        wip.pop()?;
+
+        // Set other elements
+        wip.push_nth_element(1)?;
+        wip.set(DropTracker { id: 3 })?;
+        wip.pop()?;
+
+        wip.push_nth_element(2)?;
+        wip.set(DropTracker { id: 4 })?;
+        wip.pop()?;
+
+        wip.build()
+    })();
+
+    // Currently this errors because arrays don't allow re-initialization
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(err_msg.contains("array element already initialized"));
+
+    // Even though it errored, the first element should have been dropped during Wip drop
+    assert_eq!(
+        DROP_COUNT.load(Ordering::SeqCst),
+        1,
+        "First array element should have been dropped"
+    );
+}
+
+#[test]
+fn set_default() {
+    #[derive(Facet, Debug, PartialEq, Default)]
+    struct Sample {
+        x: u32,
+        y: String,
+    }
+
+    let mut wip = Wip::alloc::<Sample>()?;
+    wip.set_default()?;
+    let sample = wip.build()?;
+    assert_eq!(*sample, Sample::default());
+    assert_eq!(sample.x, 0);
+    assert_eq!(sample.y, "");
+}
+
+#[test]
+fn set_default_no_default_impl() {
+    #[derive(Facet, Debug)]
+    struct NoDefault {
+        value: u32,
+    }
+
+    let mut wip = Wip::alloc::<NoDefault>()?;
+    let result = wip.set_default();
+    assert!(result.is_err());
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("does not implement Default")
+    );
+}
+
+#[test]
+fn set_from_function() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Point {
+        x: f64,
+        y: f64,
+    }
+
+    let mut wip = Wip::alloc::<Point>()?;
+    wip.set_from_function(|ptr| {
+        // We need to build the struct using another Wip
+        let mut inner_wip = Wip::from_ptr(ptr, <Point as Facet>::SHAPE);
+        inner_wip.push_field("x")?;
+        inner_wip.set(3.14)?;
+        inner_wip.pop()?;
+        inner_wip.push_field("y")?;
+        inner_wip.set(2.71)?;
+        inner_wip.pop()?;
+        Ok(())
+    })?;
+
+    let point = wip.build()?;
+    assert_eq!(*point, Point { x: 3.14, y: 2.71 });
+}
+
+#[test]
+fn set_default_drops_previous() {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Facet, Debug)]
+    struct DropTracker {
+        id: u64,
+    }
+
+    impl Drop for DropTracker {
+        fn drop(&mut self) {
+            DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    impl Default for DropTracker {
+        fn default() -> Self {
+            Self { id: 999 }
+        }
+    }
+
+    DROP_COUNT.store(0, Ordering::SeqCst);
+
+    let mut wip = Wip::alloc::<DropTracker>()?;
+
+    // Set initial value
+    wip.set(DropTracker { id: 1 })?;
+    assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 0);
+
+    // Set default (should drop the previous value)
+    wip.set_default()?;
+    assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 1);
+
+    let tracker = wip.build()?;
+    assert_eq!(tracker.id, 999); // Default value
+
+    drop(tracker);
+    assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 2);
 }
 
 #[test]
