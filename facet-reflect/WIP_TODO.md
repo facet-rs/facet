@@ -51,9 +51,9 @@ This document tracks the remaining work for the facet-reflect Wip (Work-in-progr
 - [ ] Fluent/chaining API that returns new Wip instances
 
 ### Field Access
-- [ ] Re-access already initialized fields
-- [ ] Partial updates to initialized structures
-- [ ] Array element re-initialization support
+- [ ] ~~Re-access already initialized fields~~ **NOT PLANNED**
+- [ ] ~~Partial updates to initialized structures~~ **NOT PLANNED**
+- [x] Array element re-initialization support
 
 ## 🧪 Testing & Safety
 

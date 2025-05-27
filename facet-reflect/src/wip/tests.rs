@@ -188,7 +188,7 @@ fn array_element_set_twice() {
         wip.set(DropTracker { id: 1 })?;
         wip.pop()?;
 
-        // Try to set element 0 again - currently this errors
+        // Set element 0 again - this should now work and drop the old value
         wip.push_nth_element(0)?;
         wip.set(DropTracker { id: 2 })?;
         wip.pop()?;
@@ -205,16 +205,20 @@ fn array_element_set_twice() {
         wip.build()
     })();
 
-    // Currently this errors because arrays don't allow re-initialization
-    assert!(result.is_err());
-    let err_msg = result.unwrap_err().to_string();
-    assert!(err_msg.contains("array element already initialized"));
+    // Now this should succeed with array element re-initialization support
+    assert!(result.is_ok());
+    let array = result.unwrap();
 
-    // Even though it errored, the first element should have been dropped during Wip drop
+    // Verify the final array has the expected values
+    assert_eq!(array[0].id, 2); // Re-initialized value
+    assert_eq!(array[1].id, 3);
+    assert_eq!(array[2].id, 4);
+
+    // The first value (id: 1) should have been dropped when we re-initialized
     assert_eq!(
         DROP_COUNT.load(Ordering::SeqCst),
         1,
-        "First array element should have been dropped"
+        "First array element should have been dropped during re-initialization"
     );
 }
 

@@ -610,15 +610,6 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                             iset,
                             current_child,
                         } => {
-                            if iset.get(idx) {
-                                return Err(ReflectError::OperationFailed {
-                                    shape: frame.shape,
-                                    operation: "array element already initialized",
-                                });
-                            }
-
-                            *current_child = Some(idx);
-
                             // Calculate the offset for this array element
                             let element_layout = array_def
                                 .t
@@ -626,6 +617,19 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                                 .sized_layout()
                                 .map_err(|_| ReflectError::Unsized { shape: array_def.t })?;
                             let offset = element_layout.size() * idx;
+
+                            // Check if this element was already initialized
+                            if iset.get(idx) {
+                                // Drop the existing value before re-initializing
+                                let element_ptr = unsafe { frame.data.field_init_at(offset) };
+                                if let Some(drop_fn) = (array_def.t.vtable.drop_in_place)() {
+                                    unsafe { drop_fn(element_ptr) };
+                                }
+                                // Unset the bit so we can re-initialize
+                                iset.unset(idx);
+                            }
+
+                            *current_child = Some(idx);
 
                             // Create a new frame for the array element
                             let element_data = unsafe { frame.data.field_uninit_at(offset) };
