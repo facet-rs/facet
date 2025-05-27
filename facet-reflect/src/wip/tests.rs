@@ -419,3 +419,91 @@ fn drop_array_partially_initialized() {
         "Should drop only the two initialized array elements"
     );
 }
+
+#[test]
+fn box_init() {
+    let mut wip = Wip::alloc::<Box<u32>>()?;
+
+    // Push into the Box to build its inner value
+    wip.push_box()?;
+    wip.set(42u32)?;
+    wip.pop()?;
+
+    let hv = wip.build()?;
+    assert_eq!(**hv, 42);
+}
+
+#[test]
+fn box_partial_init() {
+    let wip = Wip::alloc::<Box<u32>>()?;
+    // Don't initialize the Box at all
+    assert_snapshot!(wip.build().unwrap_err());
+}
+
+#[test]
+fn box_struct() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Point {
+        x: f64,
+        y: f64,
+    }
+
+    let mut wip = Wip::alloc::<Box<Point>>()?;
+
+    // Push into the Box
+    wip.push_box()?;
+
+    // Build the Point inside the Box
+    wip.push_field("x")?;
+    wip.set(1.0)?;
+    wip.pop()?;
+
+    wip.push_field("y")?;
+    wip.set(2.0)?;
+    wip.pop()?;
+
+    // Pop from Box
+    wip.pop()?;
+
+    let hv = wip.build()?;
+    assert_eq!(**hv, Point { x: 1.0, y: 2.0 });
+}
+
+#[test]
+fn drop_box_partially_initialized() {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    static BOX_DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+    static INNER_DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Facet, Debug)]
+    struct DropCounter {
+        value: u32,
+    }
+
+    impl Drop for DropCounter {
+        fn drop(&mut self) {
+            INNER_DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+            println!("Dropping DropCounter with value: {}", self.value);
+        }
+    }
+
+    BOX_DROP_COUNT.store(0, Ordering::SeqCst);
+    INNER_DROP_COUNT.store(0, Ordering::SeqCst);
+
+    {
+        let mut wip = Wip::alloc::<Box<DropCounter>>()?;
+
+        // Initialize the Box's inner value
+        wip.push_box()?;
+        wip.set(DropCounter { value: 99 })?;
+        wip.pop()?;
+
+        // Drop the wip - should drop the Box which drops the inner value
+    }
+
+    assert_eq!(
+        INNER_DROP_COUNT.load(Ordering::SeqCst),
+        1,
+        "Should drop the inner value through Box's drop"
+    );
+}

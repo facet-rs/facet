@@ -11,7 +11,7 @@ mod heap_value;
 use alloc::vec::Vec;
 pub use heap_value::*;
 
-use facet_core::{Facet, PtrConst, PtrMut, PtrUninit, Shape, Variant};
+use facet_core::{Def, Facet, KnownSmartPointer, PtrConst, PtrMut, PtrUninit, Shape, Variant};
 use iset::ISet;
 
 /// A work-in-progress heap-allocated value
@@ -75,6 +75,12 @@ enum Tracker<'shape> {
         /// if we're pushing another frame, this is set to the
         /// index of the struct field
         current_child: Option<usize>,
+    },
+
+    /// Smart pointer being initialized
+    SmartPointer {
+        /// Whether the inner value has been initialized
+        is_initialized: bool,
     },
 
     /// Partially initialized enum (but we picked a variant)
@@ -142,6 +148,13 @@ impl<'shape> Frame<'shape> {
                 }
             }
             Tracker::Enum { .. } => todo!(),
+            Tracker::SmartPointer { is_initialized } => {
+                if is_initialized {
+                    Ok(())
+                } else {
+                    Err(ReflectError::UninitializedValue { shape: self.shape })
+                }
+            }
         }
     }
 }
@@ -381,6 +394,69 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         }
     }
 
+    /// Pushes a frame to initialize the inner value of a Box<T>
+    pub fn push_box(&mut self) -> Result<(), ReflectError<'shape>> {
+        let frame = self.frames.last_mut().unwrap();
+
+        // Check that we have a SmartPointer with Box type
+        match &frame.shape.def {
+            Def::SmartPointer(smart_ptr_def) => {
+                if !matches!(smart_ptr_def.known, Some(KnownSmartPointer::Box)) {
+                    return Err(ReflectError::OperationFailed {
+                        shape: frame.shape,
+                        operation: "only Box smart pointers are currently supported",
+                    });
+                }
+
+                // Get the pointee shape
+                let pointee_shape =
+                    smart_ptr_def
+                        .pointee()
+                        .ok_or(ReflectError::OperationFailed {
+                            shape: frame.shape,
+                            operation: "Box must have a pointee shape",
+                        })?;
+
+                // Update tracker to SmartPointer state
+                if matches!(frame.tracker, Tracker::Uninit) {
+                    frame.tracker = Tracker::SmartPointer {
+                        is_initialized: false,
+                    };
+                }
+
+                // Allocate space for the inner value
+                let inner_layout =
+                    pointee_shape
+                        .layout
+                        .sized_layout()
+                        .map_err(|_| ReflectError::Unsized {
+                            shape: pointee_shape,
+                        })?;
+                let inner_ptr: *mut u8 = unsafe { std::alloc::alloc(inner_layout) };
+
+                if inner_ptr.is_null() {
+                    return Err(ReflectError::OperationFailed {
+                        shape: frame.shape,
+                        operation: "failed to allocate memory for Box inner value",
+                    });
+                }
+
+                // Push a new frame for the inner value
+                self.frames.push(Frame::new(
+                    PtrUninit::new(inner_ptr),
+                    pointee_shape,
+                    FrameOwnership::Owned,
+                ));
+
+                Ok(())
+            }
+            _ => Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "push_box can only be called on Box types",
+            }),
+        }
+    }
+
     /// Pops the current frame off the stack, indicating we're done initializing the current field.
     pub fn pop(&mut self) -> Result<(), ReflectError<'shape>> {
         if self.frames.len() <= 1 {
@@ -391,10 +467,13 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         }
 
         // Require that the top frame is fully initialized before popping.
-        let frame = self.frames.last().unwrap();
-        frame.require_full_initialization()?;
+        {
+            let frame = self.frames.last().unwrap();
+            frame.require_full_initialization()?;
+        }
 
-        self.frames.pop();
+        // Pop the frame and save its data pointer for SmartPointer handling
+        let popped_frame = self.frames.pop().unwrap();
 
         // Update parent frame's tracking when popping from a child
         let parent_frame = self.frames.last_mut().unwrap();
@@ -415,6 +494,41 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                 if let Some(idx) = *current_child {
                     iset.set(idx);
                     *current_child = None;
+                }
+            }
+            Tracker::SmartPointer { is_initialized } => {
+                // We just popped the inner value frame, so now we need to create the Box
+                if let Def::SmartPointer(smart_ptr_def) = parent_frame.shape.def {
+                    if let Some(new_into_fn) = smart_ptr_def.vtable.new_into_fn {
+                        // The child frame contained the inner value
+                        let inner_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
+
+                        // Use new_into_fn to create the Box
+                        unsafe {
+                            new_into_fn(parent_frame.data, inner_ptr);
+                        }
+
+                        // Deallocate the inner value's memory since new_into_fn moved it
+                        if let FrameOwnership::Owned = popped_frame.ownership {
+                            if let Ok(layout) = popped_frame.shape.layout.sized_layout() {
+                                if layout.size() > 0 {
+                                    unsafe {
+                                        alloc::alloc::dealloc(
+                                            popped_frame.data.as_mut_byte_ptr(),
+                                            layout,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+
+                        *is_initialized = true;
+                    } else {
+                        return Err(ReflectError::OperationFailed {
+                            shape: parent_frame.shape,
+                            operation: "SmartPointer missing new_into_fn",
+                        });
+                    }
                 }
             }
             _ => {}
@@ -499,6 +613,11 @@ impl<'facet, 'shape, T> TypedWip<'facet, 'shape, T> {
         self.wip.push_nth_element(idx)
     }
 
+    /// Forwards push_box to the inner wip instance.
+    pub fn push_box(&mut self) -> Result<(), ReflectError<'shape>> {
+        self.wip.push_box()
+    }
+
     /// Forwards pop to the inner wip instance.
     pub fn pop(&mut self) -> Result<(), ReflectError<'shape>> {
         self.wip.pop()
@@ -564,6 +683,16 @@ impl<'facet, 'shape> Drop for Wip<'facet, 'shape> {
                 Tracker::Enum { variant, data } => {
                     // TODO: Drop initialized enum variant fields
                     let _ = (variant, data);
+                }
+                Tracker::SmartPointer { is_initialized } => {
+                    // Drop the initialized Box
+                    if *is_initialized {
+                        if let Some(drop_fn) = (frame.shape.vtable.drop_in_place)() {
+                            unsafe { drop_fn(PtrMut::new(frame.data.as_mut_byte_ptr())) };
+                        }
+                    }
+                    // Note: we don't deallocate the inner value here because
+                    // the Box's drop will handle that
                 }
             }
 
