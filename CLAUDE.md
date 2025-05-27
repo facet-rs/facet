@@ -118,3 +118,7 @@ Other common scalar affinities to handle:
 - `ScalarAffinity::Path(_)` - for Path types
 - `ScalarAffinity::UUID(_)` - for UUID types 
 - `ScalarAffinity::ULID(_)` - for ULID types
+
+### Code Comments
+
+Avoid adding comments that merely restate what the code is doing or that reference the development process (e.g., "BUG:", "TODO:" unless they're meant to stay). Comments should add value by explaining complex logic or design decisions, not narrate the obvious or temporary state of the code.

@@ -90,3 +90,76 @@ fn struct_fully_init() {
     assert_eq!(hv.foo, 42u64);
     assert_eq!(hv.bar, true);
 }
+
+#[test]
+fn drop_partially_initialized_struct() {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Facet, Debug)]
+    struct NoisyDrop {
+        value: u64,
+    }
+
+    impl Drop for NoisyDrop {
+        fn drop(&mut self) {
+            DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+            println!("Dropping NoisyDrop with value: {}", self.value);
+        }
+    }
+
+    #[derive(Facet, Debug)]
+    struct Container {
+        first: NoisyDrop,
+        second: NoisyDrop,
+        third: bool,
+    }
+
+    // Reset counter
+    DROP_COUNT.store(0, Ordering::SeqCst);
+
+    // Create a partially initialized struct and drop it
+    {
+        let mut wip = Wip::alloc::<Container>()?;
+
+        // Initialize first field
+        wip.push_field("first")?;
+        assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 0, "No drops yet");
+
+        wip.put(NoisyDrop { value: 1 })?;
+        assert_eq!(
+            DROP_COUNT.load(Ordering::SeqCst),
+            0,
+            "After put, the value should NOT be dropped yet"
+        );
+
+        wip.pop()?;
+        assert_eq!(
+            DROP_COUNT.load(Ordering::SeqCst),
+            0,
+            "Still no drops after pop"
+        );
+
+        // Initialize second field
+        wip.push_field("second")?;
+        wip.put(NoisyDrop { value: 2 })?;
+        assert_eq!(
+            DROP_COUNT.load(Ordering::SeqCst),
+            0,
+            "After second put, still should have no drops"
+        );
+
+        wip.pop()?;
+
+        // Don't initialize third field - just drop the wip
+        // This should call drop on the two NoisyDrop instances we created
+    }
+
+    let final_drops = DROP_COUNT.load(Ordering::SeqCst);
+    assert_eq!(
+        final_drops, 2,
+        "Expected 2 drops total for the two initialized NoisyDrop fields, but got {}",
+        final_drops
+    );
+}

@@ -11,7 +11,7 @@ mod heap_value;
 use alloc::vec::Vec;
 pub use heap_value::*;
 
-use facet_core::{Facet, PtrConst, PtrUninit, Shape, Variant};
+use facet_core::{Facet, PtrConst, PtrMut, PtrUninit, Shape, Variant};
 use iset::ISet;
 
 /// A work-in-progress heap-allocated value
@@ -149,7 +149,10 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
     {
         // relay to put_shape — convert T into a ptr and shape, and call put_shape
         let ptr_const = PtrConst::new(&raw const value);
-        self.put_shape(ptr_const, T::SHAPE)
+        let result = self.put_shape(ptr_const, T::SHAPE);
+        // Prevent the value from being dropped since we've copied it
+        core::mem::forget(value);
+        result
     }
 
     /// Puts a value into the current frame by shape, for shape-based operations
@@ -382,6 +385,52 @@ impl<'facet, 'shape> Drop for Wip<'facet, 'shape> {
     fn drop(&mut self) {
         trace!("🧹 Wip is being dropped");
 
-        // TODO: actually clean
+        // We need to properly drop all initialized fields
+        while let Some(frame) = self.frames.pop() {
+            match &frame.tracker {
+                Tracker::Uninit => {
+                    // Nothing was initialized, nothing to drop
+                }
+                Tracker::Init => {
+                    // Fully initialized, drop it
+                    if let Some(drop_fn) = (frame.shape.vtable.drop_in_place)() {
+                        unsafe { drop_fn(PtrMut::new(frame.data.as_mut_byte_ptr())) };
+                    }
+                }
+                Tracker::Array { count } => {
+                    // TODO: Drop initialized array elements
+                    let _ = count;
+                }
+                Tracker::Struct { iset, .. } => {
+                    // Drop initialized struct fields
+                    match frame.shape.ty {
+                        facet_core::Type::User(facet_core::UserType::Struct(struct_type)) => {
+                            for (idx, field) in struct_type.fields.iter().enumerate() {
+                                if iset.get(idx) {
+                                    // This field was initialized, drop it
+                                    let field_ptr =
+                                        unsafe { frame.data.field_init_at(field.offset) };
+                                    if let Some(drop_fn) = (field.shape.vtable.drop_in_place)() {
+                                        unsafe { drop_fn(field_ptr) };
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Tracker::Enum { variant, data } => {
+                    // TODO: Drop initialized enum variant fields
+                    let _ = (variant, data);
+                }
+            }
+
+            // Deallocate the frame's memory
+            if let Ok(layout) = frame.shape.layout.sized_layout() {
+                if layout.size() > 0 {
+                    unsafe { alloc::alloc::dealloc(frame.data.as_mut_byte_ptr(), layout) };
+                }
+            }
+        }
     }
 }
