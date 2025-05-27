@@ -1,6 +1,5 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
-assertion_line: 1072
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(transparent)]\n        struct Wrapper(u32);\n        \"#)"
 ---
 #[used]
@@ -15,9 +14,16 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Wrapper {
             src_shape: &'shape ::facet::Shape<'shape>,
             dst: ::facet::PtrUninit<'dst>,
         ) -> Result<::facet::PtrMut<'dst>, ::facet::TryFromError<'shape>> {
-            match (<u32 as ::facet::Facet>::SHAPE.vtable.try_from)() {
+            let inner_result = match (<u32 as ::facet::Facet>::SHAPE.vtable.try_from)() {
                 Some(inner_try) => unsafe { (inner_try)(src_ptr, src_shape, dst) },
-                None => {
+                None => Err(::facet::TryFromError::UnsupportedSourceShape {
+                    src_shape,
+                    expected: const { &[&<u32 as ::facet::Facet>::SHAPE] },
+                }),
+            };
+            match inner_result {
+                Ok(result) => Ok(result),
+                Err(_) => {
                     if src_shape != <u32 as ::facet::Facet>::SHAPE {
                         return Err(::facet::TryFromError::UnsupportedSourceShape {
                             src_shape,

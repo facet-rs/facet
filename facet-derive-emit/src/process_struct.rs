@@ -343,10 +343,19 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                     src_shape: &'shape ::facet::Shape<'shape>,
                     dst: ::facet::PtrUninit<'dst>
                 ) -> Result<::facet::PtrMut<'dst>, ::facet::TryFromError<'shape>> {
-                    match (<#inner_field_type as ::facet::Facet>::SHAPE.vtable.try_from)() {
+                    // Try the inner type's try_from function if it exists
+                    let inner_result = match (<#inner_field_type as ::facet::Facet>::SHAPE.vtable.try_from)() {
                         Some(inner_try) => unsafe { (inner_try)(src_ptr, src_shape, dst) },
-                        None => {
-                            // Otherwise, check if source shape is exactly the inner shape
+                        None => Err(::facet::TryFromError::UnsupportedSourceShape {
+                            src_shape,
+                            expected: const { &[ &<#inner_field_type as ::facet::Facet>::SHAPE ] },
+                        })
+                    };
+
+                    match inner_result {
+                        Ok(result) => Ok(result),
+                        Err(_) => {
+                            // If inner_try failed, check if source shape is exactly the inner shape
                             if src_shape != <#inner_field_type as ::facet::Facet>::SHAPE {
                                 return Err(::facet::TryFromError::UnsupportedSourceShape {
                                     src_shape,
