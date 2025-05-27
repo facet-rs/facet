@@ -16,9 +16,10 @@ This document tracks the remaining work for the facet-reflect Wip (Work-in-progr
 ## 🚧 Major Missing Features
 
 ### Container Types
-- [ ] **Map/HashMap Support**
-  - [ ] `begin_map_insert()` method
-  - [ ] `push_map_key()` and `push_map_value()` methods
+- [x] **Map/HashMap Support**
+  - [x] `begin_map()` method to initialize maps
+  - [x] `begin_insert()`, `push_key()` and `push_value()` methods
+  - [x] Memory safety verified with Miri
   - [ ] Support for BTreeMap and other map types
 
 - [x] **List/Vec Support**

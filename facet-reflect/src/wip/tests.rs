@@ -1065,3 +1065,158 @@ fn list_vec_nested() {
     let vec: &Vec<Vec<i32>> = unsafe { hv.as_ref() };
     assert_eq!(vec, &vec![vec![1, 2], vec![3, 4, 5]]);
 }
+
+#[test]
+fn map_hashmap_simple() {
+    use std::collections::HashMap;
+
+    let mut wip = Wip::alloc::<HashMap<String, i32>>()?;
+    wip.begin_map()?;
+
+    // Insert first pair: "foo" -> 42
+    wip.begin_insert()?;
+    wip.push_key()?;
+    wip.set("foo".to_string())?;
+    wip.pop()?;
+    wip.push_value()?;
+    wip.set(42)?;
+    wip.pop()?;
+
+    // Insert second pair: "bar" -> 123
+    wip.begin_insert()?;
+    wip.push_key()?;
+    wip.set("bar".to_string())?;
+    wip.pop()?;
+    wip.push_value()?;
+    wip.set(123)?;
+    wip.pop()?;
+
+    let hv = wip.build()?;
+    let map: &HashMap<String, i32> = unsafe { hv.as_ref() };
+    assert_eq!(map.len(), 2);
+    assert_eq!(map.get("foo"), Some(&42));
+    assert_eq!(map.get("bar"), Some(&123));
+}
+
+#[test]
+fn map_hashmap_empty() {
+    use std::collections::HashMap;
+
+    let mut wip = Wip::alloc::<HashMap<String, String>>()?;
+    wip.begin_map()?;
+    // Don't insert any pairs
+
+    let hv = wip.build()?;
+    let map: &HashMap<String, String> = unsafe { hv.as_ref() };
+    assert_eq!(map.len(), 0);
+}
+
+#[test]
+fn map_hashmap_complex_values() {
+    use std::collections::HashMap;
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Person {
+        name: String,
+        age: u32,
+    }
+
+    let mut wip = Wip::alloc::<HashMap<String, Person>>()?;
+    wip.begin_map()?;
+
+    // Insert "alice" -> Person { name: "Alice", age: 30 }
+    wip.begin_insert()?;
+    wip.push_key()?;
+    wip.set("alice".to_string())?;
+    wip.pop()?;
+    wip.push_value()?;
+    wip.push_field("name")?;
+    wip.set("Alice".to_string())?;
+    wip.pop()?;
+    wip.push_field("age")?;
+    wip.set(30u32)?;
+    wip.pop()?;
+    wip.pop()?; // Done with value
+
+    // Insert "bob" -> Person { name: "Bob", age: 25 }
+    wip.begin_insert()?;
+    wip.push_key()?;
+    wip.set("bob".to_string())?;
+    wip.pop()?;
+    wip.push_value()?;
+    wip.push_field("name")?;
+    wip.set("Bob".to_string())?;
+    wip.pop()?;
+    wip.push_field("age")?;
+    wip.set(25u32)?;
+    wip.pop()?;
+    wip.pop()?; // Done with value
+
+    let hv = wip.build()?;
+    let map: &HashMap<String, Person> = unsafe { hv.as_ref() };
+    assert_eq!(map.len(), 2);
+    assert_eq!(
+        map.get("alice"),
+        Some(&Person {
+            name: "Alice".to_string(),
+            age: 30
+        })
+    );
+    assert_eq!(
+        map.get("bob"),
+        Some(&Person {
+            name: "Bob".to_string(),
+            age: 25
+        })
+    );
+}
+
+#[test]
+fn map_partial_initialization_drop() {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    use std::collections::HashMap;
+    static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Facet, Debug)]
+    struct DropTracker {
+        id: u64,
+    }
+
+    impl Drop for DropTracker {
+        fn drop(&mut self) {
+            DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+            println!("Dropping DropTracker with id: {}", self.id);
+        }
+    }
+
+    DROP_COUNT.store(0, Ordering::SeqCst);
+
+    {
+        let mut wip = Wip::alloc::<HashMap<String, DropTracker>>()?;
+        wip.begin_map()?;
+
+        // Insert a complete pair
+        wip.begin_insert()?;
+        wip.push_key()?;
+        wip.set("first".to_string())?;
+        wip.pop()?;
+        wip.push_value()?;
+        wip.set(DropTracker { id: 1 })?;
+        wip.pop()?;
+
+        // Start inserting another pair but only complete the key
+        wip.begin_insert()?;
+        wip.push_key()?;
+        wip.set("second".to_string())?;
+        wip.pop()?;
+        // Don't push value - leave incomplete
+
+        // Drop the wip - should clean up properly
+    }
+
+    assert_eq!(
+        DROP_COUNT.load(Ordering::SeqCst),
+        1,
+        "Should drop the one inserted value"
+    );
+}

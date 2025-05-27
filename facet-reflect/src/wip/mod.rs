@@ -30,6 +30,24 @@ pub struct Wip<'facet, 'shape> {
     invariant: PhantomData<fn(&'facet ()) -> &'facet ()>,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum MapInsertState {
+    /// Not currently inserting
+    Idle,
+    /// Pushing key
+    PushingKey {
+        /// Temporary storage for the key being built
+        key_ptr: Option<PtrUninit<'static>>,
+    },
+    /// Pushing value after key is done
+    PushingValue {
+        /// Temporary storage for the key that was built
+        key_ptr: PtrUninit<'static>,
+        /// Temporary storage for the value being built
+        value_ptr: Option<PtrUninit<'static>>,
+    },
+}
+
 enum FrameOwnership {
     /// This frame owns the allocation and should deallocate it on drop
     Owned,
@@ -97,6 +115,14 @@ enum Tracker<'shape> {
         is_initialized: bool,
         /// If we're pushing another frame for an element
         current_child: bool,
+    },
+
+    /// Partially initialized map (HashMap, BTreeMap, etc.)
+    Map {
+        /// The map has been initialized with capacity
+        is_initialized: bool,
+        /// State of the current insertion operation
+        insert_state: MapInsertState,
     },
 }
 
@@ -188,6 +214,16 @@ impl<'shape> Frame<'shape> {
             }
             Tracker::List { is_initialized, .. } => {
                 if is_initialized {
+                    Ok(())
+                } else {
+                    Err(ReflectError::UninitializedValue { shape: self.shape })
+                }
+            }
+            Tracker::Map {
+                is_initialized,
+                insert_state,
+            } => {
+                if is_initialized && matches!(insert_state, MapInsertState::Idle) {
                     Ok(())
                 } else {
                     Err(ReflectError::UninitializedValue { shape: self.shape })
@@ -824,6 +860,202 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         Ok(())
     }
 
+    /// Begins a map initialization operation
+    /// This initializes the map with default capacity and allows inserting key-value pairs
+    pub fn begin_map(&mut self) -> Result<(), ReflectError<'shape>> {
+        let frame = self.frames.last_mut().unwrap();
+
+        // Check that we have a Map
+        let map_def = match &frame.shape.def {
+            Def::Map(map_def) => map_def,
+            _ => {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "begin_map can only be called on Map types",
+                });
+            }
+        };
+
+        // Check that we have init_in_place_with_capacity function
+        let init_fn = map_def.vtable.init_in_place_with_capacity_fn;
+
+        // Initialize the map with default capacity (0)
+        unsafe {
+            init_fn(frame.data, 0);
+        }
+
+        // Update tracker to Map state
+        frame.tracker = Tracker::Map {
+            is_initialized: true,
+            insert_state: MapInsertState::Idle,
+        };
+
+        Ok(())
+    }
+
+    /// Begins inserting a key-value pair into the map
+    /// After calling this, use push_key() and push_value() to set the key and value
+    pub fn begin_insert(&mut self) -> Result<(), ReflectError<'shape>> {
+        let frame = self.frames.last_mut().unwrap();
+
+        // Check that we have a Map that's been initialized
+        match &mut frame.tracker {
+            Tracker::Map {
+                is_initialized: true,
+                insert_state,
+            } => {
+                if !matches!(insert_state, MapInsertState::Idle) {
+                    return Err(ReflectError::OperationFailed {
+                        shape: frame.shape,
+                        operation: "already in the middle of an insert operation",
+                    });
+                }
+                *insert_state = MapInsertState::PushingKey { key_ptr: None };
+                Ok(())
+            }
+            _ => Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "must call begin_map() before begin_insert()",
+            }),
+        }
+    }
+
+    /// Pushes a frame for the map key
+    /// Must be called after begin_insert()
+    pub fn push_key(&mut self) -> Result<(), ReflectError<'shape>> {
+        let frame = self.frames.last_mut().unwrap();
+
+        // Check that we have a Map in PushingKey state
+        let map_def = match (&frame.shape.def, &mut frame.tracker) {
+            (
+                Def::Map(map_def),
+                Tracker::Map {
+                    insert_state: MapInsertState::PushingKey { key_ptr },
+                    ..
+                },
+            ) => {
+                if key_ptr.is_some() {
+                    return Err(ReflectError::OperationFailed {
+                        shape: frame.shape,
+                        operation: "already pushing a key, call pop() first",
+                    });
+                }
+                map_def
+            }
+            _ => {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "must call begin_insert() before push_key()",
+                });
+            }
+        };
+
+        // Get the key shape
+        let key_shape = map_def.k();
+
+        // Allocate space for the key
+        let key_layout = key_shape
+            .layout
+            .sized_layout()
+            .map_err(|_| ReflectError::Unsized { shape: key_shape })?;
+        let key_ptr_raw: *mut u8 = unsafe { std::alloc::alloc(key_layout) };
+
+        if key_ptr_raw.is_null() {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "failed to allocate memory for map key",
+            });
+        }
+
+        // Store the key pointer in the insert state
+        match &mut frame.tracker {
+            Tracker::Map {
+                insert_state: MapInsertState::PushingKey { key_ptr: kp },
+                ..
+            } => {
+                *kp = Some(PtrUninit::new(key_ptr_raw));
+            }
+            _ => unreachable!(),
+        }
+
+        // Push a new frame for the key
+        self.frames.push(Frame::new(
+            PtrUninit::new(key_ptr_raw),
+            key_shape,
+            FrameOwnership::Owned,
+        ));
+
+        Ok(())
+    }
+
+    /// Pushes a frame for the map value
+    /// Must be called after the key has been set and popped
+    pub fn push_value(&mut self) -> Result<(), ReflectError<'shape>> {
+        let frame = self.frames.last_mut().unwrap();
+
+        // Check that we have a Map in PushingValue state
+        let map_def = match (&frame.shape.def, &mut frame.tracker) {
+            (
+                Def::Map(map_def),
+                Tracker::Map {
+                    insert_state: MapInsertState::PushingValue { value_ptr, .. },
+                    ..
+                },
+            ) => {
+                if value_ptr.is_some() {
+                    return Err(ReflectError::OperationFailed {
+                        shape: frame.shape,
+                        operation: "already pushing a value, call pop() first",
+                    });
+                }
+                map_def
+            }
+            _ => {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "must complete key before push_value()",
+                });
+            }
+        };
+
+        // Get the value shape
+        let value_shape = map_def.v();
+
+        // Allocate space for the value
+        let value_layout = value_shape
+            .layout
+            .sized_layout()
+            .map_err(|_| ReflectError::Unsized { shape: value_shape })?;
+        let value_ptr_raw: *mut u8 = unsafe { std::alloc::alloc(value_layout) };
+
+        if value_ptr_raw.is_null() {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "failed to allocate memory for map value",
+            });
+        }
+
+        // Store the value pointer in the insert state
+        match &mut frame.tracker {
+            Tracker::Map {
+                insert_state: MapInsertState::PushingValue { value_ptr: vp, .. },
+                ..
+            } => {
+                *vp = Some(PtrUninit::new(value_ptr_raw));
+            }
+            _ => unreachable!(),
+        }
+
+        // Push a new frame for the value
+        self.frames.push(Frame::new(
+            PtrUninit::new(value_ptr_raw),
+            value_shape,
+            FrameOwnership::Owned,
+        ));
+
+        Ok(())
+    }
+
     /// Pushes an element to the list
     /// The element should be set using `set()` or similar methods, then `pop()` to complete
     pub fn push(&mut self) -> Result<(), ReflectError<'shape>> {
@@ -1019,6 +1251,65 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                     }
                 }
             }
+            Tracker::Map {
+                is_initialized: true,
+                insert_state,
+            } => {
+                match insert_state {
+                    MapInsertState::PushingKey { key_ptr } => {
+                        // We just popped the key frame
+                        if let Some(key_ptr) = key_ptr {
+                            // Transition to PushingValue state
+                            *insert_state = MapInsertState::PushingValue {
+                                key_ptr: *key_ptr,
+                                value_ptr: None,
+                            };
+                        }
+                    }
+                    MapInsertState::PushingValue { key_ptr, value_ptr } => {
+                        // We just popped the value frame, now insert the pair
+                        if let (Some(value_ptr), Def::Map(map_def)) =
+                            (value_ptr, parent_frame.shape.def)
+                        {
+                            let insert_fn = map_def.vtable.insert_fn;
+
+                            // Use insert to add key-value pair to the map
+                            unsafe {
+                                insert_fn(
+                                    PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
+                                    PtrMut::new(key_ptr.as_mut_byte_ptr()),
+                                    PtrMut::new(value_ptr.as_mut_byte_ptr()),
+                                );
+                            }
+
+                            // Deallocate the key and value memory since insert moved them
+                            if let Ok(key_shape) = map_def.k().layout.sized_layout() {
+                                if key_shape.size() > 0 {
+                                    unsafe {
+                                        alloc::alloc::dealloc(key_ptr.as_mut_byte_ptr(), key_shape);
+                                    }
+                                }
+                            }
+                            if let Ok(value_shape) = map_def.v().layout.sized_layout() {
+                                if value_shape.size() > 0 {
+                                    unsafe {
+                                        alloc::alloc::dealloc(
+                                            value_ptr.as_mut_byte_ptr(),
+                                            value_shape,
+                                        );
+                                    }
+                                }
+                            }
+
+                            // Reset to idle state
+                            *insert_state = MapInsertState::Idle;
+                        }
+                    }
+                    MapInsertState::Idle => {
+                        // Nothing to do
+                    }
+                }
+            }
             _ => {}
         }
 
@@ -1148,6 +1439,26 @@ impl<'facet, 'shape, T> TypedWip<'facet, 'shape, T> {
     pub fn push(&mut self) -> Result<(), ReflectError<'shape>> {
         self.wip.push()
     }
+
+    /// Forwards begin_map to the inner wip instance.
+    pub fn begin_map(&mut self) -> Result<(), ReflectError<'shape>> {
+        self.wip.begin_map()
+    }
+
+    /// Forwards begin_insert to the inner wip instance.
+    pub fn begin_insert(&mut self) -> Result<(), ReflectError<'shape>> {
+        self.wip.begin_insert()
+    }
+
+    /// Forwards push_key to the inner wip instance.
+    pub fn push_key(&mut self) -> Result<(), ReflectError<'shape>> {
+        self.wip.push_key()
+    }
+
+    /// Forwards push_value to the inner wip instance.
+    pub fn push_value(&mut self) -> Result<(), ReflectError<'shape>> {
+        self.wip.push_value()
+    }
 }
 
 impl<'facet, 'shape> Drop for Wip<'facet, 'shape> {
@@ -1235,6 +1546,76 @@ impl<'facet, 'shape> Drop for Wip<'facet, 'shape> {
                         if let Some(drop_fn) = (frame.shape.vtable.drop_in_place)() {
                             unsafe { drop_fn(PtrMut::new(frame.data.as_mut_byte_ptr())) };
                         }
+                    }
+                }
+                Tracker::Map {
+                    is_initialized,
+                    insert_state,
+                } => {
+                    // Drop the initialized map
+                    if *is_initialized {
+                        if let Some(drop_fn) = (frame.shape.vtable.drop_in_place)() {
+                            unsafe { drop_fn(PtrMut::new(frame.data.as_mut_byte_ptr())) };
+                        }
+                    }
+
+                    // Clean up any in-progress insertion state
+                    match insert_state {
+                        MapInsertState::PushingKey { key_ptr } => {
+                            if let Some(key_ptr) = key_ptr {
+                                // Deallocate the key buffer
+                                if let Def::Map(map_def) = frame.shape.def {
+                                    if let Ok(key_shape) = map_def.k().layout.sized_layout() {
+                                        if key_shape.size() > 0 {
+                                            unsafe {
+                                                alloc::alloc::dealloc(
+                                                    key_ptr.as_mut_byte_ptr(),
+                                                    key_shape,
+                                                )
+                                            };
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        MapInsertState::PushingValue { key_ptr, value_ptr } => {
+                            // Drop and deallocate both key and value buffers
+                            if let Def::Map(map_def) = frame.shape.def {
+                                // Drop and deallocate the key
+                                if let Some(drop_fn) = (map_def.k().vtable.drop_in_place)() {
+                                    unsafe { drop_fn(PtrMut::new(key_ptr.as_mut_byte_ptr())) };
+                                }
+                                if let Ok(key_shape) = map_def.k().layout.sized_layout() {
+                                    if key_shape.size() > 0 {
+                                        unsafe {
+                                            alloc::alloc::dealloc(
+                                                key_ptr.as_mut_byte_ptr(),
+                                                key_shape,
+                                            )
+                                        };
+                                    }
+                                }
+
+                                // Drop and deallocate the value if it exists
+                                if let Some(value_ptr) = value_ptr {
+                                    // Note: value_ptr being Some doesn't mean the value is initialized,
+                                    // it just means we allocated space. We should only drop if we know
+                                    // it was initialized, but since we're in Drop, we can't know that.
+                                    // For safety, we'll just deallocate without dropping.
+                                    if let Ok(value_shape) = map_def.v().layout.sized_layout() {
+                                        if value_shape.size() > 0 {
+                                            unsafe {
+                                                alloc::alloc::dealloc(
+                                                    value_ptr.as_mut_byte_ptr(),
+                                                    value_shape,
+                                                )
+                                            };
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        MapInsertState::Idle => {}
                     }
                 }
             }
