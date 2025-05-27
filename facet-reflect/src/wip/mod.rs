@@ -396,16 +396,27 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
 
     /// Pushes a frame to initialize the inner value of a Box<T>
     pub fn push_box(&mut self) -> Result<(), ReflectError<'shape>> {
+        self.push_smart_ptr()
+    }
+
+    /// Pushes a frame to initialize the inner value of a smart pointer (Box<T>, Arc<T>, etc.)
+    pub fn push_smart_ptr(&mut self) -> Result<(), ReflectError<'shape>> {
         let frame = self.frames.last_mut().unwrap();
 
-        // Check that we have a SmartPointer with Box type
+        // Check that we have a SmartPointer
         match &frame.shape.def {
             Def::SmartPointer(smart_ptr_def) => {
-                if !matches!(smart_ptr_def.known, Some(KnownSmartPointer::Box)) {
-                    return Err(ReflectError::OperationFailed {
-                        shape: frame.shape,
-                        operation: "only Box smart pointers are currently supported",
-                    });
+                // Check for supported smart pointer types
+                match smart_ptr_def.known {
+                    Some(KnownSmartPointer::Box) | Some(KnownSmartPointer::Arc) => {
+                        // Supported types, continue
+                    }
+                    _ => {
+                        return Err(ReflectError::OperationFailed {
+                            shape: frame.shape,
+                            operation: "only Box and Arc smart pointers are currently supported",
+                        });
+                    }
                 }
 
                 // Get the pointee shape
@@ -616,6 +627,11 @@ impl<'facet, 'shape, T> TypedWip<'facet, 'shape, T> {
     /// Forwards push_box to the inner wip instance.
     pub fn push_box(&mut self) -> Result<(), ReflectError<'shape>> {
         self.wip.push_box()
+    }
+
+    /// Forwards push_smart_ptr to the inner wip instance.
+    pub fn push_smart_ptr(&mut self) -> Result<(), ReflectError<'shape>> {
+        self.wip.push_smart_ptr()
     }
 
     /// Forwards pop to the inner wip instance.

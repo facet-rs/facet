@@ -507,3 +507,96 @@ fn drop_box_partially_initialized() {
         "Should drop the inner value through Box's drop"
     );
 }
+
+#[test]
+fn arc_init() {
+    use alloc::sync::Arc;
+
+    let mut wip = Wip::alloc::<Arc<u32>>()?;
+
+    // Push into the Arc to build its inner value
+    wip.push_smart_ptr()?;
+    wip.set(42u32)?;
+    wip.pop()?;
+
+    let hv = wip.build()?;
+    assert_eq!(**hv, 42);
+}
+
+#[test]
+fn arc_partial_init() {
+    use alloc::sync::Arc;
+
+    let wip = Wip::alloc::<Arc<u32>>()?;
+    // Don't initialize the Arc at all
+    assert_snapshot!(wip.build().unwrap_err());
+}
+
+#[test]
+fn arc_struct() {
+    use alloc::sync::Arc;
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Point {
+        x: f64,
+        y: f64,
+    }
+
+    let mut wip = Wip::alloc::<Arc<Point>>()?;
+
+    // Push into the Arc
+    wip.push_smart_ptr()?;
+
+    // Build the Point inside the Arc
+    wip.push_field("x")?;
+    wip.set(3.0)?;
+    wip.pop()?;
+
+    wip.push_field("y")?;
+    wip.set(4.0)?;
+    wip.pop()?;
+
+    // Pop from Arc
+    wip.pop()?;
+
+    let hv = wip.build()?;
+    assert_eq!(**hv, Point { x: 3.0, y: 4.0 });
+}
+
+#[test]
+fn drop_arc_partially_initialized() {
+    use alloc::sync::Arc;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    static INNER_DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Facet, Debug)]
+    struct DropCounter {
+        value: u32,
+    }
+
+    impl Drop for DropCounter {
+        fn drop(&mut self) {
+            INNER_DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+            println!("Dropping DropCounter with value: {}", self.value);
+        }
+    }
+
+    INNER_DROP_COUNT.store(0, Ordering::SeqCst);
+
+    {
+        let mut wip = Wip::alloc::<Arc<DropCounter>>()?;
+
+        // Initialize the Arc's inner value
+        wip.push_smart_ptr()?;
+        wip.set(DropCounter { value: 123 })?;
+        wip.pop()?;
+
+        // Drop the wip - should drop the Arc which drops the inner value
+    }
+
+    assert_eq!(
+        INNER_DROP_COUNT.load(Ordering::SeqCst),
+        1,
+        "Should drop the inner value through Arc's drop"
+    );
+}
