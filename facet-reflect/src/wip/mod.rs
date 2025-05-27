@@ -354,6 +354,43 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         Ok(())
     }
 
+    /// Pushes a variant for enum initialization by name
+    pub fn push_variant_named(&mut self, variant_name: &str) -> Result<(), ReflectError<'shape>> {
+        let fr = self.frames.last_mut().unwrap();
+
+        // Check that we're dealing with an enum
+        let enum_type = match fr.shape.ty {
+            facet_core::Type::User(facet_core::UserType::Enum(e)) => e,
+            _ => {
+                return Err(ReflectError::OperationFailed {
+                    shape: fr.shape,
+                    operation: "push_variant_named requires an enum type",
+                });
+            }
+        };
+
+        // Find the variant with the matching name
+        let variant = enum_type
+            .variants
+            .iter()
+            .find(|v| v.name == variant_name)
+            .ok_or_else(|| ReflectError::OperationFailed {
+                shape: fr.shape,
+                operation: "No variant found with the given name",
+            })?;
+
+        // Get the discriminant value
+        let discriminant = variant
+            .discriminant
+            .ok_or_else(|| ReflectError::OperationFailed {
+                shape: fr.shape,
+                operation: "Variant has no discriminant value",
+            })?;
+
+        // Delegate to push_variant
+        self.push_variant(discriminant)
+    }
+
     /// Pushes a variant for enum initialization
     pub fn push_variant(&mut self, discriminant: i64) -> Result<(), ReflectError<'shape>> {
         let fr = self.frames.last_mut().unwrap();
@@ -1427,6 +1464,11 @@ impl<'facet, 'shape, T> TypedWip<'facet, 'shape, T> {
     /// Forwards push_variant to the inner wip instance.
     pub fn push_variant(&mut self, discriminant: i64) -> Result<(), ReflectError<'shape>> {
         self.wip.push_variant(discriminant)
+    }
+
+    /// Forwards push_variant_named to the inner wip instance.
+    pub fn push_variant_named(&mut self, variant_name: &str) -> Result<(), ReflectError<'shape>> {
+        self.wip.push_variant_named(variant_name)
     }
 
     /// Forwards push_nth_enum_field to the inner wip instance.

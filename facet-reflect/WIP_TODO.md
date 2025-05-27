@@ -46,8 +46,8 @@ This document tracks the remaining work for the facet-reflect Wip (Work-in-progr
 ## 🔧 API Improvements
 
 ### Convenience Methods
-- [ ] `variant_named()` - select enum variant by name instead of discriminant
-- [ ] `field_named()` - select struct field by name
+- [x] `push_variant_named()` - select enum variant by name instead of discriminant
+- [x] `push_field()` - select struct/enum field by name (already existed)
 - [ ] Fluent/chaining API that returns new Wip instances
 
 ### Field Access

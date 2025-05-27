@@ -1176,6 +1176,167 @@ fn map_hashmap_complex_values() {
 }
 
 #[test]
+fn variant_named() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    enum Animal {
+        Dog { name: String, age: u8 } = 0,
+        Cat { name: String, lives: u8 } = 1,
+        Bird { species: String } = 2,
+    }
+
+    // Test Dog variant
+    let mut wip = Wip::alloc::<Animal>()?;
+    wip.push_variant_named("Dog")?;
+    wip.push_field("name")?;
+    wip.set("Buddy".to_string())?;
+    wip.pop()?;
+    wip.push_field("age")?;
+    wip.set(5u8)?;
+    wip.pop()?;
+    let animal = wip.build()?;
+    assert_eq!(
+        *animal,
+        Animal::Dog {
+            name: "Buddy".to_string(),
+            age: 5
+        }
+    );
+
+    // Test Cat variant
+    let mut wip = Wip::alloc::<Animal>()?;
+    wip.push_variant_named("Cat")?;
+    wip.push_field("name")?;
+    wip.set("Whiskers".to_string())?;
+    wip.pop()?;
+    wip.push_field("lives")?;
+    wip.set(9u8)?;
+    wip.pop()?;
+    let animal = wip.build()?;
+    assert_eq!(
+        *animal,
+        Animal::Cat {
+            name: "Whiskers".to_string(),
+            lives: 9
+        }
+    );
+
+    // Test Bird variant
+    let mut wip = Wip::alloc::<Animal>()?;
+    wip.push_variant_named("Bird")?;
+    wip.push_field("species")?;
+    wip.set("Parrot".to_string())?;
+    wip.pop()?;
+    let animal = wip.build()?;
+    assert_eq!(
+        *animal,
+        Animal::Bird {
+            species: "Parrot".to_string()
+        }
+    );
+
+    // Test invalid variant name
+    let mut wip = Wip::alloc::<Animal>()?;
+    let result = wip.push_variant_named("Fish");
+    assert!(result.is_err());
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("No variant found with the given name")
+    );
+}
+
+#[test]
+fn field_named_on_struct() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Person {
+        name: String,
+        age: u32,
+        email: String,
+    }
+
+    let mut wip = Wip::alloc::<Person>()?;
+
+    // Use field names instead of indices
+    wip.push_field("email")?;
+    wip.set("john@example.com".to_string())?;
+    wip.pop()?;
+
+    wip.push_field("name")?;
+    wip.set("John Doe".to_string())?;
+    wip.pop()?;
+
+    wip.push_field("age")?;
+    wip.set(30u32)?;
+    wip.pop()?;
+
+    let person = wip.build()?;
+    assert_eq!(
+        *person,
+        Person {
+            name: "John Doe".to_string(),
+            age: 30,
+            email: "john@example.com".to_string(),
+        }
+    );
+
+    // Test invalid field name
+    let mut wip = Wip::alloc::<Person>()?;
+    let result = wip.push_field("invalid_field");
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("field not found"));
+}
+
+#[test]
+fn field_named_on_enum() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    enum Config {
+        Server { host: String, port: u16, tls: bool } = 0,
+        Client { url: String, timeout: u32 } = 1,
+    }
+
+    // Test field access on Server variant
+    let mut wip = Wip::alloc::<Config>()?;
+    wip.push_variant_named("Server")?;
+
+    wip.push_field("port")?;
+    wip.set(8080u16)?;
+    wip.pop()?;
+
+    wip.push_field("host")?;
+    wip.set("localhost".to_string())?;
+    wip.pop()?;
+
+    wip.push_field("tls")?;
+    wip.set(true)?;
+    wip.pop()?;
+
+    let config = wip.build()?;
+    assert_eq!(
+        *config,
+        Config::Server {
+            host: "localhost".to_string(),
+            port: 8080,
+            tls: true,
+        }
+    );
+
+    // Test invalid field name on enum variant
+    let mut wip = Wip::alloc::<Config>()?;
+    wip.push_variant_named("Client")?;
+    let result = wip.push_field("port"); // port doesn't exist on Client
+    assert!(result.is_err());
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("field not found in current enum variant")
+    );
+}
+
+#[test]
 fn map_partial_initialization_drop() {
     use core::sync::atomic::{AtomicUsize, Ordering};
     use std::collections::HashMap;
