@@ -87,6 +87,8 @@ enum Tracker<'shape> {
     Enum {
         variant: Variant<'shape>,
         data: ISet,
+        /// If we're pushing another frame, this is set to the field index
+        current_child: Option<usize>,
     },
 }
 
@@ -147,7 +149,28 @@ impl<'shape> Frame<'shape> {
                     }
                 }
             }
-            Tracker::Enum { .. } => todo!(),
+            Tracker::Enum { variant, data, .. } => {
+                // Check if all fields of the variant are initialized
+                let num_fields = variant.data.fields.len();
+                if num_fields == 0 {
+                    // Unit variant, always initialized
+                    Ok(())
+                } else if (0..num_fields).all(|idx| data.get(idx)) {
+                    Ok(())
+                } else {
+                    // Find the first uninitialized field
+                    let first_missing_idx = (0..num_fields).find(|&idx| !data.get(idx));
+                    if let Some(missing_idx) = first_missing_idx {
+                        let field_name = variant.data.fields[missing_idx].name;
+                        Err(ReflectError::UninitializedField {
+                            shape: self.shape,
+                            field_name,
+                        })
+                    } else {
+                        Err(ReflectError::UninitializedValue { shape: self.shape })
+                    }
+                }
+            }
             Tracker::SmartPointer { is_initialized } => {
                 if is_initialized {
                     Ok(())
@@ -280,6 +303,99 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         Ok(())
     }
 
+    /// Pushes a variant for enum initialization
+    pub fn push_variant(&mut self, discriminant: i64) -> Result<(), ReflectError<'shape>> {
+        let fr = self.frames.last_mut().unwrap();
+
+        // Check that we're dealing with an enum
+        let enum_type = match fr.shape.ty {
+            facet_core::Type::User(facet_core::UserType::Enum(e)) => e,
+            _ => {
+                return Err(ReflectError::WrongShape {
+                    expected: fr.shape,
+                    actual: fr.shape,
+                });
+            }
+        };
+
+        // Find the variant with the matching discriminant
+        let variant = enum_type
+            .variants
+            .iter()
+            .find(|v| v.discriminant == Some(discriminant))
+            .ok_or_else(|| ReflectError::OperationFailed {
+                shape: fr.shape,
+                operation: "No variant found with the given discriminant",
+            })?;
+
+        // Write the discriminant to memory
+        unsafe {
+            match enum_type.enum_repr {
+                facet_core::EnumRepr::U8 => {
+                    let ptr = fr.data.as_mut_byte_ptr() as *mut u8;
+                    *ptr = discriminant as u8;
+                }
+                facet_core::EnumRepr::U16 => {
+                    let ptr = fr.data.as_mut_byte_ptr() as *mut u16;
+                    *ptr = discriminant as u16;
+                }
+                facet_core::EnumRepr::U32 => {
+                    let ptr = fr.data.as_mut_byte_ptr() as *mut u32;
+                    *ptr = discriminant as u32;
+                }
+                facet_core::EnumRepr::U64 => {
+                    let ptr = fr.data.as_mut_byte_ptr() as *mut u64;
+                    *ptr = discriminant as u64;
+                }
+                facet_core::EnumRepr::I8 => {
+                    let ptr = fr.data.as_mut_byte_ptr() as *mut i8;
+                    *ptr = discriminant as i8;
+                }
+                facet_core::EnumRepr::I16 => {
+                    let ptr = fr.data.as_mut_byte_ptr() as *mut i16;
+                    *ptr = discriminant as i16;
+                }
+                facet_core::EnumRepr::I32 => {
+                    let ptr = fr.data.as_mut_byte_ptr() as *mut i32;
+                    *ptr = discriminant as i32;
+                }
+                facet_core::EnumRepr::I64 => {
+                    let ptr = fr.data.as_mut_byte_ptr() as *mut i64;
+                    *ptr = discriminant as i64;
+                }
+                facet_core::EnumRepr::USize => {
+                    let ptr = fr.data.as_mut_byte_ptr() as *mut usize;
+                    *ptr = discriminant as usize;
+                }
+                facet_core::EnumRepr::ISize => {
+                    let ptr = fr.data.as_mut_byte_ptr() as *mut isize;
+                    *ptr = discriminant as isize;
+                }
+                facet_core::EnumRepr::RustNPO => {
+                    return Err(ReflectError::OperationFailed {
+                        shape: fr.shape,
+                        operation: "RustNPO enums are not supported for incremental building",
+                    });
+                }
+                _ => {
+                    return Err(ReflectError::OperationFailed {
+                        shape: fr.shape,
+                        operation: "Unknown enum representation",
+                    });
+                }
+            }
+        }
+
+        // Update tracker to track the variant
+        fr.tracker = Tracker::Enum {
+            variant: *variant,
+            data: ISet::new(variant.data.fields.len()),
+            current_child: None,
+        };
+
+        Ok(())
+    }
+
     /// Selects a field of a struct with a given name
     pub fn push_field(&mut self, field_name: &str) -> Result<(), ReflectError<'shape>> {
         let frame = self.frames.last_mut().unwrap();
@@ -307,7 +423,30 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                     self.push_nth_field(idx)
                 }
                 facet_core::UserType::Enum(_) => {
-                    todo!("add support for selecting fields in enums")
+                    // Check if we have a variant selected
+                    match &frame.tracker {
+                        Tracker::Enum { variant, .. } => {
+                            let idx = variant
+                                .data
+                                .fields
+                                .iter()
+                                .position(|f| f.name == field_name);
+                            let idx = match idx {
+                                Some(idx) => idx,
+                                None => {
+                                    return Err(ReflectError::OperationFailed {
+                                        shape: frame.shape,
+                                        operation: "field not found in current enum variant",
+                                    });
+                                }
+                            };
+                            self.push_nth_enum_field(idx)
+                        }
+                        _ => Err(ReflectError::OperationFailed {
+                            shape: frame.shape,
+                            operation: "must call push_variant before selecting enum fields",
+                        }),
+                    }
                 }
                 facet_core::UserType::Union(_) => Err(ReflectError::OperationFailed {
                     shape: frame.shape,
@@ -465,6 +604,97 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         }
     }
 
+    /// Selects the nth field of an enum variant by index
+    pub fn push_nth_enum_field(&mut self, idx: usize) -> Result<(), ReflectError<'shape>> {
+        let frame = self.frames.last_mut().unwrap();
+
+        // Ensure we're in an enum with a variant selected
+        let (variant, enum_type) = match (&frame.tracker, &frame.shape.ty) {
+            (
+                Tracker::Enum { variant, .. },
+                facet_core::Type::User(facet_core::UserType::Enum(e)),
+            ) => (variant, e),
+            _ => {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "push_nth_enum_field requires an enum with a variant selected",
+                });
+            }
+        };
+
+        // Check bounds
+        if idx >= variant.data.fields.len() {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "enum field index out of bounds",
+            });
+        }
+
+        let field = &variant.data.fields[idx];
+
+        // Update tracker
+        match &mut frame.tracker {
+            Tracker::Enum {
+                data,
+                current_child,
+                ..
+            } => {
+                // Check if field was already initialized and drop if needed
+                if data.get(idx) {
+                    // Calculate the field offset, taking into account the discriminant
+                    let _discriminant_size = match enum_type.enum_repr {
+                        facet_core::EnumRepr::U8 | facet_core::EnumRepr::I8 => 1,
+                        facet_core::EnumRepr::U16 | facet_core::EnumRepr::I16 => 2,
+                        facet_core::EnumRepr::U32 | facet_core::EnumRepr::I32 => 4,
+                        facet_core::EnumRepr::U64 | facet_core::EnumRepr::I64 => 8,
+                        facet_core::EnumRepr::USize | facet_core::EnumRepr::ISize => {
+                            std::mem::size_of::<usize>()
+                        }
+                        facet_core::EnumRepr::RustNPO => {
+                            return Err(ReflectError::OperationFailed {
+                                shape: frame.shape,
+                                operation: "RustNPO enums are not supported",
+                            });
+                        }
+                        _ => {
+                            return Err(ReflectError::OperationFailed {
+                                shape: frame.shape,
+                                operation: "Unknown enum representation",
+                            });
+                        }
+                    };
+
+                    // The field offset already includes the discriminant offset
+                    let field_ptr = unsafe { frame.data.as_mut_byte_ptr().add(field.offset) };
+
+                    if let Some(drop_fn) = (field.shape.vtable.drop_in_place)() {
+                        unsafe { drop_fn(PtrMut::new(field_ptr)) };
+                    }
+
+                    // Unset the bit so we can re-initialize
+                    data.unset(idx);
+                }
+
+                // Set current_child to track which field we're initializing
+                *current_child = Some(idx);
+            }
+            _ => unreachable!("Already checked that we have Enum tracker"),
+        }
+
+        // Extract data we need before pushing frame
+        let field_ptr = unsafe { frame.data.as_mut_byte_ptr().add(field.offset) };
+        let field_shape = field.shape;
+
+        // Push new frame for the field
+        self.frames.push(Frame::new(
+            PtrUninit::new(field_ptr),
+            field_shape,
+            FrameOwnership::Field,
+        ));
+
+        Ok(())
+    }
+
     /// Pushes a frame to initialize the inner value of a Box<T>
     pub fn push_box(&mut self) -> Result<(), ReflectError<'shape>> {
         self.push_smart_ptr()
@@ -613,6 +843,16 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                     }
                 }
             }
+            Tracker::Enum {
+                data,
+                current_child,
+                ..
+            } => {
+                if let Some(idx) = *current_child {
+                    data.set(idx);
+                    *current_child = None;
+                }
+            }
             _ => {}
         }
 
@@ -722,6 +962,16 @@ impl<'facet, 'shape, T> TypedWip<'facet, 'shape, T> {
     {
         self.wip.set_from_function(f)
     }
+
+    /// Forwards push_variant to the inner wip instance.
+    pub fn push_variant(&mut self, discriminant: i64) -> Result<(), ReflectError<'shape>> {
+        self.wip.push_variant(discriminant)
+    }
+
+    /// Forwards push_nth_enum_field to the inner wip instance.
+    pub fn push_nth_enum_field(&mut self, idx: usize) -> Result<(), ReflectError<'shape>> {
+        self.wip.push_nth_enum_field(idx)
+    }
 }
 
 impl<'facet, 'shape> Drop for Wip<'facet, 'shape> {
@@ -780,9 +1030,18 @@ impl<'facet, 'shape> Drop for Wip<'facet, 'shape> {
                         _ => {}
                     }
                 }
-                Tracker::Enum { variant, data } => {
-                    // TODO: Drop initialized enum variant fields
-                    let _ = (variant, data);
+                Tracker::Enum { variant, data, .. } => {
+                    // Drop initialized enum variant fields
+                    for (idx, field) in variant.data.fields.iter().enumerate() {
+                        if data.get(idx) {
+                            // This field was initialized, drop it
+                            let field_ptr =
+                                unsafe { frame.data.as_mut_byte_ptr().add(field.offset) };
+                            if let Some(drop_fn) = (field.shape.vtable.drop_in_place)() {
+                                unsafe { drop_fn(PtrMut::new(field_ptr)) };
+                            }
+                        }
+                    }
                 }
                 Tracker::SmartPointer { is_initialized } => {
                     // Drop the initialized Box

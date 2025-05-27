@@ -827,3 +827,122 @@ fn drop_arc_partially_initialized() {
         "Should drop the inner value through Arc's drop"
     );
 }
+
+#[test]
+fn enum_unit_variant() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    enum Status {
+        Active = 0,
+        Inactive = 1,
+        Pending = 2,
+    }
+
+    let mut wip = Wip::alloc::<Status>()?;
+    wip.push_variant(1)?; // Inactive
+
+    let hv = wip.build()?;
+    assert_eq!(*hv, Status::Inactive);
+}
+
+#[test]
+fn enum_struct_variant() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    enum Message {
+        Text { content: String } = 0,
+        Number { value: i32 } = 1,
+        Empty = 2,
+    }
+
+    let mut wip = Wip::alloc::<Message>()?;
+    wip.push_variant(0)?; // Text variant
+
+    wip.push_field("content")?;
+    wip.set("Hello, world!".to_string())?;
+    wip.pop()?;
+
+    let hv = wip.build()?;
+    assert_eq!(
+        *hv,
+        Message::Text {
+            content: "Hello, world!".to_string()
+        }
+    );
+}
+
+#[test]
+fn enum_tuple_variant() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(i32)]
+    enum Value {
+        Int(i32) = 0,
+        Float(f64) = 1,
+        Pair(i32, String) = 2,
+    }
+
+    let mut wip = Wip::alloc::<Value>()?;
+    wip.push_variant(2)?; // Pair variant
+
+    wip.push_nth_enum_field(0)?;
+    wip.set(42)?;
+    wip.pop()?;
+
+    wip.push_nth_enum_field(1)?;
+    wip.set("test".to_string())?;
+    wip.pop()?;
+
+    let hv = wip.build()?;
+    assert_eq!(*hv, Value::Pair(42, "test".to_string()));
+}
+
+#[test]
+fn enum_set_field_twice() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u16)]
+    enum Data {
+        Point { x: f32, y: f32 } = 0,
+    }
+
+    let mut wip = Wip::alloc::<Data>()?;
+    wip.push_variant(0)?; // Point variant
+
+    // Set x field
+    wip.push_field("x")?;
+    wip.set(1.0f32)?;
+    wip.pop()?;
+
+    // Set x field again (should drop previous value)
+    wip.push_field("x")?;
+    wip.set(2.0f32)?;
+    wip.pop()?;
+
+    // Set y field
+    wip.push_field("y")?;
+    wip.set(3.0f32)?;
+    wip.pop()?;
+
+    let hv = wip.build()?;
+    assert_eq!(*hv, Data::Point { x: 2.0, y: 3.0 });
+}
+
+#[test]
+fn enum_partial_initialization_error() {
+    #[derive(Facet, Debug)]
+    #[repr(u8)]
+    enum Config {
+        Settings { timeout: u32, retries: u8 } = 0,
+    }
+
+    let mut wip = Wip::alloc::<Config>()?;
+    wip.push_variant(0)?; // Settings variant
+
+    // Only initialize timeout, not retries
+    wip.push_field("timeout")?;
+    wip.set(5000u32)?;
+    wip.pop()?;
+
+    // Should fail to build because retries is not initialized
+    let result = wip.build();
+    assert!(result.is_err());
+}
