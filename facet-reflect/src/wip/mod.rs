@@ -56,6 +56,10 @@ enum Tracker<'shape> {
         /// fields need to be individually tracked — we only
         /// support up to 63 fields.
         iset: ISet,
+
+        /// if we're pushing another frame, this is set to the
+        /// index of the struct field
+        current_child: Option<usize>,
     },
 
     /// Partially initialized enum (but we picked a variant)
@@ -141,16 +145,7 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                 .map_err(|_| ReflectError::Unsized { shape: fr.shape })?;
         }
 
-        match fr.shape.ty {
-            facet_core::Type::Primitive(_primitive_type) => {
-                fr.tracker = Tracker::Init;
-            }
-            facet_core::Type::Sequence(_sequence_type) => todo!(),
-            facet_core::Type::User(_user_type) => todo!(),
-            facet_core::Type::Pointer(_pointer_type) => todo!(),
-            _ => todo!(),
-        }
-
+        fr.tracker = Tracker::Init;
         Ok(self)
     }
 

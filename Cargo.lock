@@ -568,6 +568,7 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-testhelpers 0.17.4",
+ "insta",
  "log",
  "owo-colors",
  "tempfile",
