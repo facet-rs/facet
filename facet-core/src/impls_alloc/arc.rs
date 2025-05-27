@@ -1,15 +1,13 @@
-use core::alloc::Layout;
-
 use crate::{
-    Def, Facet, KnownSmartPointer, PtrConst, PtrMut, PtrUninit, Shape, ShapeLayout,
-    SmartPointerDef, SmartPointerFlags, SmartPointerVTable, TryBorrowInnerError, TryFromError,
-    TryIntoInnerError, Type, UserType, ValueVTable, value_vtable,
+    Def, Facet, KnownSmartPointer, PtrConst, PtrMut, PtrUninit, Shape, SmartPointerDef,
+    SmartPointerFlags, SmartPointerVTable, TryBorrowInnerError, TryFromError, TryIntoInnerError,
+    Type, UserType, ValueVTable, value_vtable,
 };
 
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
     const VTABLE: &'static ValueVTable = &const {
         // Define the functions for transparent conversion between Arc<T> and T
-        unsafe fn try_from<'a, 'shape, 'src, 'dst, T: Facet<'a> + ?Sized>(
+        unsafe fn try_from<'a, 'shape, 'src, 'dst, T: Facet<'a>>(
             src_ptr: PtrConst<'src>,
             src_shape: &'shape Shape<'shape>,
             dst: PtrUninit<'dst>,
@@ -20,112 +18,28 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
                     expected: &[T::SHAPE],
                 });
             }
-
-            if let ShapeLayout::Unsized = T::SHAPE.layout {
-                panic!("can't try_from with unsized type");
-            }
-
-            use alloc::sync::Arc;
-
-            // Get the layout for T
-            let layout = match T::SHAPE.layout {
-                ShapeLayout::Sized(layout) => layout,
-                ShapeLayout::Unsized => panic!("Unsized type not supported"),
-            };
-
-            // We'll create a new memory location, copy the value, then create an Arc from it
-            let size_of_arc_header = core::mem::size_of::<usize>() * 2;
-
-            // Use Layout::extend to combine header and value layout with correct alignment and padding
-            let header_layout =
-                Layout::from_size_align(size_of_arc_header, core::mem::align_of::<usize>())
-                    .unwrap();
-            let (arc_layout, value_offset) = header_layout.extend(layout).unwrap();
-
-            // To ensure that our allocation is correct for the Arc memory model,
-            // round up the allocation to the next multiple of 8 (Arc's alignment)
-            let adjusted_size = (arc_layout.size() + 7) & !7;
-            let final_layout =
-                unsafe { Layout::from_size_align_unchecked(adjusted_size, arc_layout.align()) };
-
-            let mem = unsafe { alloc::alloc::alloc(final_layout) };
-
-            unsafe {
-                // Copy the Arc header (refcounts, vtable pointer, etc.) from a dummy Arc<()>
-                let dummy_arc = Arc::new(());
-                let header_start = (Arc::as_ptr(&dummy_arc) as *const u8).sub(size_of_arc_header);
-                core::ptr::copy_nonoverlapping(header_start, mem, size_of_arc_header);
-
-                // Copy the source value into the memory area at the correct value offset after the Arc header
-                core::ptr::copy_nonoverlapping(
-                    src_ptr.as_byte_ptr(),
-                    mem.add(value_offset),
-                    layout.size(),
-                );
-            }
-
-            // Create an Arc from our allocated and initialized memory
-            let ptr = unsafe { mem.add(value_offset) };
-            let t_ptr: *mut T = unsafe { core::mem::transmute_copy(&ptr) };
-            let arc = unsafe { Arc::from_raw(t_ptr) };
-
-            // Move the Arc into the destination and return a PtrMut for it
+            let t = unsafe { src_ptr.read::<T>() };
+            let arc = alloc::sync::Arc::new(t);
             Ok(unsafe { dst.put(arc) })
         }
 
-        unsafe fn try_into_inner<'a, 'src, 'dst, T: Facet<'a> + ?Sized>(
+        unsafe fn try_into_inner<'a, 'src, 'dst, T: Facet<'a>>(
             src_ptr: PtrMut<'src>,
             dst: PtrUninit<'dst>,
         ) -> Result<PtrMut<'dst>, TryIntoInnerError> {
             use alloc::sync::Arc;
 
             // Read the Arc from the source pointer
-            let mut arc = unsafe { src_ptr.read::<Arc<T>>() };
+            let arc = unsafe { src_ptr.read::<Arc<T>>() };
 
-            // For unsized types, we need to know how many bytes to copy.
-            let size = match T::SHAPE.layout {
-                ShapeLayout::Sized(layout) => layout.size(),
-                _ => panic!("cannot try_into_inner with unsized type"),
-            };
-
-            // Check if we have exclusive access to the Arc (strong count = 1)
-            if let Some(inner_ref) = Arc::get_mut(&mut arc) {
-                // We have exclusive access, so we can safely copy the inner value
-                let inner_ptr = inner_ref as *const T as *const u8;
-
-                unsafe {
-                    // Copy the inner value to the destination
-                    core::ptr::copy_nonoverlapping(inner_ptr, dst.as_mut_byte_ptr(), size);
-
-                    // Prevent dropping the Arc normally which would also drop the inner value
-                    // that we've already copied
-                    let raw_ptr = Arc::into_raw(arc);
-
-                    // We need to deallocate the Arc without running destructors
-                    // Get the Arc layout
-                    let size_of_arc_header = core::mem::size_of::<usize>() * 2;
-                    let layout = match T::SHAPE.layout {
-                        ShapeLayout::Sized(layout) => layout,
-                        _ => unreachable!("We already checked that T is sized"),
-                    };
-                    let arc_layout = Layout::from_size_align_unchecked(
-                        size_of_arc_header + size,
-                        layout.align(),
-                    );
-
-                    // Get the start of the allocation (header is before the data)
-                    let allocation_start = (raw_ptr as *mut u8).sub(size_of_arc_header);
-
-                    // Deallocate the memory without running any destructors
-                    alloc::alloc::dealloc(allocation_start, arc_layout);
-
-                    // Return a PtrMut to the destination, which now owns the value
-                    Ok(PtrMut::new(dst.as_mut_byte_ptr()))
+            // Try to unwrap the Arc to get exclusive ownership
+            match Arc::try_unwrap(arc) {
+                Ok(inner) => Ok(unsafe { dst.put(inner) }),
+                Err(arc) => {
+                    // Arc is shared, so we can't extract the inner value
+                    core::mem::forget(arc);
+                    Err(TryIntoInnerError::Unavailable)
                 }
-            } else {
-                // Arc is shared, so we can't extract the inner value
-                core::mem::forget(arc);
-                Err(TryIntoInnerError::Unavailable)
             }
         }
 
@@ -156,7 +70,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
 
     const SHAPE: &'static crate::Shape<'static> = &const {
         // Function to return inner type's shape
-        fn inner_shape<'a, T: Facet<'a> + ?Sized>() -> &'static Shape<'static> {
+        fn inner_shape<'a, T: Facet<'a>>() -> &'static Shape<'static> {
             T::SHAPE
         }
 
@@ -177,55 +91,14 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
                         &const {
                             SmartPointerVTable::builder()
                                 .borrow_fn(|this| {
-                                    let ptr = Self::as_ptr(unsafe { this.get() });
+                                    let ptr = unsafe {
+                                        &raw const *(&**this.as_ptr::<alloc::sync::Arc<T>>())
+                                    };
                                     PtrConst::new(ptr)
                                 })
                                 .new_into_fn(|this, ptr| {
-                                    use alloc::sync::Arc;
-
-                                    let layout = match T::SHAPE.layout {
-                                        ShapeLayout::Sized(layout) => layout,
-                                        ShapeLayout::Unsized => panic!("nope"),
-                                    };
-
-                                    let size_of_arc_header = core::mem::size_of::<usize>() * 2;
-
-                                    // we don't know the layout of dummy_arc, but we can tell its size and we can copy it
-                                    // in front of the `PtrMut`
-                                    let arc_layout = unsafe {
-                                        Layout::from_size_align_unchecked(
-                                            size_of_arc_header + layout.size(),
-                                            layout.align(),
-                                        )
-                                    };
-                                    let mem = unsafe { alloc::alloc::alloc(arc_layout) };
-
-                                    unsafe {
-                                        // Copy the Arc header (including refcounts, vtable pointers, etc.) from a freshly-allocated Arc<()>
-                                        // so that the struct before the T value is a valid Arc header.
-                                        let dummy_arc = alloc::sync::Arc::new(());
-                                        let header_start = (Arc::as_ptr(&dummy_arc) as *const u8)
-                                            .sub(size_of_arc_header);
-                                        core::ptr::copy_nonoverlapping(
-                                            header_start,
-                                            mem,
-                                            size_of_arc_header,
-                                        );
-
-                                        // Copy the value for T, pointed to by `ptr`, into the bytes just after the Arc header
-                                        core::ptr::copy_nonoverlapping(
-                                            ptr.as_byte_ptr(),
-                                            mem.add(size_of_arc_header),
-                                            layout.size(),
-                                        );
-                                    }
-
-                                    // Safety: `mem` is valid and contains a valid Arc header and valid T.
-                                    let ptr = unsafe { mem.add(size_of_arc_header) };
-                                    let t_ptr: *mut T = unsafe { core::mem::transmute_copy(&ptr) };
-                                    // Safety: This is the pointer to the Arc header + value; from_raw assumes a pointer to T located immediately after the Arc header.
-                                    let arc = unsafe { Arc::from_raw(t_ptr) };
-                                    // Move the Arc into the destination (this) and return a PtrMut for it.
+                                    let t = unsafe { ptr.read::<T>() };
+                                    let arc = alloc::sync::Arc::new(t);
                                     unsafe { this.put(arc) }
                                 })
                                 .downgrade_into_fn(|strong, weak| unsafe {
@@ -258,7 +131,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Weak<T> {
 
     const SHAPE: &'static crate::Shape<'static> = &const {
         // Function to return inner type's shape
-        fn inner_shape<'a, T: Facet<'a> + ?Sized>() -> &'static Shape<'static> {
+        fn inner_shape<'a, T: Facet<'a>>() -> &'static Shape<'static> {
             T::SHAPE
         }
 
