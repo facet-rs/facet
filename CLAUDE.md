@@ -37,17 +37,7 @@ cargo +nightly miri nextest run -p facet-reflect test_name
 ### Pre-commit Hooks
 
 When committing changes, facet-dev will run to check for code generation and formatting changes.
-This presents an interactive menu that requires user input which can be problematic for bots and
-automated processes.
-
-To bypass the interactive menu and automatically apply all fixes, you can set the
-`FACET_PRECOMMIT_ACCEPT_ALL=1` environment variable when running git commit:
-
-```bash
-FACET_PRECOMMIT_ACCEPT_ALL=1 git commit -m "Your commit message"
-```
-
-This is particularly useful for automated systems and bots that cannot provide interactive input.
+It will automatically apply any necessary fixes without requiring user input.
 
 ### Git Force Push Safety
 
