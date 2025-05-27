@@ -1,17 +1,40 @@
+use facet_core::Facet;
 use facet_reflect::Peek;
 use facet_serialize::{Serializer, serialize_iterative};
 use log::debug;
 use std::io::{self, Write};
 
-/// Serializes a Peek instance to a writer in JSON format
-pub(crate) fn peek_to_writer<'mem, 'facet, 'shape, W: Write>(
+/// Serializes a value implementing `Facet` to a JSON string.
+#[cfg(feature = "std")]
+pub fn to_string<'facet, T: Facet<'facet>>(value: &T) -> String {
+    peek_to_string(Peek::new(value))
+}
+
+/// Serializes a `Peek` instance to a JSON string.
+#[cfg(feature = "std")]
+pub fn peek_to_string<'input, 'facet, 'shape>(peek: Peek<'input, 'facet, 'shape>) -> String {
+    let mut s = Vec::new();
+    peek_to_writer(peek, &mut s).unwrap();
+    String::from_utf8(s).unwrap()
+}
+
+/// Serializes a `Facet` value to JSON and writes it to the given writer.
+#[cfg(feature = "std")]
+pub fn to_writer<'mem, 'facet, T: Facet<'facet>, W: Write>(
+    value: &'mem T,
+    writer: &mut W,
+) -> io::Result<()> {
+    peek_to_writer(Peek::new(value), writer)
+}
+
+/// Serializes a `Peek` value to JSON and writes it to the given writer.
+pub fn peek_to_writer<'mem, 'facet, 'shape, W: Write>(
     peek: Peek<'mem, 'facet, 'shape>,
     writer: &mut W,
 ) -> io::Result<()> {
     let mut serializer = JsonSerializer::new(writer);
     serialize_iterative(peek, &mut serializer)
 }
-
 #[derive(Debug)]
 enum StackItem {
     ArrayItem { first: bool },

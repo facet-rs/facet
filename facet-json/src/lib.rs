@@ -8,71 +8,17 @@
 #[cfg(feature = "std")]
 use std::io::{self, Write};
 
-use facet_core::Facet;
 pub use facet_deserialize::{DeserError, DeserErrorKind, DeserErrorMessage};
-use facet_reflect::Peek;
 
 extern crate alloc;
 
-#[cfg(feature = "std")]
-mod iterative;
-#[cfg(feature = "std")]
-mod recursive;
+mod deserialize;
+pub use deserialize::*;
+
+mod serialize;
+pub use serialize::*;
+
 mod tokenizer;
-
-const MAX_RECURSION_DEPTH: usize = 100;
-
-/// Deserialize JSON from a given byte slice
-#[cfg(feature = "std")]
-pub fn from_slice<'input, 'facet, 'shape, T: Facet<'facet>>(
-    input: &'input [u8],
-) -> Result<T, DeserError<'input, 'shape>>
-where
-    'input: 'facet,
-{
-    recursive::from_slice(input, 0)
-}
-
-/// Deserialize JSON from a given string
-#[cfg(feature = "std")]
-pub fn from_str<'input, 'facet, 'shape, T: Facet<'facet>>(
-    input: &'input str,
-) -> Result<T, DeserError<'input, 'shape>>
-where
-    'input: 'facet,
-{
-    recursive::from_str(input, 0)
-}
-
-/// Serializes a value to JSON
-#[cfg(feature = "std")]
-pub fn to_string<'input, 'facet, T: Facet<'facet>>(value: &'input T) -> String {
-    recursive::to_string(value, 0)
-}
-
-/// Serializes a Peek instance to JSON
-#[cfg(feature = "std")]
-pub fn peek_to_string<'input, 'facet, 'shape>(peek: Peek<'input, 'facet, 'shape>) -> String {
-    recursive::peek_to_string(peek, 0)
-}
-
-/// Serializes a value to a writer in JSON format
-#[cfg(feature = "std")]
-pub fn to_writer<'mem, 'facet, T: Facet<'facet>, W: Write>(
-    value: &'mem T,
-    writer: &mut W,
-) -> io::Result<()> {
-    recursive::to_writer(value, writer)
-}
-
-/// Serializes a Peek instance to a writer in JSON format
-#[cfg(feature = "std")]
-pub fn peek_to_writer<'mem, 'facet, 'shape, W: Write>(
-    peek: Peek<'mem, 'facet, 'shape>,
-    writer: &mut W,
-) -> io::Result<()> {
-    recursive::peek_to_writer(peek, None, 0, writer)
-}
 
 /// The JSON format
 struct Json;
@@ -117,8 +63,4 @@ fn write_json_escaped_char<W: Write>(writer: &mut W, c: char) -> io::Result<()> 
             writer.write_all(&buf[..len])
         }
     }
-}
-
-fn variant_is_newtype_like(variant: &facet_core::Variant) -> bool {
-    variant.data.kind == facet_core::StructKind::Tuple && variant.data.fields.len() == 1
 }

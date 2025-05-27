@@ -9,13 +9,24 @@ use log::trace;
 
 use crate::tokenizer::{Token, TokenError, TokenErrorKind, Tokenizer};
 
-pub(crate) fn from_slice<'input, 'facet, 'shape, T: Facet<'facet>>(
+/// Deserialize JSON from a given byte slice
+pub fn from_slice<'input, 'facet, 'shape, T: Facet<'facet>>(
     input: &'input [u8],
 ) -> Result<T, DeserError<'input, 'shape>>
 where
     'input: 'facet,
 {
     facet_deserialize::deserialize(input, crate::Json)
+}
+
+/// Deserialize JSON from a UTF-8 string slice
+pub fn from_str<'input, 'facet, 'shape, T: Facet<'facet>>(
+    input: &'input str,
+) -> Result<T, DeserError<'input, 'shape>>
+where
+    'input: 'facet,
+{
+    from_slice(input.as_bytes())
 }
 
 impl Format for crate::Json {

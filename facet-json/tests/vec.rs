@@ -108,3 +108,53 @@ fn test_deserialize_list() {
     assert_eq!(result[0], 1);
     assert_eq!(result[1], 3);
 }
+
+#[test]
+fn test_vec_of_structs_fine() {
+    #[derive(Facet)]
+    struct FooBar {
+        foo: u64,
+        bar: String,
+    }
+
+    let payload = r#"[
+    {
+        "foo": 32,
+        "bar": "hello"
+    },
+    {
+        "foo": 64,
+        "bar": "world"
+    }
+]"#;
+
+    let foos: Vec<FooBar> = from_str(payload)?;
+    assert_eq!(foos.len(), 2);
+    assert_eq!(foos[0].foo, 32);
+    assert_eq!(foos[0].bar, "hello");
+    assert_eq!(foos[1].foo, 64);
+    assert_eq!(foos[1].bar, "world");
+}
+
+#[test]
+fn test_vec_of_structs_missing_field() {
+    #[derive(Facet, Debug)]
+    struct FooBar {
+        foo: u64,
+        bar: String,
+    }
+
+    let payload = r#"[
+    {
+        "foo": 32,
+        "bar": "hello"
+    },
+    {
+        "foo": 64
+    }
+]"#;
+
+    let result = from_str::<Vec<FooBar>>(payload);
+    #[cfg(not(miri))]
+    insta::assert_debug_snapshot!(result);
+}

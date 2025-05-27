@@ -726,28 +726,51 @@ where
                     }
                 }
 
-                if has_unset && container_shape.has_default_attr() {
-                    // let's allocate and build a default value
-                    let default_val = Wip::alloc_shape(container_shape)
-                        .map_err(|e| self.reflect_err(e))?
-                        .put_default()
-                        .map_err(|e| self.reflect_err(e))?
-                        .build()
-                        .map_err(|e| self.reflect_err(e))?;
-                    let peek = default_val.peek().into_struct().unwrap();
+                if has_unset {
+                    if container_shape.has_default_attr() {
+                        // let's allocate and build a default value
+                        let default_val = Wip::alloc_shape(container_shape)
+                            .map_err(|e| self.reflect_err(e))?
+                            .put_default()
+                            .map_err(|e| self.reflect_err(e))?
+                            .build()
+                            .map_err(|e| self.reflect_err(e))?;
+                        let peek = default_val.peek().into_struct().unwrap();
 
-                    for (index, field) in sd.fields.iter().enumerate() {
-                        let is_set = wip.is_field_set(index).map_err(|err| {
-                            trace!("Error checking field set status: {:?}", err);
-                            self.reflect_err(err)
-                        })?;
-                        if !is_set {
-                            let address_of_field_from_default = peek.field(index).unwrap().data();
-                            wip = wip.field(index).map_err(|e| self.reflect_err(e))?;
-                            wip = wip
-                                .put_shape(address_of_field_from_default, field.shape())
-                                .map_err(|e| self.reflect_err(e))?;
-                            wip = wip.pop().map_err(|e| self.reflect_err(e))?;
+                        for (index, field) in sd.fields.iter().enumerate() {
+                            let is_set = wip.is_field_set(index).map_err(|err| {
+                                trace!("Error checking field set status: {:?}", err);
+                                self.reflect_err(err)
+                            })?;
+                            if !is_set {
+                                trace!(
+                                    "Field #{} {} @ {} is being set to default value (from default instance)",
+                                    index.yellow(),
+                                    field.name.green(),
+                                    field.offset.blue(),
+                                );
+                                let address_of_field_from_default =
+                                    peek.field(index).unwrap().data();
+                                wip = wip.field(index).map_err(|e| self.reflect_err(e))?;
+                                wip = wip
+                                    .put_shape(address_of_field_from_default, field.shape())
+                                    .map_err(|e| self.reflect_err(e))?;
+                                wip = wip.pop().map_err(|e| self.reflect_err(e))?;
+                            }
+                        }
+                    } else {
+                        // Find the first uninitialized field to report in the error
+                        for (index, field) in sd.fields.iter().enumerate() {
+                            let is_set = wip.is_field_set(index).map_err(|err| {
+                                trace!("Error checking field set status: {:?}", err);
+                                self.reflect_err(err)
+                            })?;
+                            if !is_set {
+                                return Err(self.reflect_err(ReflectError::UninitializedField {
+                                    shape: container_shape,
+                                    field_name: field.name,
+                                }));
+                            }
                         }
                     }
                 }
@@ -811,39 +834,61 @@ where
                             }
                         }
 
-                        if has_unset && container_shape.has_default_attr() {
-                            trace!("Enum has DEFAULT attr but variant has uninitialized fields");
-                            // Handle similar to struct, allocate and build default value for variant
-                            let default_val = Wip::alloc_shape(container_shape)
-                                .map_err(|e| self.reflect_err(e))?
-                                .put_default()
-                                .map_err(|e| self.reflect_err(e))?
-                                .build()
-                                .map_err(|e| self.reflect_err(e))?;
+                        if has_unset {
+                            if container_shape.has_default_attr() {
+                                trace!(
+                                    "Enum has DEFAULT attr but variant has uninitialized fields"
+                                );
+                                // Handle similar to struct, allocate and build default value for variant
+                                let default_val = Wip::alloc_shape(container_shape)
+                                    .map_err(|e| self.reflect_err(e))?
+                                    .put_default()
+                                    .map_err(|e| self.reflect_err(e))?
+                                    .build()
+                                    .map_err(|e| self.reflect_err(e))?;
 
-                            let peek = default_val.peek();
-                            let peek_enum = peek.into_enum().map_err(|e| self.reflect_err(e))?;
-                            let default_variant = peek_enum
-                                .active_variant()
-                                .map_err(|e| self.err(DeserErrorKind::VariantError(e)))?;
+                                let peek = default_val.peek();
+                                let peek_enum =
+                                    peek.into_enum().map_err(|e| self.reflect_err(e))?;
+                                let default_variant = peek_enum
+                                    .active_variant()
+                                    .map_err(|e| self.err(DeserErrorKind::VariantError(e)))?;
 
-                            if default_variant == &variant {
-                                // It's the same variant, fill in the missing fields
+                                if default_variant == &variant {
+                                    // It's the same variant, fill in the missing fields
+                                    for (index, field) in variant.data.fields.iter().enumerate() {
+                                        let is_set = wip.is_field_set(index).map_err(|err| {
+                                            trace!("Error checking field set status: {:?}", err);
+                                            self.reflect_err(err)
+                                        })?;
+                                        if !is_set {
+                                            if let Ok(Some(def_field)) = peek_enum.field(index) {
+                                                wip = wip
+                                                    .field(index)
+                                                    .map_err(|e| self.reflect_err(e))?;
+                                                wip = wip
+                                                    .put_shape(def_field.data(), field.shape())
+                                                    .map_err(|e| self.reflect_err(e))?;
+                                                wip = wip.pop().map_err(|e| self.reflect_err(e))?;
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                // Find the first uninitialized field to report in the error
                                 for (index, field) in variant.data.fields.iter().enumerate() {
                                     let is_set = wip.is_field_set(index).map_err(|err| {
                                         trace!("Error checking field set status: {:?}", err);
                                         self.reflect_err(err)
                                     })?;
                                     if !is_set {
-                                        if let Ok(Some(def_field)) = peek_enum.field(index) {
-                                            wip = wip
-                                                .field(index)
-                                                .map_err(|e| self.reflect_err(e))?;
-                                            wip = wip
-                                                .put_shape(def_field.data(), field.shape())
-                                                .map_err(|e| self.reflect_err(e))?;
-                                            wip = wip.pop().map_err(|e| self.reflect_err(e))?;
-                                        }
+                                        return Err(self.reflect_err(
+                                            ReflectError::UninitializedEnumField {
+                                                shape: container_shape,
+                                                variant_name: variant.name,
+                                                field_name: field.name,
+                                            },
+                                        ));
                                     }
                                 }
                             }

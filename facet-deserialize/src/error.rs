@@ -11,7 +11,6 @@ use crate::debug::InputDebug;
 use crate::{Cooked, Outcome, Span};
 
 /// A JSON parse error, with context. Never would've guessed huh.
-#[derive(Debug)]
 pub struct DeserError<'input, 'shape, C = Cooked> {
     /// The input associated with the error.
     pub input: alloc::borrow::Cow<'input, [u8]>,
@@ -447,6 +446,12 @@ impl core::fmt::Display for DeserError<'_, '_> {
         }
 
         Ok(())
+    }
+}
+
+impl core::fmt::Debug for DeserError<'_, '_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(self, f)
     }
 }
 
