@@ -39,5 +39,6 @@ ulid = { version = "1.2.1", optional = true }
 eyre = "0.6.12"
 facet = { path = "../facet" }
 facet-testhelpers = { path = "../facet-testhelpers" }
+insta = "1.43.1"
 log = "0.4.27"
 tempfile = "3.19.1"

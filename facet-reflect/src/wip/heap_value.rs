@@ -141,3 +141,18 @@ impl Drop for Guard {
         }
     }
 }
+
+impl<'facet, 'shape> HeapValue<'facet, 'shape> {
+    /// Unsafely convert this HeapValue into a Box<T> without checking shape.
+    ///
+    /// # Safety
+    ///
+    /// Caller must guarantee that the underlying value is of type T with a compatible layout.
+    pub(crate) unsafe fn into_box_unchecked<T: Facet<'facet>>(mut self) -> Box<T> {
+        let guard = self.guard.take().unwrap();
+        let ptr = guard.ptr as *mut T;
+        // Don't drop, just forget the guard so we don't double free.
+        core::mem::forget(guard);
+        unsafe { Box::from_raw(ptr) }
+    }
+}
