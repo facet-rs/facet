@@ -163,3 +163,158 @@ fn drop_partially_initialized_struct() {
         final_drops
     );
 }
+
+#[test]
+fn drop_nested_partially_initialized() {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Facet, Debug)]
+    struct NoisyDrop {
+        id: u64,
+    }
+
+    impl Drop for NoisyDrop {
+        fn drop(&mut self) {
+            DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+            println!("Dropping NoisyDrop with id: {}", self.id);
+        }
+    }
+
+    #[derive(Facet, Debug)]
+    struct Inner {
+        a: NoisyDrop,
+        b: NoisyDrop,
+    }
+
+    #[derive(Facet, Debug)]
+    struct Outer {
+        inner: Inner,
+        extra: NoisyDrop,
+    }
+
+    DROP_COUNT.store(0, Ordering::SeqCst);
+
+    {
+        let mut wip = Wip::alloc::<Outer>()?;
+
+        // Start initializing inner struct
+        wip.push_field("inner")?;
+        wip.push_field("a")?;
+        wip.put(NoisyDrop { id: 1 })?;
+        wip.pop()?;
+
+        // Only initialize one field of inner, leave 'b' uninitialized
+        // Don't pop from inner
+
+        // Drop without finishing initialization
+    }
+
+    assert_eq!(
+        DROP_COUNT.load(Ordering::SeqCst),
+        1,
+        "Should drop only the one initialized NoisyDrop in the nested struct"
+    );
+}
+
+#[test]
+fn drop_with_copy_types() {
+    // Test that Copy types don't cause double-drops or other issues
+    #[derive(Facet, Debug)]
+    struct MixedTypes {
+        copyable: u64,
+        droppable: String,
+        more_copy: bool,
+    }
+
+    let mut wip = Wip::alloc::<MixedTypes>()?;
+
+    wip.push_field("copyable")?;
+    wip.put(42u64)?;
+    wip.pop()?;
+
+    wip.push_field("droppable")?;
+    wip.put("Hello".to_string())?;
+    wip.pop()?;
+
+    // Drop without initializing 'more_copy'
+    drop(wip);
+
+    // If this doesn't panic or segfault, we're good
+}
+
+#[test]
+fn drop_fully_uninitialized() {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Facet, Debug)]
+    struct NoisyDrop {
+        value: u64,
+    }
+
+    impl Drop for NoisyDrop {
+        fn drop(&mut self) {
+            DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[derive(Facet, Debug)]
+    struct Container {
+        a: NoisyDrop,
+        b: NoisyDrop,
+    }
+
+    DROP_COUNT.store(0, Ordering::SeqCst);
+
+    {
+        let wip = Wip::alloc::<Container>()?;
+        // Drop immediately without initializing anything
+    }
+
+    assert_eq!(
+        DROP_COUNT.load(Ordering::SeqCst),
+        0,
+        "No drops should occur for completely uninitialized struct"
+    );
+}
+
+#[test]
+fn drop_after_successful_build() {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Facet, Debug)]
+    struct NoisyDrop {
+        value: u64,
+    }
+
+    impl Drop for NoisyDrop {
+        fn drop(&mut self) {
+            DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    DROP_COUNT.store(0, Ordering::SeqCst);
+
+    let mut wip = Wip::alloc::<NoisyDrop>()?;
+    wip.put(NoisyDrop { value: 42 })?;
+    let hv = wip.build()?;
+
+    assert_eq!(
+        DROP_COUNT.load(Ordering::SeqCst),
+        0,
+        "No drops yet after build"
+    );
+
+    drop(hv);
+
+    assert_eq!(
+        DROP_COUNT.load(Ordering::SeqCst),
+        1,
+        "One drop after dropping HeapValue"
+    );
+}

@@ -30,6 +30,13 @@ pub struct Wip<'facet, 'shape> {
     invariant: PhantomData<fn(&'facet ()) -> &'facet ()>,
 }
 
+enum FrameOwnership {
+    /// This frame owns the allocation and should deallocate it on drop
+    Owned,
+    /// This frame is a field pointer into a parent allocation
+    Field,
+}
+
 struct Frame<'shape> {
     /// Address of the value being initialized
     data: PtrUninit<'static>,
@@ -39,6 +46,9 @@ struct Frame<'shape> {
 
     /// Tracks initialized fields
     tracker: Tracker<'shape>,
+
+    /// Whether this frame owns the allocation or is just a field pointer
+    ownership: FrameOwnership,
 }
 
 enum Tracker<'shape> {
@@ -73,11 +83,16 @@ enum Tracker<'shape> {
 }
 
 impl<'shape> Frame<'shape> {
-    fn new(data: PtrUninit<'static>, shape: &'shape Shape<'shape>) -> Self {
+    fn new(
+        data: PtrUninit<'static>,
+        shape: &'shape Shape<'shape>,
+        ownership: FrameOwnership,
+    ) -> Self {
         Self {
             data,
             shape,
             tracker: Tracker::Uninit,
+            ownership,
         }
     }
 
@@ -125,7 +140,7 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
             .map_err(|_| ReflectError::Unsized { shape })?;
 
         Ok(Self {
-            frames: vec![Frame::new(data, shape)],
+            frames: vec![Frame::new(data, shape, FrameOwnership::Owned)],
             poisoned: false,
             invariant: PhantomData,
         })
@@ -253,7 +268,8 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                     // Push a new frame for this field onto the frames stack.
                     let field_ptr = unsafe { frame.data.field_uninit_at(field.offset) };
                     let field_shape = field.shape;
-                    self.frames.push(Frame::new(field_ptr, field_shape));
+                    self.frames
+                        .push(Frame::new(field_ptr, field_shape, FrameOwnership::Field));
 
                     Ok(())
                 }
@@ -425,10 +441,12 @@ impl<'facet, 'shape> Drop for Wip<'facet, 'shape> {
                 }
             }
 
-            // Deallocate the frame's memory
-            if let Ok(layout) = frame.shape.layout.sized_layout() {
-                if layout.size() > 0 {
-                    unsafe { alloc::alloc::dealloc(frame.data.as_mut_byte_ptr(), layout) };
+            // Only deallocate if this frame owns the allocation
+            if let FrameOwnership::Owned = frame.ownership {
+                if let Ok(layout) = frame.shape.layout.sized_layout() {
+                    if layout.size() > 0 {
+                        unsafe { alloc::alloc::dealloc(frame.data.as_mut_byte_ptr(), layout) };
+                    }
                 }
             }
         }
