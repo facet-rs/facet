@@ -1,6 +1,7 @@
 use crate::Peek;
 use crate::ReflectError;
 use crate::trace;
+use alloc::boxed::Box;
 use core::{alloc::Layout, marker::PhantomData};
 use facet_core::{Facet, PtrConst, PtrMut, Shape};
 #[cfg(feature = "log")]
