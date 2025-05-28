@@ -1,3 +1,125 @@
+//! Partial value construction for dynamic reflection
+//!
+//! This module provides APIs for incrementally building values through reflection,
+//! particularly useful when deserializing data from external formats like JSON or YAML.
+//!
+//! # Overview
+//!
+//! The `Partial` type (formerly known as `Wip` - Work In Progress) allows you to:
+//! - Allocate memory for a value based on its `Shape`
+//! - Initialize fields incrementally in a type-safe manner
+//! - Handle complex nested structures including structs, enums, collections, and smart pointers
+//! - Build the final value once all required fields are initialized
+//!
+//! # API Changes
+//!
+//! Recent API improvements include:
+//! - **Renamed from `Wip` to `Partial`** for better clarity about its purpose
+//! - **Method naming changes**:
+//!   - `push()` → `begin()` - Start working on a nested value
+//!   - `pop()` → `end()` - Finish working on a nested value
+//!   - camelCase methods → snake_case (Rust convention)
+//! - **New convenience methods**:
+//!   - `set_nth_field()` - Set a field by index
+//!   - `set_named_field()` - Set a field by name
+//!   - `set_variant()` - Set enum variant
+//!   - `begin_nth_field()` - Begin working on a field by index
+//!   - `begin_named_field()` - Begin working on a field by name
+//!
+//! # Basic Usage
+//!
+//! ```no_run
+//! # use facet_reflect::Partial;
+//! # use facet_core::Shape;
+//! # fn example(shape: &'static Shape<'static>) -> Result<(), Box<dyn std::error::Error>> {
+//! // Allocate memory for a struct
+//! let mut partial = Partial::alloc(shape)?;
+//!
+//! // Set simple fields
+//! partial.set_named_field("name", "Alice")?;
+//! partial.set_named_field("age", 30u32)?;
+//!
+//! // Work with nested structures
+//! partial.begin_named_field("address")?;
+//! partial.set_named_field("street", "123 Main St")?;
+//! partial.set_named_field("city", "Springfield")?;
+//! partial.end()?;
+//!
+//! // Build the final value
+//! let value = partial.build()?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Chaining Style
+//!
+//! The API supports method chaining for cleaner code:
+//!
+//! ```no_run
+//! # use facet_reflect::Partial;
+//! # use facet_core::Shape;
+//! # fn example(shape: &'static Shape<'static>) -> Result<(), Box<dyn std::error::Error>> {
+//! let value = Partial::alloc(shape)?
+//!     .set_named_field("name", "Bob")?
+//!     .begin_named_field("scores")?
+//!         .put(vec![95, 87, 92])?
+//!     .end()?
+//!     .build()?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Working with Collections
+//!
+//! ```no_run
+//! # use facet_reflect::Partial;
+//! # use facet_core::Shape;
+//! # fn example(shape: &'static Shape<'static>) -> Result<(), Box<dyn std::error::Error>> {
+//! let mut partial = Partial::alloc(shape)?; // Assuming shape is for Vec<String>
+//!
+//! // Add items to a list
+//! partial.begin_item()?;
+//! partial.put("first")?;
+//! partial.end()?;
+//!
+//! partial.begin_item()?;
+//! partial.put("second")?;
+//! partial.end()?;
+//!
+//! let vec = partial.build()?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Working with Maps
+//!
+//! ```no_run
+//! # use facet_reflect::Partial;
+//! # use facet_core::Shape;
+//! # fn example(shape: &'static Shape<'static>) -> Result<(), Box<dyn std::error::Error>> {
+//! let mut partial = Partial::alloc(shape)?; // Assuming shape is for HashMap<String, i32>
+//!
+//! // Insert key-value pairs
+//! partial.begin_key()?;
+//! partial.put("score")?;
+//! partial.end()?;
+//! partial.begin_value()?;
+//! partial.put(100i32)?;
+//! partial.end()?;
+//!
+//! let map = partial.build()?;
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Safety and Memory Management
+//!
+//! The `Partial` type ensures memory safety by:
+//! - Tracking initialization state of all fields
+//! - Preventing use-after-build through state tracking
+//! - Properly handling drop semantics for partially initialized values
+//! - Supporting both owned and borrowed values through lifetime parameters
+
 #[cfg(test)]
 mod tests;
 
@@ -265,7 +387,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     /// Allocates a new TypedPartial instance with the given shape and type
     pub fn alloc<T>() -> Result<TypedPartial<'facet, 'shape, T>, ReflectError<'shape>>
     where
-        T: Facet<'shape>,
+        T: Facet<'facet>,
     {
         Ok(TypedPartial {
             wip: Self::alloc_shape(T::SHAPE)?,
@@ -299,7 +421,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     /// Sets a value wholesale into the current frame
     pub fn set<U>(&mut self, value: U) -> Result<&mut Self, ReflectError<'shape>>
     where
-        U: Facet<'shape>,
+        U: Facet<'facet>,
     {
         self.require_active()?;
 
@@ -409,7 +531,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Pushes a variant for enum initialization by name
-    pub fn begin_variant_named(
+    pub fn select_variant_named(
         &mut self,
         variant_name: &str,
     ) -> Result<&mut Self, ReflectError<'shape>> {
@@ -451,11 +573,11 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         };
 
         // Delegate to push_variant
-        self.begin_variant(discriminant)
+        self.select_variant(discriminant)
     }
 
     /// Pushes a variant for enum initialization
-    pub fn begin_variant(&mut self, discriminant: i64) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn select_variant(&mut self, discriminant: i64) -> Result<&mut Self, ReflectError<'shape>> {
         self.require_active()?;
 
         // Check all invariants early before making any changes
@@ -683,7 +805,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         };
 
         // Delegate to begin_variant
-        self.begin_variant(discriminant)
+        self.select_variant(discriminant)
     }
 
     /// Selects the nth field of a struct by index
@@ -1000,7 +1122,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
 
     /// Begins a pushback operation for a list (Vec, etc.)
     /// This initializes the list with default capacity and allows pushing elements
-    pub fn begin_pushback(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn begin_list(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
         self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
 
@@ -1662,7 +1784,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         value: U,
     ) -> Result<&mut Self, ReflectError<'shape>>
     where
-        U: Facet<'shape>,
+        U: Facet<'facet>,
     {
         self.begin_nth_element(idx)?.set(value)?.end()
     }
@@ -1674,7 +1796,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         value: U,
     ) -> Result<&mut Self, ReflectError<'shape>>
     where
-        U: Facet<'shape>,
+        U: Facet<'facet>,
     {
         self.begin_nth_field(idx)?.set(value)?.end()
     }
@@ -1686,7 +1808,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         value: U,
     ) -> Result<&mut Self, ReflectError<'shape>>
     where
-        U: Facet<'shape>,
+        U: Facet<'facet>,
     {
         self.begin_field(field_name)?.set(value)?.end()
     }
@@ -1698,7 +1820,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         value: U,
     ) -> Result<&mut Self, ReflectError<'shape>>
     where
-        U: Facet<'shape>,
+        U: Facet<'facet>,
     {
         self.begin_nth_enum_field(idx)?.set(value)?.end()
     }
@@ -1706,7 +1828,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     /// Convenience shortcut: sets the key for a map key-value insertion, then pops after.
     pub fn set_key<U>(&mut self, value: U) -> Result<&mut Self, ReflectError<'shape>>
     where
-        U: Facet<'shape>,
+        U: Facet<'facet>,
     {
         self.begin_key()?.set(value)?.end()
     }
@@ -1714,7 +1836,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     /// Convenience shortcut: sets the value for a map key-value insertion, then pops after.
     pub fn set_value<U>(&mut self, value: U) -> Result<&mut Self, ReflectError<'shape>>
     where
-        U: Facet<'shape>,
+        U: Facet<'facet>,
     {
         self.begin_value()?.set(value)?.end()
     }
@@ -1722,7 +1844,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     /// Shorthand for: begin_list_item(), set, end
     pub fn push<U>(&mut self, value: U) -> Result<&mut Self, ReflectError<'shape>>
     where
-        U: Facet<'shape>,
+        U: Facet<'facet>,
     {
         self.begin_list_item()?.set(value)?.end()
     }
@@ -1739,7 +1861,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
     /// Builds the value and returns a Box<T>
     pub fn build(&mut self) -> Result<Box<T>, ReflectError<'shape>>
     where
-        T: Facet<'shape>,
+        T: Facet<'facet>,
         'facet: 'shape,
     {
         let heap_value = self.wip.build()?;
@@ -1750,7 +1872,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
     /// Sets a value wholesale into the current frame
     pub fn set<U>(&mut self, value: U) -> Result<&mut Self, ReflectError<'shape>>
     where
-        U: Facet<'shape>,
+        U: Facet<'facet>,
     {
         self.wip.set(value)?;
         Ok(self)
@@ -1812,17 +1934,17 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
     }
 
     /// Forwards begin_variant to the inner wip instance.
-    pub fn begin_variant(&mut self, discriminant: i64) -> Result<&mut Self, ReflectError<'shape>> {
-        self.wip.begin_variant(discriminant)?;
+    pub fn select_variant(&mut self, discriminant: i64) -> Result<&mut Self, ReflectError<'shape>> {
+        self.wip.select_variant(discriminant)?;
         Ok(self)
     }
 
     /// Forwards begin_variant_named to the inner wip instance.
-    pub fn begin_variant_named(
+    pub fn select_variant_named(
         &mut self,
         variant_name: &str,
     ) -> Result<&mut Self, ReflectError<'shape>> {
-        self.wip.begin_variant_named(variant_name)?;
+        self.wip.select_variant_named(variant_name)?;
         Ok(self)
     }
 
@@ -1834,7 +1956,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
 
     /// Forwards begin_pushback to the inner wip instance.
     pub fn begin_list(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
-        self.wip.begin_pushback()?;
+        self.wip.begin_list()?;
         Ok(self)
     }
 
@@ -1886,7 +2008,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
         value: U,
     ) -> Result<&mut Self, ReflectError<'shape>>
     where
-        U: Facet<'shape>,
+        U: Facet<'facet>,
     {
         self.wip.set_nth_element(idx, value)?;
         Ok(self)
@@ -1899,7 +2021,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
         value: U,
     ) -> Result<&mut Self, ReflectError<'shape>>
     where
-        U: Facet<'shape>,
+        U: Facet<'facet>,
     {
         self.wip.set_nth_field(idx, value)?;
         Ok(self)
@@ -1912,7 +2034,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
         value: U,
     ) -> Result<&mut Self, ReflectError<'shape>>
     where
-        U: Facet<'shape>,
+        U: Facet<'facet>,
     {
         self.wip.set_field(field_name, value)?;
         Ok(self)
@@ -1925,7 +2047,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
         value: U,
     ) -> Result<&mut Self, ReflectError<'shape>>
     where
-        U: Facet<'shape>,
+        U: Facet<'facet>,
     {
         self.wip.set_nth_enum_field(idx, value)?;
         Ok(self)
@@ -1934,7 +2056,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
     /// Convenience shortcut: sets the key for a map key-value insertion, then pops after.
     pub fn set_key<U>(&mut self, value: U) -> Result<&mut Self, ReflectError<'shape>>
     where
-        U: Facet<'shape>,
+        U: Facet<'facet>,
     {
         self.wip.set_key(value)?;
         Ok(self)
@@ -1943,7 +2065,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
     /// Convenience shortcut: sets the value for a map key-value insertion, then pops after.
     pub fn set_value<U>(&mut self, value: U) -> Result<&mut Self, ReflectError<'shape>>
     where
-        U: Facet<'shape>,
+        U: Facet<'facet>,
     {
         self.wip.set_value(value)?;
         Ok(self)
@@ -1952,7 +2074,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
     /// Forwards push to the inner wip instance.
     pub fn push<U>(&mut self, value: U) -> Result<&mut Self, ReflectError<'shape>>
     where
-        U: Facet<'shape>,
+        U: Facet<'facet>,
     {
         self.wip.push(value)?;
         Ok(self)

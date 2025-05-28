@@ -726,7 +726,7 @@ fn enum_unit_variant() {
     }
 
     let hv = Partial::alloc::<Status>()?
-        .begin_variant(1)? // Inactive
+        .select_variant(1)? // Inactive
         .build()?;
     assert_eq!(*hv, Status::Inactive);
 }
@@ -743,7 +743,7 @@ fn enum_struct_variant() {
     }
 
     let hv = Partial::alloc::<Message>()?
-        .begin_variant(0)? // Text variant
+        .select_variant(0)? // Text variant
         .set_field("content", "Hello, world!".to_string())?
         .build()?;
     assert_eq!(
@@ -766,7 +766,7 @@ fn enum_tuple_variant() {
     }
 
     let hv = Partial::alloc::<Value>()?
-        .begin_variant(2)? // Pair variant
+        .select_variant(2)? // Pair variant
         .set_nth_enum_field(0, 42)?
         .set_nth_enum_field(1, "test".to_string())?
         .build()?;
@@ -782,7 +782,7 @@ fn enum_set_field_twice() {
     }
 
     let hv = Partial::alloc::<Data>()?
-        .begin_variant(0)? // Point variant
+        .select_variant(0)? // Point variant
         // Set x field
         .set_field("x", 1.0f32)?
         // Set x field again (should drop previous value)
@@ -804,7 +804,7 @@ fn enum_partial_initialization_error() {
 
     // Should fail to build because retries is not initialized
     let result = Partial::alloc::<Config>()?
-        .begin_variant(0)? // Settings variant
+        .select_variant(0)? // Settings variant
         // Only initialize timeout, not retries
         .set_field("timeout", 5000u32)?
         .build();
@@ -990,7 +990,7 @@ fn variant_named() {
 
     // Test Dog variant
     let animal = Partial::alloc::<Animal>()?
-        .begin_variant_named("Dog")?
+        .select_variant_named("Dog")?
         .set_field("name", "Buddy".to_string())?
         .set_field("age", 5u8)?
         .build()?;
@@ -1004,7 +1004,7 @@ fn variant_named() {
 
     // Test Cat variant
     let animal = Partial::alloc::<Animal>()?
-        .begin_variant_named("Cat")?
+        .select_variant_named("Cat")?
         .set_field("name", "Whiskers".to_string())?
         .set_field("lives", 9u8)?
         .build()?;
@@ -1018,7 +1018,7 @@ fn variant_named() {
 
     // Test Bird variant
     let animal = Partial::alloc::<Animal>()?
-        .begin_variant_named("Bird")?
+        .select_variant_named("Bird")?
         .set_field("species", "Parrot".to_string())?
         .build()?;
     assert_eq!(
@@ -1030,7 +1030,7 @@ fn variant_named() {
 
     // Test invalid variant name
     let mut partial = Partial::alloc::<Animal>()?;
-    let result = partial.begin_variant_named("Fish");
+    let result = partial.select_variant_named("Fish");
     assert!(result.is_err());
     assert!(
         result
@@ -1089,7 +1089,7 @@ fn field_named_on_enum() {
 
     // Test field access on Server variant
     let config = Partial::alloc::<Config>()?
-        .begin_variant_named("Server")?
+        .select_variant_named("Server")?
         .set_field("port", 8080u16)?
         .set_field("host", "localhost".to_string())?
         .set_field("tls", true)?
@@ -1106,7 +1106,7 @@ fn field_named_on_enum() {
     // Test invalid field name on enum variant
 
     let mut partial = Partial::alloc::<Config>()?;
-    partial.begin_variant_named("Client")?;
+    partial.select_variant_named("Client")?;
     let result = partial.begin_field("port"); // port doesn't exist on Client
     assert!(result.is_err());
     assert!(

@@ -1123,7 +1123,7 @@ where
                 }
                 trace!("Beginning pushback");
                 self.stack.push(Instruction::ListItemOrListClose);
-                wip = wip.begin_pushback().map_err(|e| self.reflect_err(e))?;
+                wip = wip.begin_list().map_err(|e| self.reflect_err(e))?;
             }
             Outcome::ListEnded => {
                 trace!("List closing");

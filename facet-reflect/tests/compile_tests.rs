@@ -1,4 +1,5 @@
-#![cfg(feature = "slow-tests")]
+#![cfg(not(miri))]
+
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
@@ -183,10 +184,10 @@ facet-reflect = {{ path = {:?} }}
 /// Test for lifetime issues in Poke implementation
 #[test]
 #[cfg(not(miri))]
-fn test_wip_poke_lifetime_error() {
+fn test_partial_poke_lifetime_error() {
     let test = CompilationTest {
         name: "poke_lifetime_error",
-        source: include_str!("wip/compile_tests/lifetimes.rs"),
+        source: include_str!("partial/compile_tests/lifetimes.rs"),
         expected_errors: &["error[E0597]: `s` does not live long enough"],
     };
 
@@ -195,10 +196,10 @@ fn test_wip_poke_lifetime_error() {
 
 #[test]
 #[cfg(not(miri))]
-fn test_wip_covariant_growing() {
+fn test_partial_covariant_growing() {
     let test = CompilationTest {
         name: "covariant_growing",
-        source: include_str!("wip/compile_tests/covariant_growing.rs"),
+        source: include_str!("partial/compile_tests/covariant_growing.rs"),
         expected_errors: &["error: lifetime may not live long enough"],
     };
 
@@ -207,10 +208,10 @@ fn test_wip_covariant_growing() {
 
 #[test]
 #[cfg(not(miri))]
-fn test_wip_invariant_growing() {
+fn test_partial_invariant_growing() {
     let test = CompilationTest {
         name: "invariant_growing",
-        source: include_str!("wip/compile_tests/invariant_growing.rs"),
+        source: include_str!("partial/compile_tests/invariant_growing.rs"),
         expected_errors: &["error: lifetime may not live long enough"],
     };
 
@@ -219,10 +220,10 @@ fn test_wip_invariant_growing() {
 
 #[test]
 #[cfg(not(miri))]
-fn test_wip_contravariant_shrinking() {
+fn test_partial_contravariant_shrinking() {
     let test = CompilationTest {
         name: "contravariant_shrinking",
-        source: include_str!("wip/compile_tests/contravariant_shrinking.rs"),
+        source: include_str!("partial/compile_tests/contravariant_shrinking.rs"),
         expected_errors: &["error[E0521]: borrowed data escapes outside of function"],
     };
 
@@ -231,10 +232,10 @@ fn test_wip_contravariant_shrinking() {
 
 #[test]
 #[cfg(not(miri))]
-fn test_wip_invariant_shrinking() {
+fn test_partial_invariant_shrinking() {
     let test = CompilationTest {
         name: "invariant_shrinking",
-        source: include_str!("wip/compile_tests/invariant_shrinking.rs"),
+        source: include_str!("partial/compile_tests/invariant_shrinking.rs"),
         expected_errors: &["error[E0521]: borrowed data escapes outside of function"],
     };
 

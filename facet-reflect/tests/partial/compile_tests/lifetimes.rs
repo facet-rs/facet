@@ -1,5 +1,5 @@
 use facet::Facet;
-use facet_reflect::Wip;
+use facet_reflect::Partial;
 
 #[derive(Debug, Facet)]
 struct Foo<'a> {
@@ -7,14 +7,14 @@ struct Foo<'a> {
 }
 
 fn main() -> eyre::Result<()> {
-    let mut wip = Wip::alloc::<Foo>()?;
-    let wip = {
+    let mut partial = Partial::alloc_shape(Foo::SHAPE)?;
+    let partial = {
         let s = "abc".to_string();
         let foo = Foo { s: &s };
-        wip.put(foo)?
+        partial.set(foo)?
     };
 
-    let v = wip.build()?.materialize::<Foo>()?;
+    let v = partial.build()?.materialize()?;
     dbg!(v);
 
     Ok(())

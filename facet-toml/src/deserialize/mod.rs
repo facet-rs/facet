@@ -416,7 +416,7 @@ fn deserialize_as_list<'input, 'a, 'shape>(
     }
 
     // Start the list
-    reflect!(wip, toml, item.span(), begin_pushback());
+    reflect!(wip, toml, item.span(), begin_list());
 
     // Loop over all items in the TOML list
     for value in item.iter() {

@@ -686,7 +686,7 @@ impl<'input, 'shape> Decoder<'input> {
         } else if let Def::List(_list_def) = shape.def {
             trace!("Deserializing list");
             let array_len = self.decode_array_len()?;
-            let mut list_wip = wip.begin_pushback().map_err(DecodeError::ReflectError)?;
+            let mut list_wip = wip.begin_list().map_err(DecodeError::ReflectError)?;
 
             for _ in 0..array_len {
                 let item_wip = list_wip

@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use facet::Facet;
-use facet_reflect::{ReflectError, Wip};
+use facet_reflect::{Partial, ReflectError};
 use facet_testhelpers::test;
 
 // The order of these tests mirrors the Def enum
@@ -18,9 +18,9 @@ fn struct_uninit() {
         foo: u32,
     }
 
-    let wip = Wip::alloc::<FooBar>()?;
+    let mut partial = Partial::alloc::<FooBar>()?;
     assert!(matches!(
-        wip.build(),
+        partial.build(),
         Err(ReflectError::UninitializedField { .. })
     ));
 }
@@ -35,18 +35,20 @@ fn enum_uninit() {
         Bar { x: u32 },
     }
 
-    let wip = Wip::alloc::<FooBar>()?;
+    let mut partial = Partial::alloc::<FooBar>()?;
     assert!(matches!(
-        wip.build(),
+        partial.build(),
         Err(ReflectError::NoVariantSelected { .. })
     ));
 
-    let wip = Wip::alloc::<FooBar>()?.variant_named("Foo")?;
-    assert!(wip.build().is_ok());
+    let mut partial = Partial::alloc::<FooBar>()?;
+    partial.select_variant_named("Foo")?;
+    assert!(partial.build().map(|_| ()).is_ok());
 
-    let wip = Wip::alloc::<FooBar>()?.variant_named("Bar")?;
+    let mut partial = Partial::alloc::<FooBar>()?;
+    partial.select_variant_named("Bar")?;
     assert!(matches!(
-        wip.build(),
+        partial.build(),
         Err(ReflectError::UninitializedEnumField { .. })
     ));
 }
@@ -63,8 +65,8 @@ fn list_uninit() {
 
 #[test]
 fn array_uninit() {
-    let wip = Wip::alloc::<[f32; 8]>()?;
-    let res = wip.build();
+    let mut partial = Partial::alloc::<[f32; 8]>()?;
+    let res = partial.build();
     assert!(
         matches!(res, Err(ReflectError::ArrayNotFullyInitialized { .. })),
         "Expected ArrayNotFullyInitialized error, got {res:?}"
@@ -87,8 +89,8 @@ fn smart_pointer_uninit() {
 }
 
 fn test_uninit<T: Facet<'static>>() {
-    let wip = Wip::alloc::<T>().unwrap();
-    let res = wip.build();
+    let mut partial = Partial::alloc::<T>().unwrap();
+    let res = partial.build().map(|_| ());
     assert!(
         matches!(res, Err(ReflectError::UninitializedValue { .. })),
         "Expected UninitializedValue error, got {res:?}"

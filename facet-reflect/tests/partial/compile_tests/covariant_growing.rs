@@ -1,5 +1,5 @@
 use facet::Facet;
-use facet_reflect::{ReflectError, Wip};
+use facet_reflect::{Partial, ReflectError};
 
 #[derive(Debug, Facet)]
 struct CovariantLifetime<'facet> {
@@ -15,12 +15,10 @@ fn main() {
     fn scope<'facet>(
         token: CovariantLifetime<'facet>,
     ) -> Result<Wrapper<'static>, ReflectError<'static>> {
-        Wip::<'static, 'static>::alloc::<Wrapper<'static>>()?
-            .field_named("token")?
-            .put(token)?
-            .pop()?
+        Partial::<'static, 'static>::alloc_shape(Wrapper::<'static>::SHAPE)?
+            .set_field("token", token)?
             .build()?
-            .materialize::<Wrapper>()
+            .materialize()
     }
     scope(CovariantLifetime {
         _pd: std::marker::PhantomData,

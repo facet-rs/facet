@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, collections::HashSet};
 
 use facet::Facet;
-use facet_reflect::{Peek, Wip};
+use facet_reflect::{Partial, Peek};
 use facet_testhelpers::test;
 use owo_colors::{OwoColorize, Style};
 
@@ -87,10 +87,15 @@ where
     }
 
     // Test default_in_place
-    if let Ok(wip) = Wip::alloc::<T>().and_then(|w| w.put_default()) {
-        let val = wip.build().unwrap();
-        facts.insert(Fact::Default);
-        eprintln!("Default:   {}", format_args!("{:?}", val).style(REMARKABLE));
+    if let Ok(mut partial) = Partial::alloc::<T>() {
+        if partial.set_default().is_ok() {
+            let val = partial.build().unwrap();
+            facts.insert(Fact::Default);
+            eprintln!(
+                "Default:   {}",
+                format_args!("{:?}", Peek::new(val.as_ref())).style(REMARKABLE)
+            );
+        }
     }
 
     // Test clone

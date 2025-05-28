@@ -368,7 +368,7 @@ fn deserialize_as_list<'facet, 'shape>(
         }
 
         // Start the list
-        wip = wip.begin_pushback().map_err(|e| AnyErr(e.to_string()))?;
+        wip = wip.begin_list().map_err(|e| AnyErr(e.to_string()))?;
 
         // Process each element
         for element in array.iter() {
