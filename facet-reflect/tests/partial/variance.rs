@@ -1,6 +1,6 @@
 #![allow(clippy::needless_lifetimes)]
 use facet::Facet;
-use facet_reflect::{ReflectError, Wip};
+use facet_reflect::{Partial, ReflectError};
 use facet_testhelpers::test;
 
 #[derive(Debug, Facet)]
@@ -26,10 +26,10 @@ fn covariant_works() {
     }
 
     fn scope<'a>(token: CovariantLifetime<'a>) -> Result<Wrapper<'a>, ReflectError<'static>> {
-        Wip::<'a, 'static>::alloc::<Wrapper<'a>>()?
-            .field_named("token")?
-            .put(token)?
-            .pop()?
+        Partial::<'a, 'static>::alloc_shape(Wrapper::<'a>::SHAPE)?
+            .begin_field("token")?
+            .set(token)?
+            .end()?
             .build()?
             .materialize::<Wrapper>()
     }
@@ -46,10 +46,10 @@ fn contravariant_works() {
     }
 
     fn scope<'a>(token: ContravariantLifetime<'a>) -> Result<Wrapper<'a>, ReflectError<'static>> {
-        Wip::<'a, 'static>::alloc::<Wrapper<'a>>()?
-            .field_named("token")?
-            .put(token)?
-            .pop()?
+        Partial::<'a, 'static>::alloc_shape(Wrapper::<'a>::SHAPE)?
+            .begin_field("token")?
+            .set(token)?
+            .end()?
             .build()?
             .materialize::<Wrapper>()
     }
@@ -66,10 +66,10 @@ fn invariant_works() {
     }
 
     fn scope<'a>(token: InvariantLifetime<'a>) -> Result<Wrapper<'a>, ReflectError<'static>> {
-        Wip::<'a, 'static>::alloc::<Wrapper<'a>>()?
-            .field_named("token")?
-            .put(token)?
-            .pop()?
+        Partial::<'a, 'static>::alloc_shape(Wrapper::<'a>::SHAPE)?
+            .begin_field("token")?
+            .set(token)?
+            .end()?
             .build()?
             .materialize::<Wrapper>()
     }

@@ -125,3 +125,32 @@ partial = partial.end()?;
 3. **Separate map operations**: Map construction uses distinct `begin_key()` and `begin_value()` methods
 4. **List initialization**: Lists require `begin_pushback()` before adding items with `begin_list_item()`
 5. **Convenience methods**: Use `set_field(name, value)` as a shorthand for `begin_field(name)?.set(value)?.end()?`
+
+## Partial vs TypedPartial
+
+The new API has two related types for building values:
+
+1. **`Partial`** - Type-erased builder that works with shapes
+   - Created with `Partial::alloc_shape(shape)` when you have a shape but not a concrete type
+   - `build()` returns a `HeapValue` which must be materialized to get the concrete type
+   - Use pattern: `partial.build()?.materialize::<T>()?`
+
+2. **`TypedPartial<T>`** - Typed wrapper that knows the concrete type at compile time
+   - Created with `Partial::alloc::<T>()` when you know the type
+   - `build()` returns `Box<T>` directly (no materialize needed)
+   - More convenient when type is known at compile time
+
+### Example
+
+```rust
+// Using Partial (type-erased)
+let partial = Partial::alloc_shape(MyStruct::SHAPE)?;
+// ... build the value ...
+let heap_value = partial.build()?;
+let value: MyStruct = heap_value.materialize()?;
+
+// Using TypedPartial (typed)
+let partial = Partial::alloc::<MyStruct>()?;
+// ... build the value ...
+let value: Box<MyStruct> = partial.build()?;
+```
