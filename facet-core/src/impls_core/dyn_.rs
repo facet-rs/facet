@@ -1,8 +1,6 @@
-use crate::{
-    DebugFn, DebugFnWide, Facet, PtrConst, PtrConstWide, Shape, Type, UserType, ValueVTable,
-};
+use crate::{DebugFn, Facet, PtrConst, Shape, Type, UserType, ValueVTable};
 
-struct DebugFnCurried<'mem> {
+pub struct DebugFnCurried<'mem> {
     ptr: PtrConst<'mem>,
     f: DebugFn,
 }
