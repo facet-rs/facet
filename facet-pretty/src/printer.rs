@@ -218,7 +218,22 @@ impl PrettyPrinter {
                                 self.write_punctuation(f, "::None")?;
                             }
                         }
-                        // Handle struct types
+                        // Handle tuple struct types
+                        (_, Type::User(UserType::Struct(struct_def)))
+                            if struct_def.kind == StructKind::Tuple =>
+                        {
+                            self.write_type_name(f, &item.value)?;
+                            item.state = StackState::ProcessSeqItem {
+                                item_index: 0,
+                                kind: SeqKind::Tuple,
+                            };
+                            self.write_punctuation(f, " (")?;
+                            writeln!(f)?;
+                            item.format_depth += 1;
+                            item.type_depth += 1;
+                            stack.push_back(item);
+                        }
+                        // Handle regular struct types
                         (_, Type::User(UserType::Struct(_))) => {
                             let struct_ = item.value.into_struct().unwrap();
 
@@ -272,7 +287,7 @@ impl PrettyPrinter {
                                                     // `Peek` implements `Display` which forwards to the
                                                     // `Display` implementation of the underlying type.
                                                     if self.use_colors {
-                                                        write!(f, "{}", item.value.yellow())?;
+                                                        write!(f, "\x1b[33m{}\x1b[0m", item.value)?; // yellow
                                                     } else {
                                                         write!(f, "{}", item.value)?;
                                                     }
@@ -287,20 +302,6 @@ impl PrettyPrinter {
                                     }
                                 }
                             }
-                        }
-                        (_, Type::User(UserType::Struct(struct_def)))
-                            if struct_def.kind == StructKind::Tuple =>
-                        {
-                            self.write_type_name(f, &item.value)?;
-                            item.state = StackState::ProcessSeqItem {
-                                item_index: 0,
-                                kind: SeqKind::Tuple,
-                            };
-                            self.write_punctuation(f, " (")?;
-                            writeln!(f)?;
-                            item.format_depth += 1;
-                            item.type_depth += 1;
-                            stack.push_back(item);
                         }
                         (Def::Map(_), _) => {
                             let _map = item.value.into_map().unwrap();
@@ -358,7 +359,11 @@ impl PrettyPrinter {
 
                             // Apply color for variant name
                             if self.use_colors {
-                                write!(f, "{}", variant.name.bold())?;
+                                if self.use_colors {
+                                    write!(f, "\x1b[1m{}\x1b[0m", variant.name)?; // bold
+                                } else {
+                                    write!(f, "{}", variant.name)?;
+                                }
                             } else {
                                 write!(f, "{}", variant.name)?;
                             }
@@ -867,7 +872,7 @@ impl PrettyPrinter {
         let type_name = TypeNameWriter(peek);
 
         if self.use_colors {
-            write!(f, "{}", type_name.bold())
+            write!(f, "\x1b[1m{}\x1b[0m", type_name) // bold
         } else {
             write!(f, "{}", type_name)
         }
@@ -885,7 +890,7 @@ impl PrettyPrinter {
     fn write_field_name<W: fmt::Write>(&self, f: &mut W, name: &str) -> fmt::Result {
         if self.use_colors {
             // Use cyan color for field names (approximating original RGB color)
-            write!(f, "{}", name.cyan())
+            write!(f, "\x1b[36m{}\x1b[0m", name) // cyan
         } else {
             write!(f, "{}", name)
         }
@@ -894,7 +899,7 @@ impl PrettyPrinter {
     /// Write styled punctuation to formatter
     fn write_punctuation<W: fmt::Write>(&self, f: &mut W, text: &str) -> fmt::Result {
         if self.use_colors {
-            write!(f, "{}", text.dim())
+            write!(f, "\x1b[2m{}\x1b[0m", text) // dim
         } else {
             write!(f, "{}", text)
         }
@@ -910,7 +915,7 @@ impl PrettyPrinter {
     /// Write styled comment to formatter
     fn write_comment<W: fmt::Write>(&self, f: &mut W, text: &str) -> fmt::Result {
         if self.use_colors {
-            write!(f, "{}", text.dim())
+            write!(f, "\x1b[2m{}\x1b[0m", text) // dim
         } else {
             write!(f, "{}", text)
         }
@@ -927,7 +932,11 @@ impl PrettyPrinter {
     fn write_redacted<W: fmt::Write>(&self, f: &mut W, text: &str) -> fmt::Result {
         if self.use_colors {
             // Use bright red and bold for redacted values
-            write!(f, "{}", text.bright_red().bold())
+            if self.use_colors {
+                write!(f, "\x1b[91;1m{}\x1b[0m", text) // bright red + bold
+            } else {
+                write!(f, "{}", text)
+            }
         } else {
             write!(f, "{}", text)
         }
