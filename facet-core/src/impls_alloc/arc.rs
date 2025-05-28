@@ -91,9 +91,8 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
                         &const {
                             SmartPointerVTable::builder()
                                 .borrow_fn(|this| {
-                                    let ptr = unsafe {
-                                        &raw const **this.as_ptr::<alloc::sync::Arc<T>>()
-                                    };
+                                    let arc_ptr = unsafe { this.as_ptr::<alloc::sync::Arc<T>>() };
+                                    let ptr = unsafe { alloc::sync::Arc::as_ptr(&*arc_ptr) };
                                     PtrConst::new(ptr)
                                 })
                                 .new_into_fn(|this, ptr| {

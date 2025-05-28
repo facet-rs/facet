@@ -285,9 +285,9 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
     }
 
     /// Sets a value wholesale into the current frame
-    pub fn set<T>(&mut self, value: T) -> Result<&mut Self, ReflectError<'shape>>
+    pub fn set<U>(&mut self, value: U) -> Result<&mut Self, ReflectError<'shape>>
     where
-        T: Facet<'shape>,
+        U: Facet<'shape>,
     {
         if self.state != WipState::Active {
             return Err(ReflectError::InvariantViolation {
@@ -295,9 +295,9 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
             });
         }
 
-        // relay to set_shape — convert T into a ptr and shape, and call set_shape
+        // relay to set_shape — convert U into a ptr and shape, and call set_shape
         let ptr_const = PtrConst::new(&raw const value);
-        match self.set_shape(ptr_const, T::SHAPE) {
+        match self.set_shape(ptr_const, U::SHAPE) {
             Ok(_) => {
                 // Prevent the value from being dropped since we've copied it
                 core::mem::forget(value);
