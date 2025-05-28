@@ -75,9 +75,10 @@ where
             l_ord_r: cmp_result,
         });
         let cmp_symbol = match cmp_result {
-            Ordering::Less => "<",
-            Ordering::Equal => "==",
-            Ordering::Greater => ">",
+            Some(Ordering::Less) => "<",
+            Some(Ordering::Equal) => "==",
+            Some(Ordering::Greater) => ">",
+            None => "??",
         };
         let cmp_str = format!(
             "{:?} {} {:?}",
@@ -229,7 +230,9 @@ impl FactBuilder {
             facts.insert(Fact::PartialEqAnd { l_eq_r });
         }
         if let Some(l_ord_r) = self.has_ord_and {
-            facts.insert(Fact::OrdAnd { l_ord_r });
+            facts.insert(Fact::OrdAnd {
+                l_ord_r: Some(l_ord_r),
+            });
         }
         if self.has_default {
             facts.insert(Fact::Default);
@@ -246,7 +249,7 @@ enum Fact {
     Debug,
     Display,
     PartialEqAnd { l_eq_r: bool },
-    OrdAnd { l_ord_r: Ordering },
+    OrdAnd { l_ord_r: Option<Ordering> },
     Default,
     Clone,
 }
@@ -265,9 +268,10 @@ impl Display for Fact {
             ),
             Fact::OrdAnd { l_ord_r } => {
                 let ord_str = match l_ord_r {
-                    Ordering::Less => "<",
-                    Ordering::Equal => "==",
-                    Ordering::Greater => ">",
+                    Some(Ordering::Less) => "<",
+                    Some(Ordering::Equal) => "==",
+                    Some(Ordering::Greater) => ">",
+                    None => "??",
                 };
                 write!(f, "impl Ord and l {} r", ord_str)
             }

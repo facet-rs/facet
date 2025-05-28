@@ -156,7 +156,12 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         self,
         peek: crate::Peek<'_, 'facet, 'shape>,
     ) -> Result<Wip<'facet, 'shape>, ReflectError<'shape>> {
-        self.put_shape(peek.data, peek.shape)
+        self.put_shape(
+            peek.data
+                .thin()
+                .ok_or_else(|| ReflectError::Unsized { shape: peek.shape })?,
+            peek.shape,
+        )
     }
 
     /// Returns the number of frames on the stack

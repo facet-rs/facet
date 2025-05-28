@@ -742,7 +742,8 @@ where
                             self.reflect_err(err)
                         })?;
                         if !is_set {
-                            let address_of_field_from_default = peek.field(index).unwrap().data();
+                            let address_of_field_from_default =
+                                peek.field(index).unwrap().data().thin().unwrap();
                             wip = wip.field(index).map_err(|e| self.reflect_err(e))?;
                             wip = wip
                                 .put_shape(address_of_field_from_default, field.shape())
@@ -840,7 +841,10 @@ where
                                                 .field(index)
                                                 .map_err(|e| self.reflect_err(e))?;
                                             wip = wip
-                                                .put_shape(def_field.data(), field.shape())
+                                                .put_shape(
+                                                    def_field.data().thin().unwrap(),
+                                                    field.shape(),
+                                                )
                                                 .map_err(|e| self.reflect_err(e))?;
                                             wip = wip.pop().map_err(|e| self.reflect_err(e))?;
                                         }
@@ -876,7 +880,7 @@ where
                         if let Ok(Some(def_field)) = peek_enum.field(index) {
                             wip = wip.field(index).map_err(|e| self.reflect_err(e))?;
                             wip = wip
-                                .put_shape(def_field.data(), field.shape())
+                                .put_shape(def_field.data().thin().unwrap(), field.shape())
                                 .map_err(|e| self.reflect_err(e))?;
                             wip = wip.pop().map_err(|e| self.reflect_err(e))?;
                         }

@@ -43,7 +43,7 @@ impl<'mem, 'facet, 'shape> PeekTuple<'mem, 'facet, 'shape> {
         let field = &self.ty.fields[index];
         // We can safely use field operations here since this is within facet-reflect
         // which is allowed to use unsafe code
-        let field_ptr = unsafe { self.value.data().field(field.offset) };
+        let field_ptr = unsafe { self.value.data().thin()?.field(field.offset) };
         let field_peek = unsafe { Peek::unchecked_new(field_ptr, field.shape) };
 
         Some(field_peek)

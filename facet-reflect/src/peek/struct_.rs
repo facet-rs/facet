@@ -36,11 +36,13 @@ impl<'mem, 'facet, 'shape> PeekStruct<'mem, 'facet, 'shape> {
     /// Returns the value of the field at the given index
     #[inline(always)]
     pub fn field(&self, index: usize) -> Result<Peek<'mem, 'facet, 'shape>, FieldError> {
+        let data = self.value.data().thin().ok_or(FieldError::Unsized)?;
+
         self.ty
             .fields
             .get(index)
             .map(|field| unsafe {
-                let field_data = self.value.data().field(field.offset);
+                let field_data = data.field(field.offset);
                 Peek::unchecked_new(field_data, field.shape())
             })
             .ok_or(FieldError::IndexOutOfBounds {

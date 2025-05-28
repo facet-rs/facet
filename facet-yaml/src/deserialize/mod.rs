@@ -209,7 +209,8 @@ fn deserialize_value<'facet, 'shape>(
                         #[cfg(feature = "log")]
                         log::debug!("Copying default for field: {}", field.name);
 
-                        let address_of_field_from_default = peek.field(index).unwrap().data();
+                        let address_of_field_from_default =
+                            peek.field(index).unwrap().data().thin().unwrap();
                         wip = wip.field(index).map_err(|e| AnyErr(e.to_string()))?;
                         wip = wip
                             .put_shape(address_of_field_from_default, field.shape())

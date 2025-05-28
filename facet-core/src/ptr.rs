@@ -2,7 +2,7 @@
 //!
 //! Type-erased pointer helpers for working with reflected values
 
-use core::{marker::PhantomData, ptr::NonNull};
+use core::{marker::PhantomData, mem::transmute, ptr::NonNull};
 
 use crate::{Shape, UnsizedError};
 
@@ -407,8 +407,28 @@ impl<'mem> PtrMut<'mem> {
 #[derive(Clone, Copy)]
 #[repr(C)]
 struct PtrWide {
-    ptr: NonNull<u8>,
+    ptr: *mut (),
     metadata: usize,
+}
+
+impl PtrWide {
+    const fn from_ptr<T: ?Sized>(ptr: *mut T) -> Self {
+        if size_of_val(&ptr) != size_of::<Self>() {
+            panic!("Tried to construct a wide pointer from a thin pointer");
+        }
+        let ptr_ref = &ptr;
+        let self_ref = unsafe { transmute::<&*mut T, &Self>(ptr_ref) };
+        *self_ref
+    }
+
+    unsafe fn to_ptr<T: ?Sized>(self) -> *mut T {
+        if size_of::<*mut T>() != size_of::<Self>() {
+            panic!("Tried to get a wide pointer as a thin pointer");
+        }
+        let self_ref = &self;
+        let ptr_ref = unsafe { transmute::<&Self, &*mut T>(self_ref) };
+        *ptr_ref
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -425,9 +445,35 @@ pub struct PtrConstWide<'mem> {
     phantom: PhantomData<&'mem ()>,
 }
 
+impl<'mem> PtrConstWide<'mem> {
+    pub const fn new<T: ?Sized>(ptr: *const T) -> Self {
+        Self {
+            ptr: PtrWide::from_ptr(ptr.cast_mut()),
+            phantom: PhantomData,
+        }
+    }
+
+    pub fn as_byte_ptr(self) -> *const u8 {
+        self.ptr.ptr.cast::<u8>()
+    }
+
+    pub unsafe fn get<T: ?Sized>(self) -> &'mem T {
+        unsafe { self.ptr.to_ptr::<T>().as_ref().unwrap() }
+    }
+}
+
 #[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct PtrMutWide<'mem> {
     ptr: PtrWide,
     phantom: PhantomData<&'mem mut ()>,
+}
+
+impl<'mem> PtrMutWide<'mem> {
+    pub const fn new<T: ?Sized>(ptr: *mut T) -> Self {
+        Self {
+            ptr: PtrWide::from_ptr(ptr),
+            phantom: PhantomData,
+        }
+    }
 }

@@ -61,7 +61,7 @@ impl<'mem, 'facet, 'shape> PeekMap<'mem, 'facet, 'shape> {
 
     /// Get the number of entries in the map
     pub fn len(&self) -> usize {
-        unsafe { (self.def.vtable.len_fn)(self.value.data()) }
+        unsafe { (self.def.vtable.len_fn)(self.value.data().thin().unwrap()) }
     }
 
     /// Returns true if the map is empty
@@ -73,7 +73,7 @@ impl<'mem, 'facet, 'shape> PeekMap<'mem, 'facet, 'shape> {
     pub fn contains_key(&self, key: &impl facet_core::Facet<'facet>) -> bool {
         unsafe {
             let key_ptr = PtrConst::new(key);
-            (self.def.vtable.contains_key_fn)(self.value.data(), key_ptr)
+            (self.def.vtable.contains_key_fn)(self.value.data().thin().unwrap(), key_ptr)
         }
     }
 
@@ -84,7 +84,8 @@ impl<'mem, 'facet, 'shape> PeekMap<'mem, 'facet, 'shape> {
     ) -> Option<Peek<'mem, 'facet, 'shape>> {
         unsafe {
             let key_ptr = PtrConst::new(key);
-            let value_ptr = (self.def.vtable.get_value_ptr_fn)(self.value.data(), key_ptr)?;
+            let value_ptr =
+                (self.def.vtable.get_value_ptr_fn)(self.value.data().thin().unwrap(), key_ptr)?;
             Some(Peek::unchecked_new(value_ptr, self.def.v()))
         }
     }
@@ -92,7 +93,7 @@ impl<'mem, 'facet, 'shape> PeekMap<'mem, 'facet, 'shape> {
     /// Returns an iterator over the key-value pairs in the map
     pub fn iter(self) -> PeekMapIter<'mem, 'facet, 'shape> {
         let iter_init_with_value_fn = self.def.vtable.iter_vtable.init_with_value.unwrap();
-        let iter = unsafe { iter_init_with_value_fn(self.value.data()) };
+        let iter = unsafe { iter_init_with_value_fn(self.value.data().thin().unwrap()) };
         PeekMapIter { map: self, iter }
     }
 
