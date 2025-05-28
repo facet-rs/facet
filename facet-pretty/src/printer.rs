@@ -7,7 +7,6 @@ use core::{
     str,
 };
 use std::{collections::HashMap, hash::DefaultHasher};
-use yansi::Paint as _;
 
 use facet_core::{
     Def, Facet, FieldFlags, PointerType, PrimitiveType, SequenceType, StructKind, TextualType,

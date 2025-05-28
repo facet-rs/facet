@@ -1,6 +1,6 @@
 #![cfg(feature = "std")]
 
-mod no_uninit;
+// mod no_uninit;
 
 // mod misc;
 

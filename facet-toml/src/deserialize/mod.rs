@@ -15,7 +15,6 @@ use facet_core::{Characteristic, Def, Facet, FieldFlags, StructKind, Type, UserT
 use facet_reflect::{Partial, ReflectError, ScalarType};
 use log::trace;
 use toml_edit::{ImDocument, Item, TomlError};
-use yansi::Paint as _;
 
 macro_rules! reflect {
     ($wip:expr, $toml:expr, $span:expr, $($tt:tt)*) => {

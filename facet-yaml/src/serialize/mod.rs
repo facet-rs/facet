@@ -19,8 +19,6 @@ use yaml_rust2::{
     Yaml, YamlEmitter,
     yaml::{Array, Hash},
 };
-#[cfg(feature = "log")]
-use yansi::Paint as _;
 
 /// Serializer for YAML values.
 pub struct YamlSerializer<'shape> {

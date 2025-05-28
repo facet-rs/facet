@@ -478,9 +478,9 @@ dependencies = [
  "fs-err",
  "indicatif",
  "log",
+ "owo-colors",
  "similar",
  "termion",
- "yansi",
 ]
 
 [[package]]
@@ -555,7 +555,6 @@ dependencies = [
  "facet-reflect",
  "facet-testhelpers 0.17.4",
  "insta",
- "yansi",
 ]
 
 [[package]]
@@ -652,7 +651,6 @@ dependencies = [
  "serde",
  "toml",
  "toml_edit",
- "yansi",
 ]
 
 [[package]]
@@ -693,7 +691,6 @@ dependencies = [
  "time",
  "ulid",
  "yaml-rust2",
- "yansi",
 ]
 
 [[package]]

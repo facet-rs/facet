@@ -25,7 +25,6 @@ facet-core = { version = "0.27.7", path = "../facet-core", default-features = fa
 facet-reflect = { version = "0.27.7", path = "../facet-reflect", default-features = false }
 facet-serialize = { version = "0.24.8", path = "../facet-serialize", default-features = false, optional = true }
 log = { version = "0.4.27", optional = true }
-yansi = "1.0.1"
 
 [dev-dependencies]
 facet = { path = "../facet" }

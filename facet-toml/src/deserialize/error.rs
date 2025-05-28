@@ -10,8 +10,6 @@ use alloc::{
 use ariadne::{Color, Label, Report, ReportKind, Source};
 use facet_core::Shape;
 use facet_reflect::ReflectError;
-#[cfg(feature = "rich-diagnostics")]
-use yansi::Paint as _;
 
 /// Any error from deserializing TOML.
 pub struct TomlDeError<'input, 'shape> {

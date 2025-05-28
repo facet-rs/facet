@@ -17,7 +17,6 @@ pub use error::TomlSerError;
 use facet_serialize::{Serialize, Serializer};
 use log::trace;
 use toml_edit::{DocumentMut, Item, Table, Value};
-use yansi::Paint as _;
 
 /// Serializer for TOML values.
 pub struct TomlSerializer<'shape> {

@@ -16,8 +16,8 @@ facet-testhelpers = { version = "0.17.4", path = "../facet-testhelpers" }
 fs-err = "3.1.0"
 indicatif = "0.17.11"
 log = "0.4.27"
+owo-colors = "4.2.1"
 similar = { version = "2.7.0", features = ["inline"] }
-yansi = "1.0.1"
 
 [target.'cfg(not(windows))'.dependencies]
 termion = "4.0.5"

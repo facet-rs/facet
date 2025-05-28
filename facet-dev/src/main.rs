@@ -1,5 +1,6 @@
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use log::{LevelFilter, debug, error, warn};
+use owo_colors::OwoColorize;
 use similar::ChangeTag;
 #[cfg(not(windows))]
 use std::os::unix::process::ExitStatusExt;
@@ -19,7 +20,6 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use yansi::Paint as _;
 
 mod readme;
 mod sample;
@@ -113,11 +113,11 @@ impl Job {
                 match change.tag() {
                     ChangeTag::Insert => print!("{}", format_args!("    +{}", change).green()),
                     ChangeTag::Delete => print!("{}", format_args!("    -{}", change).red()),
-                    ChangeTag::Equal => print!("{}", format_args!("    {}", change).dim()),
+                    ChangeTag::Equal => print!("{}", format_args!("    {}", change).dimmed()),
                 }
                 last_was_ellipsis = false;
             } else if !last_was_ellipsis {
-                println!("{}", "    ...".dim());
+                println!("{}", "    ...".dimmed());
                 last_was_ellipsis = true;
             }
         }
@@ -342,7 +342,7 @@ pub fn enqueue_rustfmt_jobs(sender: std::sync::mpsc::Sender<Job>, staged_files: 
                     "{} {}: {}",
                     "❌".red(),
                     path.display().to_string().blue(),
-                    format_args!("Failed to read: {e}").dim()
+                    format_args!("Failed to read: {e}").dimmed()
                 );
                 continue;
             }
@@ -378,7 +378,7 @@ pub fn enqueue_rustfmt_jobs(sender: std::sync::mpsc::Sender<Job>, staged_files: 
                     "{} {}: {}",
                     "❌".red(),
                     path.display().to_string().blue(),
-                    "Failed to write src to rustfmt".dim()
+                    "Failed to write src to rustfmt".dimmed()
                 );
                 continue;
             }
@@ -408,8 +408,8 @@ pub fn enqueue_rustfmt_jobs(sender: std::sync::mpsc::Sender<Job>, staged_files: 
                 "{} {}: rustfmt failed\n{}\n{}",
                 "❌".red(),
                 path.display().to_string().blue(),
-                String::from_utf8_lossy(&output.stderr).dim(),
-                String::from_utf8_lossy(&output.stdout).dim()
+                String::from_utf8_lossy(&output.stderr).dimmed(),
+                String::from_utf8_lossy(&output.stdout).dimmed()
             );
             continue;
         }
@@ -774,10 +774,10 @@ pub fn collect_staged_files() -> io::Result<StagedFiles> {
     let mut unstaged = Vec::new();
 
     for line in stdout.lines() {
-        log::trace!("Parsing git status line: {:?}", line.dim());
+        log::trace!("Parsing git status line: {:?}", line.dimmed());
         // E.g. "M  src/main.rs", "A  foo.rs", "AM foo/bar.rs"
         if line.len() < 3 {
-            log::trace!("Skipping short line: {:?}", line.dim());
+            log::trace!("Skipping short line: {:?}", line.dimmed());
             continue;
         }
         let x = line.chars().next().unwrap();
@@ -788,7 +788,7 @@ pub fn collect_staged_files() -> io::Result<StagedFiles> {
             "x: {:?}, y: {:?}, path: {:?}",
             x.magenta(),
             y.cyan(),
-            path.dim()
+            path.dimmed()
         );
 
         // Staged and not dirty (to be formatted/committed)
@@ -1032,7 +1032,7 @@ fn pre_push() {
                             pb.finish_with_message(format!(
                                 "{} Failed {}",
                                 "✖".red(),
-                                time_str.dim()
+                                time_str.dimmed()
                             ));
                         }
                         "IoError" => {
@@ -1040,7 +1040,7 @@ fn pre_push() {
                                 "{} {} {}",
                                 "⚠ Error".red(),
                                 "IO Error".red(),
-                                time_str.dim()
+                                time_str.dimmed()
                             ));
                         }
                         _ => unreachable!(),
@@ -1068,7 +1068,7 @@ fn pre_push() {
     if interrupted.load(Ordering::SeqCst) {
         for pb in progress_bars.values() {
             if !pb.is_finished() {
-                pb.finish_with_message(format!("{}", "↪ Cancelled".dim()));
+                pb.finish_with_message(format!("{}", "↪ Cancelled".dimmed()));
             }
         }
     }
@@ -1116,7 +1116,7 @@ fn pre_push() {
             "{} {} {}",
             "✅ All pre-push checks passed!".green().bold(),
             "ACCEPTED".green().bold(),
-            overall_time_str.dim()
+            overall_time_str.dimmed()
         );
         std::process::exit(0);
     } else {
@@ -1135,12 +1135,12 @@ fn pre_push() {
         for (info, output) in failures {
             println!(
                 "\n{}",
-                "--------------------------------------------------".dim()
+                "--------------------------------------------------".dimmed()
             );
             println!(
                 "Failed Check: {} {}",
                 info.name.yellow().bold(),
-                format!("(Command: {})", info.command.join(" ")).dim()
+                format!("(Command: {})", info.command.join(" ")).dimmed()
             );
             println!("Exit Status: {}", output.status.to_string().red());
 
@@ -1157,7 +1157,7 @@ fn pre_push() {
             }
             println!(
                 "{}",
-                "--------------------------------------------------".dim()
+                "--------------------------------------------------".dimmed()
             );
         }
         println!("\n{}", " PUSH REJECTED ".on_red().white().bold());
