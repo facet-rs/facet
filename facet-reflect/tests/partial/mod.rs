@@ -10,6 +10,6 @@ mod option_leak;
 mod put_vec_leak;
 mod struct_leak;
 // mod put_into_tuples;
+mod arc;
 mod array_building;
 mod variance;
-// mod arc;

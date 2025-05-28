@@ -33,14 +33,15 @@ This document tracks the migration of tests from the old `Wip` API to the new `P
 
 ## Test Migration Results
 
-### ✅ Successfully Migrated (39/43 tests)
+### ✅ Successfully Migrated (43/47 tests)
+- **arc**: All 4 tests passing
 - **list_leak**: All 12 tests passing
 - **option_leak**: All 6 tests passing  
 - **put_vec_leak**: All 3 tests passing
 - **struct_leak**: All 14 tests passing
 - **map_leak**: 4/8 tests passing (tests 1, 2, 7, 8)
 
-### ❌ Failed Tests (4/43 tests)
+### ❌ Failed Tests (4/47 tests)
 - **map_leak tests 3-6**: Use-after-free errors in Partial drop implementation when map insertions are partially completed
 
 ## Known Issues

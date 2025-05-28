@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use facet::Facet;
-use facet_reflect::Wip;
+use facet_reflect::Partial;
 use facet_testhelpers::test;
 
 #[derive(Debug, PartialEq, Facet)]
@@ -21,16 +21,15 @@ struct OuterNoArc {
 
 #[test]
 fn outer_no_arc() {
-    let wip = Wip::alloc::<OuterNoArc>()?;
-    let wip = wip.field_named("inner")?;
-    let wip = wip.field_named("value")?;
-    let wip = wip.put(1234_i32)?;
-    let wip = wip.pop()?;
-    let wip = wip.pop()?;
-    let wip = wip.build()?;
-    let o: OuterNoArc = wip.materialize()?;
+    let mut partial = Partial::alloc::<OuterNoArc>()?;
+    partial.begin_field("inner")?;
+    partial.begin_field("value")?;
+    partial.set(1234_i32)?;
+    partial.end()?;
+    partial.end()?;
+    let o: Box<OuterNoArc> = partial.build()?;
     assert_eq!(
-        o,
+        *o,
         OuterNoArc {
             inner: Inner { value: 1234 }
         }
@@ -39,30 +38,28 @@ fn outer_no_arc() {
 
 #[test]
 fn outer_yes_arc_put() {
-    let wip = Wip::alloc::<OuterYesArc>()?;
+    let mut partial = Partial::alloc::<OuterYesArc>()?;
     let inner = Arc::new(Inner { value: 5678 });
-    let wip = wip.field_named("inner")?;
-    let wip = wip.put(inner.clone())?;
-    let wip = wip.pop()?;
-    let wip = wip.build()?;
-    let o: OuterYesArc = wip.materialize()?;
-    assert_eq!(o, OuterYesArc { inner });
+    partial.begin_field("inner")?;
+    partial.set(inner.clone())?;
+    partial.end()?;
+    let o: Box<OuterYesArc> = partial.build()?;
+    assert_eq!(*o, OuterYesArc { inner });
 }
 
 #[test]
 fn outer_yes_arc_pointee() {
-    let wip = Wip::alloc::<OuterYesArc>()?;
-    let wip = wip.field_named("inner")?;
-    let wip = wip.push_pointee()?;
-    let wip = wip.field_named("value")?;
-    let wip = wip.put(4321_i32)?;
-    let wip = wip.pop()?;
-    let wip = wip.pop()?;
-    let wip = wip.pop()?;
-    let wip = wip.build()?;
-    let o: OuterYesArc = wip.materialize()?;
+    let mut partial = Partial::alloc::<OuterYesArc>()?;
+    partial.begin_field("inner")?;
+    partial.begin_smart_ptr()?;
+    partial.begin_field("value")?;
+    partial.set(4321_i32)?;
+    partial.end()?;
+    partial.end()?;
+    partial.end()?;
+    let o: Box<OuterYesArc> = partial.build()?;
     assert_eq!(
-        o,
+        *o,
         OuterYesArc {
             inner: Arc::new(Inner { value: 4321 })
         }
@@ -71,13 +68,13 @@ fn outer_yes_arc_pointee() {
 
 #[test]
 fn outer_yes_arc_field_named_twice_error() {
-    let wip = Wip::alloc::<OuterYesArc>().unwrap();
-    let wip = wip.field_named("inner").unwrap();
-    // Try to do field_named again instead of push_pointee; this should error
-    let err = wip.field_named("value").err().unwrap();
+    let mut partial = Partial::alloc::<OuterYesArc>().unwrap();
+    partial.begin_field("inner").unwrap();
+    // Try to do begin_field again instead of begin_smart_ptr; this should error
+    let err = partial.begin_field("value").err().unwrap();
     let err_string = format!("{err}");
     assert!(
-        err_string.contains("push_pointee"),
-        "Error message should mention 'push_pointee', got: {err_string}"
+        err_string.contains("opaque types cannot be reflected upon"),
+        "Error message should mention 'opaque types cannot be reflected upon', got: {err_string}"
     );
 }

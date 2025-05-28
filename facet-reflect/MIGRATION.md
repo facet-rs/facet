@@ -53,9 +53,9 @@ wip = wip.pop_struct_field()?;
 #### After
 ```rust
 let mut partial = Partial::alloc::<MyStruct>()?;
-partial = partial.begin_field("field_name")?;
-partial = partial.set(value)?;
-partial = partial.end()?;
+partial.begin_field("field_name")?;
+partial.set(value)?;
+partial.end()?;
 ```
 
 ### List Construction
@@ -71,10 +71,10 @@ wip = wip.pop_list_element()?;
 #### After
 ```rust
 let mut partial = Partial::alloc::<Vec<i32>>()?;
-partial = partial.begin_list()?;
-partial = partial.begin_list_item()?;
-partial = partial.set(42)?;
-partial = partial.end()?;
+partial.begin_list()?;
+partial.begin_list_item()?;
+partial.set(42)?;
+partial.end()?;
 ```
 
 ### Map Construction
@@ -90,14 +90,14 @@ wip = wip.pop_map_entry()?;
 #### After
 ```rust
 let mut partial = Partial::alloc::<HashMap<String, i32>>()?;
-partial = partial.begin_map()?;
-partial = partial.begin_insert()?;
-partial = partial.begin_key()?;
-partial = partial.set("key".to_string())?;
-partial = partial.end()?;
-partial = partial.begin_value()?;
-partial = partial.set(42)?;
-partial = partial.end()?;
+partial.begin_map()?;
+partial.begin_insert()?;
+partial.begin_key()?;
+partial.set("key".to_string())?;
+partial.end()?;
+partial.begin_value()?;
+partial.set(42)?;
+partial.end()?;
 ```
 
 ### Array Construction
@@ -113,9 +113,9 @@ wip = wip.pop_array_element()?;
 #### After
 ```rust
 let mut partial = Partial::alloc::<[i32; 3]>()?;
-partial = partial.begin_nth_element(0)?;
-partial = partial.set(value)?;
-partial = partial.end()?;
+partial.begin_nth_element(0)?;
+partial.set(value)?;
+partial.end()?;
 ```
 
 ### Option Construction
@@ -131,10 +131,10 @@ wip = wip.put("hello")?;  // Implicitly creates Some("hello")
 ```rust
 // The new API requires explicit Option values
 let mut partial = Partial::alloc::<Option<String>>()?;
-partial = partial.set(Some("hello".to_string()))?;  // Explicit Some
+partial.set(Some("hello".to_string()))?;  // Explicit Some
 
 // Or for None:
-partial = partial.set(None)?;
+partial.set(None)?;
 ```
 
 **Note**: The implicit conversion from inner value to `Some` has been removed for clarity and consistency. You must now explicitly provide `Some(value)` or `None`.
@@ -147,6 +147,7 @@ partial = partial.set(None)?;
 4. **List initialization**: Lists require `begin_list()` before adding items with `begin_list_item()`
 5. **Convenience methods**: Use `set_field(name, value)` as a shorthand for `begin_field(name)?.set(value)?.end()?`
 6. **No implicit Option conversion**: Must explicitly use `Some(value)` or `None` when setting Option types
+7. **Mutable reference API**: All navigation methods return `&mut self`, so you don't need to reassign the variable
 
 ## Partial vs TypedPartial
 
