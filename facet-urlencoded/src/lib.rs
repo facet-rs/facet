@@ -291,7 +291,7 @@ fn deserialize_nested_field<'mem, 'shape>(
             }
 
             // Return to parent level
-            Ok(current_wip.pop()?)
+            Ok(current_wip.end()?)
         }
         _ => {
             error!("Expected struct field for nested value");

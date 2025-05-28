@@ -419,7 +419,7 @@ impl<'shape, 'input> XdrDeserializerStack<'input> {
                     let pad_len = len % 4;
                     for byte in &self.input[self.pos - len..self.pos] {
                         wip = wip
-                            .push_list_element()
+                            .begin_list_item()
                             .unwrap()
                             .put(*byte)
                             .unwrap()
@@ -532,7 +532,7 @@ pub fn deserialize_wip<'facet, 'shape>(
                 if reason == PopReason::TopLevel {
                     return Ok(wip.build().unwrap());
                 } else {
-                    wip = wip.pop().unwrap();
+                    wip = wip.end().unwrap();
                 }
             }
             Some(DeserializeTask::Value) => {
@@ -550,7 +550,7 @@ pub fn deserialize_wip<'facet, 'shape>(
                     .stack
                     .push(DeserializeTask::Pop(PopReason::ObjectOrListVal));
                 runner.stack.push(DeserializeTask::Value);
-                wip = wip.push_list_element().unwrap();
+                wip = wip.begin_list_item().unwrap();
             }
             None => unreachable!("Instruction stack is empty"),
         }

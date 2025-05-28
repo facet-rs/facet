@@ -167,7 +167,7 @@ impl<'input, 'facet, 'shape> KdlDeserializer<'input> {
             .ok_or_else(|| KdlErrorKind::MissingNodes(vec!["TODO".to_owned()]))?;
         log::trace!("Popped node from `KdlDocument`: {node:#?}");
 
-        wip = wip.push_field(node.name().value())?;
+        wip = wip.begin_field(node.name().value())?;
         log::trace!(
             "Node matched expected child; New def: {:#?}",
             wip.shape().def

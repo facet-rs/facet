@@ -549,7 +549,7 @@ where
                         }
                     });
                 } else {
-                    wip = wip.pop().map_err(|e| {
+                    wip = wip.end().map_err(|e| {
                         let reflect_error = runner.reflect_err(e);
                         // Convert the reflection error's span to Cooked
                         DeserError {
@@ -713,7 +713,7 @@ where
                                     field.offset.blue(),
                                 );
                             }
-                            wip = wip.pop().map_err(|e| self.reflect_err(e))?;
+                            wip = wip.end().map_err(|e| self.reflect_err(e))?;
                         } else {
                             trace!(
                                 "Field #{} {} @ {} is not initialized",
@@ -755,7 +755,7 @@ where
                                 wip = wip
                                     .put_shape(address_of_field_from_default, field.shape())
                                     .map_err(|e| self.reflect_err(e))?;
-                                wip = wip.pop().map_err(|e| self.reflect_err(e))?;
+                                wip = wip.end().map_err(|e| self.reflect_err(e))?;
                             }
                         }
                     } else {
@@ -821,7 +821,7 @@ where
                                             variant.name
                                         );
                                     }
-                                    wip = wip.pop().map_err(|e| self.reflect_err(e))?;
+                                    wip = wip.end().map_err(|e| self.reflect_err(e))?;
                                 } else {
                                     trace!(
                                         "Field #{} @ {} in variant {} is not initialized",
@@ -869,7 +869,7 @@ where
                                                 wip = wip
                                                     .put_shape(def_field.data(), field.shape())
                                                     .map_err(|e| self.reflect_err(e))?;
-                                                wip = wip.pop().map_err(|e| self.reflect_err(e))?;
+                                                wip = wip.end().map_err(|e| self.reflect_err(e))?;
                                             }
                                         }
                                     }
@@ -923,7 +923,7 @@ where
                             wip = wip
                                 .put_shape(def_field.data(), field.shape())
                                 .map_err(|e| self.reflect_err(e))?;
-                            wip = wip.pop().map_err(|e| self.reflect_err(e))?;
+                            wip = wip.end().map_err(|e| self.reflect_err(e))?;
                         }
                     }
                 }
@@ -1127,7 +1127,7 @@ where
             }
             Outcome::ListEnded => {
                 trace!("List closing");
-                wip = wip.pop().map_err(|e| self.reflect_err(e))?;
+                wip = wip.end().map_err(|e| self.reflect_err(e))?;
             }
             Outcome::ObjectStarted => {
                 let shape = wip.shape();
@@ -1255,7 +1255,7 @@ where
                                         break;
                                     } else {
                                         // Key not in this flattened field, go back up
-                                        wip = wip.pop().map_err(|e| self.reflect_err(e))?;
+                                        wip = wip.end().map_err(|e| self.reflect_err(e))?;
                                     }
                                 }
                             }
@@ -1430,7 +1430,7 @@ where
 
                 // For now, both tuples and other sequences use push()
                 // TODO: In the future we might need special handling for tuples
-                wip = wip.push_list_element().map_err(|e| self.reflect_err(e))?;
+                wip = wip.begin_list_item().map_err(|e| self.reflect_err(e))?;
 
                 trace!(" After push, wip.shape is {}", wip.shape().cyan());
                 wip = self.value(wip, outcome)?;

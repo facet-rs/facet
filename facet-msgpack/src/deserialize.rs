@@ -431,7 +431,7 @@ impl<'input, 'shape> Decoder<'input> {
                             seen_fields[index] = true;
                             wip = self
                                 .deserialize_value(wip.field(index).unwrap())?
-                                .pop()
+                                .end()
                                 .unwrap();
                         }
                         None => {
@@ -481,9 +481,11 @@ impl<'input, 'shape> Decoder<'input> {
                 // For tuples, deserialize fields in order
                 for idx in 0..field_count {
                     trace!("Deserializing tuple field {}", idx);
-                    wip = wip.push_nth_field(idx).map_err(DecodeError::ReflectError)?;
+                    wip = wip
+                        .begin_nth_field(idx)
+                        .map_err(DecodeError::ReflectError)?;
                     wip = self.deserialize_value(wip)?;
-                    wip = wip.pop().map_err(DecodeError::ReflectError)?;
+                    wip = wip.end().map_err(DecodeError::ReflectError)?;
                 }
 
                 return Ok(wip);
@@ -558,7 +560,7 @@ impl<'input, 'shape> Decoder<'input> {
                                                 .map_err(DecodeError::ReflectError)?;
                                             let field_wip = self.deserialize_value(field_wip)?;
                                             enum_wip = field_wip
-                                                .pop()
+                                                .end()
                                                 .map_err(DecodeError::ReflectError)?;
                                         }
                                         None => {
@@ -677,7 +679,7 @@ impl<'input, 'shape> Decoder<'input> {
                     .map_err(DecodeError::ReflectError)?;
                 let map_wip_next = self.deserialize_value(value_wip)?;
 
-                map_wip = map_wip_next.pop().map_err(DecodeError::ReflectError)?;
+                map_wip = map_wip_next.end().map_err(DecodeError::ReflectError)?;
             }
 
             wip = map_wip;
@@ -688,11 +690,11 @@ impl<'input, 'shape> Decoder<'input> {
 
             for _ in 0..array_len {
                 let item_wip = list_wip
-                    .push_list_element()
+                    .begin_list_item()
                     .map_err(DecodeError::ReflectError)?;
                 list_wip = self
                     .deserialize_value(item_wip)?
-                    .pop()
+                    .end()
                     .map_err(DecodeError::ReflectError)?;
             }
 
@@ -709,7 +711,7 @@ impl<'input, 'shape> Decoder<'input> {
                 // Value is present - initialize a Some option
                 let some_wip = wip.push_some().map_err(DecodeError::ReflectError)?;
                 let some_wip = self.deserialize_value(some_wip)?;
-                wip = some_wip.pop().map_err(DecodeError::ReflectError)?;
+                wip = some_wip.end().map_err(DecodeError::ReflectError)?;
             }
         } else {
             return Err(DecodeError::UnsupportedShape(format!("{:?}", shape)));

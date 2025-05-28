@@ -143,7 +143,7 @@ fn deserialize_as_struct<'input, 'a, 'shape>(
 
         wip = deserialize_item(toml, wip, item)?;
 
-        reflect!(wip, toml, item.span(), pop());
+        reflect!(wip, toml, item.span(), end());
 
         return Ok(wip);
     }
@@ -162,7 +162,7 @@ fn deserialize_as_struct<'input, 'a, 'shape>(
     })?;
 
     for field in def.fields {
-        reflect!(wip, toml, item.span(), push_field(field.name));
+        reflect!(wip, toml, item.span(), begin_field(field.name));
 
         // Find the matching TOML field
         let field_item = table.get(field.name);
@@ -205,7 +205,7 @@ fn deserialize_as_struct<'input, 'a, 'shape>(
             }
         }
 
-        reflect!(wip, toml, item.span(), pop());
+        reflect!(wip, toml, item.span(), end());
     }
 
     trace!("Finished deserializing {}", "struct".blue());
@@ -335,7 +335,7 @@ fn build_enum_from_variant_name<'input, 'a, 'shape>(
 
     // Push all fields
     for (index, field) in variant.data.fields.iter().enumerate() {
-        reflect!(wip, toml, item.span(), push_field(field.name));
+        reflect!(wip, toml, item.span(), begin_field(field.name));
 
         // Try to get the TOML value as a table to extract the field
         if let Some(table) = item.as_table_like() {
@@ -378,7 +378,7 @@ fn build_enum_from_variant_name<'input, 'a, 'shape>(
             ));
         }
 
-        reflect!(wip, toml, item.span(), pop());
+        reflect!(wip, toml, item.span(), end());
     }
 
     Ok(wip)
@@ -421,7 +421,7 @@ fn deserialize_as_list<'input, 'a, 'shape>(
     // Loop over all items in the TOML list
     for value in item.iter() {
         // Start the field
-        reflect!(wip, toml, value.span(), push_list_element());
+        reflect!(wip, toml, value.span(), begin_list_item());
 
         wip = deserialize_item(
             toml,
@@ -431,7 +431,7 @@ fn deserialize_as_list<'input, 'a, 'shape>(
         )?;
 
         // Finish the field
-        reflect!(wip, toml, value.span(), pop());
+        reflect!(wip, toml, value.span(), end());
     }
 
     trace!("Finished deserializing {}", "list".blue());
@@ -514,7 +514,7 @@ fn deserialize_as_map<'input, 'a, 'shape>(
         wip = deserialize_item(toml, wip, v)?;
 
         // Finish the value
-        reflect!(wip, toml, v.span(), pop());
+        reflect!(wip, toml, v.span(), end());
     }
 
     trace!("Finished deserializing {}", "map".blue());
@@ -553,7 +553,7 @@ fn deserialize_as_option<'input, 'a, 'shape>(
             wip = handle_nested_options(toml, wip, item)?;
 
             // Pop back up one level
-            reflect!(wip, toml, item.span(), pop());
+            reflect!(wip, toml, item.span(), end());
         } else {
             // We've reached the innermost level - handle the actual value
             if item.is_integer() {
@@ -571,7 +571,7 @@ fn deserialize_as_option<'input, 'a, 'shape>(
     wip = handle_nested_options(toml, wip, item)?;
 
     // Pop the outermost Option
-    reflect!(wip, toml, item.span(), pop());
+    reflect!(wip, toml, item.span(), end());
 
     trace!("Finished deserializing {}", "option".blue());
 

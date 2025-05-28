@@ -113,7 +113,7 @@ fn deserialize_value<'facet, 'shape>(
                     .field(field_index)
                     .map_err(|e| AnyErr(format!("Field '{}' error: {}", k, e)))?;
                 wip = deserialize_value(wip, v)?;
-                wip = wip.pop().map_err(|e| AnyErr(e.to_string()))?;
+                wip = wip.end().map_err(|e| AnyErr(e.to_string()))?;
             }
 
             // Process any unset fields with defaults
@@ -181,7 +181,7 @@ fn deserialize_value<'facet, 'shape>(
                             }
                         }
 
-                        wip = wip.pop().map_err(|e| AnyErr(e.to_string()))?;
+                        wip = wip.end().map_err(|e| AnyErr(e.to_string()))?;
                     }
                 }
             }
@@ -214,7 +214,7 @@ fn deserialize_value<'facet, 'shape>(
                         wip = wip
                             .put_shape(address_of_field_from_default, field.shape())
                             .map_err(|e| AnyErr(e.to_string()))?;
-                        wip = wip.pop().map_err(|e| AnyErr(e.to_string()))?;
+                        wip = wip.end().map_err(|e| AnyErr(e.to_string()))?;
                     }
                 }
             }
@@ -376,9 +376,11 @@ fn deserialize_as_list<'facet, 'shape>(
             log::debug!("Processing list element: {:?}", element);
 
             // Push element
-            wip = wip.push_list_element().map_err(|e| AnyErr(e.to_string()))?;
+            wip = wip
+                .begin_list_item().ma
+                p_err(|e| AnyErr(e.to_string()))?;
             wip = deserialize_value(wip, element)?;
-            wip = wip.pop().map_err(|e| AnyErr(e.to_string()))?;
+            wip = wip.end().map_err(|e| AnyErr(e.to_string()))?;
         }
 
         Ok(wip)
@@ -419,7 +421,7 @@ fn deserialize_as_map<'facet, 'shape>(
             // Push map value
             wip = wip.push_map_value().map_err(|e| AnyErr(e.to_string()))?;
             wip = deserialize_value(wip, v)?;
-            wip = wip.pop().map_err(|e| AnyErr(e.to_string()))?;
+            wip = wip.end().map_err(|e| AnyErr(e.to_string()))?;
         }
 
         Ok(wip)
