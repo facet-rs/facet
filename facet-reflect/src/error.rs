@@ -136,6 +136,17 @@ pub enum ReflectError<'shape> {
         /// The array size
         size: usize,
     },
+
+    /// Invalid operation for the current state
+    InvalidOperation {
+        /// The operation that was attempted
+        operation: &'static str,
+        /// The reason why it failed
+        reason: &'static str,
+    },
+
+    /// No active frame in Partial
+    NoActiveFrame,
 }
 
 impl core::fmt::Display for ReflectError<'_> {
@@ -254,6 +265,12 @@ impl core::fmt::Display for ReflectError<'_> {
                     shape.blue(),
                     size
                 )
+            }
+            ReflectError::InvalidOperation { operation, reason } => {
+                write!(f, "Invalid operation '{}': {}", operation.yellow(), reason)
+            }
+            ReflectError::NoActiveFrame => {
+                write!(f, "No active frame in Partial")
             }
         }
     }

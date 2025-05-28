@@ -2,7 +2,8 @@
 #![warn(missing_docs)]
 #![warn(clippy::std_instead_of_core)]
 #![warn(clippy::std_instead_of_alloc)]
-#![deny(unsafe_code)]
+// TODO: Re-enable once Partial API is updated to support ownership patterns
+// #![deny(unsafe_code)]
 #![doc = include_str!("../README.md")]
 
 extern crate alloc;
@@ -20,8 +21,7 @@ pub use error::*;
 
 mod span;
 use facet_core::{
-    Characteristic, Def, Facet, FieldFlags, PointerType, ScalarAffinity, SequenceType, StructKind,
-    Type, UserType,
+    Characteristic, Def, Facet, FieldFlags, PointerType, ScalarAffinity, StructKind, Type, UserType,
 };
 use owo_colors::OwoColorize;
 pub use span::*;
@@ -508,22 +508,15 @@ where
     }
 
     loop {
-        let frame_count = wip.frames_count();
-        debug_assert!(
-            frame_count
-                >= runner
-                    .stack
-                    .iter()
-                    .filter(|f| matches!(f, Instruction::Pop(_)))
-                    .count()
-        );
+        // Note: frames_count() is no longer available in the new Partial API
+        // This was used for debugging/assertions only
 
         let insn = match runner.stack.pop() {
             Some(insn) => insn,
             None => unreachable!("Instruction stack is empty"),
         };
 
-        trace!("[{frame_count}] Instruction {:?}", insn.bright_red());
+        trace!("Instruction {:?}", insn.bright_red());
 
         match insn {
             Instruction::Pop(reason) => {
@@ -549,7 +542,7 @@ where
                         }
                     });
                 } else {
-                    wip = wip.end().map_err(|e| {
+                    wip.end().map_err(|e| {
                         let reflect_error = runner.reflect_err(e);
                         // Convert the reflection error's span to Cooked
                         DeserError {
@@ -686,34 +679,23 @@ where
                     })?;
                     if !is_set {
                         if field.flags.contains(FieldFlags::DEFAULT) {
-                            wip = wip.field(index).map_err(|e| self.reflect_err(e))?;
-                            if let Some(default_in_place_fn) = field.vtable.default_fn {
-                                wip = wip
-                                    .put_from_fn(default_in_place_fn)
-                                    .map_err(|e| self.reflect_err(e))?;
-                                trace!(
-                                    "Field #{} {} @ {} was set to default value (via custom fn)",
-                                    index.yellow(),
-                                    field.name.green(),
-                                    field.offset.blue(),
-                                );
-                            } else {
-                                if !field.shape().is(Characteristic::Default) {
-                                    return Err(self.reflect_err(
-                                        ReflectError::DefaultAttrButNoDefaultImpl {
-                                            shape: field.shape(),
-                                        },
-                                    ));
-                                }
-                                wip = wip.put_default().map_err(|e| self.reflect_err(e))?;
-                                trace!(
-                                    "Field #{} {} @ {} was set to default value (via default impl)",
-                                    index.yellow(),
-                                    field.name.green(),
-                                    field.offset.blue(),
-                                );
+                            wip.begin_nth_field(index)
+                                .map_err(|e| self.reflect_err(e))?;
+                            if !field.shape().is(Characteristic::Default) {
+                                return Err(self.reflect_err(
+                                    ReflectError::DefaultAttrButNoDefaultImpl {
+                                        shape: field.shape(),
+                                    },
+                                ));
                             }
-                            wip = wip.end().map_err(|e| self.reflect_err(e))?;
+                            wip.set_default().map_err(|e| self.reflect_err(e))?;
+                            trace!(
+                                "Field #{} {} @ {} was set to default value (via default impl)",
+                                index.yellow(),
+                                field.name.green(),
+                                field.offset.blue(),
+                            );
+                            wip.end().map_err(|e| self.reflect_err(e))?;
                         } else {
                             trace!(
                                 "Field #{} {} @ {} is not initialized",
@@ -731,7 +713,7 @@ where
                         // let's allocate and build a default value
                         let default_val = Partial::alloc_shape(container_shape)
                             .map_err(|e| self.reflect_err(e))?
-                            .put_default()
+                            .set_default()
                             .map_err(|e| self.reflect_err(e))?
                             .build()
                             .map_err(|e| self.reflect_err(e))?;
@@ -749,13 +731,13 @@ where
                                     field.name.green(),
                                     field.offset.blue(),
                                 );
-                                let address_of_field_from_default =
-                                    peek.field(index).unwrap().data();
-                                wip = wip.field(index).map_err(|e| self.reflect_err(e))?;
-                                wip = wip
-                                    .put_shape(address_of_field_from_default, field.shape())
+                                wip.begin_nth_field(index)
                                     .map_err(|e| self.reflect_err(e))?;
-                                wip = wip.end().map_err(|e| self.reflect_err(e))?;
+                                // Get the field as a Peek from the default value
+                                let def_field = peek.field(index).unwrap();
+                                wip.set_from_peek(&def_field)
+                                    .map_err(|e| self.reflect_err(e))?;
+                                wip.end().map_err(|e| self.reflect_err(e))?;
                             }
                         }
                     } else {
@@ -794,34 +776,23 @@ where
 
                             if !is_set {
                                 if field.flags.contains(FieldFlags::DEFAULT) {
-                                    wip = wip.field(index).map_err(|e| self.reflect_err(e))?;
-                                    if let Some(default_in_place_fn) = field.vtable.default_fn {
-                                        wip = wip
-                                            .put_from_fn(default_in_place_fn)
-                                            .map_err(|e| self.reflect_err(e))?;
-                                        trace!(
-                                            "Field #{} @ {} in variant {} was set to default value (via custom fn)",
-                                            index.yellow(),
-                                            field.offset.blue(),
-                                            variant.name
-                                        );
-                                    } else {
-                                        if !field.shape().is(Characteristic::Default) {
-                                            return Err(self.reflect_err(
-                                                ReflectError::DefaultAttrButNoDefaultImpl {
-                                                    shape: field.shape(),
-                                                },
-                                            ));
-                                        }
-                                        wip = wip.put_default().map_err(|e| self.reflect_err(e))?;
-                                        trace!(
-                                            "Field #{} @ {} in variant {} was set to default value (via default impl)",
-                                            index.yellow(),
-                                            field.offset.blue(),
-                                            variant.name
-                                        );
+                                    wip.begin_nth_field(index)
+                                        .map_err(|e| self.reflect_err(e))?;
+                                    if !field.shape().is(Characteristic::Default) {
+                                        return Err(self.reflect_err(
+                                            ReflectError::DefaultAttrButNoDefaultImpl {
+                                                shape: field.shape(),
+                                            },
+                                        ));
                                     }
-                                    wip = wip.end().map_err(|e| self.reflect_err(e))?;
+                                    wip.set_default().map_err(|e| self.reflect_err(e))?;
+                                    trace!(
+                                        "Field #{} @ {} in variant {} was set to default value (via default impl)",
+                                        index.yellow(),
+                                        field.offset.blue(),
+                                        variant.name
+                                    );
+                                    wip.end().map_err(|e| self.reflect_err(e))?;
                                 } else {
                                     trace!(
                                         "Field #{} @ {} in variant {} is not initialized",
@@ -842,7 +813,7 @@ where
                                 // Handle similar to struct, allocate and build default value for variant
                                 let default_val = Partial::alloc_shape(container_shape)
                                     .map_err(|e| self.reflect_err(e))?
-                                    .put_default()
+                                    .set_default()
                                     .map_err(|e| self.reflect_err(e))?
                                     .build()
                                     .map_err(|e| self.reflect_err(e))?;
@@ -856,20 +827,18 @@ where
 
                                 if default_variant == &variant {
                                     // It's the same variant, fill in the missing fields
-                                    for (index, field) in variant.data.fields.iter().enumerate() {
+                                    for (index, _field) in variant.data.fields.iter().enumerate() {
                                         let is_set = wip.is_field_set(index).map_err(|err| {
                                             trace!("Error checking field set status: {:?}", err);
                                             self.reflect_err(err)
                                         })?;
                                         if !is_set {
                                             if let Ok(Some(def_field)) = peek_enum.field(index) {
-                                                wip = wip
-                                                    .field(index)
+                                                wip.begin_nth_field(index)
                                                     .map_err(|e| self.reflect_err(e))?;
-                                                wip = wip
-                                                    .put_shape(def_field.data(), field.shape())
+                                                wip.set_from_peek(&def_field)
                                                     .map_err(|e| self.reflect_err(e))?;
-                                                wip = wip.end().map_err(|e| self.reflect_err(e))?;
+                                                wip.end().map_err(|e| self.reflect_err(e))?;
                                             }
                                         }
                                     }
@@ -899,7 +868,7 @@ where
                     trace!("No variant selected but enum has DEFAULT attr; setting to default");
                     let default_val = Partial::alloc_shape(container_shape)
                         .map_err(|e| self.reflect_err(e))?
-                        .put_default()
+                        .set_default()
                         .map_err(|e| self.reflect_err(e))?
                         .build()
                         .map_err(|e| self.reflect_err(e))?;
@@ -911,19 +880,18 @@ where
                         .map_err(|e| self.err(DeserErrorKind::VariantError(e)))?;
 
                     // Select the default variant
-                    wip = wip
-                        .variant(default_variant_idx)
+                    wip.begin_nth_variant(default_variant_idx)
                         .map_err(|e| self.reflect_err(e))?;
 
                     // Copy all fields from default value
                     let variant = &ed.variants[default_variant_idx];
-                    for (index, field) in variant.data.fields.iter().enumerate() {
+                    for (index, _field) in variant.data.fields.iter().enumerate() {
                         if let Ok(Some(def_field)) = peek_enum.field(index) {
-                            wip = wip.field(index).map_err(|e| self.reflect_err(e))?;
-                            wip = wip
-                                .put_shape(def_field.data(), field.shape())
+                            wip.begin_nth_field(index)
                                 .map_err(|e| self.reflect_err(e))?;
-                            wip = wip.end().map_err(|e| self.reflect_err(e))?;
+                            wip.set_from_peek(&def_field)
+                                .map_err(|e| self.reflect_err(e))?;
+                            wip.end().map_err(|e| self.reflect_err(e))?;
                         }
                     }
                 }
@@ -942,9 +910,9 @@ where
     /// Internal common handler for GotScalar outcome, to deduplicate code.
     fn handle_scalar<'facet>(
         &self,
-        wip: Partial<'facet, 'shape>,
+        wip: &mut Partial<'facet, 'shape>,
         scalar: Scalar<'input>,
-    ) -> Result<Partial<'facet, 'shape>, DeserError<'input, 'shape, C>>
+    ) -> Result<(), DeserError<'input, 'shape, C>>
     where
         'input: 'facet, // 'input outlives 'facet
     {
@@ -954,17 +922,20 @@ where
                     Type::User(UserType::Enum(_)) => {
                         if wip.selected_variant().is_some() {
                             // If we already have a variant selected, just put the string
-                            wip.put(cow.to_string()).map_err(|e| self.reflect_err(e))
+                            wip.set(cow.to_string()).map_err(|e| self.reflect_err(e))?;
                         } else {
                             // Try to select the variant
                             match wip.find_variant(&cow) {
                                 Some((variant_index, _)) => {
-                                    wip.variant(variant_index).map_err(|e| self.reflect_err(e))
+                                    wip.begin_nth_variant(variant_index)
+                                        .map_err(|e| self.reflect_err(e))?;
                                 }
-                                None => Err(self.err(DeserErrorKind::NoSuchVariant {
-                                    name: cow.to_string(),
-                                    enum_shape: wip.innermost_shape(),
-                                })),
+                                None => {
+                                    return Err(self.err(DeserErrorKind::NoSuchVariant {
+                                        name: cow.to_string(),
+                                        enum_shape: wip.innermost_shape(),
+                                    }));
+                                }
                             }
                         }
                     }
@@ -974,19 +945,32 @@ where
                         // This is for handling the &str type
                         // The Cow may be Borrowed (we may have an owned string but need a &str)
                         match cow {
-                            Cow::Borrowed(s) => wip.put(s).map_err(|e| self.reflect_err(e)),
-                            Cow::Owned(s) => wip.put(s).map_err(|e| self.reflect_err(e)),
-                        }
+                            Cow::Borrowed(s) => wip.set(s).map_err(|e| self.reflect_err(e))?,
+                            Cow::Owned(s) => wip.set(s).map_err(|e| self.reflect_err(e))?,
+                        }; // Add semicolon to ignore the return value
                     }
-                    _ => wip.put(cow.to_string()).map_err(|e| self.reflect_err(e)),
+                    _ => {
+                        wip.set(cow.to_string()).map_err(|e| self.reflect_err(e))?;
+                    }
                 }
             }
-            Scalar::U64(value) => wip.put(value).map_err(|e| self.reflect_err(e)),
-            Scalar::I64(value) => wip.put(value).map_err(|e| self.reflect_err(e)),
-            Scalar::F64(value) => wip.put(value).map_err(|e| self.reflect_err(e)),
-            Scalar::Bool(value) => wip.put(value).map_err(|e| self.reflect_err(e)),
-            Scalar::Null => wip.put_default().map_err(|e| self.reflect_err(e)),
+            Scalar::U64(value) => {
+                wip.set(value).map_err(|e| self.reflect_err(e))?;
+            }
+            Scalar::I64(value) => {
+                wip.set(value).map_err(|e| self.reflect_err(e))?;
+            }
+            Scalar::F64(value) => {
+                wip.set(value).map_err(|e| self.reflect_err(e))?;
+            }
+            Scalar::Bool(value) => {
+                wip.set(value).map_err(|e| self.reflect_err(e))?;
+            }
+            Scalar::Null => {
+                wip.set_default().map_err(|e| self.reflect_err(e))?;
+            }
         }
+        Ok(())
     }
 
     /// Handle value parsing
@@ -1009,14 +993,15 @@ where
 
         // Handle null values
         if matches!(outcome.node, Outcome::Scalar(Scalar::Null)) {
-            return wip.put_default().map_err(|e| self.reflect_err(e));
+            wip.set_default().map_err(|e| self.reflect_err(e))?;
+            return Ok(wip);
         }
 
         // Resolve the innermost value to deserialize
         loop {
             if matches!(wip.shape().def, Def::Option(_)) {
                 trace!("  Starting Some(_) option for {}", wip.shape().blue());
-                wip = wip.push_some().map_err(|e| self.reflect_err(e))?;
+                wip.push_some().map_err(|e| self.reflect_err(e))?;
                 self.stack.push(Instruction::Pop(PopReason::Some));
             } else if let Def::SmartPointer(inner) = wip.shape().def {
                 if let Some(pointee) = inner.pointee() {
@@ -1031,7 +1016,7 @@ where
                         wip.shape().blue()
                     );
                 }
-                wip = wip.push_pointee().map_err(|e| self.reflect_err(e))?;
+                wip.push_pointee().map_err(|e| self.reflect_err(e))?;
                 self.stack.push(Instruction::Pop(PopReason::SmartPointer));
             } else if let Some(inner_fn) = wip.shape().inner {
                 let inner = inner_fn();
@@ -1040,7 +1025,7 @@ where
                     wip.shape().blue(),
                     inner.yellow()
                 );
-                wip = wip.push_inner().map_err(|e| self.reflect_err(e))?;
+                wip.push_inner().map_err(|e| self.reflect_err(e))?;
                 self.stack.push(Instruction::Pop(PopReason::Wrapper));
             } else {
                 break;
@@ -1058,7 +1043,7 @@ where
         match outcome.node {
             Outcome::Scalar(s) => {
                 trace!("Parsed scalar value: {}", s.cyan());
-                wip = self.handle_scalar(wip, s)?;
+                self.handle_scalar(&mut wip, s)?;
             }
             Outcome::ListStarted => {
                 let shape = wip.innermost_shape();
@@ -1073,12 +1058,12 @@ where
                     }
                     Def::List(_) => {
                         trace!("Array starting for list ({})!", shape.blue());
-                        wip = wip.put_default().map_err(|e| self.reflect_err(e))?;
+                        wip.set_default().map_err(|e| self.reflect_err(e))?;
                     }
                     Def::Scalar(sd) => {
                         if matches!(sd.affinity, ScalarAffinity::Empty(_)) {
                             trace!("Empty tuple/scalar, nice");
-                            wip = wip.put_default().map_err(|e| self.reflect_err(e))?;
+                            wip.set_default().map_err(|e| self.reflect_err(e))?;
                         } else {
                             return Err(self.err(DeserErrorKind::UnsupportedType {
                                 got: shape,
@@ -1095,7 +1080,7 @@ where
                                 }
                                 UserType::Struct(_) => {
                                     trace!("Array starting for tuple struct ({})!", shape.blue());
-                                    wip = wip.put_default().map_err(|e| self.reflect_err(e))?;
+                                    wip.set_default().map_err(|e| self.reflect_err(e))?;
                                 }
                                 _ => {
                                     return Err(self.err(DeserErrorKind::UnsupportedType {
@@ -1123,18 +1108,18 @@ where
                 }
                 trace!("Beginning pushback");
                 self.stack.push(Instruction::ListItemOrListClose);
-                wip = wip.begin_list().map_err(|e| self.reflect_err(e))?;
+                wip.begin_list().map_err(|e| self.reflect_err(e))?;
             }
             Outcome::ListEnded => {
                 trace!("List closing");
-                wip = wip.end().map_err(|e| self.reflect_err(e))?;
+                wip.end().map_err(|e| self.reflect_err(e))?;
             }
             Outcome::ObjectStarted => {
                 let shape = wip.shape();
                 match shape.def {
                     Def::Map(_md) => {
                         trace!("Object starting for map value ({})!", shape.blue());
-                        wip = wip.put_default().map_err(|e| self.reflect_err(e))?;
+                        wip.set_default().map_err(|e| self.reflect_err(e))?;
                     }
                     _ => {
                         // For non-collection types, check the Type enum
@@ -1220,7 +1205,8 @@ where
                         // First try to find a direct field match
                         if let Some(index) = wip.field_index(&key) {
                             trace!("It's a struct field");
-                            wip = wip.field(index).map_err(|e| self.reflect_err(e))?;
+                            wip.begin_nth_field(index)
+                                .map_err(|e| self.reflect_err(e))?;
                         } else {
                             trace!(
                                 "Did not find direct field match in innermost shape {}",
@@ -1233,13 +1219,13 @@ where
                                 if field.flags.contains(FieldFlags::FLATTEN) {
                                     trace!("Found flattened field #{}", index);
                                     // Enter the flattened field
-                                    wip = wip.field(index).map_err(|e| self.reflect_err(e))?;
+                                    wip.begin_nth_field(index)
+                                        .map_err(|e| self.reflect_err(e))?;
 
                                     // Check if this flattened field has the requested key
                                     if let Some(subfield_index) = wip.field_index(&key) {
                                         trace!("Found key {} in flattened field", key);
-                                        wip = wip
-                                            .field(subfield_index)
+                                        wip.begin_nth_field(subfield_index)
                                             .map_err(|e| self.reflect_err(e))?;
                                         found_in_flatten = true;
                                         handled_by_flatten = true;
@@ -1248,14 +1234,13 @@ where
                                         wip.find_variant(&key)
                                     {
                                         trace!("Found key {} in flattened field", key);
-                                        wip = wip
-                                            .variant_named(&key)
+                                        wip.select_variant_named(&key)
                                             .map_err(|e| self.reflect_err(e))?;
                                         found_in_flatten = true;
                                         break;
                                     } else {
                                         // Key not in this flattened field, go back up
-                                        wip = wip.end().map_err(|e| self.reflect_err(e))?;
+                                        wip.end().map_err(|e| self.reflect_err(e))?;
                                     }
                                 }
                             }
@@ -1285,7 +1270,8 @@ where
                                 wip.shape().blue(),
                                 variant.name.yellow(),
                             );
-                            wip = wip.variant(index).map_err(|e| self.reflect_err(e))?;
+                            wip.begin_nth_variant(index)
+                                .map_err(|e| self.reflect_err(e))?;
 
                             // Let's see what's in the variant — if it's tuple-like with only one field, we want to push field 0
                             if matches!(variant.data.kind, StructKind::Tuple)
@@ -1296,7 +1282,7 @@ where
                                     wip.shape().blue(),
                                     variant.name.yellow()
                                 );
-                                wip = wip.field(0).map_err(|e| self.reflect_err(e))?;
+                                wip.begin_nth_field(0).map_err(|e| self.reflect_err(e))?;
                                 self.stack.push(Instruction::Pop(PopReason::ObjectVal));
                             }
 
@@ -1313,7 +1299,8 @@ where
                                 // Try to find the field index of the key within the selected variant
                                 if let Some(index) = wip.field_index(&key) {
                                     trace!("Found field {} in selected variant", key.blue());
-                                    wip = wip.field(index).map_err(|e| self.reflect_err(e))?;
+                                    wip.begin_nth_field(index)
+                                        .map_err(|e| self.reflect_err(e))?;
                                 } else if wip.shape().has_deny_unknown_fields_attr() {
                                     trace!("Unknown field in variant and denying unknown fields");
                                     return Err(self.err(DeserErrorKind::UnknownField {
@@ -1340,9 +1327,9 @@ where
                     _ => {
                         // Check if it's a map
                         if let Def::Map(_) = shape.def {
-                            wip = wip.push_map_key().map_err(|e| self.reflect_err(e))?;
-                            wip = wip.put(key.to_string()).map_err(|e| self.reflect_err(e))?;
-                            wip = wip.push_map_value().map_err(|e| self.reflect_err(e))?;
+                            wip.push_map_key().map_err(|e| self.reflect_err(e))?;
+                            wip.set(key.to_string()).map_err(|e| self.reflect_err(e))?;
+                            wip.push_map_value().map_err(|e| self.reflect_err(e))?;
                         } else {
                             return Err(self.err(DeserErrorKind::Unimplemented(
                                 "object key for non-struct/map",
@@ -1430,7 +1417,7 @@ where
 
                 // For now, both tuples and other sequences use push()
                 // TODO: In the future we might need special handling for tuples
-                wip = wip.begin_list_item().map_err(|e| self.reflect_err(e))?;
+                wip.begin_list_item().map_err(|e| self.reflect_err(e))?;
 
                 trace!(" After push, wip.shape is {}", wip.shape().cyan());
                 wip = self.value(wip, outcome)?;

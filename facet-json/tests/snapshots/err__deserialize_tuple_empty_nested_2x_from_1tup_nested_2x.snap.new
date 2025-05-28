@@ -1,0 +1,12 @@
+---
+source: facet-json/tests/err.rs
+assertion_line: 186
+expression: err
+---
+[31mError:[0m 
+   [38;5;246m╭[0m[38;5;246m─[0m[38;5;246m[[0m json:1:1 [38;5;246m][0m
+   [38;5;246m│[0m
+ [38;5;246m1 │[0m [31m[[0m[38;5;249m[[0m[38;5;249m[[0m[38;5;249m1[0m[38;5;249m0[0m[38;5;249m][0m[38;5;249m][0m[38;5;249m][0m
+ [38;5;240m  │[0m [31m┬[0m  
+ [38;5;240m  │[0m [31m╰[0m[31m─[0m[31m─[0m Operation failed on shape [34m((()))[39m: begin_pushback can only be called on List types
+[38;5;246m───╯[0m

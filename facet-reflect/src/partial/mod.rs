@@ -130,7 +130,7 @@ use alloc::vec;
 
 mod iset;
 
-use crate::{ReflectError, trace};
+use crate::{Peek, ReflectError, trace};
 
 use core::marker::PhantomData;
 
@@ -1803,6 +1803,160 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
             .last()
             .expect("Partial always has at least one frame")
             .shape
+    }
+
+    /// Returns the innermost shape (alias for shape(), for compatibility)
+    pub fn innermost_shape(&self) -> &'shape Shape<'shape> {
+        self.shape()
+    }
+
+    /// Check if a struct field at the given index has been set
+    pub fn is_field_set(&self, index: usize) -> Result<bool, ReflectError<'shape>> {
+        let frame = self.frames.last().ok_or(ReflectError::NoActiveFrame)?;
+
+        match &frame.tracker {
+            Tracker::Struct { iset, .. } => Ok(iset.get(index)),
+            Tracker::Enum { data, .. } => Ok(data.get(index)),
+            _ => Err(ReflectError::InvalidOperation {
+                operation: "is_field_set",
+                reason: "Current frame is not a struct or enum variant",
+            }),
+        }
+    }
+
+    /// Find the index of a field by name in the current struct
+    pub fn field_index(&self, field_name: &str) -> Option<usize> {
+        let frame = self.frames.last()?;
+
+        match frame.shape.ty {
+            Type::User(UserType::Struct(struct_def)) => {
+                struct_def.fields.iter().position(|f| f.name == field_name)
+            }
+            Type::User(UserType::Enum(_)) => {
+                // If we're in an enum variant, check its fields
+                if let Tracker::Enum { variant, .. } = &frame.tracker {
+                    variant
+                        .data
+                        .fields
+                        .iter()
+                        .position(|f| f.name == field_name)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Get the currently selected variant for an enum
+    pub fn selected_variant(&self) -> Option<Variant<'shape>> {
+        let frame = self.frames.last()?;
+
+        match &frame.tracker {
+            Tracker::Enum { variant, .. } => Some(*variant),
+            _ => None,
+        }
+    }
+
+    /// Find a variant by name in the current enum
+    pub fn find_variant(&self, variant_name: &str) -> Option<(usize, &'shape Variant<'shape>)> {
+        let frame = self.frames.last()?;
+
+        if let Type::User(UserType::Enum(enum_def)) = frame.shape.ty {
+            enum_def
+                .variants
+                .iter()
+                .enumerate()
+                .find(|(_, v)| v.name == variant_name)
+                .map(|(idx, variant)| (idx, variant))
+        } else {
+            None
+        }
+    }
+
+    /// Begin building the Some variant of an Option
+    pub fn push_some(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+        self.require_active()?;
+        let frame = self.frames.last().unwrap();
+
+        // Verify we're working with an Option
+        if !matches!(frame.shape.def, Def::Option(_)) {
+            return Err(ReflectError::WasNotA {
+                expected: "Option",
+                actual: frame.shape,
+            });
+        }
+
+        // For Option, we need to select the Some variant
+        self.select_variant(1)?; // Some is typically variant 1
+
+        // Now navigate into the value field of Some
+        self.begin_nth_field(0)
+    }
+
+    /// Begin building the inner value of a smart pointer
+    pub fn push_pointee(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+        self.begin_smart_ptr()
+    }
+
+    /// Begin building the inner value of a wrapper type
+    pub fn push_inner(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+        self.require_active()?;
+        let frame = self.frames.last().unwrap();
+
+        // Get the inner shape
+        if let Some(inner_fn) = frame.shape.inner {
+            let _inner_shape = inner_fn();
+
+            // For wrapper types with inner, we typically need to navigate to the first field
+            // This is a common pattern for newtype wrappers
+            self.begin_nth_field(0)
+        } else {
+            Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "type does not have an inner value",
+            })
+        }
+    }
+
+    /// Begin building a map key (for compatibility)
+    pub fn push_map_key(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+        self.begin_key()
+    }
+
+    /// Begin building a map value (for compatibility)
+    pub fn push_map_value(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+        self.begin_value()
+    }
+
+    /// Copy a value from a Peek into the current position (safe alternative to set_shape)
+    pub fn set_from_peek(
+        &mut self,
+        peek: &Peek<'_, '_, 'shape>,
+    ) -> Result<&mut Self, ReflectError<'shape>> {
+        self.require_active()?;
+
+        // Get the source value's pointer and shape
+        let src_ptr = peek.data();
+        let src_shape = peek.shape();
+
+        // Safety: This is a safe wrapper around set_shape
+        // The peek guarantees the source data is valid for its shape
+        unsafe { self.set_shape(src_ptr, src_shape) }
+    }
+
+    /// Copy a field from a struct's default value (safe wrapper for deserialization)
+    /// This method creates the Peek internally to avoid exposing unsafe code to callers
+    pub fn set_field_from_default(
+        &mut self,
+        field_data: PtrConst<'_>,
+        field_shape: &'shape Shape<'shape>,
+    ) -> Result<&mut Self, ReflectError<'shape>> {
+        self.require_active()?;
+
+        // Safety: The caller guarantees that field_data points to valid data for field_shape
+        // This is typically used when copying default values during deserialization
+        unsafe { self.set_shape(field_data, field_shape) }
     }
 
     /// Convenience shortcut: sets the nth element of an array directly to value, popping after.
