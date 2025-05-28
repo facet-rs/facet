@@ -1,0 +1,5 @@
+---
+source: facet-reflect/src/partial/tests.rs
+expression: "Partial::alloc::<Arc<u32>>()?.build().unwrap_err()"
+---
+Value '[34mArc<u32>[39m' was not initialized

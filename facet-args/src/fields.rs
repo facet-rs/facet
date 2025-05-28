@@ -4,12 +4,12 @@ use facet_core::{FieldAttribute, Shape, Type, UserType};
 use facet_deserialize::{
     DeserErrorKind, Outcome, Raw, Scalar, Span, Spanned, Subspan, SubspanMeta,
 };
-use facet_reflect::Wip;
+use facet_reflect::Partial;
 
 pub(crate) fn validate_field<'facet, 'shape>(
     field_name: &str,
     shape: &'shape Shape<'shape>,
-    wip: &Wip<'facet, 'shape>,
+    wip: &Partial<'facet, 'shape>,
 ) -> Result<(), DeserErrorKind<'shape>> {
     if let Type::User(UserType::Struct(_)) = &shape.ty {
         if wip.field_index(field_name).is_none() {
@@ -25,7 +25,7 @@ pub(crate) fn validate_field<'facet, 'shape>(
 // Find a positional field
 pub(crate) fn find_positional_field<'facet, 'shape>(
     shape: &'shape Shape<'shape>,
-    wip: &Wip<'facet, 'shape>,
+    wip: &Partial<'facet, 'shape>,
 ) -> Result<&'shape str, DeserErrorKind<'shape>> {
     if let Type::User(UserType::Struct(st)) = &shape.ty {
         for (idx, field) in st.fields.iter().enumerate() {
@@ -51,7 +51,7 @@ pub(crate) fn find_positional_field<'facet, 'shape>(
 // Find an unset boolean field for implicit false handling
 pub(crate) fn find_unset_bool_field<'facet, 'shape>(
     shape: &'shape Shape<'shape>,
-    wip: &Wip<'facet, 'shape>,
+    wip: &Partial<'facet, 'shape>,
 ) -> Option<&'shape str> {
     if let Type::User(UserType::Struct(st)) = &shape.ty {
         for (idx, field) in st.fields.iter().enumerate() {

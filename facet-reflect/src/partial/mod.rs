@@ -11,20 +11,21 @@ mod heap_value;
 use alloc::vec::Vec;
 pub use heap_value::*;
 
-use facet_core::{Def, Facet, KnownSmartPointer, PtrConst, PtrMut, PtrUninit, Shape, Variant};
+use facet_core::{
+    Def, EnumRepr, Facet, KnownSmartPointer, PtrConst, PtrMut, PtrUninit, Shape, Type, UserType,
+    Variant,
+};
 use iset::ISet;
 
-/// State of a WIP value
+/// State of a partial value
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WipState {
-    /// WIP is active and can be modified
+enum PartialState {
+    /// Partial is active and can be modified
     Active,
-    /// WIP has been successfully built and cannot be reused
+    /// Partial has been successfully built and cannot be reused
     Built,
-    /// Building failed and WIP is poisoned
+    /// Building failed and Partial is poisoned
     BuildFailed,
-    /// Construction error occurred and WIP is poisoned
-    ConstructionError,
 }
 
 /// A work-in-progress heap-allocated value
@@ -33,12 +34,12 @@ enum WipState {
 ///
 /// * `'facet`: The lifetime of borrowed values within the structure (or 'static if it's owned)
 /// * `'shape`: The lifetime of the Shape structure itself (often 'static)
-pub struct Wip<'facet, 'shape> {
+pub struct Partial<'facet, 'shape> {
     /// stack of frames to keep track of deeply nested initialization
     frames: Vec<Frame<'shape>>,
 
-    /// current state of the WIP
-    state: WipState,
+    /// current state of the Partial
+    state: PartialState,
 
     invariant: PhantomData<fn(&'facet ()) -> &'facet ()>,
 }
@@ -161,7 +162,7 @@ impl<'shape> Frame<'shape> {
             Tracker::Init => Ok(()),
             Tracker::Array { iset, .. } => {
                 match self.shape.ty {
-                    facet_core::Type::Sequence(facet_core::SequenceType::Array(array_def)) => {
+                    Type::Sequence(facet_core::SequenceType::Array(array_def)) => {
                         // Check if all array elements are initialized
                         if (0..array_def.n).all(|idx| iset.get(idx)) {
                             Ok(())
@@ -178,7 +179,7 @@ impl<'shape> Frame<'shape> {
                 } else {
                     // Attempt to find the first uninitialized field, if possible
                     match self.shape.ty {
-                        facet_core::Type::User(facet_core::UserType::Struct(struct_type)) => {
+                        Type::User(UserType::Struct(struct_type)) => {
                             // Find index of the first bit not set
                             let first_missing_idx =
                                 (0..struct_type.fields.len()).find(|&idx| !iset.get(idx));
@@ -247,8 +248,8 @@ impl<'shape> Frame<'shape> {
     }
 }
 
-impl<'facet, 'shape> Wip<'facet, 'shape> {
-    /// Allocates a new Wip instance with the given shape
+impl<'facet, 'shape> Partial<'facet, 'shape> {
+    /// Allocates a new Partial instance with the given shape
     pub fn alloc_shape(shape: &'shape Shape<'shape>) -> Result<Self, ReflectError<'shape>> {
         let data = shape
             .allocate()
@@ -256,17 +257,17 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
 
         Ok(Self {
             frames: vec![Frame::new(data, shape, FrameOwnership::Owned)],
-            state: WipState::Active,
+            state: PartialState::Active,
             invariant: PhantomData,
         })
     }
 
-    /// Allocates a new TypedWip instance with the given shape and type
-    pub fn alloc<T>() -> Result<TypedWip<'facet, 'shape, T>, ReflectError<'shape>>
+    /// Allocates a new TypedPartial instance with the given shape and type
+    pub fn alloc<T>() -> Result<TypedPartial<'facet, 'shape, T>, ReflectError<'shape>>
     where
         T: Facet<'shape>,
     {
-        Ok(TypedWip {
+        Ok(TypedPartial {
             wip: Self::alloc_shape(T::SHAPE)?,
             phantom: PhantomData,
         })
@@ -279,8 +280,19 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         let data_static = PtrUninit::new(data.as_mut_byte_ptr());
         Self {
             frames: vec![Frame::new(data_static, shape, FrameOwnership::Field)],
-            state: WipState::Active,
+            state: PartialState::Active,
             invariant: PhantomData,
+        }
+    }
+
+    /// Require that the partial is active
+    fn require_active(&self) -> Result<(), ReflectError<'shape>> {
+        if self.state == PartialState::Active {
+            Ok(())
+        } else {
+            Err(ReflectError::InvariantViolation {
+                invariant: "Cannot use Partial after it has been built or poisoned",
+            })
         }
     }
 
@@ -289,90 +301,67 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
     where
         U: Facet<'shape>,
     {
-        if self.state != WipState::Active {
-            return Err(ReflectError::InvariantViolation {
-                invariant: "Cannot use WIP after it has been built or poisoned",
-            });
-        }
+        self.require_active()?;
 
         // relay to set_shape — convert U into a ptr and shape, and call set_shape
         let ptr_const = PtrConst::new(&raw const value);
-        match self.set_shape(ptr_const, U::SHAPE) {
-            Ok(_) => {
-                // Prevent the value from being dropped since we've copied it
-                core::mem::forget(value);
-                Ok(self)
-            }
-            Err(e) => {
-                self.state = WipState::ConstructionError;
-                Err(e)
-            }
-        }
+        unsafe {
+            // Safety: We are calling set_shape with a valid shape and a valid pointer
+            self.set_shape(ptr_const, U::SHAPE)?
+        };
+
+        // Prevent the value from being dropped since we've copied it
+        core::mem::forget(value);
+        Ok(self)
     }
 
     /// Sets a value into the current frame by shape, for shape-based operations
-    pub fn set_shape(
+    ///
+    /// If this returns Ok, then `src_value` has been moved out of
+    pub unsafe fn set_shape(
         &mut self,
         src_value: PtrConst<'_>,
         src_shape: &'shape Shape<'shape>,
     ) -> Result<&mut Self, ReflectError<'shape>> {
-        if self.state != WipState::Active {
-            return Err(ReflectError::InvariantViolation {
-                invariant: "Cannot use WIP after it has been built or poisoned",
-            });
-        }
+        self.require_active()?;
 
         let fr = self.frames.last_mut().unwrap();
-
         if !fr.shape.is_shape(src_shape) {
-            self.state = WipState::ConstructionError;
-            return Err(ReflectError::WrongShape {
+            let err = ReflectError::WrongShape {
                 expected: src_shape,
                 actual: fr.shape,
-            });
+            };
+            return Err(err);
         }
 
-        match unsafe {
-            fr.data
-                .copy_from(src_value, fr.shape)
-                .map_err(|_| ReflectError::Unsized { shape: fr.shape })
-        } {
-            Ok(_) => {
-                fr.tracker = Tracker::Init;
-                Ok(self)
-            }
-            Err(e) => {
-                self.state = WipState::ConstructionError;
-                Err(e)
-            }
+        if fr.shape.layout.sized_layout().is_err() {
+            return Err(ReflectError::Unsized { shape: fr.shape });
         }
+
+        unsafe {
+            fr.data.copy_from(src_value, fr.shape).unwrap();
+        }
+        fr.tracker = Tracker::Init;
+        Ok(self)
     }
 
     /// Sets the current frame to its default value
     pub fn set_default(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
-        if self.state != WipState::Active {
-            return Err(ReflectError::InvariantViolation {
-                invariant: "Cannot use WIP after it has been built or poisoned",
-            });
-        }
-
-        let frame = self.frames.last_mut().unwrap();
-
-        // Check if we need to drop an existing value
-        if matches!(frame.tracker, Tracker::Init) {
-            if let Some(drop_fn) = (frame.shape.vtable.drop_in_place)() {
-                unsafe { drop_fn(PtrMut::new(frame.data.as_mut_byte_ptr())) };
-            }
-        }
+        let frame = self.frames.last().unwrap(); // Get frame to access vtable
 
         if let Some(default_fn) = (frame.shape.vtable.default_in_place)() {
-            // Initialize with default value
-            // SAFETY: frame.data points to uninitialized memory of the correct layout
-            unsafe { default_fn(frame.data) };
-            frame.tracker = Tracker::Init;
-            Ok(self)
+            // Initialize with default value using set_from_function
+            // SAFETY: set_from_function handles the active check, dropping,
+            // and setting tracker. The closure passes the correct pointer type
+            // and casts to 'static which is safe within the context of calling
+            // the vtable function. The closure returns Ok(()) because the
+            // default_in_place function does not return errors.
+            self.set_from_function(move |ptr: PtrUninit<'_>| {
+                unsafe { default_fn(PtrUninit::new(ptr.as_mut_byte_ptr())) };
+                Ok(())
+            })
         } else {
-            self.state = WipState::ConstructionError;
+            // Default function not available, set state and return error
             Err(ReflectError::OperationFailed {
                 shape: frame.shape,
                 operation: "type does not implement Default",
@@ -385,11 +374,7 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
     where
         F: FnOnce(PtrUninit<'_>) -> Result<(), ReflectError<'shape>>,
     {
-        if self.state != WipState::Active {
-            return Err(ReflectError::InvariantViolation {
-                invariant: "Cannot use WIP after it has been built or poisoned",
-            });
-        }
+        self.require_active()?;
 
         let frame = self.frames.last_mut().unwrap();
 
@@ -403,13 +388,11 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         // Call the function to initialize the value
         match f(frame.data) {
             Ok(()) => {
+                // FIXME: what about finding out the discriminant of enums?
                 frame.tracker = Tracker::Init;
                 Ok(self)
             }
-            Err(e) => {
-                self.state = WipState::ConstructionError;
-                Err(e)
-            }
+            Err(e) => Err(e),
         }
     }
 
@@ -418,19 +401,14 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         &mut self,
         variant_name: &str,
     ) -> Result<&mut Self, ReflectError<'shape>> {
-        if self.state != WipState::Active {
-            return Err(ReflectError::InvariantViolation {
-                invariant: "Cannot use WIP after it has been built or poisoned",
-            });
-        }
+        self.require_active()?;
 
         let fr = self.frames.last_mut().unwrap();
 
         // Check that we're dealing with an enum
         let enum_type = match fr.shape.ty {
-            facet_core::Type::User(facet_core::UserType::Enum(e)) => e,
+            Type::User(UserType::Enum(e)) => e,
             _ => {
-                self.state = WipState::ConstructionError;
                 return Err(ReflectError::OperationFailed {
                     shape: fr.shape,
                     operation: "push_variant_named requires an enum type",
@@ -442,7 +420,6 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         let variant = match enum_type.variants.iter().find(|v| v.name == variant_name) {
             Some(v) => v,
             None => {
-                self.state = WipState::ConstructionError;
                 return Err(ReflectError::OperationFailed {
                     shape: fr.shape,
                     operation: "No variant found with the given name",
@@ -454,7 +431,6 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         let discriminant = match variant.discriminant {
             Some(d) => d,
             None => {
-                self.state = WipState::ConstructionError;
                 return Err(ReflectError::OperationFailed {
                     shape: fr.shape,
                     operation: "Variant has no discriminant value",
@@ -468,19 +444,15 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
 
     /// Pushes a variant for enum initialization
     pub fn push_variant(&mut self, discriminant: i64) -> Result<&mut Self, ReflectError<'shape>> {
-        if self.state != WipState::Active {
-            return Err(ReflectError::InvariantViolation {
-                invariant: "Cannot use WIP after it has been built or poisoned",
-            });
-        }
+        self.require_active()?;
 
-        let fr = self.frames.last_mut().unwrap();
+        // Check all invariants early before making any changes
+        let fr = self.frames.last().unwrap();
 
         // Check that we're dealing with an enum
         let enum_type = match fr.shape.ty {
-            facet_core::Type::User(facet_core::UserType::Enum(e)) => e,
+            Type::User(UserType::Enum(e)) => e,
             _ => {
-                self.state = WipState::ConstructionError;
                 return Err(ReflectError::WrongShape {
                     expected: fr.shape,
                     actual: fr.shape,
@@ -496,7 +468,6 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         {
             Some(v) => v,
             None => {
-                self.state = WipState::ConstructionError;
                 return Err(ReflectError::OperationFailed {
                     shape: fr.shape,
                     operation: "No variant found with the given discriminant",
@@ -504,63 +475,81 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
             }
         };
 
+        // Check enum representation early
+        match enum_type.enum_repr {
+            EnumRepr::RustNPO => {
+                return Err(ReflectError::OperationFailed {
+                    shape: fr.shape,
+                    operation: "RustNPO enums are not supported for incremental building",
+                });
+            }
+            EnumRepr::U8
+            | EnumRepr::U16
+            | EnumRepr::U32
+            | EnumRepr::U64
+            | EnumRepr::I8
+            | EnumRepr::I16
+            | EnumRepr::I32
+            | EnumRepr::I64
+            | EnumRepr::USize
+            | EnumRepr::ISize => {
+                // These are supported, continue
+            }
+            _ => {
+                return Err(ReflectError::OperationFailed {
+                    shape: fr.shape,
+                    operation: "Unknown enum representation",
+                });
+            }
+        }
+
+        // All checks passed, now we can safely make changes
+        let fr = self.frames.last_mut().unwrap();
+
         // Write the discriminant to memory
         unsafe {
             match enum_type.enum_repr {
-                facet_core::EnumRepr::U8 => {
+                EnumRepr::U8 => {
                     let ptr = fr.data.as_mut_byte_ptr() as *mut u8;
                     *ptr = discriminant as u8;
                 }
-                facet_core::EnumRepr::U16 => {
+                EnumRepr::U16 => {
                     let ptr = fr.data.as_mut_byte_ptr() as *mut u16;
                     *ptr = discriminant as u16;
                 }
-                facet_core::EnumRepr::U32 => {
+                EnumRepr::U32 => {
                     let ptr = fr.data.as_mut_byte_ptr() as *mut u32;
                     *ptr = discriminant as u32;
                 }
-                facet_core::EnumRepr::U64 => {
+                EnumRepr::U64 => {
                     let ptr = fr.data.as_mut_byte_ptr() as *mut u64;
                     *ptr = discriminant as u64;
                 }
-                facet_core::EnumRepr::I8 => {
+                EnumRepr::I8 => {
                     let ptr = fr.data.as_mut_byte_ptr() as *mut i8;
                     *ptr = discriminant as i8;
                 }
-                facet_core::EnumRepr::I16 => {
+                EnumRepr::I16 => {
                     let ptr = fr.data.as_mut_byte_ptr() as *mut i16;
                     *ptr = discriminant as i16;
                 }
-                facet_core::EnumRepr::I32 => {
+                EnumRepr::I32 => {
                     let ptr = fr.data.as_mut_byte_ptr() as *mut i32;
                     *ptr = discriminant as i32;
                 }
-                facet_core::EnumRepr::I64 => {
+                EnumRepr::I64 => {
                     let ptr = fr.data.as_mut_byte_ptr() as *mut i64;
                     *ptr = discriminant as i64;
                 }
-                facet_core::EnumRepr::USize => {
+                EnumRepr::USize => {
                     let ptr = fr.data.as_mut_byte_ptr() as *mut usize;
                     *ptr = discriminant as usize;
                 }
-                facet_core::EnumRepr::ISize => {
+                EnumRepr::ISize => {
                     let ptr = fr.data.as_mut_byte_ptr() as *mut isize;
                     *ptr = discriminant as isize;
                 }
-                facet_core::EnumRepr::RustNPO => {
-                    self.state = WipState::ConstructionError;
-                    return Err(ReflectError::OperationFailed {
-                        shape: fr.shape,
-                        operation: "RustNPO enums are not supported for incremental building",
-                    });
-                }
-                _ => {
-                    self.state = WipState::ConstructionError;
-                    return Err(ReflectError::OperationFailed {
-                        shape: fr.shape,
-                        operation: "Unknown enum representation",
-                    });
-                }
+                _ => unreachable!("Already checked enum representation above"),
             }
         }
 
@@ -576,35 +565,24 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
 
     /// Selects a field of a struct with a given name
     pub fn push_field(&mut self, field_name: &str) -> Result<&mut Self, ReflectError<'shape>> {
-        if self.state != WipState::Active {
-            return Err(ReflectError::InvariantViolation {
-                invariant: "Cannot use WIP after it has been built or poisoned",
-            });
-        }
+        self.require_active()?;
 
         let frame = self.frames.last_mut().unwrap();
         match frame.shape.ty {
-            facet_core::Type::Primitive(_) => {
-                self.state = WipState::ConstructionError;
-                Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
-                    operation: "cannot select a field from a primitive type",
-                })
-            }
-            facet_core::Type::Sequence(_) => {
-                self.state = WipState::ConstructionError;
-                Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
-                    operation: "cannot select a field from a sequence type",
-                })
-            }
-            facet_core::Type::User(user_type) => match user_type {
-                facet_core::UserType::Struct(struct_type) => {
+            Type::Primitive(_) => Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "cannot select a field from a primitive type",
+            }),
+            Type::Sequence(_) => Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "cannot select a field from a sequence type",
+            }),
+            Type::User(user_type) => match user_type {
+                UserType::Struct(struct_type) => {
                     let idx = struct_type.fields.iter().position(|f| f.name == field_name);
                     let idx = match idx {
                         Some(idx) => idx,
                         None => {
-                            self.state = WipState::ConstructionError;
                             return Err(ReflectError::OperationFailed {
                                 shape: frame.shape,
                                 operation: "field not found",
@@ -613,7 +591,7 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                     };
                     self.push_nth_field(idx)
                 }
-                facet_core::UserType::Enum(_) => {
+                UserType::Enum(_) => {
                     // Check if we have a variant selected
                     match &frame.tracker {
                         Tracker::Enum { variant, .. } => {
@@ -625,7 +603,6 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                             let idx = match idx {
                                 Some(idx) => idx,
                                 None => {
-                                    self.state = WipState::ConstructionError;
                                     return Err(ReflectError::OperationFailed {
                                         shape: frame.shape,
                                         operation: "field not found in current enum variant",
@@ -634,55 +611,37 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                             };
                             self.push_nth_enum_field(idx)
                         }
-                        _ => {
-                            self.state = WipState::ConstructionError;
-                            Err(ReflectError::OperationFailed {
-                                shape: frame.shape,
-                                operation: "must call push_variant before selecting enum fields",
-                            })
-                        }
+                        _ => Err(ReflectError::OperationFailed {
+                            shape: frame.shape,
+                            operation: "must call push_variant before selecting enum fields",
+                        }),
                     }
                 }
-                facet_core::UserType::Union(_) => {
-                    self.state = WipState::ConstructionError;
-                    Err(ReflectError::OperationFailed {
-                        shape: frame.shape,
-                        operation: "unions are not supported",
-                    })
-                }
-                facet_core::UserType::Opaque => {
-                    self.state = WipState::ConstructionError;
-                    Err(ReflectError::OperationFailed {
-                        shape: frame.shape,
-                        operation: "opaque types cannot be reflected upon",
-                    })
-                }
-            },
-            facet_core::Type::Pointer(_) => {
-                self.state = WipState::ConstructionError;
-                Err(ReflectError::OperationFailed {
+                UserType::Union(_) => Err(ReflectError::OperationFailed {
                     shape: frame.shape,
-                    operation: "cannot select a field from a pointer type",
-                })
-            }
+                    operation: "unions are not supported",
+                }),
+                UserType::Opaque => Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "opaque types cannot be reflected upon",
+                }),
+            },
+            Type::Pointer(_) => Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "cannot select a field from a pointer type",
+            }),
             _ => todo!(),
         }
     }
 
     /// Selects the nth field of a struct by index
     pub fn push_nth_field(&mut self, idx: usize) -> Result<&mut Self, ReflectError<'shape>> {
-        if self.state != WipState::Active {
-            return Err(ReflectError::InvariantViolation {
-                invariant: "Cannot use WIP after it has been built or poisoned",
-            });
-        }
-
+        self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
         match frame.shape.ty {
-            facet_core::Type::User(user_type) => match user_type {
-                facet_core::UserType::Struct(struct_type) => {
+            Type::User(user_type) => match user_type {
+                UserType::Struct(struct_type) => {
                     if idx >= struct_type.fields.len() {
-                        self.state = WipState::ConstructionError;
                         return Err(ReflectError::OperationFailed {
                             shape: frame.shape,
                             operation: "field index out of bounds",
@@ -724,48 +683,33 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
 
                     Ok(self)
                 }
-                facet_core::UserType::Enum(_) => {
+                UserType::Enum(_) => {
                     todo!("add support for selecting fields in enums")
                 }
-                facet_core::UserType::Union(_) => {
-                    self.state = WipState::ConstructionError;
-                    Err(ReflectError::OperationFailed {
-                        shape: frame.shape,
-                        operation: "unions are not supported",
-                    })
-                }
-                facet_core::UserType::Opaque => {
-                    self.state = WipState::ConstructionError;
-                    Err(ReflectError::OperationFailed {
-                        shape: frame.shape,
-                        operation: "opaque types cannot be reflected upon",
-                    })
-                }
-            },
-            _ => {
-                self.state = WipState::ConstructionError;
-                Err(ReflectError::OperationFailed {
+                UserType::Union(_) => Err(ReflectError::OperationFailed {
                     shape: frame.shape,
-                    operation: "cannot select a field from this type",
-                })
-            }
+                    operation: "unions are not supported",
+                }),
+                UserType::Opaque => Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "opaque types cannot be reflected upon",
+                }),
+            },
+            _ => Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "cannot select a field from this type",
+            }),
         }
     }
 
     /// Selects the nth element of an array by index
     pub fn push_nth_element(&mut self, idx: usize) -> Result<&mut Self, ReflectError<'shape>> {
-        if self.state != WipState::Active {
-            return Err(ReflectError::InvariantViolation {
-                invariant: "Cannot use WIP after it has been built or poisoned",
-            });
-        }
-
+        self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
         match frame.shape.ty {
-            facet_core::Type::Sequence(seq_type) => match seq_type {
+            Type::Sequence(seq_type) => match seq_type {
                 facet_core::SequenceType::Array(array_def) => {
                     if idx >= array_def.n {
-                        self.state = WipState::ConstructionError;
                         return Err(ReflectError::OperationFailed {
                             shape: frame.shape,
                             operation: "array index out of bounds",
@@ -773,7 +717,6 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                     }
 
                     if array_def.n > 63 {
-                        self.state = WipState::ConstructionError;
                         return Err(ReflectError::OperationFailed {
                             shape: frame.shape,
                             operation: "arrays larger than 63 elements are not yet supported",
@@ -797,7 +740,6 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                             let element_layout = match array_def.t.layout.sized_layout() {
                                 Ok(layout) => layout,
                                 Err(_) => {
-                                    self.state = WipState::ConstructionError;
                                     return Err(ReflectError::Unsized { shape: array_def.t });
                                 }
                             };
@@ -826,51 +768,33 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
 
                             Ok(self)
                         }
-                        _ => {
-                            self.state = WipState::ConstructionError;
-                            Err(ReflectError::OperationFailed {
-                                shape: frame.shape,
-                                operation: "expected array tracker state",
-                            })
-                        }
+                        _ => Err(ReflectError::OperationFailed {
+                            shape: frame.shape,
+                            operation: "expected array tracker state",
+                        }),
                     }
                 }
-                _ => {
-                    self.state = WipState::ConstructionError;
-                    Err(ReflectError::OperationFailed {
-                        shape: frame.shape,
-                        operation: "can only select elements from arrays",
-                    })
-                }
-            },
-            _ => {
-                self.state = WipState::ConstructionError;
-                Err(ReflectError::OperationFailed {
+                _ => Err(ReflectError::OperationFailed {
                     shape: frame.shape,
-                    operation: "cannot select an element from this type",
-                })
-            }
+                    operation: "can only select elements from arrays",
+                }),
+            },
+            _ => Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "cannot select an element from this type",
+            }),
         }
     }
 
     /// Selects the nth field of an enum variant by index
     pub fn push_nth_enum_field(&mut self, idx: usize) -> Result<&mut Self, ReflectError<'shape>> {
-        if self.state != WipState::Active {
-            return Err(ReflectError::InvariantViolation {
-                invariant: "Cannot use WIP after it has been built or poisoned",
-            });
-        }
-
+        self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
 
         // Ensure we're in an enum with a variant selected
         let (variant, enum_type) = match (&frame.tracker, &frame.shape.ty) {
-            (
-                Tracker::Enum { variant, .. },
-                facet_core::Type::User(facet_core::UserType::Enum(e)),
-            ) => (variant, e),
+            (Tracker::Enum { variant, .. }, Type::User(UserType::Enum(e))) => (variant, e),
             _ => {
-                self.state = WipState::ConstructionError;
                 return Err(ReflectError::OperationFailed {
                     shape: frame.shape,
                     operation: "push_nth_enum_field requires an enum with a variant selected",
@@ -880,7 +804,6 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
 
         // Check bounds
         if idx >= variant.data.fields.len() {
-            self.state = WipState::ConstructionError;
             return Err(ReflectError::OperationFailed {
                 shape: frame.shape,
                 operation: "enum field index out of bounds",
@@ -900,22 +823,18 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                 if data.get(idx) {
                     // Calculate the field offset, taking into account the discriminant
                     let _discriminant_size = match enum_type.enum_repr {
-                        facet_core::EnumRepr::U8 | facet_core::EnumRepr::I8 => 1,
-                        facet_core::EnumRepr::U16 | facet_core::EnumRepr::I16 => 2,
-                        facet_core::EnumRepr::U32 | facet_core::EnumRepr::I32 => 4,
-                        facet_core::EnumRepr::U64 | facet_core::EnumRepr::I64 => 8,
-                        facet_core::EnumRepr::USize | facet_core::EnumRepr::ISize => {
-                            std::mem::size_of::<usize>()
-                        }
-                        facet_core::EnumRepr::RustNPO => {
-                            self.state = WipState::ConstructionError;
+                        EnumRepr::U8 | EnumRepr::I8 => 1,
+                        EnumRepr::U16 | EnumRepr::I16 => 2,
+                        EnumRepr::U32 | EnumRepr::I32 => 4,
+                        EnumRepr::U64 | EnumRepr::I64 => 8,
+                        EnumRepr::USize | EnumRepr::ISize => core::mem::size_of::<usize>(),
+                        EnumRepr::RustNPO => {
                             return Err(ReflectError::OperationFailed {
                                 shape: frame.shape,
                                 operation: "RustNPO enums are not supported",
                             });
                         }
                         _ => {
-                            self.state = WipState::ConstructionError;
                             return Err(ReflectError::OperationFailed {
                                 shape: frame.shape,
                                 operation: "Unknown enum representation",
@@ -954,19 +873,9 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         Ok(self)
     }
 
-    /// Pushes a frame to initialize the inner value of a Box<T>
-    pub fn push_box(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
-        self.push_smart_ptr()
-    }
-
     /// Pushes a frame to initialize the inner value of a smart pointer (Box<T>, Arc<T>, etc.)
     pub fn push_smart_ptr(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
-        if self.state != WipState::Active {
-            return Err(ReflectError::InvariantViolation {
-                invariant: "Cannot use WIP after it has been built or poisoned",
-            });
-        }
-
+        self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
 
         // Check that we have a SmartPointer
@@ -978,7 +887,6 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                         // Supported types, continue
                     }
                     _ => {
-                        self.state = WipState::ConstructionError;
                         return Err(ReflectError::OperationFailed {
                             shape: frame.shape,
                             operation: "only Box and Arc smart pointers are currently supported",
@@ -990,7 +898,6 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                 let pointee_shape = match smart_ptr_def.pointee() {
                     Some(shape) => shape,
                     None => {
-                        self.state = WipState::ConstructionError;
                         return Err(ReflectError::OperationFailed {
                             shape: frame.shape,
                             operation: "Box must have a pointee shape",
@@ -1009,7 +916,6 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                 let inner_layout = match pointee_shape.layout.sized_layout() {
                     Ok(layout) => layout,
                     Err(_) => {
-                        self.state = WipState::ConstructionError;
                         return Err(ReflectError::Unsized {
                             shape: pointee_shape,
                         });
@@ -1018,7 +924,6 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                 let inner_ptr: *mut u8 = unsafe { std::alloc::alloc(inner_layout) };
 
                 if inner_ptr.is_null() {
-                    self.state = WipState::ConstructionError;
                     return Err(ReflectError::OperationFailed {
                         shape: frame.shape,
                         operation: "failed to allocate memory for Box inner value",
@@ -1034,32 +939,23 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
 
                 Ok(self)
             }
-            _ => {
-                self.state = WipState::ConstructionError;
-                Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
-                    operation: "push_box can only be called on Box types",
-                })
-            }
+            _ => Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "push_smart_ptr can only be called on compatible types",
+            }),
         }
     }
 
     /// Begins a pushback operation for a list (Vec, etc.)
     /// This initializes the list with default capacity and allows pushing elements
     pub fn begin_pushback(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
-        if self.state != WipState::Active {
-            return Err(ReflectError::InvariantViolation {
-                invariant: "Cannot use WIP after it has been built or poisoned",
-            });
-        }
-
+        self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
 
         // Check that we have a List
         let list_def = match &frame.shape.def {
             Def::List(list_def) => list_def,
             _ => {
-                self.state = WipState::ConstructionError;
                 return Err(ReflectError::OperationFailed {
                     shape: frame.shape,
                     operation: "begin_pushback can only be called on List types",
@@ -1071,7 +967,6 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         let init_fn = match list_def.vtable.init_in_place_with_capacity {
             Some(f) => f,
             None => {
-                self.state = WipState::ConstructionError;
                 return Err(ReflectError::OperationFailed {
                     shape: frame.shape,
                     operation: "list type does not support initialization with capacity",
@@ -1096,19 +991,13 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
     /// Begins a map initialization operation
     /// This initializes the map with default capacity and allows inserting key-value pairs
     pub fn begin_map(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
-        if self.state != WipState::Active {
-            return Err(ReflectError::InvariantViolation {
-                invariant: "Cannot use WIP after it has been built or poisoned",
-            });
-        }
-
+        self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
 
         // Check that we have a Map
         let map_def = match &frame.shape.def {
             Def::Map(map_def) => map_def,
             _ => {
-                self.state = WipState::ConstructionError;
                 return Err(ReflectError::OperationFailed {
                     shape: frame.shape,
                     operation: "begin_map can only be called on Map types",
@@ -1136,12 +1025,7 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
     /// Begins inserting a key-value pair into the map
     /// After calling this, use push_key() and push_value() to set the key and value
     pub fn begin_insert(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
-        if self.state != WipState::Active {
-            return Err(ReflectError::InvariantViolation {
-                invariant: "Cannot use WIP after it has been built or poisoned",
-            });
-        }
-
+        self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
 
         // Check that we have a Map that's been initialized
@@ -1151,7 +1035,6 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                 insert_state,
             } => {
                 if !matches!(insert_state, MapInsertState::Idle) {
-                    self.state = WipState::ConstructionError;
                     return Err(ReflectError::OperationFailed {
                         shape: frame.shape,
                         operation: "already in the middle of an insert operation",
@@ -1160,25 +1043,17 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                 *insert_state = MapInsertState::PushingKey { key_ptr: None };
                 Ok(self)
             }
-            _ => {
-                self.state = WipState::ConstructionError;
-                Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
-                    operation: "must call begin_map() before begin_insert()",
-                })
-            }
+            _ => Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "must call begin_map() before begin_insert()",
+            }),
         }
     }
 
     /// Pushes a frame for the map key
     /// Must be called after begin_insert()
     pub fn push_key(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
-        if self.state != WipState::Active {
-            return Err(ReflectError::InvariantViolation {
-                invariant: "Cannot use WIP after it has been built or poisoned",
-            });
-        }
-
+        self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
 
         // Check that we have a Map in PushingKey state
@@ -1191,7 +1066,6 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                 },
             ) => {
                 if key_ptr.is_some() {
-                    self.state = WipState::ConstructionError;
                     return Err(ReflectError::OperationFailed {
                         shape: frame.shape,
                         operation: "already pushing a key, call pop() first",
@@ -1200,7 +1074,6 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                 map_def
             }
             _ => {
-                self.state = WipState::ConstructionError;
                 return Err(ReflectError::OperationFailed {
                     shape: frame.shape,
                     operation: "must call begin_insert() before push_key()",
@@ -1215,14 +1088,12 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         let key_layout = match key_shape.layout.sized_layout() {
             Ok(layout) => layout,
             Err(_) => {
-                self.state = WipState::ConstructionError;
                 return Err(ReflectError::Unsized { shape: key_shape });
             }
         };
         let key_ptr_raw: *mut u8 = unsafe { std::alloc::alloc(key_layout) };
 
         if key_ptr_raw.is_null() {
-            self.state = WipState::ConstructionError;
             return Err(ReflectError::OperationFailed {
                 shape: frame.shape,
                 operation: "failed to allocate memory for map key",
@@ -1253,12 +1124,7 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
     /// Pushes a frame for the map value
     /// Must be called after the key has been set and popped
     pub fn push_value(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
-        if self.state != WipState::Active {
-            return Err(ReflectError::InvariantViolation {
-                invariant: "Cannot use WIP after it has been built or poisoned",
-            });
-        }
-
+        self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
 
         // Check that we have a Map in PushingValue state
@@ -1271,7 +1137,6 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                 },
             ) => {
                 if value_ptr.is_some() {
-                    self.state = WipState::ConstructionError;
                     return Err(ReflectError::OperationFailed {
                         shape: frame.shape,
                         operation: "already pushing a value, call pop() first",
@@ -1280,7 +1145,6 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                 map_def
             }
             _ => {
-                self.state = WipState::ConstructionError;
                 return Err(ReflectError::OperationFailed {
                     shape: frame.shape,
                     operation: "must complete key before push_value()",
@@ -1295,14 +1159,12 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         let value_layout = match value_shape.layout.sized_layout() {
             Ok(layout) => layout,
             Err(_) => {
-                self.state = WipState::ConstructionError;
                 return Err(ReflectError::Unsized { shape: value_shape });
             }
         };
         let value_ptr_raw: *mut u8 = unsafe { std::alloc::alloc(value_layout) };
 
         if value_ptr_raw.is_null() {
-            self.state = WipState::ConstructionError;
             return Err(ReflectError::OperationFailed {
                 shape: frame.shape,
                 operation: "failed to allocate memory for map value",
@@ -1332,20 +1194,14 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
 
     /// Pushes an element to the list
     /// The element should be set using `set()` or similar methods, then `pop()` to complete
-    pub fn push(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
-        if self.state != WipState::Active {
-            return Err(ReflectError::InvariantViolation {
-                invariant: "Cannot use WIP after it has been built or poisoned",
-            });
-        }
-
+    pub fn push_list_element(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+        self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
 
         // Check that we have a List that's been initialized
         let list_def = match &frame.shape.def {
             Def::List(list_def) => list_def,
             _ => {
-                self.state = WipState::ConstructionError;
                 return Err(ReflectError::OperationFailed {
                     shape: frame.shape,
                     operation: "push can only be called on List types",
@@ -1360,7 +1216,6 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                 current_child,
             } => {
                 if *current_child {
-                    self.state = WipState::ConstructionError;
                     return Err(ReflectError::OperationFailed {
                         shape: frame.shape,
                         operation: "already pushing an element, call pop() first",
@@ -1369,7 +1224,6 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                 *current_child = true;
             }
             _ => {
-                self.state = WipState::ConstructionError;
                 return Err(ReflectError::OperationFailed {
                     shape: frame.shape,
                     operation: "must call begin_pushback() before push()",
@@ -1384,7 +1238,6 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         let element_layout = match element_shape.layout.sized_layout() {
             Ok(layout) => layout,
             Err(_) => {
-                self.state = WipState::ConstructionError;
                 return Err(ReflectError::Unsized {
                     shape: element_shape,
                 });
@@ -1393,7 +1246,6 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         let element_ptr: *mut u8 = unsafe { std::alloc::alloc(element_layout) };
 
         if element_ptr.is_null() {
-            self.state = WipState::ConstructionError;
             return Err(ReflectError::OperationFailed {
                 shape: frame.shape,
                 operation: "failed to allocate memory for list element",
@@ -1412,15 +1264,9 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
 
     /// Pops the current frame off the stack, indicating we're done initializing the current field.
     pub fn pop(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
-        if self.state != WipState::Active {
-            return Err(ReflectError::InvariantViolation {
-                invariant: "Cannot use WIP after it has been built or poisoned",
-            });
-        }
-
+        self.require_active()?;
         if self.frames.len() <= 1 {
             // Never pop the last/root frame.
-            self.state = WipState::ConstructionError;
             return Err(ReflectError::InvariantViolation {
                 invariant: "Wip::pop() called with only one frame on the stack",
             });
@@ -1429,10 +1275,7 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         // Require that the top frame is fully initialized before popping.
         {
             let frame = self.frames.last().unwrap();
-            if let Err(e) = frame.require_full_initialization() {
-                self.state = WipState::ConstructionError;
-                return Err(e);
-            }
+            frame.require_full_initialization()?
         }
 
         // Pop the frame and save its data pointer for SmartPointer handling
@@ -1487,7 +1330,6 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
 
                         *is_initialized = true;
                     } else {
-                        self.state = WipState::ConstructionError;
                         return Err(ReflectError::OperationFailed {
                             shape: parent_frame.shape,
                             operation: "SmartPointer missing new_into_fn",
@@ -1540,7 +1382,6 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
 
                             *current_child = false;
                         } else {
-                            self.state = WipState::ConstructionError;
                             return Err(ReflectError::OperationFailed {
                                 shape: parent_frame.shape,
                                 operation: "List missing push function",
@@ -1616,14 +1457,9 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
 
     /// Builds the value
     pub fn build(&mut self) -> Result<HeapValue<'facet, 'shape>, ReflectError<'shape>> {
-        if self.state != WipState::Active {
-            return Err(ReflectError::InvariantViolation {
-                invariant: "Cannot build WIP after it has been built or poisoned",
-            });
-        }
-
+        self.require_active()?;
         if self.frames.len() != 1 {
-            self.state = WipState::BuildFailed;
+            self.state = PartialState::BuildFailed;
             return Err(ReflectError::InvariantViolation {
                 invariant: "Wip::build() expects a single frame — pop until that's the case",
             });
@@ -1635,12 +1471,12 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         if let Err(e) = frame.require_full_initialization() {
             // Put the frame back so Drop can handle cleanup properly
             self.frames.push(frame);
-            self.state = WipState::BuildFailed;
+            self.state = PartialState::BuildFailed;
             return Err(e);
         }
 
         // Mark as built to prevent reuse
-        self.state = WipState::Built;
+        self.state = PartialState::Built;
 
         match frame
             .shape
@@ -1659,21 +1495,187 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
             Err(e) => {
                 // Put the frame back for proper cleanup
                 self.frames.push(frame);
-                self.state = WipState::BuildFailed;
+                self.state = PartialState::BuildFailed;
                 Err(e)
             }
         }
+    }
+
+    /// Returns a human-readable path representing the current traversal in the builder,
+    /// e.g., "RootStruct.fieldName[index].subfield".
+    pub fn path(&self) -> String {
+        let mut out = String::new();
+
+        let mut path_components = Vec::new();
+        // The stack of enum/struct/sequence names currently in context.
+        // Start from root and build upwards.
+        for (i, frame) in self.frames.iter().enumerate() {
+            match frame.shape.ty {
+                Type::User(user_type) => match user_type {
+                    UserType::Struct(struct_type) => {
+                        // Try to get currently active field index
+                        let mut field_str = None;
+                        if let Tracker::Struct {
+                            current_child: Some(idx),
+                            ..
+                        } = &frame.tracker
+                        {
+                            if let Some(field) = struct_type.fields.get(*idx) {
+                                field_str = Some(field.name);
+                            }
+                        }
+                        if i == 0 {
+                            // Use Display for the root struct shape
+                            path_components.push(format!("{}", frame.shape));
+                        }
+                        if let Some(field_name) = field_str {
+                            path_components.push(format!(".{}", field_name));
+                        }
+                    }
+                    UserType::Enum(_enum_type) => {
+                        // Try to get currently active variant and field
+                        if let Tracker::Enum {
+                            variant,
+                            current_child,
+                            ..
+                        } = &frame.tracker
+                        {
+                            if i == 0 {
+                                // Use Display for the root enum shape
+                                path_components.push(format!("{}", frame.shape));
+                            }
+                            path_components.push(format!("::{}", variant.name));
+                            if let Some(idx) = *current_child {
+                                if let Some(field) = variant.data.fields.get(idx) {
+                                    path_components.push(format!(".{}", field.name));
+                                }
+                            }
+                        } else if i == 0 {
+                            // just the enum display
+                            path_components.push(format!("{}", frame.shape));
+                        }
+                    }
+                    UserType::Union(_union_type) => {
+                        path_components.push(format!("{}", frame.shape));
+                    }
+                    UserType::Opaque => {
+                        path_components.push("<opaque>".to_string());
+                    }
+                },
+                Type::Sequence(seq_type) => match seq_type {
+                    facet_core::SequenceType::Array(_array_def) => {
+                        // Try to show current element index
+                        if let Tracker::Array {
+                            current_child: Some(idx),
+                            ..
+                        } = &frame.tracker
+                        {
+                            path_components.push(format!("[{}]", idx));
+                        }
+                    }
+                    // You can add more for Slice, Vec, etc., if applicable
+                    _ => {
+                        // just indicate "[]" for sequence
+                        path_components.push("[]".to_string());
+                    }
+                },
+                Type::Pointer(_) => {
+                    // Indicate deref
+                    path_components.push("*".to_string());
+                }
+                _ => {
+                    // No structural path
+                }
+            }
+        }
+        // Merge the path_components into a single string
+        for component in path_components {
+            out.push_str(&component);
+        }
+        out
+    }
+
+    /// Returns the shape of the current frame.
+    pub fn shape(&self) -> &'shape Shape<'shape> {
+        self.frames
+            .last()
+            .expect("Partial always has at least one frame")
+            .shape
+    }
+
+    /// Convenience shortcut: sets the nth element of an array directly to value, popping after.
+    pub fn set_nth_element<U>(
+        &mut self,
+        idx: usize,
+        value: U,
+    ) -> Result<&mut Self, ReflectError<'shape>>
+    where
+        U: Facet<'shape>,
+    {
+        self.push_nth_element(idx)?.set(value)?.pop()
+    }
+
+    /// Convenience shortcut: sets the field at index `idx` directly to value, popping after.
+    pub fn set_nth_field<U>(
+        &mut self,
+        idx: usize,
+        value: U,
+    ) -> Result<&mut Self, ReflectError<'shape>>
+    where
+        U: Facet<'shape>,
+    {
+        self.push_nth_field(idx)?.set(value)?.pop()
+    }
+
+    /// Convenience shortcut: sets the named field to value, popping after.
+    pub fn set_field<U>(
+        &mut self,
+        field_name: &str,
+        value: U,
+    ) -> Result<&mut Self, ReflectError<'shape>>
+    where
+        U: Facet<'shape>,
+    {
+        self.push_field(field_name)?.set(value)?.pop()
+    }
+
+    /// Convenience shortcut: sets the nth field of an enum variant directly to value, popping after.
+    pub fn set_nth_enum_field<U>(
+        &mut self,
+        idx: usize,
+        value: U,
+    ) -> Result<&mut Self, ReflectError<'shape>>
+    where
+        U: Facet<'shape>,
+    {
+        self.push_nth_enum_field(idx)?.set(value)?.pop()
+    }
+
+    /// Convenience shortcut: sets the key for a map key-value insertion, then pops after.
+    pub fn set_key<U>(&mut self, value: U) -> Result<&mut Self, ReflectError<'shape>>
+    where
+        U: Facet<'shape>,
+    {
+        self.push_key()?.set(value)?.pop()
+    }
+
+    /// Convenience shortcut: sets the value for a map key-value insertion, then pops after.
+    pub fn set_value<U>(&mut self, value: U) -> Result<&mut Self, ReflectError<'shape>>
+    where
+        U: Facet<'shape>,
+    {
+        self.push_value()?.set(value)?.pop()
     }
 }
 
 /// A typed wrapper around `Wip`, for when you want to statically
 /// ensure that `build` gives you the proper type.
-pub struct TypedWip<'facet, 'shape, T> {
-    wip: Wip<'facet, 'shape>,
+pub struct TypedPartial<'facet, 'shape, T> {
+    wip: Partial<'facet, 'shape>,
     phantom: PhantomData<T>,
 }
 
-impl<'facet, 'shape, T> TypedWip<'facet, 'shape, T> {
+impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
     /// Builds the value and returns a Box<T>
     pub fn build(&mut self) -> Result<Box<T>, ReflectError<'shape>>
     where
@@ -1700,7 +1702,7 @@ impl<'facet, 'shape, T> TypedWip<'facet, 'shape, T> {
         src_value: PtrConst<'_>,
         src_shape: &'shape Shape<'shape>,
     ) -> Result<&mut Self, ReflectError<'shape>> {
-        self.wip.set_shape(src_value, src_shape)?;
+        unsafe { self.wip.set_shape(src_value, src_shape)? };
         Ok(self)
     }
 
@@ -1719,12 +1721,6 @@ impl<'facet, 'shape, T> TypedWip<'facet, 'shape, T> {
     /// Forwards push_nth_element to the inner wip instance.
     pub fn push_nth_element(&mut self, idx: usize) -> Result<&mut Self, ReflectError<'shape>> {
         self.wip.push_nth_element(idx)?;
-        Ok(self)
-    }
-
-    /// Forwards push_box to the inner wip instance.
-    pub fn push_box(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
-        self.wip.push_box()?;
         Ok(self)
     }
 
@@ -1783,8 +1779,8 @@ impl<'facet, 'shape, T> TypedWip<'facet, 'shape, T> {
     }
 
     /// Forwards push to the inner wip instance.
-    pub fn push(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
-        self.wip.push()?;
+    pub fn push_list_element(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+        self.wip.push_list_element()?;
         Ok(self)
     }
 
@@ -1811,9 +1807,90 @@ impl<'facet, 'shape, T> TypedWip<'facet, 'shape, T> {
         self.wip.push_value()?;
         Ok(self)
     }
+
+    /// Returns a human-readable path representing the current traversal in the builder,
+    /// e.g., "RootStruct.fieldName[index].subfield".
+    pub fn path(&self) -> String {
+        self.wip.path()
+    }
+
+    /// Returns the shape of the current frame.
+    pub fn shape(&self) -> &'shape Shape<'shape> {
+        self.wip.shape()
+    }
+
+    /// Convenience shortcut: sets the nth element of an array directly to value, popping after.
+    pub fn set_nth_element<U>(
+        &mut self,
+        idx: usize,
+        value: U,
+    ) -> Result<&mut Self, ReflectError<'shape>>
+    where
+        U: Facet<'shape>,
+    {
+        self.wip.set_nth_element(idx, value)?;
+        Ok(self)
+    }
+
+    /// Convenience shortcut: sets the field at index `idx` directly to value, popping after.
+    pub fn set_nth_field<U>(
+        &mut self,
+        idx: usize,
+        value: U,
+    ) -> Result<&mut Self, ReflectError<'shape>>
+    where
+        U: Facet<'shape>,
+    {
+        self.wip.set_nth_field(idx, value)?;
+        Ok(self)
+    }
+
+    /// Convenience shortcut: sets the named field to value, popping after.
+    pub fn set_field<U>(
+        &mut self,
+        field_name: &str,
+        value: U,
+    ) -> Result<&mut Self, ReflectError<'shape>>
+    where
+        U: Facet<'shape>,
+    {
+        self.wip.set_field(field_name, value)?;
+        Ok(self)
+    }
+
+    /// Convenience shortcut: sets the nth field of an enum variant directly to value, popping after.
+    pub fn set_nth_enum_field<U>(
+        &mut self,
+        idx: usize,
+        value: U,
+    ) -> Result<&mut Self, ReflectError<'shape>>
+    where
+        U: Facet<'shape>,
+    {
+        self.wip.set_nth_enum_field(idx, value)?;
+        Ok(self)
+    }
+
+    /// Convenience shortcut: sets the key for a map key-value insertion, then pops after.
+    pub fn set_key<U>(&mut self, value: U) -> Result<&mut Self, ReflectError<'shape>>
+    where
+        U: Facet<'shape>,
+    {
+        self.wip.set_key(value)?;
+        Ok(self)
+    }
+
+    /// Convenience shortcut: sets the value for a map key-value insertion, then pops after.
+    pub fn set_value<U>(&mut self, value: U) -> Result<&mut Self, ReflectError<'shape>>
+    where
+        U: Facet<'shape>,
+    {
+        self.wip.set_value(value)?;
+        Ok(self)
+    }
 }
 
-impl<'facet, 'shape, T> core::fmt::Debug for TypedWip<'facet, 'shape, T> {
+impl<'facet, 'shape, T> core::fmt::Debug for TypedPartial<'facet, 'shape, T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("TypedWip")
             .field("shape", &self.wip.frames.last().map(|frame| frame.shape))
@@ -1821,7 +1898,7 @@ impl<'facet, 'shape, T> core::fmt::Debug for TypedWip<'facet, 'shape, T> {
     }
 }
 
-impl<'facet, 'shape> Drop for Wip<'facet, 'shape> {
+impl<'facet, 'shape> Drop for Partial<'facet, 'shape> {
     fn drop(&mut self) {
         trace!("🧹 Wip is being dropped");
 
@@ -1839,7 +1916,7 @@ impl<'facet, 'shape> Drop for Wip<'facet, 'shape> {
                 }
                 Tracker::Array { iset, .. } => {
                     // Drop initialized array elements
-                    if let facet_core::Type::Sequence(facet_core::SequenceType::Array(array_def)) =
+                    if let Type::Sequence(facet_core::SequenceType::Array(array_def)) =
                         frame.shape.ty
                     {
                         let element_layout = array_def.t.layout.sized_layout().ok();
@@ -1858,9 +1935,7 @@ impl<'facet, 'shape> Drop for Wip<'facet, 'shape> {
                 }
                 Tracker::Struct { iset, .. } => {
                     // Drop initialized struct fields
-                    if let facet_core::Type::User(facet_core::UserType::Struct(struct_type)) =
-                        frame.shape.ty
-                    {
+                    if let Type::User(UserType::Struct(struct_type)) = frame.shape.ty {
                         for (idx, field) in struct_type.fields.iter().enumerate() {
                             if iset.get(idx) {
                                 // This field was initialized, drop it

@@ -2,7 +2,7 @@ use crate::constants::*;
 use crate::errors::Error as DecodeError;
 
 use facet_core::{Def, Facet, Type, UserType};
-use facet_reflect::{HeapValue, Wip};
+use facet_reflect::{HeapValue, Partial};
 use log::trace;
 
 /// Deserializes MessagePack-encoded data into a type that implements `Facet`.
@@ -31,7 +31,7 @@ use log::trace;
 pub fn from_slice<'input: 'facet, 'facet, T: Facet<'facet>>(
     msgpack: &'input [u8],
 ) -> Result<T, DecodeError<'static>> {
-    from_slice_value(msgpack, Wip::alloc::<T>()?)?
+    from_slice_value(msgpack, Partial::alloc::<T>()?)?
         .materialize::<T>()
         .map_err(|e| DecodeError::UnsupportedType(e.to_string()))
 }
@@ -77,7 +77,7 @@ pub fn from_slice<'input: 'facet, 'facet, T: Facet<'facet>>(
 /// <https://github.com/msgpack/msgpack/blob/master/spec.md>
 pub fn from_slice_value<'facet, 'shape>(
     msgpack: &[u8],
-    wip: Wip<'facet, 'shape>,
+    wip: Partial<'facet, 'shape>,
 ) -> Result<HeapValue<'facet, 'shape>, DecodeError<'shape>> {
     let mut decoder = Decoder::new(msgpack);
     decoder
@@ -409,8 +409,8 @@ impl<'input, 'shape> Decoder<'input> {
 
     fn deserialize_value<'facet>(
         &mut self,
-        mut wip: Wip<'facet, 'shape>,
-    ) -> Result<Wip<'facet, 'shape>, DecodeError<'shape>> {
+        mut wip: Partial<'facet, 'shape>,
+    ) -> Result<Partial<'facet, 'shape>, DecodeError<'shape>> {
         let shape = wip.shape();
         trace!("Deserializing {:?}", shape);
 
@@ -687,7 +687,9 @@ impl<'input, 'shape> Decoder<'input> {
             let mut list_wip = wip.begin_pushback().map_err(DecodeError::ReflectError)?;
 
             for _ in 0..array_len {
-                let item_wip = list_wip.push().map_err(DecodeError::ReflectError)?;
+                let item_wip = list_wip
+                    .push_list_element()
+                    .map_err(DecodeError::ReflectError)?;
                 list_wip = self
                     .deserialize_value(item_wip)?
                     .pop()

@@ -1,7 +1,7 @@
 use facet::Facet;
 use facet_testhelpers::test;
 
-use super::Wip;
+use super::Partial;
 use crate::ReflectError;
 
 #[cfg(not(miri))]
@@ -19,23 +19,23 @@ macro_rules! assert_snapshot {
 
 #[test]
 fn f64_uninit() {
-    assert_snapshot!(Wip::alloc::<f64>()?.build().unwrap_err());
+    assert_snapshot!(Partial::alloc::<f64>()?.build().unwrap_err());
 }
 
 #[test]
 fn f64_init() {
-    let hv = Wip::alloc::<f64>()?.set::<f64>(6.241)?.build()?;
+    let hv = Partial::alloc::<f64>()?.set::<f64>(6.241)?.build()?;
     assert_eq!(*hv, 6.241);
 }
 
 #[test]
 fn option_uninit() {
-    assert_snapshot!(Wip::alloc::<Option<f64>>()?.build().unwrap_err());
+    assert_snapshot!(Partial::alloc::<Option<f64>>()?.build().unwrap_err());
 }
 
 #[test]
 fn option_init() {
-    let hv = Wip::alloc::<Option<f64>>()?
+    let hv = Partial::alloc::<Option<f64>>()?
         .set::<Option<f64>>(Some(6.241))?
         .build()?;
     assert_eq!(*hv, Some(6.241));
@@ -49,7 +49,7 @@ fn struct_fully_uninit() {
         bar: bool,
     }
 
-    assert_snapshot!(Wip::alloc::<FooBar>()?.build().unwrap_err());
+    assert_snapshot!(Partial::alloc::<FooBar>()?.build().unwrap_err());
 }
 
 #[test]
@@ -60,14 +60,8 @@ fn struct_partially_uninit() {
         bar: bool,
     }
 
-    let mut wip = Wip::alloc::<FooBar>()?;
-    assert_snapshot!(
-        wip.push_field("foo")?
-            .set::<u64>(42)?
-            .pop()?
-            .build()
-            .unwrap_err()
-    );
+    let mut partial = Partial::alloc::<FooBar>()?;
+    assert_snapshot!(partial.set_field("foo", 42_u64)?.build().unwrap_err());
 }
 
 #[test]
@@ -78,13 +72,9 @@ fn struct_fully_init() {
         bar: bool,
     }
 
-    let hv = Wip::alloc::<FooBar>()?
-        .push_field("foo")?
-        .set::<u64>(42)?
-        .pop()?
-        .push_field("bar")?
-        .set::<bool>(true)?
-        .pop()?
+    let hv = Partial::alloc::<FooBar>()?
+        .set_field("foo", 42u64)?
+        .set_field("bar", true)?
         .build()?;
     assert_eq!(hv.foo, 42u64);
     assert_eq!(hv.bar, true);
@@ -116,19 +106,15 @@ fn struct_field_set_twice() {
     DROP_COUNT.store(0, Ordering::SeqCst);
 
     let result = (|| -> Result<Box<Container>, ReflectError> {
-        let mut wip = Wip::alloc::<Container>()?;
+        let mut partial = Partial::alloc::<Container>()?;
 
         // Set tracker field first time
-        wip.push_field("tracker")?
-            .set(DropTracker { id: 1 })?
-            .pop()?;
+        partial.set_field("tracker", DropTracker { id: 1 })?;
 
         assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 0, "No drops yet");
 
         // Set tracker field second time (should drop the previous value)
-        wip.push_field("tracker")?
-            .set(DropTracker { id: 2 })?
-            .pop()?;
+        partial.set_field("tracker", DropTracker { id: 2 })?;
 
         assert_eq!(
             DROP_COUNT.load(Ordering::SeqCst),
@@ -137,9 +123,9 @@ fn struct_field_set_twice() {
         );
 
         // Set value field
-        wip.push_field("value")?.set(100u64)?.pop()?;
+        partial.set_field("value", 100u64)?;
 
-        wip.build()
+        partial.build()
     })();
 
     assert!(result.is_ok());
@@ -177,23 +163,15 @@ fn array_element_set_twice() {
     DROP_COUNT.store(0, Ordering::SeqCst);
 
     let result = (|| -> Result<Box<[DropTracker; 3]>, ReflectError> {
-        Wip::alloc::<[DropTracker; 3]>()?
+        Partial::alloc::<[DropTracker; 3]>()?
             // Set element 0
-            .push_nth_element(0)?
-            .set(DropTracker { id: 1 })?
-            .pop()?
+            .set_nth_element(0, DropTracker { id: 1 })?
             // Set element 0 again - drops old value
-            .push_nth_element(0)?
-            .set(DropTracker { id: 2 })?
-            .pop()?
+            .set_nth_element(0, DropTracker { id: 2 })?
             // Set element 1
-            .push_nth_element(1)?
-            .set(DropTracker { id: 3 })?
-            .pop()?
+            .set_nth_element(1, DropTracker { id: 3 })?
             // Set element 2
-            .push_nth_element(2)?
-            .set(DropTracker { id: 4 })?
-            .pop()?
+            .set_nth_element(2, DropTracker { id: 4 })?
             .build()
     })();
 
@@ -222,7 +200,7 @@ fn set_default() {
         y: String,
     }
 
-    let sample = Wip::alloc::<Sample>()?.set_default()?.build()?;
+    let sample = Partial::alloc::<Sample>()?.set_default()?.build()?;
     assert_eq!(*sample, Sample::default());
     assert_eq!(sample.x, 0);
     assert_eq!(sample.y, "");
@@ -235,37 +213,13 @@ fn set_default_no_default_impl() {
         value: u32,
     }
 
-    let result = Wip::alloc::<NoDefault>()?.set_default().map(|_| ());
+    let result = Partial::alloc::<NoDefault>()?.set_default().map(|_| ());
     assert!(
         result
             .unwrap_err()
             .to_string()
             .contains("does not implement Default")
     );
-}
-
-#[test]
-fn set_from_function() {
-    #[derive(Facet, Debug, PartialEq)]
-    struct Point {
-        x: f64,
-        y: f64,
-    }
-
-    let point = Wip::alloc::<Point>()?
-        .set_from_function(|ptr| {
-            // We need to build the struct using another Wip
-            Wip::from_ptr(ptr, <Point as Facet>::SHAPE)
-                .push_field("x")?
-                .set(56.124)?
-                .pop()?
-                .push_field("y")?
-                .set(2.71)?
-                .pop()?;
-            Ok(())
-        })?
-        .build()?;
-    assert_eq!(*point, Point { x: 56.124, y: 2.71 });
 }
 
 #[test]
@@ -292,17 +246,17 @@ fn set_default_drops_previous() {
 
     DROP_COUNT.store(0, Ordering::SeqCst);
 
-    let mut wip = Wip::alloc::<DropTracker>()?;
+    let mut partial = Partial::alloc::<DropTracker>()?;
 
     // Set initial value
-    wip.set(DropTracker { id: 1 })?;
+    partial.set(DropTracker { id: 1 })?;
     assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 0);
 
     // Set default (should drop the previous value)
-    wip.set_default()?;
+    partial.set_default()?;
     assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 1);
 
-    let tracker = wip.build()?;
+    let tracker = partial.build()?;
     assert_eq!(tracker.id, 999); // Default value
 
     drop(tracker);
@@ -339,20 +293,20 @@ fn drop_partially_initialized_struct() {
 
     // Create a partially initialized struct and drop it
     {
-        let mut wip = Wip::alloc::<Container>()?;
+        let mut partial = Partial::alloc::<Container>()?;
 
         // Initialize first field
-        wip.push_field("first")?;
+        partial.push_field("first")?;
         assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 0, "No drops yet");
 
-        wip.set(NoisyDrop { value: 1 })?;
+        partial.set(NoisyDrop { value: 1 })?;
         assert_eq!(
             DROP_COUNT.load(Ordering::SeqCst),
             0,
             "After set, the value should NOT be dropped yet"
         );
 
-        wip.pop()?;
+        partial.pop()?;
         assert_eq!(
             DROP_COUNT.load(Ordering::SeqCst),
             0,
@@ -360,17 +314,17 @@ fn drop_partially_initialized_struct() {
         );
 
         // Initialize second field
-        wip.push_field("second")?;
-        wip.set(NoisyDrop { value: 2 })?;
+        partial.push_field("second")?;
+        partial.set(NoisyDrop { value: 2 })?;
         assert_eq!(
             DROP_COUNT.load(Ordering::SeqCst),
             0,
             "After second set, still should have no drops"
         );
 
-        wip.pop()?;
+        partial.pop()?;
 
-        // Don't initialize third field - just drop the wip
+        // Don't initialize third field - just drop the partial
         // This should call drop on the two NoisyDrop instances we created
     }
 
@@ -415,13 +369,11 @@ fn drop_nested_partially_initialized() {
     DROP_COUNT.store(0, Ordering::SeqCst);
 
     {
-        let mut wip = Wip::alloc::<Outer>()?;
+        let mut partial = Partial::alloc::<Outer>()?;
 
         // Start initializing inner struct
-        wip.push_field("inner")?;
-        wip.push_field("a")?;
-        wip.set(NoisyDrop { id: 1 })?;
-        wip.pop()?;
+        partial.push_field("inner")?;
+        partial.set_field("a", NoisyDrop { id: 1 })?;
 
         // Only initialize one field of inner, leave 'b' uninitialized
         // Don't pop from inner
@@ -446,18 +398,14 @@ fn drop_with_copy_types() {
         more_copy: bool,
     }
 
-    let mut wip = Wip::alloc::<MixedTypes>()?;
+    let mut partial = Partial::alloc::<MixedTypes>()?;
 
-    wip.push_field("copyable")?;
-    wip.set(42u64)?;
-    wip.pop()?;
+    partial.set_field("copyable", 42u64)?;
 
-    wip.push_field("droppable")?;
-    wip.set("Hello".to_string())?;
-    wip.pop()?;
+    partial.set_field("droppable", "Hello".to_string())?;
 
     // Drop without initializing 'more_copy'
-    drop(wip);
+    drop(partial);
 
     // If this doesn't panic or segfault, we're good
 }
@@ -488,7 +436,7 @@ fn drop_fully_uninitialized() {
     DROP_COUNT.store(0, Ordering::SeqCst);
 
     {
-        let _wip = Wip::alloc::<Container>()?;
+        let _partial = Partial::alloc::<Container>()?;
         // Drop immediately without initializing anything
     }
 
@@ -518,7 +466,7 @@ fn drop_after_successful_build() {
 
     DROP_COUNT.store(0, Ordering::SeqCst);
 
-    let hv = Wip::alloc::<NoisyDrop>()?
+    let hv = Partial::alloc::<NoisyDrop>()?
         .set(NoisyDrop { value: 42 })?
         .build()?;
 
@@ -539,34 +487,22 @@ fn drop_after_successful_build() {
 
 #[test]
 fn array_init() {
-    let hv = Wip::alloc::<[u32; 3]>()?
+    let hv = Partial::alloc::<[u32; 3]>()?
         // Initialize in order
-        .push_nth_element(0)?
-        .set(42u32)?
-        .pop()?
-        .push_nth_element(1)?
-        .set(43u32)?
-        .pop()?
-        .push_nth_element(2)?
-        .set(44u32)?
-        .pop()?
+        .set_nth_element(0, 42u32)?
+        .set_nth_element(1, 43u32)?
+        .set_nth_element(2, 44u32)?
         .build()?;
     assert_eq!(*hv, [42, 43, 44]);
 }
 
 #[test]
 fn array_init_out_of_order() {
-    let hv = Wip::alloc::<[u32; 3]>()?
+    let hv = Partial::alloc::<[u32; 3]>()?
         // Initialize out of order
-        .push_nth_element(2)?
-        .set(44u32)?
-        .pop()?
-        .push_nth_element(0)?
-        .set(42u32)?
-        .pop()?
-        .push_nth_element(1)?
-        .set(43u32)?
-        .pop()?
+        .set_nth_element(2, 44u32)?
+        .set_nth_element(0, 42u32)?
+        .set_nth_element(1, 43u32)?
         .build()?;
     assert_eq!(*hv, [42, 43, 44]);
 }
@@ -575,14 +511,10 @@ fn array_init_out_of_order() {
 fn array_partial_init() {
     // Should fail to build
     assert_snapshot!(
-        Wip::alloc::<[u32; 3]>()?
+        Partial::alloc::<[u32; 3]>()?
             // Initialize only two elements
-            .push_nth_element(0)?
-            .set(42u32)?
-            .pop()?
-            .push_nth_element(2)?
-            .set(44u32)?
-            .pop()?
+            .set_nth_element(0, 42u32)?
+            .set_nth_element(2, 44u32)?
             .build()
             .unwrap_err()
     );
@@ -609,16 +541,11 @@ fn drop_array_partially_initialized() {
     DROP_COUNT.store(0, Ordering::SeqCst);
 
     {
-        let mut wip = Wip::alloc::<[NoisyDrop; 4]>()?;
+        let mut partial = Partial::alloc::<[NoisyDrop; 4]>()?;
 
         // Initialize elements 0 and 2
-        wip.push_nth_element(0)?;
-        wip.set(NoisyDrop { value: 10 })?;
-        wip.pop()?;
-
-        wip.push_nth_element(2)?;
-        wip.set(NoisyDrop { value: 30 })?;
-        wip.pop()?;
+        partial.set_nth_element(0, NoisyDrop { value: 10 })?;
+        partial.set_nth_element(2, NoisyDrop { value: 30 })?;
 
         // Drop without initializing elements 1 and 3
     }
@@ -632,9 +559,9 @@ fn drop_array_partially_initialized() {
 
 #[test]
 fn box_init() {
-    let hv = Wip::alloc::<Box<u32>>()?
+    let hv = Partial::alloc::<Box<u32>>()?
         // Push into the Box to build its inner value
-        .push_box()?
+        .push_smart_ptr()?
         .set(42u32)?
         .pop()?
         .build()?;
@@ -644,7 +571,7 @@ fn box_init() {
 #[test]
 fn box_partial_init() {
     // Don't initialize the Box at all
-    assert_snapshot!(Wip::alloc::<Box<u32>>()?.build().unwrap_err());
+    assert_snapshot!(Partial::alloc::<Box<u32>>()?.build().unwrap_err());
 }
 
 #[test]
@@ -655,16 +582,12 @@ fn box_struct() {
         y: f64,
     }
 
-    let hv = Wip::alloc::<Box<Point>>()?
+    let hv = Partial::alloc::<Box<Point>>()?
         // Push into the Box
-        .push_box()?
-        // Build the Point inside the Box
-        .push_field("x")?
-        .set(1.0)?
-        .pop()?
-        .push_field("y")?
-        .set(2.0)?
-        .pop()?
+        .push_smart_ptr()?
+        // Build the Point inside the Box using set_field shorthand
+        .set_field("x", 1.0)?
+        .set_field("y", 2.0)?
         // Pop from Box
         .pop()?
         .build()?;
@@ -693,14 +616,14 @@ fn drop_box_partially_initialized() {
     INNER_DROP_COUNT.store(0, Ordering::SeqCst);
 
     {
-        let mut wip = Wip::alloc::<Box<DropCounter>>()?;
+        let mut partial = Partial::alloc::<Box<DropCounter>>()?;
 
-        // Initialize the Box's inner value
-        wip.push_box()?;
-        wip.set(DropCounter { value: 99 })?;
-        wip.pop()?;
+        // Initialize the Box's inner value using set
+        partial.push_smart_ptr()?;
+        partial.set(DropCounter { value: 99 })?;
+        partial.pop()?;
 
-        // Drop the wip - should drop the Box which drops the inner value
+        // Drop the partial - should drop the Box which drops the inner value
     }
 
     assert_eq!(
@@ -714,7 +637,7 @@ fn drop_box_partially_initialized() {
 fn arc_init() {
     use alloc::sync::Arc;
 
-    let hv = Wip::alloc::<Arc<u32>>()?
+    let hv = Partial::alloc::<Arc<u32>>()?
         // Push into the Arc to build its inner value
         .push_smart_ptr()?
         .set(42u32)?
@@ -728,7 +651,7 @@ fn arc_partial_init() {
     use alloc::sync::Arc;
 
     // Don't initialize the Arc at all
-    assert_snapshot!(Wip::alloc::<Arc<u32>>()?.build().unwrap_err());
+    assert_snapshot!(Partial::alloc::<Arc<u32>>()?.build().unwrap_err());
 }
 
 #[test]
@@ -741,16 +664,12 @@ fn arc_struct() {
         y: f64,
     }
 
-    let hv = Wip::alloc::<Arc<Point>>()?
+    let hv = Partial::alloc::<Arc<Point>>()?
         // Push into the Arc
         .push_smart_ptr()?
-        // Build the Point inside the Arc
-        .push_field("x")?
-        .set(3.0)?
-        .pop()?
-        .push_field("y")?
-        .set(4.0)?
-        .pop()?
+        // Build the Point inside the Arc using set_field shorthand
+        .set_field("x", 3.0)?
+        .set_field("y", 4.0)?
         // Pop from Arc
         .pop()?
         .build()?;
@@ -778,14 +697,14 @@ fn drop_arc_partially_initialized() {
     INNER_DROP_COUNT.store(0, Ordering::SeqCst);
 
     {
-        let mut wip = Wip::alloc::<Arc<DropCounter>>()?;
+        let mut partial = Partial::alloc::<Arc<DropCounter>>()?;
 
         // Initialize the Arc's inner value
-        wip.push_smart_ptr()?;
-        wip.set(DropCounter { value: 123 })?;
-        wip.pop()?;
+        partial.push_smart_ptr()?;
+        partial.set(DropCounter { value: 123 })?;
+        partial.pop()?;
 
-        // Drop the wip - should drop the Arc which drops the inner value
+        // Drop the partial - should drop the Arc which drops the inner value
     }
 
     assert_eq!(
@@ -806,7 +725,7 @@ fn enum_unit_variant() {
         Pending = 2,
     }
 
-    let hv = Wip::alloc::<Status>()?
+    let hv = Partial::alloc::<Status>()?
         .push_variant(1)? // Inactive
         .build()?;
     assert_eq!(*hv, Status::Inactive);
@@ -823,11 +742,9 @@ fn enum_struct_variant() {
         Empty = 2,
     }
 
-    let hv = Wip::alloc::<Message>()?
+    let hv = Partial::alloc::<Message>()?
         .push_variant(0)? // Text variant
-        .push_field("content")?
-        .set("Hello, world!".to_string())?
-        .pop()?
+        .set_field("content", "Hello, world!".to_string())?
         .build()?;
     assert_eq!(
         *hv,
@@ -848,14 +765,10 @@ fn enum_tuple_variant() {
         Pair(i32, String) = 2,
     }
 
-    let hv = Wip::alloc::<Value>()?
+    let hv = Partial::alloc::<Value>()?
         .push_variant(2)? // Pair variant
-        .push_nth_enum_field(0)?
-        .set(42)?
-        .pop()?
-        .push_nth_enum_field(1)?
-        .set("test".to_string())?
-        .pop()?
+        .set_nth_enum_field(0, 42)?
+        .set_nth_enum_field(1, "test".to_string())?
         .build()?;
     assert_eq!(*hv, Value::Pair(42, "test".to_string()));
 }
@@ -868,20 +781,14 @@ fn enum_set_field_twice() {
         Point { x: f32, y: f32 } = 0,
     }
 
-    let hv = Wip::alloc::<Data>()?
+    let hv = Partial::alloc::<Data>()?
         .push_variant(0)? // Point variant
         // Set x field
-        .push_field("x")?
-        .set(1.0f32)?
-        .pop()?
+        .set_field("x", 1.0f32)?
         // Set x field again (should drop previous value)
-        .push_field("x")?
-        .set(2.0f32)?
-        .pop()?
+        .set_field("x", 2.0f32)?
         // Set y field
-        .push_field("y")?
-        .set(3.0f32)?
-        .pop()?
+        .set_field("y", 3.0f32)?
         .build()?;
     assert_eq!(*hv, Data::Point { x: 2.0, y: 3.0 });
 }
@@ -896,30 +803,28 @@ fn enum_partial_initialization_error() {
     }
 
     // Should fail to build because retries is not initialized
-    let result = Wip::alloc::<Config>()?
+    let result = Partial::alloc::<Config>()?
         .push_variant(0)? // Settings variant
         // Only initialize timeout, not retries
-        .push_field("timeout")?
-        .set(5000u32)?
-        .pop()?
+        .set_field("timeout", 5000u32)?
         .build();
     assert!(result.is_err());
 }
 
 #[test]
 fn list_vec_basic() {
-    let hv = Wip::alloc::<Vec<i32>>()?
+    let hv = Partial::alloc::<Vec<i32>>()?
         .begin_pushback()?
         // Push first element
-        .push()?
+        .push_list_element()?
         .set(42)?
         .pop()?
         // Push second element
-        .push()?
+        .push_list_element()?
         .set(84)?
         .pop()?
         // Push third element
-        .push()?
+        .push_list_element()?
         .set(126)?
         .pop()?
         .build()?;
@@ -935,10 +840,10 @@ fn list_vec_complex() {
         age: u32,
     }
 
-    let hv = Wip::alloc::<Vec<Person>>()?
+    let hv = Partial::alloc::<Vec<Person>>()?
         .begin_pushback()?
         // Push first person
-        .push()?
+        .push_list_element()?
         .push_nth_field(0)? // name
         .set("Alice".to_string())?
         .pop()?
@@ -947,7 +852,7 @@ fn list_vec_complex() {
         .pop()?
         .pop()? // Done with first person
         // Push second person
-        .push()?
+        .push_list_element()?
         .push_nth_field(0)? // name
         .set("Bob".to_string())?
         .pop()?
@@ -974,7 +879,7 @@ fn list_vec_complex() {
 
 #[test]
 fn list_vec_empty() {
-    let hv = Wip::alloc::<Vec<String>>()?
+    let hv = Partial::alloc::<Vec<String>>()?
         .begin_pushback()?
         // Don't push any elements
         .build()?;
@@ -984,28 +889,28 @@ fn list_vec_empty() {
 
 #[test]
 fn list_vec_nested() {
-    let hv = Wip::alloc::<Vec<Vec<i32>>>()?
+    let hv = Partial::alloc::<Vec<Vec<i32>>>()?
         .begin_pushback()?
         // Push first inner vec
-        .push()?
+        .push_list_element()?
         .begin_pushback()?
-        .push()?
+        .push_list_element()?
         .set(1)?
         .pop()?
-        .push()?
+        .push_list_element()?
         .set(2)?
         .pop()?
         .pop()? // Done with first inner vec
         // Push second inner vec
-        .push()?
+        .push_list_element()?
         .begin_pushback()?
-        .push()?
+        .push_list_element()?
         .set(3)?
         .pop()?
-        .push()?
+        .push_list_element()?
         .set(4)?
         .pop()?
-        .push()?
+        .push_list_element()?
         .set(5)?
         .pop()?
         .pop()? // Done with second inner vec
@@ -1018,7 +923,7 @@ fn list_vec_nested() {
 fn map_hashmap_simple() {
     use std::collections::HashMap;
 
-    let hv = Wip::alloc::<HashMap<String, i32>>()?
+    let hv = Partial::alloc::<HashMap<String, i32>>()?
         .begin_map()?
         // Insert first pair: "foo" -> 42
         .begin_insert()?
@@ -1047,7 +952,7 @@ fn map_hashmap_simple() {
 fn map_hashmap_empty() {
     use std::collections::HashMap;
 
-    let hv = Wip::alloc::<HashMap<String, String>>()?
+    let hv = Partial::alloc::<HashMap<String, String>>()?
         .begin_map()?
         // Don't insert any pairs
         .build()?;
@@ -1065,7 +970,7 @@ fn map_hashmap_complex_values() {
         age: u32,
     }
 
-    let hv = Wip::alloc::<HashMap<String, Person>>()?
+    let hv = Partial::alloc::<HashMap<String, Person>>()?
         .begin_map()?
         // Insert "alice" -> Person { name: "Alice", age: 30 }
         .begin_insert()?
@@ -1123,7 +1028,7 @@ fn variant_named() {
     }
 
     // Test Dog variant
-    let animal = Wip::alloc::<Animal>()?
+    let animal = Partial::alloc::<Animal>()?
         .push_variant_named("Dog")?
         .push_field("name")?
         .set("Buddy".to_string())?
@@ -1141,7 +1046,7 @@ fn variant_named() {
     );
 
     // Test Cat variant
-    let animal = Wip::alloc::<Animal>()?
+    let animal = Partial::alloc::<Animal>()?
         .push_variant_named("Cat")?
         .push_field("name")?
         .set("Whiskers".to_string())?
@@ -1159,7 +1064,7 @@ fn variant_named() {
     );
 
     // Test Bird variant
-    let animal = Wip::alloc::<Animal>()?
+    let animal = Partial::alloc::<Animal>()?
         .push_variant_named("Bird")?
         .push_field("species")?
         .set("Parrot".to_string())?
@@ -1173,8 +1078,8 @@ fn variant_named() {
     );
 
     // Test invalid variant name
-    let mut wip = Wip::alloc::<Animal>()?;
-    let result = wip.push_variant_named("Fish");
+    let mut partial = Partial::alloc::<Animal>()?;
+    let result = partial.push_variant_named("Fish");
     assert!(result.is_err());
     assert!(
         result
@@ -1193,7 +1098,7 @@ fn field_named_on_struct() {
         email: String,
     }
 
-    let person = Wip::alloc::<Person>()?
+    let person = Partial::alloc::<Person>()?
         // Use field names instead of indices
         .push_field("email")?
         .set("john@example.com".to_string())?
@@ -1215,8 +1120,8 @@ fn field_named_on_struct() {
     );
 
     // Test invalid field name
-    let mut wip = Wip::alloc::<Person>()?;
-    let result = wip.push_field("invalid_field");
+    let mut partial = Partial::alloc::<Person>()?;
+    let result = partial.push_field("invalid_field");
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("field not found"));
 }
@@ -1232,7 +1137,7 @@ fn field_named_on_enum() {
     }
 
     // Test field access on Server variant
-    let config = Wip::alloc::<Config>()?
+    let config = Partial::alloc::<Config>()?
         .push_variant_named("Server")?
         .push_field("port")?
         .set(8080u16)?
@@ -1255,9 +1160,9 @@ fn field_named_on_enum() {
 
     // Test invalid field name on enum variant
 
-    let mut wip = Wip::alloc::<Config>()?;
-    wip.push_variant_named("Client")?;
-    let result = wip.push_field("port"); // port doesn't exist on Client
+    let mut partial = Partial::alloc::<Config>()?;
+    partial.push_variant_named("Client")?;
+    let result = partial.push_field("port"); // port doesn't exist on Client
     assert!(result.is_err());
     assert!(
         result
@@ -1288,26 +1193,25 @@ fn map_partial_initialization_drop() {
     DROP_COUNT.store(0, Ordering::SeqCst);
 
     {
-        let mut wip = Wip::alloc::<HashMap<String, DropTracker>>()?;
-        wip.begin_map()?;
-
-        // Insert a complete pair
-        wip.begin_insert()?;
-        wip.push_key()?;
-        wip.set("first".to_string())?;
-        wip.pop()?;
-        wip.push_value()?;
-        wip.set(DropTracker { id: 1 })?;
-        wip.pop()?;
-
-        // Start inserting another pair but only complete the key
-        wip.begin_insert()?;
-        wip.push_key()?;
-        wip.set("second".to_string())?;
-        wip.pop()?;
+        let mut partial = Partial::alloc::<HashMap<String, DropTracker>>()?;
+        partial
+            .begin_map()?
+            // Insert a complete pair
+            .begin_insert()?
+            .push_key()?
+            .set("first".to_string())?
+            .pop()?
+            .push_value()?
+            .set(DropTracker { id: 1 })?
+            .pop()?
+            // Start inserting another pair but only complete the key
+            .begin_insert()?
+            .push_key()?
+            .set("second".to_string())?
+            .pop()?;
         // Don't push value - leave incomplete
 
-        // Drop the wip - should clean up properly
+        // Drop the partial - should clean up properly
     }
 
     assert_eq!(
@@ -1320,7 +1224,7 @@ fn map_partial_initialization_drop() {
 #[test]
 fn tuple_basic() {
     // Test building a simple tuple
-    let boxed = Wip::alloc::<(i32, String)>()?
+    let boxed = Partial::alloc::<(i32, String)>()?
         // Tuples are represented as structs, so we use push_nth_field
         .push_nth_field(0)?
         .set(42i32)?
@@ -1335,7 +1239,7 @@ fn tuple_basic() {
 #[test]
 fn tuple_mixed_types() {
     // Test building a tuple with more diverse types
-    let boxed = Wip::alloc::<(u8, bool, f64, String)>()?
+    let boxed = Partial::alloc::<(u8, bool, f64, String)>()?
         // Set fields in non-sequential order to test flexibility
         .push_nth_field(2)?
         .set(56.124f64)?
@@ -1356,7 +1260,7 @@ fn tuple_mixed_types() {
 #[test]
 fn tuple_nested() {
     // Test nested tuples
-    let boxed = Wip::alloc::<((i32, i32), String)>()?
+    let boxed = Partial::alloc::<((i32, i32), String)>()?
         // Build the nested tuple first
         .push_nth_field(0)?
         .push_nth_field(0)?
@@ -1377,7 +1281,7 @@ fn tuple_nested() {
 #[test]
 fn tuple_empty() {
     // Test empty tuple (unit type)
-    let boxed = Wip::alloc::<()>()?
+    let boxed = Partial::alloc::<()>()?
         // Empty tuple has no fields to set, but we still need to set it
         .set(())?
         .build()?;

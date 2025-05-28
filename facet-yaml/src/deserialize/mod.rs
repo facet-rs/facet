@@ -11,12 +11,12 @@ use alloc::{
 };
 use error::AnyErr;
 use facet_core::{Characteristic, Def, Facet, FieldFlags, ScalarAffinity, Type, UserType};
-use facet_reflect::Wip;
+use facet_reflect::Partial;
 use yaml_rust2::{Yaml, YamlLoader};
 
 /// Deserializes a YAML string into a value of type `T` that implements `Facet`.
 pub fn from_str<'input: 'facet, 'facet, T: Facet<'facet>>(yaml: &'input str) -> Result<T, AnyErr> {
-    let wip = Wip::alloc::<T>()?;
+    let wip = Partial::alloc::<T>()?;
     let wip = from_str_value(wip, yaml)?;
     let heap_value = wip.build().map_err(|e| AnyErr(e.to_string()))?;
     heap_value
@@ -53,9 +53,9 @@ fn yaml_to_u64(ty: &Yaml) -> Result<u64, AnyErr> {
 }
 
 fn from_str_value<'facet, 'shape>(
-    wip: Wip<'facet, 'shape>,
+    wip: Partial<'facet, 'shape>,
     yaml: &str,
-) -> Result<Wip<'facet, 'shape>, AnyErr> {
+) -> Result<Partial<'facet, 'shape>, AnyErr> {
     let docs = YamlLoader::load_from_str(yaml).map_err(|e| e.to_string())?;
     if docs.len() != 1 {
         return Err("Expected exactly one YAML document".into());
@@ -64,9 +64,9 @@ fn from_str_value<'facet, 'shape>(
 }
 
 fn deserialize_value<'facet, 'shape>(
-    mut wip: Wip<'facet, 'shape>,
+    mut wip: Partial<'facet, 'shape>,
     value: &Yaml,
-) -> Result<Wip<'facet, 'shape>, AnyErr> {
+) -> Result<Partial<'facet, 'shape>, AnyErr> {
     // Get both the direct shape and innermost shape (for transparent types)
     let shape = wip.shape();
     let innermost_shape = wip.innermost_shape();
@@ -193,7 +193,7 @@ fn deserialize_value<'facet, 'shape>(
                 log::debug!("Using struct-level default");
 
                 // Create default instance
-                let default_val = Wip::alloc_shape(shape)
+                let default_val = Partial::alloc_shape(shape)
                     .map_err(|e| AnyErr(e.to_string()))?
                     .put_default()
                     .map_err(|e| AnyErr(e.to_string()))?
@@ -355,9 +355,9 @@ fn deserialize_value<'facet, 'shape>(
 }
 
 fn deserialize_as_list<'facet, 'shape>(
-    mut wip: Wip<'facet, 'shape>,
+    mut wip: Partial<'facet, 'shape>,
     value: &Yaml,
-) -> Result<Wip<'facet, 'shape>, AnyErr> {
+) -> Result<Partial<'facet, 'shape>, AnyErr> {
     #[cfg(feature = "log")]
     log::debug!("deserialize_as_list: shape={}", wip.shape());
 
@@ -376,7 +376,7 @@ fn deserialize_as_list<'facet, 'shape>(
             log::debug!("Processing list element: {:?}", element);
 
             // Push element
-            wip = wip.push().map_err(|e| AnyErr(e.to_string()))?;
+            wip = wip.push_list_element().map_err(|e| AnyErr(e.to_string()))?;
             wip = deserialize_value(wip, element)?;
             wip = wip.pop().map_err(|e| AnyErr(e.to_string()))?;
         }
@@ -391,9 +391,9 @@ fn deserialize_as_list<'facet, 'shape>(
 }
 
 fn deserialize_as_map<'facet, 'shape>(
-    mut wip: Wip<'facet, 'shape>,
+    mut wip: Partial<'facet, 'shape>,
     value: &Yaml,
-) -> Result<Wip<'facet, 'shape>, AnyErr> {
+) -> Result<Partial<'facet, 'shape>, AnyErr> {
     if let Yaml::Hash(hash) = value {
         // Handle empty map
         if hash.is_empty() {

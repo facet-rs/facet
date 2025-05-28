@@ -1,0 +1,5 @@
+---
+source: facet-reflect/src/partial/tests.rs
+expression: "Partial::alloc::<[u32; 3]>()? .push_nth_element(0)? .set(42u32)? .pop()?\n.push_nth_element(2)? .set(44u32)? .pop()? .build().unwrap_err()"
+---
+Value '[34m[u32; 3][39m' was not initialized

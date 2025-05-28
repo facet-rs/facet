@@ -3,7 +3,7 @@
 #![doc = include_str!("../README.md")]
 
 use facet_core::{Def, Facet, Type, UserType};
-use facet_reflect::{HeapValue, Wip};
+use facet_reflect::{HeapValue, Partial};
 use log::*;
 
 #[cfg(test)]
@@ -71,7 +71,7 @@ mod tests;
 pub fn from_str<'input: 'facet, 'facet, T: Facet<'facet>>(
     urlencoded: &'input str,
 ) -> Result<T, UrlEncodedError<'facet>> {
-    let val = from_str_value(Wip::alloc::<T>()?, urlencoded)?;
+    let val = from_str_value(Partial::alloc::<T>()?, urlencoded)?;
     Ok(val.materialize::<T>()?)
 }
 
@@ -79,7 +79,7 @@ pub fn from_str<'input: 'facet, 'facet, T: Facet<'facet>>(
 ///
 /// This is the lower-level function that works with `Wip` directly.
 fn from_str_value<'mem, 'shape>(
-    wip: Wip<'mem, 'shape>,
+    wip: Partial<'mem, 'shape>,
     urlencoded: &str,
 ) -> Result<HeapValue<'mem, 'shape>, UrlEncodedError<'shape>> {
     trace!("Starting URL encoded form data deserialization");
@@ -178,7 +178,7 @@ impl NestedValues {
 
 /// Deserialize a value recursively using the nested values
 fn deserialize_value<'mem, 'shape>(
-    wip: Wip<'mem, 'shape>,
+    wip: Partial<'mem, 'shape>,
     values: &NestedValues,
 ) -> Result<HeapValue<'mem, 'shape>, UrlEncodedError<'shape>> {
     let shape = wip.shape();
@@ -226,8 +226,8 @@ fn deserialize_value<'mem, 'shape>(
 fn deserialize_scalar_field<'mem, 'shape>(
     key: &str,
     value: &str,
-    wip: Wip<'mem, 'shape>,
-) -> Result<Wip<'mem, 'shape>, UrlEncodedError<'shape>> {
+    wip: Partial<'mem, 'shape>,
+) -> Result<Partial<'mem, 'shape>, UrlEncodedError<'shape>> {
     match wip.shape().def {
         Def::Scalar(_sd) => {
             let wip = if wip.shape().is_type::<String>() {
@@ -263,8 +263,8 @@ fn deserialize_scalar_field<'mem, 'shape>(
 fn deserialize_nested_field<'mem, 'shape>(
     key: &str,
     nested_values: &NestedValues,
-    wip: Wip<'mem, 'shape>,
-) -> Result<Wip<'mem, 'shape>, UrlEncodedError<'shape>> {
+    wip: Partial<'mem, 'shape>,
+) -> Result<Partial<'mem, 'shape>, UrlEncodedError<'shape>> {
     let shape = wip.shape();
     match shape.ty {
         Type::User(UserType::Struct(_)) => {

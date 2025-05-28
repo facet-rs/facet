@@ -1,0 +1,5 @@
+---
+source: facet-reflect/src/partial/tests.rs
+expression: "Partial::alloc::<Box<u32>>()?.build().unwrap_err()"
+---
+Value '[34mBox<u32>[39m' was not initialized

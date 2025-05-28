@@ -26,7 +26,7 @@ use facet_core::{
 use owo_colors::OwoColorize;
 pub use span::*;
 
-use facet_reflect::{HeapValue, ReflectError, Wip};
+use facet_reflect::{HeapValue, Partial, ReflectError};
 use log::trace;
 
 #[derive(PartialEq, Debug, Clone)]
@@ -162,7 +162,7 @@ where
     runner: StackRunner<'input, C, I>,
 
     /// Holds the intermediate representation of the value being built.
-    pub wip: Wip<'facet, 'shape>,
+    pub wip: Partial<'facet, 'shape>,
 }
 
 impl<'input, 'facet, 'shape, C, I> NextData<'input, 'facet, 'shape, C, I>
@@ -353,7 +353,7 @@ mod deser_impl {
             let source = format.source();
 
             // Step 1: Allocate shape
-            let wip = match Wip::alloc_shape(T::SHAPE) {
+            let wip = match Partial::alloc_shape(T::SHAPE) {
                 Ok(wip) => wip,
                 Err(e) => {
                     let default_span = Span::<F::SpanType>::default();
@@ -437,7 +437,7 @@ where
 /// Deserializes a working-in-progress value into a fully materialized heap value.
 /// This function drives the parsing loop until the entire input is consumed and the value is complete.
 pub fn deserialize_wip<'input, 'facet, 'shape, F>(
-    mut wip: Wip<'facet, 'shape>,
+    mut wip: Partial<'facet, 'shape>,
     input: &'input F::Input<'input>,
     format: &mut F,
 ) -> Result<HeapValue<'facet, 'shape>, DeserError<'input, 'shape, Cooked>>
@@ -663,9 +663,9 @@ where
 
     pub fn pop<'facet>(
         &mut self,
-        mut wip: Wip<'facet, 'shape>,
+        mut wip: Partial<'facet, 'shape>,
         reason: PopReason,
-    ) -> Result<Wip<'facet, 'shape>, DeserError<'input, 'shape, C>> {
+    ) -> Result<Partial<'facet, 'shape>, DeserError<'input, 'shape, C>> {
         trace!(
             "--- STACK has {:?} {}",
             self.stack.green(),
@@ -729,7 +729,7 @@ where
                 if has_unset {
                     if container_shape.has_default_attr() {
                         // let's allocate and build a default value
-                        let default_val = Wip::alloc_shape(container_shape)
+                        let default_val = Partial::alloc_shape(container_shape)
                             .map_err(|e| self.reflect_err(e))?
                             .put_default()
                             .map_err(|e| self.reflect_err(e))?
@@ -840,7 +840,7 @@ where
                                     "Enum has DEFAULT attr but variant has uninitialized fields"
                                 );
                                 // Handle similar to struct, allocate and build default value for variant
-                                let default_val = Wip::alloc_shape(container_shape)
+                                let default_val = Partial::alloc_shape(container_shape)
                                     .map_err(|e| self.reflect_err(e))?
                                     .put_default()
                                     .map_err(|e| self.reflect_err(e))?
@@ -897,7 +897,7 @@ where
                 } else if container_shape.has_default_attr() {
                     // No variant selected, but enum has default attribute - set to default
                     trace!("No variant selected but enum has DEFAULT attr; setting to default");
-                    let default_val = Wip::alloc_shape(container_shape)
+                    let default_val = Partial::alloc_shape(container_shape)
                         .map_err(|e| self.reflect_err(e))?
                         .put_default()
                         .map_err(|e| self.reflect_err(e))?
@@ -942,9 +942,9 @@ where
     /// Internal common handler for GotScalar outcome, to deduplicate code.
     fn handle_scalar<'facet>(
         &self,
-        wip: Wip<'facet, 'shape>,
+        wip: Partial<'facet, 'shape>,
         scalar: Scalar<'input>,
-    ) -> Result<Wip<'facet, 'shape>, DeserError<'input, 'shape, C>>
+    ) -> Result<Partial<'facet, 'shape>, DeserError<'input, 'shape, C>>
     where
         'input: 'facet, // 'input outlives 'facet
     {
@@ -992,9 +992,9 @@ where
     /// Handle value parsing
     fn value<'facet>(
         &mut self,
-        mut wip: Wip<'facet, 'shape>,
+        mut wip: Partial<'facet, 'shape>,
         outcome: Spanned<Outcome<'input>, C>,
-    ) -> Result<Wip<'facet, 'shape>, DeserError<'input, 'shape, C>>
+    ) -> Result<Partial<'facet, 'shape>, DeserError<'input, 'shape, C>>
     where
         'input: 'facet, // 'input must outlive 'facet
     {
@@ -1193,9 +1193,9 @@ where
 
     fn object_key_or_object_close<'facet>(
         &mut self,
-        mut wip: Wip<'facet, 'shape>,
+        mut wip: Partial<'facet, 'shape>,
         outcome: Spanned<Outcome<'input>, C>,
-    ) -> Result<Wip<'facet, 'shape>, DeserError<'input, 'shape, C>>
+    ) -> Result<Partial<'facet, 'shape>, DeserError<'input, 'shape, C>>
     where
         'input: 'facet,
     {
@@ -1402,9 +1402,9 @@ where
 
     fn list_item_or_list_close<'facet>(
         &mut self,
-        mut wip: Wip<'facet, 'shape>,
+        mut wip: Partial<'facet, 'shape>,
         outcome: Spanned<Outcome<'input>, C>,
-    ) -> Result<Wip<'facet, 'shape>, DeserError<'input, 'shape, C>>
+    ) -> Result<Partial<'facet, 'shape>, DeserError<'input, 'shape, C>>
     where
         'input: 'facet,
     {
@@ -1430,7 +1430,7 @@ where
 
                 // For now, both tuples and other sequences use push()
                 // TODO: In the future we might need special handling for tuples
-                wip = wip.push().map_err(|e| self.reflect_err(e))?;
+                wip = wip.push_list_element().map_err(|e| self.reflect_err(e))?;
 
                 trace!(" After push, wip.shape is {}", wip.shape().cyan());
                 wip = self.value(wip, outcome)?;

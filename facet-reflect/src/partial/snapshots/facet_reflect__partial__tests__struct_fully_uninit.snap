@@ -1,0 +1,5 @@
+---
+source: facet-reflect/src/partial/tests.rs
+expression: "Partial::alloc::<FooBar>()?.build().unwrap_err()"
+---
+Value '[34mFooBar[39m' was not initialized

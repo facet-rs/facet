@@ -12,7 +12,7 @@ use alloc::{
 };
 pub use error::{TomlDeError, TomlDeErrorKind};
 use facet_core::{Characteristic, Def, Facet, FieldFlags, StructKind, Type, UserType};
-use facet_reflect::{ReflectError, ScalarType, Wip};
+use facet_reflect::{Partial, ReflectError, ScalarType};
 use log::trace;
 use toml_edit::{ImDocument, Item, TomlError};
 use yansi::Paint as _;
@@ -41,7 +41,7 @@ pub fn from_str<'input, 'facet, 'shape, T: Facet<'facet>>(
     trace!("Parsing TOML");
 
     // Allocate the type
-    let wip = Wip::alloc::<T>().map_err(|e| {
+    let wip = Partial::alloc::<T>().map_err(|e| {
         TomlDeError::new(
             toml,
             TomlDeErrorKind::GenericReflect(e),
@@ -83,9 +83,9 @@ pub fn from_str<'input, 'facet, 'shape, T: Facet<'facet>>(
 
 fn deserialize_item<'input, 'facet, 'shape>(
     toml: &'input str,
-    wip: Wip<'facet, 'shape>,
+    wip: Partial<'facet, 'shape>,
     item: &Item,
-) -> Result<Wip<'facet, 'shape>, TomlDeError<'input, 'shape>> {
+) -> Result<Partial<'facet, 'shape>, TomlDeError<'input, 'shape>> {
     // Check for Option before anything else, since it's a special case
     // Option is an enum in Rust, but we handle it specially
     if let Def::Option(_) = wip.shape().def {
@@ -114,10 +114,10 @@ fn deserialize_item<'input, 'facet, 'shape>(
 
 fn deserialize_as_struct<'input, 'a, 'shape>(
     toml: &'input str,
-    mut wip: Wip<'a, 'shape>,
+    mut wip: Partial<'a, 'shape>,
     def: &facet_core::StructType<'shape>,
     item: &Item,
-) -> Result<Wip<'a, 'shape>, TomlDeError<'input, 'shape>> {
+) -> Result<Partial<'a, 'shape>, TomlDeError<'input, 'shape>> {
     trace!(
         "Deserializing {} as {}",
         item.type_name().cyan(),
@@ -215,9 +215,9 @@ fn deserialize_as_struct<'input, 'a, 'shape>(
 
 fn deserialize_as_enum<'input, 'a, 'shape>(
     toml: &'input str,
-    wip: Wip<'a, 'shape>,
+    wip: Partial<'a, 'shape>,
     item: &Item,
-) -> Result<Wip<'a, 'shape>, TomlDeError<'input, 'shape>> {
+) -> Result<Partial<'a, 'shape>, TomlDeError<'input, 'shape>> {
     trace!(
         "Deserializing {} as {}",
         item.type_name().cyan(),
@@ -314,10 +314,10 @@ fn deserialize_as_enum<'input, 'a, 'shape>(
 
 fn build_enum_from_variant_name<'input, 'a, 'shape>(
     toml: &'input str,
-    mut wip: Wip<'a, 'shape>,
+    mut wip: Partial<'a, 'shape>,
     variant_name: &str,
     item: &Item,
-) -> Result<Wip<'a, 'shape>, TomlDeError<'input, 'shape>> {
+) -> Result<Partial<'a, 'shape>, TomlDeError<'input, 'shape>> {
     // Select the variant
     reflect!(wip, toml, item.span(), variant_named(variant_name));
 
@@ -386,9 +386,9 @@ fn build_enum_from_variant_name<'input, 'a, 'shape>(
 
 fn deserialize_as_list<'input, 'a, 'shape>(
     toml: &'input str,
-    mut wip: Wip<'a, 'shape>,
+    mut wip: Partial<'a, 'shape>,
     item: &Item,
-) -> Result<Wip<'a, 'shape>, TomlDeError<'input, 'shape>> {
+) -> Result<Partial<'a, 'shape>, TomlDeError<'input, 'shape>> {
     trace!(
         "Deserializing {} as {}",
         item.type_name().cyan(),
@@ -421,7 +421,7 @@ fn deserialize_as_list<'input, 'a, 'shape>(
     // Loop over all items in the TOML list
     for value in item.iter() {
         // Start the field
-        reflect!(wip, toml, value.span(), push());
+        reflect!(wip, toml, value.span(), push_list_element());
 
         wip = deserialize_item(
             toml,
@@ -441,9 +441,9 @@ fn deserialize_as_list<'input, 'a, 'shape>(
 
 fn deserialize_as_map<'input, 'a, 'shape>(
     toml: &'input str,
-    mut wip: Wip<'a, 'shape>,
+    mut wip: Partial<'a, 'shape>,
     item: &Item,
-) -> Result<Wip<'a, 'shape>, TomlDeError<'input, 'shape>> {
+) -> Result<Partial<'a, 'shape>, TomlDeError<'input, 'shape>> {
     trace!(
         "Deserializing {} as {}",
         item.type_name().cyan(),
@@ -524,9 +524,9 @@ fn deserialize_as_map<'input, 'a, 'shape>(
 
 fn deserialize_as_option<'input, 'a, 'shape>(
     toml: &'input str,
-    mut wip: Wip<'a, 'shape>,
+    mut wip: Partial<'a, 'shape>,
     item: &Item,
-) -> Result<Wip<'a, 'shape>, TomlDeError<'input, 'shape>> {
+) -> Result<Partial<'a, 'shape>, TomlDeError<'input, 'shape>> {
     trace!(
         "Deserializing {} as {}",
         item.type_name().cyan(),
@@ -539,9 +539,9 @@ fn deserialize_as_option<'input, 'a, 'shape>(
     // Handle nested options recursively
     fn handle_nested_options<'input, 'a, 'shape>(
         toml: &'input str,
-        mut wip: Wip<'a, 'shape>,
+        mut wip: Partial<'a, 'shape>,
         item: &Item,
-    ) -> Result<Wip<'a, 'shape>, TomlDeError<'input, 'shape>> {
+    ) -> Result<Partial<'a, 'shape>, TomlDeError<'input, 'shape>> {
         // Check if we have another nested Option
         if let Def::Option(_) = wip.shape().def {
             trace!("Detected another level of nested Option");
@@ -580,9 +580,9 @@ fn deserialize_as_option<'input, 'a, 'shape>(
 
 fn deserialize_as_smartpointer<'input, 'a, 'shape>(
     _toml: &'input str,
-    mut _wip: Wip<'a, 'shape>,
+    mut _wip: Partial<'a, 'shape>,
     item: &Item,
-) -> Result<Wip<'a, 'shape>, TomlDeError<'input, 'shape>> {
+) -> Result<Partial<'a, 'shape>, TomlDeError<'input, 'shape>> {
     trace!(
         "Deserializing {} as {}",
         item.type_name().cyan(),
@@ -596,9 +596,9 @@ fn deserialize_as_smartpointer<'input, 'a, 'shape>(
 
 fn deserialize_as_scalar<'input, 'a, 'shape>(
     toml: &'input str,
-    mut wip: Wip<'a, 'shape>,
+    mut wip: Partial<'a, 'shape>,
     item: &Item,
-) -> Result<Wip<'a, 'shape>, TomlDeError<'input, 'shape>> {
+) -> Result<Partial<'a, 'shape>, TomlDeError<'input, 'shape>> {
     trace!(
         "Deserializing {} as {}",
         item.type_name().cyan(),

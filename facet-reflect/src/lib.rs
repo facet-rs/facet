@@ -10,9 +10,9 @@ mod error;
 pub use error::*;
 
 #[cfg(feature = "alloc")]
-mod wip;
+mod partial;
 #[cfg(feature = "alloc")]
-pub use wip::*;
+pub use partial::*;
 
 mod peek;
 pub use peek::*;

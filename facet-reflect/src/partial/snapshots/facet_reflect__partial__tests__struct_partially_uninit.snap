@@ -1,0 +1,5 @@
+---
+source: facet-reflect/src/partial/tests.rs
+expression: "partial.set_field(\"foo\", 42_u64)?.build().unwrap_err()"
+---
+Field 'FooBar::bar' was not initialized

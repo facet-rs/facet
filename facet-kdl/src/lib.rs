@@ -9,7 +9,7 @@ use std::{
 };
 
 use facet_core::{Def, Facet, FieldFlags, Type, UserType};
-use facet_reflect::{ReflectError, Wip};
+use facet_reflect::{Partial, ReflectError};
 use kdl::{KdlDocument, KdlError as KdlParseError};
 
 // QUESTION: Any interest in making something a bit like `strum` with `facet`? Always nice to have an easy way to get
@@ -102,7 +102,7 @@ impl<'input, 'facet, 'shape> KdlDeserializer<'input> {
         let document: KdlDocument = dbg!(kdl.parse()?);
         log::trace!("KDL parsed");
 
-        let mut wip = Wip::alloc::<T>().expect("failed to allocate");
+        let mut wip = Partial::alloc::<T>().expect("failed to allocate");
         log::trace!("Allocated WIP for type {}", wip.shape());
 
         wip = Self { kdl }.deserialize_document(wip, document)?;
@@ -117,9 +117,9 @@ impl<'input, 'facet, 'shape> KdlDeserializer<'input> {
 
     fn deserialize_document(
         &mut self,
-        wip: Wip<'facet, 'shape>,
+        wip: Partial<'facet, 'shape>,
         document: KdlDocument,
-    ) -> Result<'shape, Wip<'facet, 'shape>> {
+    ) -> Result<'shape, Partial<'facet, 'shape>> {
         log::trace!("Entering `deserialize_document` method");
 
         // First check the type system (Type)
@@ -155,9 +155,9 @@ impl<'input, 'facet, 'shape> KdlDeserializer<'input> {
 
     fn deserialize_node(
         &mut self,
-        mut wip: Wip<'facet, 'shape>,
+        mut wip: Partial<'facet, 'shape>,
         mut document: KdlDocument,
-    ) -> Result<'shape, Wip<'facet, 'shape>> {
+    ) -> Result<'shape, Partial<'facet, 'shape>> {
         log::trace!("Entering `deserialize_node` method");
 
         // TODO: Correctly generate that error and write a constructor that gets rid of the `.to_owned()`?

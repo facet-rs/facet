@@ -7,7 +7,7 @@ use std::io::Write;
 use facet_core::{
     Def, Facet, NumberBits, ScalarAffinity, SequenceType, Signedness, StructKind, Type, UserType,
 };
-use facet_reflect::{HeapValue, Peek, Wip};
+use facet_reflect::{HeapValue, Partial, Peek};
 use facet_serialize::{Serializer, serialize_iterative};
 
 /// Errors when serializing to XDR bytes
@@ -313,7 +313,7 @@ impl<'shape, 'input> XdrDeserializerStack<'input> {
         Ok(data)
     }
 
-    fn next<'f>(&mut self, wip: Wip<'f, 'shape>) -> Result<Wip<'f, 'shape>, XdrDeserError> {
+    fn next<'f>(&mut self, wip: Partial<'f, 'shape>) -> Result<Partial<'f, 'shape>, XdrDeserError> {
         match (wip.shape().def, wip.shape().ty) {
             (Def::Scalar(sd), _) => match sd.affinity {
                 ScalarAffinity::Number(na) => match na.bits {
@@ -418,7 +418,13 @@ impl<'shape, 'input> XdrDeserializerStack<'input> {
                     self.pos += len;
                     let pad_len = len % 4;
                     for byte in &self.input[self.pos - len..self.pos] {
-                        wip = wip.push().unwrap().put(*byte).unwrap().pop().unwrap();
+                        wip = wip
+                            .push_list_element()
+                            .unwrap()
+                            .put(*byte)
+                            .unwrap()
+                            .pop()
+                            .unwrap();
                     }
                     if pad_len != 0 {
                         self.pos += 4 - pad_len;
@@ -499,7 +505,7 @@ impl<'shape, 'input> XdrDeserializerStack<'input> {
 /// Deserialize an XDR slice given some some [`Wip`] into a [`HeapValue`]
 pub fn deserialize_wip<'facet, 'shape>(
     input: &[u8],
-    mut wip: Wip<'facet, 'shape>,
+    mut wip: Partial<'facet, 'shape>,
 ) -> Result<HeapValue<'facet, 'shape>, XdrDeserError> {
     let mut runner = XdrDeserializerStack {
         input,
@@ -544,7 +550,7 @@ pub fn deserialize_wip<'facet, 'shape>(
                     .stack
                     .push(DeserializeTask::Pop(PopReason::ObjectOrListVal));
                 runner.stack.push(DeserializeTask::Value);
-                wip = wip.push().unwrap();
+                wip = wip.push_list_element().unwrap();
             }
             None => unreachable!("Instruction stack is empty"),
         }
@@ -553,7 +559,7 @@ pub fn deserialize_wip<'facet, 'shape>(
 
 /// Deserialize a slice of XDR bytes into any Facet type
 pub fn deserialize<'f, F: facet_core::Facet<'f>>(input: &[u8]) -> Result<F, XdrDeserError> {
-    let v = deserialize_wip(input, Wip::alloc_shape(F::SHAPE).unwrap())?;
+    let v = deserialize_wip(input, Partial::alloc_shape(F::SHAPE).unwrap())?;
     let f: F = v.materialize().unwrap();
     Ok(f)
 }
