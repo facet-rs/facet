@@ -1666,6 +1666,14 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     {
         self.push_value()?.set(value)?.pop()
     }
+
+    /// Shorthand for: push_list_element(), set(value), pop()
+    pub fn append<U>(&mut self, value: U) -> Result<&mut Self, ReflectError<'shape>>
+    where
+        U: Facet<'shape>,
+    {
+        self.push_list_element()?.set(value)?.pop()
+    }
 }
 
 /// A typed wrapper around `Wip`, for when you want to statically
@@ -1886,6 +1894,15 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
         U: Facet<'shape>,
     {
         self.wip.set_value(value)?;
+        Ok(self)
+    }
+
+    /// Forwards append to the inner wip instance.
+    pub fn append<U>(&mut self, value: U) -> Result<&mut Self, ReflectError<'shape>>
+    where
+        U: Facet<'shape>,
+    {
+        self.wip.append(value)?;
         Ok(self)
     }
 }

@@ -815,18 +815,9 @@ fn enum_partial_initialization_error() {
 fn list_vec_basic() {
     let hv = Partial::alloc::<Vec<i32>>()?
         .begin_pushback()?
-        // Push first element
-        .push_list_element()?
-        .set(42)?
-        .pop()?
-        // Push second element
-        .push_list_element()?
-        .set(84)?
-        .pop()?
-        // Push third element
-        .push_list_element()?
-        .set(126)?
-        .pop()?
+        .append(42)?
+        .append(84)?
+        .append(126)?
         .build()?;
     let vec: &Vec<i32> = hv.as_ref();
     assert_eq!(vec, &vec![42, 84, 126]);
@@ -844,21 +835,13 @@ fn list_vec_complex() {
         .begin_pushback()?
         // Push first person
         .push_list_element()?
-        .push_nth_field(0)? // name
-        .set("Alice".to_string())?
-        .pop()?
-        .push_nth_field(1)? // age
-        .set(30u32)?
-        .pop()?
+        .set_field("name", "Alice".to_string())?
+        .set_field("age", 30u32)?
         .pop()? // Done with first person
         // Push second person
         .push_list_element()?
-        .push_nth_field(0)? // name
-        .set("Bob".to_string())?
-        .pop()?
-        .push_nth_field(1)? // age
-        .set(25u32)?
-        .pop()?
+        .set_field("name", "Bob".to_string())?
+        .set_field("age", 25u32)?
         .pop()? // Done with second person
         .build()?;
     let vec: &Vec<Person> = hv.as_ref();
@@ -894,25 +877,15 @@ fn list_vec_nested() {
         // Push first inner vec
         .push_list_element()?
         .begin_pushback()?
-        .push_list_element()?
-        .set(1)?
-        .pop()?
-        .push_list_element()?
-        .set(2)?
-        .pop()?
+        .append(1)?
+        .append(2)?
         .pop()? // Done with first inner vec
         // Push second inner vec
         .push_list_element()?
         .begin_pushback()?
-        .push_list_element()?
-        .set(3)?
-        .pop()?
-        .push_list_element()?
-        .set(4)?
-        .pop()?
-        .push_list_element()?
-        .set(5)?
-        .pop()?
+        .append(3)?
+        .append(4)?
+        .append(5)?
         .pop()? // Done with second inner vec
         .build()?;
     let vec: &Vec<Vec<i32>> = hv.as_ref();
