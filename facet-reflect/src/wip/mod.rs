@@ -48,6 +48,7 @@ enum MapInsertState {
     },
 }
 
+#[derive(Debug)]
 enum FrameOwnership {
     /// This frame owns the allocation and should deallocate it on drop
     Owned,
@@ -1372,7 +1373,13 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
         }
 
         let frame = self.frames.pop().unwrap();
-        frame.require_full_initialization()?;
+
+        // Check initialization before proceeding
+        if let Err(e) = frame.require_full_initialization() {
+            // Put the frame back so Drop can handle cleanup properly
+            self.frames.push(frame);
+            return Err(e);
+        }
 
         Ok(HeapValue {
             guard: Some(Guard {
