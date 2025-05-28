@@ -289,7 +289,9 @@ impl PrettyPrinter {
                                 }
                             }
                         }
-                        (_, Type::Sequence(SequenceType::Tuple(..))) => {
+                        (_, Type::User(UserType::Struct(struct_def)))
+                            if struct_def.kind == StructKind::Tuple =>
+                        {
                             self.write_type_name(f, &item.value)?;
                             item.state = StackState::ProcessSeqItem {
                                 item_index: 0,

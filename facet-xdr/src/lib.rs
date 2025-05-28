@@ -5,7 +5,7 @@
 use std::io::Write;
 
 use facet_core::{
-    Def, Facet, NumberBits, ScalarAffinity, SequenceType, Signedness, Type, UserType,
+    Def, Facet, NumberBits, ScalarAffinity, SequenceType, Signedness, StructKind, Type, UserType,
 };
 use facet_reflect::{HeapValue, Peek, Wip};
 use facet_serialize::{Serializer, serialize_iterative};
@@ -483,8 +483,10 @@ impl<'shape, 'input> XdrDeserializerStack<'input> {
                 }
                 _ => Err(XdrDeserError::UnsupportedType),
             },
-            (_, Type::Sequence(SequenceType::Tuple(tt))) => {
-                for _field in tt.fields.iter() {
+            (_, Type::User(UserType::Struct(struct_type)))
+                if struct_type.kind == StructKind::Tuple =>
+            {
+                for _field in struct_type.fields.iter() {
                     self.stack.push(DeserializeTask::ListItem);
                 }
                 Ok(wip)

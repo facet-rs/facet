@@ -467,30 +467,26 @@ impl<'input, 'shape> Decoder<'input> {
 
                 return Ok(wip);
             }
-            Type::Sequence(facet_core::SequenceType::Tuple(tuple_type)) => {
+            Type::User(facet_core::UserType::Struct(struct_type))
+                if struct_type.kind == facet_core::StructKind::Tuple =>
+            {
                 trace!("Deserializing tuple");
                 let array_len = self.decode_array_len()?;
-                let field_count = tuple_type.fields.len();
+                let field_count = struct_type.fields.len();
 
                 if array_len != field_count {
                     return Err(DecodeError::InvalidData);
                 }
 
-                // For tuples, we need to use begin_pushback for the new API
-                let mut tuple_wip = wip.begin_pushback().map_err(DecodeError::ReflectError)?;
-
-                for _ in 0..field_count {
-                    // Push a new element
-                    let element_wip = tuple_wip.push().map_err(DecodeError::ReflectError)?;
-
-                    // Deserialize the element value
-                    let element_wip = self.deserialize_value(element_wip)?;
-
-                    // Pop back up to the tuple level
-                    tuple_wip = element_wip.pop().map_err(DecodeError::ReflectError)?;
+                // For tuples, deserialize fields in order
+                for idx in 0..field_count {
+                    trace!("Deserializing tuple field {}", idx);
+                    wip = wip.push_nth_field(idx).map_err(DecodeError::ReflectError)?;
+                    wip = self.deserialize_value(wip)?;
+                    wip = wip.pop().map_err(DecodeError::ReflectError)?;
                 }
 
-                return Ok(tuple_wip);
+                return Ok(wip);
             }
             Type::User(UserType::Enum(enum_type)) => {
                 trace!("Deserializing enum");

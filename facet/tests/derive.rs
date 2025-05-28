@@ -546,3 +546,23 @@ fn struct_with_default_field_that_has_lifetime() {
         name: Option<std::borrow::Cow<'a, str>>,
     }
 }
+
+#[test]
+fn plain_tuple() {
+    let _value = (42, "hello", true);
+    let shape = <(i32, &str, bool) as Facet>::SHAPE;
+
+    // Verify it's a struct with Tuple kind
+    match shape.ty {
+        Type::User(UserType::Struct(s)) => {
+            assert_eq!(s.kind, StructKind::Tuple);
+            assert_eq!(s.fields.len(), 3);
+
+            // Verify fields are named with $idx (from the macro)
+            assert_eq!(s.fields[0].name, "$idx");
+            assert_eq!(s.fields[1].name, "$idx");
+            assert_eq!(s.fields[2].name, "$idx");
+        }
+        _ => panic!("Expected tuple to be a UserType::Struct"),
+    }
+}

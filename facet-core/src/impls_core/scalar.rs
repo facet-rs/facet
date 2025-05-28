@@ -62,7 +62,9 @@ unsafe impl Facet<'_> for () {
                     .affinity(&const { ScalarAffinity::empty().build() })
                     .build(),
             ))
-            .ty(Type::Sequence(SequenceType::Tuple(TupleType {
+            .ty(Type::User(UserType::Struct(StructType {
+                repr: Repr::default(),
+                kind: StructKind::Tuple,
                 fields: &[],
             })))
             .build()

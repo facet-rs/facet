@@ -1,8 +1,8 @@
 use core::{cmp::Ordering, fmt, mem};
 
 use crate::{
-    Characteristic, Facet, MarkerTraits, SequenceType, Shape, TupleType, Type, TypeNameOpts,
-    VTableView, ValueVTable, types::field_in_type,
+    Characteristic, Facet, MarkerTraits, Repr, Shape, StructKind, StructType, Type, TypeNameOpts,
+    UserType, VTableView, ValueVTable, types::field_in_type,
 };
 
 #[inline(always)]
@@ -220,7 +220,9 @@ macro_rules! impl_facet_for_tuple {
                             "(⋯)"
                         }
                     })
-                    .ty(Type::Sequence(SequenceType::Tuple(TupleType {
+                    .ty(Type::User(UserType::Struct(StructType {
+                        repr: Repr::default(),
+                        kind: StructKind::Tuple,
                         fields: &const {[
                             $(field_in_type!(Self, $idx),)+
                         ]}

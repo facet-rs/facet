@@ -11,8 +11,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use facet_core::{
-    Def, Facet, Field, PointerType, ScalarAffinity, SequenceType, ShapeAttribute, StructKind, Type,
-    UserType,
+    Def, Facet, Field, PointerType, ScalarAffinity, ShapeAttribute, StructKind, Type, UserType,
 };
 use facet_reflect::{
     FieldIter, FieldsForSerializeIter, HasFields, Peek, PeekListLikeIter, PeekMapIter, ScalarType,
@@ -471,8 +470,23 @@ where
                                 // Correctly handle unit struct type when encountered as a value
                                 serializer.serialize_unit()?;
                             }
-                            StructKind::Tuple | StructKind::TupleStruct => {
-                                debug!("  Handling tuple struct with {:?} kind", sd.kind);
+                            StructKind::Tuple => {
+                                debug!("  Handling tuple with {} fields", sd.fields.len());
+                                let peek_struct = cpeek.into_struct().unwrap();
+                                let fields_iter = peek_struct.fields();
+                                debug!("  Serializing {} fields as tuple", sd.fields.len());
+
+                                stack.push(SerializeTask::Tuple {
+                                    items: fields_iter,
+                                    first: true,
+                                });
+                                trace!(
+                                    "  Pushed TupleFields to stack for tuple, will handle {} fields",
+                                    sd.fields.len()
+                                );
+                            }
+                            StructKind::TupleStruct => {
+                                debug!("  Handling tuple struct");
                                 let peek_struct = cpeek.into_struct().unwrap();
                                 let fields = peek_struct.fields_for_serialize().count();
                                 debug!("  Serializing {} fields as array", fields);
@@ -505,46 +519,6 @@ where
                             }
                             _ => {
                                 unreachable!()
-                            }
-                        }
-                    }
-                    (_, Type::Sequence(SequenceType::Tuple(_))) => {
-                        debug!("Serializing tuple: shape={}", cpeek.shape(),);
-
-                        // Now we can use our dedicated PeekTuple type
-                        if let Ok(peek_tuple) = cpeek.into_tuple() {
-                            let count = peek_tuple.len();
-                            debug!("  Tuple fields count: {}", count);
-
-                            stack.push(SerializeTask::Tuple {
-                                items: peek_tuple.fields(),
-                                first: true,
-                            });
-                            trace!(
-                                "  Pushed TupleFields to stack for tuple, will handle {} fields",
-                                count
-                            );
-                        } else {
-                            // This shouldn't happen if into_tuple is implemented correctly,
-                            // but we'll handle it as a fallback
-                            debug!(
-                                "  Could not convert to PeekTuple, falling back to list_like approach"
-                            );
-
-                            if let Ok(peek_list_like) = cpeek.into_list_like() {
-                                stack.push(SerializeTask::Array {
-                                    items: peek_list_like.iter(),
-                                    first: true,
-                                });
-                                trace!("  Pushed ArrayItems to stack for tuple serialization",);
-                            } else {
-                                // Final fallback - create an empty array
-                                debug!(
-                                    "  Could not convert tuple to list-like either, using empty array"
-                                );
-                                serializer.start_array(Some(0))?;
-                                serializer.end_array()?;
-                                trace!("  Warning: Tuple serialization fallback to empty array");
                             }
                         }
                     }

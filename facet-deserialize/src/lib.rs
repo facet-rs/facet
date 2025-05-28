@@ -1104,16 +1104,15 @@ where
                                     }));
                                 }
                             }
-                        } else if let Type::Sequence(SequenceType::Tuple(tuple_type)) = shape.ty {
-                            trace!(
-                                "Array starting for tuple ({}) with {} fields!",
-                                shape.blue(),
-                                tuple_type.fields.len()
-                            );
-                            // Initialize the tuple with default values
-                            wip = wip.put_default().map_err(|e| self.reflect_err(e))?;
-                            // No special handling needed here - the tuple is already set up correctly
-                            // and will receive array elements via pushback
+                        } else if let Type::User(UserType::Struct(struct_type)) = shape.ty {
+                            if struct_type.kind == StructKind::Tuple {
+                                trace!(
+                                    "Array starting for tuple ({}) with {} fields!",
+                                    shape.blue(),
+                                    struct_type.fields.len()
+                                );
+                                // Tuples are treated as structs and fields will be set by index
+                            }
                         } else {
                             return Err(self.err(DeserErrorKind::UnsupportedType {
                                 got: shape,
@@ -1156,16 +1155,17 @@ where
                                     }));
                                 }
                             }
-                        } else if let Type::Sequence(SequenceType::Tuple(tuple_type)) = shape.ty {
-                            // This could be a tuple that was serialized as an object
-                            // Despite this being unusual, we'll handle it here for robustness
-                            trace!(
-                                "Object starting for tuple ({}) with {} fields - unusual but handling",
-                                shape.blue(),
-                                tuple_type.fields.len()
-                            );
-                            // Initialize the tuple with default values
-                            wip = wip.put_default().map_err(|e| self.reflect_err(e))?;
+                        } else if let Type::User(UserType::Struct(struct_type)) = shape.ty {
+                            if struct_type.kind == StructKind::Tuple {
+                                // This could be a tuple that was serialized as an object
+                                // Despite this being unusual, we'll handle it here for robustness
+                                trace!(
+                                    "Object starting for tuple ({}) with {} fields - unusual but handling",
+                                    shape.blue(),
+                                    struct_type.fields.len()
+                                );
+                                // Tuples are treated as structs
+                            }
                         } else {
                             return Err(self.err(DeserErrorKind::UnsupportedType {
                                 got: shape,
@@ -1428,17 +1428,9 @@ where
                 );
                 trace!("Before push, wip.shape is {}", wip.shape().blue());
 
-                // Special handling for tuples - we need to identify if we're in a tuple context
-                let is_tuple = matches!(wip.shape().ty, Type::Sequence(SequenceType::Tuple(_)));
-
-                if is_tuple {
-                    trace!("Handling list item for a tuple type");
-                    // For tuples, we need to use field-based access by index
-                    wip = wip.push().map_err(|e| self.reflect_err(e))?;
-                } else {
-                    // Standard list/array handling
-                    wip = wip.push().map_err(|e| self.reflect_err(e))?;
-                }
+                // For now, both tuples and other sequences use push()
+                // TODO: In the future we might need special handling for tuples
+                wip = wip.push().map_err(|e| self.reflect_err(e))?;
 
                 trace!(" After push, wip.shape is {}", wip.shape().cyan());
                 wip = self.value(wip, outcome)?;

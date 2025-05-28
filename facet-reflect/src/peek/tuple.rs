@@ -1,7 +1,14 @@
 use core::fmt::Debug;
-use facet_core::TupleType;
+use facet_core::Field;
 
 use super::{FieldIter, Peek};
+
+/// Local representation of a tuple type for peek operations
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TupleType<'shape> {
+    /// Fields of the tuple, with offsets
+    pub fields: &'shape [Field<'shape>],
+}
 
 /// Field index and associated peek value
 pub type TupleField<'mem, 'facet, 'shape> = (usize, Peek<'mem, 'facet, 'shape>);

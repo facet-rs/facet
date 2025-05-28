@@ -99,7 +99,6 @@ pub enum StructKind {
     /// struct S { foo: T0, bar: T1 }
     Struct,
 
-    // TODO: remove this
     /// (T0, T1)
     Tuple,
 }

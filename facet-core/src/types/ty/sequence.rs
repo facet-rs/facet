@@ -1,25 +1,14 @@
-use super::{Field, Shape};
+use super::Shape;
 
-/// Describes built-in sequence type (tuple, array, slice)
+/// Describes built-in sequence type (array, slice)
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub enum SequenceType<'shape> {
-    /// Tuple (`(T0, T1, ...)`)
-    Tuple(TupleType<'shape>),
-
     /// Array (`[T; N]`)
     Array(ArrayType<'shape>),
 
     /// Slice (`[T]`)
     Slice(SliceType<'shape>),
-}
-
-/// Describes a tuple (`(T0, T1, ...)`)
-#[derive(Clone, Copy, Debug)]
-#[repr(C)]
-pub struct TupleType<'shape> {
-    /// Fields of the slice, with offsets
-    pub fields: &'shape [Field<'shape>],
 }
 
 /// Describes a fixed-size array (`[T; N]`)

@@ -1,13 +1,14 @@
 use core::{cmp::Ordering, marker::PhantomData};
 use facet_core::{
-    Def, Facet, PointerType, PtrConst, PtrMut, SequenceType, Shape, Type, TypeNameOpts, UserType,
+    Def, Facet, PointerType, PtrConst, PtrMut, Shape, StructKind, Type, TypeNameOpts, UserType,
     ValueVTable,
 };
 
 use crate::{ReflectError, ScalarType};
 
 use super::{
-    ListLikeDef, PeekEnum, PeekList, PeekListLike, PeekMap, PeekSmartPointer, PeekStruct, PeekTuple,
+    ListLikeDef, PeekEnum, PeekList, PeekListLike, PeekMap, PeekSmartPointer, PeekStruct,
+    PeekTuple, tuple::TupleType,
 };
 
 /// A unique identifier for a peek value
@@ -321,8 +322,20 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
 
     /// Tries to identify this value as a tuple
     pub fn into_tuple(self) -> Result<PeekTuple<'mem, 'facet, 'shape>, ReflectError<'shape>> {
-        if let Type::Sequence(SequenceType::Tuple(ty)) = self.shape.ty {
-            Ok(PeekTuple { value: self, ty })
+        if let Type::User(UserType::Struct(struct_type)) = self.shape.ty {
+            if struct_type.kind == StructKind::Tuple {
+                Ok(PeekTuple {
+                    value: self,
+                    ty: TupleType {
+                        fields: struct_type.fields,
+                    },
+                })
+            } else {
+                Err(ReflectError::WasNotA {
+                    expected: "tuple",
+                    actual: self.shape,
+                })
+            }
         } else {
             Err(ReflectError::WasNotA {
                 expected: "tuple",
