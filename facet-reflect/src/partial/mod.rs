@@ -190,6 +190,8 @@ enum FrameOwnership {
     Owned,
     /// This frame is a field pointer into a parent allocation
     Field,
+    /// This frame's allocation is managed elsewhere (e.g., in MapInsertState)
+    ManagedElsewhere,
 }
 
 struct Frame<'shape> {
@@ -1290,7 +1292,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         self.frames.push(Frame::new(
             PtrUninit::new(key_ptr_raw),
             key_shape,
-            FrameOwnership::Owned,
+            FrameOwnership::ManagedElsewhere, // Ownership tracked in MapInsertState
         ));
 
         Ok(self)
@@ -1361,7 +1363,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         self.frames.push(Frame::new(
             PtrUninit::new(value_ptr_raw),
             value_shape,
-            FrameOwnership::Owned,
+            FrameOwnership::ManagedElsewhere, // Ownership tracked in MapInsertState
         ));
 
         Ok(self)
@@ -1596,7 +1598,11 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                                 );
                             }
 
-                            // Deallocate the key and value memory since insert moved them
+                            // Note: We don't deallocate the key and value memory here.
+                            // The insert function has semantically moved the values into the map,
+                            // but we still need to deallocate the temporary buffers.
+                            // However, since we don't have frames for them anymore (they were popped),
+                            // we need to handle deallocation here.
                             if let Ok(key_shape) = map_def.k().layout.sized_layout() {
                                 if key_shape.size() > 0 {
                                     unsafe {
@@ -2220,10 +2226,6 @@ impl<'facet, 'shape> Drop for Partial<'facet, 'shape> {
 
                                 // Drop and deallocate the value if it exists
                                 if let Some(value_ptr) = value_ptr {
-                                    // Note: value_ptr being Some doesn't mean the value is initialized,
-                                    // it just means we allocated space. We should only drop if we know
-                                    // it was initialized, but since we're in Drop, we can't know that.
-                                    // For safety, we'll just deallocate without dropping.
                                     if let Ok(value_shape) = map_def.v().layout.sized_layout() {
                                         if value_shape.size() > 0 {
                                             unsafe {

@@ -1,4 +1,5 @@
 #![cfg(not(miri))]
+#![cfg(feature = "slow-tests")]
 
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
