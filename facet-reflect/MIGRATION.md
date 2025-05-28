@@ -71,7 +71,7 @@ wip = wip.pop_list_element()?;
 #### After
 ```rust
 let mut partial = Partial::alloc::<Vec<i32>>()?;
-partial = partial.begin_pushback()?;
+partial = partial.begin_list()?;
 partial = partial.begin_list_item()?;
 partial = partial.set(42)?;
 partial = partial.end()?;
@@ -118,13 +118,35 @@ partial = partial.set(value)?;
 partial = partial.end()?;
 ```
 
+### Option Construction
+
+#### Before
+```rust
+// The old API supported implicit conversion from inner value to Some
+let mut wip = Wip::new::<Option<String>>();
+wip = wip.put("hello")?;  // Implicitly creates Some("hello")
+```
+
+#### After
+```rust
+// The new API requires explicit Option values
+let mut partial = Partial::alloc::<Option<String>>()?;
+partial = partial.set(Some("hello".to_string()))?;  // Explicit Some
+
+// Or for None:
+partial = partial.set(None)?;
+```
+
+**Note**: The implicit conversion from inner value to `Some` has been removed for clarity and consistency. You must now explicitly provide `Some(value)` or `None`.
+
 ## Key Differences
 
 1. **Single end method**: Use `end()` for all types instead of type-specific pop methods
 2. **Descriptive naming**: Method names clearly indicate their purpose (e.g., `begin_field` vs generic `push`)
 3. **Separate map operations**: Map construction uses distinct `begin_key()` and `begin_value()` methods
-4. **List initialization**: Lists require `begin_pushback()` before adding items with `begin_list_item()`
+4. **List initialization**: Lists require `begin_list()` before adding items with `begin_list_item()`
 5. **Convenience methods**: Use `set_field(name, value)` as a shorthand for `begin_field(name)?.set(value)?.end()?`
+6. **No implicit Option conversion**: Must explicitly use `Some(value)` or `None` when setting Option types
 
 ## Partial vs TypedPartial
 

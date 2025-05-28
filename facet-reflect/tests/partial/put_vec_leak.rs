@@ -1,27 +1,26 @@
-use facet_reflect::Wip;
+use facet_reflect::Partial;
 use facet_testhelpers::test;
 
 #[test]
 fn put_vec_leaktest1() {
-    let w = Wip::alloc::<Vec<String>>()?;
-    let w = w.put(vec!["a".to_string()])?;
+    let mut w = Partial::alloc::<Vec<String>>()?;
+    w.set(vec!["a".to_string()])?;
     drop(w);
 }
 
 #[test]
 fn put_vec_leaktest2() {
-    let w = Wip::alloc::<Vec<String>>()?;
-    let w = w.put(vec!["a".to_string()])?;
+    let mut w = Partial::alloc::<Vec<String>>()?;
+    w.set(vec!["a".to_string()])?;
     let w = w.build()?;
-    // let it drop: the entire value should be deinitialized, and the memory for the Wip should be freed
+    // let it drop: the entire value should be deinitialized, and the memory for the Partial should be freed
     drop(w);
 }
 
 #[test]
 fn put_vec_leaktest3() {
-    let w = Wip::alloc::<Vec<String>>()?;
-    let w = w.put(vec!["a".to_string()])?;
-    let w = w.build()?;
-    let v = w.materialize::<Vec<String>>()?;
-    assert_eq!(v, vec!["a".to_string()]);
+    let mut w = Partial::alloc::<Vec<String>>()?;
+    w.set(vec!["a".to_string()])?;
+    let v = w.build()?;
+    assert_eq!(*v, vec!["a".to_string()]);
 }

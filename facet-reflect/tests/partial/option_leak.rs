@@ -1,46 +1,41 @@
-use facet_reflect::Wip;
+use facet_reflect::Partial;
 use facet_testhelpers::test;
 
 #[test]
 fn wip_option_testleak1() {
-    let _ = Wip::alloc::<Option<String>>()?
-        .push_some()?
-        .put(String::from("Hello, world!"))?
-        .pop()?
-        .build()?
-        .materialize::<Option<String>>();
+    let mut wip = Partial::alloc::<Option<String>>()?;
+    wip.set(Some(String::from("Hello, world!")))?;
+    let _ = wip.build()?;
 }
 
 #[test]
 fn wip_option_testleak2() {
-    let wip = Wip::alloc::<Option<String>>()?;
-    let wip = wip.push_some()?;
-    let wip = wip.put(String::from("Hello, world!"))?;
-    let wip = wip.pop()?;
+    let mut wip = Partial::alloc::<Option<String>>()?;
+    wip.set(Some(String::from("Hello, world!")))?;
     let _wip = wip.build()?;
 }
 
 #[test]
 fn wip_option_testleak3() {
-    Wip::alloc::<Option<String>>()?
-        .push_some()?
-        .put(String::from("Hello, world!"))?
-        .pop()?;
+    let mut wip = Partial::alloc::<Option<String>>()?;
+    wip.set(Some(String::from("Hello, world!")))?;
+    // Don't call build() to test partial initialization
 }
 
 #[test]
 fn wip_option_testleak4() {
-    let _ = Wip::alloc::<Option<String>>()?
-        .push_some()?
-        .put(String::from("Hello, world!"));
+    let mut wip = Partial::alloc::<Option<String>>()?;
+    wip.set(Some(String::from("Hello, world!")))?;
+    // Don't call build() to test partial initialization
 }
 
 #[test]
 fn wip_option_testleak5() {
-    Wip::alloc::<Option<String>>()?.push_some()?;
+    let _ = Partial::alloc::<Option<String>>()?;
+    // Just allocate without setting a value
 }
 
 #[test]
 fn wip_option_testleak6() {
-    Wip::alloc::<Option<String>>()?;
+    let _ = Partial::alloc::<Option<String>>()?;
 }
