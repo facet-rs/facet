@@ -538,9 +538,12 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                 }
                 facet_core::UserType::Union(_) => Err(ReflectError::OperationFailed {
                     shape: frame.shape,
-                    operation: "unions are not supported yet",
+                    operation: "unions are not supported",
                 }),
-                facet_core::UserType::Opaque => todo!(),
+                facet_core::UserType::Opaque => Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "opaque types cannot be reflected upon",
+                }),
             },
             facet_core::Type::Pointer(_) => Err(ReflectError::OperationFailed {
                 shape: frame.shape,
@@ -603,9 +606,12 @@ impl<'facet, 'shape> Wip<'facet, 'shape> {
                 }
                 facet_core::UserType::Union(_) => Err(ReflectError::OperationFailed {
                     shape: frame.shape,
-                    operation: "unions are not supported yet",
+                    operation: "unions are not supported",
                 }),
-                facet_core::UserType::Opaque => todo!(),
+                facet_core::UserType::Opaque => Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "opaque types cannot be reflected upon",
+                }),
             },
             _ => Err(ReflectError::OperationFailed {
                 shape: frame.shape,

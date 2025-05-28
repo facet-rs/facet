@@ -1292,6 +1292,7 @@ fn field_named_on_struct() {
 fn field_named_on_enum() {
     #[derive(Facet, Debug, PartialEq)]
     #[repr(u8)]
+    #[allow(dead_code)]
     enum Config {
         Server { host: String, port: u16, tls: bool } = 0,
         Client { url: String, timeout: u32 } = 1,
@@ -1384,4 +1385,85 @@ fn map_partial_initialization_drop() {
         1,
         "Should drop the one inserted value"
     );
+}
+
+#[test]
+fn tuple_basic() {
+    // Test building a simple tuple
+    let mut wip = Wip::alloc::<(i32, String)>()?;
+
+    // Tuples are represented as structs, so we use push_nth_field
+    wip.push_nth_field(0)?;
+    wip.set(42i32)?;
+    wip.pop()?;
+
+    wip.push_nth_field(1)?;
+    wip.set("hello".to_string())?;
+    wip.pop()?;
+
+    let boxed = wip.build()?;
+    assert_eq!(*boxed, (42, "hello".to_string()));
+}
+
+#[test]
+fn tuple_mixed_types() {
+    // Test building a tuple with more diverse types
+    let mut wip = Wip::alloc::<(u8, bool, f64, String)>()?;
+
+    // Set fields in non-sequential order to test flexibility
+    wip.push_nth_field(2)?;
+    wip.set(3.14f64)?;
+    wip.pop()?;
+
+    wip.push_nth_field(0)?;
+    wip.set(255u8)?;
+    wip.pop()?;
+
+    wip.push_nth_field(3)?;
+    wip.set("world".to_string())?;
+    wip.pop()?;
+
+    wip.push_nth_field(1)?;
+    wip.set(true)?;
+    wip.pop()?;
+
+    let boxed = wip.build()?;
+    assert_eq!(*boxed, (255u8, true, 3.14f64, "world".to_string()));
+}
+
+#[test]
+fn tuple_nested() {
+    // Test nested tuples
+    let mut wip = Wip::alloc::<((i32, i32), String)>()?;
+
+    // Build the nested tuple first
+    wip.push_nth_field(0)?;
+    wip.push_nth_field(0)?;
+    wip.set(1i32)?;
+    wip.pop()?;
+
+    wip.push_nth_field(1)?;
+    wip.set(2i32)?;
+    wip.pop()?;
+    wip.pop()?; // Pop out of the nested tuple
+
+    // Now set the string
+    wip.push_nth_field(1)?;
+    wip.set("nested".to_string())?;
+    wip.pop()?;
+
+    let boxed = wip.build()?;
+    assert_eq!(*boxed, ((1, 2), "nested".to_string()));
+}
+
+#[test]
+fn tuple_empty() {
+    // Test empty tuple (unit type)
+    let mut wip = Wip::alloc::<()>()?;
+
+    // Empty tuple has no fields to set, but we still need to set it
+    wip.set(())?;
+
+    let boxed = wip.build()?;
+    assert_eq!(*boxed, ());
 }

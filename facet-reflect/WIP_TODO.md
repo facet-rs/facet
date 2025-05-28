@@ -33,15 +33,15 @@ This document tracks the remaining work for the facet-reflect Wip (Work-in-progr
   - [ ] Set-specific methods
 
 ### Type Support
-- [ ] **Union Support** (currently has `todo!()`)
-- [ ] **Tuple Support**
-  - [ ] Direct tuple initialization
-  - [ ] Tuple struct patterns
+- [ ] ~~**Union Support**~~ **NOT PLANNED** - Unions won't be supported
+- [x] **Tuple Support** (Tuples are now properly represented as StructKind::Tuple)
+  - [x] Direct tuple initialization (works via push_nth_field)
+  - [x] Tuple struct patterns (already supported)
 - [ ] **Additional Smart Pointers**
   - [ ] Rc<T> support
   - [ ] Cow<T> support
   - [ ] Other smart pointer types
-- [ ] **Opaque Type Handling** (currently has `todo!()`)
+- [x] **Opaque Type Handling** - Returns error explaining opaque types cannot be reflected
 
 ## 🔧 API Improvements
 

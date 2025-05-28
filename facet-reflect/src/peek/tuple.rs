@@ -5,7 +5,7 @@ use super::{FieldIter, Peek};
 
 /// Local representation of a tuple type for peek operations
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct TupleType<'shape> {
+pub struct TupleType<'shape> {
     /// Fields of the tuple, with offsets
     pub fields: &'shape [Field<'shape>],
 }
