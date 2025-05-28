@@ -21,7 +21,7 @@ fn struct_uninit() {
     let mut partial = Partial::alloc::<FooBar>()?;
     assert!(matches!(
         partial.build(),
-        Err(ReflectError::UninitializedField { .. })
+        Err(ReflectError::UninitializedValue { .. })
     ));
 }
 
@@ -38,7 +38,7 @@ fn enum_uninit() {
     let mut partial = Partial::alloc::<FooBar>()?;
     assert!(matches!(
         partial.build(),
-        Err(ReflectError::NoVariantSelected { .. })
+        Err(ReflectError::UninitializedValue { .. })
     ));
 
     let mut partial = Partial::alloc::<FooBar>()?;
@@ -68,8 +68,8 @@ fn array_uninit() {
     let mut partial = Partial::alloc::<[f32; 8]>()?;
     let res = partial.build();
     assert!(
-        matches!(res, Err(ReflectError::ArrayNotFullyInitialized { .. })),
-        "Expected ArrayNotFullyInitialized error, got {res:?}"
+        matches!(res, Err(ReflectError::UninitializedValue { .. })),
+        "Expected UninitializedValue error, got {res:?}"
     );
 }
 

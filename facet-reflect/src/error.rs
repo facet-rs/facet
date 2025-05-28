@@ -2,7 +2,7 @@ use facet_core::{Characteristic, EnumType, FieldError, Shape, TryFromError};
 use owo_colors::OwoColorize;
 
 /// Errors that can occur when reflecting on types.
-#[derive(Debug, PartialEq, Clone)]
+#[derive(PartialEq, Clone)]
 #[non_exhaustive]
 pub enum ReflectError<'shape> {
     /// Tried to set an enum to a variant that does not exist
@@ -45,12 +45,6 @@ pub enum ReflectError<'shape> {
         field_name: &'shape str,
         /// The name of the variant containing the field
         variant_name: &'shape str,
-    },
-
-    /// An enum had no variant selected during build
-    NoVariantSelected {
-        /// The enum shape
-        shape: &'shape Shape<'shape>,
     },
 
     /// A scalar value was not initialized during build
@@ -186,9 +180,6 @@ impl core::fmt::Display for ReflectError<'_> {
                     variant_name.red()
                 )
             }
-            ReflectError::NoVariantSelected { shape } => {
-                write!(f, "Enum '{}' had no variant selected", shape.blue())
-            }
             ReflectError::UninitializedValue { shape } => {
                 write!(f, "Value '{}' was not initialized", shape.blue())
             }
@@ -265,6 +256,13 @@ impl core::fmt::Display for ReflectError<'_> {
                 )
             }
         }
+    }
+}
+
+impl core::fmt::Debug for ReflectError<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // Use Display implementation for more readable output
+        write!(f, "ReflectError({})", self)
     }
 }
 

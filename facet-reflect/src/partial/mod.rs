@@ -333,9 +333,10 @@ impl<'shape> Frame<'shape> {
                     let first_missing_idx = (0..num_fields).find(|&idx| !data.get(idx));
                     if let Some(missing_idx) = first_missing_idx {
                         let field_name = variant.data.fields[missing_idx].name;
-                        Err(ReflectError::UninitializedField {
+                        Err(ReflectError::UninitializedEnumField {
                             shape: self.shape,
                             field_name,
+                            variant_name: variant.name,
                         })
                     } else {
                         Err(ReflectError::UninitializedValue { shape: self.shape })
