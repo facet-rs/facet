@@ -4,58 +4,37 @@
 
 This document tracks the migration of tests from the old `Wip` API to the new `Partial` API.
 
-## Migration Changes Applied
+## Tests Still Needing Migration
 
-### 1. Type Renaming
-- `Wip` → `Partial`
-- `Wip::alloc()` → `Partial::alloc()`
+### Files still using old Wip API (3 files remaining):
+- **invariant.rs**: Tests for variance behavior
+- **map.rs**: Map construction tests
+- **misc.rs**: Miscellaneous tests including enums, lists, and edge cases
 
-### 2. Method Renaming
-- `put()` → `set()`
-- `pop()` → `end()`
-- `field_named()` → `begin_field()`
-- `push()` → `begin_list_item()`
-- `begin_pushback()` → `begin_list()`
+### Files already migrated:
+- **arc.rs**: All 4 tests passing ✅
+- **array_building.rs**: Array construction tests ✅
+- **list_leak.rs**: List memory leak tests ✅
+- **map_leak.rs**: Map memory leak tests (all 8 tests now passing) ✅
+- **no_uninit.rs**: Tests for uninitialized value handling ✅
+- **option_leak.rs**: Option memory leak tests ✅
+- **put_vec_leak.rs**: Vec memory leak tests ✅
+- **struct_leak.rs**: Struct memory leak tests ✅
+- **variance.rs**: Variance tests ✅
 
-### 3. Option Handling
-- Old API: `push_some()` and implicit conversion from inner value
-- New API: Explicit `set(Some(value))` or `set(None)`
-- No special Option methods - just use the full Option value
+## Key API Changes
 
-### 4. Map Construction
-- Must call `begin_map()` before `begin_insert()`
-- Sequence: `begin_map()` → `begin_insert()` → `begin_key()` → `set(key)` → `end()` → `begin_value()` → `set(value)` → `end()`
-- Note: `begin_map()` and `begin_insert()` don't push frames, they just change state
-
-### 5. List Construction  
-- Must call `begin_list()` before adding items
-- Sequence: `begin_list()` → `begin_list_item()` → `set(value)` → `end()` → ...
-
-## Test Migration Results
-
-### ✅ Successfully Migrated (43/47 tests)
-- **arc**: All 4 tests passing
-- **list_leak**: All 12 tests passing
-- **option_leak**: All 6 tests passing  
-- **put_vec_leak**: All 3 tests passing
-- **struct_leak**: All 14 tests passing
-- **map_leak**: 4/8 tests passing (tests 1, 2, 7, 8)
-
-### ❌ Failed Tests (4/47 tests)
-- **map_leak tests 3-6**: Use-after-free errors in Partial drop implementation when map insertions are partially completed
-
-## Known Issues
-
-1. **Memory Safety Bug**: The Partial drop implementation has a use-after-free bug when deallocating partially initialized map insertions. This affects tests where:
-   - Key is set but not ended
-   - Key is set and ended but value is not set
-   - Value is set but not ended
-
-2. **API Inconsistency**: Some operations push frames (e.g., `begin_key()`, `begin_value()`) while others don't (e.g., `begin_map()`, `begin_insert()`). This makes it difficult to predict how many `end()` calls are needed.
-
-## Recommendations
-
-1. Fix the use-after-free bug in Partial's drop implementation for partially initialized maps
-2. Consider adding explicit Option support methods for clarity (e.g., `set_some()`, `set_none()`)
-3. Document frame pushing behavior more clearly in the API
-4. Add more comprehensive tests for partial initialization scenarios
+1. **Type renaming**: `Wip` → `Partial`
+2. **Method renaming**:
+   - `put()` → `set()`
+   - `pop()` → `end()`
+   - `field_named()` → `begin_field()`
+   - `push()` → `begin_list_item()`
+   - `begin_pushback()` → `begin_list()`
+   - `push_pointee()` → `begin_smart_ptr()`
+   - `variant()` → `select_variant()`
+   - `variant_named()` → `select_variant_named()`
+   - `field()` → `begin_nth_field()` or `begin_nth_element()`
+3. **API returns `&mut self`**: No need to reassign variables
+4. **Build return type**: `TypedPartial::build()` returns `Box<T>`
+5. **No implicit Option conversion**: Must use explicit `Some(value)` or `None`

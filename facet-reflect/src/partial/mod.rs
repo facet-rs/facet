@@ -1656,6 +1656,22 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
             return Err(e);
         }
 
+        // Check invariants if present
+        if let Some(invariants_fn) = (frame.shape.vtable.invariants)() {
+            // Safety: The value is fully initialized at this point (we just checked with require_full_initialization)
+            let value_ptr = unsafe { frame.data.assume_init().as_const() };
+            let invariants_ok = unsafe { invariants_fn(value_ptr) };
+
+            if !invariants_ok {
+                // Put the frame back so Drop can handle cleanup properly
+                self.frames.push(frame);
+                self.state = PartialState::BuildFailed;
+                return Err(ReflectError::InvariantViolation {
+                    invariant: "Type invariants check failed",
+                });
+            }
+        }
+
         // Mark as built to prevent reuse
         self.state = PartialState::Built;
 
