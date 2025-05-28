@@ -19,29 +19,25 @@ macro_rules! assert_snapshot {
 
 #[test]
 fn f64_uninit() {
-    let wip = Wip::alloc::<f64>()?;
-    assert_snapshot!(wip.build().unwrap_err());
+    assert_snapshot!(Wip::alloc::<f64>()?.build().unwrap_err());
 }
 
 #[test]
 fn f64_init() {
-    let mut wip = Wip::alloc::<f64>()?;
-    wip.set::<f64>(6.241)?;
-    let hv = wip.build()?;
+    let hv = Wip::alloc::<f64>()?.set::<f64>(6.241)?.build()?;
     assert_eq!(*hv, 6.241);
 }
 
 #[test]
 fn option_uninit() {
-    let wip = Wip::alloc::<Option<f64>>()?;
-    assert_snapshot!(wip.build().unwrap_err());
+    assert_snapshot!(Wip::alloc::<Option<f64>>()?.build().unwrap_err());
 }
 
 #[test]
 fn option_init() {
-    let mut wip = Wip::alloc::<Option<f64>>()?;
-    wip.set::<Option<f64>>(Some(6.241))?;
-    let hv = wip.build()?;
+    let hv = Wip::alloc::<Option<f64>>()?
+        .set::<Option<f64>>(Some(6.241))?
+        .build()?;
     assert_eq!(*hv, Some(6.241));
 }
 
@@ -53,8 +49,7 @@ fn struct_fully_uninit() {
         bar: bool,
     }
 
-    let wip = Wip::alloc::<FooBar>()?;
-    assert_snapshot!(wip.build().unwrap_err());
+    assert_snapshot!(Wip::alloc::<FooBar>()?.build().unwrap_err());
 }
 
 #[test]
@@ -66,10 +61,13 @@ fn struct_partially_uninit() {
     }
 
     let mut wip = Wip::alloc::<FooBar>()?;
-    wip.push_field("foo")?;
-    wip.set::<u64>(42)?;
-    wip.pop()?;
-    assert_snapshot!(wip.build().unwrap_err());
+    assert_snapshot!(
+        wip.push_field("foo")?
+            .set::<u64>(42)?
+            .pop()?
+            .build()
+            .unwrap_err()
+    );
 }
 
 #[test]
@@ -80,14 +78,14 @@ fn struct_fully_init() {
         bar: bool,
     }
 
-    let mut wip = Wip::alloc::<FooBar>()?;
-    wip.push_field("foo")?;
-    wip.set::<u64>(42)?;
-    wip.pop()?;
-    wip.push_field("bar")?;
-    wip.set::<bool>(true)?;
-    wip.pop()?;
-    let hv = wip.build()?;
+    let hv = Wip::alloc::<FooBar>()?
+        .push_field("foo")?
+        .set::<u64>(42)?
+        .pop()?
+        .push_field("bar")?
+        .set::<bool>(true)?
+        .pop()?
+        .build()?;
     assert_eq!(hv.foo, 42u64);
     assert_eq!(hv.bar, true);
 }
@@ -121,16 +119,16 @@ fn struct_field_set_twice() {
         let mut wip = Wip::alloc::<Container>()?;
 
         // Set tracker field first time
-        wip.push_field("tracker")?;
-        wip.set(DropTracker { id: 1 })?;
-        wip.pop()?;
+        wip.push_field("tracker")?
+            .set(DropTracker { id: 1 })?
+            .pop()?;
 
         assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 0, "No drops yet");
 
         // Set tracker field second time (should drop the previous value)
-        wip.push_field("tracker")?;
-        wip.set(DropTracker { id: 2 })?;
-        wip.pop()?;
+        wip.push_field("tracker")?
+            .set(DropTracker { id: 2 })?
+            .pop()?;
 
         assert_eq!(
             DROP_COUNT.load(Ordering::SeqCst),
@@ -139,9 +137,7 @@ fn struct_field_set_twice() {
         );
 
         // Set value field
-        wip.push_field("value")?;
-        wip.set(100u64)?;
-        wip.pop()?;
+        wip.push_field("value")?.set(100u64)?.pop()?;
 
         wip.build()
     })();
@@ -181,28 +177,24 @@ fn array_element_set_twice() {
     DROP_COUNT.store(0, Ordering::SeqCst);
 
     let result = (|| -> Result<Box<[DropTracker; 3]>, ReflectError> {
-        let mut wip = Wip::alloc::<[DropTracker; 3]>()?;
-
-        // Set element 0
-        wip.push_nth_element(0)?;
-        wip.set(DropTracker { id: 1 })?;
-        wip.pop()?;
-
-        // Set element 0 again - this should now work and drop the old value
-        wip.push_nth_element(0)?;
-        wip.set(DropTracker { id: 2 })?;
-        wip.pop()?;
-
-        // Set other elements
-        wip.push_nth_element(1)?;
-        wip.set(DropTracker { id: 3 })?;
-        wip.pop()?;
-
-        wip.push_nth_element(2)?;
-        wip.set(DropTracker { id: 4 })?;
-        wip.pop()?;
-
-        wip.build()
+        Wip::alloc::<[DropTracker; 3]>()?
+            // Set element 0
+            .push_nth_element(0)?
+            .set(DropTracker { id: 1 })?
+            .pop()?
+            // Set element 0 again - drops old value
+            .push_nth_element(0)?
+            .set(DropTracker { id: 2 })?
+            .pop()?
+            // Set element 1
+            .push_nth_element(1)?
+            .set(DropTracker { id: 3 })?
+            .pop()?
+            // Set element 2
+            .push_nth_element(2)?
+            .set(DropTracker { id: 4 })?
+            .pop()?
+            .build()
     })();
 
     // Now this should succeed with array element re-initialization support
@@ -230,9 +222,7 @@ fn set_default() {
         y: String,
     }
 
-    let mut wip = Wip::alloc::<Sample>()?;
-    wip.set_default()?;
-    let sample = wip.build()?;
+    let sample = Wip::alloc::<Sample>()?.set_default()?.build()?;
     assert_eq!(*sample, Sample::default());
     assert_eq!(sample.x, 0);
     assert_eq!(sample.y, "");
@@ -245,9 +235,7 @@ fn set_default_no_default_impl() {
         value: u32,
     }
 
-    let mut wip = Wip::alloc::<NoDefault>()?;
-    let result = wip.set_default();
-    assert!(result.is_err());
+    let result = Wip::alloc::<NoDefault>()?.set_default().map(|_| ());
     assert!(
         result
             .unwrap_err()
@@ -264,21 +252,20 @@ fn set_from_function() {
         y: f64,
     }
 
-    let mut wip = Wip::alloc::<Point>()?;
-    wip.set_from_function(|ptr| {
-        // We need to build the struct using another Wip
-        let mut inner_wip = Wip::from_ptr(ptr, <Point as Facet>::SHAPE);
-        inner_wip.push_field("x")?;
-        inner_wip.set(3.14)?;
-        inner_wip.pop()?;
-        inner_wip.push_field("y")?;
-        inner_wip.set(2.71)?;
-        inner_wip.pop()?;
-        Ok(())
-    })?;
-
-    let point = wip.build()?;
-    assert_eq!(*point, Point { x: 3.14, y: 2.71 });
+    let point = Wip::alloc::<Point>()?
+        .set_from_function(|ptr| {
+            // We need to build the struct using another Wip
+            Wip::from_ptr(ptr, <Point as Facet>::SHAPE)
+                .push_field("x")?
+                .set(56.124)?
+                .pop()?
+                .push_field("y")?
+                .set(2.71)?
+                .pop()?;
+            Ok(())
+        })?
+        .build()?;
+    assert_eq!(*point, Point { x: 56.124, y: 2.71 });
 }
 
 #[test]
@@ -531,9 +518,9 @@ fn drop_after_successful_build() {
 
     DROP_COUNT.store(0, Ordering::SeqCst);
 
-    let mut wip = Wip::alloc::<NoisyDrop>()?;
-    wip.set(NoisyDrop { value: 42 })?;
-    let hv = wip.build()?;
+    let hv = Wip::alloc::<NoisyDrop>()?
+        .set(NoisyDrop { value: 42 })?
+        .build()?;
 
     assert_eq!(
         DROP_COUNT.load(Ordering::SeqCst),
@@ -552,61 +539,53 @@ fn drop_after_successful_build() {
 
 #[test]
 fn array_init() {
-    let mut wip = Wip::alloc::<[u32; 3]>()?;
-
-    // Initialize in order
-    wip.push_nth_element(0)?;
-    wip.set(42u32)?;
-    wip.pop()?;
-
-    wip.push_nth_element(1)?;
-    wip.set(43u32)?;
-    wip.pop()?;
-
-    wip.push_nth_element(2)?;
-    wip.set(44u32)?;
-    wip.pop()?;
-
-    let hv = wip.build()?;
+    let hv = Wip::alloc::<[u32; 3]>()?
+        // Initialize in order
+        .push_nth_element(0)?
+        .set(42u32)?
+        .pop()?
+        .push_nth_element(1)?
+        .set(43u32)?
+        .pop()?
+        .push_nth_element(2)?
+        .set(44u32)?
+        .pop()?
+        .build()?;
     assert_eq!(*hv, [42, 43, 44]);
 }
 
 #[test]
 fn array_init_out_of_order() {
-    let mut wip = Wip::alloc::<[u32; 3]>()?;
-
-    // Initialize out of order
-    wip.push_nth_element(2)?;
-    wip.set(44u32)?;
-    wip.pop()?;
-
-    wip.push_nth_element(0)?;
-    wip.set(42u32)?;
-    wip.pop()?;
-
-    wip.push_nth_element(1)?;
-    wip.set(43u32)?;
-    wip.pop()?;
-
-    let hv = wip.build()?;
+    let hv = Wip::alloc::<[u32; 3]>()?
+        // Initialize out of order
+        .push_nth_element(2)?
+        .set(44u32)?
+        .pop()?
+        .push_nth_element(0)?
+        .set(42u32)?
+        .pop()?
+        .push_nth_element(1)?
+        .set(43u32)?
+        .pop()?
+        .build()?;
     assert_eq!(*hv, [42, 43, 44]);
 }
 
 #[test]
 fn array_partial_init() {
-    let mut wip = Wip::alloc::<[u32; 3]>()?;
-
-    // Initialize only two elements
-    wip.push_nth_element(0)?;
-    wip.set(42u32)?;
-    wip.pop()?;
-
-    wip.push_nth_element(2)?;
-    wip.set(44u32)?;
-    wip.pop()?;
-
     // Should fail to build
-    assert_snapshot!(wip.build().unwrap_err());
+    assert_snapshot!(
+        Wip::alloc::<[u32; 3]>()?
+            // Initialize only two elements
+            .push_nth_element(0)?
+            .set(42u32)?
+            .pop()?
+            .push_nth_element(2)?
+            .set(44u32)?
+            .pop()?
+            .build()
+            .unwrap_err()
+    );
 }
 
 #[test]
@@ -653,22 +632,19 @@ fn drop_array_partially_initialized() {
 
 #[test]
 fn box_init() {
-    let mut wip = Wip::alloc::<Box<u32>>()?;
-
-    // Push into the Box to build its inner value
-    wip.push_box()?;
-    wip.set(42u32)?;
-    wip.pop()?;
-
-    let hv = wip.build()?;
+    let hv = Wip::alloc::<Box<u32>>()?
+        // Push into the Box to build its inner value
+        .push_box()?
+        .set(42u32)?
+        .pop()?
+        .build()?;
     assert_eq!(**hv, 42);
 }
 
 #[test]
 fn box_partial_init() {
-    let wip = Wip::alloc::<Box<u32>>()?;
     // Don't initialize the Box at all
-    assert_snapshot!(wip.build().unwrap_err());
+    assert_snapshot!(Wip::alloc::<Box<u32>>()?.build().unwrap_err());
 }
 
 #[test]
@@ -679,24 +655,19 @@ fn box_struct() {
         y: f64,
     }
 
-    let mut wip = Wip::alloc::<Box<Point>>()?;
-
-    // Push into the Box
-    wip.push_box()?;
-
-    // Build the Point inside the Box
-    wip.push_field("x")?;
-    wip.set(1.0)?;
-    wip.pop()?;
-
-    wip.push_field("y")?;
-    wip.set(2.0)?;
-    wip.pop()?;
-
-    // Pop from Box
-    wip.pop()?;
-
-    let hv = wip.build()?;
+    let hv = Wip::alloc::<Box<Point>>()?
+        // Push into the Box
+        .push_box()?
+        // Build the Point inside the Box
+        .push_field("x")?
+        .set(1.0)?
+        .pop()?
+        .push_field("y")?
+        .set(2.0)?
+        .pop()?
+        // Pop from Box
+        .pop()?
+        .build()?;
     assert_eq!(**hv, Point { x: 1.0, y: 2.0 });
 }
 
@@ -743,14 +714,12 @@ fn drop_box_partially_initialized() {
 fn arc_init() {
     use alloc::sync::Arc;
 
-    let mut wip = Wip::alloc::<Arc<u32>>()?;
-
-    // Push into the Arc to build its inner value
-    wip.push_smart_ptr()?;
-    wip.set(42u32)?;
-    wip.pop()?;
-
-    let hv = wip.build()?;
+    let hv = Wip::alloc::<Arc<u32>>()?
+        // Push into the Arc to build its inner value
+        .push_smart_ptr()?
+        .set(42u32)?
+        .pop()?
+        .build()?;
     assert_eq!(**hv, 42);
 }
 
@@ -758,9 +727,8 @@ fn arc_init() {
 fn arc_partial_init() {
     use alloc::sync::Arc;
 
-    let wip = Wip::alloc::<Arc<u32>>()?;
     // Don't initialize the Arc at all
-    assert_snapshot!(wip.build().unwrap_err());
+    assert_snapshot!(Wip::alloc::<Arc<u32>>()?.build().unwrap_err());
 }
 
 #[test]
@@ -773,24 +741,19 @@ fn arc_struct() {
         y: f64,
     }
 
-    let mut wip = Wip::alloc::<Arc<Point>>()?;
-
-    // Push into the Arc
-    wip.push_smart_ptr()?;
-
-    // Build the Point inside the Arc
-    wip.push_field("x")?;
-    wip.set(3.0)?;
-    wip.pop()?;
-
-    wip.push_field("y")?;
-    wip.set(4.0)?;
-    wip.pop()?;
-
-    // Pop from Arc
-    wip.pop()?;
-
-    let hv = wip.build()?;
+    let hv = Wip::alloc::<Arc<Point>>()?
+        // Push into the Arc
+        .push_smart_ptr()?
+        // Build the Point inside the Arc
+        .push_field("x")?
+        .set(3.0)?
+        .pop()?
+        .push_field("y")?
+        .set(4.0)?
+        .pop()?
+        // Pop from Arc
+        .pop()?
+        .build()?;
     assert_eq!(**hv, Point { x: 3.0, y: 4.0 });
 }
 
@@ -836,16 +799,16 @@ fn drop_arc_partially_initialized() {
 fn enum_unit_variant() {
     #[derive(Facet, Debug, PartialEq)]
     #[repr(u8)]
+    #[allow(dead_code)]
     enum Status {
         Active = 0,
         Inactive = 1,
         Pending = 2,
     }
 
-    let mut wip = Wip::alloc::<Status>()?;
-    wip.push_variant(1)?; // Inactive
-
-    let hv = wip.build()?;
+    let hv = Wip::alloc::<Status>()?
+        .push_variant(1)? // Inactive
+        .build()?;
     assert_eq!(*hv, Status::Inactive);
 }
 
@@ -853,20 +816,19 @@ fn enum_unit_variant() {
 fn enum_struct_variant() {
     #[derive(Facet, Debug, PartialEq)]
     #[repr(u8)]
+    #[allow(dead_code)]
     enum Message {
         Text { content: String } = 0,
         Number { value: i32 } = 1,
         Empty = 2,
     }
 
-    let mut wip = Wip::alloc::<Message>()?;
-    wip.push_variant(0)?; // Text variant
-
-    wip.push_field("content")?;
-    wip.set("Hello, world!".to_string())?;
-    wip.pop()?;
-
-    let hv = wip.build()?;
+    let hv = Wip::alloc::<Message>()?
+        .push_variant(0)? // Text variant
+        .push_field("content")?
+        .set("Hello, world!".to_string())?
+        .pop()?
+        .build()?;
     assert_eq!(
         *hv,
         Message::Text {
@@ -879,24 +841,22 @@ fn enum_struct_variant() {
 fn enum_tuple_variant() {
     #[derive(Facet, Debug, PartialEq)]
     #[repr(i32)]
+    #[allow(dead_code)]
     enum Value {
         Int(i32) = 0,
         Float(f64) = 1,
         Pair(i32, String) = 2,
     }
 
-    let mut wip = Wip::alloc::<Value>()?;
-    wip.push_variant(2)?; // Pair variant
-
-    wip.push_nth_enum_field(0)?;
-    wip.set(42)?;
-    wip.pop()?;
-
-    wip.push_nth_enum_field(1)?;
-    wip.set("test".to_string())?;
-    wip.pop()?;
-
-    let hv = wip.build()?;
+    let hv = Wip::alloc::<Value>()?
+        .push_variant(2)? // Pair variant
+        .push_nth_enum_field(0)?
+        .set(42)?
+        .pop()?
+        .push_nth_enum_field(1)?
+        .set("test".to_string())?
+        .pop()?
+        .build()?;
     assert_eq!(*hv, Value::Pair(42, "test".to_string()));
 }
 
@@ -908,25 +868,21 @@ fn enum_set_field_twice() {
         Point { x: f32, y: f32 } = 0,
     }
 
-    let mut wip = Wip::alloc::<Data>()?;
-    wip.push_variant(0)?; // Point variant
-
-    // Set x field
-    wip.push_field("x")?;
-    wip.set(1.0f32)?;
-    wip.pop()?;
-
-    // Set x field again (should drop previous value)
-    wip.push_field("x")?;
-    wip.set(2.0f32)?;
-    wip.pop()?;
-
-    // Set y field
-    wip.push_field("y")?;
-    wip.set(3.0f32)?;
-    wip.pop()?;
-
-    let hv = wip.build()?;
+    let hv = Wip::alloc::<Data>()?
+        .push_variant(0)? // Point variant
+        // Set x field
+        .push_field("x")?
+        .set(1.0f32)?
+        .pop()?
+        // Set x field again (should drop previous value)
+        .push_field("x")?
+        .set(2.0f32)?
+        .pop()?
+        // Set y field
+        .push_field("y")?
+        .set(3.0f32)?
+        .pop()?
+        .build()?;
     assert_eq!(*hv, Data::Point { x: 2.0, y: 3.0 });
 }
 
@@ -934,45 +890,40 @@ fn enum_set_field_twice() {
 fn enum_partial_initialization_error() {
     #[derive(Facet, Debug)]
     #[repr(u8)]
+    #[allow(dead_code)]
     enum Config {
         Settings { timeout: u32, retries: u8 } = 0,
     }
 
-    let mut wip = Wip::alloc::<Config>()?;
-    wip.push_variant(0)?; // Settings variant
-
-    // Only initialize timeout, not retries
-    wip.push_field("timeout")?;
-    wip.set(5000u32)?;
-    wip.pop()?;
-
     // Should fail to build because retries is not initialized
-    let result = wip.build();
+    let result = Wip::alloc::<Config>()?
+        .push_variant(0)? // Settings variant
+        // Only initialize timeout, not retries
+        .push_field("timeout")?
+        .set(5000u32)?
+        .pop()?
+        .build();
     assert!(result.is_err());
 }
 
 #[test]
 fn list_vec_basic() {
-    let mut wip = Wip::alloc::<Vec<i32>>()?;
-    wip.begin_pushback()?;
-
-    // Push first element
-    wip.push()?;
-    wip.set(42)?;
-    wip.pop()?;
-
-    // Push second element
-    wip.push()?;
-    wip.set(84)?;
-    wip.pop()?;
-
-    // Push third element
-    wip.push()?;
-    wip.set(126)?;
-    wip.pop()?;
-
-    let hv = wip.build()?;
-    let vec: &Vec<i32> = unsafe { hv.as_ref() };
+    let hv = Wip::alloc::<Vec<i32>>()?
+        .begin_pushback()?
+        // Push first element
+        .push()?
+        .set(42)?
+        .pop()?
+        // Push second element
+        .push()?
+        .set(84)?
+        .pop()?
+        // Push third element
+        .push()?
+        .set(126)?
+        .pop()?
+        .build()?;
+    let vec: &Vec<i32> = hv.as_ref();
     assert_eq!(vec, &vec![42, 84, 126]);
 }
 
@@ -984,31 +935,28 @@ fn list_vec_complex() {
         age: u32,
     }
 
-    let mut wip = Wip::alloc::<Vec<Person>>()?;
-    wip.begin_pushback()?;
-
-    // Push first person
-    wip.push()?;
-    wip.push_nth_field(0)?; // name
-    wip.set("Alice".to_string())?;
-    wip.pop()?;
-    wip.push_nth_field(1)?; // age
-    wip.set(30u32)?;
-    wip.pop()?;
-    wip.pop()?; // Done with first person
-
-    // Push second person
-    wip.push()?;
-    wip.push_nth_field(0)?; // name
-    wip.set("Bob".to_string())?;
-    wip.pop()?;
-    wip.push_nth_field(1)?; // age
-    wip.set(25u32)?;
-    wip.pop()?;
-    wip.pop()?; // Done with second person
-
-    let hv = wip.build()?;
-    let vec: &Vec<Person> = unsafe { hv.as_ref() };
+    let hv = Wip::alloc::<Vec<Person>>()?
+        .begin_pushback()?
+        // Push first person
+        .push()?
+        .push_nth_field(0)? // name
+        .set("Alice".to_string())?
+        .pop()?
+        .push_nth_field(1)? // age
+        .set(30u32)?
+        .pop()?
+        .pop()? // Done with first person
+        // Push second person
+        .push()?
+        .push_nth_field(0)? // name
+        .set("Bob".to_string())?
+        .pop()?
+        .push_nth_field(1)? // age
+        .set(25u32)?
+        .pop()?
+        .pop()? // Done with second person
+        .build()?;
+    let vec: &Vec<Person> = hv.as_ref();
     assert_eq!(
         vec,
         &vec![
@@ -1026,47 +974,43 @@ fn list_vec_complex() {
 
 #[test]
 fn list_vec_empty() {
-    let mut wip = Wip::alloc::<Vec<String>>()?;
-    wip.begin_pushback()?;
-    // Don't push any elements
-
-    let hv = wip.build()?;
-    let vec: &Vec<String> = unsafe { hv.as_ref() };
+    let hv = Wip::alloc::<Vec<String>>()?
+        .begin_pushback()?
+        // Don't push any elements
+        .build()?;
+    let vec: &Vec<String> = hv.as_ref();
     assert_eq!(vec, &Vec::<String>::new());
 }
 
 #[test]
 fn list_vec_nested() {
-    let mut wip = Wip::alloc::<Vec<Vec<i32>>>()?;
-    wip.begin_pushback()?;
-
-    // Push first inner vec
-    wip.push()?;
-    wip.begin_pushback()?;
-    wip.push()?;
-    wip.set(1)?;
-    wip.pop()?;
-    wip.push()?;
-    wip.set(2)?;
-    wip.pop()?;
-    wip.pop()?; // Done with first inner vec
-
-    // Push second inner vec
-    wip.push()?;
-    wip.begin_pushback()?;
-    wip.push()?;
-    wip.set(3)?;
-    wip.pop()?;
-    wip.push()?;
-    wip.set(4)?;
-    wip.pop()?;
-    wip.push()?;
-    wip.set(5)?;
-    wip.pop()?;
-    wip.pop()?; // Done with second inner vec
-
-    let hv = wip.build()?;
-    let vec: &Vec<Vec<i32>> = unsafe { hv.as_ref() };
+    let hv = Wip::alloc::<Vec<Vec<i32>>>()?
+        .begin_pushback()?
+        // Push first inner vec
+        .push()?
+        .begin_pushback()?
+        .push()?
+        .set(1)?
+        .pop()?
+        .push()?
+        .set(2)?
+        .pop()?
+        .pop()? // Done with first inner vec
+        // Push second inner vec
+        .push()?
+        .begin_pushback()?
+        .push()?
+        .set(3)?
+        .pop()?
+        .push()?
+        .set(4)?
+        .pop()?
+        .push()?
+        .set(5)?
+        .pop()?
+        .pop()? // Done with second inner vec
+        .build()?;
+    let vec: &Vec<Vec<i32>> = hv.as_ref();
     assert_eq!(vec, &vec![vec![1, 2], vec![3, 4, 5]]);
 }
 
@@ -1074,29 +1018,26 @@ fn list_vec_nested() {
 fn map_hashmap_simple() {
     use std::collections::HashMap;
 
-    let mut wip = Wip::alloc::<HashMap<String, i32>>()?;
-    wip.begin_map()?;
-
-    // Insert first pair: "foo" -> 42
-    wip.begin_insert()?;
-    wip.push_key()?;
-    wip.set("foo".to_string())?;
-    wip.pop()?;
-    wip.push_value()?;
-    wip.set(42)?;
-    wip.pop()?;
-
-    // Insert second pair: "bar" -> 123
-    wip.begin_insert()?;
-    wip.push_key()?;
-    wip.set("bar".to_string())?;
-    wip.pop()?;
-    wip.push_value()?;
-    wip.set(123)?;
-    wip.pop()?;
-
-    let hv = wip.build()?;
-    let map: &HashMap<String, i32> = unsafe { hv.as_ref() };
+    let hv = Wip::alloc::<HashMap<String, i32>>()?
+        .begin_map()?
+        // Insert first pair: "foo" -> 42
+        .begin_insert()?
+        .push_key()?
+        .set("foo".to_string())?
+        .pop()?
+        .push_value()?
+        .set(42)?
+        .pop()?
+        // Insert second pair: "bar" -> 123
+        .begin_insert()?
+        .push_key()?
+        .set("bar".to_string())?
+        .pop()?
+        .push_value()?
+        .set(123)?
+        .pop()?
+        .build()?;
+    let map: &HashMap<String, i32> = hv.as_ref();
     assert_eq!(map.len(), 2);
     assert_eq!(map.get("foo"), Some(&42));
     assert_eq!(map.get("bar"), Some(&123));
@@ -1106,12 +1047,11 @@ fn map_hashmap_simple() {
 fn map_hashmap_empty() {
     use std::collections::HashMap;
 
-    let mut wip = Wip::alloc::<HashMap<String, String>>()?;
-    wip.begin_map()?;
-    // Don't insert any pairs
-
-    let hv = wip.build()?;
-    let map: &HashMap<String, String> = unsafe { hv.as_ref() };
+    let hv = Wip::alloc::<HashMap<String, String>>()?
+        .begin_map()?
+        // Don't insert any pairs
+        .build()?;
+    let map: &HashMap<String, String> = hv.as_ref();
     assert_eq!(map.len(), 0);
 }
 
@@ -1125,39 +1065,36 @@ fn map_hashmap_complex_values() {
         age: u32,
     }
 
-    let mut wip = Wip::alloc::<HashMap<String, Person>>()?;
-    wip.begin_map()?;
-
-    // Insert "alice" -> Person { name: "Alice", age: 30 }
-    wip.begin_insert()?;
-    wip.push_key()?;
-    wip.set("alice".to_string())?;
-    wip.pop()?;
-    wip.push_value()?;
-    wip.push_field("name")?;
-    wip.set("Alice".to_string())?;
-    wip.pop()?;
-    wip.push_field("age")?;
-    wip.set(30u32)?;
-    wip.pop()?;
-    wip.pop()?; // Done with value
-
-    // Insert "bob" -> Person { name: "Bob", age: 25 }
-    wip.begin_insert()?;
-    wip.push_key()?;
-    wip.set("bob".to_string())?;
-    wip.pop()?;
-    wip.push_value()?;
-    wip.push_field("name")?;
-    wip.set("Bob".to_string())?;
-    wip.pop()?;
-    wip.push_field("age")?;
-    wip.set(25u32)?;
-    wip.pop()?;
-    wip.pop()?; // Done with value
-
-    let hv = wip.build()?;
-    let map: &HashMap<String, Person> = unsafe { hv.as_ref() };
+    let hv = Wip::alloc::<HashMap<String, Person>>()?
+        .begin_map()?
+        // Insert "alice" -> Person { name: "Alice", age: 30 }
+        .begin_insert()?
+        .push_key()?
+        .set("alice".to_string())?
+        .pop()?
+        .push_value()?
+        .push_field("name")?
+        .set("Alice".to_string())?
+        .pop()?
+        .push_field("age")?
+        .set(30u32)?
+        .pop()?
+        .pop()? // Done with value
+        // Insert "bob" -> Person { name: "Bob", age: 25 }
+        .begin_insert()?
+        .push_key()?
+        .set("bob".to_string())?
+        .pop()?
+        .push_value()?
+        .push_field("name")?
+        .set("Bob".to_string())?
+        .pop()?
+        .push_field("age")?
+        .set(25u32)?
+        .pop()?
+        .pop()? // Done with value
+        .build()?;
+    let map: &HashMap<String, Person> = hv.as_ref();
     assert_eq!(map.len(), 2);
     assert_eq!(
         map.get("alice"),
@@ -1186,15 +1123,15 @@ fn variant_named() {
     }
 
     // Test Dog variant
-    let mut wip = Wip::alloc::<Animal>()?;
-    wip.push_variant_named("Dog")?;
-    wip.push_field("name")?;
-    wip.set("Buddy".to_string())?;
-    wip.pop()?;
-    wip.push_field("age")?;
-    wip.set(5u8)?;
-    wip.pop()?;
-    let animal = wip.build()?;
+    let animal = Wip::alloc::<Animal>()?
+        .push_variant_named("Dog")?
+        .push_field("name")?
+        .set("Buddy".to_string())?
+        .pop()?
+        .push_field("age")?
+        .set(5u8)?
+        .pop()?
+        .build()?;
     assert_eq!(
         *animal,
         Animal::Dog {
@@ -1204,15 +1141,15 @@ fn variant_named() {
     );
 
     // Test Cat variant
-    let mut wip = Wip::alloc::<Animal>()?;
-    wip.push_variant_named("Cat")?;
-    wip.push_field("name")?;
-    wip.set("Whiskers".to_string())?;
-    wip.pop()?;
-    wip.push_field("lives")?;
-    wip.set(9u8)?;
-    wip.pop()?;
-    let animal = wip.build()?;
+    let animal = Wip::alloc::<Animal>()?
+        .push_variant_named("Cat")?
+        .push_field("name")?
+        .set("Whiskers".to_string())?
+        .pop()?
+        .push_field("lives")?
+        .set(9u8)?
+        .pop()?
+        .build()?;
     assert_eq!(
         *animal,
         Animal::Cat {
@@ -1222,12 +1159,12 @@ fn variant_named() {
     );
 
     // Test Bird variant
-    let mut wip = Wip::alloc::<Animal>()?;
-    wip.push_variant_named("Bird")?;
-    wip.push_field("species")?;
-    wip.set("Parrot".to_string())?;
-    wip.pop()?;
-    let animal = wip.build()?;
+    let animal = Wip::alloc::<Animal>()?
+        .push_variant_named("Bird")?
+        .push_field("species")?
+        .set("Parrot".to_string())?
+        .pop()?
+        .build()?;
     assert_eq!(
         *animal,
         Animal::Bird {
@@ -1256,22 +1193,18 @@ fn field_named_on_struct() {
         email: String,
     }
 
-    let mut wip = Wip::alloc::<Person>()?;
-
-    // Use field names instead of indices
-    wip.push_field("email")?;
-    wip.set("john@example.com".to_string())?;
-    wip.pop()?;
-
-    wip.push_field("name")?;
-    wip.set("John Doe".to_string())?;
-    wip.pop()?;
-
-    wip.push_field("age")?;
-    wip.set(30u32)?;
-    wip.pop()?;
-
-    let person = wip.build()?;
+    let person = Wip::alloc::<Person>()?
+        // Use field names instead of indices
+        .push_field("email")?
+        .set("john@example.com".to_string())?
+        .pop()?
+        .push_field("name")?
+        .set("John Doe".to_string())?
+        .pop()?
+        .push_field("age")?
+        .set(30u32)?
+        .pop()?
+        .build()?;
     assert_eq!(
         *person,
         Person {
@@ -1299,22 +1232,18 @@ fn field_named_on_enum() {
     }
 
     // Test field access on Server variant
-    let mut wip = Wip::alloc::<Config>()?;
-    wip.push_variant_named("Server")?;
-
-    wip.push_field("port")?;
-    wip.set(8080u16)?;
-    wip.pop()?;
-
-    wip.push_field("host")?;
-    wip.set("localhost".to_string())?;
-    wip.pop()?;
-
-    wip.push_field("tls")?;
-    wip.set(true)?;
-    wip.pop()?;
-
-    let config = wip.build()?;
+    let config = Wip::alloc::<Config>()?
+        .push_variant_named("Server")?
+        .push_field("port")?
+        .set(8080u16)?
+        .pop()?
+        .push_field("host")?
+        .set("localhost".to_string())?
+        .pop()?
+        .push_field("tls")?
+        .set(true)?
+        .pop()?
+        .build()?;
     assert_eq!(
         *config,
         Config::Server {
@@ -1325,6 +1254,7 @@ fn field_named_on_enum() {
     );
 
     // Test invalid field name on enum variant
+
     let mut wip = Wip::alloc::<Config>()?;
     wip.push_variant_named("Client")?;
     let result = wip.push_field("port"); // port doesn't exist on Client
@@ -1390,80 +1320,66 @@ fn map_partial_initialization_drop() {
 #[test]
 fn tuple_basic() {
     // Test building a simple tuple
-    let mut wip = Wip::alloc::<(i32, String)>()?;
-
-    // Tuples are represented as structs, so we use push_nth_field
-    wip.push_nth_field(0)?;
-    wip.set(42i32)?;
-    wip.pop()?;
-
-    wip.push_nth_field(1)?;
-    wip.set("hello".to_string())?;
-    wip.pop()?;
-
-    let boxed = wip.build()?;
+    let boxed = Wip::alloc::<(i32, String)>()?
+        // Tuples are represented as structs, so we use push_nth_field
+        .push_nth_field(0)?
+        .set(42i32)?
+        .pop()?
+        .push_nth_field(1)?
+        .set("hello".to_string())?
+        .pop()?
+        .build()?;
     assert_eq!(*boxed, (42, "hello".to_string()));
 }
 
 #[test]
 fn tuple_mixed_types() {
     // Test building a tuple with more diverse types
-    let mut wip = Wip::alloc::<(u8, bool, f64, String)>()?;
-
-    // Set fields in non-sequential order to test flexibility
-    wip.push_nth_field(2)?;
-    wip.set(3.14f64)?;
-    wip.pop()?;
-
-    wip.push_nth_field(0)?;
-    wip.set(255u8)?;
-    wip.pop()?;
-
-    wip.push_nth_field(3)?;
-    wip.set("world".to_string())?;
-    wip.pop()?;
-
-    wip.push_nth_field(1)?;
-    wip.set(true)?;
-    wip.pop()?;
-
-    let boxed = wip.build()?;
-    assert_eq!(*boxed, (255u8, true, 3.14f64, "world".to_string()));
+    let boxed = Wip::alloc::<(u8, bool, f64, String)>()?
+        // Set fields in non-sequential order to test flexibility
+        .push_nth_field(2)?
+        .set(56.124f64)?
+        .pop()?
+        .push_nth_field(0)?
+        .set(255u8)?
+        .pop()?
+        .push_nth_field(3)?
+        .set("world".to_string())?
+        .pop()?
+        .push_nth_field(1)?
+        .set(true)?
+        .pop()?
+        .build()?;
+    assert_eq!(*boxed, (255u8, true, 56.124f64, "world".to_string()));
 }
 
 #[test]
 fn tuple_nested() {
     // Test nested tuples
-    let mut wip = Wip::alloc::<((i32, i32), String)>()?;
-
-    // Build the nested tuple first
-    wip.push_nth_field(0)?;
-    wip.push_nth_field(0)?;
-    wip.set(1i32)?;
-    wip.pop()?;
-
-    wip.push_nth_field(1)?;
-    wip.set(2i32)?;
-    wip.pop()?;
-    wip.pop()?; // Pop out of the nested tuple
-
-    // Now set the string
-    wip.push_nth_field(1)?;
-    wip.set("nested".to_string())?;
-    wip.pop()?;
-
-    let boxed = wip.build()?;
+    let boxed = Wip::alloc::<((i32, i32), String)>()?
+        // Build the nested tuple first
+        .push_nth_field(0)?
+        .push_nth_field(0)?
+        .set(1i32)?
+        .pop()?
+        .push_nth_field(1)?
+        .set(2i32)?
+        .pop()?
+        .pop()? // Pop out of the nested tuple
+        // Now set the string
+        .push_nth_field(1)?
+        .set("nested".to_string())?
+        .pop()?
+        .build()?;
     assert_eq!(*boxed, ((1, 2), "nested".to_string()));
 }
 
 #[test]
 fn tuple_empty() {
     // Test empty tuple (unit type)
-    let mut wip = Wip::alloc::<()>()?;
-
-    // Empty tuple has no fields to set, but we still need to set it
-    wip.set(())?;
-
-    let boxed = wip.build()?;
+    let boxed = Wip::alloc::<()>()?
+        // Empty tuple has no fields to set, but we still need to set it
+        .set(())?
+        .build()?;
     assert_eq!(*boxed, ());
 }

@@ -19,9 +19,8 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use yansi::{Paint as _, Style};
+use yansi::Paint as _;
 
-mod menu;
 mod readme;
 mod sample;
 
@@ -436,7 +435,7 @@ pub fn show_jobs_and_apply_if_consent_is_given(jobs: &mut [Job]) {
 
     // Emojis for display
     const ACTION_REQUIRED: &str = "🚧";
-    const DIFF: &str = "📝";
+
     const OK: &str = "✅";
     const CANCEL: &str = "🛑";
 
@@ -488,85 +487,20 @@ pub fn show_jobs_and_apply_if_consent_is_given(jobs: &mut [Job]) {
 
     let jobs_vec = jobs.to_vec();
 
-    // Define menu items as a Vec<MenuItem>
-    static MENU_LABEL: &str = "facet-dev fixed some files for you:";
-    let menu_items = [
-        menu::MenuItem {
-            label: "[y]es: 🚀 Apply the above fixes".to_string(),
-            action: "apply".to_string(),
-            style: Style::new().green().bold(),
-        },
-        menu::MenuItem {
-            label: "[d]iff: 🔍 Show details of all diffs".to_string(),
-            action: "diff".to_string(),
-            style: Style::new().cyan(),
-        },
-        menu::MenuItem {
-            label: "[c]ontinue: ➡️ Continue with the commit without applying fixes".to_string(),
-            action: "continue".to_string(),
-            style: Style::new().yellow(),
-        },
-        menu::MenuItem {
-            label: "[a]bort: 💥 Exit with error (this'll abort the commit)".to_string(),
-            action: "abort".to_string(),
-            style: Style::new().red(),
-        },
-    ];
-
-    loop {
-        let action =
-            menu::show_menu(MENU_LABEL, &menu_items[..]).unwrap_or_else(|| "apply".to_string());
-        match action.as_str() {
-            "apply" => {
-                for job in &jobs_vec {
-                    print!("{} Applying {} ... ", OK, job.path.display().yellow());
-                    io::stdout().flush().unwrap();
-                    match job.apply() {
-                        Ok(_) => {
-                            println!("{}", "ok".green());
-                        }
-                        Err(e) => {
-                            println!("{} {}", CANCEL, format_args!("failed: {e}").red());
-                        }
-                    }
-                }
-                println!("{} {}", OK, "All fixes applied and staged!".green().bold());
-                std::process::exit(0);
+    for job in &jobs_vec {
+        print!("{} Applying {} ... ", OK, job.path.display().yellow());
+        io::stdout().flush().unwrap();
+        match job.apply() {
+            Ok(_) => {
+                println!("{}", "ok".green());
             }
-            "diff" => {
-                println!(
-                    "\n{} {}\n",
-                    DIFF,
-                    "Showing diffs for all changed/generated files:"
-                        .magenta()
-                        .bold()
-                );
-                for job in &jobs_vec {
-                    println!(
-                        "{} {}\n{}",
-                        DIFF,
-                        job.path.display().yellow(),
-                        "───────────────────────────────────────────────".dim()
-                    );
-                    job.show_diff();
-                }
-                // After showing diffs, continue loop to show menu again
+            Err(e) => {
+                println!("{} {}", CANCEL, format_args!("failed: {e}").red());
             }
-            "continue" => {
-                println!(
-                    "{} {}",
-                    CANCEL,
-                    "Continuing without applying fixes.".yellow().bold()
-                );
-                return;
-            }
-            "abort" => {
-                println!("{} {}", CANCEL, "Aborting. No changes made.".red().bold());
-                std::process::exit(1);
-            }
-            _ => todo!(),
         }
     }
+    println!("{} {}", OK, "All fixes applied and staged!".green().bold());
+    std::process::exit(0);
 }
 
 enum Subcommand {
