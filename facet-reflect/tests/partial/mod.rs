@@ -22,6 +22,6 @@ mod no_uninit;
 
 mod variance;
 
-// mod array_building;
+mod array_building;
 
 // mod arc;

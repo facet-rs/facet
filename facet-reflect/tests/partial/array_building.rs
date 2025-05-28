@@ -1,23 +1,15 @@
 use facet::Facet;
-use facet_reflect::{ReflectError, Wip};
+use facet_reflect::{Partial, ReflectError};
 use facet_testhelpers::test;
 
 #[test]
 fn test_building_array_f32_3_pushback() {
-    // Test building a [f32; 3] array using the begin_pushback/push API
-    let array = Wip::alloc::<[f32; 3]>()?
-        .begin_pushback()?
-        .push()?
-        .put(1.0f32)?
-        .pop()?
-        .push()?
-        .put(2.0f32)?
-        .pop()?
-        .push()?
-        .put(3.0f32)?
-        .pop()?
-        .build()?
-        .materialize::<[f32; 3]>()?;
+    // Test building a [f32; 3] array using set_nth_element API
+    let array = *Partial::alloc::<[f32; 3]>()?
+        .set_nth_element(0, 1.0f32)?
+        .set_nth_element(1, 2.0f32)?
+        .set_nth_element(2, 3.0f32)?
+        .build()?;
 
     assert_eq!(array, [1.0, 2.0, 3.0]);
     assert_eq!(array.len(), 3);
@@ -25,23 +17,13 @@ fn test_building_array_f32_3_pushback() {
 
 #[test]
 fn test_building_array_u8_4_pushback() {
-    // Test building a [u8; 4] array using the begin_pushback/push API
-    let array = Wip::alloc::<[u8; 4]>()?
-        .begin_pushback()?
-        .push()?
-        .put(1u8)?
-        .pop()?
-        .push()?
-        .put(2u8)?
-        .pop()?
-        .push()?
-        .put(3u8)?
-        .pop()?
-        .push()?
-        .put(4u8)?
-        .pop()?
-        .build()?
-        .materialize::<[u8; 4]>()?;
+    // Test building a [u8; 4] array using set_nth_element API
+    let array = *Partial::alloc::<[u8; 4]>()?
+        .set_nth_element(0, 1u8)?
+        .set_nth_element(1, 2u8)?
+        .set_nth_element(2, 3u8)?
+        .set_nth_element(3, 4u8)?
+        .build()?;
 
     assert_eq!(array, [1, 2, 3, 4]);
     assert_eq!(array.len(), 4);
@@ -55,59 +37,29 @@ fn test_building_array_in_struct() {
         values: [f32; 3],
     }
 
-    let mut wip = Wip::alloc::<WithArrays>()?;
+    let mut partial = Partial::alloc::<WithArrays>()?;
     println!("Allocated WithArrays");
 
-    wip = wip.field_named("name")?;
-    println!("Selected 'name' field");
+    partial.set_field("name", "test array".to_string())?;
+    println!("Set 'name' field");
 
-    wip = wip.put("test array".to_string())?;
-    println!("Put string value to 'name' field");
-
-    wip = wip.pop()?;
-    println!("Popped back to struct level from 'name'");
-
-    wip = wip.field_named("values")?;
+    partial.begin_field("values")?;
     println!("Selected 'values' field (array)");
 
-    wip = wip.begin_pushback()?;
-    println!("Started array pushback");
+    partial.set_nth_element(0, 1.1f32)?;
+    println!("Set first array element");
 
-    wip = wip.push()?;
-    println!("Pushed first array element frame");
+    partial.set_nth_element(1, 2.2f32)?;
+    println!("Set second array element");
 
-    wip = wip.put(1.1f32)?;
-    println!("Put first array element value");
+    partial.set_nth_element(2, 3.3f32)?;
+    println!("Set third array element");
 
-    wip = wip.pop()?;
-    println!("Popped first array element");
-
-    wip = wip.push()?;
-    println!("Pushed second array element frame");
-
-    wip = wip.put(2.2f32)?;
-    println!("Put second array element value");
-
-    wip = wip.pop()?;
-    println!("Popped second array element");
-
-    wip = wip.push()?;
-    println!("Pushed third array element frame");
-
-    wip = wip.put(3.3f32)?;
-    println!("Put third array element value");
-
-    wip = wip.pop()?;
-    println!("Popped third array element");
-
-    wip = wip.pop()?;
+    partial.end()?;
     println!("Popped from array level back to struct");
 
-    let hv = wip.build()?;
-    println!("Built heap value");
-
-    let with_arrays = hv.materialize::<WithArrays>()?;
-    println!("Materialized WithArrays struct");
+    let with_arrays = *partial.build()?;
+    println!("Built and materialized WithArrays struct");
 
     assert_eq!(
         with_arrays,
@@ -120,41 +72,33 @@ fn test_building_array_in_struct() {
 
 #[test]
 fn test_too_many_items_in_array() {
-    // Push more elements than array size
-    let result = Wip::alloc::<[u8; 2]>()?
-        .begin_pushback()?
-        .push()?
-        .put(1u8)?
-        .pop()?
-        .push()?
-        .put(2u8)?
-        .pop()?
-        .push(); // This is the 3rd push, but the array can only hold 2 items
+    // Try to set more elements than array size
+    let mut partial = Partial::alloc::<[u8; 2]>()?;
+    partial.set_nth_element(0, 1u8)?;
+    partial.set_nth_element(1, 2u8)?;
+
+    let result = partial.begin_nth_element(2); // This is the 3rd element, but the array can only hold 2 items
 
     match result {
-        Err(ReflectError::ArrayIndexOutOfBounds {
+        Err(ReflectError::OperationFailed {
             shape: _,
-            index,
-            size,
+            operation,
         }) => {
-            assert_eq!(index, 2);
-            assert_eq!(size, 2);
+            assert_eq!(operation, "array index out of bounds");
         }
-        Ok(_) => panic!("Expected ArrayIndexOutOfBounds error, but push succeeded"),
-        Err(e) => panic!("Expected ArrayIndexOutOfBounds error, but got: {:?}", e),
+        Ok(_) => panic!(
+            "Expected OperationFailed error for array index out of bounds, but operation succeeded"
+        ),
+        Err(e) => panic!("Expected OperationFailed error, but got: {:?}", e),
     }
 }
 
 #[test]
 fn test_too_few_items_in_array() {
-    let result = Wip::alloc::<[u8; 3]>()?
-        .begin_pushback()?
-        .push()?
-        .put(1u8)?
-        .pop()?
-        .push()?
-        .put(2u8)?
-        .pop()?
+    let result = Partial::alloc::<[u8; 3]>()?
+        .set_nth_element(0, 1u8)?
+        .set_nth_element(1, 2u8)?
+        // Missing third element
         .build();
 
     assert!(result.is_err());
@@ -168,89 +112,44 @@ fn test_nested_array_building() {
         matrix: [[i32; 2]; 3], // 3x2 matrix
     }
 
-    let mut wip = Wip::alloc::<NestedArrays>()?;
+    let mut partial = Partial::alloc::<NestedArrays>()?;
     println!("Allocated NestedArrays");
 
-    wip = wip.field_named("name")?;
-    println!("Selected 'name' field");
+    partial.set_field("name", "test matrix".to_string())?;
+    println!("Set 'name' field");
 
-    wip = wip.put("test matrix".to_string())?;
-    println!("Put string value to 'name' field");
-
-    wip = wip.pop()?;
-    println!("Popped back to struct level from 'name'");
-
-    wip = wip.field_named("matrix")?;
+    partial.begin_field("matrix")?;
     println!("Selected 'matrix' field (outer array)");
 
-    wip = wip.begin_pushback()?;
-    println!("Started outer array pushback");
+    // First row [1, 2]
+    partial.begin_nth_element(0)?;
+    println!("Started first row");
+    partial.set_nth_element(0, 1i32)?;
+    partial.set_nth_element(1, 2i32)?;
+    partial.end()?;
+    println!("Completed first row");
 
-    wip = wip.push()?;
-    println!("Pushed first row frame");
+    // Second row [3, 4]
+    partial.begin_nth_element(1)?;
+    println!("Started second row");
+    partial.set_nth_element(0, 3i32)?;
+    partial.set_nth_element(1, 4i32)?;
+    partial.end()?;
+    println!("Completed second row");
 
-    wip = wip.begin_pushback()?;
-    println!("Started first inner array pushback");
+    // Third row [5, 6]
+    partial.begin_nth_element(2)?;
+    println!("Started third row");
+    partial.set_nth_element(0, 5i32)?;
+    partial.set_nth_element(1, 6i32)?;
+    partial.end()?;
+    println!("Completed third row");
 
-    wip = wip.push()?;
-    wip = wip.put(1i32)?;
-    wip = wip.pop()?;
-    println!("Set first row, first element (1)");
-
-    wip = wip.push()?;
-    wip = wip.put(2i32)?;
-    wip = wip.pop()?;
-    println!("Set first row, second element (2)");
-
-    wip = wip.pop()?;
-    println!("Popped from first inner array back to outer array");
-
-    wip = wip.push()?;
-    println!("Pushed second row frame");
-
-    wip = wip.begin_pushback()?;
-    println!("Started second inner array pushback");
-
-    wip = wip.push()?;
-    wip = wip.put(3i32)?;
-    wip = wip.pop()?;
-    println!("Set second row, first element (3)");
-
-    wip = wip.push()?;
-    wip = wip.put(4i32)?;
-    wip = wip.pop()?;
-    println!("Set second row, second element (4)");
-
-    wip = wip.pop()?;
-    println!("Popped from second inner array back to outer array");
-
-    wip = wip.push()?;
-    println!("Pushed third row frame");
-
-    wip = wip.begin_pushback()?;
-    println!("Started third inner array pushback");
-
-    wip = wip.push()?;
-    wip = wip.put(5i32)?;
-    wip = wip.pop()?;
-    println!("Set third row, first element (5)");
-
-    wip = wip.push()?;
-    wip = wip.put(6i32)?;
-    wip = wip.pop()?;
-    println!("Set third row, second element (6)");
-
-    wip = wip.pop()?;
-    println!("Popped from third inner array back to outer array");
-
-    wip = wip.pop()?;
+    partial.end()?;
     println!("Popped from outer array back to struct level");
 
-    let hv = wip.build()?;
-    println!("Built heap value");
-
-    let nested_arrays = hv.materialize::<NestedArrays>()?;
-    println!("Materialized NestedArrays struct");
+    let nested_arrays = *partial.build()?;
+    println!("Built and materialized NestedArrays struct");
 
     assert_eq!(
         nested_arrays,
