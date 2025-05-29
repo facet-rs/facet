@@ -20,7 +20,7 @@ pub use ty::*;
 use crate::{ConstTypeId, Facet};
 
 /// Schema for reflection of a type
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 #[repr(C)]
 #[non_exhaustive]
 pub struct Shape<'shape> {
@@ -350,6 +350,27 @@ impl Shape<'_> {
 impl core::fmt::Display for Shape<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         (self.vtable.type_name)(f, TypeNameOpts::default())
+    }
+}
+
+impl core::fmt::Debug for Shape<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut debug_struct = f.debug_struct("Shape");
+
+        // Always show the type name
+        debug_struct.field("type", &format_args!("{}", self));
+
+        // Show def if it's not Undefined
+        if !matches!(self.def, Def::Undefined) {
+            debug_struct.field("def", &format_args!("{:?}", self.def));
+        }
+
+        // Show inner if present
+        if self.inner.is_some() {
+            debug_struct.field("inner", &format_args!("Some(..)"));
+        }
+
+        debug_struct.finish()
     }
 }
 

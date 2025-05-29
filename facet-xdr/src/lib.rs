@@ -4,9 +4,7 @@
 
 use std::io::Write;
 
-use facet_core::{
-    Def, Facet, NumberBits, ScalarAffinity, SequenceType, Signedness, StructKind, Type, UserType,
-};
+use facet_core::{Def, Facet, NumberBits, ScalarAffinity, Signedness, StructKind, Type, UserType};
 use facet_reflect::{HeapValue, Partial, Peek};
 use facet_serialize::{Serializer, serialize_iterative};
 
@@ -313,42 +311,53 @@ impl<'shape, 'input> XdrDeserializerStack<'input> {
         Ok(data)
     }
 
-    fn next<'f>(&mut self, wip: Partial<'f, 'shape>) -> Result<Partial<'f, 'shape>, XdrDeserError> {
+    fn next<'f>(
+        &mut self,
+        mut wip: Partial<'f, 'shape>,
+    ) -> Result<Partial<'f, 'shape>, XdrDeserError> {
         match (wip.shape().def, wip.shape().ty) {
             (Def::Scalar(sd), _) => match sd.affinity {
                 ScalarAffinity::Number(na) => match na.bits {
                     NumberBits::Integer { bits, sign } => match (bits, sign) {
                         (8, Signedness::Unsigned) => {
                             let value = self.next_u32()? as u8;
-                            Ok(wip.put(value).unwrap())
+                            wip.set(value).unwrap();
+                            Ok(wip)
                         }
                         (16, Signedness::Unsigned) => {
                             let value = self.next_u32()? as u16;
-                            Ok(wip.put(value).unwrap())
+                            wip.set(value).unwrap();
+                            Ok(wip)
                         }
                         (32, Signedness::Unsigned) => {
                             let value = self.next_u32()?;
-                            Ok(wip.put(value).unwrap())
+                            wip.set(value).unwrap();
+                            Ok(wip)
                         }
                         (64, Signedness::Unsigned) => {
                             let value = self.next_u64()?;
-                            Ok(wip.put(value).unwrap())
+                            wip.set(value).unwrap();
+                            Ok(wip)
                         }
                         (8, Signedness::Signed) => {
                             let value = self.next_u32()? as i8;
-                            Ok(wip.put(value).unwrap())
+                            wip.set(value).unwrap();
+                            Ok(wip)
                         }
                         (16, Signedness::Signed) => {
                             let value = self.next_u32()? as i16;
-                            Ok(wip.put(value).unwrap())
+                            wip.set(value).unwrap();
+                            Ok(wip)
                         }
                         (32, Signedness::Signed) => {
                             let value = self.next_u32()? as i32;
-                            Ok(wip.put(value).unwrap())
+                            wip.set(value).unwrap();
+                            Ok(wip)
                         }
                         (64, Signedness::Signed) => {
                             let value = self.next_u64()? as i64;
-                            Ok(wip.put(value).unwrap())
+                            wip.set(value).unwrap();
+                            Ok(wip)
                         }
                         _ => Err(XdrDeserError::UnsupportedNumericType),
                     },
@@ -362,11 +371,13 @@ impl<'shape, 'input> XdrDeserializerStack<'input> {
                         if bits == 32 {
                             let bits = self.next_u32()?;
                             let float = f32::from_bits(bits);
-                            Ok(wip.put(float).unwrap())
+                            wip.set(float).unwrap();
+                            Ok(wip)
                         } else if bits == 64 {
                             let bits = self.next_u64()?;
                             let float = f64::from_bits(bits);
-                            Ok(wip.put(float).unwrap())
+                            wip.set(float).unwrap();
+                            Ok(wip)
                         } else {
                             Err(XdrDeserError::UnsupportedNumericType)
                         }
@@ -380,29 +391,39 @@ impl<'shape, 'input> XdrDeserializerStack<'input> {
                             source: e,
                         }
                     })?;
-                    Ok(wip.put(string.to_owned()).unwrap())
+                    wip.set(string.to_owned()).unwrap();
+                    Ok(wip)
                 }
                 ScalarAffinity::Boolean(_) => match self.next_u32()? {
-                    0 => Ok(wip.put(false).unwrap()),
-                    1 => Ok(wip.put(true).unwrap()),
+                    0 => {
+                        wip.set(false).unwrap();
+                        Ok(wip)
+                    }
+                    1 => {
+                        wip.set(true).unwrap();
+                        Ok(wip)
+                    }
                     _ => Err(XdrDeserError::InvalidBoolean {
                         position: self.pos - 4,
                     }),
                 },
                 ScalarAffinity::Char(_) => {
                     let value = self.next_u32()?;
-                    Ok(wip.put(char::from_u32(value).unwrap()).unwrap())
+                    wip.set(char::from_u32(value).unwrap()).unwrap();
+                    Ok(wip)
                 }
                 _ => Err(XdrDeserError::UnsupportedType),
             },
             (Def::List(ld), _) => {
                 if ld.t().is_type::<u8>() {
                     let data = self.next_data(None)?;
-                    Ok(wip.put(data.to_vec()).unwrap())
+                    wip.set(data.to_vec()).unwrap();
+                    Ok(wip)
                 } else {
                     let len = self.next_u32()?;
+                    wip.begin_list().unwrap();
                     if len == 0 {
-                        Ok(wip.put_empty_list().unwrap())
+                        Ok(wip)
                     } else {
                         for _ in 0..len {
                             self.stack.push(DeserializeTask::ListItem);
@@ -414,17 +435,12 @@ impl<'shape, 'input> XdrDeserializerStack<'input> {
             (Def::Array(ad), _) => {
                 let len = ad.n;
                 if ad.t().is_type::<u8>() {
-                    let mut wip = wip;
                     self.pos += len;
                     let pad_len = len % 4;
                     for byte in &self.input[self.pos - len..self.pos] {
-                        wip = wip
-                            .begin_list_item()
-                            .unwrap()
-                            .put(*byte)
-                            .unwrap()
-                            .pop()
-                            .unwrap();
+                        wip.begin_list_item().unwrap();
+                        wip.set(*byte).unwrap();
+                        wip.end().unwrap();
                     }
                     if pad_len != 0 {
                         self.pos += 4 - pad_len;
@@ -440,7 +456,8 @@ impl<'shape, 'input> XdrDeserializerStack<'input> {
             (Def::Slice(sd), _) => {
                 if sd.t().is_type::<u8>() {
                     let data = self.next_data(None)?;
-                    Ok(wip.put(data.to_vec()).unwrap())
+                    wip.set(data.to_vec()).unwrap();
+                    Ok(wip)
                 } else {
                     let len = self.next_u32()?;
                     for _ in 0..len {
@@ -450,11 +467,15 @@ impl<'shape, 'input> XdrDeserializerStack<'input> {
                 }
             }
             (Def::Option(_), _) => match self.next_u32()? {
-                0 => Ok(wip.put_default().unwrap()),
+                0 => {
+                    wip.set_default().unwrap();
+                    Ok(wip)
+                }
                 1 => {
                     self.stack.push(DeserializeTask::Pop(PopReason::Some));
                     self.stack.push(DeserializeTask::Value);
-                    Ok(wip.push_some().unwrap())
+                    wip.select_variant(1).unwrap();
+                    Ok(wip)
                 }
                 _ => Err(XdrDeserError::InvalidOptional {
                     position: self.pos - 4,
@@ -462,12 +483,21 @@ impl<'shape, 'input> XdrDeserializerStack<'input> {
             },
             (_, Type::User(ut)) => match ut {
                 UserType::Struct(st) => {
-                    for (index, _field) in st.fields.iter().enumerate().rev() {
-                        if !wip.is_field_set(index).unwrap() {
-                            self.stack.push(DeserializeTask::Field(index));
+                    if st.kind == StructKind::Tuple {
+                        // Handle tuple structs
+                        for _field in st.fields.iter() {
+                            self.stack.push(DeserializeTask::ListItem);
                         }
+                        Ok(wip)
+                    } else {
+                        // Handle regular structs
+                        for (index, _field) in st.fields.iter().enumerate().rev() {
+                            if !wip.is_field_set(index).unwrap() {
+                                self.stack.push(DeserializeTask::Field(index));
+                            }
+                        }
+                        Ok(wip)
                     }
-                    Ok(wip)
                 }
                 UserType::Enum(et) => {
                     let discriminant = self.next_u32()?;
@@ -480,7 +510,8 @@ impl<'shape, 'input> XdrDeserializerStack<'input> {
                         for (index, _field) in variant.data.fields.iter().enumerate().rev() {
                             self.stack.push(DeserializeTask::Field(index));
                         }
-                        Ok(wip.variant(discriminant as usize).unwrap())
+                        wip.select_variant(discriminant as i64).unwrap();
+                        Ok(wip)
                     } else {
                         Err(XdrDeserError::InvalidVariant {
                             position: self.pos - 4,
@@ -489,14 +520,6 @@ impl<'shape, 'input> XdrDeserializerStack<'input> {
                 }
                 _ => Err(XdrDeserError::UnsupportedType),
             },
-            (_, Type::User(UserType::Struct(struct_type)))
-                if struct_type.kind == StructKind::Tuple =>
-            {
-                for _field in struct_type.fields.iter() {
-                    self.stack.push(DeserializeTask::ListItem);
-                }
-                Ok(wip)
-            }
             _ => Err(XdrDeserError::UnsupportedType),
         }
     }
@@ -517,22 +540,15 @@ pub fn deserialize_wip<'facet, 'shape>(
     };
 
     loop {
-        let frame_count = wip.frames_count();
-        debug_assert!(
-            frame_count
-                >= runner
-                    .stack
-                    .iter()
-                    .filter(|f| matches!(f, DeserializeTask::Pop(_)))
-                    .count()
-        );
+        // We no longer have access to frames_count
+        // The frame count assertion has been removed as it's an internal implementation detail
 
         match runner.stack.pop() {
             Some(DeserializeTask::Pop(reason)) => {
                 if reason == PopReason::TopLevel {
                     return Ok(wip.build().unwrap());
                 } else {
-                    wip = wip.end().unwrap();
+                    wip.end().unwrap();
                 }
             }
             Some(DeserializeTask::Value) => {
@@ -543,14 +559,14 @@ pub fn deserialize_wip<'facet, 'shape>(
                     .stack
                     .push(DeserializeTask::Pop(PopReason::ObjectOrListVal));
                 runner.stack.push(DeserializeTask::Value);
-                wip = wip.field(index).unwrap();
+                wip.begin_nth_field(index).unwrap();
             }
             Some(DeserializeTask::ListItem) => {
                 runner
                     .stack
                     .push(DeserializeTask::Pop(PopReason::ObjectOrListVal));
                 runner.stack.push(DeserializeTask::Value);
-                wip = wip.begin_list_item().unwrap();
+                wip.begin_list_item().unwrap();
             }
             None => unreachable!("Instruction stack is empty"),
         }

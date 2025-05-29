@@ -90,7 +90,7 @@ struct KdlDeserializer<'input> {
 
 type Result<'shape, T> = std::result::Result<T, KdlError<'shape>>;
 
-impl<'input, 'facet, 'shape> KdlDeserializer<'input> {
+impl<'input, 'facet: 'shape, 'shape> KdlDeserializer<'input> {
     fn from_str<T: Facet<'facet>>(kdl: &'input str) -> Result<'shape, T> {
         log::trace!("Entering `from_str` method");
 
@@ -102,24 +102,29 @@ impl<'input, 'facet, 'shape> KdlDeserializer<'input> {
         let document: KdlDocument = dbg!(kdl.parse()?);
         log::trace!("KDL parsed");
 
-        let mut wip = Partial::alloc::<T>().expect("failed to allocate");
-        log::trace!("Allocated WIP for type {}", wip.shape());
+        let mut typed_partial = Partial::alloc::<T>().expect("failed to allocate");
+        log::trace!(
+            "Allocated WIP for type {}",
+            typed_partial.inner_mut().shape()
+        );
 
-        wip = Self { kdl }.deserialize_document(wip, document)?;
+        {
+            let wip = typed_partial.inner_mut();
+            Self { kdl }.deserialize_document(wip, document)?;
+        }
 
-        let heap_value = wip.build()?;
+        let boxed_value = typed_partial.build()?;
         log::trace!("WIP fully built");
-        let result = heap_value.materialize::<T>()?;
         log::trace!("Type of WIP unerased");
 
-        Ok(result)
+        Ok(*boxed_value)
     }
 
     fn deserialize_document(
         &mut self,
-        wip: Partial<'facet, 'shape>,
+        wip: &mut Partial<'facet, 'shape>,
         document: KdlDocument,
-    ) -> Result<'shape, Partial<'facet, 'shape>> {
+    ) -> Result<'shape, ()> {
         log::trace!("Entering `deserialize_document` method");
 
         // First check the type system (Type)
@@ -155,9 +160,9 @@ impl<'input, 'facet, 'shape> KdlDeserializer<'input> {
 
     fn deserialize_node(
         &mut self,
-        mut wip: Partial<'facet, 'shape>,
+        wip: &mut Partial<'facet, 'shape>,
         mut document: KdlDocument,
-    ) -> Result<'shape, Partial<'facet, 'shape>> {
+    ) -> Result<'shape, ()> {
         log::trace!("Entering `deserialize_node` method");
 
         // TODO: Correctly generate that error and write a constructor that gets rid of the `.to_owned()`?
@@ -167,7 +172,7 @@ impl<'input, 'facet, 'shape> KdlDeserializer<'input> {
             .ok_or_else(|| KdlErrorKind::MissingNodes(vec!["TODO".to_owned()]))?;
         log::trace!("Popped node from `KdlDocument`: {node:#?}");
 
-        wip = wip.begin_field(node.name().value())?;
+        wip.begin_field(node.name().value())?;
         log::trace!(
             "Node matched expected child; New def: {:#?}",
             wip.shape().def
@@ -200,7 +205,7 @@ impl<'input, 'facet, 'shape> KdlDeserializer<'input> {
 /// "#;
 /// let val: MyStruct = from_str(kdl)?;
 /// ```
-pub fn from_str<'input, 'facet, 'shape, T>(kdl: &'input str) -> Result<'shape, T>
+pub fn from_str<'input, 'facet: 'shape, 'shape, T>(kdl: &'input str) -> Result<'shape, T>
 where
     T: Facet<'facet>,
     'input: 'facet,

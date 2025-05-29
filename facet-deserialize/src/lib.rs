@@ -880,7 +880,7 @@ where
                         .map_err(|e| self.err(DeserErrorKind::VariantError(e)))?;
 
                     // Select the default variant
-                    wip.begin_nth_variant(default_variant_idx)
+                    wip.select_nth_variant(default_variant_idx)
                         .map_err(|e| self.reflect_err(e))?;
 
                     // Copy all fields from default value
@@ -927,7 +927,7 @@ where
                             // Try to select the variant
                             match wip.find_variant(&cow) {
                                 Some((variant_index, _)) => {
-                                    wip.begin_nth_variant(variant_index)
+                                    wip.select_nth_variant(variant_index)
                                         .map_err(|e| self.reflect_err(e))?;
                                 }
                                 None => {
@@ -1270,7 +1270,7 @@ where
                                 wip.shape().blue(),
                                 variant.name.yellow(),
                             );
-                            wip.begin_nth_variant(index)
+                            wip.select_nth_variant(index)
                                 .map_err(|e| self.reflect_err(e))?;
 
                             // Let's see what's in the variant — if it's tuple-like with only one field, we want to push field 0

@@ -13,9 +13,9 @@ use super::error::{TomlDeError, TomlDeErrorKind};
 /// Applies to all Rust scalars supported by the `num` crate.
 pub(crate) fn put_number<'input, 'a, 'shape, T>(
     toml: &'input str,
-    wip: Partial<'a, 'shape>,
+    wip: &mut Partial<'a, 'shape>,
     item: &Item,
-) -> Result<Partial<'a, 'shape>, TomlDeError<'input, 'shape>>
+) -> Result<(), TomlDeError<'input, 'shape>>
 where
     T: Facet<'a> + NumCast + 'a,
 {
@@ -69,16 +69,18 @@ where
 
     // TODO: only generate if actually error
     let path = wip.path();
-    wip.put(value)
-        .map_err(|e| TomlDeError::new(toml, TomlDeErrorKind::GenericReflect(e), item.span(), path))
+    wip.set(value).map_err(|e| {
+        TomlDeError::new(toml, TomlDeErrorKind::GenericReflect(e), item.span(), path)
+    })?;
+    Ok(())
 }
 
 /// Try to convert a TOML boolean to a Rust boolean.
 pub(crate) fn put_boolean<'input, 'a, 'shape>(
     toml: &'input str,
-    wip: Partial<'a, 'shape>,
+    wip: &mut Partial<'a, 'shape>,
     item: &Item,
-) -> Result<Partial<'a, 'shape>, TomlDeError<'input, 'shape>> {
+) -> Result<(), TomlDeError<'input, 'shape>> {
     let v = item.as_value().ok_or_else(|| {
         TomlDeError::new(
             toml,
@@ -107,16 +109,18 @@ pub(crate) fn put_boolean<'input, 'a, 'shape>(
 
     // TODO: only generate if actually error
     let path = wip.path();
-    wip.put(value)
-        .map_err(|e| TomlDeError::new(toml, TomlDeErrorKind::GenericReflect(e), item.span(), path))
+    wip.set(value).map_err(|e| {
+        TomlDeError::new(toml, TomlDeErrorKind::GenericReflect(e), item.span(), path)
+    })?;
+    Ok(())
 }
 
 /// Try to convert a TOML char to a Rust char.
 pub(crate) fn put_char<'input, 'a, 'shape>(
     toml: &'input str,
-    wip: Partial<'a, 'shape>,
+    wip: &mut Partial<'a, 'shape>,
     item: &Item,
-) -> Result<Partial<'a, 'shape>, TomlDeError<'input, 'shape>> {
+) -> Result<(), TomlDeError<'input, 'shape>> {
     let v = item.as_value().ok_or_else(|| {
         TomlDeError::new(
             toml,
@@ -158,16 +162,18 @@ pub(crate) fn put_char<'input, 'a, 'shape>(
 
     // TODO: only generate if actually error
     let path = wip.path();
-    wip.put(value)
-        .map_err(|e| TomlDeError::new(toml, TomlDeErrorKind::GenericReflect(e), item.span(), path))
+    wip.set(value).map_err(|e| {
+        TomlDeError::new(toml, TomlDeErrorKind::GenericReflect(e), item.span(), path)
+    })?;
+    Ok(())
 }
 
 /// Try to convert a TOML string to a Rust string.
 pub(crate) fn put_string<'input, 'a, 'shape, T>(
     toml: &'input str,
-    wip: Partial<'a, 'shape>,
+    wip: &mut Partial<'a, 'shape>,
     item: &Item,
-) -> Result<Partial<'a, 'shape>, TomlDeError<'input, 'shape>>
+) -> Result<(), TomlDeError<'input, 'shape>>
 where
     T: From<String> + Facet<'a> + 'a,
 {
@@ -190,16 +196,18 @@ where
 
     // TODO: only generate if actually error
     let path = wip.path();
-    wip.put(value)
-        .map_err(|e| TomlDeError::new(toml, TomlDeErrorKind::GenericReflect(e), item.span(), path))
+    wip.set(value).map_err(|e| {
+        TomlDeError::new(toml, TomlDeErrorKind::GenericReflect(e), item.span(), path)
+    })?;
+    Ok(())
 }
 
 /// Try to convert a TOML string to a Rust type that implements `FromStr`.
 pub(crate) fn put_from_str<'input, 'a, 'shape>(
     toml: &'input str,
-    wip: Partial<'a, 'shape>,
+    wip: &mut Partial<'a, 'shape>,
     item: &Item,
-) -> Result<Partial<'a, 'shape>, TomlDeError<'input, 'shape>> {
+) -> Result<(), TomlDeError<'input, 'shape>> {
     let string = item.as_str().ok_or_else(|| {
         TomlDeError::new(
             toml,
@@ -214,7 +222,8 @@ pub(crate) fn put_from_str<'input, 'a, 'shape>(
 
     // TODO: only generate if actually error
     let path = wip.path();
-    wip.parse(string).map_err(|e| match e {
+    // Simply set the string value - automatic conversion will handle parsing
+    wip.set(string.to_string()).map_err(|e| match e {
         // Handle the specific parsing error with a custom error type
         ReflectError::OperationFailed {
             operation: "parsing",
@@ -231,5 +240,6 @@ pub(crate) fn put_from_str<'input, 'a, 'shape>(
             path,
         ),
         e => TomlDeError::new(toml, TomlDeErrorKind::GenericReflect(e), item.span(), path),
-    })
+    })?;
+    Ok(())
 }

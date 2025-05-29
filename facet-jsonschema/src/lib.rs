@@ -85,7 +85,6 @@ fn serialize<'shape, W: Write>(
                         return Ok(());
                     }
                 }
-                _ => {} // Handle other sequence types
             }
         }
         _ => {} // Continue to check the def system

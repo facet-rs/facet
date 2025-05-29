@@ -16,12 +16,13 @@ use yaml_rust2::{Yaml, YamlLoader};
 
 /// Deserializes a YAML string into a value of type `T` that implements `Facet`.
 pub fn from_str<'input: 'facet, 'facet, T: Facet<'facet>>(yaml: &'input str) -> Result<T, AnyErr> {
-    let wip = Partial::alloc::<T>()?;
-    let wip = from_str_value(wip, yaml)?;
-    let heap_value = wip.build().map_err(|e| AnyErr(e.to_string()))?;
-    heap_value
-        .materialize::<T>()
-        .map_err(|e| AnyErr(e.to_string()))
+    let mut typed_partial = Partial::alloc::<T>()?;
+    {
+        let wip = typed_partial.inner_mut();
+        from_str_value(wip, yaml)?;
+    }
+    let boxed_value = typed_partial.build().map_err(|e| AnyErr(e.to_string()))?;
+    Ok(*boxed_value)
 }
 
 fn yaml_type(ty: &Yaml) -> &'static str {
@@ -53,20 +54,21 @@ fn yaml_to_u64(ty: &Yaml) -> Result<u64, AnyErr> {
 }
 
 fn from_str_value<'facet, 'shape>(
-    wip: Partial<'facet, 'shape>,
+    wip: &mut Partial<'facet, 'shape>,
     yaml: &str,
-) -> Result<Partial<'facet, 'shape>, AnyErr> {
+) -> Result<(), AnyErr> {
     let docs = YamlLoader::load_from_str(yaml).map_err(|e| e.to_string())?;
     if docs.len() != 1 {
         return Err("Expected exactly one YAML document".into());
     }
-    deserialize_value(wip, &docs[0])
+    deserialize_value(wip, &docs[0])?;
+    Ok(())
 }
 
 fn deserialize_value<'facet, 'shape>(
-    mut wip: Partial<'facet, 'shape>,
+    wip: &mut Partial<'facet, 'shape>,
     value: &Yaml,
-) -> Result<Partial<'facet, 'shape>, AnyErr> {
+) -> Result<(), AnyErr> {
     // Get both the direct shape and innermost shape (for transparent types)
     let shape = wip.shape();
     let innermost_shape = wip.innermost_shape();
@@ -89,8 +91,8 @@ fn deserialize_value<'facet, 'shape>(
         log::debug!("Handling transparent String wrapper");
 
         if let Yaml::String(s) = value {
-            wip = wip.put(s.to_string()).map_err(|e| AnyErr(e.to_string()))?;
-            return Ok(wip);
+            wip.set(s.to_string()).map_err(|e| AnyErr(e.to_string()))?;
+            return Ok(());
         }
     }
 
@@ -109,119 +111,51 @@ fn deserialize_value<'facet, 'shape>(
                 #[cfg(feature = "log")]
                 log::debug!("Processing struct field '{}' (index: {})", k, field_index);
 
-                wip = wip
-                    .field(field_index)
+                wip.begin_nth_field(field_index)
                     .map_err(|e| AnyErr(format!("Field '{}' error: {}", k, e)))?;
-                wip = deserialize_value(wip, v)?;
-                wip = wip.end().map_err(|e| AnyErr(e.to_string()))?;
+                deserialize_value(wip, v)?;
+                wip.end().map_err(|e| AnyErr(e.to_string()))?;
             }
 
             // Process any unset fields with defaults
-            let mut has_unset = false;
             for (index, field) in sd.fields.iter().enumerate() {
                 let is_set = wip.is_field_set(index).map_err(|e| AnyErr(e.to_string()))?;
                 if !is_set {
-                    has_unset = true;
-
                     // If field has default attribute, apply it
                     if field.flags.contains(FieldFlags::DEFAULT) {
                         #[cfg(feature = "log")]
                         log::debug!("Setting default for field: {}", field.name);
 
-                        wip = wip.field(index).map_err(|e| AnyErr(e.to_string()))?;
+                        wip.begin_nth_field(index)
+                            .map_err(|e| AnyErr(e.to_string()))?;
 
-                        // Check for custom default function
-                        if let Some(default_in_place_fn) = field.vtable.default_fn {
+                        // Use set_default which internally handles custom default functions safely
+                        if field.shape().is(Characteristic::Default)
+                            || field.vtable.default_fn.is_some()
+                        {
                             #[cfg(feature = "log")]
-                            log::debug!("Using custom default function for field: {}", field.name);
+                            log::debug!("Using Default for field: {}", field.name);
 
-                            wip = wip
-                                .put_from_fn(default_in_place_fn)
-                                .map_err(|e| AnyErr(e.to_string()))?;
+                            wip.set_default().map_err(|e| AnyErr(e.to_string()))?;
                         } else {
-                            // Use regular Default implementation
-                            if !field.shape().is(Characteristic::Default) {
-                                return Err(AnyErr(format!(
-                                    "Field '{}' has default attribute but its type doesn't implement Default",
-                                    field.name
-                                )));
-                            }
-
-                            #[cfg(feature = "log")]
-                            log::debug!("Using Default impl for field: {}", field.name);
-
-                            // Create a default instance but use the field_shape instead of just wip.put_default()
-                            // This is needed to correctly process fields with default values in nested structs
-                            let field_shape = field.shape();
-
-                            // Check if this is a struct type that might have fields with default values
-                            if let Type::User(UserType::Struct(_)) = &field_shape.ty {
-                                // Process the nested struct with defaults
-                                #[cfg(feature = "log")]
-                                log::debug!(
-                                    "Processing nested struct with defaults: {}",
-                                    field.name
-                                );
-
-                                // For handling nested structs, we need to be careful with our approach.
-                                // We'll just use the standard Default implementation and let the system
-                                // handle the custom field defaults during creation. The facet_core system will
-                                // handle the custom field defaults during the Default::default() call.
-
-                                #[cfg(feature = "log")]
-                                log::debug!(
-                                    "Using Default impl for nested struct field: {}",
-                                    field.name
-                                );
-
-                                wip = wip.put_default().map_err(|e| AnyErr(e.to_string()))?;
-                            } else {
-                                // Simple default for non-struct types
-                                wip = wip.put_default().map_err(|e| AnyErr(e.to_string()))?;
-                            }
+                            return Err(AnyErr(format!(
+                                "Field '{}' has default attribute but its type doesn't implement Default",
+                                field.name
+                            )));
                         }
 
-                        wip = wip.end().map_err(|e| AnyErr(e.to_string()))?;
+                        wip.end().map_err(|e| AnyErr(e.to_string()))?;
                     }
                 }
             }
 
-            // If there are still unset fields and the struct has a default attribute,
-            // create a default instance and copy any remaining unset fields from it
-            if has_unset && shape.has_default_attr() {
-                #[cfg(feature = "log")]
-                log::debug!("Using struct-level default");
-
-                // Create default instance
-                let default_val = Partial::alloc_shape(shape)
-                    .map_err(|e| AnyErr(e.to_string()))?
-                    .put_default()
-                    .map_err(|e| AnyErr(e.to_string()))?
-                    .build()
-                    .map_err(|e| AnyErr(e.to_string()))?;
-
-                let peek = default_val.peek().into_struct().unwrap();
-
-                // Copy unset fields from default instance
-                for (index, field) in sd.fields.iter().enumerate() {
-                    let is_set = wip.is_field_set(index).map_err(|e| AnyErr(e.to_string()))?;
-                    if !is_set {
-                        #[cfg(feature = "log")]
-                        log::debug!("Copying default for field: {}", field.name);
-
-                        let address_of_field_from_default = peek.field(index).unwrap().data();
-                        wip = wip.field(index).map_err(|e| AnyErr(e.to_string()))?;
-                        wip = wip
-                            .put_shape(address_of_field_from_default, field.shape())
-                            .map_err(|e| AnyErr(e.to_string()))?;
-                        wip = wip.end().map_err(|e| AnyErr(e.to_string()))?;
-                    }
-                }
-            }
+            // Note: Struct-level defaults would require unsafe code to copy fields,
+            // which is not allowed in facet-yaml due to deny(unsafe_code).
+            // Individual field defaults are handled above.
         } else {
             return Err(AnyErr(format!("Expected a YAML hash, got: {:?}", value)));
         }
-        return Ok(wip);
+        return Ok(());
     }
 
     // Then check the def system (Def) using innermost_shape instead of shape
@@ -244,7 +178,7 @@ fn deserialize_value<'facet, 'shape>(
                 || innermost_shape.is_type::<usize>()
             {
                 let u = yaml_to_u64(value)?;
-                wip = wip.put(u).map_err(|e| AnyErr(e.to_string()))?;
+                wip.set(u).map_err(|e| AnyErr(e.to_string()))?;
             } else if innermost_shape.is_type::<i64>()
                 || innermost_shape.is_type::<i32>()
                 || innermost_shape.is_type::<i16>()
@@ -274,7 +208,7 @@ fn deserialize_value<'facet, 'shape>(
                         )));
                     }
                 };
-                wip = wip.put(i).map_err(|e| AnyErr(e.to_string()))?;
+                wip.set(i).map_err(|e| AnyErr(e.to_string()))?;
             } else if innermost_shape.is_type::<f64>() || innermost_shape.is_type::<f32>() {
                 // Handle floating point numbers
                 let f = match value {
@@ -299,7 +233,7 @@ fn deserialize_value<'facet, 'shape>(
                         )));
                     }
                 };
-                wip = wip.put(f).map_err(|e| AnyErr(e.to_string()))?;
+                wip.set(f).map_err(|e| AnyErr(e.to_string()))?;
             } else if innermost_shape.is_type::<bool>() {
                 // Handle boolean values
                 let b = match value {
@@ -316,7 +250,7 @@ fn deserialize_value<'facet, 'shape>(
                         )));
                     }
                 };
-                wip = wip.put(b).map_err(|e| AnyErr(e.to_string()))?;
+                wip.set(b).map_err(|e| AnyErr(e.to_string()))?;
             } else if innermost_shape.is_type::<String>()
                 || matches!(scalar_def.affinity, ScalarAffinity::Time(_))
                 || matches!(scalar_def.affinity, ScalarAffinity::UUID(_))
@@ -328,7 +262,7 @@ fn deserialize_value<'facet, 'shape>(
                     .as_str()
                     .ok_or_else(|| AnyErr(format!("Expected string, got: {}", yaml_type(value))))?
                     .to_string();
-                wip = wip.put(s).map_err(|e| AnyErr(e.to_string()))?;
+                wip.set(s).map_err(|e| AnyErr(e.to_string()))?;
             } else {
                 return Err(AnyErr(format!(
                     "facet-yaml: unsupported scalar type: {}",
@@ -340,35 +274,35 @@ fn deserialize_value<'facet, 'shape>(
             #[cfg(feature = "log")]
             log::debug!("Processing list type");
 
-            wip = deserialize_as_list(wip, value)?;
+            deserialize_as_list(wip, value)?;
         }
         Def::Map(_) => {
             #[cfg(feature = "log")]
             log::debug!("Processing map type");
 
-            wip = deserialize_as_map(wip, value)?;
+            deserialize_as_map(wip, value)?;
         }
         // Enum has been moved to Type system
         _ => return Err(AnyErr(format!("Unsupported type: {:?}", shape))),
     }
-    Ok(wip)
+    Ok(())
 }
 
 fn deserialize_as_list<'facet, 'shape>(
-    mut wip: Partial<'facet, 'shape>,
+    wip: &mut Partial<'facet, 'shape>,
     value: &Yaml,
-) -> Result<Partial<'facet, 'shape>, AnyErr> {
+) -> Result<(), AnyErr> {
     #[cfg(feature = "log")]
     log::debug!("deserialize_as_list: shape={}", wip.shape());
 
     if let Yaml::Array(array) = value {
-        // Handle empty list
-        if array.is_empty() {
-            return wip.put_empty_list().map_err(|e| AnyErr(e.to_string()));
-        }
-
         // Start the list
-        wip = wip.begin_list().map_err(|e| AnyErr(e.to_string()))?;
+        wip.begin_list().map_err(|e| AnyErr(e.to_string()))?;
+
+        // Handle empty list - just return without adding items
+        if array.is_empty() {
+            return Ok(());
+        }
 
         // Process each element
         for element in array.iter() {
@@ -376,14 +310,12 @@ fn deserialize_as_list<'facet, 'shape>(
             log::debug!("Processing list element: {:?}", element);
 
             // Push element
-            wip = wip
-                .begin_list_item().ma
-                p_err(|e| AnyErr(e.to_string()))?;
-            wip = deserialize_value(wip, element)?;
-            wip = wip.end().map_err(|e| AnyErr(e.to_string()))?;
+            wip.begin_list_item().map_err(|e| AnyErr(e.to_string()))?;
+            deserialize_value(wip, element)?;
+            wip.end().map_err(|e| AnyErr(e.to_string()))?;
         }
 
-        Ok(wip)
+        Ok(())
     } else {
         Err(AnyErr(format!(
             "Expected a YAML array, got: {}",
@@ -393,17 +325,17 @@ fn deserialize_as_list<'facet, 'shape>(
 }
 
 fn deserialize_as_map<'facet, 'shape>(
-    mut wip: Partial<'facet, 'shape>,
+    wip: &mut Partial<'facet, 'shape>,
     value: &Yaml,
-) -> Result<Partial<'facet, 'shape>, AnyErr> {
+) -> Result<(), AnyErr> {
     if let Yaml::Hash(hash) = value {
+        // Start the map
+        wip.begin_map().map_err(|e| AnyErr(e.to_string()))?;
+
         // Handle empty map
         if hash.is_empty() {
-            return wip.put_empty_map().map_err(|e| AnyErr(e.to_string()));
+            return Ok(());
         }
-
-        // Start the map
-        wip = wip.begin_map_insert().map_err(|e| AnyErr(e.to_string()))?;
 
         // Process each key-value pair
         for (k, v) in hash {
@@ -413,18 +345,18 @@ fn deserialize_as_map<'facet, 'shape>(
                 .ok_or_else(|| AnyErr(format!("Expected string key, got: {}", yaml_type(k))))?;
 
             // Push map key
-            wip = wip.push_map_key().map_err(|e| AnyErr(e.to_string()))?;
-            wip = wip
-                .put(key_str.to_string())
+            wip.begin_key().map_err(|e| AnyErr(e.to_string()))?;
+            wip.set(key_str.to_string())
                 .map_err(|e| AnyErr(e.to_string()))?;
+            wip.end().map_err(|e| AnyErr(e.to_string()))?;
 
             // Push map value
-            wip = wip.push_map_value().map_err(|e| AnyErr(e.to_string()))?;
-            wip = deserialize_value(wip, v)?;
-            wip = wip.end().map_err(|e| AnyErr(e.to_string()))?;
+            wip.begin_value().map_err(|e| AnyErr(e.to_string()))?;
+            deserialize_value(wip, v)?;
+            wip.end().map_err(|e| AnyErr(e.to_string()))?;
         }
 
-        Ok(wip)
+        Ok(())
     } else {
         Err(AnyErr(format!(
             "Expected a YAML hash/map, got: {}",

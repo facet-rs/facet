@@ -268,6 +268,12 @@ enum Tracker<'shape> {
         /// State of the current insertion operation
         insert_state: MapInsertState,
     },
+
+    /// Option being initialized with Some(inner_value)
+    Option {
+        /// Whether we're currently building the inner value
+        building_inner: bool,
+    },
 }
 
 impl<'shape> Frame<'shape> {
@@ -380,6 +386,13 @@ impl<'shape> Frame<'shape> {
                     Ok(())
                 } else {
                     Err(ReflectError::UninitializedValue { shape: self.shape })
+                }
+            }
+            Tracker::Option { building_inner } => {
+                if building_inner {
+                    Err(ReflectError::UninitializedValue { shape: self.shape })
+                } else {
+                    Ok(())
                 }
             }
         }
@@ -533,6 +546,19 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
             if let Some(drop_fn) = (frame.shape.vtable.drop_in_place)() {
                 unsafe { drop_fn(PtrMut::new(frame.data.as_mut_byte_ptr())) };
             }
+        }
+
+        // Don't allow overwriting when building an Option's inner value
+        if matches!(
+            frame.tracker,
+            Tracker::Option {
+                building_inner: true
+            }
+        ) {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "Cannot overwrite while building Option inner value",
+            });
         }
 
         // Call the function to initialize the value
@@ -1212,61 +1238,47 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         Ok(self)
     }
 
-    /// Begins inserting a key-value pair into the map
-    /// After calling this, use push_key() and push_value() to set the key and value
-    pub fn begin_insert(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
-        self.require_active()?;
-        let frame = self.frames.last_mut().unwrap();
-
-        // Check that we have a Map that's been initialized
-        match &mut frame.tracker {
-            Tracker::Map {
-                is_initialized: true,
-                insert_state,
-            } => {
-                if !matches!(insert_state, MapInsertState::Idle) {
-                    return Err(ReflectError::OperationFailed {
-                        shape: frame.shape,
-                        operation: "already in the middle of an insert operation",
-                    });
-                }
-                *insert_state = MapInsertState::PushingKey { key_ptr: None };
-                Ok(self)
-            }
-            _ => Err(ReflectError::OperationFailed {
-                shape: frame.shape,
-                operation: "must call begin_map() before begin_insert()",
-            }),
-        }
-    }
-
     /// Pushes a frame for the map key
-    /// Must be called after begin_insert()
+    /// Automatically starts a new insert if we're idle
     pub fn begin_key(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
         self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
 
-        // Check that we have a Map in PushingKey state
+        // Check that we have a Map and set up for key insertion
         let map_def = match (&frame.shape.def, &mut frame.tracker) {
             (
                 Def::Map(map_def),
                 Tracker::Map {
-                    insert_state: MapInsertState::PushingKey { key_ptr },
-                    ..
+                    is_initialized: true,
+                    insert_state,
                 },
             ) => {
-                if key_ptr.is_some() {
-                    return Err(ReflectError::OperationFailed {
-                        shape: frame.shape,
-                        operation: "already pushing a key, call pop() first",
-                    });
+                match insert_state {
+                    MapInsertState::Idle => {
+                        // Start a new insert automatically
+                        *insert_state = MapInsertState::PushingKey { key_ptr: None };
+                    }
+                    MapInsertState::PushingKey { key_ptr } => {
+                        if key_ptr.is_some() {
+                            return Err(ReflectError::OperationFailed {
+                                shape: frame.shape,
+                                operation: "already pushing a key, call end() first",
+                            });
+                        }
+                    }
+                    _ => {
+                        return Err(ReflectError::OperationFailed {
+                            shape: frame.shape,
+                            operation: "must complete current operation before begin_key()",
+                        });
+                    }
                 }
                 map_def
             }
             _ => {
                 return Err(ReflectError::OperationFailed {
                     shape: frame.shape,
-                    operation: "must call begin_insert() before push_key()",
+                    operation: "must call begin_map() before begin_key()",
                 });
             }
         };
@@ -1643,6 +1655,45 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                     }
                 }
             }
+            Tracker::Option { building_inner } => {
+                // We just popped the inner value frame for an Option's Some variant
+                if *building_inner {
+                    if let Def::Option(option_def) = parent_frame.shape.def {
+                        // Use the Option vtable to initialize Some(inner_value)
+                        let init_some_fn = option_def.vtable.init_some_fn;
+
+                        // The popped frame contains the inner value
+                        let inner_value_ptr = unsafe { popped_frame.data.assume_init().as_const() };
+
+                        // Initialize the Option as Some(inner_value)
+                        unsafe {
+                            init_some_fn(parent_frame.data, inner_value_ptr);
+                        }
+
+                        // Deallocate the inner value's memory since init_some_fn moved it
+                        if let FrameOwnership::Owned = popped_frame.ownership {
+                            if let Ok(layout) = popped_frame.shape.layout.sized_layout() {
+                                if layout.size() > 0 {
+                                    unsafe {
+                                        alloc::alloc::dealloc(
+                                            popped_frame.data.as_mut_byte_ptr(),
+                                            layout,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+
+                        // Mark that we're no longer building the inner value
+                        *building_inner = false;
+                    } else {
+                        return Err(ReflectError::OperationFailed {
+                            shape: parent_frame.shape,
+                            operation: "Option frame without Option definition",
+                        });
+                    }
+                }
+            }
             _ => {}
         }
 
@@ -1825,9 +1876,20 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         match &frame.tracker {
             Tracker::Struct { iset, .. } => Ok(iset.get(index)),
             Tracker::Enum { data, .. } => Ok(data.get(index)),
+            Tracker::Option { building_inner } => {
+                // For Options, index 0 represents the inner value
+                if index == 0 {
+                    Ok(!building_inner)
+                } else {
+                    Err(ReflectError::InvalidOperation {
+                        operation: "is_field_set",
+                        reason: "Option only has one field (index 0)",
+                    })
+                }
+            }
             _ => Err(ReflectError::InvalidOperation {
                 operation: "is_field_set",
-                reason: "Current frame is not a struct or enum variant",
+                reason: "Current frame is not a struct, enum variant, or option",
             }),
         }
     }
@@ -1885,21 +1947,52 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     /// Begin building the Some variant of an Option
     pub fn push_some(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
         self.require_active()?;
-        let frame = self.frames.last().unwrap();
+        let frame = self.frames.last_mut().unwrap();
 
         // Verify we're working with an Option
-        if !matches!(frame.shape.def, Def::Option(_)) {
-            return Err(ReflectError::WasNotA {
-                expected: "Option",
-                actual: frame.shape,
-            });
+        let option_def = match frame.shape.def {
+            Def::Option(def) => def,
+            _ => {
+                return Err(ReflectError::WasNotA {
+                    expected: "Option",
+                    actual: frame.shape,
+                });
+            }
+        };
+
+        // Initialize the tracker for Option building
+        if matches!(frame.tracker, Tracker::Uninit) {
+            frame.tracker = Tracker::Option {
+                building_inner: true,
+            };
         }
 
-        // For Option, we need to select the Some variant
-        self.select_variant(1)?; // Some is typically variant 1
+        // Get the inner type shape
+        let inner_shape = option_def.t;
 
-        // Now navigate into the value field of Some
-        self.begin_nth_field(0)
+        // Allocate memory for the inner value
+        let inner_layout = inner_shape
+            .layout
+            .sized_layout()
+            .map_err(|_| ReflectError::Unsized { shape: inner_shape })?;
+
+        let inner_data = if inner_layout.size() == 0 {
+            // For ZST, use a non-null but unallocated pointer
+            PtrUninit::new(core::ptr::NonNull::<u8>::dangling().as_ptr())
+        } else {
+            // Allocate memory for the inner value
+            let ptr = unsafe { alloc::alloc::alloc(inner_layout) };
+            if ptr.is_null() {
+                alloc::alloc::handle_alloc_error(inner_layout);
+            }
+            PtrUninit::new(ptr)
+        };
+
+        // Create a new frame for the inner value
+        let inner_frame = Frame::new(inner_data, inner_shape, FrameOwnership::Owned);
+        self.frames.push(inner_frame);
+
+        Ok(self)
     }
 
     /// Begin building the inner value of a smart pointer
@@ -2059,9 +2152,20 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
         T: Facet<'facet>,
         'facet: 'shape,
     {
+        trace!(
+            "TypedPartial::build: Building value for type {}, inner shape: {}",
+            T::SHAPE,
+            self.inner.shape()
+        );
         let heap_value = self.inner.build()?;
+        trace!(
+            "TypedPartial::build: Built heap value with shape: {}",
+            heap_value.shape()
+        );
         // Safety: HeapValue was constructed from T and the shape layout is correct.
-        unsafe { Ok(heap_value.into_box_unchecked::<T>()) }
+        let result = unsafe { heap_value.into_box_unchecked::<T>() };
+        trace!("TypedPartial::build: Successfully converted to Box<T>");
+        Ok(result)
     }
 
     /// Sets a value wholesale into the current frame
@@ -2173,12 +2277,6 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
         Ok(self)
     }
 
-    /// Forwards begin_insert to the inner wip instance.
-    pub fn begin_insert(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
-        self.inner.begin_insert()?;
-        Ok(self)
-    }
-
     /// Forwards begin_key to the inner wip instance.
     pub fn begin_key(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
         self.inner.begin_key()?;
@@ -2278,6 +2376,24 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
         U: Facet<'facet>,
     {
         self.inner.push(value)?;
+        Ok(self)
+    }
+
+    /// Forwards push_some to the inner wip instance.
+    pub fn push_some(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+        self.inner.push_some()?;
+        Ok(self)
+    }
+
+    /// Forwards push_pointee to the inner wip instance.
+    pub fn push_pointee(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+        self.inner.push_pointee()?;
+        Ok(self)
+    }
+
+    /// Forwards push_inner to the inner wip instance.
+    pub fn push_inner(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+        self.inner.push_inner()?;
         Ok(self)
     }
 }
@@ -2434,6 +2550,17 @@ impl<'facet, 'shape> Drop for Partial<'facet, 'shape> {
                             }
                         }
                         MapInsertState::Idle => {}
+                    }
+                }
+                Tracker::Option { building_inner } => {
+                    // If we're building the inner value, it will be handled by the Option vtable
+                    // No special cleanup needed here as the Option will either be properly
+                    // initialized or remain uninitialized
+                    if !building_inner {
+                        // Option is fully initialized, drop it normally
+                        if let Some(drop_fn) = (frame.shape.vtable.drop_in_place)() {
+                            unsafe { drop_fn(PtrMut::new(frame.data.as_mut_byte_ptr())) };
+                        }
                     }
                 }
             }

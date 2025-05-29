@@ -6,7 +6,7 @@ use std::collections::HashMap;
 fn wip_map_trivial() {
     let mut partial = Partial::alloc::<HashMap<String, String>>()?;
     partial.begin_map()?;
-    partial.begin_insert()?;
+
     partial.begin_key()?;
     partial.set::<String>("key".into())?;
     partial.end()?;

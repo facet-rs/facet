@@ -34,13 +34,13 @@ macro_rules! reflect {
 }
 
 /// Deserializes a TOML string into a value of type `T` that implements `Facet`.
-pub fn from_str<'input, 'facet, 'shape, T: Facet<'facet>>(
+pub fn from_str<'input, 'facet: 'shape, 'shape, T: Facet<'facet>>(
     toml: &'input str,
 ) -> Result<T, TomlDeError<'input, 'shape>> {
     trace!("Parsing TOML");
 
     // Allocate the type
-    let partial = Partial::alloc::<T>().map_err(|e| {
+    let mut partial = Partial::alloc::<T>().map_err(|e| {
         TomlDeError::new(
             toml,
             TomlDeErrorKind::GenericReflect(e),
@@ -62,7 +62,7 @@ pub fn from_str<'input, 'facet, 'shape, T: Facet<'facet>>(
     trace!("Starting deserialization");
 
     // Deserialize it with facet reflection
-    deserialize_item(toml, &mut partial, docs.as_item())?;
+    deserialize_item(toml, partial.inner_mut(), docs.as_item())?;
 
     // Build the result
     let result = partial.build().map_err(|e| {
@@ -83,7 +83,7 @@ fn deserialize_item<'input, 'facet, 'shape>(
     toml: &'input str,
     wip: &mut Partial<'facet, 'shape>,
     item: &Item,
-) -> Result<Partial<'facet, 'shape>, TomlDeError<'input, 'shape>> {
+) -> Result<(), TomlDeError<'input, 'shape>> {
     // Check for Option before anything else, since it's a special case
     // Option is an enum in Rust, but we handle it specially
     if let Def::Option(_) = wip.shape().def {
@@ -97,17 +97,19 @@ fn deserialize_item<'input, 'facet, 'shape>(
 
     // Check for enum in the type system
     if let Type::User(UserType::Enum(_)) = &wip.shape().ty {
-        return deserialize_as_enum(toml, wip, item);
+        deserialize_as_enum(toml, wip, item)?;
+        return Ok(());
     }
 
     // Fall back to the def system for other types
     match wip.shape().def {
-        Def::Scalar(_) => deserialize_as_scalar(toml, wip, item),
-        Def::List(_) => deserialize_as_list(toml, wip, item),
-        Def::Map(_) => deserialize_as_map(toml, wip, item),
-        Def::SmartPointer(_) => deserialize_as_smartpointer(toml, wip, item),
+        Def::Scalar(_) => deserialize_as_scalar(toml, wip, item)?,
+        Def::List(_) => deserialize_as_list(toml, wip, item)?,
+        Def::Map(_) => deserialize_as_map(toml, wip, item)?,
+        Def::SmartPointer(_) => deserialize_as_smartpointer(toml, wip, item)?,
         _ => todo!(),
     }
+    Ok(())
 }
 
 fn deserialize_as_struct<'input, 'a, 'shape>(
@@ -171,11 +173,11 @@ fn deserialize_as_struct<'input, 'a, 'shape>(
                     // Default of `Option<T>` is `None`
                     reflect!(wip, toml, item.span(), set_default());
                 } else if field.flags.contains(FieldFlags::DEFAULT) {
-                    // Handle the default function
-                    if let Some(default_in_place_fn) = field.vtable.default_fn {
-                        reflect!(wip, toml, item.span(), put_from_fn(default_in_place_fn));
-                    } else if field.shape().is(Characteristic::Default) {
-                        reflect!(wip, toml, item.span(), put_default());
+                    // Handle the default - set_default internally handles custom default functions safely
+                    if field.shape().is(Characteristic::Default)
+                        || field.vtable.default_fn.is_some()
+                    {
+                        reflect!(wip, toml, item.span(), set_default());
                     } else {
                         // Throw an error when there's a "default" attribute but no implementation for the type
                         return Err(TomlDeError::new(
@@ -191,7 +193,7 @@ fn deserialize_as_struct<'input, 'a, 'shape>(
                     }
                 } else if field.shape().is_type::<()>() {
                     // Default of `()` is `()`
-                    reflect!(wip, toml, item.span(), put_default());
+                    reflect!(wip, toml, item.span(), set_default());
                 } else {
                     return Err(TomlDeError::new(
                         toml,
@@ -208,21 +210,21 @@ fn deserialize_as_struct<'input, 'a, 'shape>(
 
     trace!("Finished deserializing {}", "struct".blue());
 
-    Ok(wip)
+    Ok(())
 }
 
 fn deserialize_as_enum<'input, 'a, 'shape>(
     toml: &'input str,
-    wip: Partial<'a, 'shape>,
+    wip: &mut Partial<'a, 'shape>,
     item: &Item,
-) -> Result<Partial<'a, 'shape>, TomlDeError<'input, 'shape>> {
+) -> Result<(), TomlDeError<'input, 'shape>> {
     trace!(
         "Deserializing {} as {}",
         item.type_name().cyan(),
         "enum".blue()
     );
 
-    let wip = match item {
+    match item {
         Item::None => todo!(),
 
         Item::Value(value) => {
@@ -303,28 +305,28 @@ fn deserialize_as_enum<'input, 'a, 'shape>(
         }
 
         Item::ArrayOfTables(_array_of_tables) => todo!(),
-    };
+    }
 
     trace!("Finished deserializing {}", "enum".blue());
 
-    Ok(wip)
+    Ok(())
 }
 
 fn build_enum_from_variant_name<'input, 'a, 'shape>(
     toml: &'input str,
-    mut wip: Partial<'a, 'shape>,
+    wip: &mut Partial<'a, 'shape>,
     variant_name: &str,
     item: &Item,
-) -> Result<Partial<'a, 'shape>, TomlDeError<'input, 'shape>> {
+) -> Result<(), TomlDeError<'input, 'shape>> {
     // Select the variant
-    reflect!(wip, toml, item.span(), variant_named(variant_name));
+    reflect!(wip, toml, item.span(), select_variant_named(variant_name));
 
     // Safe to unwrap because the variant got just selected
     let variant = wip.selected_variant().unwrap();
 
     if variant.data.kind == StructKind::Unit {
         // No need to do anything, we can just set the variant since it's a unit enum
-        return Ok(wip);
+        return Ok(());
     }
 
     // Whether it's a tuple so we need to use the index
@@ -354,7 +356,7 @@ fn build_enum_from_variant_name<'input, 'a, 'shape>(
                 // Push none if field not found and it's an option
                 None if matches!(field.shape().def, Def::Option(_)) => {
                     // Default of `Option<T>` is `None`
-                    reflect!(wip, toml, item.span(), put_default());
+                    reflect!(wip, toml, item.span(), set_default());
                 }
                 None => {
                     return Err(TomlDeError::new(
@@ -379,14 +381,14 @@ fn build_enum_from_variant_name<'input, 'a, 'shape>(
         reflect!(wip, toml, item.span(), end());
     }
 
-    Ok(wip)
+    Ok(())
 }
 
 fn deserialize_as_list<'input, 'a, 'shape>(
     toml: &'input str,
-    mut wip: Partial<'a, 'shape>,
+    wip: &mut Partial<'a, 'shape>,
     item: &Item,
-) -> Result<Partial<'a, 'shape>, TomlDeError<'input, 'shape>> {
+) -> Result<(), TomlDeError<'input, 'shape>> {
     trace!(
         "Deserializing {} as {}",
         item.type_name().cyan(),
@@ -406,22 +408,20 @@ fn deserialize_as_list<'input, 'a, 'shape>(
         ));
     };
 
-    if item.is_empty() {
-        // Only put an empty list
-        reflect!(wip, toml, item.span(), put_empty_list());
-
-        return Ok(wip);
-    }
-
     // Start the list
     reflect!(wip, toml, item.span(), begin_list());
+
+    if item.is_empty() {
+        // Empty list - nothing more to do
+        return Ok(());
+    }
 
     // Loop over all items in the TOML list
     for value in item.iter() {
         // Start the field
         reflect!(wip, toml, value.span(), begin_list_item());
 
-        wip = deserialize_item(
+        deserialize_item(
             toml,
             wip,
             // TODO: remove clone
@@ -434,14 +434,14 @@ fn deserialize_as_list<'input, 'a, 'shape>(
 
     trace!("Finished deserializing {}", "list".blue());
 
-    Ok(wip)
+    Ok(())
 }
 
 fn deserialize_as_map<'input, 'a, 'shape>(
     toml: &'input str,
-    mut wip: Partial<'a, 'shape>,
+    wip: &mut Partial<'a, 'shape>,
     item: &Item,
-) -> Result<Partial<'a, 'shape>, TomlDeError<'input, 'shape>> {
+) -> Result<(), TomlDeError<'input, 'shape>> {
     trace!(
         "Deserializing {} as {}",
         item.type_name().cyan(),
@@ -461,20 +461,18 @@ fn deserialize_as_map<'input, 'a, 'shape>(
         )
     })?;
 
-    if table.is_empty() {
-        // Only put an empty map
-        reflect!(wip, toml, item.span(), put_empty_map());
-
-        return Ok(wip);
-    }
-
     // Start the map
-    reflect!(wip, toml, item.span(), begin_map_insert());
+    reflect!(wip, toml, item.span(), begin_map());
+
+    if table.is_empty() {
+        // Empty map - nothing more to do
+        return Ok(());
+    }
 
     // Loop over all items in the TOML list
     for (k, v) in table.iter() {
         // Start the key
-        reflect!(wip, toml, item.span(), push_map_key());
+        reflect!(wip, toml, item.span(), begin_key());
 
         trace!("Push {} {}", "key".cyan(), k.cyan().bold());
 
@@ -488,10 +486,10 @@ fn deserialize_as_map<'input, 'a, 'shape>(
             )
         })? {
             ScalarType::String => {
-                reflect!(wip, toml, item.span(), put(k.to_string()));
+                reflect!(wip, toml, item.span(), set(k.to_string()));
             }
             ScalarType::CowStr => {
-                reflect!(wip, toml, item.span(), put(Cow::Owned(k.to_string())));
+                reflect!(wip, toml, item.span(), set(Cow::Owned(k.to_string())));
             }
             _ => {
                 return Err(TomlDeError::new(
@@ -506,7 +504,7 @@ fn deserialize_as_map<'input, 'a, 'shape>(
         trace!("Push {}", "value".cyan());
 
         // Start the value
-        reflect!(wip, toml, v.span(), push_map_value());
+        reflect!(wip, toml, v.span(), begin_value());
 
         // Deserialize the value
         deserialize_item(toml, wip, v)?;
@@ -517,7 +515,7 @@ fn deserialize_as_map<'input, 'a, 'shape>(
 
     trace!("Finished deserializing {}", "map".blue());
 
-    Ok(wip)
+    Ok(())
 }
 
 fn deserialize_as_option<'input, 'a, 'shape>(
@@ -532,23 +530,23 @@ fn deserialize_as_option<'input, 'a, 'shape>(
     );
 
     // Push the Some variant
-    reflect!(wip, toml, item.span(), push_some());
+    reflect!(wip, toml, item.span(), select_variant(1));
 
     // Handle nested options recursively
     fn handle_nested_options<'input, 'a, 'shape>(
         toml: &'input str,
-        mut wip: Partial<'a, 'shape>,
+        wip: &mut Partial<'a, 'shape>,
         item: &Item,
-    ) -> Result<Partial<'a, 'shape>, TomlDeError<'input, 'shape>> {
+    ) -> Result<(), TomlDeError<'input, 'shape>> {
         // Check if we have another nested Option
         if let Def::Option(_) = wip.shape().def {
             trace!("Detected another level of nested Option");
 
             // Push Some for this level too
-            reflect!(wip, toml, item.span(), push_some());
+            reflect!(wip, toml, item.span(), select_variant(1));
 
             // Recursively handle any more levels of nesting
-            wip = handle_nested_options(toml, wip, item)?;
+            handle_nested_options(toml, wip, item)?;
 
             // Pop back up one level
             reflect!(wip, toml, item.span(), end());
@@ -556,31 +554,31 @@ fn deserialize_as_option<'input, 'a, 'shape>(
             // We've reached the innermost level - handle the actual value
             if item.is_integer() {
                 trace!("Deserializing integer at innermost Option level");
-                wip = deserialize_as_scalar(toml, wip, item)?;
+                deserialize_as_scalar(toml, wip, item)?;
             } else {
                 deserialize_item(toml, wip, item)?;
             }
         }
 
-        Ok(wip)
+        Ok(())
     }
 
     // Start processing from the current level
-    wip = handle_nested_options(toml, wip, item)?;
+    handle_nested_options(toml, wip, item)?;
 
     // Pop the outermost Option
     reflect!(wip, toml, item.span(), end());
 
     trace!("Finished deserializing {}", "option".blue());
 
-    Ok(wip)
+    Ok(())
 }
 
 fn deserialize_as_smartpointer<'input, 'a, 'shape>(
     _toml: &'input str,
-    mut _wip: Partial<'a, 'shape>,
+    _wip: &mut Partial<'a, 'shape>,
     item: &Item,
-) -> Result<Partial<'a, 'shape>, TomlDeError<'input, 'shape>> {
+) -> Result<(), TomlDeError<'input, 'shape>> {
     trace!(
         "Deserializing {} as {}",
         item.type_name().cyan(),
@@ -594,16 +592,16 @@ fn deserialize_as_smartpointer<'input, 'a, 'shape>(
 
 fn deserialize_as_scalar<'input, 'a, 'shape>(
     toml: &'input str,
-    mut wip: Partial<'a, 'shape>,
+    wip: &mut Partial<'a, 'shape>,
     item: &Item,
-) -> Result<Partial<'a, 'shape>, TomlDeError<'input, 'shape>> {
+) -> Result<(), TomlDeError<'input, 'shape>> {
     trace!(
         "Deserializing {} as {}",
         item.type_name().cyan(),
         "scalar".blue()
     );
 
-    wip = match ScalarType::try_from_shape(wip.shape()).ok_or_else(|| {
+    match ScalarType::try_from_shape(wip.shape()).ok_or_else(|| {
         TomlDeError::new(
             toml,
             TomlDeErrorKind::UnrecognizedScalar(wip.shape()),
@@ -611,7 +609,7 @@ fn deserialize_as_scalar<'input, 'a, 'shape>(
             wip.path(),
         )
     })? {
-        ScalarType::Unit => wip,
+        ScalarType::Unit => {}
 
         ScalarType::Bool => to_scalar::put_boolean(toml, wip, item)?,
         ScalarType::Char => to_scalar::put_char(toml, wip, item)?,
@@ -649,9 +647,9 @@ fn deserialize_as_scalar<'input, 'a, 'shape>(
                 wip.path(),
             ));
         }
-    };
+    }
 
     trace!("Finished deserializing {}", "scalar".blue());
 
-    Ok(wip)
+    Ok(())
 }

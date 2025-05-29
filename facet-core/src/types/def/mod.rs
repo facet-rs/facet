@@ -31,7 +31,7 @@ mod scalar;
 pub use scalar::*;
 
 /// The semantic definition of a shape: is it more like a scalar, a map, a list?
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 #[repr(C)]
 #[non_exhaustive]
 // this enum is only ever going to be owned in static space,
@@ -78,6 +78,47 @@ pub enum Def<'shape> {
 
     /// Smart pointers, like `Arc<T>`, `Rc<T>`, etc.
     SmartPointer(SmartPointerDef<'shape>),
+}
+
+impl<'shape> core::fmt::Debug for Def<'shape> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Def::Undefined => write!(f, "Undefined"),
+            Def::Scalar(scalar_def) => {
+                let affinity_name = match scalar_def.affinity {
+                    crate::ScalarAffinity::Number(_) => "Number",
+                    crate::ScalarAffinity::ComplexNumber(_) => "ComplexNumber",
+                    crate::ScalarAffinity::String(_) => "String",
+                    crate::ScalarAffinity::Boolean(_) => "Boolean",
+                    crate::ScalarAffinity::Empty(_) => "Empty",
+                    crate::ScalarAffinity::SocketAddr(_) => "SocketAddr",
+                    crate::ScalarAffinity::IpAddr(_) => "IpAddr",
+                    crate::ScalarAffinity::Url(_) => "Url",
+                    crate::ScalarAffinity::UUID(_) => "UUID",
+                    crate::ScalarAffinity::ULID(_) => "ULID",
+                    crate::ScalarAffinity::Time(_) => "Time",
+                    crate::ScalarAffinity::Opaque(_) => "Opaque",
+                    crate::ScalarAffinity::Other(_) => "Other",
+                    crate::ScalarAffinity::Char(_) => "Char",
+                    crate::ScalarAffinity::Path(_) => "Path",
+                };
+                write!(f, "Scalar({})", affinity_name)
+            }
+            Def::Map(map_def) => write!(f, "Map<{}>", (map_def.v)()),
+            Def::Set(set_def) => write!(f, "Set<{}>", (set_def.t)()),
+            Def::List(list_def) => write!(f, "List<{}>", (list_def.t)()),
+            Def::Array(array_def) => write!(f, "Array<{}; {}>", array_def.t, array_def.n),
+            Def::Slice(slice_def) => write!(f, "Slice<{}>", slice_def.t),
+            Def::Option(option_def) => write!(f, "Option<{}>", option_def.t),
+            Def::SmartPointer(smart_ptr_def) => {
+                if let Some(pointee) = smart_ptr_def.pointee {
+                    write!(f, "SmartPointer<{}>", pointee())
+                } else {
+                    write!(f, "SmartPointer<opaque>")
+                }
+            }
+        }
+    }
 }
 
 impl<'shape> Def<'shape> {

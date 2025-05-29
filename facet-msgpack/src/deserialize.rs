@@ -29,9 +29,16 @@ use log::trace;
 /// assert_eq!(user, User { id: 42, username: "user123".to_string() });
 /// ```
 pub fn from_slice<T: Facet<'static>>(msgpack: &[u8]) -> Result<T, DecodeError<'static>> {
+    trace!("from_slice: Starting deserialization for type {}", T::SHAPE);
     let mut typed_partial = Partial::alloc::<T>()?;
+    trace!(
+        "from_slice: Allocated TypedPartial, inner shape: {}",
+        typed_partial.inner_mut().shape()
+    );
     from_slice_value(msgpack, typed_partial.inner_mut())?;
+    trace!("from_slice: Deserialization complete, building value");
     let boxed_value = typed_partial.build()?;
+    trace!("from_slice: Value built successfully");
     Ok(*boxed_value)
 }
 
@@ -78,8 +85,14 @@ pub fn from_slice_value<'facet, 'shape>(
     msgpack: &[u8],
     wip: &mut Partial<'facet, 'shape>,
 ) -> Result<(), DecodeError<'shape>> {
+    trace!("from_slice_value: Starting with shape {}", wip.shape());
     let mut decoder = Decoder::new(msgpack);
-    decoder.deserialize_value(wip)
+    let result = decoder.deserialize_value(wip);
+    match &result {
+        Ok(_) => trace!("from_slice_value: Deserialization successful"),
+        Err(e) => trace!("from_slice_value: Deserialization failed: {:?}", e),
+    }
+    result
 }
 
 struct Decoder<'input> {
@@ -650,14 +663,12 @@ impl<'input, 'shape> Decoder<'input> {
 
             for _ in 0..map_len {
                 // Each map entry has a key and value
-                wip.begin_insert()?;
                 wip.begin_key()?;
                 self.deserialize_value(wip)?;
                 wip.end()?;
 
                 wip.begin_value()?;
                 self.deserialize_value(wip)?;
-                wip.end()?;
                 wip.end()?;
             }
         } else if let Def::List(_list_def) = shape.def {
@@ -671,17 +682,22 @@ impl<'input, 'shape> Decoder<'input> {
                 wip.end()?;
             }
         } else if let Def::Option(_option_def) = shape.def {
-            trace!("Deserializing option");
+            trace!("Deserializing option with shape: {}", shape);
             if self.peek_nil()? {
+                trace!("Option value is nil, setting to None");
                 // Consume the nil value
                 self.decode_nil()?;
                 // Initialize None option
                 wip.set_default()?;
             } else {
+                trace!("Option value is present, setting to Some");
                 // Value is present - initialize a Some option
                 wip.push_some()?;
+                trace!("After push_some, wip shape: {}", wip.shape());
                 self.deserialize_value(wip)?;
+                trace!("After deserialize_value, calling end");
                 wip.end()?;
+                trace!("After end, wip shape: {}", wip.shape());
             }
         } else {
             return Err(DecodeError::UnsupportedShape(format!("{:?}", shape)));

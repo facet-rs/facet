@@ -933,7 +933,6 @@ fn map_hashmap_simple() {
     let hv = Partial::alloc::<HashMap<String, i32>>()?
         .begin_map()?
         // Insert first pair: "foo" -> 42
-        .begin_insert()?
         .begin_key()?
         .set("foo".to_string())?
         .end()?
@@ -941,7 +940,6 @@ fn map_hashmap_simple() {
         .set(42)?
         .end()?
         // Insert second pair: "bar" -> 123
-        .begin_insert()?
         .begin_key()?
         .set("bar".to_string())?
         .end()?
@@ -980,14 +978,12 @@ fn map_hashmap_complex_values() {
     let hv = Partial::alloc::<HashMap<String, Person>>()?
         .begin_map()?
         // Insert "alice" -> Person { name: "Alice", age: 30 }
-        .begin_insert()?
         .set_key("alice".to_string())?
         .begin_value()?
         .set_field("name", "Alice".to_string())?
         .set_field("age", 30u32)?
         .end()? // Done with value
         // Insert "bob" -> Person { name: "Bob", age: 25 }
-        .begin_insert()?
         .set_key("bob".to_string())?
         .begin_value()?
         .set_field("name", "Bob".to_string())?
@@ -1176,12 +1172,16 @@ fn map_partial_initialization_drop() {
         partial
             .begin_map()?
             // Insert a complete pair
-            .begin_insert()?
-            .set_key("first".to_string())?
-            .set_value(DropTracker { id: 1 })?
+            .begin_key()?
+            .set("first".to_string())?
+            .end()?
+            .begin_value()?
+            .set(DropTracker { id: 1 })?
+            .end()?
             // Start inserting another pair but only complete the key
-            .begin_insert()?
-            .set_key("second".to_string())?;
+            .begin_key()?
+            .set("second".to_string())?
+            .end()?;
         // Don't set_value - leave incomplete
 
         // Drop the partial - should clean up properly

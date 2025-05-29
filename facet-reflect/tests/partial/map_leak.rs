@@ -8,7 +8,6 @@ use facet_testhelpers::test;
 fn wip_map_leaktest1() {
     let mut wip = Partial::alloc::<HashMap<String, String>>()?;
     wip.begin_map()?
-        .begin_insert()?
         .begin_key()?
         .set("key".to_string())?
         .end()?
@@ -24,7 +23,6 @@ fn wip_map_leaktest1() {
 fn wip_map_leaktest2() {
     let mut wip = Partial::alloc::<HashMap<String, String>>()?;
     wip.begin_map()?
-        .begin_insert()?
         .begin_key()?
         .set("key".to_string())?
         .end()?
@@ -39,7 +37,6 @@ fn wip_map_leaktest2() {
 fn wip_map_leaktest3() {
     let mut wip = Partial::alloc::<HashMap<String, String>>()?;
     wip.begin_map()?
-        .begin_insert()?
         .begin_key()?
         .set("key".to_string())?
         .end()?
@@ -53,7 +50,6 @@ fn wip_map_leaktest3() {
 fn wip_map_leaktest4() {
     let mut wip = Partial::alloc::<HashMap<String, String>>()?;
     wip.begin_map()?
-        .begin_insert()?
         .begin_key()?
         .set("key".to_string())?
         .end()?
@@ -65,10 +61,7 @@ fn wip_map_leaktest4() {
 #[test]
 fn wip_map_leaktest5() {
     let mut wip = Partial::alloc::<HashMap<String, String>>()?;
-    wip.begin_map()?
-        .begin_insert()?
-        .begin_key()?
-        .set("key".to_string())?;
+    wip.begin_map()?.begin_key()?.set("key".to_string())?;
     drop(wip);
 }
 
@@ -76,7 +69,7 @@ fn wip_map_leaktest5() {
 #[test]
 fn wip_map_leaktest6() {
     let mut wip = Partial::alloc::<HashMap<String, String>>()?;
-    wip.begin_map()?.begin_insert()?.begin_key()?;
+    wip.begin_map()?.begin_key()?;
     drop(wip);
 }
 
@@ -84,7 +77,7 @@ fn wip_map_leaktest6() {
 #[test]
 fn wip_map_leaktest7() {
     let mut wip = Partial::alloc::<HashMap<String, String>>()?;
-    wip.begin_map()?.begin_insert()?;
+    wip.begin_map()?;
     drop(wip);
 }
 

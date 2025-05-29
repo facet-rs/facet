@@ -1,5 +1,19 @@
 # Facet Reflect API Migration Guide
 
+## Quick Reference: Most Common Changes
+
+| Old Method | New Method | Notes |
+|------------|------------|-------|
+| `Wip::new::<T>()` | `Partial::alloc::<T>()` | Returns `TypedPartial<T>` |
+| `wip.put(value)` | `partial.set(value)` | |
+| `wip.put_default()` | `partial.set_default()` | |
+| `wip.field(idx)` | `partial.begin_nth_field(idx)` | |
+| `wip.variant(disc)` | `partial.select_variant(disc)` | |
+| `wip.variant_named(name)` | `partial.select_variant_named(name)` | |
+| `wip.begin_map_insert()` | Just use `partial.begin_map()` | No separate insert method |
+| `wip.put_empty_list()` | Just use `partial.begin_list()` | Don't add items for empty |
+| `wip.put_empty_map()` | Just use `partial.begin_map()` | Don't add items for empty |
+
 ## Major API Changes
 
 ### 1. Wip → Partial
@@ -15,6 +29,7 @@ The API uses descriptive method names for different operations:
 #### Struct Fields
 - `begin_field(field_name)` - Select a struct field by name
 - `begin_nth_field(idx)` - Select a struct field by index
+- `field(idx)` - No longer exists, use `begin_nth_field(idx)` instead
 
 #### Arrays and Tuples
 - `begin_nth_element(idx)` - Select an array or tuple element by index
@@ -28,14 +43,27 @@ The API uses descriptive method names for different operations:
 - `begin_list()` - Initialize a list/vector for adding elements
 - `begin_list_item()` - Add an item to a list
 - `begin_map()` - Initialize a map for adding key-value pairs
-- `begin_insert()` - Begin inserting a key-value pair into map
-- `begin_key()` - Set the key of a map entry
-- `begin_value()` - Set the value of a map entry
+- `begin_key()` / `push_map_key()` - Push a frame for setting the key of a map entry (push_map_key is an alias)
+- `begin_value()` / `push_map_value()` - Push a frame for setting the value of a map entry (push_map_value is an alias)
+
+Note: Methods like `put_empty_list()` and `put_empty_map()` no longer exist. To create empty collections, just call `begin_list()`/`begin_map()` without adding any items.
 
 #### Smart Pointers
 - `begin_smart_ptr()` - Navigate into smart pointer contents (Box, Arc, etc.)
 
-### 4. Single End Method
+### 4. Setting Values
+- `put()` → `set()` - Set a value at the current position
+- `put_default()` → `set_default()` - Set the default value at the current position
+- `put_from_fn()` → `set_from_function()` - Set a value using a function
+- `parse()` - Method removed, use type conversions before calling `set()`
+
+### 5. Other Method Changes
+- `variant(discriminant)` → `select_variant(discriminant)` 
+- `variant_named(name)` → `select_variant_named(name)`
+- `begin_map_insert()` - Removed, just use `begin_map()` followed by `begin_key()`
+- `frames_count()` - Removed, internal implementation detail
+
+### 6. Single End Method
 All navigation operations use a single `end()` method to pop the current frame, regardless of the type being constructed.
 
 ## Migration Examples
@@ -91,11 +119,10 @@ wip = wip.pop_map_entry()?;
 ```rust
 let mut partial = Partial::alloc::<HashMap<String, i32>>()?;
 partial.begin_map()?;
-partial.begin_insert()?;
-partial.begin_key()?;
+partial.begin_key()?;   // or push_map_key()
 partial.set("key".to_string())?;
 partial.end()?;
-partial.begin_value()?;
+partial.begin_value()?; // or push_map_value()
 partial.set(42)?;
 partial.end()?;
 ```
@@ -143,7 +170,7 @@ partial.set(None)?;
 
 1. **Single end method**: Use `end()` for all types instead of type-specific pop methods
 2. **Descriptive naming**: Method names clearly indicate their purpose (e.g., `begin_field` vs generic `push`)
-3. **Separate map operations**: Map construction uses distinct `begin_key()` and `begin_value()` methods
+3. **Separate map operations**: Map construction uses distinct `begin_key()` and `begin_value()` methods (no `begin_insert()`)
 4. **List initialization**: Lists require `begin_list()` before adding items with `begin_list_item()`
 5. **Convenience methods**: Use `set_field(name, value)` as a shorthand for `begin_field(name)?.set(value)?.end()?`
 6. **No implicit Option conversion**: Must explicitly use `Some(value)` or `None` when setting Option types
@@ -157,11 +184,13 @@ The new API has two related types for building values:
    - Created with `Partial::alloc_shape(shape)` when you have a shape but not a concrete type
    - `build()` returns a `HeapValue` which must be materialized to get the concrete type
    - Use pattern: `partial.build()?.materialize::<T>()?`
+   - Used internally by deserializers that work with shapes
 
 2. **`TypedPartial<T>`** - Typed wrapper that knows the concrete type at compile time
    - Created with `Partial::alloc::<T>()` when you know the type
    - `build()` returns `Box<T>` directly (no materialize needed)
    - More convenient when type is known at compile time
+   - Can be converted to `Partial` via `as_partial()` or `as_partial_mut()` methods
 
 ### Example
 
@@ -176,4 +205,8 @@ let value: MyStruct = heap_value.materialize()?;
 let partial = Partial::alloc::<MyStruct>()?;
 // ... build the value ...
 let value: Box<MyStruct> = partial.build()?;
+
+// Converting TypedPartial to Partial (for passing to functions)
+let mut typed_partial = Partial::alloc::<MyStruct>()?;
+let partial_ref: &mut Partial = typed_partial.as_partial_mut();
 ```

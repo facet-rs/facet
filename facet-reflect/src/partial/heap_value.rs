@@ -31,19 +31,36 @@ impl<'facet, 'shape> HeapValue<'facet, 'shape> {
         unsafe { Peek::unchecked_new(PtrConst::new(self.guard.as_ref().unwrap().ptr), self.shape) }
     }
 
+    /// Returns the shape of this heap value.
+    pub fn shape(&self) -> &'shape Shape<'shape> {
+        self.shape
+    }
+
     /// Turn this heapvalue into a concrete type
     pub fn materialize<T: Facet<'facet>>(mut self) -> Result<T, ReflectError<'shape>> {
+        trace!(
+            "HeapValue::materialize: Materializing heap value with shape {} to type {}",
+            self.shape,
+            T::SHAPE
+        );
         if self.shape != T::SHAPE {
+            trace!(
+                "HeapValue::materialize: Shape mismatch! Expected {}, but heap value has {}",
+                T::SHAPE,
+                self.shape
+            );
             return Err(ReflectError::WrongShape {
                 expected: self.shape,
                 actual: T::SHAPE,
             });
         }
 
+        trace!("HeapValue::materialize: Shapes match, proceeding with materialization");
         let guard = self.guard.take().unwrap();
         let data = PtrConst::new(guard.ptr);
         let res = unsafe { data.read::<T>() };
         drop(guard); // free memory (but don't drop in place)
+        trace!("HeapValue::materialize: Successfully materialized value");
         Ok(res)
     }
 }

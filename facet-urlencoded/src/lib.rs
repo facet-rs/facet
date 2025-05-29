@@ -3,7 +3,7 @@
 #![doc = include_str!("../README.md")]
 
 use facet_core::{Def, Facet, Type, UserType};
-use facet_reflect::{HeapValue, Partial};
+use facet_reflect::Partial;
 use log::*;
 
 #[cfg(test)]
@@ -71,17 +71,22 @@ mod tests;
 pub fn from_str<'input: 'facet, 'facet, T: Facet<'facet>>(
     urlencoded: &'input str,
 ) -> Result<T, UrlEncodedError<'facet>> {
-    let val = from_str_value(Partial::alloc::<T>()?, urlencoded)?;
-    Ok(val.materialize::<T>()?)
+    let mut typed_partial = Partial::alloc::<T>()?;
+    {
+        let wip = typed_partial.inner_mut();
+        from_str_value(wip, urlencoded)?;
+    }
+    let boxed_value = typed_partial.build()?;
+    Ok(*boxed_value)
 }
 
 /// Deserializes a URL encoded form data string into an heap-allocated value.
 ///
 /// This is the lower-level function that works with `Wip` directly.
 fn from_str_value<'mem, 'shape>(
-    wip: Partial<'mem, 'shape>,
+    wip: &mut Partial<'mem, 'shape>,
     urlencoded: &str,
-) -> Result<HeapValue<'mem, 'shape>, UrlEncodedError<'shape>> {
+) -> Result<(), UrlEncodedError<'shape>> {
     trace!("Starting URL encoded form data deserialization");
 
     // Parse the URL encoded string into key-value pairs
@@ -98,7 +103,8 @@ fn from_str_value<'mem, 'shape>(
     initialize_nested_structures(&mut nested_values);
 
     // Process the deserialization
-    deserialize_value(wip, &nested_values)
+    deserialize_value(wip, &nested_values)?;
+    Ok(())
 }
 
 /// Ensures that all nested structures have entries in the NestedValues
@@ -178,22 +184,21 @@ impl NestedValues {
 
 /// Deserialize a value recursively using the nested values
 fn deserialize_value<'mem, 'shape>(
-    wip: Partial<'mem, 'shape>,
+    wip: &mut Partial<'mem, 'shape>,
     values: &NestedValues,
-) -> Result<HeapValue<'mem, 'shape>, UrlEncodedError<'shape>> {
+) -> Result<(), UrlEncodedError<'shape>> {
     let shape = wip.shape();
     match shape.ty {
         Type::User(UserType::Struct(_)) => {
             trace!("Deserializing struct");
 
-            let mut wip = wip;
-
             // Process flat fields
             for key in values.keys() {
                 if let Some(index) = wip.field_index(key) {
                     let value = values.get(key).unwrap(); // Safe because we're iterating over keys
-                    let field = wip.field(index)?;
-                    wip = deserialize_scalar_field(key, value, field)?;
+                    wip.begin_nth_field(index)?;
+                    deserialize_scalar_field(key, value, wip)?;
+                    wip.end()?;
                 } else {
                     trace!("Unknown field: {}", key);
                 }
@@ -203,15 +208,16 @@ fn deserialize_value<'mem, 'shape>(
             for key in values.nested.keys() {
                 if let Some(index) = wip.field_index(key) {
                     let nested_values = values.nested.get(key).unwrap(); // Safe because we're iterating over keys
-                    let field = wip.field(index)?;
-                    wip = deserialize_nested_field(key, nested_values, field)?;
+                    wip.begin_nth_field(index)?;
+                    deserialize_nested_field(key, nested_values, wip)?;
+                    wip.end()?;
                 } else {
                     trace!("Unknown nested field: {}", key);
                 }
             }
 
             trace!("Finished deserializing struct");
-            Ok(wip.build()?)
+            Ok(())
         }
         _ => {
             error!("Unsupported root type");
@@ -226,28 +232,28 @@ fn deserialize_value<'mem, 'shape>(
 fn deserialize_scalar_field<'mem, 'shape>(
     key: &str,
     value: &str,
-    wip: Partial<'mem, 'shape>,
-) -> Result<Partial<'mem, 'shape>, UrlEncodedError<'shape>> {
+    wip: &mut Partial<'mem, 'shape>,
+) -> Result<(), UrlEncodedError<'shape>> {
     match wip.shape().def {
         Def::Scalar(_sd) => {
-            let wip = if wip.shape().is_type::<String>() {
+            if wip.shape().is_type::<String>() {
                 let s = value.to_string();
-                wip.put(s)?
+                wip.set(s)?;
             } else if wip.shape().is_type::<u64>() {
                 match value.parse::<u64>() {
-                    Ok(num) => wip.put(num)?,
+                    Ok(num) => wip.set(num)?,
                     Err(_) => {
                         return Err(UrlEncodedError::InvalidNumber(
                             key.to_string(),
                             value.to_string(),
                         ));
                     }
-                }
+                };
             } else {
                 warn!("facet-yaml: unsupported scalar type: {}", wip.shape());
                 return Err(UrlEncodedError::UnsupportedType(format!("{}", wip.shape())));
-            };
-            Ok(wip.pop()?)
+            }
+            Ok(())
         }
         _ => {
             error!("Expected scalar field");
@@ -263,35 +269,34 @@ fn deserialize_scalar_field<'mem, 'shape>(
 fn deserialize_nested_field<'mem, 'shape>(
     key: &str,
     nested_values: &NestedValues,
-    wip: Partial<'mem, 'shape>,
-) -> Result<Partial<'mem, 'shape>, UrlEncodedError<'shape>> {
+    wip: &mut Partial<'mem, 'shape>,
+) -> Result<(), UrlEncodedError<'shape>> {
     let shape = wip.shape();
     match shape.ty {
         Type::User(UserType::Struct(_)) => {
             trace!("Deserializing nested struct field: {}", key);
 
-            let mut current_wip = wip;
-
             // Process flat fields in the nested structure
             for nested_key in nested_values.keys() {
-                if let Some(index) = current_wip.field_index(nested_key) {
+                if let Some(index) = wip.field_index(nested_key) {
                     let value = nested_values.get(nested_key).unwrap(); // Safe because we're iterating over keys
-                    let field_wip = current_wip.field(index)?;
-                    current_wip = deserialize_scalar_field(nested_key, value, field_wip)?
+                    wip.begin_nth_field(index)?;
+                    deserialize_scalar_field(nested_key, value, wip)?;
+                    wip.end()?;
                 }
             }
 
             // Process deeper nested fields
             for nested_key in nested_values.nested.keys() {
-                if let Some(index) = current_wip.field_index(nested_key) {
+                if let Some(index) = wip.field_index(nested_key) {
                     let deeper_nested = nested_values.nested.get(nested_key).unwrap(); // Safe because we're iterating over keys
-                    let field_wip = current_wip.field(index)?;
-                    current_wip = deserialize_nested_field(nested_key, deeper_nested, field_wip)?;
+                    wip.begin_nth_field(index)?;
+                    deserialize_nested_field(nested_key, deeper_nested, wip)?;
+                    wip.end()?;
                 }
             }
 
-            // Return to parent level
-            Ok(current_wip.end()?)
+            Ok(())
         }
         _ => {
             error!("Expected struct field for nested value");
