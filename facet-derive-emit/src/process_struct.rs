@@ -12,7 +12,7 @@ pub(crate) fn gen_field_from_pfield(
     let field_name_raw = &field.name.raw;
     let field_type = &field.ty; // TokenStream of the type
 
-    let tts: facet_derive_parse::TokenStream = field_type.clone();
+    let tts: crate::parser::TokenStream = field_type.clone();
     let field_type_static = tts
         .to_token_iter()
         .parse::<Vec<LifetimeOrTt>>()

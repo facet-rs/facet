@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Proc macro for emitting derived 'Facet' trait code in facet"
+description = "Proc macro implementation for emitting derived 'Facet' trait code in facet"
 keywords = [
     "reflection",
     "introspection",
@@ -19,8 +19,8 @@ categories = ["development-tools", "encoding"]
 slow-tests = [] # Enable slow tests (compile tests)
 
 [dependencies]
-facet-derive-parse = { version = "0.27.5", path = "../facet-derive-parse" }
 quote = "1.0.40"
+unsynn = "0.1.0"
 
 [dev-dependencies]
 insta = { version = "1.43.1" }

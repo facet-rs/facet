@@ -5,7 +5,6 @@ members = [
     "facet",
 
     # derive macro
-    "facet-derive-parse",
     "facet-derive-emit",
     "facet-derive",
 

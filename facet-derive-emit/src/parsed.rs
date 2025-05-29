@@ -1,5 +1,5 @@
+use crate::parser::{Ident, ReprInner, ToTokens, TokenStream};
 use crate::{BoundedGenericParams, RenameRule};
-use facet_derive_parse::{Ident, ReprInner, ToTokens, TokenStream};
 use quote::quote;
 
 /// For struct fields, they can either be identifiers (`my_struct.foo`)
@@ -15,7 +15,7 @@ impl quote::ToTokens for IdentOrLiteral {
         match self {
             IdentOrLiteral::Ident(ident) => tokens.extend(quote::quote! { #ident }),
             IdentOrLiteral::Literal(lit) => {
-                let unsuffixed = facet_derive_parse::Literal::usize_unsuffixed(*lit);
+                let unsuffixed = crate::parser::Literal::usize_unsuffixed(*lit);
                 tokens.extend(quote! { #unsuffixed })
             }
         }
@@ -90,11 +90,11 @@ impl PFacetAttr {
     /// Parse a `FacetAttr` attribute into a `PFacetAttr`.
     /// Pushes to `dest` for each parsed attribute.
     pub fn parse(
-        facet_attr: &facet_derive_parse::FacetAttr,
+        facet_attr: &crate::parser::FacetAttr,
         display_name: &mut String,
         dest: &mut Vec<PFacetAttr>,
     ) {
-        use facet_derive_parse::FacetInner;
+        use crate::parser::FacetInner;
 
         for attr in facet_attr.inner.content.0.iter().map(|d| &d.value) {
             match attr {
@@ -378,7 +378,7 @@ pub struct PAttrs {
 }
 
 impl PAttrs {
-    fn parse(attrs: &[facet_derive_parse::Attribute], display_name: &mut String) -> Self {
+    fn parse(attrs: &[crate::parser::Attribute], display_name: &mut String) -> Self {
         let mut doc_lines: Vec<TokenStream> = Vec::new();
         let mut facet_attrs: Vec<PFacetAttr> = Vec::new();
         let mut repr: Option<PRepr> = None;
@@ -386,11 +386,11 @@ impl PAttrs {
 
         for attr in attrs {
             match &attr.body.content {
-                facet_derive_parse::AttributeInner::Doc(doc_attr) => {
+                crate::parser::AttributeInner::Doc(doc_attr) => {
                     // Handle doc comments
                     doc_lines.push(doc_attr.value.to_token_stream());
                 }
-                facet_derive_parse::AttributeInner::Repr(repr_attr) => {
+                crate::parser::AttributeInner::Repr(repr_attr) => {
                     if repr.is_some() {
                         panic!("Multiple #[repr] attributes found");
                     }
@@ -412,7 +412,7 @@ impl PAttrs {
                         }
                     };
                 }
-                facet_derive_parse::AttributeInner::Facet(facet_attr) => {
+                crate::parser::AttributeInner::Facet(facet_attr) => {
                     PFacetAttr::parse(facet_attr, display_name, &mut facet_attrs);
                 }
                 _ => {
@@ -474,8 +474,8 @@ pub struct PEnum {
 }
 
 impl PEnum {
-    /// Parse a `facet_derive_parse::Enum` into a `PEnum`.
-    pub fn parse(e: &facet_derive_parse::Enum) -> Self {
+    /// Parse a `crate::parser::Enum` into a `PEnum`.
+    pub fn parse(e: &crate::parser::Enum) -> Self {
         let mut container_display_name = e.name.to_string();
 
         // Parse container-level attributes
@@ -503,7 +503,7 @@ impl PEnum {
         // Get the repr attribute if present, or default to Rust(None)
         let mut repr = None;
         for attr in &e.attributes {
-            if let facet_derive_parse::AttributeInner::Repr(repr_attr) = &attr.body.content {
+            if let crate::parser::AttributeInner::Repr(repr_attr) = &attr.body.content {
                 // Parse repr attribute, will panic if invalid, just like struct repr parser
                 repr = match PRepr::parse(repr_attr) {
                     Some(parsed) => Some(parsed),
@@ -545,10 +545,10 @@ pub struct PStructField {
 impl PStructField {
     /// Parse a named struct field (usual struct).
     pub(crate) fn from_struct_field(
-        f: &facet_derive_parse::StructField,
+        f: &crate::parser::StructField,
         rename_all_rule: Option<RenameRule>,
     ) -> Self {
-        use facet_derive_parse::ToTokens;
+        use crate::parser::ToTokens;
         Self::parse(
             &f.attributes,
             IdentOrLiteral::Ident(f.name.clone()),
@@ -560,12 +560,12 @@ impl PStructField {
     /// Parse a tuple (unnamed) field for tuple structs or enum tuple variants.
     /// The index is converted to an identifier like `_0`, `_1`, etc.
     pub(crate) fn from_enum_field(
-        attrs: &[facet_derive_parse::Attribute],
+        attrs: &[crate::parser::Attribute],
         idx: usize,
-        typ: &facet_derive_parse::VerbatimUntil<facet_derive_parse::Comma>,
+        typ: &crate::parser::VerbatimUntil<crate::parser::Comma>,
         rename_all_rule: Option<RenameRule>,
     ) -> Self {
-        use facet_derive_parse::ToTokens;
+        use crate::parser::ToTokens;
         // Create an Ident from the index, using `_` prefix convention for tuple fields
         let ty = typ.to_token_stream(); // Convert to TokenStream
         Self::parse(attrs, IdentOrLiteral::Literal(idx), ty, rename_all_rule)
@@ -573,7 +573,7 @@ impl PStructField {
 
     /// Central parse function used by both `from_struct_field` and `from_enum_field`.
     fn parse(
-        attrs: &[facet_derive_parse::Attribute],
+        attrs: &[crate::parser::Attribute],
         name: IdentOrLiteral,
         ty: TokenStream,
         rename_all_rule: Option<RenameRule>,
@@ -629,14 +629,11 @@ pub enum PStructKind {
 }
 
 impl PStructKind {
-    /// Parse a `facet_derive_parse::StructKind` into a `PStructKind`.
+    /// Parse a `crate::parser::StructKind` into a `PStructKind`.
     /// Passes rename_all_rule through to all PStructField parsing.
-    pub fn parse(
-        kind: &facet_derive_parse::StructKind,
-        rename_all_rule: Option<RenameRule>,
-    ) -> Self {
+    pub fn parse(kind: &crate::parser::StructKind, rename_all_rule: Option<RenameRule>) -> Self {
         match kind {
-            facet_derive_parse::StructKind::Struct { clauses: _, fields } => {
+            crate::parser::StructKind::Struct { clauses: _, fields } => {
                 let parsed_fields = fields
                     .content
                     .0
@@ -647,7 +644,7 @@ impl PStructKind {
                     fields: parsed_fields,
                 }
             }
-            facet_derive_parse::StructKind::TupleStruct {
+            crate::parser::StructKind::TupleStruct {
                 fields,
                 clauses: _,
                 semi: _,
@@ -670,7 +667,7 @@ impl PStructKind {
                     fields: parsed_fields,
                 }
             }
-            facet_derive_parse::StructKind::UnitStruct {
+            crate::parser::StructKind::UnitStruct {
                 clauses: _,
                 semi: _,
             } => PStructKind::UnitStruct,
@@ -679,7 +676,7 @@ impl PStructKind {
 }
 
 impl PStruct {
-    pub fn parse(s: &facet_derive_parse::Struct) -> Self {
+    pub fn parse(s: &crate::parser::Struct) -> Self {
         // Create a mutable string to pass to PAttrs::parse.
         // While #[facet(rename = "...")] isn't typically used directly on the struct
         // definition itself in the same way as fields, the parse function expects
@@ -731,16 +728,16 @@ pub struct PVariant {
 }
 
 impl PVariant {
-    /// Parses an `EnumVariantLike` from `facet_derive_parse` into a `PVariant`.
+    /// Parses an `EnumVariantLike` from `crate::parser` into a `PVariant`.
     ///
     /// Requires the container-level `rename_all` rule to correctly determine the
     /// effective name of the variant itself. The variant's own `rename_all` rule
     /// (if present) will be stored in `attrs.rename_all` and used for its fields.
     fn parse(
-        var_like: &facet_derive_parse::EnumVariantLike,
+        var_like: &crate::parser::EnumVariantLike,
         container_rename_all_rule: Option<RenameRule>,
     ) -> Self {
-        use facet_derive_parse::{EnumVariantData, StructEnumVariant, TupleVariant, UnitVariant};
+        use crate::parser::{EnumVariantData, StructEnumVariant, TupleVariant, UnitVariant};
 
         let (raw_name_ident, attributes) = match &var_like.variant {
             // Fix: Changed var_like.value.variant to var_like.variant

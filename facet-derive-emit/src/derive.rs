@@ -1,4 +1,4 @@
-use facet_derive_parse::{ToTokens, *};
+use crate::parser::{ToTokens, *};
 use quote::quote;
 
 use crate::{LifetimeName, RenameRule, process_enum, process_struct};

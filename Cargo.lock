@@ -440,18 +440,11 @@ dependencies = [
 name = "facet-derive-emit"
 version = "0.27.5"
 dependencies = [
- "facet-derive-parse",
  "insta",
  "owo-colors",
  "quote",
  "rust-format",
  "tempfile",
-]
-
-[[package]]
-name = "facet-derive-parse"
-version = "0.27.5"
-dependencies = [
  "unsynn",
 ]
 

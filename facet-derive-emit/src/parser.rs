@@ -1,6 +1,4 @@
-#![warn(missing_docs)]
-#![doc = include_str!("../README.md")]
-
+/// Parses Rust syntax emitted for the facet-derive macro.
 pub use unsynn::*;
 
 keyword! {

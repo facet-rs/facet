@@ -1,4 +1,4 @@
-use facet_derive_parse::{GenericParam, GenericParams, ToTokens, TokenStream};
+use crate::parser::{GenericParam, GenericParams, ToTokens, TokenStream};
 use quote::quote;
 
 use crate::LifetimeName;
