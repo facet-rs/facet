@@ -1610,7 +1610,7 @@ where
                 match shape.def {
                     Def::Map(_md) => {
                         trace!("Object starting for map value ({})!", shape.blue());
-                        wip.set_default().map_err(|e| self.reflect_err(e))?;
+                        wip.begin_map().map_err(|e| self.reflect_err(e))?;
                     }
                     _ => {
                         // For non-collection types, check the Type enum
@@ -1820,6 +1820,7 @@ where
                         if let Def::Map(_) = shape.def {
                             wip.push_map_key().map_err(|e| self.reflect_err(e))?;
                             wip.set(key.to_string()).map_err(|e| self.reflect_err(e))?;
+                            wip.end().map_err(|e| self.reflect_err(e))?; // Complete the key frame
                             wip.push_map_value().map_err(|e| self.reflect_err(e))?;
                         } else {
                             return Err(self.err(DeserErrorKind::Unimplemented(
