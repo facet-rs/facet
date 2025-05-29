@@ -1887,6 +1887,11 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                     })
                 }
             }
+            Tracker::Uninit => {
+                // For uninitialized values (like tuples that haven't been started yet),
+                // all fields are unset
+                Ok(false)
+            }
             _ => Err(ReflectError::InvalidOperation {
                 operation: "is_field_set",
                 reason: "Current frame is not a struct, enum variant, or option",

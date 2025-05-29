@@ -338,7 +338,7 @@ impl core::fmt::Display for FieldError {
 macro_rules! field_in_type {
     ($container:ty, $field:tt) => {
         $crate::Field::builder()
-            .name(stringify!($idx))
+            .name(stringify!($field))
             .shape($crate::shape_of(&|t: &Self| &t.$field))
             .offset(::core::mem::offset_of!(Self, $field))
             .flags($crate::FieldFlags::EMPTY)

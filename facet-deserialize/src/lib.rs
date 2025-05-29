@@ -1535,9 +1535,20 @@ where
                                 UserType::Enum(_) => {
                                     trace!("Array starting for enum ({})!", shape.blue());
                                 }
-                                UserType::Struct(_) => {
-                                    trace!("Array starting for tuple struct ({})!", shape.blue());
-                                    wip.set_default().map_err(|e| self.reflect_err(e))?;
+                                UserType::Struct(st) => {
+                                    if st.kind == StructKind::Tuple {
+                                        trace!(
+                                            "Array starting for tuple struct ({})!",
+                                            shape.blue()
+                                        );
+                                        // Don't call set_default for tuples - they need field-by-field initialization
+                                    } else {
+                                        // Regular struct shouldn't be parsed from array
+                                        return Err(self.err(DeserErrorKind::UnsupportedType {
+                                            got: shape,
+                                            wanted: "array, list, tuple, or slice",
+                                        }));
+                                    }
                                 }
                                 _ => {
                                     return Err(self.err(DeserErrorKind::UnsupportedType {
