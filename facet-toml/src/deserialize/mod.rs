@@ -14,19 +14,19 @@ pub use error::{TomlDeError, TomlDeErrorKind};
 use facet_core::{Characteristic, Def, Facet, FieldFlags, StructKind, Type, UserType};
 use facet_reflect::{Partial, ReflectError, ScalarType};
 use log::trace;
+use owo_colors::OwoColorize;
 use toml_edit::{ImDocument, Item, TomlError};
 
 macro_rules! reflect {
     ($wip:expr, $toml:expr, $span:expr, $($tt:tt)*) => {
-        let path = $wip.path();
-        $wip = match $wip.$($tt)* {
-            Ok(wip) => wip,
+        match $wip.$($tt)* {
+            Ok(_) => {},
             Err(e) => {
                 return Err(TomlDeError::new(
                     $toml,
                     TomlDeErrorKind::GenericReflect(e),
                     $span,
-                    path
+                    $wip.path()
                 ));
             }
         }
@@ -40,7 +40,7 @@ pub fn from_str<'input, 'facet, 'shape, T: Facet<'facet>>(
     trace!("Parsing TOML");
 
     // Allocate the type
-    let wip = Partial::alloc::<T>().map_err(|e| {
+    let partial = Partial::alloc::<T>().map_err(|e| {
         TomlDeError::new(
             toml,
             TomlDeErrorKind::GenericReflect(e),
@@ -55,34 +55,33 @@ pub fn from_str<'input, 'facet, 'shape, T: Facet<'facet>>(
             toml,
             TomlDeErrorKind::GenericTomlError(e.message().to_string()),
             e.span(),
-            wip.path(),
+            partial.path(),
         )
     })?;
 
     trace!("Starting deserialization");
 
     // Deserialize it with facet reflection
-    let wip = deserialize_item(toml, wip, docs.as_item())?;
-
-    // TODO: only generate if actually error
-    let path = wip.path();
+    deserialize_item(toml, &mut partial, docs.as_item())?;
 
     // Build the result
-    let heap_value = wip.build().map_err(|e| {
-        TomlDeError::new(toml, TomlDeErrorKind::GenericReflect(e), None, path.clone())
+    let result = partial.build().map_err(|e| {
+        TomlDeError::new(
+            toml,
+            TomlDeErrorKind::GenericReflect(e),
+            None,
+            "$".to_string(),
+        )
     })?;
-    let result = heap_value
-        .materialize::<T>()
-        .map_err(|e| TomlDeError::new(toml, TomlDeErrorKind::GenericReflect(e), None, path))?;
 
     trace!("Finished deserialization");
 
-    Ok(result)
+    Ok(*result)
 }
 
 fn deserialize_item<'input, 'facet, 'shape>(
     toml: &'input str,
-    wip: Partial<'facet, 'shape>,
+    wip: &mut Partial<'facet, 'shape>,
     item: &Item,
 ) -> Result<Partial<'facet, 'shape>, TomlDeError<'input, 'shape>> {
     // Check for Option before anything else, since it's a special case
@@ -113,10 +112,10 @@ fn deserialize_item<'input, 'facet, 'shape>(
 
 fn deserialize_as_struct<'input, 'a, 'shape>(
     toml: &'input str,
-    mut wip: Partial<'a, 'shape>,
+    wip: &mut Partial<'a, 'shape>,
     def: &facet_core::StructType<'shape>,
     item: &Item,
-) -> Result<Partial<'a, 'shape>, TomlDeError<'input, 'shape>> {
+) -> Result<(), TomlDeError<'input, 'shape>> {
     trace!(
         "Deserializing {} as {}",
         item.type_name().cyan(),
@@ -138,13 +137,13 @@ fn deserialize_as_struct<'input, 'a, 'shape>(
             }
         }
 
-        reflect!(wip, toml, item.span(), field(0));
+        reflect!(wip, toml, item.span(), begin_nth_field(0));
 
-        wip = deserialize_item(toml, wip, item)?;
+        deserialize_item(toml, wip, item)?;
 
         reflect!(wip, toml, item.span(), end());
 
-        return Ok(wip);
+        return Ok(());
     }
 
     // Otherwise we expect a table
@@ -166,11 +165,11 @@ fn deserialize_as_struct<'input, 'a, 'shape>(
         // Find the matching TOML field
         let field_item = table.get(field.name);
         match field_item {
-            Some(field_item) => wip = deserialize_item(toml, wip, field_item)?,
+            Some(field_item) => deserialize_item(toml, wip, field_item)?,
             None => {
                 if let Def::Option(..) = field.shape().def {
                     // Default of `Option<T>` is `None`
-                    reflect!(wip, toml, item.span(), put_default());
+                    reflect!(wip, toml, item.span(), set_default());
                 } else if field.flags.contains(FieldFlags::DEFAULT) {
                     // Handle the default function
                     if let Some(default_in_place_fn) = field.vtable.default_fn {
@@ -350,7 +349,7 @@ fn build_enum_from_variant_name<'input, 'a, 'shape>(
             match table.get(field_name) {
                 // Field found, push it
                 Some(field) => {
-                    wip = deserialize_item(toml, wip, field)?;
+                    deserialize_item(toml, wip, field)?;
                 }
                 // Push none if field not found and it's an option
                 None if matches!(field.shape().def, Def::Option(_)) => {
@@ -367,7 +366,7 @@ fn build_enum_from_variant_name<'input, 'a, 'shape>(
                 }
             }
         } else if item.is_value() {
-            wip = deserialize_item(toml, wip, item)?;
+            deserialize_item(toml, wip, item)?;
         } else {
             return Err(TomlDeError::new(
                 toml,
@@ -510,7 +509,7 @@ fn deserialize_as_map<'input, 'a, 'shape>(
         reflect!(wip, toml, v.span(), push_map_value());
 
         // Deserialize the value
-        wip = deserialize_item(toml, wip, v)?;
+        deserialize_item(toml, wip, v)?;
 
         // Finish the value
         reflect!(wip, toml, v.span(), end());
@@ -523,9 +522,9 @@ fn deserialize_as_map<'input, 'a, 'shape>(
 
 fn deserialize_as_option<'input, 'a, 'shape>(
     toml: &'input str,
-    mut wip: Partial<'a, 'shape>,
+    wip: &mut Partial<'a, 'shape>,
     item: &Item,
-) -> Result<Partial<'a, 'shape>, TomlDeError<'input, 'shape>> {
+) -> Result<(), TomlDeError<'input, 'shape>> {
     trace!(
         "Deserializing {} as {}",
         item.type_name().cyan(),
@@ -559,7 +558,7 @@ fn deserialize_as_option<'input, 'a, 'shape>(
                 trace!("Deserializing integer at innermost Option level");
                 wip = deserialize_as_scalar(toml, wip, item)?;
             } else {
-                wip = deserialize_item(toml, wip, item)?;
+                deserialize_item(toml, wip, item)?;
             }
         }
 

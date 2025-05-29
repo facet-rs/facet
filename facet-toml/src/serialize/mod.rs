@@ -12,6 +12,7 @@ use alloc::{
     vec::Vec,
 };
 use core::borrow::Borrow as _;
+use owo_colors::OwoColorize;
 
 pub use error::TomlSerError;
 use facet_serialize::{Serialize, Serializer};

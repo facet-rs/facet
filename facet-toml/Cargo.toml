@@ -33,6 +33,7 @@ toml_edit = { version = "0.22.26", default-features = false, features = [
 facet-core = { version = "0.27.7", path = "../facet-core", default-features = false }
 facet-reflect = { version = "0.27.7", path = "../facet-reflect", default-features = false }
 facet-serialize = { version = "0.24.8", path = "../facet-serialize", default-features = false, optional = true }
+owo-colors = "4.2.1"
 
 [dev-dependencies]
 eyre = "0.6.12"

@@ -10,6 +10,7 @@ use alloc::{
 use ariadne::{Color, Label, Report, ReportKind, Source};
 use facet_core::Shape;
 use facet_reflect::ReflectError;
+use owo_colors::OwoColorize;
 
 /// Any error from deserializing TOML.
 pub struct TomlDeError<'input, 'shape> {

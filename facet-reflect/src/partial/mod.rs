@@ -398,7 +398,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         T: Facet<'facet>,
     {
         Ok(TypedPartial {
-            wip: Self::alloc_shape(T::SHAPE)?,
+            inner: Self::alloc_shape(T::SHAPE)?,
             phantom: PhantomData,
         })
     }
@@ -2035,18 +2035,23 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
 /// A typed wrapper around `Wip`, for when you want to statically
 /// ensure that `build` gives you the proper type.
 pub struct TypedPartial<'facet, 'shape, T> {
-    wip: Partial<'facet, 'shape>,
+    inner: Partial<'facet, 'shape>,
     phantom: PhantomData<T>,
 }
 
 impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
+    /// Unwraps the underlying Partial, consuming self.
+    pub fn inner_mut(&mut self) -> &mut Partial<'facet, 'shape> {
+        &mut self.inner
+    }
+
     /// Builds the value and returns a Box<T>
     pub fn build(&mut self) -> Result<Box<T>, ReflectError<'shape>>
     where
         T: Facet<'facet>,
         'facet: 'shape,
     {
-        let heap_value = self.wip.build()?;
+        let heap_value = self.inner.build()?;
         // Safety: HeapValue was constructed from T and the shape layout is correct.
         unsafe { Ok(heap_value.into_box_unchecked::<T>()) }
     }
@@ -2056,7 +2061,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
     where
         U: Facet<'facet>,
     {
-        self.wip.set(value)?;
+        self.inner.set(value)?;
         Ok(self)
     }
 
@@ -2066,43 +2071,43 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
         src_value: PtrConst<'_>,
         src_shape: &'shape Shape<'shape>,
     ) -> Result<&mut Self, ReflectError<'shape>> {
-        unsafe { self.wip.set_shape(src_value, src_shape)? };
+        unsafe { self.inner.set_shape(src_value, src_shape)? };
         Ok(self)
     }
 
     /// Forwards begin_field to the inner wip instance.
     pub fn begin_field(&mut self, field_name: &str) -> Result<&mut Self, ReflectError<'shape>> {
-        self.wip.begin_field(field_name)?;
+        self.inner.begin_field(field_name)?;
         Ok(self)
     }
 
     /// Forwards begin_nth_field to the inner wip instance.
     pub fn begin_nth_field(&mut self, idx: usize) -> Result<&mut Self, ReflectError<'shape>> {
-        self.wip.begin_nth_field(idx)?;
+        self.inner.begin_nth_field(idx)?;
         Ok(self)
     }
 
     /// Forwards begin_nth_element to the inner wip instance.
     pub fn begin_nth_element(&mut self, idx: usize) -> Result<&mut Self, ReflectError<'shape>> {
-        self.wip.begin_nth_element(idx)?;
+        self.inner.begin_nth_element(idx)?;
         Ok(self)
     }
 
     /// Forwards begin_smart_ptr to the inner wip instance.
     pub fn begin_smart_ptr(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
-        self.wip.begin_smart_ptr()?;
+        self.inner.begin_smart_ptr()?;
         Ok(self)
     }
 
     /// Forwards end to the inner wip instance.
     pub fn end(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
-        self.wip.end()?;
+        self.inner.end()?;
         Ok(self)
     }
 
     /// Forwards set_default to the inner wip instance.
     pub fn set_default(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
-        self.wip.set_default()?;
+        self.inner.set_default()?;
         Ok(self)
     }
 
@@ -2111,13 +2116,13 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
     where
         F: FnOnce(PtrUninit<'_>) -> Result<(), ReflectError<'shape>>,
     {
-        self.wip.set_from_function(f)?;
+        self.inner.set_from_function(f)?;
         Ok(self)
     }
 
     /// Forwards begin_variant to the inner wip instance.
     pub fn select_variant(&mut self, discriminant: i64) -> Result<&mut Self, ReflectError<'shape>> {
-        self.wip.select_variant(discriminant)?;
+        self.inner.select_variant(discriminant)?;
         Ok(self)
     }
 
@@ -2126,61 +2131,61 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
         &mut self,
         variant_name: &str,
     ) -> Result<&mut Self, ReflectError<'shape>> {
-        self.wip.select_variant_named(variant_name)?;
+        self.inner.select_variant_named(variant_name)?;
         Ok(self)
     }
 
     /// Forwards begin_nth_enum_field to the inner wip instance.
     pub fn begin_nth_enum_field(&mut self, idx: usize) -> Result<&mut Self, ReflectError<'shape>> {
-        self.wip.begin_nth_enum_field(idx)?;
+        self.inner.begin_nth_enum_field(idx)?;
         Ok(self)
     }
 
     /// Forwards begin_pushback to the inner wip instance.
     pub fn begin_list(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
-        self.wip.begin_list()?;
+        self.inner.begin_list()?;
         Ok(self)
     }
 
     /// Forwards begin_list_item to the inner wip instance.
     pub fn begin_list_item(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
-        self.wip.begin_list_item()?;
+        self.inner.begin_list_item()?;
         Ok(self)
     }
 
     /// Forwards begin_map to the inner wip instance.
     pub fn begin_map(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
-        self.wip.begin_map()?;
+        self.inner.begin_map()?;
         Ok(self)
     }
 
     /// Forwards begin_insert to the inner wip instance.
     pub fn begin_insert(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
-        self.wip.begin_insert()?;
+        self.inner.begin_insert()?;
         Ok(self)
     }
 
     /// Forwards begin_key to the inner wip instance.
     pub fn begin_key(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
-        self.wip.begin_key()?;
+        self.inner.begin_key()?;
         Ok(self)
     }
 
     /// Forwards begin_value to the inner wip instance.
     pub fn begin_value(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
-        self.wip.begin_value()?;
+        self.inner.begin_value()?;
         Ok(self)
     }
 
     /// Returns a human-readable path representing the current traversal in the builder,
     /// e.g., "RootStruct.fieldName[index].subfield".
     pub fn path(&self) -> String {
-        self.wip.path()
+        self.inner.path()
     }
 
     /// Returns the shape of the current frame.
     pub fn shape(&self) -> &'shape Shape<'shape> {
-        self.wip.shape()
+        self.inner.shape()
     }
 
     /// Convenience shortcut: sets the nth element of an array directly to value, popping after.
@@ -2192,7 +2197,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
     where
         U: Facet<'facet>,
     {
-        self.wip.set_nth_element(idx, value)?;
+        self.inner.set_nth_element(idx, value)?;
         Ok(self)
     }
 
@@ -2205,7 +2210,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
     where
         U: Facet<'facet>,
     {
-        self.wip.set_nth_field(idx, value)?;
+        self.inner.set_nth_field(idx, value)?;
         Ok(self)
     }
 
@@ -2218,7 +2223,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
     where
         U: Facet<'facet>,
     {
-        self.wip.set_field(field_name, value)?;
+        self.inner.set_field(field_name, value)?;
         Ok(self)
     }
 
@@ -2231,7 +2236,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
     where
         U: Facet<'facet>,
     {
-        self.wip.set_nth_enum_field(idx, value)?;
+        self.inner.set_nth_enum_field(idx, value)?;
         Ok(self)
     }
 
@@ -2240,7 +2245,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
     where
         U: Facet<'facet>,
     {
-        self.wip.set_key(value)?;
+        self.inner.set_key(value)?;
         Ok(self)
     }
 
@@ -2249,7 +2254,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
     where
         U: Facet<'facet>,
     {
-        self.wip.set_value(value)?;
+        self.inner.set_value(value)?;
         Ok(self)
     }
 
@@ -2258,7 +2263,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
     where
         U: Facet<'facet>,
     {
-        self.wip.push(value)?;
+        self.inner.push(value)?;
         Ok(self)
     }
 }
@@ -2266,7 +2271,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
 impl<'facet, 'shape, T> core::fmt::Debug for TypedPartial<'facet, 'shape, T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("TypedWip")
-            .field("shape", &self.wip.frames.last().map(|frame| frame.shape))
+            .field("shape", &self.inner.frames.last().map(|frame| frame.shape))
             .finish()
     }
 }

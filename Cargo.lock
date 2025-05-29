@@ -648,6 +648,7 @@ dependencies = [
  "facet-testhelpers 0.17.4",
  "log",
  "num-traits",
+ "owo-colors",
  "serde",
  "toml",
  "toml_edit",
