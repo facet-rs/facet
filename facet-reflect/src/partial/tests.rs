@@ -836,6 +836,16 @@ fn enum_select_nth_variant() {
 }
 
 #[test]
+fn empty_struct_init() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct EmptyStruct {}
+
+    // Test that we can build an empty struct without setting any fields
+    let hv = Partial::alloc::<EmptyStruct>()?.build()?;
+    assert_eq!(*hv, EmptyStruct {});
+}
+
+#[test]
 fn list_vec_basic() {
     let hv = Partial::alloc::<Vec<i32>>()?
         .begin_list()?

@@ -276,10 +276,18 @@ impl<'shape> Frame<'shape> {
         shape: &'shape Shape<'shape>,
         ownership: FrameOwnership,
     ) -> Self {
+        // For empty structs (structs with 0 fields), start as Init since there's nothing to initialize
+        let tracker = match shape.ty {
+            Type::User(UserType::Struct(struct_type)) if struct_type.fields.is_empty() => {
+                Tracker::Init
+            }
+            _ => Tracker::Uninit,
+        };
+
         Self {
             data,
             shape,
-            tracker: Tracker::Uninit,
+            tracker,
             ownership,
         }
     }
