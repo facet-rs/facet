@@ -135,6 +135,24 @@ pub enum DeserErrorKind<'shape> {
 
     /// An error occurred when reflecting an enum variant (index) from a user type.
     VariantError(VariantError),
+
+    /// Too many elements for an array.
+    ArrayOverflow {
+        /// The array shape
+        shape: &'shape Shape<'shape>,
+
+        /// Maximum allowed length
+        max_len: usize,
+    },
+
+    /// Failed to convert numeric type.
+    NumericConversion {
+        /// Source type name
+        from: &'static str,
+
+        /// Target type name  
+        to: &'static str,
+    },
 }
 
 impl<'input, 'shape, C> DeserError<'input, 'shape, C> {
@@ -268,6 +286,22 @@ impl core::fmt::Display for DeserErrorMessage<'_, '_> {
             }
             DeserErrorKind::VariantError(e) => {
                 write!(f, "Variant error: {e}")
+            }
+            DeserErrorKind::ArrayOverflow { shape, max_len } => {
+                write!(
+                    f,
+                    "Too many elements for array {}: maximum {} elements allowed",
+                    shape.blue(),
+                    max_len.yellow()
+                )
+            }
+            DeserErrorKind::NumericConversion { from, to } => {
+                write!(
+                    f,
+                    "Cannot convert {} to {}: value out of range or precision loss",
+                    from.red(),
+                    to.green()
+                )
             }
         }
     }

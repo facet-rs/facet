@@ -460,6 +460,7 @@ where
         substack: Substack::new(),
         last_span: Span::new(0, 0),
         format_source: format.source(),
+        array_indices: Vec::new(),
     };
 
     macro_rules! next {
@@ -609,6 +610,223 @@ where
     }
 }
 
+/// Trait for numeric type conversions
+trait NumericConvert: Sized {
+    const TYPE_NAME: &'static str;
+
+    fn to_i8(self) -> Option<i8>;
+    fn to_i16(self) -> Option<i16>;
+    fn to_i32(self) -> Option<i32>;
+    fn to_i64(self) -> Option<i64>;
+    fn to_i128(self) -> Option<i128>;
+    fn to_isize(self) -> Option<isize>;
+
+    fn to_u8(self) -> Option<u8>;
+    fn to_u16(self) -> Option<u16>;
+    fn to_u32(self) -> Option<u32>;
+    fn to_u64(self) -> Option<u64>;
+    fn to_u128(self) -> Option<u128>;
+    fn to_usize(self) -> Option<usize>;
+
+    fn to_f32(self) -> Option<f32>;
+    fn to_f64(self) -> Option<f64>;
+}
+
+impl NumericConvert for u64 {
+    const TYPE_NAME: &'static str = "u64";
+
+    fn to_i8(self) -> Option<i8> {
+        self.try_into().ok()
+    }
+    fn to_i16(self) -> Option<i16> {
+        self.try_into().ok()
+    }
+    fn to_i32(self) -> Option<i32> {
+        self.try_into().ok()
+    }
+    fn to_i64(self) -> Option<i64> {
+        self.try_into().ok()
+    }
+    fn to_i128(self) -> Option<i128> {
+        Some(self as i128)
+    }
+    fn to_isize(self) -> Option<isize> {
+        self.try_into().ok()
+    }
+
+    fn to_u8(self) -> Option<u8> {
+        self.try_into().ok()
+    }
+    fn to_u16(self) -> Option<u16> {
+        self.try_into().ok()
+    }
+    fn to_u32(self) -> Option<u32> {
+        self.try_into().ok()
+    }
+    fn to_u64(self) -> Option<u64> {
+        Some(self)
+    }
+    fn to_u128(self) -> Option<u128> {
+        Some(self as u128)
+    }
+    fn to_usize(self) -> Option<usize> {
+        self.try_into().ok()
+    }
+
+    fn to_f32(self) -> Option<f32> {
+        Some(self as f32)
+    }
+    fn to_f64(self) -> Option<f64> {
+        Some(self as f64)
+    }
+}
+
+impl NumericConvert for i64 {
+    const TYPE_NAME: &'static str = "i64";
+
+    fn to_i8(self) -> Option<i8> {
+        self.try_into().ok()
+    }
+    fn to_i16(self) -> Option<i16> {
+        self.try_into().ok()
+    }
+    fn to_i32(self) -> Option<i32> {
+        self.try_into().ok()
+    }
+    fn to_i64(self) -> Option<i64> {
+        Some(self)
+    }
+    fn to_i128(self) -> Option<i128> {
+        Some(self as i128)
+    }
+    fn to_isize(self) -> Option<isize> {
+        self.try_into().ok()
+    }
+
+    fn to_u8(self) -> Option<u8> {
+        self.try_into().ok()
+    }
+    fn to_u16(self) -> Option<u16> {
+        self.try_into().ok()
+    }
+    fn to_u32(self) -> Option<u32> {
+        self.try_into().ok()
+    }
+    fn to_u64(self) -> Option<u64> {
+        self.try_into().ok()
+    }
+    fn to_u128(self) -> Option<u128> {
+        self.try_into().ok()
+    }
+    fn to_usize(self) -> Option<usize> {
+        self.try_into().ok()
+    }
+
+    fn to_f32(self) -> Option<f32> {
+        Some(self as f32)
+    }
+    fn to_f64(self) -> Option<f64> {
+        Some(self as f64)
+    }
+}
+
+impl NumericConvert for f64 {
+    const TYPE_NAME: &'static str = "f64";
+
+    fn to_i8(self) -> Option<i8> {
+        if self.fract() == 0.0 && self >= i8::MIN as f64 && self <= i8::MAX as f64 {
+            Some(self as i8)
+        } else {
+            None
+        }
+    }
+    fn to_i16(self) -> Option<i16> {
+        if self.fract() == 0.0 && self >= i16::MIN as f64 && self <= i16::MAX as f64 {
+            Some(self as i16)
+        } else {
+            None
+        }
+    }
+    fn to_i32(self) -> Option<i32> {
+        if self.fract() == 0.0 && self >= i32::MIN as f64 && self <= i32::MAX as f64 {
+            Some(self as i32)
+        } else {
+            None
+        }
+    }
+    fn to_i64(self) -> Option<i64> {
+        if self.fract() == 0.0 && self >= i64::MIN as f64 && self <= i64::MAX as f64 {
+            Some(self as i64)
+        } else {
+            None
+        }
+    }
+    fn to_i128(self) -> Option<i128> {
+        if self.fract() == 0.0 && self >= i128::MIN as f64 && self <= i128::MAX as f64 {
+            Some(self as i128)
+        } else {
+            None
+        }
+    }
+    fn to_isize(self) -> Option<isize> {
+        if self.fract() == 0.0 && self >= isize::MIN as f64 && self <= isize::MAX as f64 {
+            Some(self as isize)
+        } else {
+            None
+        }
+    }
+
+    fn to_u8(self) -> Option<u8> {
+        if self.fract() == 0.0 && self >= 0.0 && self <= u8::MAX as f64 {
+            Some(self as u8)
+        } else {
+            None
+        }
+    }
+    fn to_u16(self) -> Option<u16> {
+        if self.fract() == 0.0 && self >= 0.0 && self <= u16::MAX as f64 {
+            Some(self as u16)
+        } else {
+            None
+        }
+    }
+    fn to_u32(self) -> Option<u32> {
+        if self.fract() == 0.0 && self >= 0.0 && self <= u32::MAX as f64 {
+            Some(self as u32)
+        } else {
+            None
+        }
+    }
+    fn to_u64(self) -> Option<u64> {
+        if self.fract() == 0.0 && self >= 0.0 && self <= u64::MAX as f64 {
+            Some(self as u64)
+        } else {
+            None
+        }
+    }
+    fn to_u128(self) -> Option<u128> {
+        if self.fract() == 0.0 && self >= 0.0 && self <= u128::MAX as f64 {
+            Some(self as u128)
+        } else {
+            None
+        }
+    }
+    fn to_usize(self) -> Option<usize> {
+        if self.fract() == 0.0 && self >= 0.0 && self <= usize::MAX as f64 {
+            Some(self as usize)
+        } else {
+            None
+        }
+    }
+
+    fn to_f32(self) -> Option<f32> {
+        Some(self as f32)
+    }
+    fn to_f64(self) -> Option<f64> {
+        Some(self)
+    }
+}
+
 #[doc(hidden)]
 /// Maintains the parsing state and context necessary to drive deserialization.
 ///
@@ -632,6 +850,9 @@ pub struct StackRunner<'input, C = Cooked, I: ?Sized + 'input = [u8]> {
 
     /// Format source identifier for error reporting
     pub format_source: &'static str,
+
+    /// Array index tracking - maps depth to current index for arrays
+    pub array_indices: Vec<usize>,
 }
 
 impl<'input, 'shape, C, I: ?Sized + 'input> StackRunner<'input, C, I>
@@ -908,6 +1129,212 @@ where
     }
 
     /// Internal common handler for GotScalar outcome, to deduplicate code.
+    /// Helper to set numeric values with type conversion
+    fn set_numeric_value<'facet, N>(
+        &self,
+        wip: &mut Partial<'facet, 'shape>,
+        value: N,
+    ) -> Result<(), DeserError<'input, 'shape, C>>
+    where
+        'input: 'facet,
+        N: NumericConvert,
+    {
+        let shape = wip.innermost_shape();
+
+        // Check if this is a numeric scalar
+        if let Def::Scalar(sd) = shape.def {
+            if let ScalarAffinity::Number(num_affinity) = sd.affinity {
+                use facet_core::{NumberBits, Signedness};
+
+                // Check if it's integer or float based on the bits type
+                match num_affinity.bits {
+                    NumberBits::Integer { bits, sign } => {
+                        // Integer type - check signed/unsigned and size
+                        match sign {
+                            Signedness::Signed => {
+                                // Signed integers
+                                match bits {
+                                    8 => {
+                                        wip.set(value.to_i8().ok_or_else(|| {
+                                            self.err(DeserErrorKind::NumericConversion {
+                                                from: N::TYPE_NAME,
+                                                to: "i8",
+                                            })
+                                        })?)
+                                        .map_err(|e| self.reflect_err(e))?;
+                                    }
+                                    16 => {
+                                        wip.set(value.to_i16().ok_or_else(|| {
+                                            self.err(DeserErrorKind::NumericConversion {
+                                                from: N::TYPE_NAME,
+                                                to: "i16",
+                                            })
+                                        })?)
+                                        .map_err(|e| self.reflect_err(e))?;
+                                    }
+                                    32 => {
+                                        wip.set(value.to_i32().ok_or_else(|| {
+                                            self.err(DeserErrorKind::NumericConversion {
+                                                from: N::TYPE_NAME,
+                                                to: "i32",
+                                            })
+                                        })?)
+                                        .map_err(|e| self.reflect_err(e))?;
+                                    }
+                                    64 => {
+                                        wip.set(value.to_i64().ok_or_else(|| {
+                                            self.err(DeserErrorKind::NumericConversion {
+                                                from: N::TYPE_NAME,
+                                                to: "i64",
+                                            })
+                                        })?)
+                                        .map_err(|e| self.reflect_err(e))?;
+                                    }
+                                    128 => {
+                                        wip.set(value.to_i128().ok_or_else(|| {
+                                            self.err(DeserErrorKind::NumericConversion {
+                                                from: N::TYPE_NAME,
+                                                to: "i128",
+                                            })
+                                        })?)
+                                        .map_err(|e| self.reflect_err(e))?;
+                                    }
+                                    _ => {
+                                        // Platform-dependent size (isize)
+                                        wip.set(value.to_isize().ok_or_else(|| {
+                                            self.err(DeserErrorKind::NumericConversion {
+                                                from: N::TYPE_NAME,
+                                                to: "isize",
+                                            })
+                                        })?)
+                                        .map_err(|e| self.reflect_err(e))?;
+                                    }
+                                }
+                            }
+                            Signedness::Unsigned => {
+                                // Unsigned integers
+                                match bits {
+                                    8 => {
+                                        wip.set(value.to_u8().ok_or_else(|| {
+                                            self.err(DeserErrorKind::NumericConversion {
+                                                from: N::TYPE_NAME,
+                                                to: "u8",
+                                            })
+                                        })?)
+                                        .map_err(|e| self.reflect_err(e))?;
+                                    }
+                                    16 => {
+                                        wip.set(value.to_u16().ok_or_else(|| {
+                                            self.err(DeserErrorKind::NumericConversion {
+                                                from: N::TYPE_NAME,
+                                                to: "u16",
+                                            })
+                                        })?)
+                                        .map_err(|e| self.reflect_err(e))?;
+                                    }
+                                    32 => {
+                                        wip.set(value.to_u32().ok_or_else(|| {
+                                            self.err(DeserErrorKind::NumericConversion {
+                                                from: N::TYPE_NAME,
+                                                to: "u32",
+                                            })
+                                        })?)
+                                        .map_err(|e| self.reflect_err(e))?;
+                                    }
+                                    64 => {
+                                        wip.set(value.to_u64().ok_or_else(|| {
+                                            self.err(DeserErrorKind::NumericConversion {
+                                                from: N::TYPE_NAME,
+                                                to: "u64",
+                                            })
+                                        })?)
+                                        .map_err(|e| self.reflect_err(e))?;
+                                    }
+                                    128 => {
+                                        wip.set(value.to_u128().ok_or_else(|| {
+                                            self.err(DeserErrorKind::NumericConversion {
+                                                from: N::TYPE_NAME,
+                                                to: "u128",
+                                            })
+                                        })?)
+                                        .map_err(|e| self.reflect_err(e))?;
+                                    }
+                                    _ => {
+                                        // Platform-dependent size (usize)
+                                        wip.set(value.to_usize().ok_or_else(|| {
+                                            self.err(DeserErrorKind::NumericConversion {
+                                                from: N::TYPE_NAME,
+                                                to: "usize",
+                                            })
+                                        })?)
+                                        .map_err(|e| self.reflect_err(e))?;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    NumberBits::Float {
+                        sign_bits,
+                        exponent_bits,
+                        mantissa_bits,
+                        ..
+                    } => {
+                        // Floating point - calculate total bits
+                        let total_bits = sign_bits + exponent_bits + mantissa_bits;
+                        match total_bits {
+                            32 => {
+                                wip.set(value.to_f32().ok_or_else(|| {
+                                    self.err(DeserErrorKind::NumericConversion {
+                                        from: N::TYPE_NAME,
+                                        to: "f32",
+                                    })
+                                })?)
+                                .map_err(|e| self.reflect_err(e))?;
+                            }
+                            64 => {
+                                wip.set(value.to_f64().ok_or_else(|| {
+                                    self.err(DeserErrorKind::NumericConversion {
+                                        from: N::TYPE_NAME,
+                                        to: "f64",
+                                    })
+                                })?)
+                                .map_err(|e| self.reflect_err(e))?;
+                            }
+                            _ => {
+                                // Unknown float size
+                                return Err(self.err(DeserErrorKind::NumericConversion {
+                                    from: N::TYPE_NAME,
+                                    to: "unknown float size",
+                                }));
+                            }
+                        }
+                    }
+                    _ => {
+                        // Fixed-point, Decimal, or other numeric types not supported
+                        return Err(self.err(DeserErrorKind::NumericConversion {
+                            from: N::TYPE_NAME,
+                            to: "fixed-point or decimal",
+                        }));
+                    }
+                }
+            } else {
+                // Not a number affinity - cannot convert
+                return Err(self.err(DeserErrorKind::UnsupportedType {
+                    got: shape,
+                    wanted: "numeric type",
+                }));
+            }
+        } else {
+            // Not a scalar def - cannot convert
+            return Err(self.err(DeserErrorKind::UnsupportedType {
+                got: shape,
+                wanted: "scalar type",
+            }));
+        }
+
+        Ok(())
+    }
+
     fn handle_scalar<'facet>(
         &self,
         wip: &mut Partial<'facet, 'shape>,
@@ -950,18 +1377,48 @@ where
                         }; // Add semicolon to ignore the return value
                     }
                     _ => {
-                        wip.set(cow.to_string()).map_err(|e| self.reflect_err(e))?;
+                        // Check if this is a scalar type that can be parsed from a string
+                        let shape = wip.innermost_shape();
+                        if let Def::Scalar(sd) = shape.def {
+                            match sd.affinity {
+                                ScalarAffinity::Time(_)
+                                | ScalarAffinity::Path(_)
+                                | ScalarAffinity::UUID(_)
+                                | ScalarAffinity::ULID(_)
+                                | ScalarAffinity::Url(_)
+                                | ScalarAffinity::IpAddr(_)
+                                | ScalarAffinity::SocketAddr(_) => {
+                                    // For these types, just pass the string value directly
+                                    // The automatic conversion via try_from will handle parsing
+                                    match cow {
+                                        Cow::Borrowed(s) => {
+                                            wip.set(s).map_err(|e| self.reflect_err(e))?
+                                        }
+                                        Cow::Owned(s) => {
+                                            wip.set(s).map_err(|e| self.reflect_err(e))?
+                                        }
+                                    };
+                                }
+                                _ => {
+                                    // For other types, convert to String
+                                    wip.set(cow.to_string()).map_err(|e| self.reflect_err(e))?;
+                                }
+                            }
+                        } else {
+                            // Not a scalar, just set as String
+                            wip.set(cow.to_string()).map_err(|e| self.reflect_err(e))?;
+                        }
                     }
                 }
             }
             Scalar::U64(value) => {
-                wip.set(value).map_err(|e| self.reflect_err(e))?;
+                self.set_numeric_value(wip, value)?;
             }
             Scalar::I64(value) => {
-                wip.set(value).map_err(|e| self.reflect_err(e))?;
+                self.set_numeric_value(wip, value)?;
             }
             Scalar::F64(value) => {
-                wip.set(value).map_err(|e| self.reflect_err(e))?;
+                self.set_numeric_value(wip, value)?;
             }
             Scalar::Bool(value) => {
                 wip.set(value).map_err(|e| self.reflect_err(e))?;
@@ -1108,10 +1565,33 @@ where
                 }
                 trace!("Beginning pushback");
                 self.stack.push(Instruction::ListItemOrListClose);
-                wip.begin_list().map_err(|e| self.reflect_err(e))?;
+
+                // Only call begin_list() for actual lists, not arrays
+                match shape.def {
+                    Def::List(_) => {
+                        wip.begin_list().map_err(|e| self.reflect_err(e))?;
+                    }
+                    Def::Array(_) => {
+                        // Arrays don't need begin_list()
+                        // Initialize index tracking for this array
+                        self.array_indices.push(0);
+                    }
+                    Def::Slice(_) => {
+                        // Slices don't need begin_list()
+                        // They will be populated element by element
+                    }
+                    _ => {
+                        // For other types like tuples, no special initialization needed
+                    }
+                }
             }
             Outcome::ListEnded => {
                 trace!("List closing");
+                // Clean up array index tracking if this was an array
+                let shape = wip.shape();
+                if matches!(shape.def, Def::Array(_)) {
+                    self.array_indices.pop();
+                }
                 wip.end().map_err(|e| self.reflect_err(e))?;
             }
             Outcome::ObjectStarted => {
@@ -1403,6 +1883,11 @@ where
         match outcome.node {
             Outcome::ListEnded => {
                 trace!("List close");
+                // Clean up array index tracking if this was an array
+                let shape = wip.shape();
+                if matches!(shape.def, Def::Array(_)) {
+                    self.array_indices.pop();
+                }
                 Ok(wip)
             }
             _ => {
@@ -1415,9 +1900,77 @@ where
                 );
                 trace!("Before push, wip.shape is {}", wip.shape().blue());
 
-                // For now, both tuples and other sequences use push()
-                // TODO: In the future we might need special handling for tuples
-                wip.begin_list_item().map_err(|e| self.reflect_err(e))?;
+                // Different handling for arrays vs lists
+                let shape = wip.shape();
+                match shape.def {
+                    Def::Array(ad) => {
+                        // Arrays use the last index in our tracking vector
+                        if let Some(current_index) = self.array_indices.last().copied() {
+                            // Check bounds
+                            if current_index >= ad.n {
+                                return Err(self.err(DeserErrorKind::ArrayOverflow {
+                                    shape,
+                                    max_len: ad.n,
+                                }));
+                            }
+
+                            // Set this array element
+                            wip.begin_nth_element(current_index)
+                                .map_err(|e| self.reflect_err(e))?;
+
+                            // Increment the index for next time
+                            if let Some(last) = self.array_indices.last_mut() {
+                                *last += 1;
+                            }
+                        } else {
+                            // This shouldn't happen if we properly initialize in ListStarted
+                            return Err(self.err(DeserErrorKind::Unimplemented(
+                                "Array index tracking not initialized",
+                            )));
+                        }
+                    }
+                    Def::List(_) => {
+                        wip.begin_list_item().map_err(|e| self.reflect_err(e))?;
+                    }
+                    _ => {
+                        // Check if this is a tuple
+                        if let Type::User(UserType::Struct(struct_type)) = shape.ty {
+                            if struct_type.kind == StructKind::Tuple {
+                                // Tuples use field indexing
+                                // Find the next uninitialized field
+                                let mut field_index = None;
+                                for i in 0..struct_type.fields.len() {
+                                    if !wip.is_field_set(i).map_err(|e| self.reflect_err(e))? {
+                                        field_index = Some(i);
+                                        break;
+                                    }
+                                }
+
+                                if let Some(idx) = field_index {
+                                    wip.begin_nth_field(idx).map_err(|e| self.reflect_err(e))?;
+                                } else {
+                                    // All fields are set, this is too many elements
+                                    return Err(self.err(DeserErrorKind::ArrayOverflow {
+                                        shape,
+                                        max_len: struct_type.fields.len(),
+                                    }));
+                                }
+                            } else {
+                                // Not a tuple struct
+                                return Err(self.err(DeserErrorKind::UnsupportedType {
+                                    got: shape,
+                                    wanted: "array, list, or tuple",
+                                }));
+                            }
+                        } else {
+                            // Not a struct type at all
+                            return Err(self.err(DeserErrorKind::UnsupportedType {
+                                got: shape,
+                                wanted: "array, list, or tuple",
+                            }));
+                        }
+                    }
+                }
 
                 trace!(" After push, wip.shape is {}", wip.shape().cyan());
                 wip = self.value(wip, outcome)?;
