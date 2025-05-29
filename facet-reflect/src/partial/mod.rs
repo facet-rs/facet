@@ -776,8 +776,8 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         }
     }
 
-    /// Begins a variant for enum initialization, by variant index in the enum's variant list (0-based)
-    pub fn begin_nth_variant(&mut self, index: usize) -> Result<&mut Self, ReflectError<'shape>> {
+    /// Selects a variant for enum initialization, by variant index in the enum's variant list (0-based)
+    pub fn select_nth_variant(&mut self, index: usize) -> Result<&mut Self, ReflectError<'shape>> {
         self.require_active()?;
 
         let fr = self.frames.last().unwrap();
@@ -788,7 +788,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
             _ => {
                 return Err(ReflectError::OperationFailed {
                     shape: fr.shape,
-                    operation: "begin_nth_variant requires an enum type",
+                    operation: "select_nth_variant requires an enum type",
                 });
             }
         };
@@ -812,7 +812,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
             }
         };
 
-        // Delegate to begin_variant
+        // Delegate to select_variant
         self.select_variant(discriminant)
     }
 
@@ -2132,6 +2132,12 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
         variant_name: &str,
     ) -> Result<&mut Self, ReflectError<'shape>> {
         self.inner.select_variant_named(variant_name)?;
+        Ok(self)
+    }
+
+    /// Forwards select_nth_variant to the inner wip instance.
+    pub fn select_nth_variant(&mut self, index: usize) -> Result<&mut Self, ReflectError<'shape>> {
+        self.inner.select_nth_variant(index)?;
         Ok(self)
     }
 

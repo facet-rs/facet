@@ -812,6 +812,30 @@ fn enum_partial_initialization_error() {
 }
 
 #[test]
+fn enum_select_nth_variant() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    #[allow(dead_code)]
+    enum Status {
+        Active = 0,
+        Inactive = 1,
+        Pending = 2,
+    }
+
+    // Test selecting variant by index (0-based)
+    let hv = Partial::alloc::<Status>()?
+        .select_nth_variant(1)? // Inactive (index 1)
+        .build()?;
+    assert_eq!(*hv, Status::Inactive);
+
+    // Test selecting different variant by index
+    let hv2 = Partial::alloc::<Status>()?
+        .select_nth_variant(2)? // Pending (index 2)
+        .build()?;
+    assert_eq!(*hv2, Status::Pending);
+}
+
+#[test]
 fn list_vec_basic() {
     let hv = Partial::alloc::<Vec<i32>>()?
         .begin_list()?

@@ -31,7 +31,8 @@ use log::trace;
 pub fn from_slice<'input: 'facet, 'facet, T: Facet<'facet>>(
     msgpack: &'input [u8],
 ) -> Result<T, DecodeError<'static>> {
-    from_slice_value(msgpack, Partial::alloc::<T>()?)?
+    let typed_partial = Partial::alloc::<T>()?;
+    from_slice_value(msgpack, typed_partial.inner_mut())?
         .materialize::<T>()
         .map_err(|e| DecodeError::UnsupportedType(e.to_string()))
 }
@@ -77,13 +78,10 @@ pub fn from_slice<'input: 'facet, 'facet, T: Facet<'facet>>(
 /// <https://github.com/msgpack/msgpack/blob/master/spec.md>
 pub fn from_slice_value<'facet, 'shape>(
     msgpack: &[u8],
-    wip: Partial<'facet, 'shape>,
-) -> Result<HeapValue<'facet, 'shape>, DecodeError<'shape>> {
+    wip: &mut Partial<'facet, 'shape>,
+) -> Result<(), DecodeError<'shape>> {
     let mut decoder = Decoder::new(msgpack);
-    decoder
-        .deserialize_value(wip)?
-        .build()
-        .map_err(|e| DecodeError::UnsupportedType(e.to_string()))
+    decoder.deserialize_value(&mut wip)
 }
 
 struct Decoder<'input> {
@@ -409,8 +407,8 @@ impl<'input, 'shape> Decoder<'input> {
 
     fn deserialize_value<'facet>(
         &mut self,
-        mut wip: Partial<'facet, 'shape>,
-    ) -> Result<Partial<'facet, 'shape>, DecodeError<'shape>> {
+        wip: &mut Partial<'facet, 'shape>,
+    ) -> Result<(), DecodeError<'shape>> {
         let shape = wip.shape();
         trace!("Deserializing {:?}", shape);
 
@@ -429,10 +427,8 @@ impl<'input, 'shape> Decoder<'input> {
                     match wip.field_index(&key) {
                         Some(index) => {
                             seen_fields[index] = true;
-                            wip = self
-                                .deserialize_value(wip.field(index).unwrap())?
-                                .end()
-                                .unwrap();
+                            self.deserialize_value(wip.begin_nth_field(index).unwrap())?;
+                            wip.end().unwrap();
                         }
                         None => {
                             // Skip unknown field value
@@ -447,17 +443,7 @@ impl<'input, 'shape> Decoder<'input> {
                     if !seen {
                         let field = &struct_type.fields[i];
                         if field.flags.contains(facet_core::FieldFlags::DEFAULT) {
-                            // Field has default attribute, so we should apply the default
-                            let field_wip = wip.field(i).map_err(DecodeError::ReflectError)?;
-
-                            // Whether there's a custom default function or not, we just use put_default()
-                            // the Wip.put_default() API in the facet system will handle calling the
-                            // appropriate default function set in the #[facet(default = ...)] attribute
-                            wip = field_wip
-                                .put_default()
-                                .map_err(DecodeError::ReflectError)?
-                                .pop()
-                                .map_err(DecodeError::ReflectError)?;
+                            wip.begin_nth_field(i)?.set_default()?.end()?;
                         } else {
                             // Non-default field was missing
                             return Err(DecodeError::MissingField(field.name.to_string()));
@@ -465,7 +451,7 @@ impl<'input, 'shape> Decoder<'input> {
                     }
                 }
 
-                return Ok(wip);
+                return Ok(());
             }
             Type::User(facet_core::UserType::Struct(struct_type))
                 if struct_type.kind == facet_core::StructKind::Tuple =>
@@ -481,14 +467,12 @@ impl<'input, 'shape> Decoder<'input> {
                 // For tuples, deserialize fields in order
                 for idx in 0..field_count {
                     trace!("Deserializing tuple field {}", idx);
-                    wip = wip
-                        .begin_nth_field(idx)
-                        .map_err(DecodeError::ReflectError)?;
-                    wip = self.deserialize_value(wip)?;
-                    wip = wip.end().map_err(DecodeError::ReflectError)?;
+                    wip.begin_nth_field(idx)?;
+                    self.deserialize_value(wip)?;
+                    wip.end().map_err(DecodeError::ReflectError)?;
                 }
 
-                return Ok(wip);
+                return Ok(());
             }
             Type::User(UserType::Enum(enum_type)) => {
                 trace!("Deserializing enum");
@@ -498,7 +482,9 @@ impl<'input, 'shape> Decoder<'input> {
                     let variant_name = self.decode_string()?;
                     for (idx, variant) in enum_type.variants.iter().enumerate() {
                         if variant.name == variant_name {
-                            return wip.variant(idx).map_err(DecodeError::ReflectError);
+                            wip.begin_nth_variant(idx)
+                                .map_err(DecodeError::ReflectError)?;
+                            return Ok(());
                         }
                     }
                     return Err(DecodeError::InvalidEnum(format!(
@@ -522,7 +508,8 @@ impl<'input, 'shape> Decoder<'input> {
                             facet_core::StructKind::Unit => {
                                 // Need to skip any value that might be present
                                 self.skip_value()?;
-                                return wip.variant(idx).map_err(DecodeError::ReflectError);
+                                wip.select_nth_variant(idx)?;
+                                return Ok(());
                             }
 
                             // Handle tuple variant
