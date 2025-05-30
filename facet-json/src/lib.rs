@@ -29,11 +29,29 @@ struct Json;
 fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
     writer.write_all(b"\"")?;
 
-    for c in s.chars() {
+    let mut idx = 0;
+    while idx + 8 < s.len() {
+        let chunk = &s[idx..idx + 8];
+        let window = <[u8; 8]>::try_from(chunk.as_bytes()).unwrap();
+        let bignum = u64::from_le_bytes(window);
+        let completely_ascii = bignum & 0x8080808080808080u64 == 0;
+        if completely_ascii {
+            writer.write_all(chunk.as_bytes())?;
+        } else {
+            for c in chunk.chars() {
+                write_json_escaped_char(writer, c)?;
+            }
+        }
+        idx += 8;
+    }
+
+    for c in s[idx..].chars() {
         write_json_escaped_char(writer, c)?;
     }
 
-    writer.write_all(b"\"")
+    Ok(())
+
+    // writer.write_all(b"\"")
 }
 
 /// Writes a single JSON escaped character
