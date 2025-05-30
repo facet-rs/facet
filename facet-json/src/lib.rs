@@ -25,6 +25,7 @@ struct Json;
 
 /// Properly escapes and writes a JSON string
 #[cfg(feature = "std")]
+#[inline]
 fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
     writer.write_all(b"\"")?;
 
@@ -37,6 +38,7 @@ fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
 
 /// Writes a single JSON escaped character
 #[cfg(feature = "std")]
+#[inline]
 fn write_json_escaped_char<W: Write>(writer: &mut W, c: char) -> io::Result<()> {
     match c {
         '"' => writer.write_all(b"\\\""),
