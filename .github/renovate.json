@@ -5,8 +5,8 @@
     ":automergeBranch",
     ":automergeRequireAllStatusChecks",
     ":semanticCommits",
-    "schedule:daily",
-    "schedule:automergeDaily"
+    "schedule:weekly",
+    "schedule:automergeWeekly"
   ],
   "packageRules": [
     {
