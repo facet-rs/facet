@@ -40,34 +40,34 @@ fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
     //    just call `write_json_escaped_char` for each character.
 
     const STEP_SIZE: usize = 16;
-    type BigNum = u128;
+    type Window = u128;
     type Chunk = [u8; STEP_SIZE];
 
     writer.write_all(b"\"")?;
 
     let mut idx = 0;
     while idx + STEP_SIZE < s.len() {
-        let chunk = &s[idx..idx + STEP_SIZE];
+        let slice = &s[idx..idx + STEP_SIZE];
         // Unwrap here is fine because the chunk is guaranteed to be exactly `CHUNK_SIZE` bytes long
         // by construction.
-        let window = Chunk::try_from(chunk.as_bytes()).unwrap();
+        let chunk = Chunk::try_from(slice.as_bytes()).unwrap();
         #[cfg(target_endian = "little")]
-        let bignum = BigNum::from_le_bytes(window);
+        let window = Window::from_le_bytes(chunk);
         #[cfg(target_endian = "big")]
-        let bignum = BigNum::from_be_bytes(window);
-        // Our bignum is a concatenation of u8 values. For each value, we need to make sure that:
+        let window = Window::from_be_bytes(chunk);
+        // Our window is a concatenation of u8 values. For each value, we need to make sure that:
         // 1. It is ASCII (i.e. the first bit of the u8 is 0, so u8 & 0x80 == 0)
         // 2. It does not contain quotes (i.e. u8 & 0x22 != 0)
         // 3. It does not contain backslashes (i.e. u8 & 0x5c != 0)
         // 4. It does not contain control characters (i.e. characters below 32, including 0)
         //    This means the bit above the 1st, 2nd or 3rd bit must be set, so u8 & 0xe0 != 0
-        let completely_ascii = bignum & 0x80808080808080808080808080808080 == 0;
-        let quote_free = bignum & 0x22222222222222222222222222222222 == 0;
-        let backslash_free = bignum & 0x5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c == 0;
-        let control_char_free = bignum & 0xe0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0 != 0;
+        let completely_ascii = window & 0x80808080808080808080808080808080 == 0;
+        let quote_free = window & 0x22222222222222222222222222222222 == 0;
+        let backslash_free = window & 0x5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c == 0;
+        let control_char_free = window & 0xe0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0 != 0;
         if completely_ascii && quote_free && backslash_free && control_char_free {
             // Yay! Whack it into the writer!
-            writer.write_all(chunk.as_bytes())?;
+            writer.write_all(slice.as_bytes())?;
             idx += STEP_SIZE;
         } else {
             // Ahw one of the conditions not met. Let's take our time and artisanally handle each
