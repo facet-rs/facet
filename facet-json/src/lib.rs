@@ -49,9 +49,7 @@ fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
         write_json_escaped_char(writer, c)?;
     }
 
-    Ok(())
-
-    // writer.write_all(b"\"")
+    writer.write_all(b"\"")
 }
 
 /// Writes a single JSON escaped character
