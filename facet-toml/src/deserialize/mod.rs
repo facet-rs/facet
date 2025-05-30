@@ -501,6 +501,9 @@ fn deserialize_as_map<'input, 'a, 'shape>(
             }
         };
 
+        // End the key frame
+        reflect!(wip, toml, item.span(), end());
+
         trace!("Push {}", "value".cyan());
 
         // Start the value
@@ -529,44 +532,13 @@ fn deserialize_as_option<'input, 'a, 'shape>(
         "option".blue()
     );
 
-    // Push the Some variant
-    reflect!(wip, toml, item.span(), select_variant(1));
+    // Use push_some to initialize the Option as Some
+    reflect!(wip, toml, item.span(), push_some());
 
-    // Handle nested options recursively
-    fn handle_nested_options<'input, 'a, 'shape>(
-        toml: &'input str,
-        wip: &mut Partial<'a, 'shape>,
-        item: &Item,
-    ) -> Result<(), TomlDeError<'input, 'shape>> {
-        // Check if we have another nested Option
-        if let Def::Option(_) = wip.shape().def {
-            trace!("Detected another level of nested Option");
+    // Deserialize the inner value
+    deserialize_item(toml, wip, item)?;
 
-            // Push Some for this level too
-            reflect!(wip, toml, item.span(), select_variant(1));
-
-            // Recursively handle any more levels of nesting
-            handle_nested_options(toml, wip, item)?;
-
-            // Pop back up one level
-            reflect!(wip, toml, item.span(), end());
-        } else {
-            // We've reached the innermost level - handle the actual value
-            if item.is_integer() {
-                trace!("Deserializing integer at innermost Option level");
-                deserialize_as_scalar(toml, wip, item)?;
-            } else {
-                deserialize_item(toml, wip, item)?;
-            }
-        }
-
-        Ok(())
-    }
-
-    // Start processing from the current level
-    handle_nested_options(toml, wip, item)?;
-
-    // Pop the outermost Option
+    // End the Option
     reflect!(wip, toml, item.span(), end());
 
     trace!("Finished deserializing {}", "option".blue());
