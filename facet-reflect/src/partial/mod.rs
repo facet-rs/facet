@@ -274,6 +274,14 @@ enum Tracker<'shape> {
         /// Whether we're currently building the inner value
         building_inner: bool,
     },
+
+    /// Conversion frame for types with try_from
+    Conversion {
+        /// The parent shape that has the try_from conversion
+        parent_shape: &'shape Shape<'shape>,
+        /// Whether conversion has been completed
+        is_converted: bool,
+    },
 }
 
 impl<'shape> Frame<'shape> {
@@ -395,6 +403,16 @@ impl<'shape> Frame<'shape> {
                     Ok(())
                 }
             }
+            Tracker::Conversion { is_converted, .. } => {
+                if is_converted {
+                    Ok(())
+                } else {
+                    Err(ReflectError::OperationFailed {
+                        shape: self.shape,
+                        operation: "conversion frame requires calling set() to convert the value",
+                    })
+                }
+            }
         }
     }
 }
@@ -454,16 +472,50 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     {
         self.require_active()?;
 
-        // relay to set_shape — convert U into a ptr and shape, and call set_shape
-        let ptr_const = PtrConst::new(&raw const value);
-        unsafe {
-            // Safety: We are calling set_shape with a valid shape and a valid pointer
-            self.set_shape(ptr_const, U::SHAPE)?
-        };
+        // Check if this is a conversion frame
+        let frame = self.frames.last_mut().unwrap();
+        if let Tracker::Conversion {
+            parent_shape,
+            ref mut is_converted,
+        } = frame.tracker
+        {
+            // This is a conversion frame - use try_from to convert
+            if let Some(try_from_fn) = (parent_shape.vtable.try_from)() {
+                let ptr_const = PtrConst::new(&raw const value);
+                let result = unsafe { try_from_fn(ptr_const, U::SHAPE, frame.data) };
 
-        // Prevent the value from being dropped since we've copied it
-        core::mem::forget(value);
-        Ok(self)
+                // Prevent the value from being dropped since we've passed it to try_from
+                core::mem::forget(value);
+
+                match result {
+                    Ok(_) => {
+                        *is_converted = true;
+                        Ok(self)
+                    }
+                    Err(e) => Err(ReflectError::TryFromError {
+                        src_shape: U::SHAPE,
+                        dst_shape: parent_shape,
+                        inner: e,
+                    }),
+                }
+            } else {
+                // This shouldn't happen as we checked for try_from in push_inner
+                Err(ReflectError::InvariantViolation {
+                    invariant: "conversion frame parent should have try_from",
+                })
+            }
+        } else {
+            // Regular frame - use set_shape
+            let ptr_const = PtrConst::new(&raw const value);
+            unsafe {
+                // Safety: We are calling set_shape with a valid shape and a valid pointer
+                self.set_shape(ptr_const, U::SHAPE)?
+            };
+
+            // Prevent the value from being dropped since we've copied it
+            core::mem::forget(value);
+            Ok(self)
+        }
     }
 
     /// Sets a value into the current frame by shape, for shape-based operations
@@ -1694,6 +1746,27 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                     }
                 }
             }
+            Tracker::Conversion { .. } => {
+                // For conversion frames, we need to update the parent struct's field tracker
+                // The conversion happened in-place, so we need to mark the field as initialized
+                // Check if parent frame is tracking a struct field
+                match &mut parent_frame.tracker {
+                    Tracker::Struct {
+                        iset,
+                        current_child,
+                    } => {
+                        if let Some(idx) = *current_child {
+                            iset.set(idx);
+                            *current_child = None;
+                        }
+                    }
+                    _ => {
+                        // Parent frame might not be a struct (e.g., direct NonZero value)
+                        // In that case, the conversion frame represents the entire value
+                        parent_frame.tracker = Tracker::Init;
+                    }
+                }
+            }
             _ => {}
         }
 
@@ -2008,18 +2081,71 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     /// Begin building the inner value of a wrapper type
     pub fn push_inner(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
         self.require_active()?;
-        let frame = self.frames.last().unwrap();
 
-        // Get the inner shape
-        if let Some(inner_fn) = frame.shape.inner {
-            let _inner_shape = inner_fn();
+        // Get the inner shape and check for try_from
+        let (inner_shape, has_try_from, parent_shape) = {
+            let frame = self.frames.last().unwrap();
+            if let Some(inner_fn) = frame.shape.inner {
+                let inner_shape = inner_fn();
+                let has_try_from = (frame.shape.vtable.try_from)().is_some();
+                (Some(inner_shape), has_try_from, frame.shape)
+            } else {
+                (None, false, frame.shape)
+            }
+        };
 
-            // For wrapper types with inner, we typically need to navigate to the first field
-            // This is a common pattern for newtype wrappers
-            self.begin_nth_field(0)
+        if let Some(inner_shape) = inner_shape {
+            if has_try_from {
+                // Create a conversion frame with the inner shape
+
+                // Extract the data pointer before updating the frame
+                let frame_data = {
+                    let frame = self.frames.last().unwrap();
+                    frame.data
+                };
+
+                // If the parent frame is a struct tracking a field, we need to update it
+                let frame = self.frames.last_mut().unwrap();
+                match &mut frame.tracker {
+                    Tracker::Uninit => {
+                        // The parent frame is for NonZero itself, initialize it as a struct
+                        if let Type::User(UserType::Struct(struct_type)) = parent_shape.ty {
+                            frame.tracker = Tracker::Struct {
+                                iset: ISet::new(struct_type.fields.len()),
+                                current_child: Some(0), // We're working on field 0
+                            };
+                        }
+                    }
+                    Tracker::Struct { current_child, .. } => {
+                        // Already tracking a struct, update current_child if needed
+                        if current_child.is_none() {
+                            *current_child = Some(0);
+                        }
+                    }
+                    _ => {}
+                }
+
+                // For conversion frames, we create a frame directly with the inner shape
+                // This allows setting values of the inner type which will be converted
+                self.frames
+                    .push(Frame::new(frame_data, inner_shape, FrameOwnership::Field));
+
+                // Set the tracker to Conversion
+                let last_frame = self.frames.last_mut().unwrap();
+                last_frame.tracker = Tracker::Conversion {
+                    parent_shape,
+                    is_converted: false,
+                };
+
+                Ok(self)
+            } else {
+                // For wrapper types without try_from, navigate to the first field
+                // This is a common pattern for newtype wrappers
+                self.begin_nth_field(0)
+            }
         } else {
             Err(ReflectError::OperationFailed {
-                shape: frame.shape,
+                shape: parent_shape,
                 operation: "type does not have an inner value",
             })
         }
@@ -2567,6 +2693,19 @@ impl<'facet, 'shape> Drop for Partial<'facet, 'shape> {
                             unsafe { drop_fn(PtrMut::new(frame.data.as_mut_byte_ptr())) };
                         }
                     }
+                }
+                Tracker::Conversion {
+                    parent_shape,
+                    is_converted,
+                } => {
+                    // If conversion was completed, the parent type now owns the value
+                    // and will handle dropping it with its own drop function
+                    if *is_converted {
+                        if let Some(drop_fn) = (parent_shape.vtable.drop_in_place)() {
+                            unsafe { drop_fn(PtrMut::new(frame.data.as_mut_byte_ptr())) };
+                        }
+                    }
+                    // If conversion wasn't completed, there's nothing to drop
                 }
             }
 
