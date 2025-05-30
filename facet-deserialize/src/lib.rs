@@ -1504,6 +1504,23 @@ where
             }
             Outcome::ListStarted => {
                 let shape = wip.innermost_shape();
+
+                // First check if this is a tuple struct (including empty tuples)
+                if let Type::User(UserType::Struct(st)) = shape.ty {
+                    if st.kind == StructKind::Tuple {
+                        trace!(
+                            "Array starting for tuple struct ({}) with {} fields!",
+                            shape.blue(),
+                            st.fields.len()
+                        );
+
+                        // Both empty and non-empty tuples need to process list events
+                        trace!("Beginning pushback");
+                        self.stack.push(Instruction::ListItemOrListClose);
+                        return Ok(wip);
+                    }
+                }
+
                 match shape.def {
                     Def::Array(_) => {
                         trace!("Array starting for array ({})!", shape.blue());
@@ -1517,17 +1534,6 @@ where
                         trace!("Array starting for list ({})!", shape.blue());
                         wip.set_default().map_err(|e| self.reflect_err(e))?;
                     }
-                    Def::Scalar(sd) => {
-                        if matches!(sd.affinity, ScalarAffinity::Empty(_)) {
-                            trace!("Empty tuple/scalar, nice");
-                            wip.set_default().map_err(|e| self.reflect_err(e))?;
-                        } else {
-                            return Err(self.err(DeserErrorKind::UnsupportedType {
-                                got: shape,
-                                wanted: "array, list, tuple, or slice",
-                            }));
-                        }
-                    }
                     _ => {
                         // For non-collection types, check the Type enum
                         if let Type::User(user_ty) = shape.ty {
@@ -1535,20 +1541,13 @@ where
                                 UserType::Enum(_) => {
                                     trace!("Array starting for enum ({})!", shape.blue());
                                 }
-                                UserType::Struct(st) => {
-                                    if st.kind == StructKind::Tuple {
-                                        trace!(
-                                            "Array starting for tuple struct ({})!",
-                                            shape.blue()
-                                        );
-                                        // Don't call set_default for tuples - they need field-by-field initialization
-                                    } else {
-                                        // Regular struct shouldn't be parsed from array
-                                        return Err(self.err(DeserErrorKind::UnsupportedType {
-                                            got: shape,
-                                            wanted: "array, list, tuple, or slice",
-                                        }));
-                                    }
+                                UserType::Struct(_) => {
+                                    // Regular struct shouldn't be parsed from array
+                                    // (Tuples are already handled above)
+                                    return Err(self.err(DeserErrorKind::UnsupportedType {
+                                        got: shape,
+                                        wanted: "array, list, tuple, or slice",
+                                    }));
                                 }
                                 _ => {
                                     return Err(self.err(DeserErrorKind::UnsupportedType {
@@ -1556,15 +1555,6 @@ where
                                         wanted: "array, list, tuple, or slice",
                                     }));
                                 }
-                            }
-                        } else if let Type::User(UserType::Struct(struct_type)) = shape.ty {
-                            if struct_type.kind == StructKind::Tuple {
-                                trace!(
-                                    "Array starting for tuple ({}) with {} fields!",
-                                    shape.blue(),
-                                    struct_type.fields.len()
-                                );
-                                // Tuples are treated as structs and fields will be set by index
                             }
                         } else {
                             return Err(self.err(DeserErrorKind::UnsupportedType {

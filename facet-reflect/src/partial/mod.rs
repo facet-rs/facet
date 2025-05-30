@@ -291,6 +291,7 @@ impl<'shape> Frame<'shape> {
         ownership: FrameOwnership,
     ) -> Self {
         // For empty structs (structs with 0 fields), start as Init since there's nothing to initialize
+        // This includes empty tuples () which are zero-sized types with no fields to initialize
         let tracker = match shape.ty {
             Type::User(UserType::Struct(struct_type)) if struct_type.fields.is_empty() => {
                 Tracker::Init
@@ -2033,13 +2034,73 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         self.shape()
     }
 
+    /// Helper to check if a shape is trivially constructible (i.e., it's a struct where all fields are trivially constructible)
+    fn is_trivially_constructible(shape: &Shape) -> bool {
+        match shape.ty {
+            Type::User(UserType::Struct(struct_type)) => {
+                // A struct is trivially constructible if all its fields are trivially constructible
+                struct_type
+                    .fields
+                    .iter()
+                    .all(|field| Self::is_trivially_constructible(field.shape))
+            }
+            _ => false,
+        }
+    }
+
     /// Check if a struct field at the given index has been set
     pub fn is_field_set(&self, index: usize) -> Result<bool, ReflectError<'shape>> {
         let frame = self.frames.last().ok_or(ReflectError::NoActiveFrame)?;
 
         match &frame.tracker {
-            Tracker::Struct { iset, .. } => Ok(iset.get(index)),
-            Tracker::Enum { data, .. } => Ok(data.get(index)),
+            Tracker::Uninit => {
+                // For uninitialized structs, check if the requested field is trivially constructible
+                if let Type::User(UserType::Struct(struct_type)) = frame.shape.ty {
+                    if let Some(field) = struct_type.fields.get(index) {
+                        if Self::is_trivially_constructible(field.shape) {
+                            return Ok(true);
+                        }
+                    }
+                }
+                Ok(false)
+            }
+            Tracker::Init => Ok(true),
+            Tracker::Struct { iset, .. } => {
+                // Check if the field is already marked as set
+                if iset.get(index) {
+                    return Ok(true);
+                }
+
+                // For fields that are trivially constructible, they are always initialized
+                if let Type::User(UserType::Struct(struct_type)) = frame.shape.ty {
+                    if let Some(field) = struct_type.fields.get(index) {
+                        if Self::is_trivially_constructible(field.shape) {
+                            return Ok(true);
+                        }
+                    }
+                }
+
+                Ok(false)
+            }
+            Tracker::Enum { data, .. } => {
+                // Check if the field is already marked as set
+                if data.get(index) {
+                    return Ok(true);
+                }
+
+                // For enum variant fields that are empty structs, they are always initialized
+                if let Tracker::Enum { variant, .. } = &frame.tracker {
+                    if let Some(field) = variant.data.fields.get(index) {
+                        if let Type::User(UserType::Struct(field_struct)) = field.shape.ty {
+                            if field_struct.fields.is_empty() {
+                                return Ok(true);
+                            }
+                        }
+                    }
+                }
+
+                Ok(false)
+            }
             Tracker::Option { building_inner } => {
                 // For Options, index 0 represents the inner value
                 if index == 0 {
@@ -2050,11 +2111,6 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                         reason: "Option only has one field (index 0)",
                     })
                 }
-            }
-            Tracker::Uninit => {
-                // For uninitialized values (like tuples that haven't been started yet),
-                // all fields are unset
-                Ok(false)
             }
             _ => Err(ReflectError::InvalidOperation {
                 operation: "is_field_set",

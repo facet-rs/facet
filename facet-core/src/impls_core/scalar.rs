@@ -57,11 +57,6 @@ unsafe impl Facet<'_> for () {
     const SHAPE: &'static Shape<'static> = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("()")
-            .def(Def::Scalar(
-                ScalarDef::builder()
-                    .affinity(&const { ScalarAffinity::empty().build() })
-                    .build(),
-            ))
             .ty(Type::User(UserType::Struct(StructType {
                 repr: Repr::default(),
                 kind: StructKind::Tuple,
