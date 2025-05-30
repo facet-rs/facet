@@ -54,14 +54,14 @@ fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
         let window = Window::from_ne_bytes(chunk);
         // Our window is a concatenation of u8 values. For each value, we need to make sure that:
         // 1. It is ASCII (i.e. the first bit of the u8 is 0, so u8 & 0x80 == 0)
-        // 2. It does not contain quotes (i.e. u8 & 0x22 != 0)
-        // 3. It does not contain backslashes (i.e. u8 & 0x5c != 0)
+        // 2. It does not contain quotes (i.e. 0x22)
+        // 3. It does not contain backslashes (i.e. 0x5c)
         // 4. It does not contain control characters (i.e. characters below 32, including 0)
         //    This means the bit above the 1st, 2nd or 3rd bit must be set, so u8 & 0xe0 != 0
         let completely_ascii = window & 0x80808080808080808080808080808080 == 0;
         let quote_free = !contains_0x22(window);
         let backslash_free = !contains_0x5c(window);
-        let control_char_free = window & 0xe0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0 != 0;
+        let control_char_free = top_three_bits_set(window);
         if completely_ascii && quote_free && backslash_free && control_char_free {
             // Yay! Whack it into the writer!
             writer.write_all(slice.as_bytes())?;
@@ -73,7 +73,7 @@ fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
             for c in (&mut chars).take(STEP_SIZE) {
                 write_json_escaped_char(writer, c)?;
             }
-            let bytes_consumed = chars.as_str().as_ptr() as usize - s[idx..].as_ptr() as usize;
+            let bytes_consumed = chars.as_str().as_ptr() as usize - (s.as_ptr() as usize + idx);
             idx += bytes_consumed;
         }
     }
@@ -91,19 +91,29 @@ fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
 }
 
 fn contains_0x22(val: u128) -> bool {
-    let xor_result = val ^ 0x22222222222222222222222222222222u128;
-    let has_zero = (xor_result.wrapping_sub(0x01010101010101010101010101010101u128))
+    let xor_result = val ^ 0x22222222222222222222222222222222;
+    let has_zero = (xor_result.wrapping_sub(0x01010101010101010101010101010101))
         & !xor_result
-        & 0x80808080808080808080808080808080u128;
+        & 0x80808080808080808080808080808080;
     has_zero != 0
 }
 
 fn contains_0x5c(val: u128) -> bool {
-    let xor_result = val ^ 0x5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5cu128;
-    let has_zero = (xor_result.wrapping_sub(0x01010101010101010101010101010101u128))
+    let xor_result = val ^ 0x5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c;
+    let has_zero = (xor_result.wrapping_sub(0x01010101010101010101010101010101))
         & !xor_result
-        & 0x80808080808080808080808080808080u128;
+        & 0x80808080808080808080808080808080;
     has_zero != 0
+}
+
+/// For each of the 16 u8s that make up a u128, check if the top three bits are set.
+fn top_three_bits_set(value: u128) -> bool {
+    let mask = 0xe0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0;
+    let masked = value & mask;
+    let has_zero = (masked.wrapping_sub(0x01010101010101010101010101010101))
+        & !masked
+        & 0x80808080808080808080808080808080;
+    has_zero == 0
 }
 
 /// Writes a single JSON escaped character
