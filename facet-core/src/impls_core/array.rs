@@ -7,18 +7,18 @@ where
 {
     const VTABLE: &'static ValueVTable = &const {
         ValueVTable::builder::<Self>()
-            .marker_traits(T::SHAPE.vtable.marker_traits)
+            .marker_traits(|| T::SHAPE.vtable.marker_traits())
             .type_name(|f, opts| {
                 if let Some(opts) = opts.for_children() {
                     write!(f, "[")?;
-                    (T::SHAPE.vtable.type_name)(f, opts)?;
+                    (T::SHAPE.vtable.type_name())(f, opts)?;
                     write!(f, "; {L}]")
                 } else {
                     write!(f, "[⋯; {L}]")
                 }
             })
             .display(|| {
-                if (T::SHAPE.vtable.display)().is_some() {
+                if T::SHAPE.vtable.has_display() {
                     Some(|value, f| {
                         write!(f, "[")?;
 
@@ -35,7 +35,7 @@ where
                 }
             })
             .debug(|| {
-                if (T::SHAPE.vtable.debug)().is_some() {
+                if T::SHAPE.vtable.has_debug() {
                     Some(|value, f| {
                         write!(f, "[")?;
 
@@ -52,7 +52,7 @@ where
                 }
             })
             .partial_eq(|| {
-                if (T::SHAPE.vtable.partial_eq)().is_some() {
+                if T::SHAPE.vtable.has_partial_eq() {
                     Some(|a, b| {
                         zip(a, b).all(|(a, b)| (<VTableView<T>>::of().partial_eq().unwrap())(a, b))
                     })
@@ -64,7 +64,7 @@ where
                 if L == 0 {
                     // Zero-length arrays implement `Default` irrespective of the element type
                     Some(|target| unsafe { target.assume_init() })
-                } else if L <= 32 && (T::SHAPE.vtable.default_in_place)().is_some() {
+                } else if L <= 32 && T::SHAPE.vtable.has_default_in_place() {
                     Some(|mut target| unsafe {
                         let t_dip = <VTableView<T>>::of().default_in_place().unwrap();
                         let stride = T::SHAPE
@@ -85,7 +85,7 @@ where
                 }
             })
             .clone_into(|| {
-                if (T::SHAPE.vtable.clone_into)().is_some() {
+                if T::SHAPE.vtable.has_clone_into() {
                     Some(|src, mut dst| unsafe {
                         let t_cip = <VTableView<T>>::of().clone_into().unwrap();
                         let stride = T::SHAPE
@@ -104,7 +104,7 @@ where
                 }
             })
             .partial_ord(|| {
-                if (T::SHAPE.vtable.partial_ord)().is_some() {
+                if T::SHAPE.vtable.has_partial_ord() {
                     Some(|a, b| {
                         zip(a, b)
                             .find_map(|(a, b)| {
@@ -122,7 +122,7 @@ where
                 }
             })
             .ord(|| {
-                if (T::SHAPE.vtable.ord)().is_some() {
+                if T::SHAPE.vtable.has_ord() {
                     Some(|a, b| {
                         zip(a, b)
                             .find_map(
@@ -140,7 +140,7 @@ where
                 }
             })
             .hash(|| {
-                if (T::SHAPE.vtable.hash)().is_some() {
+                if T::SHAPE.vtable.has_hash() {
                     Some(|value, state, hasher| {
                         for value in value {
                             (<VTableView<T>>::of().hash().unwrap())(value, state, hasher)

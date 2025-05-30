@@ -42,16 +42,19 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::boxed::Box<T> {
             write!(f, "{}", Self::SHAPE.type_identifier)?;
             if let Some(opts) = opts.for_children() {
                 write!(f, "<")?;
-                (T::SHAPE.vtable.type_name)(f, opts)?;
+                (T::SHAPE.vtable.type_name())(f, opts)?;
                 write!(f, ">")?;
             } else {
                 write!(f, "<…>")?;
             }
             Ok(())
         });
-        vtable.try_from = || Some(try_from::<T>);
-        vtable.try_into_inner = || Some(try_into_inner::<T>);
-        vtable.try_borrow_inner = || Some(try_borrow_inner::<T>);
+        {
+            let vtable = vtable.sized_mut().unwrap();
+            vtable.try_from = || Some(try_from::<T>);
+            vtable.try_into_inner = || Some(try_into_inner::<T>);
+            vtable.try_borrow_inner = || Some(try_borrow_inner::<T>);
+        }
         vtable
     };
 
@@ -149,7 +152,8 @@ mod tests {
         assert_eq!(unsafe { borrowed_ptr.get::<String>() }, "example");
 
         // Get the function pointer for dropping the Box
-        let drop_fn = (box_shape.vtable.drop_in_place)().expect("Box<T> should have drop_in_place");
+        let drop_fn = (box_shape.vtable.sized().unwrap().drop_in_place)()
+            .expect("Box<T> should have drop_in_place");
 
         // Drop the Box in place
         // SAFETY: box_ptr points to a valid Box<String>

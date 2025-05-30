@@ -162,15 +162,15 @@ impl<'shape> Shape<'shape> {
             Characteristic::Unpin => self.vtable.marker_traits().contains(MarkerTraits::UNPIN),
 
             // Functionality traits
-            Characteristic::Clone => (self.vtable.clone_into)().is_some(),
-            Characteristic::Display => (self.vtable.display)().is_some(),
-            Characteristic::Debug => (self.vtable.debug)().is_some(),
-            Characteristic::PartialEq => (self.vtable.partial_eq)().is_some(),
-            Characteristic::PartialOrd => (self.vtable.partial_ord)().is_some(),
-            Characteristic::Ord => (self.vtable.ord)().is_some(),
-            Characteristic::Hash => (self.vtable.hash)().is_some(),
-            Characteristic::Default => (self.vtable.default_in_place)().is_some(),
-            Characteristic::FromStr => (self.vtable.parse)().is_some(),
+            Characteristic::Clone => self.vtable.has_clone_into(),
+            Characteristic::Display => self.vtable.has_display(),
+            Characteristic::Debug => self.vtable.has_debug(),
+            Characteristic::PartialEq => self.vtable.has_partial_eq(),
+            Characteristic::PartialOrd => self.vtable.has_partial_ord(),
+            Characteristic::Ord => self.vtable.has_ord(),
+            Characteristic::Hash => self.vtable.has_hash(),
+            Characteristic::Default => self.vtable.has_default_in_place(),
+            Characteristic::FromStr => self.vtable.has_parse(),
         }
     }
 
@@ -201,7 +201,7 @@ impl<'shape> Shape<'shape> {
 
     /// Check if this shape implements the Display trait
     pub fn is_display(&self) -> bool {
-        (self.vtable.display)().is_some()
+        self.is(Characteristic::Display)
     }
 
     /// Check if this shape implements the Debug trait
@@ -241,6 +241,6 @@ impl<'shape> Shape<'shape> {
 
     /// Writes the name of this type to the given formatter
     pub fn write_type_name(&self, f: &mut fmt::Formatter<'_>, opts: TypeNameOpts) -> fmt::Result {
-        (self.vtable.type_name)(f, opts)
+        (self.vtable.type_name())(f, opts)
     }
 }

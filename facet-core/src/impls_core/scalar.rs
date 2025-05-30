@@ -162,152 +162,159 @@ macro_rules! impl_facet_for_integer {
                     "{}",
                     Self::SHAPE.type_identifier
                 ));
+                {
+                    let vtable = vtable.sized_mut().unwrap();
 
-                vtable.try_from = || {
-                    Some(|source, source_shape, dest| {
-                        if source_shape == Self::SHAPE {
-                            return Ok(unsafe { dest.copy_from(source, source_shape)? });
-                        }
-                        if source_shape == u64::SHAPE {
-                            let value: u64 = *unsafe { source.get::<u64>() };
-                            match <$type>::try_from(value) {
-                                Ok(converted) => {
-                                    return Ok(unsafe { dest.put::<$type>(converted) });
-                                }
-                                Err(_) => {
-                                    return Err(TryFromError::Generic(
-                                        "conversion from u64 failed",
-                                    ));
+                    vtable.try_from = || {
+                        Some(|source, source_shape, dest| {
+                            if source_shape == Self::SHAPE {
+                                return Ok(unsafe { dest.copy_from(source, source_shape)? });
+                            }
+                            if source_shape == u64::SHAPE {
+                                let value: u64 = *unsafe { source.get::<u64>() };
+                                match <$type>::try_from(value) {
+                                    Ok(converted) => {
+                                        return Ok(unsafe { dest.put::<$type>(converted) });
+                                    }
+                                    Err(_) => {
+                                        return Err(TryFromError::Generic(
+                                            "conversion from u64 failed",
+                                        ));
+                                    }
                                 }
                             }
-                        }
-                        if source_shape == u32::SHAPE {
-                            let value: u32 = *unsafe { source.get::<u32>() };
-                            let value: u64 = value as u64;
-                            match <$type>::try_from(value) {
-                                Ok(converted) => {
-                                    return Ok(unsafe { dest.put::<$type>(converted) });
-                                }
-                                Err(_) => {
-                                    return Err(TryFromError::Generic(
-                                        "conversion from u32 failed",
-                                    ));
-                                }
-                            }
-                        }
-                        if source_shape == u16::SHAPE {
-                            let value: u16 = *unsafe { source.get::<u16>() };
-                            let value: u64 = value as u64;
-                            match <$type>::try_from(value) {
-                                Ok(converted) => {
-                                    return Ok(unsafe { dest.put::<$type>(converted) });
-                                }
-                                Err(_) => {
-                                    return Err(TryFromError::Generic(
-                                        "conversion from u16 failed",
-                                    ));
+                            if source_shape == u32::SHAPE {
+                                let value: u32 = *unsafe { source.get::<u32>() };
+                                let value: u64 = value as u64;
+                                match <$type>::try_from(value) {
+                                    Ok(converted) => {
+                                        return Ok(unsafe { dest.put::<$type>(converted) });
+                                    }
+                                    Err(_) => {
+                                        return Err(TryFromError::Generic(
+                                            "conversion from u32 failed",
+                                        ));
+                                    }
                                 }
                             }
-                        }
-                        if source_shape == u8::SHAPE {
-                            let value: u8 = *unsafe { source.get::<u8>() };
-                            let value: u64 = value as u64;
-                            match <$type>::try_from(value) {
-                                Ok(converted) => {
-                                    return Ok(unsafe { dest.put::<$type>(converted) });
-                                }
-                                Err(_) => {
-                                    return Err(TryFromError::Generic("conversion from u8 failed"));
-                                }
-                            }
-                        }
-                        if source_shape == i64::SHAPE {
-                            let value: i64 = *unsafe { source.get::<i64>() };
-                            match <$type>::try_from(value) {
-                                Ok(converted) => {
-                                    return Ok(unsafe { dest.put::<$type>(converted) });
-                                }
-                                Err(_) => {
-                                    return Err(TryFromError::Generic(
-                                        "conversion from i64 failed",
-                                    ));
+                            if source_shape == u16::SHAPE {
+                                let value: u16 = *unsafe { source.get::<u16>() };
+                                let value: u64 = value as u64;
+                                match <$type>::try_from(value) {
+                                    Ok(converted) => {
+                                        return Ok(unsafe { dest.put::<$type>(converted) });
+                                    }
+                                    Err(_) => {
+                                        return Err(TryFromError::Generic(
+                                            "conversion from u16 failed",
+                                        ));
+                                    }
                                 }
                             }
-                        }
-                        if source_shape == i32::SHAPE {
-                            let value: i32 = *unsafe { source.get::<i32>() };
-                            let value: i64 = value as i64;
-                            match <$type>::try_from(value) {
-                                Ok(converted) => {
-                                    return Ok(unsafe { dest.put::<$type>(converted) });
-                                }
-                                Err(_) => {
-                                    return Err(TryFromError::Generic(
-                                        "conversion from i32 failed",
-                                    ));
-                                }
-                            }
-                        }
-                        if source_shape == i16::SHAPE {
-                            let value: i16 = *unsafe { source.get::<i16>() };
-                            let value: i64 = value as i64;
-                            match <$type>::try_from(value) {
-                                Ok(converted) => {
-                                    return Ok(unsafe { dest.put::<$type>(converted) });
-                                }
-                                Err(_) => {
-                                    return Err(TryFromError::Generic(
-                                        "conversion from i16 failed",
-                                    ));
+                            if source_shape == u8::SHAPE {
+                                let value: u8 = *unsafe { source.get::<u8>() };
+                                let value: u64 = value as u64;
+                                match <$type>::try_from(value) {
+                                    Ok(converted) => {
+                                        return Ok(unsafe { dest.put::<$type>(converted) });
+                                    }
+                                    Err(_) => {
+                                        return Err(TryFromError::Generic(
+                                            "conversion from u8 failed",
+                                        ));
+                                    }
                                 }
                             }
-                        }
-                        if source_shape == i8::SHAPE {
-                            let value: i8 = *unsafe { source.get::<i8>() };
-                            let value: i64 = value as i64;
-                            match <$type>::try_from(value) {
-                                Ok(converted) => {
-                                    return Ok(unsafe { dest.put::<$type>(converted) });
-                                }
-                                Err(_) => {
-                                    return Err(TryFromError::Generic("conversion from i8 failed"));
-                                }
-                            }
-                        }
-                        if source_shape == f64::SHAPE {
-                            let value: f64 = *unsafe { source.get::<f64>() };
-                            let value = value as i64;
-                            match <$type>::try_from(value) {
-                                Ok(converted) => {
-                                    return Ok(unsafe { dest.put::<$type>(converted) });
-                                }
-                                Err(_) => {
-                                    return Err(TryFromError::Generic(
-                                        "conversion from f64 failed",
-                                    ));
+                            if source_shape == i64::SHAPE {
+                                let value: i64 = *unsafe { source.get::<i64>() };
+                                match <$type>::try_from(value) {
+                                    Ok(converted) => {
+                                        return Ok(unsafe { dest.put::<$type>(converted) });
+                                    }
+                                    Err(_) => {
+                                        return Err(TryFromError::Generic(
+                                            "conversion from i64 failed",
+                                        ));
+                                    }
                                 }
                             }
-                        }
-                        if source_shape == f32::SHAPE {
-                            let value: f32 = *unsafe { source.get::<f32>() };
-                            let value = value as i64;
-                            match <$type>::try_from(value) {
-                                Ok(converted) => {
-                                    return Ok(unsafe { dest.put::<$type>(converted) });
-                                }
-                                Err(_) => {
-                                    return Err(TryFromError::Generic(
-                                        "conversion from f32 failed",
-                                    ));
+                            if source_shape == i32::SHAPE {
+                                let value: i32 = *unsafe { source.get::<i32>() };
+                                let value: i64 = value as i64;
+                                match <$type>::try_from(value) {
+                                    Ok(converted) => {
+                                        return Ok(unsafe { dest.put::<$type>(converted) });
+                                    }
+                                    Err(_) => {
+                                        return Err(TryFromError::Generic(
+                                            "conversion from i32 failed",
+                                        ));
+                                    }
                                 }
                             }
-                        }
-                        Err(TryFromError::UnsupportedSourceShape {
-                            src_shape: source_shape,
-                            expected: &[Self::SHAPE, u64::SHAPE, i64::SHAPE, f64::SHAPE],
+                            if source_shape == i16::SHAPE {
+                                let value: i16 = *unsafe { source.get::<i16>() };
+                                let value: i64 = value as i64;
+                                match <$type>::try_from(value) {
+                                    Ok(converted) => {
+                                        return Ok(unsafe { dest.put::<$type>(converted) });
+                                    }
+                                    Err(_) => {
+                                        return Err(TryFromError::Generic(
+                                            "conversion from i16 failed",
+                                        ));
+                                    }
+                                }
+                            }
+                            if source_shape == i8::SHAPE {
+                                let value: i8 = *unsafe { source.get::<i8>() };
+                                let value: i64 = value as i64;
+                                match <$type>::try_from(value) {
+                                    Ok(converted) => {
+                                        return Ok(unsafe { dest.put::<$type>(converted) });
+                                    }
+                                    Err(_) => {
+                                        return Err(TryFromError::Generic(
+                                            "conversion from i8 failed",
+                                        ));
+                                    }
+                                }
+                            }
+                            if source_shape == f64::SHAPE {
+                                let value: f64 = *unsafe { source.get::<f64>() };
+                                let value = value as i64;
+                                match <$type>::try_from(value) {
+                                    Ok(converted) => {
+                                        return Ok(unsafe { dest.put::<$type>(converted) });
+                                    }
+                                    Err(_) => {
+                                        return Err(TryFromError::Generic(
+                                            "conversion from f64 failed",
+                                        ));
+                                    }
+                                }
+                            }
+                            if source_shape == f32::SHAPE {
+                                let value: f32 = *unsafe { source.get::<f32>() };
+                                let value = value as i64;
+                                match <$type>::try_from(value) {
+                                    Ok(converted) => {
+                                        return Ok(unsafe { dest.put::<$type>(converted) });
+                                    }
+                                    Err(_) => {
+                                        return Err(TryFromError::Generic(
+                                            "conversion from f32 failed",
+                                        ));
+                                    }
+                                }
+                            }
+                            Err(TryFromError::UnsupportedSourceShape {
+                                src_shape: source_shape,
+                                expected: &[Self::SHAPE, u64::SHAPE, i64::SHAPE, f64::SHAPE],
+                            })
                         })
-                    })
-                };
+                    };
+                }
 
                 vtable
             };
@@ -344,12 +351,14 @@ macro_rules! impl_facet_for_integer {
                         // Put the NonZero value into the destination
                         Ok(unsafe { dst.put(nz) })
                     } else {
-                        let inner_try_from = (<$type as Facet>::SHAPE.vtable.try_from)().ok_or(
-                            TryFromError::UnsupportedSourceShape {
+                        let inner_try_from = <$type as Facet>::SHAPE
+                            .vtable
+                            .sized()
+                            .and_then(|s| (s.try_from)())
+                            .ok_or(TryFromError::UnsupportedSourceShape {
                                 src_shape,
                                 expected: &[<$type as Facet>::SHAPE],
-                            },
-                        )?;
+                            })?;
 
                         // fallback to inner's try_from
                         // This relies on the fact that `dst` is the same size as `NonZero<$type>`
@@ -393,10 +402,14 @@ macro_rules! impl_facet_for_integer {
                     stringify!($type)
                 ));
 
-                // Add our new transparency functions
-                vtable.try_from = || Some(try_from);
-                vtable.try_into_inner = || Some(try_into_inner);
-                vtable.try_borrow_inner = || Some(try_borrow_inner);
+                {
+                    let vtable = vtable.sized_mut().unwrap();
+
+                    // Add our new transparency functions
+                    vtable.try_from = || Some(try_from);
+                    vtable.try_into_inner = || Some(try_into_inner);
+                    vtable.try_borrow_inner = || Some(try_borrow_inner);
+                }
 
                 vtable
             };
@@ -733,7 +746,7 @@ unsafe impl Facet<'_> for f32 {
         let mut vtable =
             value_vtable!(f32, |f, _opts| write!(f, "{}", Self::SHAPE.type_identifier));
 
-        vtable.try_from = || {
+        vtable.sized_mut().unwrap().try_from = || {
             Some(|source, source_shape, dest| {
                 if source_shape == Self::SHAPE {
                     return Ok(unsafe { dest.copy_from(source, source_shape)? });
@@ -795,7 +808,7 @@ unsafe impl Facet<'_> for f64 {
         let mut vtable =
             value_vtable!(f64, |f, _opts| write!(f, "{}", Self::SHAPE.type_identifier));
 
-        vtable.try_from = || {
+        vtable.sized_mut().unwrap().try_from = || {
             Some(|source, source_shape, dest| {
                 if source_shape == Self::SHAPE {
                     return Ok(unsafe { dest.copy_from(source, source_shape)? });

@@ -42,7 +42,7 @@ unsafe impl<'a, Idx: Facet<'a>> Facet<'a> for core::ops::Range<Idx> {
                 write!(f, "{}", Self::SHAPE.type_identifier)?;
                 if let Some(opts) = opts.for_children() {
                     write!(f, "<")?;
-                    (Idx::SHAPE.vtable.type_name)(f, opts)?;
+                    (Idx::SHAPE.vtable.type_name())(f, opts)?;
                     write!(f, ">")?;
                 } else {
                     write!(f, "<…>")?;

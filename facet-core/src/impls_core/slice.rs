@@ -9,7 +9,7 @@ where
             .type_name(|f, opts| {
                 if let Some(opts) = opts.for_children() {
                     write!(f, "[")?;
-                    (T::SHAPE.vtable.type_name)(f, opts)?;
+                    (T::SHAPE.vtable.type_name())(f, opts)?;
                     write!(f, "]")
                 } else {
                     write!(f, "[⋯]")
@@ -22,7 +22,7 @@ where
                     .difference(MarkerTraits::COPY)
             })
             .debug(|| {
-                if (T::SHAPE.vtable.debug)().is_some() {
+                if T::SHAPE.vtable.has_debug() {
                     Some(|value, f| {
                         write!(f, "[")?;
                         for (i, item) in value.iter().enumerate() {
@@ -38,7 +38,7 @@ where
                 }
             })
             .partial_eq(|| {
-                if (T::SHAPE.vtable.partial_eq)().is_some() {
+                if T::SHAPE.vtable.has_partial_eq() {
                     Some(|a, b| {
                         if a.len() != b.len() {
                             return false;
@@ -55,7 +55,7 @@ where
                 }
             })
             .partial_ord(|| {
-                if (T::SHAPE.vtable.partial_ord)().is_some() {
+                if T::SHAPE.vtable.has_partial_ord() {
                     Some(|a, b| {
                         for (x, y) in a.iter().zip(b.iter()) {
                             let ord = (<VTableView<T>>::of().partial_ord().unwrap())(x, y);
@@ -72,7 +72,7 @@ where
                 }
             })
             .ord(|| {
-                if (T::SHAPE.vtable.ord)().is_some() {
+                if T::SHAPE.vtable.has_ord() {
                     Some(|a, b| {
                         for (x, y) in a.iter().zip(b.iter()) {
                             let ord = (<VTableView<T>>::of().ord().unwrap())(x, y);
@@ -87,7 +87,7 @@ where
                 }
             })
             .hash(|| {
-                if (T::SHAPE.vtable.hash)().is_some() {
+                if T::SHAPE.vtable.has_hash() {
                     Some(|value, state, hasher| {
                         for item in value.iter() {
                             (<VTableView<T>>::of().hash().unwrap())(item, state, hasher);

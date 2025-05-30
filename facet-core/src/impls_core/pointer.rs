@@ -1,9 +1,8 @@
-use core::{fmt, hash::Hash, mem::transmute};
+use core::{fmt, hash::Hash};
 
 use crate::{
-    CmpFn, CmpFnTyped, DebugFn, DebugFnTyped, DisplayFn, DisplayFnTyped, Facet, HashFn,
-    HashFnTyped, HasherProxy, MarkerTraits, PartialEqFn, PartialEqFnTyped, PartialOrdFn,
-    PartialOrdFnTyped, PointerType, Shape, Type, TypeParam, ValuePointerType, ValueVTable,
+    Facet, HasherProxy, MarkerTraits, PointerType, Shape, Type, TypeParam, VTableView,
+    ValuePointerType, ValueVTable,
 };
 
 macro_rules! impl_facet_for_pointer {
@@ -25,7 +24,7 @@ macro_rules! impl_facet_for_pointer {
                                     write!(f, "mut ")?;
                                 }
                             }
-                            (T::VTABLE.type_name)(f, opts)
+                            (T::VTABLE.type_name())(f, opts)
                         } else {
                             if stringify!($ptr_type) == "Raw" {
                                 if $mutable {
@@ -179,60 +178,60 @@ impl_facet_for_pointer!(
                 })
                 .clone_into(|| Some(|src, dst| unsafe { dst.put(core::ptr::read(src)) }))
                 .debug(|| {
-                    if (T::VTABLE.debug)().is_some() {
+                    if T::VTABLE.has_debug() {
                         Some(|value, f| {
-                            let debug_fn = unsafe { transmute::<DebugFn, DebugFnTyped<T>>((T::VTABLE.debug)().unwrap()) };
-                            debug_fn(*value, f)
+                            let view = VTableView::<T>::of();
+                            view.debug().unwrap()(*value, f)
                         })
                     } else {
                         None
                     }
                 })
                 .display(|| {
-                    if (T::VTABLE.display)().is_some() {
+                    if T::VTABLE.has_display() {
                         Some(|value, f| {
-                            let display_fn = unsafe { transmute::<DisplayFn, DisplayFnTyped<T>>((T::VTABLE.display)().unwrap()) };
-                            display_fn(*value, f)
+                            let view = VTableView::<T>::of();
+                            view.display().unwrap()(*value, f)
                         })
                     } else {
                         None
                     }
                 })
                 .partial_eq(|| {
-                    if (T::VTABLE.partial_eq)().is_some() {
+                    if T::VTABLE.has_partial_eq() {
                         Some(|a, b| {
-                            let eq_fn = unsafe { transmute::<PartialEqFn, PartialEqFnTyped<T>>((T::VTABLE.partial_eq)().unwrap()) };
-                            eq_fn(*a, *b)
+                            let view = VTableView::<T>::of();
+                            view.partial_eq().unwrap()(*a, *b)
                         })
                     } else {
                         None
                     }
                 })
                 .partial_ord(|| {
-                    if (T::VTABLE.partial_ord)().is_some() {
+                    if T::VTABLE.has_partial_ord() {
                         Some(|a, b| {
-                            let partial_ord_fn = unsafe { transmute::<PartialOrdFn, PartialOrdFnTyped<T>>((T::VTABLE.partial_ord)().unwrap()) };
-                            partial_ord_fn(*a, *b)
+                            let view = VTableView::<T>::of();
+                            view.partial_ord().unwrap()(*a, *b)
                         })
                     } else {
                         None
                     }
                 })
                 .ord(|| {
-                    if (T::VTABLE.ord)().is_some() {
+                    if T::VTABLE.has_ord() {
                         Some(|a, b| {
-                            let ord_fn = unsafe { transmute::<CmpFn, CmpFnTyped<T>>((T::VTABLE.ord)().unwrap()) };
-                            ord_fn(*a, *b)
+                            let view = VTableView::<T>::of();
+                            view.ord().unwrap()(*a, *b)
                         })
                     } else {
                         None
                     }
                 })
                 .hash(|| {
-                    if (T::VTABLE.hash)().is_some() {
+                    if T::VTABLE.has_hash() {
                         Some(|value, hasher_this, hasher_write_fn| {
-                            let hash_fn = unsafe { transmute::<HashFn, HashFnTyped<T>>((T::VTABLE.hash)().unwrap()) };
-                            hash_fn(*value, hasher_this, hasher_write_fn)
+                            let view = VTableView::<T>::of();
+                            view.hash().unwrap()(*value, hasher_this, hasher_write_fn)
                         })
                     } else {
                         None
@@ -266,60 +265,60 @@ impl_facet_for_pointer!(
                     marker_traits
                 })
                 .debug(|| {
-                    if (T::VTABLE.debug)().is_some() {
+                    if T::VTABLE.has_debug() {
                         Some(|value, f| {
-                            let debug_fn = unsafe { transmute::<DebugFn, DebugFnTyped<T>>((T::VTABLE.debug)().unwrap()) };
-                            debug_fn(*value, f)
+                            let view = VTableView::<T>::of();
+                            view.debug().unwrap()(*value, f)
                         })
                     } else {
                         None
                     }
                 })
                 .display(|| {
-                    if (T::VTABLE.display)().is_some() {
+                    if T::VTABLE.has_display() {
                         Some(|value, f| {
-                            let display_fn = unsafe { transmute::<DisplayFn, DisplayFnTyped<T>>((T::VTABLE.display)().unwrap()) };
-                            display_fn(*value, f)
+                            let view = VTableView::<T>::of();
+                            view.display().unwrap()(*value, f)
                         })
                     } else {
                         None
                     }
                 })
                 .partial_eq(|| {
-                    if (T::VTABLE.partial_eq)().is_some() {
+                    if T::VTABLE.has_partial_eq() {
                         Some(|a, b| {
-                            let eq_fn = unsafe { transmute::<PartialEqFn, PartialEqFnTyped<T>>((T::VTABLE.partial_eq)().unwrap()) };
-                            eq_fn(*a, *b)
+                            let view = VTableView::<T>::of();
+                            view.partial_eq().unwrap()(*a, *b)
                         })
                     } else {
                         None
                     }
                 })
                 .partial_ord(|| {
-                    if (T::VTABLE.partial_ord)().is_some() {
+                    if T::VTABLE.has_partial_ord() {
                         Some(|a, b| {
-                            let partial_ord_fn = unsafe { transmute::<PartialOrdFn, PartialOrdFnTyped<T>>((T::VTABLE.partial_ord)().unwrap()) };
-                            partial_ord_fn(*a, *b)
+                            let view = VTableView::<T>::of();
+                            view.partial_ord().unwrap()(*a, *b)
                         })
                     } else {
                         None
                     }
                 })
                 .ord(|| {
-                    if (T::VTABLE.ord)().is_some() {
+                    if T::VTABLE.has_ord() {
                         Some(|a, b| {
-                            let ord_fn = unsafe { transmute::<CmpFn, CmpFnTyped<T>>((T::VTABLE.ord)().unwrap()) };
-                            ord_fn(*a, *b)
+                            let view = VTableView::<T>::of();
+                            view.ord().unwrap()(*a, *b)
                         })
                     } else {
                         None
                     }
                 })
                 .hash(|| {
-                    if (T::VTABLE.hash)().is_some() {
+                    if T::VTABLE.has_hash() {
                         Some(|value, hasher_this, hasher_write_fn| {
-                            let hash_fn = unsafe { transmute::<HashFn, HashFnTyped<T>>((T::VTABLE.hash)().unwrap()) };
-                            hash_fn(*value, hasher_this, hasher_write_fn)
+                            let view = VTableView::<T>::of();
+                            view.hash().unwrap()(*value, hasher_this, hasher_write_fn)
                         })
                     } else {
                         None

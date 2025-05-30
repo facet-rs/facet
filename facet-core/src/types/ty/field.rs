@@ -317,6 +317,9 @@ pub enum FieldError {
         /// what someone tried to write into it / read from it
         actual: &'static Shape<'static>,
     },
+
+    /// The type is unsized
+    Unsized,
 }
 
 impl core::error::Error for FieldError {}
@@ -330,6 +333,9 @@ impl core::fmt::Display for FieldError {
             }
             FieldError::TypeMismatch { expected, actual } => {
                 write!(f, "expected type {}, got {}", expected, actual)
+            }
+            FieldError::Unsized => {
+                write!(f, "can't access field of !Sized type")
             }
         }
     }

@@ -14,12 +14,12 @@ where
     let mut facts: HashSet<Fact> = HashSet::new();
     let value_vtable = T::SHAPE.vtable;
     let traits = [
-        ("Debug", (value_vtable.debug)().is_some()),
-        ("Display", (value_vtable.display)().is_some()),
-        ("Default", (value_vtable.default_in_place)().is_some()),
-        ("PartialEq", (value_vtable.partial_eq)().is_some()),
-        ("Ord", (value_vtable.ord)().is_some()),
-        ("Clone", (value_vtable.clone_into)().is_some()),
+        ("Debug", value_vtable.has_debug()),
+        ("Display", value_vtable.has_display()),
+        ("Default", value_vtable.has_default_in_place()),
+        ("PartialEq", value_vtable.has_partial_eq()),
+        ("Ord", value_vtable.has_ord()),
+        ("Clone", value_vtable.has_clone_into()),
     ];
     let trait_str = traits
         .iter()
@@ -37,8 +37,10 @@ where
     let l = Peek::new(val1);
     let r = Peek::new(val2);
 
+    let vtable = l.shape().vtable.sized().unwrap();
+
     // Format display representation
-    if (l.shape().vtable.display)().is_some() {
+    if (vtable.display)().is_some() {
         facts.insert(Fact::Display);
         eprintln!(
             "Display:   {}",
@@ -47,7 +49,7 @@ where
     }
 
     // Format debug representation
-    if (l.shape().vtable.debug)().is_some() {
+    if (vtable.debug)().is_some() {
         facts.insert(Fact::Debug);
         eprintln!(
             "Debug:     {}",
@@ -73,9 +75,10 @@ where
             l_ord_r: cmp_result,
         });
         let cmp_symbol = match cmp_result {
-            Ordering::Less => "<",
-            Ordering::Equal => "==",
-            Ordering::Greater => ">",
+            Some(Ordering::Less) => "<",
+            Some(Ordering::Equal) => "==",
+            Some(Ordering::Greater) => ">",
+            None => "??",
         };
         let cmp_str = format!(
             "{:?} {} {:?}",
@@ -94,7 +97,7 @@ where
     }
 
     // Test clone
-    if (l.shape().vtable.clone_into)().is_some() {
+    if (vtable.clone_into)().is_some() {
         facts.insert(Fact::Clone);
         eprintln!("Clone:     Implemented");
     }
@@ -227,7 +230,9 @@ impl FactBuilder {
             facts.insert(Fact::PartialEqAnd { l_eq_r });
         }
         if let Some(l_ord_r) = self.has_ord_and {
-            facts.insert(Fact::OrdAnd { l_ord_r });
+            facts.insert(Fact::OrdAnd {
+                l_ord_r: Some(l_ord_r),
+            });
         }
         if self.has_default {
             facts.insert(Fact::Default);
@@ -244,7 +249,7 @@ enum Fact {
     Debug,
     Display,
     PartialEqAnd { l_eq_r: bool },
-    OrdAnd { l_ord_r: Ordering },
+    OrdAnd { l_ord_r: Option<Ordering> },
     Default,
     Clone,
 }
@@ -263,9 +268,10 @@ impl Display for Fact {
             ),
             Fact::OrdAnd { l_ord_r } => {
                 let ord_str = match l_ord_r {
-                    Ordering::Less => "<",
-                    Ordering::Equal => "==",
-                    Ordering::Greater => ">",
+                    Some(Ordering::Less) => "<",
+                    Some(Ordering::Equal) => "==",
+                    Some(Ordering::Greater) => ">",
+                    None => "??",
                 };
                 write!(f, "impl Ord and l {} r", ord_str)
             }
