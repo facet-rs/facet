@@ -61,8 +61,8 @@ fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
         // 4. It does not contain control characters (i.e. characters below 32, including 0)
         //    This means the bit above the 1st, 2nd or 3rd bit must be set, so u8 & 0xe0 != 0
         let completely_ascii = window & 0x80808080808080808080808080808080 == 0;
-        let quote_free = window & 0x22222222222222222222222222222222 == 0;
-        let backslash_free = window & 0x5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c == 0;
+        let quote_free = !contains_0x22(window);
+        let backslash_free = !contains_0x5c(window);
         let control_char_free = window & 0xe0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0 != 0;
         if completely_ascii && quote_free && backslash_free && control_char_free {
             // Yay! Whack it into the writer!
@@ -75,8 +75,8 @@ fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
             for c in (&mut chars).take(STEP_SIZE) {
                 write_json_escaped_char(writer, c)?;
             }
-            let bits_consumed = chars.as_str().as_ptr() as usize - s[idx..].as_ptr() as usize;
-            idx += bits_consumed;
+            let bytes_consumed = chars.as_str().as_ptr() as usize - s[idx..].as_ptr() as usize;
+            idx += bytes_consumed;
         }
     }
 
@@ -90,6 +90,22 @@ fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
     }
 
     writer.write_all(b"\"")
+}
+
+fn contains_0x22(val: u128) -> bool {
+    let xor_result = val ^ 0x22222222222222222222222222222222u128;
+    let has_zero = (xor_result.wrapping_sub(0x01010101010101010101010101010101u128))
+        & !xor_result
+        & 0x80808080808080808080808080808080u128;
+    has_zero != 0
+}
+
+fn contains_0x5c(val: u128) -> bool {
+    let xor_result = val ^ 0x5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5cu128;
+    let has_zero = (xor_result.wrapping_sub(0x01010101010101010101010101010101u128))
+        & !xor_result
+        & 0x80808080808080808080808080808080u128;
+    has_zero != 0
 }
 
 /// Writes a single JSON escaped character
