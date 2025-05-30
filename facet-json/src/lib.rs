@@ -53,10 +53,7 @@ fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
         // Unwrap here is fine because the chunk is guaranteed to be exactly `CHUNK_SIZE` bytes long
         // by construction.
         let chunk = Chunk::try_from(slice.as_bytes()).unwrap();
-        #[cfg(target_endian = "little")]
-        let window = Window::from_le_bytes(chunk);
-        #[cfg(target_endian = "big")]
-        let window = Window::from_be_bytes(chunk);
+        let window = Window::from_ne_bytes(chunk);
         // Our window is a concatenation of u8 values. For each value, we need to make sure that:
         // 1. It is ASCII (i.e. the first bit of the u8 is 0, so u8 & 0x80 == 0)
         // 2. It does not contain quotes (i.e. u8 & 0x22 != 0)
@@ -79,7 +76,7 @@ fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
                 write_json_escaped_char(writer, c)?;
             }
             let bits_consumed = chars.as_str().as_ptr() as usize - s.as_ptr() as usize;
-            idx += bits_consumed / 8;
+            idx += bits_consumed;
         }
     }
 
