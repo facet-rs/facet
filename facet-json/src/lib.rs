@@ -37,12 +37,15 @@ fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
         let completely_ascii = bignum & 0x8080808080808080u64 == 0;
         if completely_ascii {
             writer.write_all(chunk.as_bytes())?;
+            idx += 8;
         } else {
-            for c in chunk.chars() {
+            let mut chars = chunk[idx..].chars();
+            for c in (&mut chars).take(8) {
                 write_json_escaped_char(writer, c)?;
             }
+            let bytes_consumed = chars.as_str().as_ptr() as usize - s.as_ptr() as usize;
+            idx += bytes_consumed;
         }
-        idx += 8;
     }
 
     for c in s[idx..].chars() {
