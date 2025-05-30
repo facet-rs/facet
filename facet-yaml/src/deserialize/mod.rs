@@ -157,9 +157,9 @@ fn deserialize_value<'facet, 'shape>(
                 }
             }
 
-            // Note: Struct-level defaults would require unsafe code to copy fields,
-            // which is not allowed in facet-yaml due to deny(unsafe_code).
-            // Individual field defaults are handled above.
+            // Handle struct-level defaults using the safe API from facet-reflect
+            wip.fill_unset_fields_from_default()
+                .map_err(|e| AnyErr(e.to_string()))?;
         } else {
             return Err(AnyErr(format!("Expected a YAML hash, got: {:?}", value)));
         }
@@ -398,6 +398,20 @@ fn deserialize_value<'facet, 'shape>(
             log::debug!("Processing map type");
 
             deserialize_as_map(wip, value)?;
+        }
+        Def::Option(_) => {
+            #[cfg(feature = "log")]
+            log::debug!("Processing option type");
+
+            // Handle Option<T>
+            if let Yaml::Null = value {
+                // Null maps to None - already handled by default
+            } else {
+                // Non-null maps to Some(value)
+                wip.push_some().map_err(|e| AnyErr(e.to_string()))?;
+                deserialize_value(wip, value)?;
+                wip.end().map_err(|e| AnyErr(e.to_string()))?;
+            }
         }
         // Enum has been moved to Type system
         _ => return Err(AnyErr(format!("Unsupported type: {:?}", shape))),
