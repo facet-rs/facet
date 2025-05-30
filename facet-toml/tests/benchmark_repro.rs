@@ -43,7 +43,7 @@ struct Nested0 {
 
 #[test]
 fn test_wide_struct_deserialization() {
-    // Start with a simpler test
+    // Provide all required fields
     let toml_str = r#"
 field01 = "value 01"
 field02 = 12345678901234567
@@ -52,6 +52,32 @@ field04 = 3.141592653589793
 field05 = true
 field06 = "optional value 06"
 field07 = [1, 2, 3, 4, 5]
+field08 = "value 08"
+field09 = 987654321
+field10 = 42
+field11 = 2.718281828
+field12 = false
+field13 = "optional value 13"
+field14 = [6, 7, 8, 9, 10]
+field15 = "value 15"
+field16 = 11111111111
+field17 = -999
+field18 = 1.414213562
+field19 = true
+field20 = "optional value 20"
+field21 = [11, 12, 13]
+field22 = "value 22"
+field23 = 22222222222
+field24 = 777
+field25 = 0.577215664
+field26 = false
+field27 = "optional value 27"
+field28 = [14, 15, 16, 17]
+field29 = { key1 = 100, key2 = 200, key3 = 300 }
+
+[field30]
+id = 999
+name = "nested name"
 "#;
 
     let result: Result<Wide, _> = facet_toml::from_str(toml_str);

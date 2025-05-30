@@ -158,7 +158,7 @@ fn test_partial_nested_struct() {
                 // Convert to string and check if it contains the expected message
                 let err_msg = format!("{}", reflect_err);
                 assert!(
-                    err_msg.contains("Field 'OrderForm::user' was not initialized"),
+                    err_msg.contains("Field 'Address::city' was not initialized"),
                     "Expected error about uninitialized field, got: {}",
                     err_msg
                 );
