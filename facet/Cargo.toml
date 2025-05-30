@@ -18,7 +18,9 @@ reflect = ["dep:facet-reflect"] # Enables reflection via Peek and Poke types
 testfeat = [] # Does nothing, only used for tests
 std = ["facet-core/std", "alloc"] # Uses libstd and alloc
 alloc = ["facet-core/alloc"] # Enables alloc support
-bytes = ["facet-core/bytes"] # Implements Facet for bytes types (Bytes, BytesMut)
+bytes = [
+    "facet-core/bytes",
+] # Implements Facet for bytes types (Bytes, BytesMut)
 camino = [
     "facet-core/camino",
 ] # Implements Facet for camino types (Utf8PathBuf, Utf8Path)
@@ -31,6 +33,9 @@ jiff02 = [
 time = [
     "facet-core/time",
 ] # Implements Facet for time types (OffsetDateTime, PrimitiveDateTime, etc.)
+chrono = [
+    "facet-core/chrono",
+] # Implements Facet for chrono types (DateTime, NaiveDate, etc.)
 url = ["facet-core/url"] # Implements Facet for Url
 
 [dependencies]
