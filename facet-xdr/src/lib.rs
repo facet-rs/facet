@@ -539,7 +539,7 @@ impl<'shape, 'input> XdrDeserializerStack<'input> {
     }
 }
 
-/// Deserialize an XDR slice given some some [`Wip`] into a [`HeapValue`]
+/// Deserialize an XDR slice given some some [`Partial`] into a [`HeapValue`]
 pub fn deserialize_wip<'facet, 'shape>(
     input: &[u8],
     mut wip: Partial<'facet, 'shape>,

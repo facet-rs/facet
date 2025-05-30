@@ -47,7 +47,7 @@ fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
 
     writer.write_all(b"\"")?;
 
-    let mut idx = 0;
+    let idx = 0;
     // while idx + STEP_SIZE < s.len() {
     //     let slice = &s[idx..idx + STEP_SIZE];
     //     // Unwrap here is fine because the chunk is guaranteed to be exactly `CHUNK_SIZE` bytes long
@@ -92,21 +92,21 @@ fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
     writer.write_all(b"\"")
 }
 
-fn contains_0x22(val: u128) -> bool {
-    let xor_result = val ^ 0x22222222222222222222222222222222u128;
-    let has_zero = (xor_result.wrapping_sub(0x01010101010101010101010101010101u128))
-        & !xor_result
-        & 0x80808080808080808080808080808080u128;
-    has_zero != 0
-}
+// fn contains_0x22(val: u128) -> bool {
+//     let xor_result = val ^ 0x22222222222222222222222222222222u128;
+//     let has_zero = (xor_result.wrapping_sub(0x01010101010101010101010101010101u128))
+//         & !xor_result
+//         & 0x80808080808080808080808080808080u128;
+//     has_zero != 0
+// }
 
-fn contains_0x5c(val: u128) -> bool {
-    let xor_result = val ^ 0x5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5cu128;
-    let has_zero = (xor_result.wrapping_sub(0x01010101010101010101010101010101u128))
-        & !xor_result
-        & 0x80808080808080808080808080808080u128;
-    has_zero != 0
-}
+// fn contains_0x5c(val: u128) -> bool {
+//     let xor_result = val ^ 0x5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5cu128;
+//     let has_zero = (xor_result.wrapping_sub(0x01010101010101010101010101010101u128))
+//         & !xor_result
+//         & 0x80808080808080808080808080808080u128;
+//     has_zero != 0
+// }
 
 /// Writes a single JSON escaped character
 #[cfg(feature = "std")]
@@ -132,7 +132,7 @@ fn write_json_escaped_char<W: Write>(writer: &mut W, c: char) -> io::Result<()> 
             writer.write_all(&buf)
         }
         c if c.is_ascii() => {
-            writer.write(&[c as u8])?;
+            writer.write_all(&[c as u8])?;
             Ok(())
         }
         c => {

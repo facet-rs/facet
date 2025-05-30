@@ -14,7 +14,7 @@ fn test_empty_tuple_always_initialized() {
 
     // Build should succeed immediately
     let built = partial.build().unwrap();
-    let value: () = built.materialize().unwrap();
+    let _value: () = built.materialize().unwrap();
 }
 
 #[test]

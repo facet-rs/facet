@@ -161,7 +161,7 @@ impl Drop for Guard {
 }
 
 impl<'facet, 'shape> HeapValue<'facet, 'shape> {
-    /// Unsafely convert this HeapValue into a Box<T> without checking shape.
+    /// Unsafely convert this HeapValue into a `Box<T>` without checking shape.
     ///
     /// # Safety
     ///

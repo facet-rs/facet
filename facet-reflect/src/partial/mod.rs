@@ -1180,7 +1180,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         Ok(self)
     }
 
-    /// Pushes a frame to initialize the inner value of a smart pointer (Box<T>, Arc<T>, etc.)
+    /// Pushes a frame to initialize the inner value of a smart pointer (`Box<T>`, `Arc<T>`, etc.)
     pub fn begin_smart_ptr(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
         self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
@@ -1938,7 +1938,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Returns a human-readable path representing the current traversal in the builder,
-    /// e.g., "RootStruct.fieldName[index].subfield".
+    /// e.g., `RootStruct.fieldName[index].subfield`.
     pub fn path(&self) -> String {
         let mut out = String::new();
 
@@ -2455,7 +2455,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
         &mut self.inner
     }
 
-    /// Builds the value and returns a Box<T>
+    /// Builds the value and returns a `Box<T>`
     pub fn build(&mut self) -> Result<Box<T>, ReflectError<'shape>>
     where
         T: Facet<'facet>,
@@ -2605,7 +2605,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
     }
 
     /// Returns a human-readable path representing the current traversal in the builder,
-    /// e.g., "RootStruct.fieldName[index].subfield".
+    /// e.g., `RootStruct.fieldName[index].subfield`.
     pub fn path(&self) -> String {
         self.inner.path()
     }
