@@ -674,14 +674,14 @@ impl_facet_for_integer!(
     usize,
     &const {
         ScalarAffinity::number()
-            .unsigned_integer(core::mem::size_of::<usize>() * 8)
+            .pointer_sized_unsigned_integer()
             .min(PtrConst::new(&raw const MIN_USIZE))
             .max(PtrConst::new(&raw const MAX_USIZE))
             .build()
     },
     &const {
         ScalarAffinity::number()
-            .unsigned_integer(core::mem::size_of::<usize>() * 8)
+            .pointer_sized_unsigned_integer()
             .min(PtrConst::new(&raw const MIN_NZ_USIZE))
             .max(PtrConst::new(&raw const MAX_NZ_USIZE))
             .build()
@@ -692,14 +692,14 @@ impl_facet_for_integer!(
     isize,
     &const {
         ScalarAffinity::number()
-            .signed_integer(core::mem::size_of::<isize>() * 8)
+            .pointer_sized_signed_integer()
             .min(PtrConst::new(&raw const MIN_ISIZE))
             .max(PtrConst::new(&raw const MAX_ISIZE))
             .build()
     },
     &const {
         ScalarAffinity::number()
-            .signed_integer(core::mem::size_of::<isize>() * 8)
+            .pointer_sized_signed_integer()
             .min(PtrConst::new(&raw const MIN_NZ_ISIZE))
             .max(PtrConst::new(&raw const MAX_NZ_ISIZE))
             .build()

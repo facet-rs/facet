@@ -208,15 +208,35 @@ pub enum Signedness {
     Unsigned,
 }
 
+/// Size specification for integer types
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[repr(C)]
+pub enum IntegerSize {
+    /// Fixed-size integer (e.g., u64, i32)
+    Fixed(usize),
+    /// Pointer-sized integer (e.g., usize, isize)
+    PointerSized,
+}
+
+impl IntegerSize {
+    /// Returns the actual number of bits for this integer size
+    pub const fn bits(&self) -> usize {
+        match self {
+            IntegerSize::Fixed(bits) => *bits,
+            IntegerSize::PointerSized => core::mem::size_of::<usize>() * 8,
+        }
+    }
+}
+
 /// Bit representation of numbers
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
 #[non_exhaustive]
 pub enum NumberBits {
-    /// Integer number limits with specified number of bits
+    /// Integer number limits with specified size and signedness
     Integer {
-        /// Number of bits in the integer representation
-        bits: usize,
+        /// Size specification for the integer
+        size: IntegerSize,
         /// Whether the integer is signed or unsigned
         sign: Signedness,
     },
@@ -294,7 +314,10 @@ impl<'shape> NumberAffinityBuilder<'shape> {
 
     /// Sets the number limits as integer with specified bits and sign
     pub const fn integer(mut self, bits: usize, sign: Signedness) -> Self {
-        self.limits = Some(NumberBits::Integer { bits, sign });
+        self.limits = Some(NumberBits::Integer {
+            size: IntegerSize::Fixed(bits),
+            sign,
+        });
         self
     }
 
@@ -306,6 +329,24 @@ impl<'shape> NumberAffinityBuilder<'shape> {
     /// Sets the number limits as unsigned integer with specified bits
     pub const fn unsigned_integer(self, bits: usize) -> Self {
         self.integer(bits, Signedness::Unsigned)
+    }
+
+    /// Sets the number limits as pointer-sized signed integer
+    pub const fn pointer_sized_signed_integer(mut self) -> Self {
+        self.limits = Some(NumberBits::Integer {
+            size: IntegerSize::PointerSized,
+            sign: Signedness::Signed,
+        });
+        self
+    }
+
+    /// Sets the number limits as pointer-sized unsigned integer
+    pub const fn pointer_sized_unsigned_integer(mut self) -> Self {
+        self.limits = Some(NumberBits::Integer {
+            size: IntegerSize::PointerSized,
+            sign: Signedness::Unsigned,
+        });
+        self
     }
 
     /// Sets the number limits as float with specified bits

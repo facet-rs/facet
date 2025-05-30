@@ -4,7 +4,9 @@
 
 use std::io::Write;
 
-use facet_core::{Def, Facet, NumberBits, ScalarAffinity, Signedness, StructKind, Type, UserType};
+use facet_core::{
+    Def, Facet, IntegerSize, NumberBits, ScalarAffinity, Signedness, StructKind, Type, UserType,
+};
 use facet_reflect::{HeapValue, Partial, Peek};
 use facet_serialize::{Serializer, serialize_iterative};
 
@@ -318,44 +320,56 @@ impl<'shape, 'input> XdrDeserializerStack<'input> {
         match (wip.shape().def, wip.shape().ty) {
             (Def::Scalar(sd), _) => match sd.affinity {
                 ScalarAffinity::Number(na) => match na.bits {
-                    NumberBits::Integer { bits, sign } => match (bits, sign) {
-                        (8, Signedness::Unsigned) => {
+                    NumberBits::Integer { size, sign } => match (size, sign) {
+                        (IntegerSize::Fixed(8), Signedness::Unsigned) => {
                             let value = self.next_u32()? as u8;
                             wip.set(value).unwrap();
                             Ok(wip)
                         }
-                        (16, Signedness::Unsigned) => {
+                        (IntegerSize::Fixed(16), Signedness::Unsigned) => {
                             let value = self.next_u32()? as u16;
                             wip.set(value).unwrap();
                             Ok(wip)
                         }
-                        (32, Signedness::Unsigned) => {
+                        (IntegerSize::Fixed(32), Signedness::Unsigned) => {
                             let value = self.next_u32()?;
                             wip.set(value).unwrap();
                             Ok(wip)
                         }
-                        (64, Signedness::Unsigned) => {
+                        (IntegerSize::Fixed(64), Signedness::Unsigned) => {
                             let value = self.next_u64()?;
                             wip.set(value).unwrap();
                             Ok(wip)
                         }
-                        (8, Signedness::Signed) => {
+                        (IntegerSize::Fixed(8), Signedness::Signed) => {
                             let value = self.next_u32()? as i8;
                             wip.set(value).unwrap();
                             Ok(wip)
                         }
-                        (16, Signedness::Signed) => {
+                        (IntegerSize::Fixed(16), Signedness::Signed) => {
                             let value = self.next_u32()? as i16;
                             wip.set(value).unwrap();
                             Ok(wip)
                         }
-                        (32, Signedness::Signed) => {
+                        (IntegerSize::Fixed(32), Signedness::Signed) => {
                             let value = self.next_u32()? as i32;
                             wip.set(value).unwrap();
                             Ok(wip)
                         }
-                        (64, Signedness::Signed) => {
+                        (IntegerSize::Fixed(64), Signedness::Signed) => {
                             let value = self.next_u64()? as i64;
+                            wip.set(value).unwrap();
+                            Ok(wip)
+                        }
+                        (IntegerSize::PointerSized, Signedness::Unsigned) => {
+                            // Handle usize - use 64-bit on most platforms
+                            let value = self.next_u64()? as usize;
+                            wip.set(value).unwrap();
+                            Ok(wip)
+                        }
+                        (IntegerSize::PointerSized, Signedness::Signed) => {
+                            // Handle isize - use 64-bit on most platforms
+                            let value = self.next_u64()? as isize;
                             wip.set(value).unwrap();
                             Ok(wip)
                         }

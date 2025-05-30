@@ -145,7 +145,7 @@ impl<'shape> YamlSerializer<'shape> {
     #[cfg(feature = "log")]
     fn display_full_key(&self) -> String {
         if self.key_stack.is_empty() {
-            return "root".red().to_string();
+            return "root".to_string();
         }
 
         let mut output = "[".to_string();

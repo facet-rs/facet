@@ -222,11 +222,11 @@ pub(crate) fn put_from_str<'input, 'a, 'shape>(
 
     // TODO: only generate if actually error
     let path = wip.path();
-    // Simply set the string value - automatic conversion will handle parsing
-    wip.set(string.to_string()).map_err(|e| match e {
+    // Use parse_from_str to parse the string value into the target type
+    wip.parse_from_str(string).map_err(|e| match e {
         // Handle the specific parsing error with a custom error type
         ReflectError::OperationFailed {
-            operation: "parsing",
+            operation: "Failed to parse string value",
             shape,
         } => TomlDeError::new(
             toml,

@@ -558,10 +558,9 @@ fn plain_tuple() {
             assert_eq!(s.kind, StructKind::Tuple);
             assert_eq!(s.fields.len(), 3);
 
-            // Verify fields are named with $idx (from the macro)
-            assert_eq!(s.fields[0].name, "$idx");
-            assert_eq!(s.fields[1].name, "$idx");
-            assert_eq!(s.fields[2].name, "$idx");
+            assert_eq!(s.fields[0].name, "0");
+            assert_eq!(s.fields[1].name, "1");
+            assert_eq!(s.fields[2].name, "2");
         }
         _ => panic!("Expected tuple to be a UserType::Struct"),
     }

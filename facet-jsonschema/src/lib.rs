@@ -152,8 +152,12 @@ fn serialize_scalar<W: Write>(scalar_def: &ScalarDef, writer: &mut W) -> std::io
     match scalar_def.affinity {
         facet_core::ScalarAffinity::Number(number_affinity) => {
             match number_affinity.bits {
-                facet_core::NumberBits::Integer { bits, sign } => {
+                facet_core::NumberBits::Integer { size, sign } => {
                     write!(writer, "\"type\": \"integer\"")?;
+                    let bits = match size {
+                        facet_core::IntegerSize::Fixed(bits) => bits,
+                        facet_core::IntegerSize::PointerSized => core::mem::size_of::<usize>() * 8,
+                    };
                     match sign {
                         facet_core::Signedness::Unsigned => {
                             write!(writer, ", \"format\": \"uint{bits}\"")?;

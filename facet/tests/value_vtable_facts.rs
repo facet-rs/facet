@@ -1,5 +1,6 @@
 use std::alloc::Layout;
 use std::fmt::Debug;
+use std::net::Ipv4Addr;
 use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::rc::Rc;
 use std::{cmp::Ordering, collections::BTreeSet, marker::PhantomData};
@@ -1860,5 +1861,39 @@ fn test_rc_weak() {
             .correct_ord_and(Ordering::Equal)
             .build(),
         TypedMarkerTraits::new().eq().copy().unpin(),
+    );
+}
+
+#[test]
+fn test_ipv4_addr_parse_from_str() {
+    use facet_reflect::Partial;
+
+    // Test that Ipv4Addr can be parsed from a string using facet reflection
+    let mut wip = Partial::alloc_shape(Ipv4Addr::SHAPE).unwrap();
+
+    // This should work - parse a valid IP address
+    let result = wip.parse_from_str("127.0.0.1");
+    assert!(result.is_ok(), "Failed to parse valid IP address");
+
+    let value: Ipv4Addr = wip.build().unwrap().materialize().unwrap();
+    assert_eq!(value, "127.0.0.1".parse::<Ipv4Addr>().unwrap());
+
+    // Test that invalid IP addresses fail to parse
+    let mut wip2 = Partial::alloc_shape(Ipv4Addr::SHAPE).unwrap();
+    let result2 = wip2.parse_from_str("not.an.ip.address");
+    assert!(result2.is_err(), "Should fail to parse invalid IP address");
+
+    // Test that Ipv4Addr shape indicates it supports parsing
+    let shape = Ipv4Addr::SHAPE;
+    assert!(
+        shape.is_from_str(),
+        "Ipv4Addr should support parsing from string"
+    );
+
+    // Check that the vtable has a parse function
+    let parse_fn = (shape.vtable.parse)();
+    assert!(
+        parse_fn.is_some(),
+        "Ipv4Addr should have a parse function in vtable"
     );
 }

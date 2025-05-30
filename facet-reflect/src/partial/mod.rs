@@ -2133,7 +2133,6 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                 .iter()
                 .enumerate()
                 .find(|(_, v)| v.name == variant_name)
-                .map(|(idx, variant)| (idx, variant))
         } else {
             None
         }

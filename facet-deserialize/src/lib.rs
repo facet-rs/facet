@@ -1189,132 +1189,138 @@ where
         // Check if this is a numeric scalar
         if let Def::Scalar(sd) = shape.def {
             if let ScalarAffinity::Number(num_affinity) = sd.affinity {
-                use facet_core::{NumberBits, Signedness};
+                use facet_core::{IntegerSize, NumberBits, Signedness};
 
                 // Check if it's integer or float based on the bits type
                 match num_affinity.bits {
-                    NumberBits::Integer { bits, sign } => {
+                    NumberBits::Integer { size, sign } => {
                         // Integer type - check signed/unsigned and size
-                        match sign {
-                            Signedness::Signed => {
-                                // Signed integers
-                                match bits {
-                                    8 => {
-                                        wip.set(value.to_i8().ok_or_else(|| {
-                                            self.err(DeserErrorKind::NumericConversion {
-                                                from: N::TYPE_NAME,
-                                                to: "i8",
-                                            })
-                                        })?)
-                                        .map_err(|e| self.reflect_err(e))?;
-                                    }
-                                    16 => {
-                                        wip.set(value.to_i16().ok_or_else(|| {
-                                            self.err(DeserErrorKind::NumericConversion {
-                                                from: N::TYPE_NAME,
-                                                to: "i16",
-                                            })
-                                        })?)
-                                        .map_err(|e| self.reflect_err(e))?;
-                                    }
-                                    32 => {
-                                        wip.set(value.to_i32().ok_or_else(|| {
-                                            self.err(DeserErrorKind::NumericConversion {
-                                                from: N::TYPE_NAME,
-                                                to: "i32",
-                                            })
-                                        })?)
-                                        .map_err(|e| self.reflect_err(e))?;
-                                    }
-                                    64 => {
-                                        wip.set(value.to_i64().ok_or_else(|| {
-                                            self.err(DeserErrorKind::NumericConversion {
-                                                from: N::TYPE_NAME,
-                                                to: "i64",
-                                            })
-                                        })?)
-                                        .map_err(|e| self.reflect_err(e))?;
-                                    }
-                                    128 => {
-                                        wip.set(value.to_i128().ok_or_else(|| {
-                                            self.err(DeserErrorKind::NumericConversion {
-                                                from: N::TYPE_NAME,
-                                                to: "i128",
-                                            })
-                                        })?)
-                                        .map_err(|e| self.reflect_err(e))?;
-                                    }
-                                    _ => {
-                                        // Platform-dependent size (isize)
-                                        wip.set(value.to_isize().ok_or_else(|| {
-                                            self.err(DeserErrorKind::NumericConversion {
-                                                from: N::TYPE_NAME,
-                                                to: "isize",
-                                            })
-                                        })?)
-                                        .map_err(|e| self.reflect_err(e))?;
-                                    }
+                        match (size, sign) {
+                            (IntegerSize::Fixed(bits), Signedness::Signed) => match bits {
+                                8 => {
+                                    wip.set(value.to_i8().ok_or_else(|| {
+                                        self.err(DeserErrorKind::NumericConversion {
+                                            from: N::TYPE_NAME,
+                                            to: "i8",
+                                        })
+                                    })?)
+                                    .map_err(|e| self.reflect_err(e))?;
                                 }
+                                16 => {
+                                    wip.set(value.to_i16().ok_or_else(|| {
+                                        self.err(DeserErrorKind::NumericConversion {
+                                            from: N::TYPE_NAME,
+                                            to: "i16",
+                                        })
+                                    })?)
+                                    .map_err(|e| self.reflect_err(e))?;
+                                }
+                                32 => {
+                                    wip.set(value.to_i32().ok_or_else(|| {
+                                        self.err(DeserErrorKind::NumericConversion {
+                                            from: N::TYPE_NAME,
+                                            to: "i32",
+                                        })
+                                    })?)
+                                    .map_err(|e| self.reflect_err(e))?;
+                                }
+                                64 => {
+                                    wip.set(value.to_i64().ok_or_else(|| {
+                                        self.err(DeserErrorKind::NumericConversion {
+                                            from: N::TYPE_NAME,
+                                            to: "i64",
+                                        })
+                                    })?)
+                                    .map_err(|e| self.reflect_err(e))?;
+                                }
+                                128 => {
+                                    wip.set(value.to_i128().ok_or_else(|| {
+                                        self.err(DeserErrorKind::NumericConversion {
+                                            from: N::TYPE_NAME,
+                                            to: "i128",
+                                        })
+                                    })?)
+                                    .map_err(|e| self.reflect_err(e))?;
+                                }
+                                _ => {
+                                    return Err(self.err(DeserErrorKind::NumericConversion {
+                                        from: N::TYPE_NAME,
+                                        to: "unknown fixed-size signed integer",
+                                    }));
+                                }
+                            },
+                            (IntegerSize::Fixed(bits), Signedness::Unsigned) => match bits {
+                                8 => {
+                                    wip.set(value.to_u8().ok_or_else(|| {
+                                        self.err(DeserErrorKind::NumericConversion {
+                                            from: N::TYPE_NAME,
+                                            to: "u8",
+                                        })
+                                    })?)
+                                    .map_err(|e| self.reflect_err(e))?;
+                                }
+                                16 => {
+                                    wip.set(value.to_u16().ok_or_else(|| {
+                                        self.err(DeserErrorKind::NumericConversion {
+                                            from: N::TYPE_NAME,
+                                            to: "u16",
+                                        })
+                                    })?)
+                                    .map_err(|e| self.reflect_err(e))?;
+                                }
+                                32 => {
+                                    wip.set(value.to_u32().ok_or_else(|| {
+                                        self.err(DeserErrorKind::NumericConversion {
+                                            from: N::TYPE_NAME,
+                                            to: "u32",
+                                        })
+                                    })?)
+                                    .map_err(|e| self.reflect_err(e))?;
+                                }
+                                64 => {
+                                    wip.set(value.to_u64().ok_or_else(|| {
+                                        self.err(DeserErrorKind::NumericConversion {
+                                            from: N::TYPE_NAME,
+                                            to: "u64",
+                                        })
+                                    })?)
+                                    .map_err(|e| self.reflect_err(e))?;
+                                }
+                                128 => {
+                                    wip.set(value.to_u128().ok_or_else(|| {
+                                        self.err(DeserErrorKind::NumericConversion {
+                                            from: N::TYPE_NAME,
+                                            to: "u128",
+                                        })
+                                    })?)
+                                    .map_err(|e| self.reflect_err(e))?;
+                                }
+                                _ => {
+                                    return Err(self.err(DeserErrorKind::NumericConversion {
+                                        from: N::TYPE_NAME,
+                                        to: "unknown fixed-size unsigned integer",
+                                    }));
+                                }
+                            },
+                            (IntegerSize::PointerSized, Signedness::Signed) => {
+                                // Handle isize directly
+                                wip.set(value.to_isize().ok_or_else(|| {
+                                    self.err(DeserErrorKind::NumericConversion {
+                                        from: N::TYPE_NAME,
+                                        to: "isize",
+                                    })
+                                })?)
+                                .map_err(|e| self.reflect_err(e))?;
                             }
-                            Signedness::Unsigned => {
-                                // Unsigned integers
-                                match bits {
-                                    8 => {
-                                        wip.set(value.to_u8().ok_or_else(|| {
-                                            self.err(DeserErrorKind::NumericConversion {
-                                                from: N::TYPE_NAME,
-                                                to: "u8",
-                                            })
-                                        })?)
-                                        .map_err(|e| self.reflect_err(e))?;
-                                    }
-                                    16 => {
-                                        wip.set(value.to_u16().ok_or_else(|| {
-                                            self.err(DeserErrorKind::NumericConversion {
-                                                from: N::TYPE_NAME,
-                                                to: "u16",
-                                            })
-                                        })?)
-                                        .map_err(|e| self.reflect_err(e))?;
-                                    }
-                                    32 => {
-                                        wip.set(value.to_u32().ok_or_else(|| {
-                                            self.err(DeserErrorKind::NumericConversion {
-                                                from: N::TYPE_NAME,
-                                                to: "u32",
-                                            })
-                                        })?)
-                                        .map_err(|e| self.reflect_err(e))?;
-                                    }
-                                    64 => {
-                                        wip.set(value.to_u64().ok_or_else(|| {
-                                            self.err(DeserErrorKind::NumericConversion {
-                                                from: N::TYPE_NAME,
-                                                to: "u64",
-                                            })
-                                        })?)
-                                        .map_err(|e| self.reflect_err(e))?;
-                                    }
-                                    128 => {
-                                        wip.set(value.to_u128().ok_or_else(|| {
-                                            self.err(DeserErrorKind::NumericConversion {
-                                                from: N::TYPE_NAME,
-                                                to: "u128",
-                                            })
-                                        })?)
-                                        .map_err(|e| self.reflect_err(e))?;
-                                    }
-                                    _ => {
-                                        // Platform-dependent size (usize)
-                                        wip.set(value.to_usize().ok_or_else(|| {
-                                            self.err(DeserErrorKind::NumericConversion {
-                                                from: N::TYPE_NAME,
-                                                to: "usize",
-                                            })
-                                        })?)
-                                        .map_err(|e| self.reflect_err(e))?;
-                                    }
-                                }
+                            (IntegerSize::PointerSized, Signedness::Unsigned) => {
+                                // Handle usize directly
+                                wip.set(value.to_usize().ok_or_else(|| {
+                                    self.err(DeserErrorKind::NumericConversion {
+                                        from: N::TYPE_NAME,
+                                        to: "usize",
+                                    })
+                                })?)
+                                .map_err(|e| self.reflect_err(e))?;
                             }
                         }
                     }
@@ -1424,23 +1430,11 @@ where
                     _ => {
                         // Check if this is a scalar type that can be parsed from a string
                         let shape = wip.innermost_shape();
-                        if let Def::Scalar(sd) = shape.def {
-                            match sd.affinity {
-                                ScalarAffinity::Time(_)
-                                | ScalarAffinity::Path(_)
-                                | ScalarAffinity::UUID(_)
-                                | ScalarAffinity::ULID(_)
-                                | ScalarAffinity::Url(_)
-                                | ScalarAffinity::IpAddr(_)
-                                | ScalarAffinity::SocketAddr(_) => {
-                                    // Use the type's parse function via the vtable
-                                    wip.parse_from_str(cow.as_ref())
-                                        .map_err(|e| self.reflect_err(e))?;
-                                }
-                                _ => {
-                                    // For other types, convert to String
-                                    wip.set(cow.to_string()).map_err(|e| self.reflect_err(e))?;
-                                }
+                        if let Def::Scalar(_) = shape.def {
+                            // Try parse_from_str first for any scalar type that supports it
+                            if wip.parse_from_str(cow.as_ref()).is_err() {
+                                // If parsing fails, fall back to setting as String
+                                wip.set(cow.to_string()).map_err(|e| self.reflect_err(e))?;
                             }
                         } else {
                             // Not a scalar, just set as String

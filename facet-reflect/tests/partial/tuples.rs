@@ -5,8 +5,7 @@ use facet_testhelpers::test;
 fn build_empty_tuple() {
     // Test building ()
     let mut partial = Partial::alloc::<()>()?;
-    let empty_tuple = *partial.build()?;
-    assert_eq!(empty_tuple, ());
+    partial.build()?;
 }
 
 #[test]

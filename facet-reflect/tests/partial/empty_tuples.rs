@@ -15,7 +15,8 @@ fn test_empty_tuple_always_initialized() {
     // Build should succeed immediately
     let built = partial.build().unwrap();
     let value: () = built.materialize().unwrap();
-    assert_eq!(value, ());
+    // Unit type successfully built
+    let _ = value;
 }
 
 #[test]
