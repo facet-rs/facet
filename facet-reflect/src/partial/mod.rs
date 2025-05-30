@@ -499,8 +499,8 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         let fr = self.frames.last_mut().unwrap();
         if !fr.shape.is_shape(src_shape) {
             let err = ReflectError::WrongShape {
-                expected: src_shape,
-                actual: fr.shape,
+                expected: fr.shape,
+                actual: src_shape,
             };
             return Err(err);
         }
@@ -705,8 +705,8 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         let enum_type = match fr.shape.ty {
             Type::User(UserType::Enum(e)) => e,
             _ => {
-                return Err(ReflectError::WrongShape {
-                    expected: fr.shape,
+                return Err(ReflectError::WasNotA {
+                    expected: "enum",
                     actual: fr.shape,
                 });
             }

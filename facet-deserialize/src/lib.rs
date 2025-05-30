@@ -1430,10 +1430,42 @@ where
                     _ => {
                         // Check if this is a scalar type that can be parsed from a string
                         let shape = wip.innermost_shape();
-                        if let Def::Scalar(_) = shape.def {
-                            // Try parse_from_str first for any scalar type that supports it
-                            if wip.parse_from_str(cow.as_ref()).is_err() {
-                                // If parsing fails, fall back to setting as String
+                        if let Def::Scalar(scalar_def) = shape.def {
+                            // Check if this is a type that expects to be parsed from string
+                            // (like IpAddr, UUID, Path, etc.)
+                            if !matches!(scalar_def.affinity, facet_core::ScalarAffinity::String(_))
+                            {
+                                // Try parse_from_str for non-string scalar types
+                                match wip.parse_from_str(cow.as_ref()) {
+                                    Ok(_) => {
+                                        // Successfully parsed
+                                    }
+                                    Err(parse_err) => {
+                                        // Parsing failed - check if it's because parse isn't supported
+                                        // or if parsing actually failed
+                                        match parse_err {
+                                            ReflectError::OperationFailed {
+                                                shape: _,
+                                                operation,
+                                            } if operation.contains("does not support parsing") => {
+                                                // Type doesn't have a parse function, try direct conversion
+                                                wip.set(cow.to_string())
+                                                    .map_err(|e| self.reflect_err(e))?;
+                                            }
+                                            _ => {
+                                                // Actual parsing failure
+                                                return Err(self.err(DeserErrorKind::ReflectError(
+                                                    ReflectError::OperationFailed {
+                                                        shape,
+                                                        operation: "Failed to parse string value",
+                                                    }
+                                                )));
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                // It's a string type, set directly
                                 wip.set(cow.to_string()).map_err(|e| self.reflect_err(e))?;
                             }
                         } else {
