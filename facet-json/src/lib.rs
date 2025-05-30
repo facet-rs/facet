@@ -61,10 +61,10 @@ fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
         // 3. It does not contain backslashes (i.e. u8 & 0x5c != 0)
         // 4. It does not contain control characters (i.e. characters below 32, including 0)
         //    This means the bit above the 1st, 2nd or 3rd bit must be set, so u8 & 0xe0 != 0
-        let completely_ascii = bignum & 0x80808080808080808080808080808080u128 == 0;
-        let quote_free = bignum & 0x22222222222222222222222222222222u128 == 0;
-        let backslash_free = bignum & 0x5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5cu128 == 0;
-        let control_char_free = bignum & 0xe0e0e0e0e0e0e0e0e0e0e0e0e0e0e0eu128 != 0;
+        let completely_ascii = bignum & 0x80808080808080808080808080808080 == 0;
+        let quote_free = bignum & 0x22222222222222222222222222222222 == 0;
+        let backslash_free = bignum & 0x5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c == 0;
+        let control_char_free = bignum & 0xe0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0 != 0;
         if completely_ascii && quote_free && backslash_free && control_char_free {
             // Yay! Whack it into the writer!
             writer.write_all(chunk.as_bytes())?;
