@@ -455,7 +455,16 @@ impl<'input, 'shape> Decoder<'input> {
                     if !seen {
                         let field = &struct_type.fields[i];
                         if field.flags.contains(facet_core::FieldFlags::DEFAULT) {
-                            wip.begin_nth_field(i)?.set_default()?.end()?;
+                            wip.begin_nth_field(i)?;
+
+                            // Check for field-level default function first, then type-level default
+                            if let Some(field_default_fn) = field.vtable.default_fn {
+                                wip.set_field_default(field_default_fn)?;
+                            } else {
+                                wip.set_default()?;
+                            }
+
+                            wip.end()?;
                         } else {
                             // Non-default field was missing
                             return Err(DecodeError::MissingField(field.name.to_string()));

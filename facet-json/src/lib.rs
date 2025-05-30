@@ -48,11 +48,7 @@ fn write_json_escaped_char<W: Write>(writer: &mut W, c: char) -> io::Result<()> 
         '\t' => writer.write_all(b"\\t"),
         '\u{08}' => writer.write_all(b"\\b"),
         '\u{0C}' => writer.write_all(b"\\f"),
-        c if c.is_ascii() => {
-            writer.write(&[c as u8])?;
-            Ok(())
-        }
-        c if c.is_control() => {
+        c if c.is_ascii_control() => {
             let mut buf = [0; 6];
             let s = format!("{:04x}", c as u32);
             buf[0] = b'\\';
@@ -62,6 +58,10 @@ fn write_json_escaped_char<W: Write>(writer: &mut W, c: char) -> io::Result<()> 
             buf[4] = s.as_bytes()[2];
             buf[5] = s.as_bytes()[3];
             writer.write_all(&buf)
+        }
+        c if c.is_ascii() => {
+            writer.write(&[c as u8])?;
+            Ok(())
         }
         c => {
             let mut buf = [0; 4];

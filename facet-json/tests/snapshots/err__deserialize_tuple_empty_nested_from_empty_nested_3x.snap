@@ -1,5 +1,6 @@
 ---
 source: facet-json/tests/err.rs
+assertion_line: 125
 expression: err
 ---
 [31mError:[0m 
@@ -7,5 +8,5 @@ expression: err
    [38;5;246m│[0m
  [38;5;246m1 │[0m [38;5;249m[[0m[38;5;249m[[0m[31m[[0m[38;5;249m[[0m[38;5;249m][0m[38;5;249m][0m[38;5;249m][0m[38;5;249m][0m
  [38;5;240m  │[0m   [31m┬[0m  
- [38;5;240m  │[0m   [31m╰[0m[31m─[0m[31m─[0m Field error for shape [31m()[39m: No such field
+ [38;5;240m  │[0m   [31m╰[0m[31m─[0m[31m─[0m Too many elements for array [34m()[39m: maximum [33m0[39m elements allowed
 [38;5;246m───╯[0m

@@ -131,6 +131,7 @@ use alloc::vec;
 mod iset;
 
 use crate::{Peek, ReflectError, trace};
+use facet_core::DefaultInPlaceFn;
 
 use core::marker::PhantomData;
 
@@ -448,6 +449,11 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         }
     }
 
+    /// Returns the current frame count (depth of nesting)
+    pub fn frame_count(&self) -> usize {
+        self.frames.len()
+    }
+
     /// Sets a value wholesale into the current frame
     pub fn set<U>(&mut self, value: U) -> Result<&mut Self, ReflectError<'shape>>
     where
@@ -534,6 +540,23 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         }
     }
 
+    /// Sets the current frame using a field-level default function
+    pub fn set_field_default(
+        &mut self,
+        field_default_fn: DefaultInPlaceFn,
+    ) -> Result<&mut Self, ReflectError<'shape>> {
+        // Use the field-level default function to initialize the value
+        // SAFETY: set_from_function handles the active check, dropping,
+        // and setting tracker. The closure passes the correct pointer type
+        // and casts to 'static which is safe within the context of calling
+        // the field vtable function. The closure returns Ok(()) because the
+        // default function does not return errors.
+        self.set_from_function(move |ptr: PtrUninit<'_>| {
+            unsafe { field_default_fn(PtrUninit::new(ptr.as_mut_byte_ptr())) };
+            Ok(())
+        })
+    }
+
     /// Sets the current frame using a function that initializes the value
     pub fn set_from_function<F>(&mut self, f: F) -> Result<&mut Self, ReflectError<'shape>>
     where
@@ -571,6 +594,57 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                 Ok(self)
             }
             Err(e) => Err(e),
+        }
+    }
+
+    /// Parses a string value into the current frame using the type's ParseFn from the vtable
+    pub fn parse_from_str(&mut self, s: &str) -> Result<&mut Self, ReflectError<'shape>> {
+        self.require_active()?;
+
+        let frame = self.frames.last_mut().unwrap();
+
+        // Check if the type has a parse function
+        let parse_fn = match (frame.shape.vtable.parse)() {
+            Some(parse_fn) => parse_fn,
+            None => {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "Type does not support parsing from string",
+                });
+            }
+        };
+
+        // Check if we need to drop an existing value
+        if matches!(frame.tracker, Tracker::Init) {
+            if let Some(drop_fn) = (frame.shape.vtable.drop_in_place)() {
+                unsafe { drop_fn(PtrMut::new(frame.data.as_mut_byte_ptr())) };
+            }
+        }
+
+        // Don't allow overwriting when building an Option's inner value
+        if matches!(
+            frame.tracker,
+            Tracker::Option {
+                building_inner: true
+            }
+        ) {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "Cannot overwrite while building Option inner value",
+            });
+        }
+
+        // Parse the string value using the type's parse function
+        let result = unsafe { parse_fn(s, frame.data) };
+        match result {
+            Ok(_) => {
+                frame.tracker = Tracker::Init;
+                Ok(self)
+            }
+            Err(_parse_error) => Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "Failed to parse string value",
+            }),
         }
     }
 
@@ -902,7 +976,22 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                     Ok(self)
                 }
                 UserType::Enum(_) => {
-                    todo!("add support for selecting fields in enums")
+                    // Check if we have a variant selected
+                    match &frame.tracker {
+                        Tracker::Enum { variant, .. } => {
+                            if idx >= variant.data.fields.len() {
+                                return Err(ReflectError::OperationFailed {
+                                    shape: frame.shape,
+                                    operation: "enum field index out of bounds",
+                                });
+                            }
+                            self.begin_nth_enum_field(idx)
+                        }
+                        _ => Err(ReflectError::OperationFailed {
+                            shape: frame.shape,
+                            operation: "must call select_variant before selecting enum fields",
+                        }),
+                    }
                 }
                 UserType::Union(_) => Err(ReflectError::OperationFailed {
                     shape: frame.shape,
@@ -2384,6 +2473,12 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
         F: FnOnce(PtrUninit<'_>) -> Result<(), ReflectError<'shape>>,
     {
         self.inner.set_from_function(f)?;
+        Ok(self)
+    }
+
+    /// Forwards parse_from_str to the inner wip instance.
+    pub fn parse_from_str(&mut self, s: &str) -> Result<&mut Self, ReflectError<'shape>> {
+        self.inner.parse_from_str(s)?;
         Ok(self)
     }
 

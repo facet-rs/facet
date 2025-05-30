@@ -140,33 +140,6 @@ fn test_deserialize_tuple_nest() {
     assert_eq!(ok.1.2, "3");
 }
 
-// (uGGP:uP,uGP:uP,uP:uP) Not unit (great grandparent, grandparent, parent) --> unit parent
-// (i.e. there is an implicit default, the value is filled without being present)
-// NOTE: Silently coerces to the type
-/// Expect a 1-tuple[1-tuple[0-tuple]] but it's a 1-tuple[0-tuple]
-#[test]
-fn test_deserialize_tuple_empty_nested_flexible() {
-    // Expect a 1x-nested 0-tuple - yup it's a 1x-nested 0-tuple
-    let _ok: ((),) = from_str("[[]]")?; // Correct
-    // Expect a 2x-nested 0-tuple - coerced from a 1x-nested 0-tuple
-    let _ok: (((),),) = from_str("[[]]")?; // Should be from "[[[]]]" but OK
-    // Expect a 3x-nested 0-tuple - coerced from a 1x-nested 0-tuple
-    let _ok: ((((),),),) = from_str("[[]]")?; // Should be from "[[[[]]]]" but OK
-}
-
-// (uGGP:uP) Not unit great grandparent --> unit parent
-// (as for uGP:uP case)
-// NOTE: Silently coerces to the type
-#[test]
-fn test_deserialize_tuple_empty_nested_2x_flexible() {
-    // Expect a 2x-nested 0-tuple - yup it's a 2x-nested 0-tuple
-    let _ok: (((),),) = from_str("[[[]]]")?; // Correct
-    // Expect a 3x-nested 0-tuple - coerced from a 2x-nested 0-tuple
-    let _ok: ((((),),),) = from_str("[[[]]]")?; // Should be from "[[[[]]]]" but OK
-    // Expect a 4x-nested 0-tuple - coerced from a 2x-nested 0-tuple
-    let _ok: (((((),),),),) = from_str("[[[]]]")?; // Should be from "[[[[[]]]]]" but OK
-}
-
 #[test]
 fn test_serialize_tuple() {
     let test_tuple1 = ("groetjes", 3);

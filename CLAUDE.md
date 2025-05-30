@@ -93,9 +93,9 @@ This design lets facet handle both generic data structures (`Def`) and Rust's sp
 
 When implementing deserialization in format-specific modules (YAML, JSON, etc.):
 
-- For types that parse from strings (OffsetDateTime, UUID, etc.), simply `wip.put(string_value)` 
-- The automatic conversion is handled through the type's vtable.try_from implementation
-- You don't need to manually parse the string - the system handles it for you
+- The `facet_deserialize` infrastructure handles automatic conversions for certain scalar types
+- For types with specific `ScalarAffinity` (Time, UUID, Path, etc.), string values are automatically converted
+- Use `partial.set(string_value)` and the system will handle parsing if the target type supports it
 - This keeps format-specific code simple and avoids duplication of parsing logic
 
 Use `ScalarAffinity` patterns to detect and handle related types:
@@ -103,9 +103,9 @@ Use `ScalarAffinity` patterns to detect and handle related types:
 ```rust
 // For scalar_def with time affinity (like OffsetDateTime)
 if matches!(scalar_def.affinity, ScalarAffinity::Time(_)) {
-    // Simply put the string value, the automatic conversion will handle parsing
+    // Simply set the string value, the automatic conversion will handle parsing
     let s = value.as_str().unwrap_or_default().to_string();
-    wip = wip.put(s).map_err(|e| AnyErr(e.to_string()))?;
+    wip.set(s).map_err(|e| AnyErr(e.to_string()))?;
 }
 ```
 

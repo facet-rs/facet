@@ -251,18 +251,23 @@ fn deserialize_value<'facet, 'shape>(
                     }
                 };
                 wip.set(b).map_err(|e| AnyErr(e.to_string()))?;
-            } else if innermost_shape.is_type::<String>()
-                || matches!(scalar_def.affinity, ScalarAffinity::Time(_))
-                || matches!(scalar_def.affinity, ScalarAffinity::UUID(_))
-                || matches!(scalar_def.affinity, ScalarAffinity::ULID(_))
-                || matches!(scalar_def.affinity, ScalarAffinity::Path(_))
-            {
-                // For strings and types with special affinity, parse from string
+            } else if innermost_shape.is_type::<String>() {
+                // For strings, set directly
                 let s = value
                     .as_str()
                     .ok_or_else(|| AnyErr(format!("Expected string, got: {}", yaml_type(value))))?
                     .to_string();
                 wip.set(s).map_err(|e| AnyErr(e.to_string()))?;
+            } else if matches!(scalar_def.affinity, ScalarAffinity::Time(_))
+                || matches!(scalar_def.affinity, ScalarAffinity::UUID(_))
+                || matches!(scalar_def.affinity, ScalarAffinity::ULID(_))
+                || matches!(scalar_def.affinity, ScalarAffinity::Path(_))
+            {
+                // For types with special affinity, use parse_from_str
+                let s = value
+                    .as_str()
+                    .ok_or_else(|| AnyErr(format!("Expected string, got: {}", yaml_type(value))))?;
+                wip.parse_from_str(s).map_err(|e| AnyErr(e.to_string()))?;
             } else {
                 return Err(AnyErr(format!(
                     "facet-yaml: unsupported scalar type: {}",

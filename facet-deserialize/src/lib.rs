@@ -461,6 +461,8 @@ where
         last_span: Span::new(0, 0),
         format_source: format.source(),
         array_indices: Vec::new(),
+        enum_tuple_field_count: None,
+        enum_tuple_current_field: None,
     };
 
     macro_rules! next {
@@ -532,6 +534,19 @@ where
                 })?;
 
                 if reason == PopReason::TopLevel {
+                    // Exit all nested frames (e.g., from flattened fields) before building
+                    while wip.frame_count() > 1 {
+                        wip.end().map_err(|e| {
+                            let reflect_error = runner.reflect_err(e);
+                            DeserError {
+                                input: reflect_error.input,
+                                span: reflect_error.span.to_cooked(format, input),
+                                kind: reflect_error.kind,
+                                source_id: reflect_error.source_id,
+                            }
+                        })?;
+                    }
+
                     return wip.build().map_err(|e| {
                         let reflect_error = runner.reflect_err(e);
                         // Convert the reflection error's span to Cooked
@@ -853,6 +868,12 @@ pub struct StackRunner<'input, C = Cooked, I: ?Sized + 'input = [u8]> {
 
     /// Array index tracking - maps depth to current index for arrays
     pub array_indices: Vec<usize>,
+
+    /// Tuple variant field tracking - number of fields in current enum tuple variant
+    pub enum_tuple_field_count: Option<usize>,
+
+    /// Tuple variant field tracking - current field index being processed
+    pub enum_tuple_current_field: Option<usize>,
 }
 
 impl<'input, 'shape, C, I: ?Sized + 'input> StackRunner<'input, C, I>
@@ -902,20 +923,32 @@ where
                         if field.flags.contains(FieldFlags::DEFAULT) {
                             wip.begin_nth_field(index)
                                 .map_err(|e| self.reflect_err(e))?;
-                            if !field.shape().is(Characteristic::Default) {
+
+                            // Check for field-level default function first, then type-level default
+                            if let Some(field_default_fn) = field.vtable.default_fn {
+                                wip.set_field_default(field_default_fn)
+                                    .map_err(|e| self.reflect_err(e))?;
+                                trace!(
+                                    "Field #{} {} @ {} was set to default value (via field default function)",
+                                    index.yellow(),
+                                    field.name.green(),
+                                    field.offset.blue(),
+                                );
+                            } else if field.shape().is(Characteristic::Default) {
+                                wip.set_default().map_err(|e| self.reflect_err(e))?;
+                                trace!(
+                                    "Field #{} {} @ {} was set to default value (via type default impl)",
+                                    index.yellow(),
+                                    field.name.green(),
+                                    field.offset.blue(),
+                                );
+                            } else {
                                 return Err(self.reflect_err(
                                     ReflectError::DefaultAttrButNoDefaultImpl {
                                         shape: field.shape(),
                                     },
                                 ));
                             }
-                            wip.set_default().map_err(|e| self.reflect_err(e))?;
-                            trace!(
-                                "Field #{} {} @ {} was set to default value (via default impl)",
-                                index.yellow(),
-                                field.name.green(),
-                                field.offset.blue(),
-                            );
                             wip.end().map_err(|e| self.reflect_err(e))?;
                         } else {
                             trace!(
@@ -999,20 +1032,32 @@ where
                                 if field.flags.contains(FieldFlags::DEFAULT) {
                                     wip.begin_nth_field(index)
                                         .map_err(|e| self.reflect_err(e))?;
-                                    if !field.shape().is(Characteristic::Default) {
+
+                                    // Check for field-level default function first, then type-level default
+                                    if let Some(field_default_fn) = field.vtable.default_fn {
+                                        wip.set_field_default(field_default_fn)
+                                            .map_err(|e| self.reflect_err(e))?;
+                                        trace!(
+                                            "Field #{} @ {} in variant {} was set to default value (via field default function)",
+                                            index.yellow(),
+                                            field.offset.blue(),
+                                            variant.name
+                                        );
+                                    } else if field.shape().is(Characteristic::Default) {
+                                        wip.set_default().map_err(|e| self.reflect_err(e))?;
+                                        trace!(
+                                            "Field #{} @ {} in variant {} was set to default value (via type default impl)",
+                                            index.yellow(),
+                                            field.offset.blue(),
+                                            variant.name
+                                        );
+                                    } else {
                                         return Err(self.reflect_err(
                                             ReflectError::DefaultAttrButNoDefaultImpl {
                                                 shape: field.shape(),
                                             },
                                         ));
                                     }
-                                    wip.set_default().map_err(|e| self.reflect_err(e))?;
-                                    trace!(
-                                        "Field #{} @ {} in variant {} was set to default value (via default impl)",
-                                        index.yellow(),
-                                        field.offset.blue(),
-                                        variant.name
-                                    );
                                     wip.end().map_err(|e| self.reflect_err(e))?;
                                 } else {
                                     trace!(
@@ -1388,16 +1433,9 @@ where
                                 | ScalarAffinity::Url(_)
                                 | ScalarAffinity::IpAddr(_)
                                 | ScalarAffinity::SocketAddr(_) => {
-                                    // For these types, just pass the string value directly
-                                    // The automatic conversion via try_from will handle parsing
-                                    match cow {
-                                        Cow::Borrowed(s) => {
-                                            wip.set(s).map_err(|e| self.reflect_err(e))?
-                                        }
-                                        Cow::Owned(s) => {
-                                            wip.set(s).map_err(|e| self.reflect_err(e))?
-                                        }
-                                    };
+                                    // Use the type's parse function via the vtable
+                                    wip.parse_from_str(cow.as_ref())
+                                        .map_err(|e| self.reflect_err(e))?;
                                 }
                                 _ => {
                                     // For other types, convert to String
@@ -1540,6 +1578,27 @@ where
                             match user_ty {
                                 UserType::Enum(_) => {
                                     trace!("Array starting for enum ({})!", shape.blue());
+                                    // Check if we have a tuple variant selected
+                                    if let Some(variant) = wip.selected_variant() {
+                                        use facet_core::StructKind;
+                                        if variant.data.kind == StructKind::Tuple {
+                                            // For tuple variants, we'll handle array elements as tuple fields
+                                            // Initialize tuple field tracking
+                                            self.enum_tuple_field_count =
+                                                Some(variant.data.fields.len());
+                                            self.enum_tuple_current_field = Some(0);
+                                        } else {
+                                            return Err(self.err(DeserErrorKind::UnsupportedType {
+                                                got: shape,
+                                                wanted: "tuple variant for array deserialization",
+                                            }));
+                                        }
+                                    } else {
+                                        return Err(self.err(DeserErrorKind::UnsupportedType {
+                                            got: shape,
+                                            wanted: "enum with variant selected",
+                                        }));
+                                    }
                                 }
                                 UserType::Struct(_) => {
                                     // Regular struct shouldn't be parsed from array
@@ -1832,17 +1891,14 @@ where
                             self.stack.push(Instruction::SubstackClose);
                         }
                     } else if handled_by_flatten {
-                        // We need two pops for flattened fields - one for the field itself,
-                        // one for the containing struct
+                        // For flattened fields, we only need one pop for the field itself.
+                        // The flattened struct should remain active until the outer object is finished.
                         trace!("Pushing Pop insn to stack (ObjectVal) for flattened field");
                         self.stack.push(Instruction::Pop(PopReason::ObjectVal));
-                        // Can't tell yet if this is needed, not required for tests (yet),
-                        // but if we did need it I think it would go in the middle, for the field:
-                        // if has_substack {
-                        //     trace!("Pushing SubstackClose insn to stack");
-                        //     self.stack.push(Instruction::SubstackClose);
-                        // }
-                        self.stack.push(Instruction::Pop(PopReason::ObjectVal));
+                        if has_substack {
+                            trace!("Pushing SubstackClose insn to stack");
+                            self.stack.push(Instruction::SubstackClose);
+                        }
                     }
                     self.stack.push(Instruction::Value(ValueReason::ObjectVal));
                 }
@@ -1889,6 +1945,15 @@ where
                 let shape = wip.shape();
                 if matches!(shape.def, Def::Array(_)) {
                     self.array_indices.pop();
+                }
+
+                // Clean up enum tuple variant tracking if this was an enum tuple
+                if let Type::User(UserType::Enum(_)) = shape.ty {
+                    if self.enum_tuple_field_count.is_some() {
+                        trace!("Enum tuple variant list ended");
+                        self.enum_tuple_field_count = None;
+                        self.enum_tuple_current_field = None;
+                    }
                 }
 
                 // Special case: if we're at an empty tuple, we've successfully parsed it
@@ -1945,8 +2010,34 @@ where
                         wip.begin_list_item().map_err(|e| self.reflect_err(e))?;
                     }
                     _ => {
+                        // Check if this is an enum tuple variant
+                        if let Type::User(UserType::Enum(_)) = shape.ty {
+                            if let (Some(field_count), Some(current_field)) =
+                                (self.enum_tuple_field_count, self.enum_tuple_current_field)
+                            {
+                                if current_field >= field_count {
+                                    // Too many elements for this tuple variant
+                                    return Err(self.err(DeserErrorKind::ArrayOverflow {
+                                        shape,
+                                        max_len: field_count,
+                                    }));
+                                }
+
+                                // Process this tuple field
+                                wip.begin_nth_enum_field(current_field)
+                                    .map_err(|e| self.reflect_err(e))?;
+
+                                // Advance to next field
+                                self.enum_tuple_current_field = Some(current_field + 1);
+                            } else {
+                                return Err(self.err(DeserErrorKind::UnsupportedType {
+                                    got: shape,
+                                    wanted: "enum with tuple variant selected",
+                                }));
+                            }
+                        }
                         // Check if this is a tuple
-                        if let Type::User(UserType::Struct(struct_type)) = shape.ty {
+                        else if let Type::User(UserType::Struct(struct_type)) = shape.ty {
                             if struct_type.kind == StructKind::Tuple {
                                 // Tuples use field indexing
                                 // Find the next uninitialized field
@@ -1991,11 +2082,12 @@ where
                 if matches!(outcome.node, Outcome::ListStarted) {
                     if let Type::User(UserType::Struct(st)) = wip.shape().ty {
                         if st.kind == StructKind::Tuple && st.fields.is_empty() {
-                            trace!("Empty tuple field with list start - expecting immediate close");
-                            // Push instructions to handle the empty list
-                            // We successfully parsed an empty list as an empty tuple
-                            // No need to do anything else - the tuple is complete
-                            return Ok(wip);
+                            trace!(
+                                "Empty tuple field with list start - initializing empty tuple and expecting immediate close"
+                            );
+                            // Initialize the empty tuple with default value since it has no fields to fill
+                            wip.set_default().map_err(|e| self.reflect_err(e))?;
+                            // Continue processing - we still need to handle the list close
                         }
                     }
                 }
