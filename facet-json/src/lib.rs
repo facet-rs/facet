@@ -39,21 +39,27 @@ fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
         let window = Chunk::try_from(chunk.as_bytes()).unwrap();
         let bignum = BigNum::from_le_bytes(window);
         let completely_ascii = bignum & 0x80808080808080808080808080808080u128 == 0;
-        if completely_ascii {
+        let contains_quotes = bignum & 0x22222222222222222222222222222222u128 != 0;
+        let contains_backslash = bignum & 0x5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5cu128 != 0;
+        // Here we check if any of the u8 comprising bignum consist of numbers below 32.
+        let contains_control_chars = bignum & 0xe0e0e0e0e0e0e0e0e0e0e0e0e0e0e0eu128 != 0;
+        if completely_ascii && !contains_quotes && !contains_backslash && !contains_control_chars {
             writer.write_all(chunk.as_bytes())?;
             idx += STEP_SIZE;
         } else {
-            let mut chars = chunk[idx..].chars();
+            let mut chars = s[idx..].chars();
             for c in (&mut chars).take(STEP_SIZE) {
                 write_json_escaped_char(writer, c)?;
             }
-            let bytes_consumed = chars.as_str().as_ptr() as usize - s.as_ptr() as usize;
-            idx += bytes_consumed;
+            let bits_consumed = chars.as_str().as_ptr() as usize - s.as_ptr() as usize;
+            idx += bits_consumed / 8;
         }
     }
 
-    for c in s[idx..].chars() {
-        write_json_escaped_char(writer, c)?;
+    if idx < s.len() {
+        for c in s[idx..].chars() {
+            write_json_escaped_char(writer, c)?;
+        }
     }
 
     writer.write_all(b"\"")
