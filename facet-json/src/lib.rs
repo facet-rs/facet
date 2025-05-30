@@ -57,14 +57,14 @@ fn write_json_escaped_char<W: Write>(writer: &mut W, c: char) -> io::Result<()> 
             buf[5] = s.as_bytes()[3];
             writer.write_all(&buf)
         }
-        // c if c.is_ascii() => {
-        //     writer.write(&[c as u8])?;
-        //     Ok(())
-        // }
+        c if c.is_ascii() => {
+            writer.write(&[c as u8])?;
+            Ok(())
+        }
         c => {
             let mut buf = [0; 4];
-            let encoded = c.encode_utf8(&mut buf);
-            writer.write_all(encoded.as_bytes())
+            let len = c.encode_utf8(&mut buf).len();
+            writer.write_all(&buf[..len])
         }
     }
 }
