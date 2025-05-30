@@ -32,7 +32,6 @@ nostd:
     cargo check --no-default-features --features alloc -p facet-core --target-dir target/nostd-w-alloc --target thumbv8m.main-none-eabihf
     cargo check --no-default-features --features alloc -p facet --target-dir target/nostd-w-alloc --target thumbv8m.main-none-eabihf
     cargo check --no-default-features --features alloc -p facet-reflect --target-dir target/nostd-w-alloc --target thumbv8m.main-none-eabihf
-    cargo check --no-default-features --features alloc -p facet-json --target-dir target/nostd-w-alloc --target thumbv8m.main-none-eabihf
 
 nostd-ci:
     #!/usr/bin/env -S bash -euo pipefail

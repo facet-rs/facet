@@ -19,7 +19,6 @@ pub fn peek_to_string<'input, 'facet, 'shape>(peek: Peek<'input, 'facet, 'shape>
 }
 
 /// Serializes a `Facet` value to JSON and writes it to the given writer.
-#[cfg(feature = "std")]
 pub fn to_writer<'mem, 'facet, T: Facet<'facet>, W: Write>(
     value: &'mem T,
     writer: &mut W,

@@ -2,8 +2,7 @@
 #![warn(missing_docs)]
 #![warn(clippy::std_instead_of_core)]
 #![warn(clippy::std_instead_of_alloc)]
-// TODO: Re-enable once Partial API is updated to support ownership patterns
-// #![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 #![doc = include_str!("../README.md")]
 
 extern crate alloc;
@@ -625,6 +624,13 @@ where
     }
 }
 
+/// Helper function to check if an f64 has no fractional part
+/// This is needed for no-std compatibility where f64::fract() is not available
+#[inline]
+fn has_no_fractional_part(value: f64) -> bool {
+    value == (value as i64) as f64
+}
+
 /// Trait for numeric type conversions
 trait NumericConvert: Sized {
     const TYPE_NAME: &'static str;
@@ -749,42 +755,42 @@ impl NumericConvert for f64 {
     const TYPE_NAME: &'static str = "f64";
 
     fn to_i8(self) -> Option<i8> {
-        if self.fract() == 0.0 && self >= i8::MIN as f64 && self <= i8::MAX as f64 {
+        if has_no_fractional_part(self) && self >= i8::MIN as f64 && self <= i8::MAX as f64 {
             Some(self as i8)
         } else {
             None
         }
     }
     fn to_i16(self) -> Option<i16> {
-        if self.fract() == 0.0 && self >= i16::MIN as f64 && self <= i16::MAX as f64 {
+        if has_no_fractional_part(self) && self >= i16::MIN as f64 && self <= i16::MAX as f64 {
             Some(self as i16)
         } else {
             None
         }
     }
     fn to_i32(self) -> Option<i32> {
-        if self.fract() == 0.0 && self >= i32::MIN as f64 && self <= i32::MAX as f64 {
+        if has_no_fractional_part(self) && self >= i32::MIN as f64 && self <= i32::MAX as f64 {
             Some(self as i32)
         } else {
             None
         }
     }
     fn to_i64(self) -> Option<i64> {
-        if self.fract() == 0.0 && self >= i64::MIN as f64 && self <= i64::MAX as f64 {
+        if has_no_fractional_part(self) && self >= i64::MIN as f64 && self <= i64::MAX as f64 {
             Some(self as i64)
         } else {
             None
         }
     }
     fn to_i128(self) -> Option<i128> {
-        if self.fract() == 0.0 && self >= i128::MIN as f64 && self <= i128::MAX as f64 {
+        if has_no_fractional_part(self) && self >= i128::MIN as f64 && self <= i128::MAX as f64 {
             Some(self as i128)
         } else {
             None
         }
     }
     fn to_isize(self) -> Option<isize> {
-        if self.fract() == 0.0 && self >= isize::MIN as f64 && self <= isize::MAX as f64 {
+        if has_no_fractional_part(self) && self >= isize::MIN as f64 && self <= isize::MAX as f64 {
             Some(self as isize)
         } else {
             None
@@ -792,42 +798,42 @@ impl NumericConvert for f64 {
     }
 
     fn to_u8(self) -> Option<u8> {
-        if self.fract() == 0.0 && self >= 0.0 && self <= u8::MAX as f64 {
+        if has_no_fractional_part(self) && self >= 0.0 && self <= u8::MAX as f64 {
             Some(self as u8)
         } else {
             None
         }
     }
     fn to_u16(self) -> Option<u16> {
-        if self.fract() == 0.0 && self >= 0.0 && self <= u16::MAX as f64 {
+        if has_no_fractional_part(self) && self >= 0.0 && self <= u16::MAX as f64 {
             Some(self as u16)
         } else {
             None
         }
     }
     fn to_u32(self) -> Option<u32> {
-        if self.fract() == 0.0 && self >= 0.0 && self <= u32::MAX as f64 {
+        if has_no_fractional_part(self) && self >= 0.0 && self <= u32::MAX as f64 {
             Some(self as u32)
         } else {
             None
         }
     }
     fn to_u64(self) -> Option<u64> {
-        if self.fract() == 0.0 && self >= 0.0 && self <= u64::MAX as f64 {
+        if has_no_fractional_part(self) && self >= 0.0 && self <= u64::MAX as f64 {
             Some(self as u64)
         } else {
             None
         }
     }
     fn to_u128(self) -> Option<u128> {
-        if self.fract() == 0.0 && self >= 0.0 && self <= u128::MAX as f64 {
+        if has_no_fractional_part(self) && self >= 0.0 && self <= u128::MAX as f64 {
             Some(self as u128)
         } else {
             None
         }
     }
     fn to_usize(self) -> Option<usize> {
-        if self.fract() == 0.0 && self >= 0.0 && self <= usize::MAX as f64 {
+        if has_no_fractional_part(self) && self >= 0.0 && self <= usize::MAX as f64 {
             Some(self as usize)
         } else {
             None
