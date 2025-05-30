@@ -27,20 +27,24 @@ struct Json;
 #[cfg(feature = "std")]
 #[inline]
 fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
+    const STEP_SIZE: usize = 16;
+    type BigNum = u128;
+    type Chunk = [u8; STEP_SIZE];
+
     writer.write_all(b"\"")?;
 
     let mut idx = 0;
-    while idx + 8 < s.len() {
-        let chunk = &s[idx..idx + 8];
-        let window = <[u8; 8]>::try_from(chunk.as_bytes()).unwrap();
-        let bignum = u64::from_le_bytes(window);
-        let completely_ascii = bignum & 0x8080808080808080u64 == 0;
+    while idx + STEP_SIZE < s.len() {
+        let chunk = &s[idx..idx + STEP_SIZE];
+        let window = Chunk::try_from(chunk.as_bytes()).unwrap();
+        let bignum = BigNum::from_le_bytes(window);
+        let completely_ascii = bignum & 0x80808080808080808080808080808080u128 == 0;
         if completely_ascii {
             writer.write_all(chunk.as_bytes())?;
-            idx += 8;
+            idx += STEP_SIZE;
         } else {
             let mut chars = chunk[idx..].chars();
-            for c in (&mut chars).take(8) {
+            for c in (&mut chars).take(STEP_SIZE) {
                 write_json_escaped_char(writer, c)?;
             }
             let bytes_consumed = chars.as_str().as_ptr() as usize - s.as_ptr() as usize;
