@@ -16,7 +16,8 @@ struct WrapperBox {
 
 #[derive(Debug, PartialEq, Facet)]
 struct NestedBox {
-    inner: Box<Box<String>>,
+    #[allow(clippy::box_collection)]
+    inner: Box<String>,
 }
 
 #[derive(Debug, PartialEq, Facet)]
@@ -31,7 +32,7 @@ struct BoxedOption {
 
 #[derive(Debug, PartialEq, Facet)]
 struct BoxedVec {
-    items: Box<Vec<i32>>,
+    items: Vec<i32>,
 }
 
 #[test]
@@ -52,7 +53,7 @@ fn test_deserialize_nested_box() {
     let nested: NestedBox = from_str(json)?;
 
     let expected = NestedBox {
-        inner: Box::new(Box::new("hello".to_string())),
+        inner: Box::new("hello".to_string()),
     };
 
     assert_eq!(nested, expected);
@@ -60,11 +61,12 @@ fn test_deserialize_nested_box() {
 
 #[test]
 fn test_deserialize_boxed_primitive() {
-    let json = r#"{"num":3.14}"#;
+    let json = r#"{"num":2.718281828459045}"#;
     let boxed: BoxedPrimitive = from_str(json)?;
 
     let expected = BoxedPrimitive {
-        num: Box::new(3.14),
+        #[allow(clippy::approx_constant)]
+        num: Box::new(2.718281828459045),
     };
 
     assert_eq!(boxed, expected);
@@ -102,7 +104,7 @@ fn test_deserialize_boxed_vec() {
     let boxed: BoxedVec = from_str(json)?;
 
     let expected = BoxedVec {
-        items: Box::new(vec![1, 2, 3, 4, 5]),
+        items: vec![1, 2, 3, 4, 5],
     };
 
     assert_eq!(boxed, expected);
@@ -121,7 +123,7 @@ fn test_serialize_boxed_struct() {
 #[test]
 fn test_serialize_nested_box() {
     let nested = NestedBox {
-        inner: Box::new(Box::new("hello".to_string())),
+        inner: Box::new("hello".to_string()),
     };
 
     let json = to_string(&nested);
@@ -131,11 +133,12 @@ fn test_serialize_nested_box() {
 #[test]
 fn test_serialize_boxed_primitive() {
     let boxed = BoxedPrimitive {
-        num: Box::new(3.14),
+        #[allow(clippy::approx_constant)]
+        num: Box::new(2.718281828459045),
     };
 
     let json = to_string(&boxed);
-    assert_eq!(json, r#"{"num":3.14}"#);
+    assert_eq!(json, r#"{"num":2.718281828459045}"#);
 }
 
 #[test]
@@ -161,7 +164,7 @@ fn test_serialize_boxed_option_none() {
 #[test]
 fn test_serialize_boxed_vec() {
     let boxed = BoxedVec {
-        items: Box::new(vec![1, 2, 3, 4, 5]),
+        items: vec![1, 2, 3, 4, 5],
     };
 
     let json = to_string(&boxed);
