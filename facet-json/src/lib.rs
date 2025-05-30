@@ -27,6 +27,18 @@ struct Json;
 #[cfg(feature = "std")]
 #[inline]
 fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
+    // Just a little bit of text on how it works. There are two main steps:
+    // 1. Check if the string is completely ASCII and doesn't contain any quotes or backslashes or
+    //    control characters. This is the fast path, because it means that the bytes can be written
+    //    as they are, without any escaping needed. In this case we go over the string in windows
+    //    of 16 bytes (which is completely arbitrary, maybe find some real world data to tune this
+    //    with? I don't know and you don't have to do this dear reader.) and we just feed them into
+    //    the writer.
+    // 2. If the string is not completely ASCII or contains quotes or backslashes or control
+    //    characters, we need to escape them. This is the slow path, because it means that we need
+    //    to write the bytes one by one, and we need to figure out where to put the escapes. So we
+    //    just call `write_json_escaped_char` for each character.
+
     const STEP_SIZE: usize = 16;
     type BigNum = u128;
     type Chunk = [u8; STEP_SIZE];
@@ -36,17 +48,30 @@ fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
     let mut idx = 0;
     while idx + STEP_SIZE < s.len() {
         let chunk = &s[idx..idx + STEP_SIZE];
+        // Unwrap here is fine because the chunk is guaranteed to be exactly `CHUNK_SIZE` bytes long
+        // by construction.
         let window = Chunk::try_from(chunk.as_bytes()).unwrap();
+        #[cfg(target_endian = "little")]
         let bignum = BigNum::from_le_bytes(window);
+        #[cfg(target_endian = "big")]
+        let bignum = BigNum::from_be_bytes(window);
+        // Our bignum is a concatenation of u8 values. For each value, we need to make sure that:
+        // 1. It is ASCII (i.e. the first bit of the u8 is 0, so u8 & 0x80 == 0)
+        // 2. It does not contain quotes (i.e. u8 & 0x22 != 0)
+        // 3. It does not contain backslashes (i.e. u8 & 0x5c != 0)
+        // 4. It does not contain control characters (i.e. characters below 32, including 0)
+        //    This means the bit above the 1st, 2nd or 3rd bit must be set, so u8 & 0xe0 != 0
         let completely_ascii = bignum & 0x80808080808080808080808080808080u128 == 0;
-        let contains_quotes = bignum & 0x22222222222222222222222222222222u128 != 0;
-        let contains_backslash = bignum & 0x5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5cu128 != 0;
-        // Here we check if any of the u8 comprising bignum consist of numbers below 32.
-        let contains_control_chars = bignum & 0xe0e0e0e0e0e0e0e0e0e0e0e0e0e0e0eu128 != 0;
-        if completely_ascii && !contains_quotes && !contains_backslash && !contains_control_chars {
+        let quote_free = bignum & 0x22222222222222222222222222222222u128 == 0;
+        let backslash_free = bignum & 0x5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5cu128 == 0;
+        let control_char_free = bignum & 0xe0e0e0e0e0e0e0e0e0e0e0e0e0e0e0eu128 != 0;
+        if completely_ascii && quote_free && backslash_free && control_char_free {
+            // Yay! Whack it into the writer!
             writer.write_all(chunk.as_bytes())?;
             idx += STEP_SIZE;
         } else {
+            // Ahw one of the conditions not met. Let's take our time and artisanally handle each
+            // character.
             let mut chars = s[idx..].chars();
             for c in (&mut chars).take(STEP_SIZE) {
                 write_json_escaped_char(writer, c)?;
@@ -56,6 +81,9 @@ fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
         }
     }
 
+    // In our loop we checked that we were able to consume at least `STEP_SIZE` bytes every
+    // iteration. That means there might be a small remnant at the end that we can handle in the
+    // slow method.
     if idx < s.len() {
         for c in s[idx..].chars() {
             write_json_escaped_char(writer, c)?;
