@@ -464,8 +464,20 @@ where
                         }
                     }
                     (Def::SmartPointer(_), _) => {
-                        let _sp = cpeek.into_smart_pointer().unwrap();
-                        panic!("TODO: Implement serialization for smart pointers");
+                        // For smart pointers, we need to borrow the inner value and serialize it
+                        // This is similar to how transparent structs work - we serialize the inner value directly
+
+                        let sp = cpeek.into_smart_pointer().unwrap();
+                        if let Some(inner_peek) = sp.borrow_inner() {
+                            // Push the inner value to be serialized
+                            stack.push(SerializeTask::Value(inner_peek, None));
+                        } else {
+                            // The smart pointer doesn't support borrowing or has an opaque pointee
+                            // We can't serialize it
+                            todo!(
+                                "Smart pointer without borrow support or with opaque pointee cannot be serialized"
+                            );
+                        }
                     }
                     (_, Type::User(UserType::Struct(sd))) => {
                         debug!("Serializing struct: shape={}", cpeek.shape(),);
