@@ -1,6 +1,6 @@
 ---
 source: facet-json/tests/err.rs
-assertion_line: 103
+assertion_line: 107
 expression: err
 ---
 [31mError:[0m 

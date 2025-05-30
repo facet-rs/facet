@@ -124,8 +124,8 @@ fn test_is_field_set_for_nested_empty_tuples() {
         field_0_initialized
     );
     assert!(
-        field_0_initialized,
-        "Field 0 of (((),),) SHOULD be considered initialized because ((),) is trivially constructible"
+        !field_0_initialized,
+        "Field 0 of (((),),) should NOT be considered initialized - it needs to be explicitly set"
     );
 
     // ((((),),),) - even deeper nesting
@@ -136,8 +136,8 @@ fn test_is_field_set_for_nested_empty_tuples() {
         field_0_initialized
     );
     assert!(
-        field_0_initialized,
-        "Field 0 of ((((),),),) SHOULD be considered initialized"
+        !field_0_initialized,
+        "Field 0 of ((((),),),) should NOT be considered initialized"
     );
 
     // ((), (), ()) - multiple empty tuple fields
@@ -150,8 +150,8 @@ fn test_is_field_set_for_nested_empty_tuples() {
         field_0_initialized, field_1_initialized, field_2_initialized
     );
     assert!(
-        field_0_initialized && field_1_initialized && field_2_initialized,
-        "All fields should be initialized since they are all empty tuples"
+        !field_0_initialized && !field_1_initialized && !field_2_initialized,
+        "All fields should NOT be initialized - they need to be explicitly set"
     );
 
     // (((), ()), ()) - mixed nesting
@@ -167,12 +167,12 @@ fn test_is_field_set_for_nested_empty_tuples() {
         field_1_initialized
     );
     assert!(
-        field_0_initialized,
-        "Field 0 SHOULD be initialized - it contains only trivially constructible fields"
+        !field_0_initialized,
+        "Field 0 should NOT be initialized - it's a non-empty tuple"
     );
     assert!(
-        field_1_initialized,
-        "Field 1 should be initialized - it's an empty tuple"
+        !field_1_initialized,
+        "Field 1 should NOT be initialized - even though it's an empty tuple"
     );
 }
 

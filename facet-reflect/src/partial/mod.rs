@@ -274,14 +274,6 @@ enum Tracker<'shape> {
         /// Whether we're currently building the inner value
         building_inner: bool,
     },
-
-    /// Conversion frame for types with try_from
-    Conversion {
-        /// The parent shape that has the try_from conversion
-        parent_shape: &'shape Shape<'shape>,
-        /// Whether conversion has been completed
-        is_converted: bool,
-    },
 }
 
 impl<'shape> Frame<'shape> {
@@ -404,16 +396,6 @@ impl<'shape> Frame<'shape> {
                     Ok(())
                 }
             }
-            Tracker::Conversion { is_converted, .. } => {
-                if is_converted {
-                    Ok(())
-                } else {
-                    Err(ReflectError::OperationFailed {
-                        shape: self.shape,
-                        operation: "conversion frame requires calling set() to convert the value",
-                    })
-                }
-            }
         }
     }
 }
@@ -473,50 +455,17 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     {
         self.require_active()?;
 
-        // Check if this is a conversion frame
-        let frame = self.frames.last_mut().unwrap();
-        if let Tracker::Conversion {
-            parent_shape,
-            ref mut is_converted,
-        } = frame.tracker
-        {
-            // This is a conversion frame - use try_from to convert
-            if let Some(try_from_fn) = (parent_shape.vtable.try_from)() {
-                let ptr_const = PtrConst::new(&raw const value);
-                let result = unsafe { try_from_fn(ptr_const, U::SHAPE, frame.data) };
+        // For conversion frames, store the value in the conversion frame itself
+        // The conversion will happen during end()
+        let ptr_const = PtrConst::new(&raw const value);
+        unsafe {
+            // Safety: We are calling set_shape with a valid shape and a valid pointer
+            self.set_shape(ptr_const, U::SHAPE)?
+        };
 
-                // Prevent the value from being dropped since we've passed it to try_from
-                core::mem::forget(value);
-
-                match result {
-                    Ok(_) => {
-                        *is_converted = true;
-                        Ok(self)
-                    }
-                    Err(e) => Err(ReflectError::TryFromError {
-                        src_shape: U::SHAPE,
-                        dst_shape: parent_shape,
-                        inner: e,
-                    }),
-                }
-            } else {
-                // This shouldn't happen as we checked for try_from in push_inner
-                Err(ReflectError::InvariantViolation {
-                    invariant: "conversion frame parent should have try_from",
-                })
-            }
-        } else {
-            // Regular frame - use set_shape
-            let ptr_const = PtrConst::new(&raw const value);
-            unsafe {
-                // Safety: We are calling set_shape with a valid shape and a valid pointer
-                self.set_shape(ptr_const, U::SHAPE)?
-            };
-
-            // Prevent the value from being dropped since we've copied it
-            core::mem::forget(value);
-            Ok(self)
-        }
+        // Prevent the value from being dropped since we've copied it
+        core::mem::forget(value);
+        Ok(self)
     }
 
     /// Sets a value into the current frame by shape, for shape-based operations
@@ -1539,7 +1488,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
 
         // Pop the frame and save its data pointer for SmartPointer handling
         let popped_frame = self.frames.pop().unwrap();
-        let _is_conversion = matches!(popped_frame.tracker, Tracker::Conversion { .. });
+        let _is_conversion = false;
         trace!(
             "end(): Popped frame with shape {}, is_conversion={}",
             popped_frame.shape, _is_conversion
@@ -1572,6 +1521,26 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
 
                 if let Err(e) = result {
                     trace!("Conversion failed: {:?}", e);
+
+                    // Deallocate the inner value's memory since conversion failed
+                    if let FrameOwnership::Owned = popped_frame.ownership {
+                        if let Ok(layout) = popped_frame.shape.layout.sized_layout() {
+                            if layout.size() > 0 {
+                                trace!(
+                                    "Deallocating conversion frame memory after failure: size={}, align={}",
+                                    layout.size(),
+                                    layout.align()
+                                );
+                                unsafe {
+                                    alloc::alloc::dealloc(
+                                        popped_frame.data.as_mut_byte_ptr(),
+                                        layout,
+                                    );
+                                }
+                            }
+                        }
+                    }
+
                     return Err(ReflectError::TryFromError {
                         src_shape: inner_shape,
                         dst_shape: parent_frame.shape,
@@ -1582,9 +1551,21 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                 trace!("Conversion succeeded, marking parent as initialized");
                 parent_frame.tracker = Tracker::Init;
 
-                // Note: We don't need to drop or deallocate the inner value here.
-                // The try_from function consumes the source value (BytesMut) and
-                // handles cleanup as necessary.
+                // Deallocate the inner value's memory since try_from consumed it
+                if let FrameOwnership::Owned = popped_frame.ownership {
+                    if let Ok(layout) = popped_frame.shape.layout.sized_layout() {
+                        if layout.size() > 0 {
+                            trace!(
+                                "Deallocating conversion frame memory: size={}, align={}",
+                                layout.size(),
+                                layout.align()
+                            );
+                            unsafe {
+                                alloc::alloc::dealloc(popped_frame.data.as_mut_byte_ptr(), layout);
+                            }
+                        }
+                    }
+                }
 
                 return Ok(self);
             }
@@ -1799,66 +1780,6 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                     }
                 }
             }
-            Tracker::Conversion {
-                parent_shape,
-                is_converted,
-            } => {
-                trace!(
-                    "Handling conversion frame pop: parent_shape={}, is_converted={}",
-                    parent_shape, is_converted
-                );
-                // If the conversion hasn't happened yet (which is the case when building incrementally),
-                // we need to trigger it now
-                if !*is_converted {
-                    trace!("Conversion not yet done, triggering now");
-                    // The popped frame contains the inner value that needs to be converted
-                    if let Some(try_from_fn) = (parent_shape.vtable.try_from)() {
-                        // Get the inner value's shape and data
-                        let inner_ptr = unsafe { popped_frame.data.assume_init().as_const() };
-                        let inner_shape = popped_frame.shape;
-
-                        trace!("Converting from {} to {}", inner_shape, parent_shape);
-                        // Convert the inner value to the parent type
-                        let result =
-                            unsafe { try_from_fn(inner_ptr, inner_shape, parent_frame.data) };
-
-                        if let Err(e) = result {
-                            trace!("Conversion failed: {:?}", e);
-                            return Err(ReflectError::TryFromError {
-                                src_shape: inner_shape,
-                                dst_shape: parent_shape,
-                                inner: e,
-                            });
-                        }
-
-                        trace!("Conversion succeeded, marking parent as initialized");
-                        // Mark the parent frame as initialized since the conversion succeeded
-                        parent_frame.tracker = Tracker::Init;
-                    } else {
-                        return Err(ReflectError::InvariantViolation {
-                            invariant: "conversion frame parent should have try_from",
-                        });
-                    }
-                } else {
-                    // Conversion already happened via set(), just update parent tracking
-                    match &mut parent_frame.tracker {
-                        Tracker::Struct {
-                            iset,
-                            current_child,
-                        } => {
-                            if let Some(idx) = *current_child {
-                                iset.set(idx);
-                                *current_child = None;
-                            }
-                        }
-                        _ => {
-                            // Parent frame might not be a struct (e.g., direct NonZero value)
-                            // In that case, the conversion frame represents the entire value
-                            parent_frame.tracker = Tracker::Init;
-                        }
-                    }
-                }
-            }
             _ => {}
         }
 
@@ -2034,54 +1955,14 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         self.shape()
     }
 
-    /// Helper to check if a shape is trivially constructible (i.e., it's a struct where all fields are trivially constructible)
-    fn is_trivially_constructible(shape: &Shape) -> bool {
-        match shape.ty {
-            Type::User(UserType::Struct(struct_type)) => {
-                // A struct is trivially constructible if all its fields are trivially constructible
-                struct_type
-                    .fields
-                    .iter()
-                    .all(|field| Self::is_trivially_constructible(field.shape))
-            }
-            _ => false,
-        }
-    }
-
     /// Check if a struct field at the given index has been set
     pub fn is_field_set(&self, index: usize) -> Result<bool, ReflectError<'shape>> {
         let frame = self.frames.last().ok_or(ReflectError::NoActiveFrame)?;
 
         match &frame.tracker {
-            Tracker::Uninit => {
-                // For uninitialized structs, check if the requested field is trivially constructible
-                if let Type::User(UserType::Struct(struct_type)) = frame.shape.ty {
-                    if let Some(field) = struct_type.fields.get(index) {
-                        if Self::is_trivially_constructible(field.shape) {
-                            return Ok(true);
-                        }
-                    }
-                }
-                Ok(false)
-            }
+            Tracker::Uninit => Ok(false),
             Tracker::Init => Ok(true),
-            Tracker::Struct { iset, .. } => {
-                // Check if the field is already marked as set
-                if iset.get(index) {
-                    return Ok(true);
-                }
-
-                // For fields that are trivially constructible, they are always initialized
-                if let Type::User(UserType::Struct(struct_type)) = frame.shape.ty {
-                    if let Some(field) = struct_type.fields.get(index) {
-                        if Self::is_trivially_constructible(field.shape) {
-                            return Ok(true);
-                        }
-                    }
-                }
-
-                Ok(false)
-            }
+            Tracker::Struct { iset, .. } => Ok(iset.get(index)),
             Tracker::Enum { data, .. } => {
                 // Check if the field is already marked as set
                 if data.get(index) {
@@ -2245,48 +2126,36 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
             if has_try_from {
                 // Create a conversion frame with the inner shape
 
-                // Extract the data pointer before updating the frame
-                let frame_data = {
-                    let frame = self.frames.last().unwrap();
-                    frame.data
-                };
+                // For conversion frames, we leave the parent tracker unchanged
+                // This allows automatic conversion detection to work properly
 
-                // If the parent frame is a struct tracking a field, we need to update it
-                let frame = self.frames.last_mut().unwrap();
-                match &mut frame.tracker {
-                    Tracker::Uninit => {
-                        // The parent frame is for NonZero itself, initialize it as a struct
-                        if let Type::User(UserType::Struct(struct_type)) = parent_shape.ty {
-                            frame.tracker = Tracker::Struct {
-                                iset: ISet::new(struct_type.fields.len()),
-                                current_child: Some(0), // We're working on field 0
-                            };
-                        }
+                // Allocate memory for the inner value (conversion source)
+                let inner_layout = inner_shape
+                    .layout
+                    .sized_layout()
+                    .map_err(|_| ReflectError::Unsized { shape: inner_shape })?;
+
+                let inner_data = if inner_layout.size() == 0 {
+                    // For ZST, use a non-null but unallocated pointer
+                    PtrUninit::new(core::ptr::NonNull::<u8>::dangling().as_ptr())
+                } else {
+                    // Allocate memory for the inner value
+                    let ptr = unsafe { alloc::alloc::alloc(inner_layout) };
+                    if ptr.is_null() {
+                        alloc::alloc::handle_alloc_error(inner_layout);
                     }
-                    Tracker::Struct { current_child, .. } => {
-                        // Already tracking a struct, update current_child if needed
-                        if current_child.is_none() {
-                            *current_child = Some(0);
-                        }
-                    }
-                    _ => {}
-                }
+                    PtrUninit::new(ptr)
+                };
 
                 // For conversion frames, we create a frame directly with the inner shape
                 // This allows setting values of the inner type which will be converted
+                // The automatic conversion detection in end() will handle the conversion
                 trace!(
-                    "push_inner: Creating conversion frame for {} -> {}",
-                    parent_shape, inner_shape
+                    "push_inner: Creating frame for inner type {} (parent is {})",
+                    inner_shape, parent_shape
                 );
                 self.frames
-                    .push(Frame::new(frame_data, inner_shape, FrameOwnership::Field));
-
-                // Set the tracker to Conversion
-                let last_frame = self.frames.last_mut().unwrap();
-                last_frame.tracker = Tracker::Conversion {
-                    parent_shape,
-                    is_converted: false,
-                };
+                    .push(Frame::new(inner_data, inner_shape, FrameOwnership::Owned));
 
                 Ok(self)
             } else {
@@ -2848,19 +2717,6 @@ impl<'facet, 'shape> Drop for Partial<'facet, 'shape> {
                             unsafe { drop_fn(PtrMut::new(frame.data.as_mut_byte_ptr())) };
                         }
                     }
-                }
-                Tracker::Conversion {
-                    parent_shape,
-                    is_converted,
-                } => {
-                    // If conversion was completed, the parent type now owns the value
-                    // and will handle dropping it with its own drop function
-                    if *is_converted {
-                        if let Some(drop_fn) = (parent_shape.vtable.drop_in_place)() {
-                            unsafe { drop_fn(PtrMut::new(frame.data.as_mut_byte_ptr())) };
-                        }
-                    }
-                    // If conversion wasn't completed, there's nothing to drop
                 }
             }
 

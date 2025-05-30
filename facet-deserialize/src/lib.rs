@@ -1514,7 +1514,7 @@ where
                             st.fields.len()
                         );
 
-                        // Both empty and non-empty tuples need to process list events
+                        // Non-empty tuples need to process list events
                         trace!("Beginning pushback");
                         self.stack.push(Instruction::ListItemOrListClose);
                         return Ok(wip);
@@ -1890,6 +1890,15 @@ where
                 if matches!(shape.def, Def::Array(_)) {
                     self.array_indices.pop();
                 }
+
+                // Special case: if we're at an empty tuple, we've successfully parsed it
+                if let Type::User(UserType::Struct(st)) = shape.ty {
+                    if st.kind == StructKind::Tuple && st.fields.is_empty() {
+                        trace!("Empty tuple parsed from []");
+                        // The empty tuple is complete - no fields to initialize
+                    }
+                }
+
                 // Don't end the list here - let the Pop instruction handle it
                 Ok(wip)
             }
@@ -1976,6 +1985,21 @@ where
                 }
 
                 trace!(" After push, wip.shape is {}", wip.shape().cyan());
+
+                // Special handling: if we're now at an empty tuple and we see a list start,
+                // we can handle the flexible coercion from []
+                if matches!(outcome.node, Outcome::ListStarted) {
+                    if let Type::User(UserType::Struct(st)) = wip.shape().ty {
+                        if st.kind == StructKind::Tuple && st.fields.is_empty() {
+                            trace!("Empty tuple field with list start - expecting immediate close");
+                            // Push instructions to handle the empty list
+                            // We successfully parsed an empty list as an empty tuple
+                            // No need to do anything else - the tuple is complete
+                            return Ok(wip);
+                        }
+                    }
+                }
+
                 wip = self.value(wip, outcome)?;
                 Ok(wip)
             }
