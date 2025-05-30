@@ -35,6 +35,7 @@ facet-core = { version = "0.27.7", path = "../facet-core", features = [
     "bytes",
     "camino",
     "time",
+    "chrono",
     "ulid",
     "uuid",
     "jiff02",
@@ -43,6 +44,7 @@ facet-core = { version = "0.27.7", path = "../facet-core", features = [
 facet-testhelpers = { path = "../facet-testhelpers" }
 insta = "1.43.1"
 time = { version = "0.3.41", features = ["macros"] }
+chrono = { version = "0.4", default-features = false }
 ulid = { version = "1.2.1" }
 uuid = { version = "1.16.0" }
 jiff = "0.2.13"

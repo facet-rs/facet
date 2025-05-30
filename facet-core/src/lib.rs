@@ -50,6 +50,9 @@ mod impls_ulid;
 #[cfg(feature = "time")]
 mod impls_time;
 
+#[cfg(feature = "chrono")]
+mod impls_chrono;
+
 #[cfg(feature = "url")]
 mod impls_url;
 
