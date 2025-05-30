@@ -21,28 +21,28 @@
 //!   - camelCase methods → snake_case (Rust convention)
 //! - **New convenience methods**:
 //!   - `set_nth_field()` - Set a field by index
-//!   - `set_named_field()` - Set a field by name
+//!   - `set_field()` - Set a field by name
 //!   - `set_variant()` - Set enum variant
 //!   - `begin_nth_field()` - Begin working on a field by index
-//!   - `begin_named_field()` - Begin working on a field by name
+//!   - `begin_field()` - Begin working on a field by name
 //!
 //! # Basic Usage
 //!
 //! ```no_run
 //! # use facet_reflect::Partial;
-//! # use facet_core::Shape;
-//! # fn example(shape: &'static Shape<'static>) -> Result<(), Box<dyn std::error::Error>> {
+//! # use facet_core::{Shape, Facet};
+//! # fn example<T: Facet<'static>>() -> Result<(), Box<dyn std::error::Error>> {
 //! // Allocate memory for a struct
-//! let mut partial = Partial::alloc(shape)?;
+//! let mut partial = Partial::alloc::<T>()?;
 //!
 //! // Set simple fields
-//! partial.set_named_field("name", "Alice")?;
-//! partial.set_named_field("age", 30u32)?;
+//! partial.set_field("name", "Alice")?;
+//! partial.set_field("age", 30u32)?;
 //!
 //! // Work with nested structures
-//! partial.begin_named_field("address")?;
-//! partial.set_named_field("street", "123 Main St")?;
-//! partial.set_named_field("city", "Springfield")?;
+//! partial.begin_field("address")?;
+//! partial.set_field("street", "123 Main St")?;
+//! partial.set_field("city", "Springfield")?;
 //! partial.end()?;
 //!
 //! // Build the final value
@@ -57,12 +57,12 @@
 //!
 //! ```no_run
 //! # use facet_reflect::Partial;
-//! # use facet_core::Shape;
-//! # fn example(shape: &'static Shape<'static>) -> Result<(), Box<dyn std::error::Error>> {
-//! let value = Partial::alloc(shape)?
-//!     .set_named_field("name", "Bob")?
-//!     .begin_named_field("scores")?
-//!         .put(vec![95, 87, 92])?
+//! # use facet_core::{Shape, Facet};
+//! # fn example<T: Facet<'static>>() -> Result<(), Box<dyn std::error::Error>> {
+//! let value = Partial::alloc::<T>()?
+//!     .set_field("name", "Bob")?
+//!     .begin_field("scores")?
+//!         .set(vec![95, 87, 92])?
 //!     .end()?
 //!     .build()?;
 //! # Ok(())
@@ -73,17 +73,17 @@
 //!
 //! ```no_run
 //! # use facet_reflect::Partial;
-//! # use facet_core::Shape;
-//! # fn example(shape: &'static Shape<'static>) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut partial = Partial::alloc(shape)?; // Assuming shape is for Vec<String>
+//! # use facet_core::{Shape, Facet};
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let mut partial = Partial::alloc::<Vec<String>>()?;
 //!
 //! // Add items to a list
-//! partial.begin_item()?;
-//! partial.put("first")?;
+//! partial.begin_list_item()?;
+//! partial.set("first")?;
 //! partial.end()?;
 //!
-//! partial.begin_item()?;
-//! partial.put("second")?;
+//! partial.begin_list_item()?;
+//! partial.set("second")?;
 //! partial.end()?;
 //!
 //! let vec = partial.build()?;
@@ -95,16 +95,17 @@
 //!
 //! ```no_run
 //! # use facet_reflect::Partial;
-//! # use facet_core::Shape;
-//! # fn example(shape: &'static Shape<'static>) -> Result<(), Box<dyn std::error::Error>> {
-//! let mut partial = Partial::alloc(shape)?; // Assuming shape is for HashMap<String, i32>
+//! # use facet_core::{Shape, Facet};
+//! # use std::collections::HashMap;
+//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! let mut partial = Partial::alloc::<HashMap<String, i32>>()?;
 //!
 //! // Insert key-value pairs
 //! partial.begin_key()?;
-//! partial.put("score")?;
+//! partial.set("score")?;
 //! partial.end()?;
 //! partial.begin_value()?;
-//! partial.put(100i32)?;
+//! partial.set(100i32)?;
 //! partial.end()?;
 //!
 //! let map = partial.build()?;
