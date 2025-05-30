@@ -75,7 +75,7 @@ fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
             for c in (&mut chars).take(STEP_SIZE) {
                 write_json_escaped_char(writer, c)?;
             }
-            let bits_consumed = chars.as_str().as_ptr() as usize - s.as_ptr() as usize;
+            let bits_consumed = chars.as_str().as_ptr() as usize - s[idx..].as_ptr() as usize;
             idx += bits_consumed;
         }
     }
