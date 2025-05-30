@@ -1900,6 +1900,7 @@ where
                 if matches!(shape.def, Def::Array(_)) {
                     self.array_indices.pop();
                 }
+                // Don't end the list here - let the Pop instruction handle it
                 Ok(wip)
             }
             _ => {

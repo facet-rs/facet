@@ -398,7 +398,18 @@ where
                     }
                     (Def::List(ld), _) => {
                         if ld.t().is_type::<u8>() {
-                            serializer.serialize_bytes(cpeek.get::<Vec<u8>>().unwrap())?
+                            // Special case for Vec<u8> - serialize as bytes
+                            if cpeek.shape().is_type::<Vec<u8>>() {
+                                serializer.serialize_bytes(cpeek.get::<Vec<u8>>().unwrap())?
+                            } else {
+                                // For other list types with u8 elements (like Bytes/BytesMut),
+                                // serialize as array
+                                let peek_list = cpeek.into_list_like().unwrap();
+                                stack.push(SerializeTask::Array {
+                                    items: peek_list.iter(),
+                                    first: true,
+                                });
+                            }
                         } else {
                             let peek_list = cpeek.into_list_like().unwrap();
                             stack.push(SerializeTask::Array {
