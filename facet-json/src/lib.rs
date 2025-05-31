@@ -29,17 +29,17 @@ struct Json;
 #[cfg(feature = "std")]
 #[inline]
 fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
-    // // Just a little bit of text on how it works. There are two main steps:
-    // // 1. Check if the string is completely ASCII and doesn't contain any quotes or backslashes or
-    // //    control characters. This is the fast path, because it means that the bytes can be written
-    // //    as they are, without any escaping needed. In this case we go over the string in windows
-    // //    of 16 bytes (which is completely arbitrary, maybe find some real world data to tune this
-    // //    with? I don't know and you don't have to do this dear reader.) and we just feed them into
-    // //    the writer.
-    // // 2. If the string is not completely ASCII or contains quotes or backslashes or control
-    // //    characters, we need to escape them. This is the slow path, because it means that we need
-    // //    to write the bytes one by one, and we need to figure out where to put the escapes. So we
-    // //    just call `write_json_escaped_char` for each character.
+    // Just a little bit of text on how it works. There are two main steps:
+    // 1. Check if the string is completely ASCII and doesn't contain any quotes or backslashes or
+    //    control characters. This is the fast path, because it means that the bytes can be written
+    //    as they are, without any escaping needed. In this case we go over the string in windows
+    //    of 16 bytes (which is completely arbitrary, maybe find some real world data to tune this
+    //    with? I don't know and you don't have to do this dear reader.) and we just feed them into
+    //    the writer.
+    // 2. If the string is not completely ASCII or contains quotes or backslashes or control
+    //    characters, we need to escape them. This is the slow path, because it means that we need
+    //    to write the bytes one by one, and we need to figure out where to put the escapes. So we
+    //    just call `write_json_escaped_char` for each character.
 
     const STEP_SIZE: usize = Window::BITS as usize / 8;
     type Window = u128;
@@ -81,9 +81,9 @@ fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
         }
     }
 
-    // // In our loop we checked that we were able to consume at least `STEP_SIZE` bytes every
-    // // iteration. That means there might be a small remnant at the end that we can handle in the
-    // // slow method.
+    // In our loop we checked that we were able to consume at least `STEP_SIZE` bytes every
+    // iteration. That means there might be a small remnant at the end that we can handle in the
+    // slow method.
     for c in s.chars() {
         write_json_escaped_char(writer, c)?;
     }
