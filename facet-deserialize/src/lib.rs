@@ -1197,57 +1197,30 @@ where
             if let ScalarAffinity::Number(num_affinity) = sd.affinity {
                 use facet_core::{IntegerSize, NumberBits, Signedness};
 
+                // Helper closure to convert and set numeric value
+                macro_rules! convert_and_set {
+                    ($converter:expr, $target_type:expr) => {{
+                        let converted = $converter(value).ok_or_else(|| {
+                            self.err(DeserErrorKind::NumericConversion {
+                                from: N::TYPE_NAME,
+                                to: $target_type,
+                            })
+                        })?;
+                        wip.set(converted).map_err(|e| self.reflect_err(e))?;
+                    }};
+                }
+
                 // Check if it's integer or float based on the bits type
                 match num_affinity.bits {
                     NumberBits::Integer { size, sign } => {
                         // Integer type - check signed/unsigned and size
                         match (size, sign) {
                             (IntegerSize::Fixed(bits), Signedness::Signed) => match bits {
-                                8 => {
-                                    wip.set(value.to_i8().ok_or_else(|| {
-                                        self.err(DeserErrorKind::NumericConversion {
-                                            from: N::TYPE_NAME,
-                                            to: "i8",
-                                        })
-                                    })?)
-                                    .map_err(|e| self.reflect_err(e))?;
-                                }
-                                16 => {
-                                    wip.set(value.to_i16().ok_or_else(|| {
-                                        self.err(DeserErrorKind::NumericConversion {
-                                            from: N::TYPE_NAME,
-                                            to: "i16",
-                                        })
-                                    })?)
-                                    .map_err(|e| self.reflect_err(e))?;
-                                }
-                                32 => {
-                                    wip.set(value.to_i32().ok_or_else(|| {
-                                        self.err(DeserErrorKind::NumericConversion {
-                                            from: N::TYPE_NAME,
-                                            to: "i32",
-                                        })
-                                    })?)
-                                    .map_err(|e| self.reflect_err(e))?;
-                                }
-                                64 => {
-                                    wip.set(value.to_i64().ok_or_else(|| {
-                                        self.err(DeserErrorKind::NumericConversion {
-                                            from: N::TYPE_NAME,
-                                            to: "i64",
-                                        })
-                                    })?)
-                                    .map_err(|e| self.reflect_err(e))?;
-                                }
-                                128 => {
-                                    wip.set(value.to_i128().ok_or_else(|| {
-                                        self.err(DeserErrorKind::NumericConversion {
-                                            from: N::TYPE_NAME,
-                                            to: "i128",
-                                        })
-                                    })?)
-                                    .map_err(|e| self.reflect_err(e))?;
-                                }
+                                8 => convert_and_set!(N::to_i8, "i8"),
+                                16 => convert_and_set!(N::to_i16, "i16"),
+                                32 => convert_and_set!(N::to_i32, "i32"),
+                                64 => convert_and_set!(N::to_i64, "i64"),
+                                128 => convert_and_set!(N::to_i128, "i128"),
                                 _ => {
                                     return Err(self.err(DeserErrorKind::NumericConversion {
                                         from: N::TYPE_NAME,
@@ -1256,51 +1229,11 @@ where
                                 }
                             },
                             (IntegerSize::Fixed(bits), Signedness::Unsigned) => match bits {
-                                8 => {
-                                    wip.set(value.to_u8().ok_or_else(|| {
-                                        self.err(DeserErrorKind::NumericConversion {
-                                            from: N::TYPE_NAME,
-                                            to: "u8",
-                                        })
-                                    })?)
-                                    .map_err(|e| self.reflect_err(e))?;
-                                }
-                                16 => {
-                                    wip.set(value.to_u16().ok_or_else(|| {
-                                        self.err(DeserErrorKind::NumericConversion {
-                                            from: N::TYPE_NAME,
-                                            to: "u16",
-                                        })
-                                    })?)
-                                    .map_err(|e| self.reflect_err(e))?;
-                                }
-                                32 => {
-                                    wip.set(value.to_u32().ok_or_else(|| {
-                                        self.err(DeserErrorKind::NumericConversion {
-                                            from: N::TYPE_NAME,
-                                            to: "u32",
-                                        })
-                                    })?)
-                                    .map_err(|e| self.reflect_err(e))?;
-                                }
-                                64 => {
-                                    wip.set(value.to_u64().ok_or_else(|| {
-                                        self.err(DeserErrorKind::NumericConversion {
-                                            from: N::TYPE_NAME,
-                                            to: "u64",
-                                        })
-                                    })?)
-                                    .map_err(|e| self.reflect_err(e))?;
-                                }
-                                128 => {
-                                    wip.set(value.to_u128().ok_or_else(|| {
-                                        self.err(DeserErrorKind::NumericConversion {
-                                            from: N::TYPE_NAME,
-                                            to: "u128",
-                                        })
-                                    })?)
-                                    .map_err(|e| self.reflect_err(e))?;
-                                }
+                                8 => convert_and_set!(N::to_u8, "u8"),
+                                16 => convert_and_set!(N::to_u16, "u16"),
+                                32 => convert_and_set!(N::to_u32, "u32"),
+                                64 => convert_and_set!(N::to_u64, "u64"),
+                                128 => convert_and_set!(N::to_u128, "u128"),
                                 _ => {
                                     return Err(self.err(DeserErrorKind::NumericConversion {
                                         from: N::TYPE_NAME,
@@ -1309,24 +1242,10 @@ where
                                 }
                             },
                             (IntegerSize::PointerSized, Signedness::Signed) => {
-                                // Handle isize directly
-                                wip.set(value.to_isize().ok_or_else(|| {
-                                    self.err(DeserErrorKind::NumericConversion {
-                                        from: N::TYPE_NAME,
-                                        to: "isize",
-                                    })
-                                })?)
-                                .map_err(|e| self.reflect_err(e))?;
+                                convert_and_set!(N::to_isize, "isize")
                             }
                             (IntegerSize::PointerSized, Signedness::Unsigned) => {
-                                // Handle usize directly
-                                wip.set(value.to_usize().ok_or_else(|| {
-                                    self.err(DeserErrorKind::NumericConversion {
-                                        from: N::TYPE_NAME,
-                                        to: "usize",
-                                    })
-                                })?)
-                                .map_err(|e| self.reflect_err(e))?;
+                                convert_and_set!(N::to_usize, "usize")
                             }
                         }
                     }
@@ -1339,24 +1258,8 @@ where
                         // Floating point - calculate total bits
                         let total_bits = sign_bits + exponent_bits + mantissa_bits;
                         match total_bits {
-                            32 => {
-                                wip.set(value.to_f32().ok_or_else(|| {
-                                    self.err(DeserErrorKind::NumericConversion {
-                                        from: N::TYPE_NAME,
-                                        to: "f32",
-                                    })
-                                })?)
-                                .map_err(|e| self.reflect_err(e))?;
-                            }
-                            64 => {
-                                wip.set(value.to_f64().ok_or_else(|| {
-                                    self.err(DeserErrorKind::NumericConversion {
-                                        from: N::TYPE_NAME,
-                                        to: "f64",
-                                    })
-                                })?)
-                                .map_err(|e| self.reflect_err(e))?;
-                            }
+                            32 => convert_and_set!(N::to_f32, "f32"),
+                            64 => convert_and_set!(N::to_f64, "f64"),
                             _ => {
                                 // Unknown float size
                                 return Err(self.err(DeserErrorKind::NumericConversion {

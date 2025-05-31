@@ -20,11 +20,7 @@ unsafe impl Facet<'_> for ConstTypeId {
                     .affinity(&const { ScalarAffinity::opaque().build() })
                     .build(),
             ))
-            .ty(Type::User(UserType::Struct(StructType {
-                repr: Repr::c(),
-                kind: StructKind::Struct,
-                fields: &const { [field_in_type!(ConstTypeId, type_id_fn)] },
-            })))
+            .ty(Type::User(UserType::Opaque))
             .build()
     };
 }

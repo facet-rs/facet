@@ -316,6 +316,7 @@ fn check_facts<'a, 'b: 'a, T>(
 }
 
 // slightly different version to overwrite the equality parts as miri juggles the addresses
+#[cfg(feature = "fn-ptr")]
 fn check_facts_no_cmp<'a, 'b: 'a, T>(
     val1: &'b T,
     val2: &'b T,
@@ -1568,6 +1569,7 @@ fn test_weird_cmp() {
 }
 
 #[test]
+#[cfg(feature = "fn-ptr")]
 fn test_fn_ptr() {
     let c = |_: u32| -> u32 { 0 };
     let c = c as fn(_) -> _;

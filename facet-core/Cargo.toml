@@ -11,17 +11,35 @@ categories = ["development-tools"]
 
 [features]
 default = ["std"]
+# Enable standard library support
 std = ["alloc"]
+# Enable allocation support for no_std environments
 alloc = []
+# Provide Facet trait implementations for camino::Utf8Path and camino::Utf8PathBuf
 camino = ["dep:camino", "alloc"]
+# Provide Facet trait implementations for ordered_float types
 ordered-float = ["dep:ordered-float"]
+# Provide Facet trait implementations for uuid::Uuid
 uuid = ["alloc", "dep:uuid"]
+# Provide Facet trait implementations for ulid::Ulid
 ulid = ["alloc", "dep:ulid"]
+# Provide Facet trait implementations for time crate types
 time = ["alloc", "dep:time"]
+# Provide Facet trait implementations for chrono crate types
 chrono = ["alloc", "dep:chrono"]
+# Provide Facet trait implementations for url::Url
 url = ["alloc", "dep:url"]
+# Provide Facet trait implementations for jiff crate types
 jiff02 = ["alloc", "dep:jiff"]
+# Provide Facet trait implementations for bytes::Bytes
 bytes = ["alloc", "dep:bytes"]
+
+# Provide Facet trait implementations for tuples up to size 12. Without it,
+# Facet is only implemented for tuples up to size 4.
+tuples-12 = []
+
+# Provide Facet trait implementations for function pointers.
+fn-ptr = []
 
 [dependencies]
 url = { version = "2.5.4", optional = true, default-features = false }
@@ -35,7 +53,10 @@ time = { version = "0.3.41", optional = true, features = [
     "parsing",
     "formatting",
 ] }
-chrono = { version = "0.4", optional = true, default-features = false, features = ["alloc", "clock"] }
+chrono = { version = "0.4", optional = true, default-features = false, features = [
+    "alloc",
+    "clock",
+] }
 jiff = { version = "0.2.13", optional = true }
 bytes = { version = "1.10.1", optional = true, default-features = false }
 

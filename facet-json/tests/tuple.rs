@@ -37,13 +37,6 @@ fn test_deserialize_tuple_i32() {
     assert_eq!(ok.2, 30);
     assert_eq!(ok.3, 40);
 
-    let ok: (i32, i32, i32, i32, i32) = from_str(r#"[10,20,30,40,50]"#)?;
-    assert_eq!(ok.0, 10);
-    assert_eq!(ok.1, 20);
-    assert_eq!(ok.2, 30);
-    assert_eq!(ok.3, 40);
-    assert_eq!(ok.4, 50);
-
     let ok: (i32, i32) = from_str(r#"[-1,-0]"#)?;
     assert_eq!(ok.0, -1);
     assert_eq!(ok.1, 0);
@@ -68,13 +61,6 @@ fn test_deserialize_tuple_f32() {
     assert_eq!(ok.1, 20.0);
     assert_eq!(ok.2, 30.0);
     assert_eq!(ok.3, 40.0);
-
-    let ok: (f32, f32, f32, f32, f32) = from_str(r#"[10,20,30,40,50]"#)?;
-    assert_eq!(ok.0, 10.0);
-    assert_eq!(ok.1, 20.0);
-    assert_eq!(ok.2, 30.0);
-    assert_eq!(ok.3, 40.0);
-    assert_eq!(ok.4, 50.0);
 
     let ok: (f32, f32) = from_str(r#"[-1,-0]"#)?;
     assert_eq!(ok.0, -1.0);

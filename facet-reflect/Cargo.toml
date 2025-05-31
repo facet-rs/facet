@@ -20,11 +20,26 @@ log = [
     "dep:log",
 ] # Enable logging of reflection operations (mostly for internal development)
 slow-tests = [] # Enable slow tests (compile tests)
-camino = ["alloc", "dep:camino", "facet-core/camino"]
-uuid = ["alloc", "dep:uuid", "facet-core/uuid"]
-ulid = ["alloc", "dep:ulid", "facet-core/ulid"]
-time = ["facet-core/time"]
-jiff02 = ["facet-core/jiff02"]
+camino = [
+    "alloc",
+    "dep:camino",
+    "facet-core/camino",
+] # Enable Facet implementation for camino path types
+uuid = [
+    "alloc",
+    "dep:uuid",
+    "facet-core/uuid",
+] # Enable Facet implementation for UUID types
+ulid = [
+    "alloc",
+    "dep:ulid",
+    "facet-core/ulid",
+] # Enable Facet implementation for ULID types
+time = ["facet-core/time"] # Enable Facet implementation for time types
+jiff02 = ["facet-core/jiff02"] # Enable Facet implementation for jiff 0.2 types
+fn-ptr = [
+    "facet-core/fn-ptr",
+] # Enable Facet implementation for function pointers
 
 [dependencies]
 bitflags = "2.9.0"

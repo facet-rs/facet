@@ -14,29 +14,36 @@ features = ["std", "reflect", "camino", "ordered-float"]
 
 [features]
 default = ["std"]
-reflect = ["dep:facet-reflect"] # Enables reflection via Peek and Poke types
+reflect = ["dep:facet-reflect"] # Enable reflection via Peek and Poke types
 testfeat = [] # Does nothing, only used for tests
-std = ["facet-core/std", "alloc"] # Uses libstd and alloc
-alloc = ["facet-core/alloc"] # Enables alloc support
+std = ["facet-core/std", "alloc"] # Enable standard library support
+alloc = ["facet-core/alloc"] # Enable allocation support for no_std environments
 bytes = [
     "facet-core/bytes",
-] # Implements Facet for bytes types (Bytes, BytesMut)
+] # Provide Facet trait implementations for bytes::Bytes and bytes::BytesMut
 camino = [
     "facet-core/camino",
-] # Implements Facet for camino types (Utf8PathBuf, Utf8Path)
-uuid = ["facet-core/uuid"] # Implements Facet for Uuid
-ulid = ["facet-core/ulid"] # Implements Facet for Ulid
-ordered-float = ["facet-core/ordered-float"] # Implements Facet for OrderedFloat
+] # Provide Facet trait implementations for camino::Utf8Path and camino::Utf8PathBuf
+uuid = ["facet-core/uuid"] # Provide Facet trait implementations for uuid::Uuid
+ulid = ["facet-core/ulid"] # Provide Facet trait implementations for ulid::Ulid
+ordered-float = ["facet-core/ordered-float"] # Provide Facet trait implementations for ordered_float types
 jiff02 = [
     "facet-core/jiff02",
-] # Implements Facet for jiff types (Zoned, Offset, etc.)
+] # Provide Facet trait implementations for jiff crate types
 time = [
     "facet-core/time",
-] # Implements Facet for time types (OffsetDateTime, PrimitiveDateTime, etc.)
+] # Provide Facet trait implementations for time crate types
 chrono = [
     "facet-core/chrono",
-] # Implements Facet for chrono types (DateTime, NaiveDate, etc.)
-url = ["facet-core/url"] # Implements Facet for Url
+] # Provide Facet trait implementations for chrono crate types
+url = ["facet-core/url"] # Provide Facet trait implementations for url::Url
+
+# Provide Facet trait implementations for tuples up to size 12. Without it,
+# Facet is only implemented for tuples up to size 4.
+tuples-12 = ["facet-core/tuples-12"]
+
+# Provide Facet trait implementations for function pointers.
+fn-ptr = ["facet-core/fn-ptr"]
 
 [dependencies]
 facet-core = { path = "../facet-core", version = "0.27.7", default-features = false }

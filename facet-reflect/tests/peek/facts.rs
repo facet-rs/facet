@@ -158,6 +158,7 @@ where
 }
 
 // slightly different version to overwrite the equality parts as miri juggles the addresses
+#[cfg(feature = "fn-ptr")]
 fn check_facts_no_cmp<'a, T>(val1: T, val2: T, mut expected_facts: HashSet<Fact>)
 where
     T: Facet<'a>,
@@ -859,6 +860,7 @@ fn test_enums() {
 }
 
 #[test]
+#[cfg(feature = "fn-ptr")]
 fn test_fn_ptr() {
     let c = |_: u32| -> u32 { 0 };
     check_facts_no_cmp::<fn(u32) -> u32>(c, c, FactBuilder::new().debug().clone().build());

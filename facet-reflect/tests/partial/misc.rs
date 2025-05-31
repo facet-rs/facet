@@ -554,6 +554,7 @@ fn wip_parse_option() {
 }
 
 #[test]
+#[cfg(feature = "fn-ptr")]
 fn wip_fn_ptr() {
     #[derive(Facet, Debug, PartialEq, Eq)]
     struct Foo {
