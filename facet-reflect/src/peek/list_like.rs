@@ -140,9 +140,7 @@ impl<'mem, 'facet, 'shape> PeekListLike<'mem, 'facet, 'shape> {
 
     /// Get an item from the list at the specified index
     ///
-    /// # Panics
-    ///
-    /// Panics if the index is out of bounds
+    /// Return `None` if the index is out of bounds
     pub fn get(&self, index: usize) -> Option<Peek<'mem, 'facet, 'shape>> {
         let as_ptr = match self.def {
             ListLikeDef::List(def) => {

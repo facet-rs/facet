@@ -119,6 +119,9 @@ impl<T: IterItem> IterVTableBuilder<T> {
     ///
     /// This method will panic if any of the required fields are `None`.
     pub const fn build(self) -> IterVTable<T> {
+        assert!(self.init_with_value.is_some());
+        assert!(self.next_back.is_some());
+        assert!(self.size_hint.is_some());
         IterVTable {
             init_with_value: self.init_with_value,
             next: self.next.unwrap(),
