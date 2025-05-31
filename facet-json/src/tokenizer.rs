@@ -302,12 +302,13 @@ impl<'input> Tokenizer<'input> {
             });
         }
 
-        let s = match str::from_utf8(&buf) {
-            Ok(st) => st.to_string(),
+        let len = buf.len();
+        let s = match String::from_utf8(buf) {
+            Ok(st) => st,
             Err(e) => {
                 return Err(TokenError {
                     kind: TokenErrorKind::InvalidUtf8(e.to_string()),
-                    span: Span::new(content_start, buf.len()),
+                    span: Span::new(content_start, len),
                 });
             }
         };
