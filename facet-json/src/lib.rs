@@ -29,17 +29,17 @@ struct Json;
 #[cfg(feature = "std")]
 #[inline]
 fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
-    // // Just a little bit of text on how it works. There are two main steps:
-    // // 1. Check if the string is completely ASCII and doesn't contain any quotes or backslashes or
-    // //    control characters. This is the fast path, because it means that the bytes can be written
-    // //    as they are, without any escaping needed. In this case we go over the string in windows
-    // //    of 16 bytes (which is completely arbitrary, maybe find some real world data to tune this
-    // //    with? I don't know and you don't have to do this dear reader.) and we just feed them into
-    // //    the writer.
-    // // 2. If the string is not completely ASCII or contains quotes or backslashes or control
-    // //    characters, we need to escape them. This is the slow path, because it means that we need
-    // //    to write the bytes one by one, and we need to figure out where to put the escapes. So we
-    // //    just call `write_json_escaped_char` for each character.
+    // Just a little bit of text on how it works. There are two main steps:
+    // 1. Check if the string is completely ASCII and doesn't contain any quotes or backslashes or
+    //    control characters. This is the fast path, because it means that the bytes can be written
+    //    as they are, without any escaping needed. In this case we go over the string in windows
+    //    of 16 bytes (which is completely arbitrary, maybe find some real world data to tune this
+    //    with? I don't know and you don't have to do this dear reader.) and we just feed them into
+    //    the writer.
+    // 2. If the string is not completely ASCII or contains quotes or backslashes or control
+    //    characters, we need to escape them. This is the slow path, because it means that we need
+    //    to write the bytes one by one, and we need to figure out where to put the escapes. So we
+    //    just call `write_json_escaped_char` for each character.
 
     const STEP_SIZE: usize = Window::BITS as usize / 8;
     type Window = u128;
@@ -81,9 +81,9 @@ fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
         }
     }
 
-    // // In our loop we checked that we were able to consume at least `STEP_SIZE` bytes every
-    // // iteration. That means there might be a small remnant at the end that we can handle in the
-    // // slow method.
+    // In our loop we checked that we were able to consume at least `STEP_SIZE` bytes every
+    // iteration. That means there might be a small remnant at the end that we can handle in the
+    // slow method.
     for c in s.chars() {
         write_json_escaped_char(writer, c)?;
     }
@@ -126,6 +126,7 @@ fn write_json_escaped_char<W: Write>(writer: &mut W, c: char) -> io::Result<()> 
     }
 }
 
+#[inline]
 fn contains_0x22(val: u128) -> bool {
     let xor_result = val ^ 0x22222222222222222222222222222222;
     let has_zero = (xor_result.wrapping_sub(0x01010101010101010101010101010101))
@@ -134,6 +135,7 @@ fn contains_0x22(val: u128) -> bool {
     has_zero != 0
 }
 
+#[inline]
 fn contains_0x5c(val: u128) -> bool {
     let xor_result = val ^ 0x5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c;
     let has_zero = (xor_result.wrapping_sub(0x01010101010101010101010101010101))
@@ -143,11 +145,11 @@ fn contains_0x5c(val: u128) -> bool {
 }
 
 /// For each of the 16 u8s that make up a u128, check if the top three bits are set.
+#[inline]
 fn top_three_bits_set(value: u128) -> bool {
-    let mask = 0xe0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0;
-    let masked = value & mask;
-    let has_zero = (masked.wrapping_sub(0x01010101010101010101010101010101))
-        & !masked
+    let xor_result = value & 0xe0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0;
+    let has_zero = (xor_result.wrapping_sub(0x01010101010101010101010101010101))
+        & !xor_result
         & 0x80808080808080808080808080808080;
     has_zero == 0
 }

@@ -25,6 +25,7 @@ pub enum TokenErrorKind {
     NumberOutOfRange(f64),
 }
 
+use alloc::borrow::Cow;
 use core::fmt::{self, Display, Formatter};
 
 use facet_deserialize::{Pos, Span, Spanned};
@@ -41,11 +42,11 @@ impl Display for TokenErrorKind {
 }
 
 /// Tokenization result, yielding a spanned token
-pub type TokenizeResult = Result<Spanned<Token>, TokenError>;
+pub type TokenizeResult<'input> = Result<Spanned<Token<'input>>, TokenError>;
 
 /// JSON tokens (without positions)
 #[derive(Debug, Clone, PartialEq)]
-pub enum Token {
+pub enum Token<'input> {
     /// Left brace character: '{'
     LBrace,
     /// Right brace character: '}'
@@ -60,7 +61,7 @@ pub enum Token {
     Comma,
     /// A JSON string value
     /// TODO: should be a &[u8], lazily de-escaped if/when needed
-    String(String),
+    String(Cow<'input, str>),
     /// A 64-bit floating point number value — used if the value contains a decimal point
     F64(f64),
     /// A signed 64-bit integer number value — used if the value does not contain a decimal point but contains a sign
@@ -77,7 +78,7 @@ pub enum Token {
     Eof,
 }
 
-impl Display for Token {
+impl Display for Token<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Token::LBrace => write!(f, "{{"),
@@ -111,7 +112,7 @@ impl<'input> Tokenizer<'input> {
     }
 
     /// Return the next spanned token or a TokenizeError
-    pub fn next_token(&mut self) -> TokenizeResult {
+    pub fn next_token(&mut self) -> TokenizeResult<'input> {
         self.skip_whitespace();
         let start = self.pos;
         let c = match self.input.get(self.pos).copied() {
@@ -193,101 +194,47 @@ impl<'input> Tokenizer<'input> {
         }
     }
 
-    fn parse_string(&mut self, start: Pos) -> TokenizeResult {
+    #[inline(never)]
+    fn parse_string(&mut self, start: Pos) -> TokenizeResult<'input> {
+        const STEP_SIZE: usize = Window::BITS as usize / 8;
+        type Window = u128;
+        type Chunk = [u8; STEP_SIZE];
+
         // Skip opening quote
         self.pos += 1;
-        let mut buf = Vec::new();
         let content_start = self.pos;
+        let mut buf = CowBuf::Borrowed {
+            input: self.input,
+            start: content_start,
+            end: content_start,
+        };
 
-        while let Some(&b) = self.input.get(self.pos) {
-            match b {
-                b'"' => {
-                    self.pos += 1;
-                    break;
-                }
-                b'\\' => {
-                    self.pos += 1;
-                    if let Some(&esc) = self.input.get(self.pos) {
-                        match esc {
-                            b'"' | b'\\' | b'/' => buf.push(esc),
-                            b'b' => buf.push(b'\x08'), // backspace
-                            b'f' => buf.push(b'\x0C'), // form feed
-                            b'n' => buf.push(b'\n'),   // line feed
-                            b'r' => buf.push(b'\r'),   // carriage return
-                            b't' => buf.push(b'\t'),   // tab
-                            b'u' => {
-                                // Handle \uXXXX Unicode escape sequence
-                                // We need to read 4 hexadecimal digits
-                                self.pos += 1; // Move past 'u'
-                                let hex_start = self.pos;
-                                if self.pos + 4 > self.input.len() {
-                                    return Err(TokenError {
-                                        kind: TokenErrorKind::UnexpectedEof(
-                                            "in Unicode escape sequence",
-                                        ),
-                                        span: Span::new(hex_start, self.input.len() - hex_start),
-                                    });
-                                }
-
-                                // Read 4 hexadecimal digits
-                                let hex_digits = &self.input[self.pos..self.pos + 4];
-                                let hex_str = match str::from_utf8(hex_digits) {
-                                    Ok(s) => s,
-                                    Err(_) => {
-                                        return Err(TokenError {
-                                            kind: TokenErrorKind::InvalidUtf8(
-                                                "invalid UTF-8 in Unicode escape".to_string(),
-                                            ),
-                                            span: Span::new(hex_start, 4),
-                                        });
-                                    }
-                                };
-
-                                // Parse hexadecimal value
-                                let code_point = match u16::from_str_radix(hex_str, 16) {
-                                    Ok(cp) => cp,
-                                    Err(_) => {
-                                        return Err(TokenError {
-                                            kind: TokenErrorKind::UnexpectedCharacter('?'),
-                                            span: Span::new(hex_start, 4),
-                                        });
-                                    }
-                                };
-
-                                // Convert to UTF-8 and append to buffer
-                                // Handle basic Unicode code points (BMP)
-                                let c = match char::from_u32(code_point as u32) {
-                                    Some(c) => c,
-                                    None => {
-                                        return Err(TokenError {
-                                            kind: TokenErrorKind::InvalidUtf8(
-                                                "invalid Unicode code point".to_string(),
-                                            ),
-                                            span: Span::new(hex_start, 4),
-                                        });
-                                    }
-                                };
-
-                                // Extend buffer with UTF-8 bytes for the character
-                                let mut utf8_buf = [0u8; 4];
-                                let utf8_bytes = c.encode_utf8(&mut utf8_buf).as_bytes();
-                                buf.extend_from_slice(utf8_bytes);
-
-                                self.pos += 3; // +3 because we'll increment once more below
-                            }
-                            _ => buf.push(esc), // other escapes
-                        }
-                        self.pos += 1;
-                    } else {
-                        return Err(TokenError {
-                            kind: TokenErrorKind::UnexpectedEof("in string escape"),
-                            span: Span::new(self.pos, 0),
-                        });
+        let mut done = false;
+        'outer: while let Some(Ok(chunk)) =
+            self.input[self.pos..].get(..STEP_SIZE).map(Chunk::try_from)
+        {
+            let window = Window::from_ne_bytes(chunk);
+            let quote_free = !super::contains_0x22(window);
+            let backslash_free = !super::contains_0x5c(window);
+            if quote_free && backslash_free {
+                buf.push_borrowed(&chunk);
+                self.pos += STEP_SIZE;
+            } else {
+                let chunk_start = self.pos;
+                while let Some(&b) = chunk.get(self.pos - chunk_start) {
+                    let should_continue = self.parse_char(b, &mut buf)?;
+                    if !should_continue {
+                        done = true;
+                        break 'outer;
                     }
                 }
-                _ => {
-                    buf.push(b);
-                    self.pos += 1;
+            }
+        }
+        if !done {
+            while let Some(&b) = self.input.get(self.pos) {
+                let should_continue = self.parse_char(b, &mut buf)?;
+                if !should_continue {
+                    break;
                 }
             }
         }
@@ -302,25 +249,146 @@ impl<'input> Tokenizer<'input> {
             });
         }
 
-        let s = match str::from_utf8(&buf) {
-            Ok(st) => st.to_string(),
-            Err(e) => {
-                return Err(TokenError {
-                    kind: TokenErrorKind::InvalidUtf8(e.to_string()),
-                    span: Span::new(content_start, buf.len()),
-                });
-            }
-        };
+        match buf {
+            CowBuf::Borrowed { input, start, end } => {
+                let len = end - start;
+                let s = match str::from_utf8(&input[start..end]) {
+                    Ok(st) => st,
+                    Err(e) => {
+                        return Err(TokenError {
+                            kind: TokenErrorKind::InvalidUtf8(e.to_string()),
+                            span: Span::new(content_start, len),
+                        });
+                    }
+                };
 
-        let len = self.pos - start;
-        let span = Span::new(start, len);
-        Ok(Spanned {
-            node: Token::String(s),
-            span,
-        })
+                let len = self.pos - start;
+                let span = Span::new(start, len);
+                Ok(Spanned {
+                    node: Token::String(Cow::Borrowed(s)),
+                    span,
+                })
+            }
+            CowBuf::Owned(buf) => {
+                let len = buf.len();
+                let s = match String::from_utf8(buf) {
+                    Ok(st) => st,
+                    Err(e) => {
+                        return Err(TokenError {
+                            kind: TokenErrorKind::InvalidUtf8(e.to_string()),
+                            span: Span::new(content_start, len),
+                        });
+                    }
+                };
+
+                let len = self.pos - start;
+                let span = Span::new(start, len);
+                Ok(Spanned {
+                    node: Token::String(Cow::Owned(s)),
+                    span,
+                })
+            }
+        }
     }
 
-    fn parse_number(&mut self, start: Pos) -> TokenizeResult {
+    #[inline]
+    fn parse_char(&mut self, byte: u8, buf: &mut CowBuf) -> Result<bool, TokenError> {
+        match byte {
+            b'"' => {
+                self.pos += 1;
+                Ok(false)
+            }
+            b'\\' => {
+                self.pos += 1;
+                if let Some(&esc) = self.input.get(self.pos) {
+                    match esc {
+                        b'"' | b'\\' | b'/' => buf.push_owned(&[esc]),
+                        b'b' => buf.push_owned(b"\x08"), // backspace
+                        b'f' => buf.push_owned(b"\x0C"), // form feed
+                        b'n' => buf.push_owned(b"\n"),   // line feed
+                        b'r' => buf.push_owned(b"\r"),   // carriage return
+                        b't' => buf.push_owned(b"\t"),   // tab
+                        b'u' => {
+                            // Handle \uXXXX Unicode escape sequence
+                            // We need to read 4 hexadecimal digits
+                            self.pos += 1; // Move past 'u'
+                            let hex_start = self.pos;
+                            if self.pos + 4 > self.input.len() {
+                                return Err(TokenError {
+                                    kind: TokenErrorKind::UnexpectedEof(
+                                        "in Unicode escape sequence",
+                                    ),
+                                    span: Span::new(hex_start, self.input.len() - hex_start),
+                                });
+                            }
+
+                            // Read 4 hexadecimal digits
+                            let hex_digits = &self.input[self.pos..self.pos + 4];
+                            let hex_str = match str::from_utf8(hex_digits) {
+                                Ok(s) => s,
+                                Err(_) => {
+                                    return Err(TokenError {
+                                        kind: TokenErrorKind::InvalidUtf8(
+                                            "invalid UTF-8 in Unicode escape".to_string(),
+                                        ),
+                                        span: Span::new(hex_start, 4),
+                                    });
+                                }
+                            };
+
+                            // Parse hexadecimal value
+                            let code_point = match u16::from_str_radix(hex_str, 16) {
+                                Ok(cp) => cp,
+                                Err(_) => {
+                                    return Err(TokenError {
+                                        kind: TokenErrorKind::UnexpectedCharacter('?'),
+                                        span: Span::new(hex_start, 4),
+                                    });
+                                }
+                            };
+
+                            // Convert to UTF-8 and append to buffer
+                            // Handle basic Unicode code points (BMP)
+                            let c = match char::from_u32(code_point as u32) {
+                                Some(c) => c,
+                                None => {
+                                    return Err(TokenError {
+                                        kind: TokenErrorKind::InvalidUtf8(
+                                            "invalid Unicode code point".to_string(),
+                                        ),
+                                        span: Span::new(hex_start, 4),
+                                    });
+                                }
+                            };
+
+                            // Extend buffer with UTF-8 bytes for the character
+                            let mut utf8_buf = [0u8; 4];
+                            let utf8_bytes = c.encode_utf8(&mut utf8_buf).as_bytes();
+                            buf.push_owned(utf8_bytes);
+
+                            self.pos += 3; // +3 because we'll increment once more below
+                        }
+                        _ => buf.push_owned(&[esc]), // other escapes
+                    }
+                    self.pos += 1;
+                    Ok(true)
+                } else {
+                    Err(TokenError {
+                        kind: TokenErrorKind::UnexpectedEof("in string escape"),
+                        span: Span::new(self.pos, 0),
+                    })
+                }
+            }
+            _ => {
+                buf.push_borrowed(&[byte]);
+                self.pos += 1;
+                Ok(true)
+            }
+        }
+    }
+
+    #[inline(never)]
+    fn parse_number(&mut self, start: Pos) -> TokenizeResult<'input> {
         let mut end = self.pos;
         if self.input[end] == b'-' {
             end += 1;
@@ -399,9 +467,10 @@ impl<'input> Tokenizer<'input> {
         Ok(Spanned { node: token, span })
     }
 
-    fn parse_literal<F>(&mut self, start: Pos, pat: &[u8], ctor: F) -> TokenizeResult
+    #[inline(never)]
+    fn parse_literal<F>(&mut self, start: Pos, pat: &[u8], ctor: F) -> TokenizeResult<'input>
     where
-        F: FnOnce() -> Token,
+        F: FnOnce() -> Token<'static>,
     {
         let end = start + pat.len();
         if end <= self.input.len() && &self.input[start..end] == pat {
@@ -418,6 +487,37 @@ impl<'input> Tokenizer<'input> {
                 kind: TokenErrorKind::UnexpectedCharacter(got),
                 span,
             })
+        }
+    }
+}
+
+enum CowBuf<'a> {
+    Borrowed {
+        input: &'a [u8],
+        start: usize,
+        end: usize,
+    },
+    Owned(Vec<u8>),
+}
+
+impl CowBuf<'_> {
+    fn push_borrowed(&mut self, data: &[u8]) {
+        match self {
+            CowBuf::Borrowed { end, .. } => *end += data.len(),
+            CowBuf::Owned(owned) => owned.extend(data),
+        }
+    }
+
+    fn push_owned(&mut self, data: &[u8]) {
+        match self {
+            CowBuf::Borrowed { input, start, end } => {
+                // Pour one out for our speed gains...
+                let mut owned = Vec::with_capacity(*end - *start + data.len());
+                owned.extend(&input[*start..*end]);
+                owned.extend(data);
+                *self = CowBuf::Owned(owned);
+            }
+            CowBuf::Owned(owned) => owned.extend(data),
         }
     }
 }
