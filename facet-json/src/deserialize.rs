@@ -1,4 +1,4 @@
-use alloc::{borrow::Cow, format};
+use alloc::format;
 
 use facet_core::Facet;
 use facet_deserialize::{
@@ -71,7 +71,7 @@ impl Format for crate::Json {
 
             let res = match token.node {
                 Token::String(s) => Ok(Spanned {
-                    node: Outcome::Scalar(Scalar::String(Cow::Owned(s))),
+                    node: Outcome::Scalar(Scalar::String(s)),
                     span,
                 }),
                 Token::F64(n) => Ok(Spanned {
