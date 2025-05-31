@@ -185,13 +185,15 @@ where
 
     fn serialize_f32(&mut self, value: f32) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", value)?;
+        // write!(self.writer, "{}", value)?;
+        write!(self.writer, "{}", ryu::Buffer::new().format(value))?;
         self.end_value()
     }
 
     fn serialize_f64(&mut self, value: f64) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", value)?;
+        // write!(self.writer, "{}", value)?;
+        write!(self.writer, "{}", ryu::Buffer::new().format(value))?;
         self.end_value()
     }
 
