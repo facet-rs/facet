@@ -1,3 +1,4 @@
+use core::borrow::Borrow;
 use facet_core::Facet;
 use facet_reflect::Peek;
 use facet_serialize::{Serializer, serialize_iterative};
@@ -215,7 +216,11 @@ where
         self.end_value()
     }
 
-    fn serialize_bytes(&mut self, _value: &[u8]) -> Result<(), Self::Error> {
+    fn serialize_bytes(
+        &mut self,
+        _len: usize,
+        _value: impl IntoIterator<Item = impl Borrow<u8>>,
+    ) -> Result<(), Self::Error> {
         panic!("JSON does not support byte arrays")
     }
 

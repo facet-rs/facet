@@ -11,7 +11,7 @@ use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
-use core::borrow::Borrow as _;
+use core::borrow::Borrow;
 use owo_colors::OwoColorize;
 
 pub use error::TomlSerError;
@@ -190,7 +190,11 @@ impl<'shape> Serializer<'shape> for TomlSerializer<'shape> {
         self.write_value(value)
     }
 
-    fn serialize_bytes(&mut self, _value: &[u8]) -> Result<(), Self::Error> {
+    fn serialize_bytes(
+        &mut self,
+        _len: usize,
+        _value: impl IntoIterator<Item = impl Borrow<u8>>,
+    ) -> Result<(), Self::Error> {
         Err(TomlSerError::UnsupportedByteArray)
     }
 

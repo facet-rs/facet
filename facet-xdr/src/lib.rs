@@ -2,7 +2,7 @@
 #![forbid(unsafe_code)]
 #![doc = include_str!("../README.md")]
 
-use std::io::Write;
+use std::{borrow::Borrow, io::Write};
 
 use facet_core::{
     Def, Facet, IntegerSize, NumberBits, ScalarAffinity, Signedness, StructKind, Type, UserType,
@@ -120,10 +120,15 @@ impl<'shape, W: Write> Serializer<'shape> for XdrSerializer<'_, W> {
 
     fn serialize_str(&mut self, value: &str) -> Result<(), Self::Error> {
         let bytes = value.as_bytes();
-        self.serialize_bytes(bytes)
+        self.serialize_bytes(bytes.len(), bytes)
     }
 
-    fn serialize_bytes(&mut self, value: &[u8]) -> Result<(), Self::Error> {
+    fn serialize_bytes(
+        &mut self,
+        _len: usize,
+        value: impl IntoIterator<Item = impl Borrow<u8>>,
+    ) -> Result<(), Self::Error> {
+        let value: Vec<u8> = value.into_iter().map(|b| *b.borrow()).collect();
         if value.len() > u32::MAX as usize {
             return Err(Self::Error::TooManyBytes);
         }
@@ -132,7 +137,7 @@ impl<'shape, W: Write> Serializer<'shape> for XdrSerializer<'_, W> {
             .write_all(&len.to_be_bytes())
             .map_err(Self::Error::Io)?;
         let pad_len = value.len() % 4;
-        self.writer.write_all(value).map_err(Self::Error::Io)?;
+        self.writer.write_all(&value).map_err(Self::Error::Io)?;
         if pad_len != 0 {
             let pad = vec![0u8; 4 - pad_len];
             self.writer.write_all(&pad).map_err(Self::Error::Io)?;

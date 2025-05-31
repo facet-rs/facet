@@ -2,7 +2,10 @@ use facet_core::Facet;
 use facet_reflect::Peek;
 use facet_serialize::{Serializer, serialize_iterative}; // Import the necessary items from facet-serialize
 use log::trace;
-use std::io::{self, Write};
+use std::{
+    borrow::Borrow,
+    io::{self, Write},
+};
 
 /// Serializes any Facet type to MessagePack bytes
 pub fn to_vec<'a, T: Facet<'a>>(value: &'a T) -> Vec<u8> {
@@ -120,9 +123,15 @@ impl<'shape, W: Write> Serializer<'shape> for MessagePackSerializer<'_, W> {
         write_str(self.writer, value)
     }
 
-    fn serialize_bytes(&mut self, value: &[u8]) -> Result<(), Self::Error> {
-        trace!("Serializing bytes, len: {}", value.len());
-        write_bin(self.writer, value)
+    fn serialize_bytes(
+        &mut self,
+        len: usize,
+        value: impl IntoIterator<Item = impl Borrow<u8>>,
+    ) -> Result<(), Self::Error> {
+        trace!("Serializing bytes, len: {}", len);
+        let mut buf = Vec::with_capacity(len);
+        buf.extend(value.into_iter().map(|b| *b.borrow()));
+        write_bin(self.writer, &buf)
     }
 
     fn serialize_none(&mut self) -> Result<(), Self::Error> {

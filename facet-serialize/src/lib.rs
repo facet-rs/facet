@@ -7,6 +7,8 @@
 
 extern crate alloc;
 
+use core::borrow::Borrow;
+
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -57,7 +59,11 @@ pub trait Serializer<'shape> {
     fn serialize_str(&mut self, value: &str) -> Result<(), Self::Error>;
 
     /// Serialize a raw byte slice.
-    fn serialize_bytes(&mut self, value: &[u8]) -> Result<(), Self::Error>;
+    fn serialize_bytes(
+        &mut self,
+        len: usize,
+        value: impl IntoIterator<Item = impl Borrow<u8>>,
+    ) -> Result<(), Self::Error>;
 
     // Special values
 
@@ -400,7 +406,8 @@ where
                         if ld.t().is_type::<u8>() {
                             // Special case for Vec<u8> - serialize as bytes
                             if cpeek.shape().is_type::<Vec<u8>>() {
-                                serializer.serialize_bytes(cpeek.get::<Vec<u8>>().unwrap())?
+                                let bytes = cpeek.get::<Vec<u8>>().unwrap();
+                                serializer.serialize_bytes(bytes.len(), bytes)?
                             } else {
                                 // For other list types with u8 elements (like Bytes/BytesMut),
                                 // serialize as array
@@ -420,13 +427,9 @@ where
                     }
                     (Def::Array(ad), _) => {
                         if ad.t().is_type::<u8>() {
-                            let bytes: Vec<u8> = peek
-                                .into_list_like()
-                                .unwrap()
-                                .iter()
-                                .map(|p| *p.get::<u8>().unwrap())
-                                .collect();
-                            serializer.serialize_bytes(&bytes)?;
+                            let list = peek.into_list_like().unwrap();
+                            let bytes = list.iter().map(|p| *p.get::<u8>().unwrap());
+                            serializer.serialize_bytes(list.len(), bytes)?;
                         } else {
                             let peek_list = cpeek.into_list_like().unwrap();
                             stack.push(SerializeTask::Array {
@@ -437,7 +440,8 @@ where
                     }
                     (Def::Slice(sd), _) => {
                         if sd.t().is_type::<u8>() {
-                            serializer.serialize_bytes(cpeek.get::<&[u8]>().unwrap())?
+                            let bytes = *cpeek.get::<&[u8]>().unwrap();
+                            serializer.serialize_bytes(bytes.len(), bytes)?
                         } else {
                             let peek_list = cpeek.into_list_like().unwrap();
                             stack.push(SerializeTask::Array {

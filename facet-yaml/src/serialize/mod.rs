@@ -5,7 +5,7 @@ compile_error!("feature `alloc` is required");
 
 mod error;
 
-use core::borrow::Borrow as _;
+use core::borrow::Borrow;
 
 use alloc::{
     borrow::Cow,
@@ -212,7 +212,11 @@ impl<'shape> Serializer<'shape> for YamlSerializer<'shape> {
         self.write_value(Yaml::String(value.to_string()))
     }
 
-    fn serialize_bytes(&mut self, _value: &[u8]) -> Result<(), Self::Error> {
+    fn serialize_bytes(
+        &mut self,
+        _len: usize,
+        _value: impl IntoIterator<Item = impl Borrow<u8>>,
+    ) -> Result<(), Self::Error> {
         Err(YamlSerError::UnsupportedByteArray)
     }
 

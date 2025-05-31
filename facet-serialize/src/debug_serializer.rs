@@ -1,3 +1,5 @@
+use core::borrow::Borrow;
+
 use crate::Serializer;
 
 use alloc::vec::Vec;
@@ -151,14 +153,18 @@ where
         Ok(())
     }
 
-    fn serialize_bytes(&mut self, value: &[u8]) -> Result<(), Self::Error> {
+    fn serialize_bytes(
+        &mut self,
+        _len: usize,
+        value: impl IntoIterator<Item = impl Borrow<u8>>,
+    ) -> Result<(), Self::Error> {
         self.write_comma()?;
         write!(self.writer, "[")?;
 
         self.need_comma.push(false);
-        for byte in value.iter() {
+        for byte in value.into_iter() {
             self.write_comma()?;
-            write!(self.writer, "{}", byte)?;
+            write!(self.writer, "{}", byte.borrow())?;
             self.set_comma();
         }
         self.need_comma.pop();
