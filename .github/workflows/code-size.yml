@@ -1,0 +1,65 @@
+name: Code Size Tracking
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  merge_group:
+  workflow_dispatch:
+
+jobs:
+  measure-code-size:
+    name: Measure Code Size
+    runs-on: depot-ubuntu-24.04-32
+    permissions:
+      pull-requests: write
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest-amd64
+
+    steps:
+      - name: Checkout current code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Create output directory
+        run: mkdir -p code-size-data
+
+      - name: Build release binaries and measure sizes
+        run: just code-size
+
+      - name: Upload code size data
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-size-data-binary-sizesmd
+          path: code-size/data/binary-sizes.md
+          retention-days: 90
+
+      - name: Comment on PR with size
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{secrets.GITHUB_TOKEN}}
+          script: |
+            const fs = require('fs');
+
+            // Read comparison data
+            let comment = '';
+
+            // Add binary size data
+            const binarySizesPath = 'code-size-data-binary-sizesmd';
+            if (fs.existsSync(binarySizesPath)) {
+              comment += fs.readFileSync(binarySizesPath, 'utf8');
+            }
+
+            // Post comment
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
