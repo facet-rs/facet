@@ -41,18 +41,14 @@ fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
     // //    to write the bytes one by one, and we need to figure out where to put the escapes. So we
     // //    just call `write_json_escaped_char` for each character.
 
-    const STEP_SIZE: usize = 16;
+    const STEP_SIZE: usize = Window::BITS as usize / 8;
     type Window = u128;
     type Chunk = [u8; STEP_SIZE];
 
     writer.write_all(b"\"")?;
 
-    let mut idx = 0;
-    while idx + STEP_SIZE < s.len() {
-        let slice = &s.as_bytes()[idx..idx + STEP_SIZE];
-        // Unwrap here is fine because the chunk is guaranteed to be exactly `CHUNK_SIZE` bytes long
-        // by construction.
-        let chunk = Chunk::try_from(slice).unwrap();
+    let mut s = s;
+    while let Some(Ok(chunk)) = s.as_bytes().get(..STEP_SIZE).map(Chunk::try_from) {
         let window = Window::from_ne_bytes(chunk);
         // Our window is a concatenation of u8 values. For each value, we need to make sure that:
         // 1. It is ASCII (i.e. the first bit of the u8 is 0, so u8 & 0x80 == 0)
@@ -66,24 +62,29 @@ fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
         let control_char_free = top_three_bits_set(window);
         if completely_ascii && quote_free && backslash_free && control_char_free {
             // Yay! Whack it into the writer!
-            writer.write_all(slice)?;
-            idx += STEP_SIZE;
+            writer.write_all(&chunk)?;
+            s = &s[STEP_SIZE..];
         } else {
             // Ahw one of the conditions not met. Let's take our time and artisanally handle each
             // character.
-            let mut chars = s[idx..].chars();
-            for c in (&mut chars).take(STEP_SIZE) {
+            let mut chars = s.chars();
+            let mut count = STEP_SIZE;
+            for c in &mut chars {
                 write_json_escaped_char(writer, c)?;
+                count = count.saturating_sub(c.len_utf8());
+                if count == 0 {
+                    // Done with our chunk
+                    break;
+                }
             }
-            let bytes_consumed = chars.as_str().as_ptr() as usize - (s.as_ptr() as usize + idx);
-            idx += bytes_consumed;
+            s = chars.as_str();
         }
     }
 
     // // In our loop we checked that we were able to consume at least `STEP_SIZE` bytes every
     // // iteration. That means there might be a small remnant at the end that we can handle in the
     // // slow method.
-    for c in s[idx..].chars() {
+    for c in s.chars() {
         write_json_escaped_char(writer, c)?;
     }
 
