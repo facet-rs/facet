@@ -193,6 +193,7 @@ impl<'input> Tokenizer<'input> {
         }
     }
 
+    #[inline(never)]
     fn parse_string(&mut self, start: Pos) -> TokenizeResult {
         const STEP_SIZE: usize = Window::BITS as usize / 8;
         type Window = u128;
@@ -358,6 +359,7 @@ impl<'input> Tokenizer<'input> {
         }
     }
 
+    #[inline(never)]
     fn parse_number(&mut self, start: Pos) -> TokenizeResult {
         let mut end = self.pos;
         if self.input[end] == b'-' {
@@ -437,6 +439,7 @@ impl<'input> Tokenizer<'input> {
         Ok(Spanned { node: token, span })
     }
 
+    #[inline(never)]
     fn parse_literal<F>(&mut self, start: Pos, pat: &[u8], ctor: F) -> TokenizeResult
     where
         F: FnOnce() -> Token,
