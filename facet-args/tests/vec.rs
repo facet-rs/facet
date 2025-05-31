@@ -2,7 +2,6 @@ use facet::Facet;
 use facet_testhelpers::test;
 
 #[test]
-#[ignore]
 fn test_value_singleton_list() {
     #[derive(Facet, Debug, PartialEq)]
     struct Args {
