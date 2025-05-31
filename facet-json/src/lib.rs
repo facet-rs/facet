@@ -126,6 +126,7 @@ fn write_json_escaped_char<W: Write>(writer: &mut W, c: char) -> io::Result<()> 
     }
 }
 
+#[inline]
 fn contains_0x22(val: u128) -> bool {
     let xor_result = val ^ 0x22222222222222222222222222222222;
     let has_zero = (xor_result.wrapping_sub(0x01010101010101010101010101010101))
@@ -134,6 +135,7 @@ fn contains_0x22(val: u128) -> bool {
     has_zero != 0
 }
 
+#[inline]
 fn contains_0x5c(val: u128) -> bool {
     let xor_result = val ^ 0x5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c;
     let has_zero = (xor_result.wrapping_sub(0x01010101010101010101010101010101))
@@ -143,11 +145,11 @@ fn contains_0x5c(val: u128) -> bool {
 }
 
 /// For each of the 16 u8s that make up a u128, check if the top three bits are set.
+#[inline]
 fn top_three_bits_set(value: u128) -> bool {
-    let mask = 0xe0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0;
-    let masked = value & mask;
-    let has_zero = (masked.wrapping_sub(0x01010101010101010101010101010101))
-        & !masked
+    let xor_result = value & 0xe0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0;
+    let has_zero = (xor_result.wrapping_sub(0x01010101010101010101010101010101))
+        & !xor_result
         & 0x80808080808080808080808080808080;
     has_zero == 0
 }

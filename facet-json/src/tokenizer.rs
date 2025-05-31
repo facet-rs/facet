@@ -194,15 +194,42 @@ impl<'input> Tokenizer<'input> {
     }
 
     fn parse_string(&mut self, start: Pos) -> TokenizeResult {
+        const STEP_SIZE: usize = Window::BITS as usize / 8;
+        type Window = u128;
+        type Chunk = [u8; STEP_SIZE];
+
         // Skip opening quote
         self.pos += 1;
         let mut buf = Vec::new();
         let content_start = self.pos;
 
-        while let Some(&b) = self.input.get(self.pos) {
-            let should_continue = self.parse_char(b, &mut buf)?;
-            if !should_continue {
-                break;
+        let mut done = false;
+        'outer: while let Some(Ok(chunk)) =
+            self.input[self.pos..].get(..STEP_SIZE).map(Chunk::try_from)
+        {
+            let window = Window::from_ne_bytes(chunk);
+            let quote_free = !super::contains_0x22(window);
+            let backslash_free = !super::contains_0x5c(window);
+            if quote_free && backslash_free {
+                buf.extend(chunk);
+                self.pos += STEP_SIZE;
+            } else {
+                let chunk_start = self.pos;
+                while let Some(&b) = chunk.get(self.pos - chunk_start) {
+                    let should_continue = self.parse_char(b, &mut buf)?;
+                    if !should_continue {
+                        done = true;
+                        break 'outer;
+                    }
+                }
+            }
+        }
+        if !done {
+            while let Some(&b) = self.input.get(self.pos) {
+                let should_continue = self.parse_char(b, &mut buf)?;
+                if !should_continue {
+                    break;
+                }
             }
         }
 
@@ -235,6 +262,7 @@ impl<'input> Tokenizer<'input> {
         })
     }
 
+    #[inline]
     fn parse_char(&mut self, byte: u8, buf: &mut Vec<u8>) -> Result<bool, TokenError> {
         match byte {
             b'"' => {
