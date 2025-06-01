@@ -35,9 +35,17 @@
           default = pkgs.mkShell {
             strictDeps = true;
             packages = with pkgs; [
-              (rust-bin.stable.latest.default.override {
-                extensions = ["rust-analyzer"];
+              # Must occur first to take precedence over nightly.
+              (rust-bin.stable.latest.minimal.override {
+                extensions = ["rust-src" "rust-docs" "clippy"];
               })
+
+              # Use `rustfmt`, and other tools that require nightly features.
+              (rust-bin.selectLatestNightlyWith (toolchain:
+                toolchain.minimal.override {
+                  extensions = ["rustfmt" "rust-analyzer"];
+                }))
+
               cargo-nextest
             ];
           };
