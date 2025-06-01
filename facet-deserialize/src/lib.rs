@@ -1309,7 +1309,7 @@ where
                     Type::User(UserType::Enum(_)) => {
                         if wip.selected_variant().is_some() {
                             // If we already have a variant selected, just put the string
-                            wip.set(cow.to_string()).map_err(|e| self.reflect_err(e))?;
+                            wip.set(cow).map_err(|e| self.reflect_err(e))?;
                         } else {
                             // Try to select the variant
                             match wip.find_variant(&cow) {
