@@ -36,5 +36,7 @@
           };
         }
       );
+
+      formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.alejandra);
     };
 }
