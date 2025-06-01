@@ -240,7 +240,7 @@ impl ListVTableBuilder {
     ///
     /// # Panics
     ///
-    /// This method will panic if any of the required fields are `None`.
+    /// Panic if any of the required fields (len, get, as_ptr, iter_vtable) are `None`.
     pub const fn build(self) -> ListVTable {
         assert!(self.as_ptr.is_some());
         ListVTable {
