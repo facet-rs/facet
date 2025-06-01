@@ -1,6 +1,7 @@
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
+use core::ops::ControlFlow;
 use core::str;
 
 /// Error encountered during tokenization
@@ -205,8 +206,8 @@ impl<'input> Tokenizer<'input> {
         let content_start = self.pos;
         let mut buf = CowBuf::Borrowed {
             input: self.input,
-            start: content_start,
-            end: content_start,
+            buf_start: content_start,
+            buf_end: content_start,
         };
 
         let mut done = false;
@@ -222,8 +223,7 @@ impl<'input> Tokenizer<'input> {
             } else {
                 let chunk_start = self.pos;
                 while let Some(&b) = chunk.get(self.pos - chunk_start) {
-                    let should_continue = self.parse_char(b, &mut buf)?;
-                    if !should_continue {
+                    if self.parse_char(b, &mut buf)? == ControlFlow::Break(()) {
                         done = true;
                         break 'outer;
                     }
@@ -232,8 +232,7 @@ impl<'input> Tokenizer<'input> {
         }
         if !done {
             while let Some(&b) = self.input.get(self.pos) {
-                let should_continue = self.parse_char(b, &mut buf)?;
-                if !should_continue {
+                if self.parse_char(b, &mut buf)? == ControlFlow::Break(()) {
                     break;
                 }
             }
@@ -250,53 +249,42 @@ impl<'input> Tokenizer<'input> {
         }
 
         match buf {
-            CowBuf::Borrowed { input, start, end } => {
-                let len = end - start;
-                let s = match str::from_utf8(&input[start..end]) {
-                    Ok(st) => st,
-                    Err(e) => {
-                        return Err(TokenError {
-                            kind: TokenErrorKind::InvalidUtf8(e.to_string()),
-                            span: Span::new(content_start, len),
-                        });
-                    }
-                };
-
-                let len = self.pos - start;
-                let span = Span::new(start, len);
-                Ok(Spanned {
-                    node: Token::String(Cow::Borrowed(s)),
-                    span,
-                })
-            }
+            CowBuf::Borrowed {
+                input,
+                buf_start,
+                buf_end,
+            } => match str::from_utf8(&input[buf_start..buf_end]) {
+                Ok(st) => Ok(Spanned {
+                    node: Token::String(Cow::Borrowed(st)),
+                    span: Span::new(start, self.pos - start),
+                }),
+                Err(e) => Err(TokenError {
+                    kind: TokenErrorKind::InvalidUtf8(e.to_string()),
+                    span: Span::new(content_start, buf_end - buf_start),
+                }),
+            },
             CowBuf::Owned(buf) => {
                 let len = buf.len();
-                let s = match String::from_utf8(buf) {
-                    Ok(st) => st,
-                    Err(e) => {
-                        return Err(TokenError {
-                            kind: TokenErrorKind::InvalidUtf8(e.to_string()),
-                            span: Span::new(content_start, len),
-                        });
-                    }
-                };
-
-                let len = self.pos - start;
-                let span = Span::new(start, len);
-                Ok(Spanned {
-                    node: Token::String(Cow::Owned(s)),
-                    span,
-                })
+                match String::from_utf8(buf) {
+                    Ok(st) => Ok(Spanned {
+                        node: Token::String(Cow::Owned(st)),
+                        span: Span::new(start, self.pos - start),
+                    }),
+                    Err(e) => Err(TokenError {
+                        kind: TokenErrorKind::InvalidUtf8(e.to_string()),
+                        span: Span::new(content_start, len),
+                    }),
+                }
             }
         }
     }
 
     #[inline]
-    fn parse_char(&mut self, byte: u8, buf: &mut CowBuf) -> Result<bool, TokenError> {
+    fn parse_char(&mut self, byte: u8, buf: &mut CowBuf) -> Result<ControlFlow<()>, TokenError> {
         match byte {
             b'"' => {
                 self.pos += 1;
-                Ok(false)
+                Ok(ControlFlow::Break(()))
             }
             b'\\' => {
                 self.pos += 1;
@@ -371,7 +359,7 @@ impl<'input> Tokenizer<'input> {
                         _ => buf.push_owned(&[esc]), // other escapes
                     }
                     self.pos += 1;
-                    Ok(true)
+                    Ok(ControlFlow::Continue(()))
                 } else {
                     Err(TokenError {
                         kind: TokenErrorKind::UnexpectedEof("in string escape"),
@@ -382,7 +370,7 @@ impl<'input> Tokenizer<'input> {
             _ => {
                 buf.push_borrowed(&[byte]);
                 self.pos += 1;
-                Ok(true)
+                Ok(ControlFlow::Continue(()))
             }
         }
     }
@@ -494,8 +482,8 @@ impl<'input> Tokenizer<'input> {
 enum CowBuf<'a> {
     Borrowed {
         input: &'a [u8],
-        start: usize,
-        end: usize,
+        buf_start: usize,
+        buf_end: usize,
     },
     Owned(Vec<u8>),
 }
@@ -503,21 +491,126 @@ enum CowBuf<'a> {
 impl CowBuf<'_> {
     fn push_borrowed(&mut self, data: &[u8]) {
         match self {
-            CowBuf::Borrowed { end, .. } => *end += data.len(),
+            CowBuf::Borrowed { buf_end, .. } => *buf_end += data.len(),
             CowBuf::Owned(owned) => owned.extend(data),
         }
     }
 
     fn push_owned(&mut self, data: &[u8]) {
         match self {
-            CowBuf::Borrowed { input, start, end } => {
+            CowBuf::Borrowed {
+                input,
+                buf_start,
+                buf_end,
+            } => {
                 // Pour one out for our speed gains...
-                let mut owned = Vec::with_capacity(*end - *start + data.len());
-                owned.extend(&input[*start..*end]);
+                let mut owned = Vec::with_capacity(*buf_end - *buf_start + data.len());
+                owned.extend(&input[*buf_start..*buf_end]);
                 owned.extend(data);
                 *self = CowBuf::Owned(owned);
             }
             CowBuf::Owned(owned) => owned.extend(data),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tokenizer() {
+        let mut tokenizer = Tokenizer::new(r#"{"foo":"abc","bar":42,"baz":true}"#.as_bytes());
+        assert_eq!(
+            tokenizer.next_token(),
+            Ok(Spanned {
+                node: Token::LBrace,
+                span: Span::new(0, 1)
+            })
+        );
+        assert_eq!(
+            tokenizer.next_token(),
+            Ok(Spanned {
+                node: Token::String(Cow::Borrowed("foo")),
+                span: Span::new(1, 5)
+            })
+        );
+        assert_eq!(
+            tokenizer.next_token(),
+            Ok(Spanned {
+                node: Token::Colon,
+                span: Span::new(6, 1)
+            })
+        );
+        assert_eq!(
+            tokenizer.next_token(),
+            Ok(Spanned {
+                node: Token::String(Cow::Borrowed("abc")),
+                span: Span::new(7, 5)
+            })
+        );
+        assert_eq!(
+            tokenizer.next_token(),
+            Ok(Spanned {
+                node: Token::Comma,
+                span: Span::new(12, 1)
+            })
+        );
+        assert_eq!(
+            tokenizer.next_token(),
+            Ok(Spanned {
+                node: Token::String(Cow::Borrowed("bar")),
+                span: Span::new(13, 5)
+            })
+        );
+        assert_eq!(
+            tokenizer.next_token(),
+            Ok(Spanned {
+                node: Token::Colon,
+                span: Span::new(18, 1)
+            })
+        );
+        assert_eq!(
+            tokenizer.next_token(),
+            Ok(Spanned {
+                node: Token::U64(42),
+                span: Span::new(19, 2)
+            })
+        );
+        assert_eq!(
+            tokenizer.next_token(),
+            Ok(Spanned {
+                node: Token::Comma,
+                span: Span::new(21, 1)
+            })
+        );
+        assert_eq!(
+            tokenizer.next_token(),
+            Ok(Spanned {
+                node: Token::String(Cow::Borrowed("baz")),
+                span: Span::new(22, 5)
+            })
+        );
+        assert_eq!(
+            tokenizer.next_token(),
+            Ok(Spanned {
+                node: Token::Colon,
+                span: Span::new(27, 1)
+            })
+        );
+        assert_eq!(
+            tokenizer.next_token(),
+            Ok(Spanned {
+                node: Token::True,
+                span: Span::new(28, 4)
+            })
+        );
+        assert_eq!(
+            tokenizer.next_token(),
+            Ok(Spanned {
+                node: Token::RBrace,
+                span: Span::new(32, 1)
+            })
+        );
     }
 }
