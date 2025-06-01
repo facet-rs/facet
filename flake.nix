@@ -1,8 +1,12 @@
 {
   description = "facet devel";
 
-  # Unstable required until Rust 1.87 is on stable
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+
+  inputs.rust-overlay = {
+    url = "github:oxalica/rust-overlay";
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
 
   # shell.nix compatibility
   inputs.flake-compat.url = "https://flakehub.com/f/edolstra/flake-compat/1.tar.gz";
@@ -10,6 +14,7 @@
   outputs = {
     self,
     nixpkgs,
+    rust-overlay,
     ...
   }: let
     # System types to support.
@@ -17,27 +22,29 @@
 
     # Helper function to generate an attrset '{ x86_64-linux = f "x86_64-linux"; ... }'.
     forAllSystems = nixpkgs.lib.genAttrs targetSystems;
+
+    pkgsFor = forAllSystems (system:
+      import nixpkgs {
+        localSystem.system = system;
+        overlays = [rust-overlay.overlays.default];
+      });
   in {
-    devShells = forAllSystems (
-      system: let
-        pkgs = nixpkgs.legacyPackages.${system};
-      in {
-        default = pkgs.mkShell {
-          strictDeps = true;
-          RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
-          nativeBuildInputs = with pkgs; [
-            cargo
-            rustc
-
-            rustfmt
-            clippy
-            rust-analyzer
-
-            cargo-nextest
-          ];
-        };
-      }
-    );
+    devShells =
+      nixpkgs.lib.mapAttrs (
+        system: pkgs: {
+          default = pkgs.mkShell {
+            strictDeps = true;
+            RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
+            nativeBuildInputs = with pkgs; [
+              (rust-bin.stable.latest.default.override {
+                extensions = ["rust-analyzer"];
+              })
+              cargo-nextest
+            ];
+          };
+        }
+      )
+      pkgsFor;
 
     formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.alejandra);
   };
