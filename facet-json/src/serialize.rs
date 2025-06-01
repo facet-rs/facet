@@ -19,17 +19,17 @@ pub fn peek_to_string<'input, 'facet, 'shape>(peek: Peek<'input, 'facet, 'shape>
 }
 
 /// Serializes a `Facet` value to JSON and writes it to the given writer.
-pub fn to_writer<'mem, 'facet, T: Facet<'facet>, W: Write>(
+pub fn to_writer<'mem, 'facet, T: Facet<'facet>>(
     value: &'mem T,
-    writer: &mut W,
+    writer: &mut Vec<u8>,
 ) -> io::Result<()> {
     peek_to_writer(Peek::new(value), writer)
 }
 
 /// Serializes a `Peek` value to JSON and writes it to the given writer.
-pub fn peek_to_writer<'mem, 'facet, 'shape, W: Write>(
+pub fn peek_to_writer<'mem, 'facet, 'shape>(
     peek: Peek<'mem, 'facet, 'shape>,
-    writer: &mut W,
+    writer: &mut Vec<u8>,
 ) -> io::Result<()> {
     let mut serializer = JsonSerializer::new(writer);
     serialize_iterative(peek, &mut serializer)
@@ -48,17 +48,14 @@ enum ObjectItemState {
 }
 
 /// A serializer for JSON format that implements the `facet_serialize::Serializer` trait.
-pub struct JsonSerializer<W> {
-    writer: W,
+pub struct JsonSerializer<'a> {
+    writer: &'a mut Vec<u8>,
     stack: Vec<StackItem>,
 }
 
-impl<W> JsonSerializer<W>
-where
-    W: Write,
-{
+impl<'a> JsonSerializer<'a> {
     /// Creates a new JSON serializer with the given writer.
-    pub fn new(writer: W) -> Self {
+    pub fn new(writer: &'a mut Vec<u8>) -> Self {
         Self {
             writer,
             stack: Vec::new(),
@@ -105,10 +102,7 @@ where
     }
 }
 
-impl<'shape, W> Serializer<'shape> for JsonSerializer<W>
-where
-    W: Write,
-{
+impl<'shape> Serializer<'shape> for JsonSerializer<'_> {
     type Error = io::Error;
 
     fn serialize_u8(&mut self, value: u8) -> Result<(), Self::Error> {
@@ -212,6 +206,7 @@ where
     }
 
     fn serialize_str(&mut self, value: &str) -> Result<(), Self::Error> {
+        self.writer.reserve(value.len() + 2);
         self.start_value()?;
         crate::write_json_string(&mut self.writer, value)?;
         self.end_value()
