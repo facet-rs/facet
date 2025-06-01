@@ -34,7 +34,6 @@
         system: pkgs: {
           default = pkgs.mkShell {
             strictDeps = true;
-            RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
             nativeBuildInputs = with pkgs; [
               (rust-bin.stable.latest.default.override {
                 extensions = ["rust-analyzer"];
