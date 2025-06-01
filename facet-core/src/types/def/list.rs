@@ -242,11 +242,7 @@ impl ListVTableBuilder {
     ///
     /// This method will panic if any of the required fields are `None`.
     pub const fn build(self) -> ListVTable {
-        assert!(self.init_in_place_with_capacity.is_some());
-        assert!(self.push.is_some());
-        assert!(self.get_mut.is_some());
         assert!(self.as_ptr.is_some());
-        assert!(self.as_mut_ptr.is_some());
         ListVTable {
             init_in_place_with_capacity: self.init_in_place_with_capacity,
             push: self.push,
