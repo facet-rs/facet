@@ -1,16 +1,16 @@
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use facet_core::Facet;
 use facet_reflect::Peek;
 use facet_serialize::{Serializer, serialize_iterative};
 use log::debug;
 
 /// Serializes a value implementing `Facet` to a JSON string.
-#[cfg(feature = "std")]
 pub fn to_string<'facet, T: Facet<'facet>>(value: &T) -> String {
     peek_to_string(Peek::new(value))
 }
 
 /// Serializes a `Peek` instance to a JSON string.
-#[cfg(feature = "std")]
 pub fn peek_to_string<'input, 'facet, 'shape>(peek: Peek<'input, 'facet, 'shape>) -> String {
     let mut s = Vec::new();
     peek_to_writer(peek, &mut s).unwrap();

@@ -176,5 +176,6 @@ fn test_string_escaping() {
     assert!(json.contains(r#""tab":"Contains\ttabs"#));
     assert!(json.contains(r#""backspace":"Contains\bbackspace"#));
     assert!(json.contains(r#""formfeed":"Contains\fformfeed"#));
+    println!("{json}");
     assert!(json.contains(r#""control":"Contains\u0001control"#));
 }

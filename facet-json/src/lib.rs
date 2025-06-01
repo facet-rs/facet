@@ -1,13 +1,14 @@
-#![cfg_attr(not(feature = "std"), no_std)]
+#![no_std]
 #![warn(missing_docs)]
 #![warn(clippy::std_instead_of_core)]
 #![warn(clippy::std_instead_of_alloc)]
 #![forbid(unsafe_code)]
 #![doc = include_str!("../README.md")]
 
-pub use facet_deserialize::{DeserError, DeserErrorKind, DeserErrorMessage};
-
 extern crate alloc;
+
+use alloc::vec::Vec;
+pub use facet_deserialize::{DeserError, DeserErrorKind, DeserErrorMessage};
 
 mod deserialize;
 pub use deserialize::*;
@@ -31,7 +32,7 @@ pub trait JsonWrite {
 
 impl JsonWrite for &mut Vec<u8> {
     fn write(&mut self, buf: &[u8]) {
-        self.extend_from_slice(buf);
+        self.extend(buf);
     }
 
     fn reserve(&mut self, additional: usize) {
@@ -41,7 +42,7 @@ impl JsonWrite for &mut Vec<u8> {
 
 impl JsonWrite for Vec<u8> {
     fn write(&mut self, buf: &[u8]) {
-        self.extend_from_slice(buf);
+        self.extend(buf);
     }
 
     fn reserve(&mut self, additional: usize) {
@@ -50,7 +51,6 @@ impl JsonWrite for Vec<u8> {
 }
 
 /// Properly escapes and writes a JSON string
-#[cfg(feature = "std")]
 #[inline]
 fn write_json_string<W: JsonWrite>(writer: &mut W, s: &str) {
     // Just a little bit of text on how it works. There are two main steps:
@@ -116,7 +116,6 @@ fn write_json_string<W: JsonWrite>(writer: &mut W, s: &str) {
 }
 
 /// Writes a single JSON escaped character
-#[cfg(feature = "std")]
 #[inline]
 fn write_json_escaped_char<W: JsonWrite>(writer: &mut W, c: char) {
     match c {
@@ -128,15 +127,18 @@ fn write_json_escaped_char<W: JsonWrite>(writer: &mut W, c: char) {
         '\u{08}' => writer.write(b"\\b"),
         '\u{0C}' => writer.write(b"\\f"),
         c if c.is_ascii_control() => {
-            let mut buf = [0; 6];
-            let s = format!("{:04x}", c as u32);
-            buf[0] = b'\\';
-            buf[1] = b'u';
-            buf[2] = s.as_bytes()[0];
-            buf[3] = s.as_bytes()[1];
-            buf[4] = s.as_bytes()[2];
-            buf[5] = s.as_bytes()[3];
-            writer.write(&buf)
+            let bytes = (c as u32).to_be_bytes();
+            // A radix 16 number (famously) fits in a u8, so unwrap here is safe.
+            let to_hex = |d: u8| char::from_digit(d as u32, 16).unwrap() as u8;
+            let buf = [
+                b'\\',
+                b'u',
+                to_hex(bytes[0]),
+                to_hex(bytes[1]),
+                to_hex(bytes[2]),
+                to_hex(bytes[3]),
+            ];
+            writer.write(&buf);
         }
         c if c.is_ascii() => {
             writer.write(&[c as u8]);

@@ -10,14 +10,8 @@ keywords = ["json", "serialization", "deserialization", "reflection", "facet"]
 categories = ["encoding", "parser-implementations"]
 
 [features]
-std = ["facet-core/std", "alloc"] # Uses libstd and alloc
-alloc = [
-    "facet-core/alloc",
-    "facet-serialize/alloc",
-    "facet-deserialize/alloc",
-] # Enables alloc support
 rich-diagnostics = ["facet-deserialize/rich-diagnostics"]
-default = ["std", "rich-diagnostics"]
+default = ["rich-diagnostics"]
 
 [dependencies]
 facet-core = { version = "0.27.8", path = "../facet-core", default-features = false }

@@ -25,7 +25,6 @@ fn test_field_rename_deserialization() {
 }
 
 /// Round-trip serialization then deserialization with a renamed field
-#[cfg(feature = "std")]
 #[test]
 fn test_field_rename_roundtrip() {
     #[derive(Facet, Debug, PartialEq)]
@@ -70,7 +69,6 @@ fn test_field_rename_common_case_styles() {
 
 /// Serialization and deserialization with special symbol characters in field name
 #[test]
-#[cfg(feature = "std")]
 fn test_field_rename_with_symbol_chars_name() {
     #[derive(Debug, PartialEq, Facet)]
     struct SpecialCharsName {
@@ -91,7 +89,6 @@ fn test_field_rename_with_symbol_chars_name() {
 
 /// Serialization and deserialization with Unicode characters in field name (emoji)
 #[test]
-#[cfg(feature = "std")]
 fn test_field_rename_with_unicode_name_emoji() {
     #[derive(Debug, PartialEq, Facet)]
     struct EmojiCharsName {
@@ -111,7 +108,6 @@ fn test_field_rename_with_unicode_name_emoji() {
 }
 
 /// Round-trip serialization/deserialization with raw identifiers as field names
-#[cfg(feature = "std")]
 #[test]
 fn test_raw_identifier_fields_roundtrip() {
     #[derive(Facet, Debug, PartialEq)]
@@ -140,7 +136,6 @@ fn test_raw_identifier_fields_roundtrip() {
 
 /// Serialization and deserialization with Unicode characters in field name (Euro sign)
 #[test]
-#[cfg(feature = "std")]
 fn test_field_rename_with_unicode_name_special_signs() {
     #[derive(Debug, PartialEq, Facet)]
     struct EmojiCharsName {
@@ -160,7 +155,6 @@ fn test_field_rename_with_unicode_name_special_signs() {
 }
 
 /// Serialization and deserialization with numeric field name
-#[cfg(feature = "std")]
 #[test]
 fn test_field_rename_with_numeric_name() {
     #[derive(Debug, PartialEq, Facet)]
@@ -179,7 +173,6 @@ fn test_field_rename_with_numeric_name() {
 }
 
 /// Serialization and deserialization of renamed enum variants (unit and tuple variants)
-#[cfg(feature = "std")]
 #[test]
 #[ignore]
 fn test_enum_variant_rename() {
@@ -209,7 +202,6 @@ fn test_enum_variant_rename() {
 }
 
 /// Serialization and deserialization of renamed fields in struct enum variants
-#[cfg(feature = "std")]
 #[test]
 #[ignore]
 fn test_enum_struct_variant_field_rename() {
@@ -267,7 +259,6 @@ fn test_enum_struct_variant_field_rename() {
 }
 
 /// Serialization and deserialization of renamed fields in nested data structures
-#[cfg(feature = "std")]
 #[test]
 fn test_field_rename_nested_structures() {
     #[derive(Debug, PartialEq, Facet)]
@@ -327,7 +318,6 @@ fn test_field_rename_nested_structures() {
 }
 
 /// Serialization and deserialization of renamed optional fields (Some and None cases)
-#[cfg(feature = "std")]
 #[test]
 fn test_field_rename_optional_values() {
     #[derive(Debug, PartialEq, Facet)]
@@ -398,7 +388,6 @@ fn test_field_rename_ignore_extra_fields() {
 }
 
 /// Renamed fields have priority over original field names during serialization
-#[cfg(feature = "std")]
 #[test]
 #[ignore]
 fn test_field_rename_serialization_priority() {
@@ -464,7 +453,6 @@ fn test_field_rename_not_alias() {
 
 /// Empty string rename test (which is valid in JSON)
 #[test]
-#[cfg(feature = "std")]
 fn test_field_empty_string_rename() {
     #[derive(Debug, PartialEq, Facet)]
     struct EmptyStringField {

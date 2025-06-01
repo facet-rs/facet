@@ -1,5 +1,3 @@
-#![cfg(feature = "std")]
-
 use facet_json::{peek_to_string, peek_to_writer, to_string};
 use facet_reflect::Peek;
 use facet_testhelpers::test;
