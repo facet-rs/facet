@@ -34,7 +34,7 @@
         system: pkgs: {
           default = pkgs.mkShell {
             strictDeps = true;
-            nativeBuildInputs = with pkgs; [
+            packages = with pkgs; [
               (rust-bin.stable.latest.default.override {
                 extensions = ["rust-analyzer"];
               })
