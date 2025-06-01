@@ -5,9 +5,6 @@
 #![forbid(unsafe_code)]
 #![doc = include_str!("../README.md")]
 
-#[cfg(feature = "std")]
-use std::io::{self, Write};
-
 pub use facet_deserialize::{DeserError, DeserErrorKind, DeserErrorMessage};
 
 extern crate alloc;
@@ -15,9 +12,7 @@ extern crate alloc;
 mod deserialize;
 pub use deserialize::*;
 
-#[cfg(feature = "std")]
 mod serialize;
-#[cfg(feature = "std")]
 pub use serialize::*;
 
 mod tokenizer;
@@ -25,10 +20,39 @@ mod tokenizer;
 /// The JSON format
 struct Json;
 
+/// `no_std` compatible Write trait used by the json serializer.
+pub trait JsonWrite {
+    /// Write all these bytes to the writer.
+    fn write(&mut self, buf: &[u8]);
+
+    /// If the writer supports it, reserve space for `len` additional bytes.
+    fn reserve(&mut self, additional: usize);
+}
+
+impl JsonWrite for &mut Vec<u8> {
+    fn write(&mut self, buf: &[u8]) {
+        self.extend_from_slice(buf);
+    }
+
+    fn reserve(&mut self, additional: usize) {
+        Vec::reserve(self, additional)
+    }
+}
+
+impl JsonWrite for Vec<u8> {
+    fn write(&mut self, buf: &[u8]) {
+        self.extend_from_slice(buf);
+    }
+
+    fn reserve(&mut self, additional: usize) {
+        Vec::reserve(self, additional)
+    }
+}
+
 /// Properly escapes and writes a JSON string
 #[cfg(feature = "std")]
 #[inline]
-fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
+fn write_json_string<W: JsonWrite>(writer: &mut W, s: &str) {
     // Just a little bit of text on how it works. There are two main steps:
     // 1. Check if the string is completely ASCII and doesn't contain any quotes or backslashes or
     //    control characters. This is the fast path, because it means that the bytes can be written
@@ -45,7 +69,7 @@ fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
     type Window = u128;
     type Chunk = [u8; STEP_SIZE];
 
-    writer.write_all(b"\"")?;
+    writer.write(b"\"");
 
     let mut s = s;
     while let Some(Ok(chunk)) = s.as_bytes().get(..STEP_SIZE).map(Chunk::try_from) {
@@ -62,7 +86,7 @@ fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
         let control_char_free = top_three_bits_set(window);
         if completely_ascii && quote_free && backslash_free && control_char_free {
             // Yay! Whack it into the writer!
-            writer.write_all(&chunk)?;
+            writer.write(&chunk);
             s = &s[STEP_SIZE..];
         } else {
             // Ahw one of the conditions not met. Let's take our time and artisanally handle each
@@ -70,7 +94,7 @@ fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
             let mut chars = s.chars();
             let mut count = STEP_SIZE;
             for c in &mut chars {
-                write_json_escaped_char(writer, c)?;
+                write_json_escaped_char(writer, c);
                 count = count.saturating_sub(c.len_utf8());
                 if count == 0 {
                     // Done with our chunk
@@ -85,24 +109,24 @@ fn write_json_string<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
     // iteration. That means there might be a small remnant at the end that we can handle in the
     // slow method.
     for c in s.chars() {
-        write_json_escaped_char(writer, c)?;
+        write_json_escaped_char(writer, c);
     }
 
-    writer.write_all(b"\"")
+    writer.write(b"\"")
 }
 
 /// Writes a single JSON escaped character
 #[cfg(feature = "std")]
 #[inline]
-fn write_json_escaped_char<W: Write>(writer: &mut W, c: char) -> io::Result<()> {
+fn write_json_escaped_char<W: JsonWrite>(writer: &mut W, c: char) {
     match c {
-        '"' => writer.write_all(b"\\\""),
-        '\\' => writer.write_all(b"\\\\"),
-        '\n' => writer.write_all(b"\\n"),
-        '\r' => writer.write_all(b"\\r"),
-        '\t' => writer.write_all(b"\\t"),
-        '\u{08}' => writer.write_all(b"\\b"),
-        '\u{0C}' => writer.write_all(b"\\f"),
+        '"' => writer.write(b"\\\""),
+        '\\' => writer.write(b"\\\\"),
+        '\n' => writer.write(b"\\n"),
+        '\r' => writer.write(b"\\r"),
+        '\t' => writer.write(b"\\t"),
+        '\u{08}' => writer.write(b"\\b"),
+        '\u{0C}' => writer.write(b"\\f"),
         c if c.is_ascii_control() => {
             let mut buf = [0; 6];
             let s = format!("{:04x}", c as u32);
@@ -112,16 +136,15 @@ fn write_json_escaped_char<W: Write>(writer: &mut W, c: char) -> io::Result<()> 
             buf[3] = s.as_bytes()[1];
             buf[4] = s.as_bytes()[2];
             buf[5] = s.as_bytes()[3];
-            writer.write_all(&buf)
+            writer.write(&buf)
         }
         c if c.is_ascii() => {
-            writer.write_all(&[c as u8])?;
-            Ok(())
+            writer.write(&[c as u8]);
         }
         c => {
             let mut buf = [0; 4];
             let len = c.encode_utf8(&mut buf).len();
-            writer.write_all(&buf[..len])
+            writer.write(&buf[..len])
         }
     }
 }

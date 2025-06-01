@@ -2,7 +2,6 @@ use facet_core::Facet;
 use facet_reflect::Peek;
 use facet_serialize::{Serializer, serialize_iterative};
 use log::debug;
-use std::io::{self, Write};
 
 /// Serializes a value implementing `Facet` to a JSON string.
 #[cfg(feature = "std")]
@@ -19,21 +18,26 @@ pub fn peek_to_string<'input, 'facet, 'shape>(peek: Peek<'input, 'facet, 'shape>
 }
 
 /// Serializes a `Facet` value to JSON and writes it to the given writer.
-pub fn to_writer<'mem, 'facet, T: Facet<'facet>>(
+pub fn to_writer<'mem, 'facet, T: Facet<'facet>, W: crate::JsonWrite>(
     value: &'mem T,
-    writer: &mut Vec<u8>,
-) -> io::Result<()> {
+    writer: W,
+) -> Result<(), SerializeError> {
     peek_to_writer(Peek::new(value), writer)
 }
 
 /// Serializes a `Peek` value to JSON and writes it to the given writer.
-pub fn peek_to_writer<'mem, 'facet, 'shape>(
+pub fn peek_to_writer<'mem, 'facet, 'shape, W: crate::JsonWrite>(
     peek: Peek<'mem, 'facet, 'shape>,
-    writer: &mut Vec<u8>,
-) -> io::Result<()> {
+    writer: W,
+) -> Result<(), SerializeError> {
     let mut serializer = JsonSerializer::new(writer);
     serialize_iterative(peek, &mut serializer)
 }
+
+/// Serialization error for json, which cannot fail.
+#[derive(Debug)]
+pub enum SerializeError {}
+
 #[derive(Debug)]
 enum StackItem {
     ArrayItem { first: bool },
@@ -48,21 +52,21 @@ enum ObjectItemState {
 }
 
 /// A serializer for JSON format that implements the `facet_serialize::Serializer` trait.
-pub struct JsonSerializer<'a> {
-    writer: &'a mut Vec<u8>,
+pub struct JsonSerializer<W: crate::JsonWrite> {
+    writer: W,
     stack: Vec<StackItem>,
 }
 
-impl<'a> JsonSerializer<'a> {
+impl<W: crate::JsonWrite> JsonSerializer<W> {
     /// Creates a new JSON serializer with the given writer.
-    pub fn new(writer: &'a mut Vec<u8>) -> Self {
+    pub fn new(writer: W) -> Self {
         Self {
             writer,
             stack: Vec::new(),
         }
     }
 
-    fn start_value(&mut self) -> Result<(), io::Error> {
+    fn start_value(&mut self) -> Result<(), SerializeError> {
         debug!("start_value, stack = {:?}", self.stack);
 
         match self.stack.last_mut() {
@@ -70,7 +74,7 @@ impl<'a> JsonSerializer<'a> {
                 if *first {
                     *first = false;
                 } else {
-                    write!(self.writer, ",")?;
+                    self.writer.write(b",");
                 }
             }
             Some(StackItem::ObjectItem { object_state }) => {
@@ -80,11 +84,11 @@ impl<'a> JsonSerializer<'a> {
                         *object_state = ObjectItemState::Value;
                     }
                     ObjectItemState::Key => {
-                        write!(self.writer, ",")?;
+                        self.writer.write(b",");
                         *object_state = ObjectItemState::Value;
                     }
                     ObjectItemState::Value => {
-                        write!(self.writer, ":")?;
+                        self.writer.write(b":");
                         *object_state = ObjectItemState::Key;
                     }
                 }
@@ -97,118 +101,120 @@ impl<'a> JsonSerializer<'a> {
         Ok(())
     }
 
-    fn end_value(&mut self) -> Result<(), io::Error> {
+    fn end_value(&mut self) -> Result<(), SerializeError> {
         Ok(())
     }
 }
 
-impl<'shape> Serializer<'shape> for JsonSerializer<'_> {
-    type Error = io::Error;
+impl<'shape, W: crate::JsonWrite> Serializer<'shape> for JsonSerializer<W> {
+    type Error = SerializeError;
 
     fn serialize_u8(&mut self, value: u8) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", value)?;
+        self.writer.write(value.to_string().as_bytes());
         self.end_value()
     }
 
     fn serialize_u16(&mut self, value: u16) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", value)?;
+        self.writer.write(value.to_string().as_bytes());
         self.end_value()
     }
 
     fn serialize_u32(&mut self, value: u32) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", value)?;
+        self.writer.write(value.to_string().as_bytes());
         self.end_value()
     }
 
     fn serialize_u64(&mut self, value: u64) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", value)?;
+        self.writer.write(value.to_string().as_bytes());
         self.end_value()
     }
 
     fn serialize_u128(&mut self, value: u128) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", value)?;
+        self.writer.write(value.to_string().as_bytes());
         self.end_value()
     }
 
     fn serialize_usize(&mut self, value: usize) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", value)?;
+        self.writer.write(value.to_string().as_bytes());
         self.end_value()
     }
 
     fn serialize_i8(&mut self, value: i8) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", value)?;
+        self.writer.write(value.to_string().as_bytes());
         self.end_value()
     }
 
     fn serialize_i16(&mut self, value: i16) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", value)?;
+        self.writer.write(value.to_string().as_bytes());
         self.end_value()
     }
 
     fn serialize_i32(&mut self, value: i32) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", value)?;
+        self.writer.write(value.to_string().as_bytes());
         self.end_value()
     }
 
     fn serialize_i64(&mut self, value: i64) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", value)?;
+        self.writer.write(value.to_string().as_bytes());
         self.end_value()
     }
 
     fn serialize_i128(&mut self, value: i128) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", value)?;
+        self.writer.write(value.to_string().as_bytes());
         self.end_value()
     }
 
     fn serialize_isize(&mut self, value: isize) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", value)?;
+        self.writer.write(value.to_string().as_bytes());
         self.end_value()
     }
 
     fn serialize_f32(&mut self, value: f32) -> Result<(), Self::Error> {
         self.start_value()?;
-        // write!(self.writer, "{}", value)?;
-        write!(self.writer, "{}", ryu::Buffer::new().format(value))?;
+        // self.writer.write(value.to_string().as_bytes());
+        self.writer
+            .write(ryu::Buffer::new().format(value).as_bytes());
         self.end_value()
     }
 
     fn serialize_f64(&mut self, value: f64) -> Result<(), Self::Error> {
         self.start_value()?;
-        // write!(self.writer, "{}", value)?;
-        write!(self.writer, "{}", ryu::Buffer::new().format(value))?;
+        // self.writer.write(value.to_string().as_bytes());
+        self.writer
+            .write(ryu::Buffer::new().format(value).as_bytes());
         self.end_value()
     }
 
     fn serialize_bool(&mut self, value: bool) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", if value { "true" } else { "false" })?;
+        self.writer.write(if value { b"true" } else { b"false" });
         self.end_value()
     }
 
     fn serialize_char(&mut self, value: char) -> Result<(), Self::Error> {
         self.start_value()?;
-        self.writer.write_all(b"\"")?;
-        crate::write_json_escaped_char(&mut self.writer, value)?;
-        self.writer.write_all(b"\"")?;
+        self.writer.write(b"\"");
+        crate::write_json_escaped_char(&mut self.writer, value);
+        self.writer.write(b"\"");
         self.end_value()
     }
 
     fn serialize_str(&mut self, value: &str) -> Result<(), Self::Error> {
         self.writer.reserve(value.len() + 2);
         self.start_value()?;
-        crate::write_json_string(&mut self.writer, value)?;
+        crate::write_json_string(&mut self.writer, value);
         self.end_value()
     }
 
@@ -218,13 +224,13 @@ impl<'shape> Serializer<'shape> for JsonSerializer<'_> {
 
     fn serialize_none(&mut self) -> Result<(), Self::Error> {
         self.start_value()?;
-        self.writer.write_all(b"null")?;
+        self.writer.write(b"null");
         self.end_value()
     }
 
     fn serialize_unit(&mut self) -> Result<(), Self::Error> {
         self.start_value()?;
-        self.writer.write_all(b"null")?;
+        self.writer.write(b"null");
         self.end_value()
     }
 
@@ -234,13 +240,13 @@ impl<'shape> Serializer<'shape> for JsonSerializer<'_> {
         variant_name: &'shape str,
     ) -> Result<(), Self::Error> {
         self.start_value()?;
-        crate::write_json_string(&mut self.writer, variant_name)?;
+        crate::write_json_string(&mut self.writer, variant_name);
         self.end_value()
     }
 
     fn start_object(&mut self, _len: Option<usize>) -> Result<(), Self::Error> {
         self.start_value()?;
-        self.writer.write_all(b"{")?;
+        self.writer.write(b"{");
         self.stack.push(StackItem::ObjectItem {
             object_state: ObjectItemState::FirstKey,
         });
@@ -258,14 +264,14 @@ impl<'shape> Serializer<'shape> for JsonSerializer<'_> {
                 ObjectItemState::Value => unreachable!(),
             },
         }
-        self.writer.write_all(b"}")?;
+        self.writer.write(b"}");
         self.end_value()?;
         Ok(())
     }
 
     fn start_array(&mut self, _len: Option<usize>) -> Result<(), Self::Error> {
         self.start_value()?;
-        self.writer.write_all(b"[")?;
+        self.writer.write(b"[");
         self.stack.push(StackItem::ArrayItem { first: true });
         Ok(())
     }
@@ -278,7 +284,7 @@ impl<'shape> Serializer<'shape> for JsonSerializer<'_> {
             }
             StackItem::ObjectItem { .. } => unreachable!(),
         }
-        self.writer.write_all(b"]")?;
+        self.writer.write(b"]");
         self.end_value()?;
         Ok(())
     }
@@ -299,12 +305,12 @@ impl<'shape> Serializer<'shape> for JsonSerializer<'_> {
                     *object_state = ObjectItemState::Key;
                 }
                 ObjectItemState::Key => {
-                    self.writer.write_all(b",")?;
+                    self.writer.write(b",");
                 }
                 ObjectItemState::Value => unreachable!(),
             }
         }
-        crate::write_json_string(&mut self.writer, name)?;
+        crate::write_json_string(&mut self.writer, name);
         if let Some(StackItem::ObjectItem { object_state }) = self.stack.last_mut() {
             *object_state = ObjectItemState::Value;
         }
