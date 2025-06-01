@@ -298,7 +298,7 @@ impl<'shape> ShapeBuilder<'shape> {
     ///
     /// # Panics
     ///
-    /// This method will panic if any of the required fields (`layout`, `vtable`, or `def`) are `None`.
+    /// This method will panic if any of the required fields (`id`, `layout`, `type_identifier`, or `ty`) are `None`.
     #[inline]
     pub const fn build(self) -> Shape<'shape> {
         Shape {
