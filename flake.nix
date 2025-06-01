@@ -48,6 +48,8 @@
 
               cargo-nextest
             ];
+
+            RUST_BACKTRACE = 1;
           };
         }
       )
