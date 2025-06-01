@@ -1801,9 +1801,23 @@ where
                     },
                     _ => {
                         // Check if it's a map
-                        if let Def::Map(_) = shape.def {
+                        if let Def::Map(map_def) = shape.def {
                             wip.push_map_key().map_err(|e| self.reflect_err(e))?;
-                            wip.set(key.to_string()).map_err(|e| self.reflect_err(e))?;
+
+                            // Check if the map key type is transparent (has an inner shape)
+                            let key_shape = map_def.k();
+                            if key_shape.inner.is_some() {
+                                // For transparent types, we need to navigate into the inner type
+                                // The inner type should be String for JSON object keys
+                                // TODO: Rename push_inner to begin_inner for consistency with begin_* naming convention
+                                wip.push_inner().map_err(|e| self.reflect_err(e))?;
+                                wip.set(key.to_string()).map_err(|e| self.reflect_err(e))?;
+                                wip.end().map_err(|e| self.reflect_err(e))?; // End inner
+                            } else {
+                                // For non-transparent types, set the string directly
+                                wip.set(key.to_string()).map_err(|e| self.reflect_err(e))?;
+                            }
+
                             wip.end().map_err(|e| self.reflect_err(e))?; // Complete the key frame
                             wip.push_map_value().map_err(|e| self.reflect_err(e))?;
                         } else {

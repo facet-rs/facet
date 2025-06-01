@@ -123,3 +123,35 @@ fn transparent_option_non_zero_u16_none() {
     let opt_none: Option<NonZeroU16> = from_str(markup)?;
     assert_eq!(opt_none, None);
 }
+
+#[test]
+fn transparent_string_as_map_key() {
+    use std::collections::HashMap;
+
+    #[derive(Facet, Clone, Debug, PartialEq, Eq, Hash)]
+    #[facet(transparent)]
+    struct UserId(String);
+
+    let markup = r#"
+        {
+            "user123": "Alice",
+            "user456": "Bob",
+            "user789": "Charlie"
+        }
+    "#;
+
+    let map: HashMap<UserId, String> = from_str(markup)?;
+    assert_eq!(
+        map.get(&UserId("user123".to_string())),
+        Some(&"Alice".to_string())
+    );
+    assert_eq!(
+        map.get(&UserId("user456".to_string())),
+        Some(&"Bob".to_string())
+    );
+    assert_eq!(
+        map.get(&UserId("user789".to_string())),
+        Some(&"Charlie".to_string())
+    );
+    assert_eq!(map.len(), 3);
+}
