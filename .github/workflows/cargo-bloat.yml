@@ -36,6 +36,7 @@ jobs:
         run: |
           cargo build --release --manifest-path outside-workspace/bigapi-cli-facet/Cargo.toml
           cargo bloat --release --manifest-path outside-workspace/bigapi-cli-facet/Cargo.toml -n 30 > pr-bloat.txt
+          cargo bloat --release --manifest-path outside-workspace/bigapi-cli-facet/Cargo.toml --crates -n 30 > pr-bloat-crates.txt
 
       - name: ✨ Checkout main branch
         shell: bash
@@ -47,6 +48,7 @@ jobs:
         run: |
           cargo build --release --manifest-path outside-workspace/bigapi-cli-facet/Cargo.toml
           cargo bloat --release --manifest-path outside-workspace/bigapi-cli-facet/Cargo.toml -n 30 > main-bloat.txt
+          cargo bloat --release --manifest-path outside-workspace/bigapi-cli-facet/Cargo.toml --crates -n 30 > main-bloat-crates.txt
 
       - name: ✨ Generate comparison
         shell: bash
@@ -107,23 +109,39 @@ jobs:
           echo "" >> bloat-report.md
           
           # Generate diff
-          echo "### Diff" >> bloat-report.md
+          echo "### Diff (by function)" >> bloat-report.md
           echo '```diff' >> bloat-report.md
           diff -u main-bloat.txt pr-bloat.txt >> bloat-report.md || true
+          echo '```' >> bloat-report.md
+          echo "" >> bloat-report.md
+          
+          echo "### Diff (by crate)" >> bloat-report.md
+          echo '```diff' >> bloat-report.md
+          diff -u main-bloat-crates.txt pr-bloat-crates.txt >> bloat-report.md || true
           echo '```' >> bloat-report.md
           echo "" >> bloat-report.md
           
           echo "<details>" >> bloat-report.md
           echo "<summary>Full outputs</summary>" >> bloat-report.md
           echo "" >> bloat-report.md
-          echo "### Main branch" >> bloat-report.md
+          echo "### Main branch (by function)" >> bloat-report.md
           echo '```' >> bloat-report.md
           cat main-bloat.txt >> bloat-report.md
           echo '```' >> bloat-report.md
           echo "" >> bloat-report.md
-          echo "### PR branch" >> bloat-report.md
+          echo "### PR branch (by function)" >> bloat-report.md
           echo '```' >> bloat-report.md
           cat pr-bloat.txt >> bloat-report.md
+          echo '```' >> bloat-report.md
+          echo "" >> bloat-report.md
+          echo "### Main branch (by crate)" >> bloat-report.md
+          echo '```' >> bloat-report.md
+          cat main-bloat-crates.txt >> bloat-report.md
+          echo '```' >> bloat-report.md
+          echo "" >> bloat-report.md
+          echo "### PR branch (by crate)" >> bloat-report.md
+          echo '```' >> bloat-report.md
+          cat pr-bloat-crates.txt >> bloat-report.md
           echo '```' >> bloat-report.md
           echo "</details>" >> bloat-report.md
 
