@@ -286,7 +286,7 @@ impl core::fmt::Display for KeyStack<'_> {
             }
             write!(f, "]")?;
         } else {
-            write!(f, "{}", "root".red())?;
+            write!(f, "«{}»", "root".red())?;
         }
         Ok(())
     }
