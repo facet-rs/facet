@@ -395,6 +395,31 @@ fn deserialize_as_list<'input, 'a, 'shape>(
         "list".blue()
     );
 
+    // Check if this is an array of tables
+    if let Some(array_of_tables) = item.as_array_of_tables() {
+        // Handle array of tables
+        reflect!(wip, toml, array_of_tables.span(), begin_list());
+
+        if array_of_tables.is_empty() {
+            // Empty list - nothing more to do
+            return Ok(());
+        }
+
+        // Loop over all tables in the array
+        for table in array_of_tables.iter() {
+            // Start the field
+            reflect!(wip, toml, table.span(), begin_list_item());
+
+            deserialize_item(toml, wip, &Item::Table(table.clone()))?;
+
+            // Finish the field
+            reflect!(wip, toml, table.span(), end());
+        }
+
+        trace!("Finished deserializing {}", "array of tables".blue());
+        return Ok(());
+    }
+
     // Get the TOML item as an array
     let Some(item) = item.as_array() else {
         return Err(TomlDeError::new(

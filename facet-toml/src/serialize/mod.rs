@@ -3,6 +3,7 @@
 #[cfg(not(feature = "alloc"))]
 compile_error!("feature `alloc` is required");
 
+mod array_of_tables;
 mod error;
 
 use alloc::{
@@ -15,6 +16,7 @@ use core::borrow::Borrow as _;
 use owo_colors::OwoColorize;
 
 pub use error::TomlSerError;
+use facet_reflect::HasFields;
 use facet_serialize::{Serialize, Serializer};
 use log::trace;
 use toml_edit::{DocumentMut, Item, Table, Value};
@@ -279,8 +281,36 @@ enum KeyOrValue {
 /// Serialize any `Facet` type to a TOML string.
 #[cfg(feature = "alloc")]
 pub fn to_string<'a, T: facet_core::Facet<'a>>(value: &'a T) -> Result<String, TomlSerError> {
-    let mut serializer = TomlSerializer::new();
-    value.serialize(&mut serializer)?;
+    // First peek at the value to understand its structure
+    let peek = facet_reflect::Peek::new(value);
 
-    Ok(serializer.into_string())
+    // Check if the root is a struct with fields that are arrays of tables
+    if let Ok(struct_peek) = peek.into_struct() {
+        let mut serializer = TomlSerializer::new();
+
+        // Process each field
+        for (field, field_value) in struct_peek.fields_for_serialize() {
+            // Check if this field is an array of tables
+            if array_of_tables::is_array_of_tables(&field_value) {
+                // Handle array of tables specially
+                let list = field_value.into_list_like().unwrap();
+                let aot = array_of_tables::serialize_array_of_tables(list)?;
+                serializer
+                    .document
+                    .insert(field.name, Item::ArrayOfTables(aot));
+            } else {
+                // Normal field serialization
+                serializer.push_key(Cow::Borrowed(field.name), "field");
+                facet_serialize::serialize_iterative(field_value, &mut serializer)?;
+                serializer.pop_key("field");
+            }
+        }
+
+        Ok(serializer.into_string())
+    } else {
+        // Not a struct at root, use normal serialization
+        let mut serializer = TomlSerializer::new();
+        value.serialize(&mut serializer)?;
+        Ok(serializer.into_string())
+    }
 }

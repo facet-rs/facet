@@ -14,6 +14,8 @@ pub enum TomlSerError {
     },
     /// TOML doesn't support byte arrays.
     UnsupportedByteArray,
+    /// Invalid array of tables (expected structs)
+    InvalidArrayOfTables,
 }
 
 impl core::fmt::Display for TomlSerError {
@@ -27,6 +29,9 @@ impl core::fmt::Display for TomlSerError {
             }
             Self::UnsupportedByteArray => {
                 write!(f, "TOML doesn't support byte arrays")
+            }
+            Self::InvalidArrayOfTables => {
+                write!(f, "Invalid array of tables: expected array of structs")
             }
         }
     }

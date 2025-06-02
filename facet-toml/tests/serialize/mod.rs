@@ -5,6 +5,7 @@ mod map;
 mod option;
 mod scalar;
 mod struct_;
+mod vec_struct;
 
 /// Assert that the TOML used to serialize a value can be used to deserialize the value too.
 #[macro_export]
