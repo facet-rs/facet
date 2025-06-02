@@ -1,0 +1,5 @@
+---
+source: facet-reflect/tests/partial/tuples.rs
+expression: partial.end().unwrap_err()
+---
+Field '(String, i32)::1' was not initialized

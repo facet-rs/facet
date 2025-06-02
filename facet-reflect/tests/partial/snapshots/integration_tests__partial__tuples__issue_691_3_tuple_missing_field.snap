@@ -1,0 +1,5 @@
+---
+source: facet-reflect/tests/partial/tuples.rs
+expression: partial.build().unwrap_err()
+---
+Field '(String, i32, bool)::2' was not initialized
