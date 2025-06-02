@@ -45,7 +45,11 @@ jobs:
       - name: ✨ Checkout main branch
         shell: bash
         run: |
+          # Stash any changes (like Cargo.lock files) before switching branches
+          git stash --include-untracked
           git checkout main
+          # Re-apply the changes (path dependencies) after switching
+          git stash pop || true
 
       - name: ✨ Build and analyze main branch
         shell: bash
