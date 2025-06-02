@@ -70,9 +70,9 @@ jobs:
           echo "Comparison of binary sizes between \`main\` and this PR:" >> bloat-report.md
           echo "" >> bloat-report.md
           
-          # Extract total size from both files
-          MAIN_SIZE=$(grep "File  .text" main-bloat.txt | awk '{print $NF}')
-          PR_SIZE=$(grep "File  .text" pr-bloat.txt | awk '{print $NF}')
+          # Extract total size from both files (from the last line)
+          MAIN_SIZE=$(grep "\.text section size" main-bloat.txt | awk '{print $3}')
+          PR_SIZE=$(grep "\.text section size" pr-bloat.txt | awk '{print $3}')
           
           # Calculate the difference
           MAIN_BYTES=$(echo $MAIN_SIZE | sed 's/[^0-9.]//g')
