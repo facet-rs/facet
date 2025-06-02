@@ -47,6 +47,7 @@
                 }))
 
               cargo-nextest
+              just
             ];
 
             RUST_BACKTRACE = 1;
