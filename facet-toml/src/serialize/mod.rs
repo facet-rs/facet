@@ -102,7 +102,7 @@ impl<'shape> TomlSerializer<'shape> {
         // Push empty item
         self.item_mut()
             .as_table_mut()
-            .unwrap()
+            .expect("the current item to be a table when pushing a new key")
             .insert(&key, Item::None);
 
         // Push the key on the stack
