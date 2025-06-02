@@ -68,7 +68,8 @@ impl<'shape> TomlSerializer<'shape> {
                         toml_type: value.type_name(),
                     })?
                     .to_string();
-                self.push_key(Cow::Owned(map_key), "map key");
+                self.push_key(Cow::Owned(map_key));
+                trace!("Push map key {}", self.display_full_key());
             }
         }
 
@@ -98,7 +99,7 @@ impl<'shape> TomlSerializer<'shape> {
     }
 
     /// Create a new empty item at the key.
-    fn push_key(&mut self, key: Cow<'shape, str>, type_name: &'static str) {
+    fn push_key(&mut self, key: Cow<'shape, str>) {
         // Push empty item
         self.item_mut()
             .as_table_mut()
@@ -107,14 +108,10 @@ impl<'shape> TomlSerializer<'shape> {
 
         // Push the key on the stack
         self.key_stack.push(key);
-
-        trace!("Push {type_name} {}", self.display_full_key());
     }
 
     /// Pop the current key, which means the item is finished.
-    fn pop_key(&mut self, type_name: &'static str) {
-        trace!("Pop {type_name} {}", self.display_full_key());
-
+    fn pop_key(&mut self) {
         self.key_stack.pop();
     }
 
@@ -239,7 +236,8 @@ impl<'shape> Serializer<'shape> for TomlSerializer<'shape> {
     }
 
     fn serialize_field_name(&mut self, name: &'shape str) -> Result<(), Self::Error> {
-        self.push_key(Cow::Borrowed(name), "field");
+        self.push_key(Cow::Borrowed(name));
+        trace!("Push field {}", self.display_full_key());
 
         Ok(())
     }
@@ -257,13 +255,15 @@ impl<'shape> Serializer<'shape> for TomlSerializer<'shape> {
     }
 
     fn end_map_value(&mut self) -> Result<(), Self::Error> {
-        self.pop_key("map item");
+        self.pop_key();
+        trace!("Pop map item {}", self.display_full_key());
 
         Ok(())
     }
 
     fn end_field(&mut self) -> Result<(), Self::Error> {
-        self.pop_key("field");
+        self.pop_key();
+        trace!("Pop field {}", self.display_full_key());
 
         Ok(())
     }
@@ -300,9 +300,11 @@ pub fn to_string<'a, T: facet_core::Facet<'a>>(value: &'a T) -> Result<String, T
                     .insert(field.name, Item::ArrayOfTables(aot));
             } else {
                 // Normal field serialization
-                serializer.push_key(Cow::Borrowed(field.name), "field");
+                serializer.push_key(Cow::Borrowed(field.name));
+                trace!("Push field {}", field.name);
                 facet_serialize::serialize_iterative(field_value, &mut serializer)?;
-                serializer.pop_key("field");
+                serializer.pop_key();
+                trace!("Pop field {}", field.name);
             }
         }
 
