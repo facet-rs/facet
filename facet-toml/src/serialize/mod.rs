@@ -12,6 +12,7 @@ use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
+use core::ops::{Deref, DerefMut};
 use owo_colors::OwoColorize;
 
 pub use error::TomlSerError;
@@ -25,7 +26,7 @@ pub struct TomlSerializer<'shape> {
     /// The TOML document.
     document: DocumentMut,
     /// Current stack of where we are in the tree.
-    key_stack: Vec<Cow<'shape, str>>,
+    key_stack: KeyStack<'shape>,
     /// What type the current item is.
     current: KeyOrValue,
 }
@@ -35,7 +36,7 @@ impl<'shape> TomlSerializer<'shape> {
     pub fn new() -> Self {
         Self {
             document: DocumentMut::new(),
-            key_stack: Vec::new(),
+            key_stack: KeyStack::new(),
             current: KeyOrValue::Value,
         }
     }
@@ -122,7 +123,7 @@ impl<'shape> TomlSerializer<'shape> {
 
         let mut output = "[".to_string();
         let mut first = true;
-        for stack_item in &self.key_stack {
+        for stack_item in self.key_stack.iter() {
             // Only loop over valid keys
             output = format!(
                 "{output}{}{}",
@@ -275,6 +276,29 @@ enum KeyOrValue {
     Key,
     /// A regular value, can be a field, array item, etc.
     Value,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+struct KeyStack<'shape>(Vec<Cow<'shape, str>>);
+
+impl KeyStack<'_> {
+    fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl<'shape> Deref for KeyStack<'shape> {
+    type Target = Vec<Cow<'shape, str>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<'shape> DerefMut for KeyStack<'shape> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
 /// Serialize any `Facet` type to a TOML string.
