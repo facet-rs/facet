@@ -5,5 +5,5 @@ edition = "2024"
 
 [dependencies]
 chrono = { version = "0.4.41", features = [] }
-facet = { version = "0.27.8", features = ["chrono", "time", "uuid"] }
+facet = { path = "../../facet", features = ["chrono", "time", "uuid"] }
 uuid = { version = "1.17.0", features = ["v4"] }
