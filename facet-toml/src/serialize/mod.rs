@@ -68,7 +68,7 @@ impl<'shape> TomlSerializer<'shape> {
                         toml_type: value.type_name(),
                     })?
                     .to_string();
-                self.push_key(Cow::Owned(map_key));
+                self.push_key(map_key);
                 trace!("Push map key {}", self.display_full_key());
             }
         }
@@ -99,7 +99,8 @@ impl<'shape> TomlSerializer<'shape> {
     }
 
     /// Create a new empty item at the key.
-    fn push_key(&mut self, key: Cow<'shape, str>) {
+    fn push_key(&mut self, key: impl Into<Cow<'shape, str>>) {
+        let key = key.into();
         // Push empty item
         self.item_mut()
             .as_table_mut()
@@ -236,7 +237,7 @@ impl<'shape> Serializer<'shape> for TomlSerializer<'shape> {
     }
 
     fn serialize_field_name(&mut self, name: &'shape str) -> Result<(), Self::Error> {
-        self.push_key(Cow::Borrowed(name));
+        self.push_key(name);
         trace!("Push field {}", self.display_full_key());
 
         Ok(())
@@ -300,7 +301,7 @@ pub fn to_string<'a, T: facet_core::Facet<'a>>(value: &'a T) -> Result<String, T
                     .insert(field.name, Item::ArrayOfTables(aot));
             } else {
                 // Normal field serialization
-                serializer.push_key(Cow::Borrowed(field.name));
+                serializer.push_key(field.name);
                 trace!("Push field {}", field.name);
                 facet_serialize::serialize_iterative(field_value, &mut serializer)?;
                 serializer.pop_key();
