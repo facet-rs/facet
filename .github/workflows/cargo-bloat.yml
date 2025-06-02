@@ -46,6 +46,8 @@ jobs:
         shell: bash
         run: |
           git checkout main
+          # Clean all build artifacts to ensure we rebuild for main branch
+          cargo clean
 
       - name: ✨ Build and analyze main branch
         shell: bash
