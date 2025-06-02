@@ -8,8 +8,6 @@ pub fn do_ser_stuff() {
     // Serialize the catalog to JSON
     let serialized = facet_json::to_string(&catalog);
 
-    let serialized = std::fs::read_to_string("/tmp/blah.json").unwrap();
-
     println!("Serialized catalog JSON.\n{}", serialized);
 
     // Deserialize back to a Catalog struct
