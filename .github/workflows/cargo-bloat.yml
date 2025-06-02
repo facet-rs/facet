@@ -27,9 +27,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: ✨ Install cargo-bloat
-        shell: bash
-        run: |
-          cargo install cargo-bloat --locked
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-bloat
 
       - name: ✨ Build and analyze PR branch
         shell: bash
