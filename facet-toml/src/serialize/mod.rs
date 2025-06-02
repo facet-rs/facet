@@ -8,7 +8,6 @@ mod error;
 
 use alloc::{
     borrow::Cow,
-    format,
     string::{String, ToString},
     vec::Vec,
 };
@@ -69,7 +68,7 @@ impl<'shape> TomlSerializer<'shape> {
                     })?
                     .to_string();
                 self.push_key(map_key);
-                trace!("Push map key {}", self.display_full_key());
+                trace!("Push map key {}", self.key_stack);
             }
         }
 
@@ -79,11 +78,7 @@ impl<'shape> TomlSerializer<'shape> {
     /// Convert the item at the current key to another type.
     fn set_current_item(&mut self, item: impl Into<Item>) {
         let item = item.into();
-        trace!(
-            "Set item {} to {}",
-            self.display_full_key(),
-            item.type_name()
-        );
+        trace!("Set item {} to {}", self.key_stack, item.type_name());
 
         *self.item_mut() = item;
     }
@@ -113,26 +108,6 @@ impl<'shape> TomlSerializer<'shape> {
     /// Pop the current key, which means the item is finished.
     fn pop_key(&mut self) {
         self.key_stack.pop();
-    }
-
-    /// Print the keys.
-    fn display_full_key(&self) -> String {
-        if self.key_stack.is_empty() {
-            return "root".red().to_string();
-        }
-
-        let mut output = "[".to_string();
-        let mut first = true;
-        for stack_item in self.key_stack.iter() {
-            // Only loop over valid keys
-            output = format!(
-                "{output}{}{}",
-                if first { "" } else { "." },
-                stack_item.cyan()
-            );
-            first = false;
-        }
-        format!("{output}]")
     }
 }
 
@@ -237,7 +212,7 @@ impl<'shape> Serializer<'shape> for TomlSerializer<'shape> {
 
     fn serialize_field_name(&mut self, name: &'shape str) -> Result<(), Self::Error> {
         self.push_key(name);
-        trace!("Push field {}", self.display_full_key());
+        trace!("Push field {}", self.key_stack);
 
         Ok(())
     }
@@ -256,14 +231,14 @@ impl<'shape> Serializer<'shape> for TomlSerializer<'shape> {
 
     fn end_map_value(&mut self) -> Result<(), Self::Error> {
         self.pop_key();
-        trace!("Pop map item {}", self.display_full_key());
+        trace!("Pop map item {}", self.key_stack);
 
         Ok(())
     }
 
     fn end_field(&mut self) -> Result<(), Self::Error> {
         self.pop_key();
-        trace!("Pop field {}", self.display_full_key());
+        trace!("Pop field {}", self.key_stack);
 
         Ok(())
     }
@@ -298,6 +273,22 @@ impl<'shape> Deref for KeyStack<'shape> {
 impl<'shape> DerefMut for KeyStack<'shape> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
+    }
+}
+
+impl core::fmt::Display for KeyStack<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut iter = self.iter();
+        if let Some(first) = iter.next() {
+            write!(f, "[{}", first.cyan())?;
+            for key in iter {
+                write!(f, ".{}", key.cyan())?;
+            }
+            write!(f, "]")?;
+        } else {
+            write!(f, "{}", "root".red())?;
+        }
+        Ok(())
     }
 }
 
