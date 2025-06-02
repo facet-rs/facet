@@ -5,7 +5,7 @@
   "license": "ISC",
   "main": "index.js",
   "name": "facet.rs",
-  "packageManager": "pnpm@10.11.0",
+  "packageManager": "pnpm@10.11.1",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
