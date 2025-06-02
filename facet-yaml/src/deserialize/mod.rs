@@ -94,7 +94,7 @@ fn deserialize_value<'facet, 'shape>(
         log::debug!("Handling facet(transparent) type");
 
         // For transparent types, push inner and deserialize as inner type
-        wip.push_inner().map_err(|e| AnyErr(e.to_string()))?;
+        wip.begin_inner().map_err(|e| AnyErr(e.to_string()))?;
         deserialize_value(wip, value)?;
         wip.end().map_err(|e| AnyErr(e.to_string()))?;
         return Ok(());
@@ -408,7 +408,7 @@ fn deserialize_value<'facet, 'shape>(
                 // Null maps to None - already handled by default
             } else {
                 // Non-null maps to Some(value)
-                wip.push_some().map_err(|e| AnyErr(e.to_string()))?;
+                wip.begin_some().map_err(|e| AnyErr(e.to_string()))?;
                 deserialize_value(wip, value)?;
                 wip.end().map_err(|e| AnyErr(e.to_string()))?;
             }

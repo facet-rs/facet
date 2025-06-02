@@ -701,8 +701,8 @@ impl<'input, 'shape> Decoder<'input> {
             } else {
                 trace!("Option value is present, setting to Some");
                 // Value is present - initialize a Some option
-                wip.push_some()?;
-                trace!("After push_some, wip shape: {}", wip.shape());
+                wip.begin_some()?;
+                trace!("After begin_some, wip shape: {}", wip.shape());
                 self.deserialize_value(wip)?;
                 trace!("After deserialize_value, calling end");
                 wip.end()?;

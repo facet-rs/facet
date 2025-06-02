@@ -45,17 +45,17 @@ fn test_option_building_none() {
 }
 
 #[test]
-fn test_option_building_with_push_some() {
+fn test_option_building_with_begin_some() {
     // This test will likely fail with the current implementation
     // but it shows what we WANT to be able to do
     let mut wip = Partial::alloc::<Option<String>>()?;
 
-    // Try the current push_some API
-    let result = wip.push_some();
+    // Try the current begin_some API
+    let result = wip.begin_some();
 
     match result {
         Ok(_) => {
-            // If push_some works, continue building
+            // If begin_some works, continue building
             wip.set("hello".to_string())?;
             wip.end()?;
 
@@ -64,8 +64,8 @@ fn test_option_building_with_push_some() {
             assert_eq!(option_value, Some("hello".to_string()));
         }
         Err(e) => {
-            println!("push_some failed as expected: {:?}", e);
-            // This shows that push_some is not properly implemented
+            println!("begin_some failed as expected: {:?}", e);
+            // This shows that begin_some is not properly implemented
         }
     }
 }

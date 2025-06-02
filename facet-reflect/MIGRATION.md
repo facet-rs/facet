@@ -13,6 +13,11 @@
 | `wip.begin_map_insert()` | Just use `partial.begin_map()` | No separate insert method |
 | `wip.put_empty_list()` | Just use `partial.begin_list()` | Don't add items for empty |
 | `wip.put_empty_map()` | Just use `partial.begin_map()` | Don't add items for empty |
+| `wip.push_some()` | `partial.begin_some()` | For Option::Some variant |
+| `wip.push_inner()` | `partial.begin_inner()` | For wrapper types |
+| `wip.push_pointee()` | `partial.begin_smart_ptr()` | Removed alias |
+| `wip.push_map_key()` | `partial.begin_key()` | Removed alias |
+| `wip.push_map_value()` | `partial.begin_value()` | Removed alias |
 
 ## Major API Changes
 
@@ -43,13 +48,17 @@ The API uses descriptive method names for different operations:
 - `begin_list()` - Initialize a list/vector for adding elements
 - `begin_list_item()` - Add an item to a list
 - `begin_map()` - Initialize a map for adding key-value pairs
-- `begin_key()` / `push_map_key()` - Push a frame for setting the key of a map entry (push_map_key is an alias)
-- `begin_value()` / `push_map_value()` - Push a frame for setting the value of a map entry (push_map_value is an alias)
+- `begin_key()` - Push a frame for setting the key of a map entry
+- `begin_value()` - Push a frame for setting the value of a map entry
 
 Note: Methods like `put_empty_list()` and `put_empty_map()` no longer exist. To create empty collections, just call `begin_list()`/`begin_map()` without adding any items.
 
-#### Smart Pointers
+#### Option Types
+- `begin_some()` - Initialize the Some variant of an Option
+
+#### Smart Pointers and Wrapper Types
 - `begin_smart_ptr()` - Navigate into smart pointer contents (Box, Arc, etc.)
+- `begin_inner()` - Navigate into wrapper type contents (types with inner values)
 
 ### 4. Setting Values
 - `put()` → `set()` - Set a value at the current position
@@ -119,10 +128,10 @@ wip = wip.pop_map_entry()?;
 ```rust
 let mut partial = Partial::alloc::<HashMap<String, i32>>()?;
 partial.begin_map()?;
-partial.begin_key()?;   // or push_map_key()
+partial.begin_key()?;
 partial.set("key".to_string())?;
 partial.end()?;
-partial.begin_value()?; // or push_map_value()
+partial.begin_value()?;
 partial.set(42)?;
 partial.end()?;
 ```
@@ -162,9 +171,15 @@ partial.set(Some("hello".to_string()))?;  // Explicit Some
 
 // Or for None:
 partial.set(None)?;
+
+// Alternative: Use begin_some() to build Some variant
+let mut partial = Partial::alloc::<Option<String>>()?;
+partial.begin_some()?;
+partial.set("hello".to_string())?;
+partial.end()?;
 ```
 
-**Note**: The implicit conversion from inner value to `Some` has been removed for clarity and consistency. You must now explicitly provide `Some(value)` or `None`.
+**Note**: The implicit conversion from inner value to `Some` has been removed for clarity and consistency. You must now explicitly provide `Some(value)` or `None` when using `set()`, or use `begin_some()` to construct the Some variant.
 
 ## Key Differences
 

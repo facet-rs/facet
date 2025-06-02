@@ -84,7 +84,7 @@ pub enum ReflectError<'shape> {
     },
 
     /// Indicates that we try to access a field on an `Arc<T>`, for example, and the field might exist
-    /// on the T, but you need to do push_pointee first when using the WIP API.
+    /// on the T, but you need to do begin_smart_ptr first when using the WIP API.
     MissingPushPointee {
         /// The smart pointer (`Arc<T>`, `Box<T>` etc.) shape on which field was caleld
         shape: &'shape Shape<'shape>,
@@ -220,7 +220,7 @@ impl core::fmt::Display for ReflectError<'_> {
                     f,
                     "Tried to access a field on smart pointer '{}', but you need to call {} first to work with the value it points to (and pop it with {} later)",
                     shape.blue(),
-                    ".push_pointee()".yellow(),
+                    ".begin_smart_ptr()".yellow(),
                     ".pop()".yellow()
                 )
             }

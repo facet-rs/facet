@@ -1431,7 +1431,7 @@ where
         loop {
             if matches!(wip.shape().def, Def::Option(_)) {
                 trace!("  Starting Some(_) option for {}", wip.shape().blue());
-                wip.push_some().map_err(|e| self.reflect_err(e))?;
+                wip.begin_some().map_err(|e| self.reflect_err(e))?;
                 self.stack.push(Instruction::Pop(PopReason::Some));
             } else if let Def::SmartPointer(inner) = wip.shape().def {
                 if let Some(pointee) = inner.pointee() {
@@ -1446,7 +1446,7 @@ where
                         wip.shape().blue()
                     );
                 }
-                wip.push_pointee().map_err(|e| self.reflect_err(e))?;
+                wip.begin_smart_ptr().map_err(|e| self.reflect_err(e))?;
                 self.stack.push(Instruction::Pop(PopReason::SmartPointer));
             } else if let Some(inner_fn) = wip.shape().inner {
                 let inner = inner_fn();
@@ -1455,7 +1455,7 @@ where
                     wip.shape().blue(),
                     inner.yellow()
                 );
-                wip.push_inner().map_err(|e| self.reflect_err(e))?;
+                wip.begin_inner().map_err(|e| self.reflect_err(e))?;
                 self.stack.push(Instruction::Pop(PopReason::Wrapper));
             } else {
                 break;
@@ -1802,15 +1802,15 @@ where
                     _ => {
                         // Check if it's a map
                         if let Def::Map(map_def) = shape.def {
-                            wip.push_map_key().map_err(|e| self.reflect_err(e))?;
+                            wip.begin_key().map_err(|e| self.reflect_err(e))?;
 
                             // Check if the map key type is transparent (has an inner shape)
                             let key_shape = map_def.k();
                             if key_shape.inner.is_some() {
                                 // For transparent types, we need to navigate into the inner type
                                 // The inner type should be String for JSON object keys
-                                // TODO: Rename push_inner to begin_inner for consistency with begin_* naming convention
-                                wip.push_inner().map_err(|e| self.reflect_err(e))?;
+                                // Use begin_inner for consistency with begin_* naming convention
+                                wip.begin_inner().map_err(|e| self.reflect_err(e))?;
                                 wip.set(key.to_string()).map_err(|e| self.reflect_err(e))?;
                                 wip.end().map_err(|e| self.reflect_err(e))?; // End inner
                             } else {
@@ -1819,7 +1819,7 @@ where
                             }
 
                             wip.end().map_err(|e| self.reflect_err(e))?; // Complete the key frame
-                            wip.push_map_value().map_err(|e| self.reflect_err(e))?;
+                            wip.begin_value().map_err(|e| self.reflect_err(e))?;
                         } else {
                             return Err(self.err(DeserErrorKind::Unimplemented(
                                 "object key for non-struct/map",

@@ -2140,7 +2140,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Begin building the Some variant of an Option
-    pub fn push_some(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn begin_some(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
         self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
 
@@ -2190,13 +2190,8 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         Ok(self)
     }
 
-    /// Begin building the inner value of a smart pointer
-    pub fn push_pointee(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
-        self.begin_smart_ptr()
-    }
-
     /// Begin building the inner value of a wrapper type
-    pub fn push_inner(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn begin_inner(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
         self.require_active()?;
 
         // Get the inner shape and check for try_from
@@ -2240,7 +2235,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                 // This allows setting values of the inner type which will be converted
                 // The automatic conversion detection in end() will handle the conversion
                 trace!(
-                    "push_inner: Creating frame for inner type {} (parent is {})",
+                    "begin_inner: Creating frame for inner type {} (parent is {})",
                     inner_shape, parent_shape
                 );
                 self.frames
@@ -2251,7 +2246,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                 // For wrapper types without try_from, navigate to the first field
                 // This is a common pattern for newtype wrappers
                 trace!(
-                    "push_inner: No try_from for {}, using field navigation",
+                    "begin_inner: No try_from for {}, using field navigation",
                     parent_shape
                 );
                 self.begin_nth_field(0)
@@ -2262,16 +2257,6 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                 operation: "type does not have an inner value",
             })
         }
-    }
-
-    /// Begin building a map key (for compatibility)
-    pub fn push_map_key(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
-        self.begin_key()
-    }
-
-    /// Begin building a map value (for compatibility)
-    pub fn push_map_value(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
-        self.begin_value()
     }
 
     /// Copy a value from a Peek into the current position (safe alternative to set_shape)
@@ -2695,21 +2680,15 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
         Ok(self)
     }
 
-    /// Forwards push_some to the inner wip instance.
-    pub fn push_some(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
-        self.inner.push_some()?;
+    /// Forwards begin_some to the inner wip instance.
+    pub fn begin_some(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+        self.inner.begin_some()?;
         Ok(self)
     }
 
-    /// Forwards push_pointee to the inner wip instance.
-    pub fn push_pointee(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
-        self.inner.push_pointee()?;
-        Ok(self)
-    }
-
-    /// Forwards push_inner to the inner wip instance.
-    pub fn push_inner(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
-        self.inner.push_inner()?;
+    /// Forwards begin_inner to the inner wip instance.
+    pub fn begin_inner(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+        self.inner.begin_inner()?;
         Ok(self)
     }
 }

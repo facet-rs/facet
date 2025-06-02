@@ -532,8 +532,8 @@ fn deserialize_as_option<'input, 'a, 'shape>(
         "option".blue()
     );
 
-    // Use push_some to initialize the Option as Some
-    reflect!(wip, toml, item.span(), push_some());
+    // Use begin_some to initialize the Option as Some
+    reflect!(wip, toml, item.span(), begin_some());
 
     // Deserialize the inner value
     deserialize_item(toml, wip, item)?;
