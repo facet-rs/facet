@@ -75,17 +75,27 @@ jobs:
           PR_SIZE=$(grep "\.text section size" pr-bloat.txt | awk '{print $3}')
           
           # Calculate the difference
-          MAIN_BYTES=$(echo $MAIN_SIZE | sed 's/[^0-9.]//g')
-          PR_BYTES=$(echo $PR_SIZE | sed 's/[^0-9.]//g')
-          if [[ $MAIN_SIZE == *"MiB"* ]]; then
-            MAIN_BYTES=$(echo "$MAIN_BYTES * 1048576" | bc | cut -d'.' -f1)
-          elif [[ $MAIN_SIZE == *"KiB"* ]]; then
-            MAIN_BYTES=$(echo "$MAIN_BYTES * 1024" | bc | cut -d'.' -f1)
+          # Extract numeric value and unit separately
+          MAIN_VALUE=$(echo $MAIN_SIZE | sed 's/[^0-9.]//g')
+          MAIN_UNIT=$(echo $MAIN_SIZE | sed 's/[0-9.]//g')
+          PR_VALUE=$(echo $PR_SIZE | sed 's/[^0-9.]//g')
+          PR_UNIT=$(echo $PR_SIZE | sed 's/[0-9.]//g')
+          
+          # Convert to bytes using awk for floating point math
+          if [[ $MAIN_UNIT == "MiB" ]]; then
+            MAIN_BYTES=$(awk "BEGIN {printf \"%.0f\", $MAIN_VALUE * 1048576}")
+          elif [[ $MAIN_UNIT == "KiB" ]]; then
+            MAIN_BYTES=$(awk "BEGIN {printf \"%.0f\", $MAIN_VALUE * 1024}")
+          else
+            MAIN_BYTES=$MAIN_VALUE
           fi
-          if [[ $PR_SIZE == *"MiB"* ]]; then
-            PR_BYTES=$(echo "$PR_BYTES * 1048576" | bc | cut -d'.' -f1)
-          elif [[ $PR_SIZE == *"KiB"* ]]; then
-            PR_BYTES=$(echo "$PR_BYTES * 1024" | bc | cut -d'.' -f1)
+          
+          if [[ $PR_UNIT == "MiB" ]]; then
+            PR_BYTES=$(awk "BEGIN {printf \"%.0f\", $PR_VALUE * 1048576}")
+          elif [[ $PR_UNIT == "KiB" ]]; then
+            PR_BYTES=$(awk "BEGIN {printf \"%.0f\", $PR_VALUE * 1024}")
+          else
+            PR_BYTES=$PR_VALUE
           fi
           
           DIFF_BYTES=$((PR_BYTES - MAIN_BYTES))
@@ -104,9 +114,9 @@ jobs:
           if [ $DIFF_BYTES -ne 0 ]; then
             ABS_DIFF=${DIFF_BYTES#-}
             if [ $ABS_DIFF -gt 1048576 ]; then
-              DIFF_FMT="${DIFF_SIGN}$(echo "scale=2; $DIFF_BYTES / 1048576" | bc) MiB"
+              DIFF_FMT="${DIFF_SIGN}$(awk "BEGIN {printf \"%.2f\", $DIFF_BYTES / 1048576}") MiB"
             elif [ $ABS_DIFF -gt 1024 ]; then
-              DIFF_FMT="${DIFF_SIGN}$(echo "scale=2; $DIFF_BYTES / 1024" | bc) KiB"
+              DIFF_FMT="${DIFF_SIGN}$(awk "BEGIN {printf \"%.2f\", $DIFF_BYTES / 1024}") KiB"
             else
               DIFF_FMT="${DIFF_SIGN}${DIFF_BYTES} B"
             fi
