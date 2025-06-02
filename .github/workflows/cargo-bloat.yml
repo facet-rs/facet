@@ -60,10 +60,50 @@ jobs:
           MAIN_SIZE=$(grep "File  .text" main-bloat.txt | awk '{print $NF}')
           PR_SIZE=$(grep "File  .text" pr-bloat.txt | awk '{print $NF}')
           
-          echo "| Branch | Total Size |" >> bloat-report.md
-          echo "|--------|------------|" >> bloat-report.md
-          echo "| main   | $MAIN_SIZE |" >> bloat-report.md
-          echo "| PR     | $PR_SIZE   |" >> bloat-report.md
+          # Calculate the difference
+          MAIN_BYTES=$(echo $MAIN_SIZE | sed 's/[^0-9.]//g')
+          PR_BYTES=$(echo $PR_SIZE | sed 's/[^0-9.]//g')
+          if [[ $MAIN_SIZE == *"MiB"* ]]; then
+            MAIN_BYTES=$(echo "$MAIN_BYTES * 1048576" | bc | cut -d'.' -f1)
+          elif [[ $MAIN_SIZE == *"KiB"* ]]; then
+            MAIN_BYTES=$(echo "$MAIN_BYTES * 1024" | bc | cut -d'.' -f1)
+          fi
+          if [[ $PR_SIZE == *"MiB"* ]]; then
+            PR_BYTES=$(echo "$PR_BYTES * 1048576" | bc | cut -d'.' -f1)
+          elif [[ $PR_SIZE == *"KiB"* ]]; then
+            PR_BYTES=$(echo "$PR_BYTES * 1024" | bc | cut -d'.' -f1)
+          fi
+          
+          DIFF_BYTES=$((PR_BYTES - MAIN_BYTES))
+          if [ $DIFF_BYTES -gt 0 ]; then
+            DIFF_SIGN="+"
+            DIFF_EMOJI="📈"
+          elif [ $DIFF_BYTES -lt 0 ]; then
+            DIFF_SIGN=""
+            DIFF_EMOJI="📉"
+          else
+            DIFF_SIGN=""
+            DIFF_EMOJI="✅"
+          fi
+          
+          # Format the difference
+          if [ $DIFF_BYTES -ne 0 ]; then
+            ABS_DIFF=${DIFF_BYTES#-}
+            if [ $ABS_DIFF -gt 1048576 ]; then
+              DIFF_FMT="${DIFF_SIGN}$(echo "scale=2; $DIFF_BYTES / 1048576" | bc) MiB"
+            elif [ $ABS_DIFF -gt 1024 ]; then
+              DIFF_FMT="${DIFF_SIGN}$(echo "scale=2; $DIFF_BYTES / 1024" | bc) KiB"
+            else
+              DIFF_FMT="${DIFF_SIGN}${DIFF_BYTES} B"
+            fi
+          else
+            DIFF_FMT="No change"
+          fi
+          
+          echo "| Branch | Total Size | Difference |" >> bloat-report.md
+          echo "|--------|------------|------------|" >> bloat-report.md
+          echo "| main   | $MAIN_SIZE | - |" >> bloat-report.md
+          echo "| **PR** | **$PR_SIZE** | **${DIFF_EMOJI} ${DIFF_FMT}** |" >> bloat-report.md
           echo "" >> bloat-report.md
           
           # Generate diff
@@ -90,6 +130,6 @@ jobs:
       - name: ✨ Comment PR
         uses: thollander/actions-comment-pull-request@v3
         with:
-          message-file: bloat-report.md
+          file-path: bloat-report.md
           comment-tag: cargo-bloat-analysis
           mode: upsert
