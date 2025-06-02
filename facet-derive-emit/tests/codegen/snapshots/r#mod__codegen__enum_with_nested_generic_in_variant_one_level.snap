@@ -1,6 +1,5 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
-assertion_line: 742
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n        enum OneLevelNested<T> {\n            VariantA(Result<T, String>),\n            VariantB(Option<T>),\n            // Also include a unit variant to check un-nested\n            Plain,\n        }\n        \"#)"
 ---
 #[automatically_derived]
@@ -61,7 +60,7 @@ where
                     };
                     ::facet::Variant::builder()
                         .name("VariantA")
-                        .discriminant(0i64)
+                        .discriminant(0i64 as i64)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())
@@ -94,7 +93,7 @@ where
                     };
                     ::facet::Variant::builder()
                         .name("VariantB")
-                        .discriminant(1i64)
+                        .discriminant(1i64 as i64)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())
@@ -106,7 +105,7 @@ where
                 },
                 ::facet::Variant::builder()
                     .name("Plain")
-                    .discriminant(2i64)
+                    .discriminant(2i64 as i64)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())

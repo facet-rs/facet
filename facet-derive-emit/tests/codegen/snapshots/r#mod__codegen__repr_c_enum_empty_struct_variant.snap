@@ -1,6 +1,5 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
-assertion_line: 150
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(C)]\n        enum EnumWithEmptyStructVariant {\n            Variant1 { },\n        }\n        \"#)"
 ---
 #[used]
@@ -46,7 +45,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithEmptyStructVariant {
                 let fields: &'static [::facet::Field] = &const { [] };
                 ::facet::Variant::builder()
                     .name("Variant1")
-                    .discriminant(0i64)
+                    .discriminant(0i64 as i64)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())

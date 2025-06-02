@@ -1,6 +1,5 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
-assertion_line: 308
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n        enum CommentedEnum {\n            /// This is variant A\n            #[allow(dead_code)]\n            A,\n            /// This is variant B\n            /// with multiple lines\n            #[allow(dead_code)]\n            B(u32),\n            /// This is variant C\n            /// which has named fields\n            #[allow(dead_code)]\n            C {\n                /// This is field x\n                x: u32,\n                /// This is field y\n                y: String,\n            },\n        }\n        \"#)"
 ---
 #[used]
@@ -34,7 +33,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for CommentedEnum {
             [
                 ::facet::Variant::builder()
                     .name("A")
-                    .discriminant(0i64)
+                    .discriminant(0i64 as i64)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -62,7 +61,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for CommentedEnum {
                     };
                     ::facet::Variant::builder()
                         .name("B")
-                        .discriminant(1i64)
+                        .discriminant(1i64 as i64)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())
@@ -110,7 +109,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for CommentedEnum {
                     };
                     ::facet::Variant::builder()
                         .name("C")
-                        .discriminant(2i64)
+                        .discriminant(2i64 as i64)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())

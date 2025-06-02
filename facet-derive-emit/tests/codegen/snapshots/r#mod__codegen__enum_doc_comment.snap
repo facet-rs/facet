@@ -1,6 +1,5 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
-assertion_line: 263
 expression: "expand(r#\"\n        /// This is an enum\n        #[derive(Facet)]\n        #[repr(u8)]\n        enum MyEnum {\n            #[allow(dead_code)]\n            A,\n            #[allow(dead_code)]\n            B,\n        }\n        \"#)"
 ---
 #[used]
@@ -16,7 +15,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for MyEnum {
             [
                 ::facet::Variant::builder()
                     .name("A")
-                    .discriminant(0i64)
+                    .discriminant(0i64 as i64)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -26,7 +25,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for MyEnum {
                     .build(),
                 ::facet::Variant::builder()
                     .name("B")
-                    .discriminant(1i64)
+                    .discriminant(1i64 as i64)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())

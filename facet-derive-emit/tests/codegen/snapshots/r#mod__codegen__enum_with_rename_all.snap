@@ -1,6 +1,5 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
-assertion_line: 816
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n        #[facet(rename_all = \"snake_case\")]\n        enum ApiResponse {\n            OkResponse {\n                #[facet(rename = \"responseData\")]\n                data: String,\n            },\n            ErrorResponse {\n                code: u32,\n                message: String,\n            },\n        }\n        \"#)"
 ---
 #[used]
@@ -51,7 +50,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                     };
                     ::facet::Variant::builder()
                         .name("ok_response")
-                        .discriminant(0i64)
+                        .discriminant(0i64 as i64)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())
@@ -74,7 +73,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
                     };
                     ::facet::Variant::builder()
                         .name("error_response")
-                        .discriminant(1i64)
+                        .discriminant(1i64 as i64)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())

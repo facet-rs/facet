@@ -1,6 +1,5 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
-assertion_line: 100
 expression: "expand(r#\"\n        #[repr(u8)]\n        #[derive(Facet)]\n        enum BitFlags {\n          None = 0b0000_0000,\n          Read = 0b0000_0001,\n          Write = 0b0000_0010,\n          Execute = 0b0000_0100,\n          All = 0b0000_0111,\n        }\n        \"#)"
 ---
 #[used]
@@ -18,7 +17,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for BitFlags {
             [
                 ::facet::Variant::builder()
                     .name("None")
-                    .discriminant(0b0000_0000)
+                    .discriminant(0b0000_0000 as i64)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -28,7 +27,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for BitFlags {
                     .build(),
                 ::facet::Variant::builder()
                     .name("Read")
-                    .discriminant(0b0000_0001)
+                    .discriminant(0b0000_0001 as i64)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -38,7 +37,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for BitFlags {
                     .build(),
                 ::facet::Variant::builder()
                     .name("Write")
-                    .discriminant(0b0000_0010)
+                    .discriminant(0b0000_0010 as i64)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -48,7 +47,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for BitFlags {
                     .build(),
                 ::facet::Variant::builder()
                     .name("Execute")
-                    .discriminant(0b0000_0100)
+                    .discriminant(0b0000_0100 as i64)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -58,7 +57,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for BitFlags {
                     .build(),
                 ::facet::Variant::builder()
                     .name("All")
-                    .discriminant(0b0000_0111)
+                    .discriminant(0b0000_0111 as i64)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())

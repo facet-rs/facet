@@ -225,7 +225,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                         exprs.push(quote! {
                             ::facet::Variant::builder()
                                 #variant_attrs_tokens
-                                .discriminant(#discriminant_ts)
+                                .discriminant(#discriminant_ts as i64)
                                 .data(::facet::StructType::builder().repr(::facet::Repr::c()).unit().build())
                                 #maybe_doc
                                 .build()
@@ -271,7 +271,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                             ]};
                             ::facet::Variant::builder()
                                 #variant_attrs_tokens
-                                .discriminant(#discriminant_ts)
+                                .discriminant(#discriminant_ts as i64)
                                 .data(::facet::StructType::builder().repr(::facet::Repr::c()).tuple().fields(fields).build())
                                 #maybe_doc
                                 .build()
@@ -327,7 +327,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                             ]};
                             ::facet::Variant::builder()
                                 #variant_attrs_tokens
-                                .discriminant(#discriminant_ts)
+                                .discriminant(#discriminant_ts as i64)
                                 .data(::facet::StructType::builder().repr(::facet::Repr::c()).struct_().fields(fields).build())
                                 #maybe_doc
                                 .build()
@@ -415,7 +415,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                         exprs.push(quote! {
                             ::facet::Variant::builder()
                                 #variant_attrs_tokens
-                                .discriminant(#discriminant_ts)
+                                .discriminant(#discriminant_ts as i64)
                                 .data(::facet::StructType::builder().repr(::facet::Repr::c()).unit().build())
                                 #maybe_doc
                                 .build()
@@ -470,7 +470,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                             ]};
                             ::facet::Variant::builder()
                                 #variant_attrs_tokens
-                                .discriminant(#discriminant_ts)
+                                .discriminant(#discriminant_ts as i64)
                                 .data(::facet::StructType::builder().repr(::facet::Repr::c()).tuple().fields(fields).build())
                                 #maybe_doc
                                 .build()
@@ -527,7 +527,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                             ]};
                             ::facet::Variant::builder()
                                 #variant_attrs_tokens
-                                .discriminant(#discriminant_ts)
+                                .discriminant(#discriminant_ts as i64)
                                 .data(::facet::StructType::builder().repr(::facet::Repr::c()).struct_().fields(fields).build())
                                 #maybe_doc
                                 .build()

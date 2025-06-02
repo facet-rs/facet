@@ -1,6 +1,5 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
-assertion_line: 117
 expression: "expand(r#\"\n        #[repr(u32)]\n        #[derive(Facet)]\n        enum Status {\n            Ok = 1,\n            Warn = 0xA,\n            Error = 0b1111,\n            Timeout = 0o77,\n        }\n        \"#)"
 ---
 #[used]
@@ -16,7 +15,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Status {
             [
                 ::facet::Variant::builder()
                     .name("Ok")
-                    .discriminant(1)
+                    .discriminant(1 as i64)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -26,7 +25,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Status {
                     .build(),
                 ::facet::Variant::builder()
                     .name("Warn")
-                    .discriminant(0xA)
+                    .discriminant(0xA as i64)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -36,7 +35,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Status {
                     .build(),
                 ::facet::Variant::builder()
                     .name("Error")
-                    .discriminant(0b1111)
+                    .discriminant(0b1111 as i64)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -46,7 +45,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Status {
                     .build(),
                 ::facet::Variant::builder()
                     .name("Timeout")
-                    .discriminant(0o77)
+                    .discriminant(0o77 as i64)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())

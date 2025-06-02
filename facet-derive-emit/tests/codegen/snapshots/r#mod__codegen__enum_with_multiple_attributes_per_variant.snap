@@ -1,6 +1,5 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
-assertion_line: 1037
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n        enum ConfigValue {\n            #[facet(rename = \"TextValue\")]\n            Text(String),\n            #[facet(rename = \"NumberValue\")]\n            Number {\n                #[facet(rename = \"numValue\")]\n                value: f64,\n                #[facet(rename = \"unitName\", sensitive)]\n                unit: String,\n            },\n            #[facet(rename = \"BoolValue\")]\n            Boolean(bool),\n        }\n        \"#)"
 ---
 #[used]
@@ -58,7 +57,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
                     };
                     ::facet::Variant::builder()
                         .name("TextValue")
-                        .discriminant(0i64)
+                        .discriminant(0i64 as i64)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())
@@ -104,7 +103,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
                     };
                     ::facet::Variant::builder()
                         .name("NumberValue")
-                        .discriminant(1i64)
+                        .discriminant(1i64 as i64)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())
@@ -133,7 +132,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigValue {
                     };
                     ::facet::Variant::builder()
                         .name("BoolValue")
-                        .discriminant(2i64)
+                        .discriminant(2i64 as i64)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())

@@ -1,6 +1,5 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
-assertion_line: 1110
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n        pub(crate) enum LogLevel {\n            Debug,\n            Info,\n            Warn,\n            Error,\n        }\n        \"#)"
 ---
 #[used]
@@ -18,7 +17,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for LogLevel {
             [
                 ::facet::Variant::builder()
                     .name("Debug")
-                    .discriminant(0i64)
+                    .discriminant(0i64 as i64)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -28,7 +27,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for LogLevel {
                     .build(),
                 ::facet::Variant::builder()
                     .name("Info")
-                    .discriminant(1i64)
+                    .discriminant(1i64 as i64)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -38,7 +37,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for LogLevel {
                     .build(),
                 ::facet::Variant::builder()
                     .name("Warn")
-                    .discriminant(2i64)
+                    .discriminant(2i64 as i64)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -48,7 +47,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for LogLevel {
                     .build(),
                 ::facet::Variant::builder()
                     .name("Error")
-                    .discriminant(3i64)
+                    .discriminant(3i64 as i64)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())

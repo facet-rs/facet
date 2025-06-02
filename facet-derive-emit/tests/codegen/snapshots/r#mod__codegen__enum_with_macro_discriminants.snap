@@ -1,6 +1,5 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
-assertion_line: 1083
 expression: "expand(r#\"\n        #[repr(u16)]\n        #[derive(Facet)]\n        enum TestEnum {\n            Value1 = test_macro!(1, 2),\n            Value2 = test_macro!(3, 4),\n        }\n        \"#)"
 ---
 #[used]
@@ -18,7 +17,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for TestEnum {
             [
                 ::facet::Variant::builder()
                     .name("Value1")
-                    .discriminant(test_macro!(1, 2))
+                    .discriminant(test_macro!(1, 2) as i64)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -28,7 +27,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for TestEnum {
                     .build(),
                 ::facet::Variant::builder()
                     .name("Value2")
-                    .discriminant(test_macro!(3, 4))
+                    .discriminant(test_macro!(3, 4) as i64)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())

@@ -1,6 +1,5 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
-assertion_line: 430
 expression: "expand(r#\"\n        #[allow(dead_code)]\n        #[derive(Facet)]\n        #[repr(u8)]\n        enum E<'a, T: Facet<'a> + core::hash::Hash, const C: usize = 3>\n        where\n            T: Debug, // Added Debug bound\n             [u8; C]: Debug, // Added Debug bound\n        {\n            Unit,\n            Tuple(T, core::marker::PhantomData<&'a [u8; C]>),\n            Record {\n                field: T,\n                phantom: core::marker::PhantomData<&'a ()>,\n                constant_val: [u8; C],\n            },\n        }\n        \"#)"
 ---
 #[automatically_derived]
@@ -62,7 +61,7 @@ where
             [
                 ::facet::Variant::builder()
                     .name("Unit")
-                    .discriminant(0i64)
+                    .discriminant(0i64 as i64)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -111,7 +110,7 @@ where
                     };
                     ::facet::Variant::builder()
                         .name("Tuple")
-                        .discriminant(1i64)
+                        .discriminant(1i64 as i64)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())
@@ -179,7 +178,7 @@ where
                     };
                     ::facet::Variant::builder()
                         .name("Record")
-                        .discriminant(2i64)
+                        .discriminant(2i64 as i64)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())

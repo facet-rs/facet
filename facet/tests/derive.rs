@@ -565,3 +565,23 @@ fn plain_tuple() {
         _ => panic!("Expected tuple to be a UserType::Struct"),
     }
 }
+
+#[test]
+fn test_macro_u16() {
+    macro_rules! test_macro_u16 {
+        () => {
+            242u16
+        };
+    }
+
+    const CONST_VALUE_U16: u16 = 142;
+
+    #[repr(u16)]
+    #[derive(Facet)]
+    #[allow(dead_code)]
+    enum TestEnum {
+        Value1 = 42u16,
+        Value2 = CONST_VALUE_U16,
+        Value3 = test_macro_u16!(),
+    }
+}

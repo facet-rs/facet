@@ -1,6 +1,5 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
-assertion_line: 163
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(C)]\n        enum EnumWithLifetimeField {\n            Variant1 { field1: &'static str },\n        }\n        \"#)"
 ---
 #[used]
@@ -67,7 +66,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithLifetimeField {
                 };
                 ::facet::Variant::builder()
                     .name("Variant1")
-                    .discriminant(0i64)
+                    .discriminant(0i64 as i64)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())

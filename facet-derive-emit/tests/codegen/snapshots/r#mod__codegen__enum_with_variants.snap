@@ -1,6 +1,5 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
-assertion_line: 51
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n        enum EnumWithVariants {\n            Variant1,\n            Variant2(i32),\n            Variant3 { field1: i32, field2: String },\n        }\n        \"#)"
 ---
 #[used]
@@ -35,7 +34,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithVariants {
             [
                 ::facet::Variant::builder()
                     .name("Variant1")
-                    .discriminant(0i64)
+                    .discriminant(0i64 as i64)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -62,7 +61,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithVariants {
                     };
                     ::facet::Variant::builder()
                         .name("Variant2")
-                        .discriminant(1i64)
+                        .discriminant(1i64 as i64)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())
@@ -85,7 +84,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithVariants {
                     };
                     ::facet::Variant::builder()
                         .name("Variant3")
-                        .discriminant(2i64)
+                        .discriminant(2i64 as i64)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())

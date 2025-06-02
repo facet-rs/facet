@@ -44,7 +44,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                         ::facet::VariantAttribute::Arbitrary("name = \"FirstVariant\""),
                         ::facet::VariantAttribute::Arbitrary("discriminant = 10"),
                     ])
-                    .discriminant(0i64)
+                    .discriminant(0i64 as i64)
                     .data(
                         ::facet::StructType::builder()
                             .repr(::facet::Repr::c())
@@ -61,7 +61,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                     ::facet::Variant::builder()
                         .name("InternalVariant")
                         .attributes(&[::facet::VariantAttribute::Arbitrary("skip")])
-                        .discriminant(1i64)
+                        .discriminant(1i64 as i64)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())
@@ -82,7 +82,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                         .attributes(&[::facet::VariantAttribute::Arbitrary(
                             "deprecated = \"Use VariantD instead\"",
                         )])
-                        .discriminant(2i64)
+                        .discriminant(2i64 as i64)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())
@@ -100,7 +100,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                     };
                     ::facet::Variant::builder()
                         .name("VariantD")
-                        .discriminant(3i64)
+                        .discriminant(3i64 as i64)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())

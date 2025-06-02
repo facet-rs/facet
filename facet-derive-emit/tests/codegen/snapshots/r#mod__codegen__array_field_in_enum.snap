@@ -1,6 +1,5 @@
 ---
 source: facet-derive-emit/tests/codegen/mod.rs
-assertion_line: 569
 expression: "expand(r#\"\n        /// Network packet types\n        #[derive(Facet)]\n        #[repr(u8)]\n        pub enum Packet {\n            /// Array of bytes representing the header\n            Header([u8; 4]),\n            Payload(Vec<u8>), // Add another variant for completeness\n        }\n        \"#)"
 ---
 #[used]
@@ -47,7 +46,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Packet {
                     };
                     ::facet::Variant::builder()
                         .name("Header")
-                        .discriminant(0i64)
+                        .discriminant(0i64 as i64)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())
@@ -77,7 +76,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Packet {
                     };
                     ::facet::Variant::builder()
                         .name("Payload")
-                        .discriminant(1i64)
+                        .discriminant(1i64 as i64)
                         .data(
                             ::facet::StructType::builder()
                                 .repr(::facet::Repr::c())
