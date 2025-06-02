@@ -12,7 +12,6 @@ use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
-use core::borrow::Borrow as _;
 use owo_colors::OwoColorize;
 
 pub use error::TomlSerError;
@@ -93,8 +92,7 @@ impl<'shape> TomlSerializer<'shape> {
         self.key_stack
             .iter()
             .fold(self.document.as_item_mut(), |item, key| {
-                let key: &str = key.borrow();
-                item.get_mut(key).unwrap()
+                item.get_mut(key.as_ref()).unwrap()
             })
     }
 
@@ -105,7 +103,7 @@ impl<'shape> TomlSerializer<'shape> {
         self.item_mut()
             .as_table_mut()
             .unwrap()
-            .insert(key.borrow(), Item::None);
+            .insert(&key, Item::None);
 
         // Push the key on the stack
         self.key_stack.push(key);
