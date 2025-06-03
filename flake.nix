@@ -22,10 +22,10 @@
     inherit (nixpkgs) lib;
 
     # System types to support.
-    targetSystems = ["x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin"];
+    systems = ["x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin"];
 
     # Helper function to generate an attrset '{ x86_64-linux = f "x86_64-linux"; ... }'.
-    eachSystem = lib.genAttrs targetSystems;
+    eachSystem = lib.genAttrs systems;
 
     pkgsFor = eachSystem (system:
       import nixpkgs {
