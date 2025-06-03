@@ -296,6 +296,12 @@ where
                     );
                 }
 
+                debug!(
+                    "Matching def={:?}, ty={:?} for shape={}",
+                    cpeek.shape().def,
+                    cpeek.shape().ty,
+                    cpeek.shape()
+                );
                 match (cpeek.shape().def, cpeek.shape().ty) {
                     (Def::Scalar(sd), _) => {
                         let cpeek = cpeek.innermost_peek();
@@ -619,6 +625,9 @@ where
                         if let Some(str_value) = cpeek.as_str() {
                             // We have a string value, serialize it
                             serializer.serialize_str(str_value)?;
+                        } else if let Some(bytes) = cpeek.as_bytes() {
+                            // We have a byte slice, serialize it as bytes
+                            serializer.serialize_bytes(bytes)?;
                         } else if let PointerType::Function(_) = pointer_type {
                             // Serialize function pointers as units
                             serializer.serialize_unit()?;

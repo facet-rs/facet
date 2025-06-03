@@ -205,6 +205,21 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
         }
     }
 
+    /// Try to get the value as a byte slice if it's a &[u8] type
+    /// Returns None if the value is not a byte slice or couldn't be extracted
+    pub fn as_bytes(&self) -> Option<&'mem [u8]> {
+        // Check if it's a direct &[u8]
+        if let Type::Pointer(PointerType::Reference(vpt)) = self.shape.ty {
+            let target_shape = (vpt.target)();
+            if let Def::Slice(sd) = target_shape.def {
+                if sd.t().is_type::<u8>() {
+                    unsafe { return Some(self.data.get::<&[u8]>()) }
+                }
+            }
+        }
+        None
+    }
+
     /// Tries to identify this value as a struct
     pub fn into_struct(self) -> Result<PeekStruct<'mem, 'facet, 'shape>, ReflectError<'shape>> {
         if let Type::User(UserType::Struct(ty)) = self.shape.ty {

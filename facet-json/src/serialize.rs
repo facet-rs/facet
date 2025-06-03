@@ -230,8 +230,12 @@ impl<'shape, W: crate::JsonWrite> Serializer<'shape> for JsonSerializer<W> {
         self.end_value()
     }
 
-    fn serialize_bytes(&mut self, _value: &[u8]) -> Result<(), Self::Error> {
-        panic!("JSON does not support byte arrays")
+    fn serialize_bytes(&mut self, value: &[u8]) -> Result<(), Self::Error> {
+        self.start_array(Some(value.len()))?;
+        for &byte in value {
+            self.serialize_u8(byte)?;
+        }
+        self.end_array()
     }
 
     fn serialize_none(&mut self) -> Result<(), Self::Error> {
