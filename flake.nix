@@ -3,13 +3,10 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-
-    # shell.nix compatibility
     flake-compat.url = "https://flakehub.com/f/edolstra/flake-compat/1.tar.gz";
   };
 
@@ -21,12 +18,9 @@
   }: let
     inherit (nixpkgs) lib;
 
-    # System types to support.
     systems = ["x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin"];
 
-    # Helper function to generate an attrset '{ x86_64-linux = f "x86_64-linux"; ... }'.
     eachSystem = lib.genAttrs systems;
-
     pkgsFor = eachSystem (system:
       import nixpkgs {
         localSystem.system = system;
