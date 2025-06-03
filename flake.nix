@@ -34,31 +34,29 @@
       });
   in {
     devShells =
-      lib.mapAttrs (
-        system: pkgs: {
-          default = pkgs.mkShell {
-            strictDeps = true;
-            packages = with pkgs; [
-              # Must occur first to take precedence over nightly.
-              (rust-bin.stable.latest.minimal.override {
-                extensions = ["rust-src" "rust-docs" "clippy"];
-              })
+      lib.mapAttrs (system: pkgs: {
+        default = pkgs.mkShell {
+          strictDeps = true;
+          packages = with pkgs; [
+            # Must occur first to take precedence over nightly.
+            (rust-bin.stable.latest.minimal.override {
+              extensions = ["rust-src" "rust-docs" "clippy"];
+            })
 
-              # Use `rustfmt`, and other tools that require nightly features.
-              (rust-bin.selectLatestNightlyWith (toolchain:
-                toolchain.minimal.override {
-                  extensions = ["rustfmt" "rust-analyzer"];
-                }))
+            # Use `rustfmt`, and other tools that require nightly features.
+            (rust-bin.selectLatestNightlyWith (toolchain:
+              toolchain.minimal.override {
+                extensions = ["rustfmt" "rust-analyzer"];
+              }))
 
-              cargo-nextest
-              just
-            ];
+            cargo-nextest
+            just
+          ];
 
-            RUST_BACKTRACE = 1;
-            RUST_LOG = "debug";
-          };
-        }
-      )
+          RUST_BACKTRACE = 1;
+          RUST_LOG = "debug";
+        };
+      })
       pkgsFor;
 
     formatter = eachSystem (system: nixpkgs.legacyPackages.${system}.alejandra);
