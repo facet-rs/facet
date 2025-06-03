@@ -12,6 +12,7 @@
 [![crates.io](https://img.shields.io/crates/v/facet-derive-parse.svg)](https://crates.io/crates/facet-derive-parse)
 [![documentation](https://docs.rs/facet-derive-parse/badge.svg)](https://docs.rs/facet-derive-parse)
 [![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-derive-parse.svg)](./LICENSE)
+[![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
 _Logo by [Misiasart](https://misiasart.com/)_
 

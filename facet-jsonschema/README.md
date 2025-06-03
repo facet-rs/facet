@@ -12,6 +12,7 @@
 [![crates.io](https://img.shields.io/crates/v/facet-jsonschema.svg)](https://crates.io/crates/facet-jsonschema)
 [![documentation](https://docs.rs/facet-jsonschema/badge.svg)](https://docs.rs/facet-jsonschema)
 [![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-jsonschema.svg)](./LICENSE)
+[![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
 _Logo by [Misiasart](https://misiasart.com/)_
 
