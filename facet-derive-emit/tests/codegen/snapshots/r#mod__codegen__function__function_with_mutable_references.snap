@@ -1,0 +1,44 @@
+---
+source: facet-derive-emit/tests/codegen/function.rs
+expression: "expand_function(r#\"\n        fn with_mut_refs(x: &mut i32, y: &mut Vec<String>) -> usize {\n            *x += 1;\n            y.len()\n        }\n        \"#)"
+---
+#[allow(non_snake_case)]
+mod __fn_shape_with_mut_refs {
+    use super::*;
+    pub(super) fn inner(x: &mut i32, y: &mut Vec<String>) -> usize {
+        *x += 1;
+        y.len()
+    }
+    #[derive(Debug, Clone)]
+    pub struct FunctionShape<Args, Ret, Generics = ()> {
+        pub name: &'static str,
+        pub param_count: usize,
+        pub param_names: &'static [&'static str],
+        _args: core::marker::PhantomData<Args>,
+        _ret: core::marker::PhantomData<Ret>,
+        _generics: core::marker::PhantomData<Generics>,
+    }
+    impl<Args, Ret, Generics> FunctionShape<Args, Ret, Generics> {
+        pub const fn new(
+            name: &'static str,
+            param_count: usize,
+            param_names: &'static [&'static str],
+        ) -> Self {
+            Self {
+                name,
+                param_count,
+                param_names,
+                _args: core::marker::PhantomData,
+                _ret: core::marker::PhantomData,
+                _generics: core::marker::PhantomData,
+            }
+        }
+    }
+    pub fn shape() -> FunctionShape<(&mut i32, &mut Vec<String>), usize, ()> {
+        FunctionShape::new("with_mut_refs", 2usize, &["x", "y"])
+    }
+}
+pub fn with_mut_refs(x: &mut i32, y: &mut Vec<String>) -> usize {
+    __fn_shape_with_mut_refs::inner(x, y)
+}
+pub use __fn_shape_with_mut_refs::shape as WITH_MUT_REFS_SHAPE;

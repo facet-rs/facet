@@ -14,6 +14,7 @@ features = ["std", "reflect", "camino", "ordered-float"]
 
 [features]
 default = ["std"]
+function = ["facet-derive/function"] # Enable function shape introspection
 reflect = ["dep:facet-reflect"] # Enable reflection via Peek and Poke types
 testfeat = [] # Does nothing, only used for tests
 std = ["facet-core/std", "alloc"] # Enable standard library support

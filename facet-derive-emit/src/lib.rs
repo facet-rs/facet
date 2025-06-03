@@ -15,6 +15,9 @@ mod process_struct;
 mod derive;
 pub use derive::*;
 
+#[cfg(feature = "function")]
+pub mod function;
+
 #[derive(Clone)]
 pub struct LifetimeName(pub facet_derive_parse::Ident);
 

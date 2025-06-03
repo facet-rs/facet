@@ -1,6 +1,9 @@
 use facet_derive_emit::*;
 use rust_format::{Formatter, RustFmt};
 
+#[cfg(feature = "function")]
+mod function;
+
 fn expand(input: &str) -> String {
     // Trim surrounding whitespace which might interfere with parsing,
     // especially when dealing with multi-line raw strings.

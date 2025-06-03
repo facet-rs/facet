@@ -1,6 +1,12 @@
 #![warn(missing_docs)]
 #![doc = include_str!("../README.md")]
 
+/// Parse function signature shape
+#[cfg(feature = "function")]
+pub mod function;
+#[cfg(feature = "function")]
+pub use function::*;
+
 pub use unsynn::*;
 
 keyword! {

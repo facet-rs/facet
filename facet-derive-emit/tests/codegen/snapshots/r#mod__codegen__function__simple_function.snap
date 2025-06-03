@@ -1,0 +1,43 @@
+---
+source: facet-derive-emit/tests/codegen/function.rs
+expression: "expand_function(r#\"\n        fn add(x: i32, y: i32) -> i32 {\n            x + y\n        }\n        \"#)"
+---
+#[allow(non_snake_case)]
+mod __fn_shape_add {
+    use super::*;
+    pub(super) fn inner(x: i32, y: i32) -> i32 {
+        x + y
+    }
+    #[derive(Debug, Clone)]
+    pub struct FunctionShape<Args, Ret, Generics = ()> {
+        pub name: &'static str,
+        pub param_count: usize,
+        pub param_names: &'static [&'static str],
+        _args: core::marker::PhantomData<Args>,
+        _ret: core::marker::PhantomData<Ret>,
+        _generics: core::marker::PhantomData<Generics>,
+    }
+    impl<Args, Ret, Generics> FunctionShape<Args, Ret, Generics> {
+        pub const fn new(
+            name: &'static str,
+            param_count: usize,
+            param_names: &'static [&'static str],
+        ) -> Self {
+            Self {
+                name,
+                param_count,
+                param_names,
+                _args: core::marker::PhantomData,
+                _ret: core::marker::PhantomData,
+                _generics: core::marker::PhantomData,
+            }
+        }
+    }
+    pub fn shape() -> FunctionShape<(i32, i32), i32, ()> {
+        FunctionShape::new("add", 2usize, &["x", "y"])
+    }
+}
+pub fn add(x: i32, y: i32) -> i32 {
+    __fn_shape_add::inner(x, y)
+}
+pub use __fn_shape_add::shape as ADD_SHAPE;

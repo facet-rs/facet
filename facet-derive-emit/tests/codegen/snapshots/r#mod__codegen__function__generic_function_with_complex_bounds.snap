@@ -1,0 +1,43 @@
+---
+source: facet-derive-emit/tests/codegen/function.rs
+expression: "expand_function(r#\"\n        fn bounded_fn<T: Clone + Send, U: Iterator<Item = T>>(data: U) -> Vec<T> {\n            data.collect()\n        }\n        \"#)"
+---
+#[allow(non_snake_case)]
+mod __fn_shape_bounded_fn {
+    use super::*;
+    pub(super) fn inner<T: Clone + Send, U: Iterator<Item = T>>(data: U) -> Vec<T> {
+        data.collect()
+    }
+    #[derive(Debug, Clone)]
+    pub struct FunctionShape<Args, Ret, Generics = ()> {
+        pub name: &'static str,
+        pub param_count: usize,
+        pub param_names: &'static [&'static str],
+        _args: core::marker::PhantomData<Args>,
+        _ret: core::marker::PhantomData<Ret>,
+        _generics: core::marker::PhantomData<Generics>,
+    }
+    impl<Args, Ret, Generics> FunctionShape<Args, Ret, Generics> {
+        pub const fn new(
+            name: &'static str,
+            param_count: usize,
+            param_names: &'static [&'static str],
+        ) -> Self {
+            Self {
+                name,
+                param_count,
+                param_names,
+                _args: core::marker::PhantomData,
+                _ret: core::marker::PhantomData,
+                _generics: core::marker::PhantomData,
+            }
+        }
+    }
+    pub fn shape<T: Clone + Send, U: Iterator<Item = T>>() -> FunctionShape<(U), Vec<T>, (T, U)> {
+        FunctionShape::new("bounded_fn", 1usize, &["data"])
+    }
+}
+pub fn bounded_fn<T: Clone + Send, U: Iterator<Item = T>>(data: U) -> Vec<T> {
+    __fn_shape_bounded_fn::inner(data)
+}
+pub use __fn_shape_bounded_fn::shape as BOUNDED_FN_SHAPE;

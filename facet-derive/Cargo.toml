@@ -18,6 +18,9 @@ categories = ["development-tools", "encoding"]
 [lib]
 proc-macro = true
 
+[features]
+function = ["facet-derive-emit/function"]
+
 [dependencies]
 facet-derive-emit = { version = "0.27.10", path = "../facet-derive-emit" }
 
