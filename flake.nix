@@ -23,9 +23,9 @@
     targetSystems = ["x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin"];
 
     # Helper function to generate an attrset '{ x86_64-linux = f "x86_64-linux"; ... }'.
-    forAllSystems = nixpkgs.lib.genAttrs targetSystems;
+    eachSystem = nixpkgs.lib.genAttrs targetSystems;
 
-    pkgsFor = forAllSystems (system:
+    pkgsFor = eachSystem (system:
       import nixpkgs {
         localSystem.system = system;
         overlays = [rust-overlay.overlays.default];
@@ -59,6 +59,6 @@
       )
       pkgsFor;
 
-    formatter = forAllSystems (system: nixpkgs.legacyPackages.${system}.alejandra);
+    formatter = eachSystem (system: nixpkgs.legacyPackages.${system}.alejandra);
   };
 }
