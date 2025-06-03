@@ -1,5 +1,5 @@
 {
-  description = "facet devel";
+  description = "The Facet project is a collection of crates pioneering runtime reflection in Rust.";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
