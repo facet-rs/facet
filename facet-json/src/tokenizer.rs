@@ -414,7 +414,7 @@ impl<'input> Tokenizer<'input> {
 
         let token = if text.contains('.') || text.contains('e') || text.contains('E') {
             // If the number contains a decimal point or exponent, parse as f64
-            match text.parse::<f64>() {
+            match lexical_core::parse::<f64>(slice) {
                 Ok(n) => Token::F64(n),
                 Err(_) => {
                     return Err(TokenError {
@@ -429,7 +429,7 @@ impl<'input> Tokenizer<'input> {
                 Ok(n) => Token::I64(n),
                 Err(_) => {
                     // If i64 parsing fails, try to parse as f64 for error reporting
-                    let num = text.parse::<f64>().unwrap_or(0.0);
+                    let num = lexical_core::parse::<f64>(slice).unwrap_or(0.0);
                     return Err(TokenError {
                         kind: TokenErrorKind::NumberOutOfRange(num),
                         span,
@@ -442,7 +442,7 @@ impl<'input> Tokenizer<'input> {
                 Ok(n) => Token::U64(n),
                 Err(_) => {
                     // If u64 parsing fails, try to parse as f64 for error reporting
-                    let num = text.parse::<f64>().unwrap_or(0.0);
+                    let num = lexical_core::parse::<f64>(slice).unwrap_or(0.0);
                     return Err(TokenError {
                         kind: TokenErrorKind::NumberOutOfRange(num),
                         span,

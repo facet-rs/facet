@@ -3,6 +3,7 @@ use alloc::vec::Vec;
 use facet_core::Facet;
 use facet_reflect::Peek;
 use facet_serialize::{Serializer, serialize_iterative};
+use lexical_core::{BUFFER_SIZE, write};
 use log::debug;
 
 /// Serializes a value implementing `Facet` to a JSON string.
@@ -195,17 +196,17 @@ impl<'shape, W: crate::JsonWrite> Serializer<'shape> for JsonSerializer<W> {
 
     fn serialize_f32(&mut self, value: f32) -> Result<(), Self::Error> {
         self.start_value()?;
-        // self.writer.write(value.to_string().as_bytes());
-        self.writer
-            .write(ryu::Buffer::new().format(value).as_bytes());
+        let mut buf = [0u8; BUFFER_SIZE];
+        let bytes = write(value, &mut buf);
+        self.writer.write(bytes);
         self.end_value()
     }
 
     fn serialize_f64(&mut self, value: f64) -> Result<(), Self::Error> {
         self.start_value()?;
-        // self.writer.write(value.to_string().as_bytes());
-        self.writer
-            .write(ryu::Buffer::new().format(value).as_bytes());
+        let mut buf = [0u8; BUFFER_SIZE];
+        let bytes = write(value, &mut buf);
+        self.writer.write(bytes);
         self.end_value()
     }
 

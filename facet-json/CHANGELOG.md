@@ -29,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - move to self-owned write trait
 - Use a Vec instead of a Writer for the json serialializer
 - Allow transparent key types
-- switch to ryu for float formatting
+- switch to lexical-core for float formatting and parsing
 - add tokenizer test, fix tokenizer using said test
 - cow tokens
 - expand flamegraph using inline never

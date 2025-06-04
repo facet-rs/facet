@@ -20,7 +20,7 @@ facet-reflect = { version = "0.27.11", path = "../facet-reflect", default-featur
 facet-serialize = { version = "0.24.12", path = "../facet-serialize", default-features = false }
 itoa = "1.0.15"
 log = "0.4.27"
-ryu = "1"
+lexical-core = { version = "1", default-features = false, features = ["write-floats", "parse-floats"] }
 
 [dev-dependencies]
 bytes = { version = "1.10.1" }
