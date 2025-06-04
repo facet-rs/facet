@@ -1,12 +1,12 @@
 ---
 source: facet-macros-emit/tests/codegen/function.rs
-expression: "expand_function(r#\"\n        fn bounded_fn<T: Clone + Send, U: Iterator<Item = T>>(data: U) -> Vec<T> {\n            data.collect()\n        }\n        \"#)"
+expression: "expand_function(r###\"\n        /// This uses r#\"raw strings\"# and r##\"nested\"## syntax\n        fn complex_doc() {\n            println!(\"test\");\n        }\n        \"###)"
 ---
 #[allow(non_snake_case)]
-mod __fn_shape_bounded_fn {
+mod __fn_shape_complex_doc {
     use super::*;
-    pub(super) fn inner<T: Clone + Send, U: Iterator<Item = T>>(data: U) -> Vec<T> {
-        data.collect()
+    pub(super) fn inner() -> () {
+        println!("test");
     }
     #[derive(Debug, Clone)]
     pub struct FunctionShape<Args, Ret, Generics = ()> {
@@ -36,11 +36,16 @@ mod __fn_shape_bounded_fn {
             }
         }
     }
-    pub fn shape<T: Clone + Send, U: Iterator<Item = T>>() -> FunctionShape<(U), Vec<T>, (T, U)> {
-        FunctionShape::new("bounded_fn", 1usize, &["data"], &[])
+    pub fn shape() -> FunctionShape<(), (), ()> {
+        FunctionShape::new(
+            "complex_doc",
+            0usize,
+            &[],
+            &[" This uses r#\"raw strings\"# and r##\"nested\"## syntax"],
+        )
     }
 }
-pub fn bounded_fn<T: Clone + Send, U: Iterator<Item = T>>(data: U) -> Vec<T> {
-    __fn_shape_bounded_fn::inner(data)
+pub fn complex_doc() -> () {
+    __fn_shape_complex_doc::inner()
 }
-pub use __fn_shape_bounded_fn::shape as BOUNDED_FN_SHAPE;
+pub use __fn_shape_complex_doc::shape as COMPLEX_DOC_SHAPE;

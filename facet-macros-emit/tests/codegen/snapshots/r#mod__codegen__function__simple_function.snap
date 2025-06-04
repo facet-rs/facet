@@ -13,6 +13,7 @@ mod __fn_shape_add {
         pub name: &'static str,
         pub param_count: usize,
         pub param_names: &'static [&'static str],
+        pub documentation: &'static [&'static str],
         _args: core::marker::PhantomData<Args>,
         _ret: core::marker::PhantomData<Ret>,
         _generics: core::marker::PhantomData<Generics>,
@@ -22,11 +23,13 @@ mod __fn_shape_add {
             name: &'static str,
             param_count: usize,
             param_names: &'static [&'static str],
+            documentation: &'static [&'static str],
         ) -> Self {
             Self {
                 name,
                 param_count,
                 param_names,
+                documentation,
                 _args: core::marker::PhantomData,
                 _ret: core::marker::PhantomData,
                 _generics: core::marker::PhantomData,
@@ -34,7 +37,7 @@ mod __fn_shape_add {
         }
     }
     pub fn shape() -> FunctionShape<(i32, i32), i32, ()> {
-        FunctionShape::new("add", 2usize, &["x", "y"])
+        FunctionShape::new("add", 2usize, &["x", "y"], &[])
     }
 }
 pub fn add(x: i32, y: i32) -> i32 {

@@ -224,3 +224,98 @@ fn function_shape_clone() {
 //     assert_eq!(shape.param_count, 1);
 //     assert_eq!(shape.param_names, &["data"]);
 // }
+
+#[cfg(feature = "function")]
+#[test]
+fn function_with_single_doc_comment() {
+    /// Single line documentation
+    #[facet_fn]
+    fn greet(name: String) -> String {
+        format!("Hello, {}!", name)
+    }
+
+    // Test function works normally
+    assert_eq!(greet("World".to_string()), "Hello, World!");
+
+    // Test shape metadata
+    let shape = fn_shape!(greet);
+    assert_eq!(shape.name, "greet");
+    assert_eq!(shape.param_count, 1);
+    assert_eq!(shape.param_names, &["name"]);
+
+    // Test documentation is captured
+    assert_eq!(shape.documentation.len(), 1);
+    assert_eq!(shape.documentation[0], " Single line documentation");
+}
+
+#[cfg(feature = "function")]
+#[test]
+fn function_with_multiple_doc_comments() {
+    /// This is a test function
+    /// that does addition of two numbers
+    #[facet_fn]
+    fn add(x: i32, y: i32) -> i32 {
+        x + y
+    }
+
+    // Test function works normally
+    assert_eq!(add(2, 3), 5);
+
+    // Test shape metadata
+    let shape = fn_shape!(add);
+    assert_eq!(shape.name, "add");
+    assert_eq!(shape.param_count, 2);
+    assert_eq!(shape.param_names, &["x", "y"]);
+
+    // Test documentation is captured
+    assert_eq!(shape.documentation.len(), 2);
+    assert_eq!(shape.documentation[0], " This is a test function");
+    assert_eq!(shape.documentation[1], " that does addition of two numbers");
+}
+
+#[cfg(feature = "function")]
+#[test]
+fn function_with_doc_comments_and_quotes() {
+    /// Hello "world", if that is your real name
+    #[facet_fn]
+    fn greet_suspicious(name: String) -> String {
+        format!("Hello, {}...?", name)
+    }
+
+    // Test function works normally
+    assert_eq!(greet_suspicious("Alice".to_string()), "Hello, Alice...?");
+
+    // Test shape metadata
+    let shape = fn_shape!(greet_suspicious);
+    assert_eq!(shape.name, "greet_suspicious");
+    assert_eq!(shape.param_count, 1);
+    assert_eq!(shape.param_names, &["name"]);
+
+    // Test documentation with quotes is captured correctly
+    assert_eq!(shape.documentation.len(), 1);
+    assert_eq!(
+        shape.documentation[0],
+        " Hello \"world\", if that is your real name"
+    );
+}
+
+#[cfg(feature = "function")]
+#[test]
+fn function_without_doc_comments() {
+    #[facet_fn]
+    fn no_docs(x: i32) -> i32 {
+        x * 2
+    }
+
+    // Test function works normally
+    assert_eq!(no_docs(5), 10);
+
+    // Test shape metadata
+    let shape = fn_shape!(no_docs);
+    assert_eq!(shape.name, "no_docs");
+    assert_eq!(shape.param_count, 1);
+    assert_eq!(shape.param_names, &["x"]);
+
+    // Test no documentation is captured
+    assert!(shape.documentation.is_empty());
+}

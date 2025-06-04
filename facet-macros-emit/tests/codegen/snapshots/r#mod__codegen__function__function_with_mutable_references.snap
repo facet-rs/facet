@@ -14,6 +14,7 @@ mod __fn_shape_with_mut_refs {
         pub name: &'static str,
         pub param_count: usize,
         pub param_names: &'static [&'static str],
+        pub documentation: &'static [&'static str],
         _args: core::marker::PhantomData<Args>,
         _ret: core::marker::PhantomData<Ret>,
         _generics: core::marker::PhantomData<Generics>,
@@ -23,11 +24,13 @@ mod __fn_shape_with_mut_refs {
             name: &'static str,
             param_count: usize,
             param_names: &'static [&'static str],
+            documentation: &'static [&'static str],
         ) -> Self {
             Self {
                 name,
                 param_count,
                 param_names,
+                documentation,
                 _args: core::marker::PhantomData,
                 _ret: core::marker::PhantomData,
                 _generics: core::marker::PhantomData,
@@ -35,7 +38,7 @@ mod __fn_shape_with_mut_refs {
         }
     }
     pub fn shape() -> FunctionShape<(&mut i32, &mut Vec<String>), usize, ()> {
-        FunctionShape::new("with_mut_refs", 2usize, &["x", "y"])
+        FunctionShape::new("with_mut_refs", 2usize, &["x", "y"], &[])
     }
 }
 pub fn with_mut_refs(x: &mut i32, y: &mut Vec<String>) -> usize {

@@ -13,6 +13,7 @@ mod __fn_shape_generic_add {
         pub name: &'static str,
         pub param_count: usize,
         pub param_names: &'static [&'static str],
+        pub documentation: &'static [&'static str],
         _args: core::marker::PhantomData<Args>,
         _ret: core::marker::PhantomData<Ret>,
         _generics: core::marker::PhantomData<Generics>,
@@ -22,11 +23,13 @@ mod __fn_shape_generic_add {
             name: &'static str,
             param_count: usize,
             param_names: &'static [&'static str],
+            documentation: &'static [&'static str],
         ) -> Self {
             Self {
                 name,
                 param_count,
                 param_names,
+                documentation,
                 _args: core::marker::PhantomData,
                 _ret: core::marker::PhantomData,
                 _generics: core::marker::PhantomData,
@@ -34,7 +37,7 @@ mod __fn_shape_generic_add {
         }
     }
     pub fn shape<T: Add<Output = T>>() -> FunctionShape<(T, T), T, T> {
-        FunctionShape::new("generic_add", 2usize, &["x", "y"])
+        FunctionShape::new("generic_add", 2usize, &["x", "y"], &[])
     }
 }
 pub fn generic_add<T: Add<Output = T>>(x: T, y: T) -> T {

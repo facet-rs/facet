@@ -13,6 +13,7 @@ mod __fn_shape_no_return {
         pub name: &'static str,
         pub param_count: usize,
         pub param_names: &'static [&'static str],
+        pub documentation: &'static [&'static str],
         _args: core::marker::PhantomData<Args>,
         _ret: core::marker::PhantomData<Ret>,
         _generics: core::marker::PhantomData<Generics>,
@@ -22,11 +23,13 @@ mod __fn_shape_no_return {
             name: &'static str,
             param_count: usize,
             param_names: &'static [&'static str],
+            documentation: &'static [&'static str],
         ) -> Self {
             Self {
                 name,
                 param_count,
                 param_names,
+                documentation,
                 _args: core::marker::PhantomData,
                 _ret: core::marker::PhantomData,
                 _generics: core::marker::PhantomData,
@@ -34,7 +37,7 @@ mod __fn_shape_no_return {
         }
     }
     pub fn shape() -> FunctionShape<(i32), (), ()> {
-        FunctionShape::new("no_return", 1usize, &["x"])
+        FunctionShape::new("no_return", 1usize, &["x"], &[])
     }
 }
 pub fn no_return(x: i32) -> () {

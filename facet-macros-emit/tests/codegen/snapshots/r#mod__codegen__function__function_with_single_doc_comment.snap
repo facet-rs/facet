@@ -1,12 +1,12 @@
 ---
 source: facet-macros-emit/tests/codegen/function.rs
-expression: "expand_function(r#\"\n        fn bounded_fn<T: Clone + Send, U: Iterator<Item = T>>(data: U) -> Vec<T> {\n            data.collect()\n        }\n        \"#)"
+expression: "expand_function(r#\"\n        /// Single line documentation\n        fn greet(name: String) -> String {\n            format!(\"Hello, {}!\", name)\n        }\n        \"#)"
 ---
 #[allow(non_snake_case)]
-mod __fn_shape_bounded_fn {
+mod __fn_shape_greet {
     use super::*;
-    pub(super) fn inner<T: Clone + Send, U: Iterator<Item = T>>(data: U) -> Vec<T> {
-        data.collect()
+    pub(super) fn inner(name: String) -> String {
+        format!("Hello, {}!", name)
     }
     #[derive(Debug, Clone)]
     pub struct FunctionShape<Args, Ret, Generics = ()> {
@@ -36,11 +36,11 @@ mod __fn_shape_bounded_fn {
             }
         }
     }
-    pub fn shape<T: Clone + Send, U: Iterator<Item = T>>() -> FunctionShape<(U), Vec<T>, (T, U)> {
-        FunctionShape::new("bounded_fn", 1usize, &["data"], &[])
+    pub fn shape() -> FunctionShape<(String), String, ()> {
+        FunctionShape::new("greet", 1usize, &["name"], &[" Single line documentation"])
     }
 }
-pub fn bounded_fn<T: Clone + Send, U: Iterator<Item = T>>(data: U) -> Vec<T> {
-    __fn_shape_bounded_fn::inner(data)
+pub fn greet(name: String) -> String {
+    __fn_shape_greet::inner(name)
 }
-pub use __fn_shape_bounded_fn::shape as BOUNDED_FN_SHAPE;
+pub use __fn_shape_greet::shape as GREET_SHAPE;

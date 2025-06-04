@@ -68,12 +68,19 @@ pub fn generate_function_shape(parsed: FunctionSignature) -> TokenStream {
         quote! { () }
     };
 
+    let documentation_lines: Vec<_> = parsed
+        .documentation
+        .iter()
+        .map(|doc| quote! { #doc })
+        .collect();
+
     let shape_definition = quote! {
         pub fn shape #generics () -> FunctionShape<( #( #types ),* ), #return_type, #generics_type> {
             FunctionShape::new(
                 #fn_name_str,
                 #arity,
-                &[ #( #names ),* ]
+                &[ #( #names ),* ],
+                &[ #( #documentation_lines ),* ]
             )
         }
     };
@@ -90,6 +97,7 @@ pub fn generate_function_shape(parsed: FunctionSignature) -> TokenStream {
                 pub name: &'static str,
                 pub param_count: usize,
                 pub param_names: &'static [&'static str],
+                pub documentation: &'static [&'static str],
                 _args: core::marker::PhantomData<Args>,
                 _ret: core::marker::PhantomData<Ret>,
                 _generics: core::marker::PhantomData<Generics>,
@@ -100,11 +108,13 @@ pub fn generate_function_shape(parsed: FunctionSignature) -> TokenStream {
                     name: &'static str,
                     param_count: usize,
                     param_names: &'static [&'static str],
+                    documentation: &'static [&'static str],
                 ) -> Self {
                     Self {
                         name,
                         param_count,
                         param_names,
+                        documentation,
                         _args: core::marker::PhantomData,
                         _ret: core::marker::PhantomData,
                         _generics: core::marker::PhantomData,

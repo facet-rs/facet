@@ -238,3 +238,78 @@ fn function_with_mutable_references() {
         "#
     ));
 }
+
+#[test]
+fn function_with_single_doc_comment() {
+    insta::assert_snapshot!(expand_function(
+        r#"
+        /// Single line documentation
+        fn greet(name: String) -> String {
+            format!("Hello, {}!", name)
+        }
+        "#
+    ));
+}
+
+#[test]
+fn function_with_multiple_doc_comments() {
+    insta::assert_snapshot!(expand_function(
+        r#"
+        /// This is a test function
+        /// that does addition of two numbers
+        fn add(x: i32, y: i32) -> i32 {
+            x + y
+        }
+        "#
+    ));
+}
+
+#[test]
+fn function_with_doc_comments_and_quotes() {
+    insta::assert_snapshot!(expand_function(
+        r#"
+        /// Hello "world", if that is your real name
+        fn greet(name: String) -> String {
+            format!("Hello, {}...?", name)
+        }
+        "#
+    ));
+}
+
+#[test]
+fn function_with_complex_doc_comments() {
+    insta::assert_snapshot!(expand_function(
+        r###"
+        /// This uses r#"raw strings"# and r##"nested"## syntax
+        fn complex_doc() {
+            println!("test");
+        }
+        "###
+    ));
+}
+
+#[test]
+fn function_with_mixed_attributes() {
+    insta::assert_snapshot!(expand_function(
+        r#"
+        /// Documentation comment
+        #[derive(Debug)]
+        /// More documentation
+        fn mixed_attrs() {
+            println!("test");
+        }
+        "#
+    ));
+}
+
+#[test]
+fn generic_function_with_docs() {
+    insta::assert_snapshot!(expand_function(
+        r#"
+        /// Generic function that adds two values
+        fn generic_add<T: Add<Output = T>>(x: T, y: T) -> T {
+            x + y
+        }
+        "#
+    ));
+}
