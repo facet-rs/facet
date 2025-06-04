@@ -127,16 +127,16 @@ fn write_json_escaped_char<W: JsonWrite>(writer: &mut W, c: char) {
         '\u{08}' => writer.write(b"\\b"),
         '\u{0C}' => writer.write(b"\\f"),
         c if c.is_ascii_control() => {
-            let bytes = (c as u32).to_be_bytes();
-            // A radix 16 number (famously) fits in a u8, so unwrap here is safe.
-            let to_hex = |d: u8| char::from_digit(d as u32, 16).unwrap() as u8;
+            let code_point = c as u32;
+            // Extract individual hex digits (nibbles) from the code point
+            let to_hex = |d: u32| char::from_digit(d, 16).unwrap() as u8;
             let buf = [
                 b'\\',
                 b'u',
-                to_hex(bytes[0]),
-                to_hex(bytes[1]),
-                to_hex(bytes[2]),
-                to_hex(bytes[3]),
+                to_hex((code_point >> 12) & 0xF),
+                to_hex((code_point >> 8) & 0xF),
+                to_hex((code_point >> 4) & 0xF),
+                to_hex(code_point & 0xF),
             ];
             writer.write(&buf);
         }
