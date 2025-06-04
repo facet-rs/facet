@@ -1,0 +1,61 @@
+---
+source: facet-macros-emit/tests/codegen/mod.rs
+assertion_line: 799
+expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(rename_all = \"camelCase\")]\n        struct PersonInfo {\n            first_name: String,\n            last_name: String,\n            home_address: String,\n            phone_number: u32,\n        }\n        \"#)"
+---
+#[used]
+static PERSON_INFO_SHAPE: &'static ::facet::Shape = <PersonInfo as ::facet::Facet>::SHAPE;
+#[automatically_derived]
+unsafe impl<'__facet> ::facet::Facet<'__facet> for PersonInfo {
+    const VTABLE: &'static ::facet::ValueVTable = &const {
+        let mut vtable = ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
+            f,
+            "PersonInfo"
+        ));
+        vtable
+    };
+    const SHAPE: &'static ::facet::Shape<'static> = &const {
+        let fields: &'static [::facet::Field] = &const {
+            [
+                {
+                    ::facet::Field::builder()
+                        .name("firstName")
+                        .shape(::facet::shape_of(&|s: &PersonInfo| &s.first_name))
+                        .offset(::core::mem::offset_of!(PersonInfo, first_name))
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("lastName")
+                        .shape(::facet::shape_of(&|s: &PersonInfo| &s.last_name))
+                        .offset(::core::mem::offset_of!(PersonInfo, last_name))
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("homeAddress")
+                        .shape(::facet::shape_of(&|s: &PersonInfo| &s.home_address))
+                        .offset(::core::mem::offset_of!(PersonInfo, home_address))
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("phoneNumber")
+                        .shape(::facet::shape_of(&|s: &PersonInfo| &s.phone_number))
+                        .offset(::core::mem::offset_of!(PersonInfo, phone_number))
+                        .build()
+                },
+            ]
+        };
+        ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("PersonInfo")
+            .ty(::facet::Type::User(::facet::UserType::Struct(
+                ::facet::StructType::builder()
+                    .repr(::facet::Repr::c())
+                    .kind(::facet::StructKind::Struct)
+                    .fields(fields)
+                    .build(),
+            )))
+            .build()
+    };
+}

@@ -8,7 +8,7 @@ use std::{cmp::Ordering, collections::BTreeSet, marker::PhantomData};
 use facet_core::{
     DropInPlaceFn, Facet, MarkerTraits, PtrConst, PtrMut, PtrUninit, VTableView, ValueVTable,
 };
-use facet_derive::Facet;
+use facet_macros::Facet;
 use facet_testhelpers::test;
 use owo_colors::{OwoColorize, Style};
 

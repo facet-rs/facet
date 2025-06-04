@@ -1,0 +1,56 @@
+---
+source: facet-macros-emit/tests/codegen.rs
+expression: "expand(r#\"\n        #[derive(Facet)]\n        struct User {\n            #[facet(rename = \"userName\")]\n            name: String,\n            #[facet(rename = \"userEmail\", sensitive)]\n            email: String,\n            #[facet(sensitive)]\n            password: String,\n        }\n        \"#)"
+---
+#[used]
+static USER_SHAPE: &'static ::facet::Shape = <User as ::facet::Facet>::SHAPE;
+#[automatically_derived]
+unsafe impl<'__facet> ::facet::Facet<'__facet> for User {
+    const SHAPE: &'static ::facet::Shape = &const {
+        let fields: &'static [::facet::Field] = &const {
+            [
+                ::facet::Field::builder()
+                    .name("name")
+                    .shape(|| ::facet::shape_of(&|s: &User| &s.name))
+                    .offset(::core::mem::offset_of!(User, name))
+                    .flags(::facet::FieldFlags::EMPTY)
+                    .attributes(&const { [::facet::FieldAttribute::Rename("userName")] })
+                    .build(),
+                ::facet::Field::builder()
+                    .name("email")
+                    .shape(|| ::facet::shape_of(&|s: &User| &s.email))
+                    .offset(::core::mem::offset_of!(User, email))
+                    .flags(::facet::FieldFlags::EMPTY)
+                    .attributes(
+                        &const { [::facet::FieldAttribute::Rename("userEmail\" , sensitive")] },
+                    )
+                    .build(),
+                ::facet::Field::builder()
+                    .name("password")
+                    .shape(|| ::facet::shape_of(&|s: &User| &s.password))
+                    .offset(::core::mem::offset_of!(User, password))
+                    .flags(::facet::FieldFlags::SENSITIVE)
+                    .attributes(&const { [::facet::FieldAttribute::Sensitive] })
+                    .build(),
+            ]
+        };
+        let vtable = &const {
+            let mut vtable =
+                ::facet::value_vtable_inner!(Self, |f, _opts| ::core::fmt::Write::write_str(
+                    f, "User"
+                ));
+            vtable
+        };
+        ::facet::Shape::builder()
+            .id(::facet::ConstTypeId::of::<Self>())
+            .layout(::core::alloc::Layout::new::<Self>())
+            .vtable(vtable)
+            .def(::facet::Def::Struct(
+                ::facet::StructDef::builder()
+                    .kind(::facet::StructKind::Struct)
+                    .fields(fields)
+                    .build(),
+            ))
+            .build()
+    };
+}

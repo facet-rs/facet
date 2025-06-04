@@ -1,0 +1,56 @@
+---
+source: facet-macros-emit/tests/codegen.rs
+expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(transparent)]\n        struct Blah<'a, T: Facet + core::hash::Hash, const C: usize = 3>(T, core::marker::PhantomData<&'a [u8; C]>)\n        where\n            T: Debug; // Added a Debug bound for demonstration\n        \"#)"
+---
+#[automatically_derived]
+unsafe impl<'a, '__facet, T: Facet + core::hash::Hash, const C: usize> ::facet::Facet<'__facet>
+    for Blah<'a, T, C>
+where
+    T: Debug,
+    'a: '__facet,
+    '__facet: 'a,
+    T: ::facet::Facet<'__facet>,
+{
+    const SHAPE: &'static ::facet::Shape = &const {
+        let fields: &'static [::facet::Field] = &const {
+            [
+                ::facet::Field::builder()
+                    .name("0")
+                    .shape(|| ::facet::shape_of(&|s: &Blah<'a, T, C>| &s.0))
+                    .offset(::core::mem::offset_of!(Blah<'a, T, C>, 0))
+                    .flags(::facet::FieldFlags::EMPTY)
+                    .attributes(&const { [] })
+                    .build(),
+                ::facet::Field::builder()
+                    .name("1")
+                    .shape(|| ::facet::shape_of(&|s: &Blah<'a, T, C>| &s.1))
+                    .offset(::core::mem::offset_of!(Blah<'a, T, C>, 1))
+                    .flags(::facet::FieldFlags::EMPTY)
+                    .attributes(&const { [] })
+                    .build(),
+            ]
+        };
+        let vtable = &const {
+            let mut vtable =
+                ::facet::value_vtable_inner!(Self, |f, _opts| ::core::fmt::Write::write_str(
+                    f, "Blah"
+                ));
+            vtable
+        };
+        ::facet::Shape::builder()
+            .id(::facet::ConstTypeId::of::<Self>())
+            .layout(::core::alloc::Layout::new::<Self>())
+            .type_params(&[::facet::TypeParam {
+                name: "T",
+                shape: || <T as ::facet::Facet>::SHAPE,
+            }])
+            .vtable(vtable)
+            .def(::facet::Def::Struct(
+                ::facet::StructDef::builder()
+                    .kind(::facet::StructKind::TupleStruct)
+                    .fields(fields)
+                    .build(),
+            ))
+            .build()
+    };
+}

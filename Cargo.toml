@@ -5,9 +5,9 @@ members = [
     "facet",
 
     # derive macro
-    "facet-derive-parse",
-    "facet-derive-emit",
-    "facet-derive",
+    "facet-macros-parse",
+    "facet-macros-emit",
+    "facet-macros",
 
     # reflection
     "facet-reflect",

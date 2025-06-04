@@ -57,7 +57,7 @@ pub struct Shape<'shape> {
     /// Generic parameters for the shape
     pub type_params: &'shape [TypeParam<'shape>],
 
-    /// Doc comment lines, collected by facet-derive. Note that they tend to
+    /// Doc comment lines, collected by facet-macros. Note that they tend to
     /// start with a space.
     pub doc: &'shape [&'shape str],
 

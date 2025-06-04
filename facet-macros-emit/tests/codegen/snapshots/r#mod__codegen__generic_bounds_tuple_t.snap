@@ -1,0 +1,41 @@
+---
+source: facet-macros-emit/tests/codegen/mod.rs
+assertion_line: 732
+expression: "expand(r#\"\n        struct Foo<T>(Vec<T>);\n        \"#)"
+---
+#[automatically_derived]
+unsafe impl<'__facet, T> ::facet::Facet<'__facet> for Foo<T>
+where
+    T: ::facet::Facet<'__facet>,
+{
+    const VTABLE: &'static ::facet::ValueVTable = &const {
+        let mut vtable =
+            ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "Foo"));
+        vtable
+    };
+    const SHAPE: &'static ::facet::Shape<'static> = &const {
+        let fields: &'static [::facet::Field] = &const {
+            [{
+                ::facet::Field::builder()
+                    .name("0")
+                    .shape(::facet::shape_of(&|s: &Foo<T>| &s.0))
+                    .offset(::core::mem::offset_of!(Foo<T>, 0))
+                    .build()
+            }]
+        };
+        ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("Foo")
+            .type_params(&[::facet::TypeParam {
+                name: "T",
+                shape: || <T as ::facet::Facet>::SHAPE,
+            }])
+            .ty(::facet::Type::User(::facet::UserType::Struct(
+                ::facet::StructType::builder()
+                    .repr(::facet::Repr::c())
+                    .kind(::facet::StructKind::TupleStruct)
+                    .fields(fields)
+                    .build(),
+            )))
+            .build()
+    };
+}

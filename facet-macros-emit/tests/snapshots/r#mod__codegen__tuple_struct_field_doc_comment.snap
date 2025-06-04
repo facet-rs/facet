@@ -1,0 +1,50 @@
+---
+source: facet-macros-emit/tests/codegen.rs
+expression: "expand(r#\"\n        #[derive(Facet)]\n        struct MyTupleStruct(\n            /// This is a documented field\n            u32,\n            /// This is another documented field\n            String,\n        );\n        \"#)"
+---
+#[used]
+static MY_TUPLE_STRUCT_SHAPE: &'static ::facet::Shape = <MyTupleStruct as ::facet::Facet>::SHAPE;
+#[automatically_derived]
+unsafe impl<'__facet> ::facet::Facet<'__facet> for MyTupleStruct {
+    const SHAPE: &'static ::facet::Shape = &const {
+        let fields: &'static [::facet::Field] = &const {
+            [
+                ::facet::Field::builder()
+                    .name("0")
+                    .shape(|| ::facet::shape_of(&|s: &MyTupleStruct| &s.0))
+                    .offset(::core::mem::offset_of!(MyTupleStruct, 0))
+                    .flags(::facet::FieldFlags::EMPTY)
+                    .attributes(&const { [] })
+                    .doc(&[" This is a documented field"])
+                    .build(),
+                ::facet::Field::builder()
+                    .name("1")
+                    .shape(|| ::facet::shape_of(&|s: &MyTupleStruct| &s.1))
+                    .offset(::core::mem::offset_of!(MyTupleStruct, 1))
+                    .flags(::facet::FieldFlags::EMPTY)
+                    .attributes(&const { [] })
+                    .doc(&[" This is another documented field"])
+                    .build(),
+            ]
+        };
+        let vtable = &const {
+            let mut vtable =
+                ::facet::value_vtable_inner!(Self, |f, _opts| ::core::fmt::Write::write_str(
+                    f,
+                    "MyTupleStruct"
+                ));
+            vtable
+        };
+        ::facet::Shape::builder()
+            .id(::facet::ConstTypeId::of::<Self>())
+            .layout(::core::alloc::Layout::new::<Self>())
+            .vtable(vtable)
+            .def(::facet::Def::Struct(
+                ::facet::StructDef::builder()
+                    .kind(::facet::StructKind::TupleStruct)
+                    .fields(fields)
+                    .build(),
+            ))
+            .build()
+    };
+}

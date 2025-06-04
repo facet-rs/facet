@@ -1,0 +1,29 @@
+[package]
+name = "facet-macros"
+version = "0.27.11"
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Proc macro for deriving the 'Facet' trait in facet"
+keywords = [
+    "reflection",
+    "introspection",
+    "serialization",
+    "deserialization",
+    "derive",
+]
+categories = ["development-tools", "encoding"]
+
+[lib]
+proc-macro = true
+
+[features]
+function = ["facet-macros-emit/function"]
+
+[dependencies]
+facet-macros-emit = { version = "0.27.11", path = "../facet-macros-emit" }
+
+# cf. https://hachyderm.io/@epage/114141126315983016
+[target.'cfg(any())'.dependencies]
+facet-core = { path = "../facet-core", version = "0.27.11" }

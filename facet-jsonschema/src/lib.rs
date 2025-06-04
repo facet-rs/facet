@@ -267,7 +267,7 @@ mod tests {
     use alloc::{rc::Rc, sync::Arc};
 
     use super::*;
-    use facet_derive::Facet;
+    use facet_macros::Facet;
     use insta::assert_snapshot;
 
     #[test]

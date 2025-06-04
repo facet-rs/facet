@@ -1,0 +1,63 @@
+---
+source: facet-macros-emit/tests/codegen.rs
+expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(default)]\n        struct ForFacetDefaultDemo {\n            #[facet(default)]\n            field1: u32,\n            #[facet(default = \"my_field_default_fn\")]\n            field2: String,\n            field3: bool,\n        }\n        \"#)"
+---
+#[used]
+static FOR_FACET_DEFAULT_DEMO_SHAPE: &'static ::facet::Shape =
+    <ForFacetDefaultDemo as ::facet::Facet>::SHAPE;
+#[automatically_derived]
+unsafe impl<'__facet> ::facet::Facet<'__facet> for ForFacetDefaultDemo {
+    const SHAPE: &'static ::facet::Shape = &const {
+        let fields: &'static [::facet::Field] = &const {
+            [
+                ::facet::Field::builder()
+                    .name("field1")
+                    .shape(|| ::facet::shape_of(&|s: &ForFacetDefaultDemo| &s.field1))
+                    .offset(::core::mem::offset_of!(ForFacetDefaultDemo, field1))
+                    .flags(::facet::FieldFlags::EMPTY)
+                    .attributes(&const { [::facet::FieldAttribute::Default(None)] })
+                    .build(),
+                ::facet::Field::builder()
+                    .name("field2")
+                    .shape(|| ::facet::shape_of(&|s: &ForFacetDefaultDemo| &s.field2))
+                    .offset(::core::mem::offset_of!(ForFacetDefaultDemo, field2))
+                    .flags(::facet::FieldFlags::EMPTY)
+                    .attributes(
+                        &const {
+                            [::facet::FieldAttribute::Default(Some(|ptr| unsafe {
+                                ptr.put(my_field_default_fn())
+                            }))]
+                        },
+                    )
+                    .build(),
+                ::facet::Field::builder()
+                    .name("field3")
+                    .shape(|| ::facet::shape_of(&|s: &ForFacetDefaultDemo| &s.field3))
+                    .offset(::core::mem::offset_of!(ForFacetDefaultDemo, field3))
+                    .flags(::facet::FieldFlags::EMPTY)
+                    .attributes(&const { [] })
+                    .build(),
+            ]
+        };
+        let vtable = &const {
+            let mut vtable =
+                ::facet::value_vtable_inner!(Self, |f, _opts| ::core::fmt::Write::write_str(
+                    f,
+                    "ForFacetDefaultDemo"
+                ));
+            vtable
+        };
+        ::facet::Shape::builder()
+            .id(::facet::ConstTypeId::of::<Self>())
+            .layout(::core::alloc::Layout::new::<Self>())
+            .vtable(vtable)
+            .def(::facet::Def::Struct(
+                ::facet::StructDef::builder()
+                    .kind(::facet::StructKind::Struct)
+                    .fields(fields)
+                    .build(),
+            ))
+            .attributes(&[::facet::ShapeAttribute::Default])
+            .build()
+    };
+}

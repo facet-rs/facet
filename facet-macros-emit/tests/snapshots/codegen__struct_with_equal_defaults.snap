@@ -1,0 +1,49 @@
+---
+source: facet-macros-emit/tests/codegen.rs
+expression: "expand(r#\"\n        #[derive(Facet)]\n        struct StructWithDefaults {\n            field1: i32 = 42,\n            field2: String = \"default\".to_string(),\n        }\n        \"#)"
+---
+#[used]
+static STRUCT_WITH_DEFAULTS_SHAPE: &'static ::facet::Shape =
+    <StructWithDefaults as ::facet::Facet>::SHAPE;
+#[automatically_derived]
+unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithDefaults {
+    const SHAPE: &'static ::facet::Shape = &const {
+        let fields: &'static [::facet::Field] = &const {
+            [
+                ::facet::Field::builder()
+                    .name("field1")
+                    .shape(|| ::facet::shape_of(&|s: &StructWithDefaults| &s.field1))
+                    .offset(::core::mem::offset_of!(StructWithDefaults, field1))
+                    .flags(::facet::FieldFlags::EMPTY)
+                    .attributes(&const { [] })
+                    .build(),
+                ::facet::Field::builder()
+                    .name("field2")
+                    .shape(|| ::facet::shape_of(&|s: &StructWithDefaults| &s.field2))
+                    .offset(::core::mem::offset_of!(StructWithDefaults, field2))
+                    .flags(::facet::FieldFlags::EMPTY)
+                    .attributes(&const { [] })
+                    .build(),
+            ]
+        };
+        let vtable = &const {
+            let mut vtable =
+                ::facet::value_vtable_inner!(Self, |f, _opts| ::core::fmt::Write::write_str(
+                    f,
+                    "StructWithDefaults"
+                ));
+            vtable
+        };
+        ::facet::Shape::builder()
+            .id(::facet::ConstTypeId::of::<Self>())
+            .layout(::core::alloc::Layout::new::<Self>())
+            .vtable(vtable)
+            .def(::facet::Def::Struct(
+                ::facet::StructDef::builder()
+                    .kind(::facet::StructKind::Struct)
+                    .fields(fields)
+                    .build(),
+            ))
+            .build()
+    };
+}

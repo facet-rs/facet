@@ -1,0 +1,46 @@
+---
+source: facet-macros-emit/tests/codegen/mod.rs
+assertion_line: 189
+expression: "expand(r#\"\n        #[derive(Facet)]\n        struct Blah {\n            foo: u32,\n            #[facet(sensitive)]\n            bar: String,\n        }\n        \"#)"
+---
+#[used]
+static BLAH_SHAPE: &'static ::facet::Shape = <Blah as ::facet::Facet>::SHAPE;
+#[automatically_derived]
+unsafe impl<'__facet> ::facet::Facet<'__facet> for Blah {
+    const VTABLE: &'static ::facet::ValueVTable = &const {
+        let mut vtable =
+            ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "Blah"));
+        vtable
+    };
+    const SHAPE: &'static ::facet::Shape<'static> = &const {
+        let fields: &'static [::facet::Field] = &const {
+            [
+                {
+                    ::facet::Field::builder()
+                        .name("foo")
+                        .shape(::facet::shape_of(&|s: &Blah| &s.foo))
+                        .offset(::core::mem::offset_of!(Blah, foo))
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("bar")
+                        .shape(::facet::shape_of(&|s: &Blah| &s.bar))
+                        .offset(::core::mem::offset_of!(Blah, bar))
+                        .flags(::facet::FieldFlags::SENSITIVE)
+                        .build()
+                },
+            ]
+        };
+        ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("Blah")
+            .ty(::facet::Type::User(::facet::UserType::Struct(
+                ::facet::StructType::builder()
+                    .repr(::facet::Repr::c())
+                    .kind(::facet::StructKind::Struct)
+                    .fields(fields)
+                    .build(),
+            )))
+            .build()
+    };
+}

@@ -99,7 +99,7 @@ pub use facet_core::*;
 /// # Examples
 ///
 /// **TODO**.
-pub use facet_derive::*;
+pub use facet_macros::*;
 
 #[cfg(feature = "reflect")]
 pub use facet_reflect::*;

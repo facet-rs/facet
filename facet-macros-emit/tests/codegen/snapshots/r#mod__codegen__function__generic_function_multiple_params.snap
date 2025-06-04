@@ -1,0 +1,43 @@
+---
+source: facet-macros-emit/tests/codegen/function.rs
+expression: "expand_function(r#\"\n        fn complex_fn<T, U>(x: Vec<T>, y: Option<U>) -> Result<T, U> {\n            todo!()\n        }\n        \"#)"
+---
+#[allow(non_snake_case)]
+mod __fn_shape_complex_fn {
+    use super::*;
+    pub(super) fn inner<T, U>(x: Vec<T>, y: Option<U>) -> Result<T, U> {
+        todo!()
+    }
+    #[derive(Debug, Clone)]
+    pub struct FunctionShape<Args, Ret, Generics = ()> {
+        pub name: &'static str,
+        pub param_count: usize,
+        pub param_names: &'static [&'static str],
+        _args: core::marker::PhantomData<Args>,
+        _ret: core::marker::PhantomData<Ret>,
+        _generics: core::marker::PhantomData<Generics>,
+    }
+    impl<Args, Ret, Generics> FunctionShape<Args, Ret, Generics> {
+        pub const fn new(
+            name: &'static str,
+            param_count: usize,
+            param_names: &'static [&'static str],
+        ) -> Self {
+            Self {
+                name,
+                param_count,
+                param_names,
+                _args: core::marker::PhantomData,
+                _ret: core::marker::PhantomData,
+                _generics: core::marker::PhantomData,
+            }
+        }
+    }
+    pub fn shape<T, U>() -> FunctionShape<(Vec<T>, Option<U>), Result<T, U>, (T, U)> {
+        FunctionShape::new("complex_fn", 2usize, &["x", "y"])
+    }
+}
+pub fn complex_fn<T, U>(x: Vec<T>, y: Option<U>) -> Result<T, U> {
+    __fn_shape_complex_fn::inner(x, y)
+}
+pub use __fn_shape_complex_fn::shape as COMPLEX_FN_SHAPE;

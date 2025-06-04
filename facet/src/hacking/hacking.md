@@ -63,7 +63,7 @@ When we use these traits, the compiler will prefer the first implementation if t
 
 It's important to understand when this specialization technique can and cannot be used:
 
-1. **Only works in macros and non-generic contexts**: Auto-deref specialization is primarily useful in macros (like those in `facet-derive`) and for non-generic, scalar types like `i32`, `u32`, `String`, etc.
+1. **Only works in macros and non-generic contexts**: Auto-deref specialization is primarily useful in macros (like those in `facet-macros`) and for non-generic, scalar types like `i32`, `u32`, `String`, etc.
 
 2. **Not suitable for generic types**: For types with generic parameters (like `HashMap<K, V>`), this approach doesn't work well because the specialization cannot be done based on properties of the generic parameters.
 

@@ -1,0 +1,48 @@
+---
+source: facet-macros-emit/tests/codegen.rs
+expression: "expand(r#\"\n        #[repr(u8)]\n        #[derive(Facet)]\n        enum Test {\n          Red,\n          Blue = 7,\n          Green,\n          Yellow = 10,\n        }\n        \"#)"
+---
+#[used]
+static TEST_SHAPE: &'static ::facet::Shape = <Test as ::facet::Facet>::SHAPE;
+#[automatically_derived]
+unsafe impl ::facet::Facet for Test {
+    const SHAPE: &'static ::facet::Shape = &const {
+        let __facet_variants: &'static [::facet::Variant] = &const {
+            [
+                ::facet::Variant::builder()
+                    .name("Red")
+                    .discriminant(0)
+                    .fields(::facet::Struct::builder().unit().build())
+                    .build(),
+                ::facet::Variant::builder()
+                    .name("Blue")
+                    .discriminant(7)
+                    .fields(::facet::Struct::builder().unit().build())
+                    .build(),
+                ::facet::Variant::builder()
+                    .name("Green")
+                    .discriminant(8)
+                    .fields(::facet::Struct::builder().unit().build())
+                    .build(),
+                ::facet::Variant::builder()
+                    .name("Yellow")
+                    .discriminant(10)
+                    .fields(::facet::Struct::builder().unit().build())
+                    .build(),
+            ]
+        };
+        ::facet::Shape::builder()
+            .id(::facet::ConstTypeId::of::<Self>())
+            .layout(::core::alloc::Layout::new::<Self>())
+            .vtable(::facet::value_vtable!(Self, |f, _opts| {
+                ::core::fmt::Write::write_str(f, "Test")
+            }))
+            .def(::facet::Def::Enum(
+                ::facet::EnumDef::builder()
+                    .variants(__facet_variants)
+                    .repr(::facet::EnumRepr::U8)
+                    .build(),
+            ))
+            .build()
+    };
+}

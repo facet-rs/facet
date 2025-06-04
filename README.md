@@ -98,8 +98,8 @@ The main `facet` crate re-exports symbols from:
   - The `Facet` trait and implementations for foreign types (mostly `libstd`)
   - The `Shape` struct along with various vtables and the whole `Def` tree
   - Type-erased pointer helpers like `PtrUninit`, `PtrConst`, and `Opaque`
-  - Autoderef specialization trick needed for `facet-derive`
-- [facet-derive](https://github.com/facet-rs/facet/tree/main/facet-derive), which implements the `Facet` derive attribute as a fast/light proc macro powered by [unsynn](https://docs.rs/unsynn)
+  - Autoderef specialization trick needed for `facet-macros`
+- [facet-macros](https://github.com/facet-rs/facet/tree/main/facet-macros), which implements the `Facet` derive attribute as a fast/light proc macro powered by [unsynn](https://docs.rs/unsynn)
 
 For struct manipulation and reflection, the following is available:
 

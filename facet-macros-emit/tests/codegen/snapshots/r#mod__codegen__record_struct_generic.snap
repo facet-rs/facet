@@ -1,0 +1,61 @@
+---
+source: facet-macros-emit/tests/codegen/mod.rs
+assertion_line: 388
+expression: "expand(r#\"\n        #[derive(Facet)]\n        struct Blah<'a, T: Facet + core::hash::Hash, const C: usize = 3>\n        where\n            T: Debug, // Added a Debug bound for demonstration if needed, adjust as per Facet constraints\n        {\n            field: core::marker::PhantomData<&'a T>,\n            another: T,\n            constant_val: [u8; C],\n        }\n        \"#)"
+---
+#[automatically_derived]
+unsafe impl<'a, '__facet, T: Facet + core::hash::Hash, const C: usize> ::facet::Facet<'__facet>
+    for Blah<'a, T, C>
+where
+    T: Debug,
+    'a: '__facet,
+    '__facet: 'a,
+    T: ::facet::Facet<'__facet>,
+{
+    const VTABLE: &'static ::facet::ValueVTable = &const {
+        let mut vtable =
+            ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "Blah"));
+        vtable
+    };
+    const SHAPE: &'static ::facet::Shape<'static> = &const {
+        let fields: &'static [::facet::Field] = &const {
+            [
+                {
+                    ::facet::Field::builder()
+                        .name("field")
+                        .shape(::facet::shape_of(&|s: &Blah<'a, T, C>| &s.field))
+                        .offset(::core::mem::offset_of!(Blah<'a, T, C>, field))
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("another")
+                        .shape(::facet::shape_of(&|s: &Blah<'a, T, C>| &s.another))
+                        .offset(::core::mem::offset_of!(Blah<'a, T, C>, another))
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("constant_val")
+                        .shape(::facet::shape_of(&|s: &Blah<'a, T, C>| &s.constant_val))
+                        .offset(::core::mem::offset_of!(Blah<'a, T, C>, constant_val))
+                        .build()
+                },
+            ]
+        };
+        ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("Blah")
+            .type_params(&[::facet::TypeParam {
+                name: "T",
+                shape: || <T as ::facet::Facet>::SHAPE,
+            }])
+            .ty(::facet::Type::User(::facet::UserType::Struct(
+                ::facet::StructType::builder()
+                    .repr(::facet::Repr::c())
+                    .kind(::facet::StructKind::Struct)
+                    .fields(fields)
+                    .build(),
+            )))
+            .build()
+    };
+}

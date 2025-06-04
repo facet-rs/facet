@@ -1,0 +1,43 @@
+---
+source: facet-macros-emit/tests/codegen/function.rs
+expression: "expand_function(r#\"\n        fn no_return(x: i32) {\n            println!(\"{}\", x);\n        }\n        \"#)"
+---
+#[allow(non_snake_case)]
+mod __fn_shape_no_return {
+    use super::*;
+    pub(super) fn inner(x: i32) -> () {
+        println!("{}", x);
+    }
+    #[derive(Debug, Clone)]
+    pub struct FunctionShape<Args, Ret, Generics = ()> {
+        pub name: &'static str,
+        pub param_count: usize,
+        pub param_names: &'static [&'static str],
+        _args: core::marker::PhantomData<Args>,
+        _ret: core::marker::PhantomData<Ret>,
+        _generics: core::marker::PhantomData<Generics>,
+    }
+    impl<Args, Ret, Generics> FunctionShape<Args, Ret, Generics> {
+        pub const fn new(
+            name: &'static str,
+            param_count: usize,
+            param_names: &'static [&'static str],
+        ) -> Self {
+            Self {
+                name,
+                param_count,
+                param_names,
+                _args: core::marker::PhantomData,
+                _ret: core::marker::PhantomData,
+                _generics: core::marker::PhantomData,
+            }
+        }
+    }
+    pub fn shape() -> FunctionShape<(i32), (), ()> {
+        FunctionShape::new("no_return", 1usize, &["x"])
+    }
+}
+pub fn no_return(x: i32) -> () {
+    __fn_shape_no_return::inner(x)
+}
+pub use __fn_shape_no_return::shape as NO_RETURN_SHAPE;

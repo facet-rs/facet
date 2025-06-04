@@ -1,0 +1,61 @@
+---
+source: facet-macros-emit/tests/codegen/mod.rs
+assertion_line: 838
+expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(rename_all = \"snake_case\")]\n        struct ConfigSettings {\n            server_url: String,\n            #[facet(rename = \"apiKey\")]\n            api_key: String,\n            timeout_secs: u32,\n            max_retry_count: u8,\n        }\n        \"#)"
+---
+#[used]
+static CONFIG_SETTINGS_SHAPE: &'static ::facet::Shape = <ConfigSettings as ::facet::Facet>::SHAPE;
+#[automatically_derived]
+unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigSettings {
+    const VTABLE: &'static ::facet::ValueVTable = &const {
+        let mut vtable = ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
+            f,
+            "ConfigSettings"
+        ));
+        vtable
+    };
+    const SHAPE: &'static ::facet::Shape<'static> = &const {
+        let fields: &'static [::facet::Field] = &const {
+            [
+                {
+                    ::facet::Field::builder()
+                        .name("server_url")
+                        .shape(::facet::shape_of(&|s: &ConfigSettings| &s.server_url))
+                        .offset(::core::mem::offset_of!(ConfigSettings, server_url))
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("apiKey")
+                        .shape(::facet::shape_of(&|s: &ConfigSettings| &s.api_key))
+                        .offset(::core::mem::offset_of!(ConfigSettings, api_key))
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("timeout_secs")
+                        .shape(::facet::shape_of(&|s: &ConfigSettings| &s.timeout_secs))
+                        .offset(::core::mem::offset_of!(ConfigSettings, timeout_secs))
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("max_retry_count")
+                        .shape(::facet::shape_of(&|s: &ConfigSettings| &s.max_retry_count))
+                        .offset(::core::mem::offset_of!(ConfigSettings, max_retry_count))
+                        .build()
+                },
+            ]
+        };
+        ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("ConfigSettings")
+            .ty(::facet::Type::User(::facet::UserType::Struct(
+                ::facet::StructType::builder()
+                    .repr(::facet::Repr::c())
+                    .kind(::facet::StructKind::Struct)
+                    .fields(fields)
+                    .build(),
+            )))
+            .build()
+    };
+}

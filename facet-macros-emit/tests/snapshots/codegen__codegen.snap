@@ -1,0 +1,30 @@
+---
+source: facet-macros-emit/tests/codegen.rs
+expression: "expand(r#\"\n        #[derive(Facet)]\n        struct FooBar;\n        \"#)"
+---
+#[used]
+static FOO_BAR_SHAPE: &'static ::facet::Shape = <FooBar as ::facet::Facet>::SHAPE;
+#[automatically_derived]
+unsafe impl ::facet::Facet for FooBar {
+    const SHAPE: &'static ::facet::Shape = &const {
+        let fields: &'static [::facet::Field] = &const { [] };
+        let vtable = &const {
+            let mut vtable =
+                ::facet::value_vtable_inner!(Self, |f, _opts| ::core::fmt::Write::write_str(
+                    f, "FooBar"
+                ));
+            vtable
+        };
+        ::facet::Shape::builder()
+            .id(::facet::ConstTypeId::of::<Self>())
+            .layout(::core::alloc::Layout::new::<Self>())
+            .vtable(vtable)
+            .def(::facet::Def::Struct(
+                ::facet::Struct::builder()
+                    .kind(::facet::StructKind::Unit)
+                    .fields(fields)
+                    .build(),
+            ))
+            .build()
+    };
+}

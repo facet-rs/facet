@@ -14,7 +14,7 @@ features = ["std", "reflect", "camino", "ordered-float"]
 
 [features]
 default = ["std"]
-function = ["facet-derive/function"] # Enable function shape introspection
+function = ["facet-macros/function"] # Enable function shape introspection
 reflect = ["dep:facet-reflect"] # Enable reflection via Peek and Poke types
 testfeat = [] # Does nothing, only used for tests
 std = ["facet-core/std", "alloc"] # Enable standard library support
@@ -48,7 +48,7 @@ fn-ptr = ["facet-core/fn-ptr"]
 
 [dependencies]
 facet-core = { path = "../facet-core", version = "0.27.11", default-features = false }
-facet-derive = { path = "../facet-derive", version = "0.27.11" }
+facet-macros = { path = "../facet-macros", version = "0.27.11" }
 facet-reflect = { path = "../facet-reflect", version = "0.27.11", optional = true }
 static_assertions = "1.1.0"
 

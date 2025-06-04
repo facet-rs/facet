@@ -15,15 +15,15 @@ version_group = "core"
 
 # Derive macros - part of core group
 [[package]]
-name = "facet-derive-parse"
+name = "facet-macros-parse"
 version_group = "core"
 
 [[package]]
-name = "facet-derive-emit"
+name = "facet-macros-emit"
 version_group = "core"
 
 [[package]]
-name = "facet-derive"
+name = "facet-macros"
 version_group = "core"
 
 # Reflection - part of core group

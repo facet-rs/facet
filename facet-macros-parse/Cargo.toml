@@ -1,0 +1,24 @@
+[package]
+name = "facet-macros-parse"
+version = "0.27.11"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Parser support for facet-macros's macro expansion"
+keywords = [
+    "reflection",
+    "introspection",
+    "serialization",
+    "deserialization",
+    "derive",
+]
+categories = ["development-tools", "encoding"]
+
+[dependencies]
+unsynn = "0.1.0"
+proc-macro2 = "1.0.95"
+quote = "1.0.40"
+
+[features]
+function = []

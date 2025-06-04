@@ -1,0 +1,54 @@
+---
+source: facet-macros-emit/tests/codegen/mod.rs
+assertion_line: 1019
+expression: "expand(r#\"\n        #[derive(Facet)]\n        struct User {\n            #[facet(rename = \"userName\")]\n            name: String,\n            #[facet(rename = \"userEmail\", sensitive)]\n            email: String,\n            #[facet(sensitive)]\n            password: String,\n        }\n        \"#)"
+---
+#[used]
+static USER_SHAPE: &'static ::facet::Shape = <User as ::facet::Facet>::SHAPE;
+#[automatically_derived]
+unsafe impl<'__facet> ::facet::Facet<'__facet> for User {
+    const VTABLE: &'static ::facet::ValueVTable = &const {
+        let mut vtable =
+            ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "User"));
+        vtable
+    };
+    const SHAPE: &'static ::facet::Shape<'static> = &const {
+        let fields: &'static [::facet::Field] = &const {
+            [
+                {
+                    ::facet::Field::builder()
+                        .name("userName")
+                        .shape(::facet::shape_of(&|s: &User| &s.name))
+                        .offset(::core::mem::offset_of!(User, name))
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("userEmail")
+                        .shape(::facet::shape_of(&|s: &User| &s.email))
+                        .offset(::core::mem::offset_of!(User, email))
+                        .flags(::facet::FieldFlags::SENSITIVE)
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("password")
+                        .shape(::facet::shape_of(&|s: &User| &s.password))
+                        .offset(::core::mem::offset_of!(User, password))
+                        .flags(::facet::FieldFlags::SENSITIVE)
+                        .build()
+                },
+            ]
+        };
+        ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("User")
+            .ty(::facet::Type::User(::facet::UserType::Struct(
+                ::facet::StructType::builder()
+                    .repr(::facet::Repr::c())
+                    .kind(::facet::StructKind::Struct)
+                    .fields(fields)
+                    .build(),
+            )))
+            .build()
+    };
+}

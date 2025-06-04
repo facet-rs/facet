@@ -55,13 +55,13 @@ simply make a note of it and I will take care of it.
 
 crates like `facet-yaml`, `facet-json`, only have have a _dev_ dependency on
 `facet`. For regular dependencies, they only have `facet-core`, `facet-reflect`.
-This is to keep `facet-derive` out of them.
+This is to keep `facet-macros` out of them.
 
 ### Testing Derive Macros
 
 Tests that exercise the `#[derive(Facet)]` macro cannot live in `facet-core`
-because it does not depend on `facet-derive`. Such tests should either be
-snapshot tests in `facet-derive-emit` or integration tests in the main `facet`
+because it does not depend on `facet-macros`. Such tests should either be
+snapshot tests in `facet-macros-emit` or integration tests in the main `facet`
 crate, which brings all the necessary components together.
 
 ### Def and Type enums

@@ -1,0 +1,31 @@
+---
+source: facet-macros-emit/tests/codegen.rs
+expression: "expand(r#\"\n        /// yes 😄\n        /// no\n        #[derive(Facet)]\n        struct Foo {}\n        \"#)"
+---
+#[used]
+static FOO_SHAPE: &'static ::facet::Shape = <Foo as ::facet::Facet>::SHAPE;
+#[automatically_derived]
+unsafe impl<'__facet> ::facet::Facet<'__facet> for Foo {
+    const SHAPE: &'static ::facet::Shape = &const {
+        let fields: &'static [::facet::Field] = &const { [] };
+        let vtable = &const {
+            let mut vtable =
+                ::facet::value_vtable_inner!(Self, |f, _opts| ::core::fmt::Write::write_str(
+                    f, "Foo"
+                ));
+            vtable
+        };
+        ::facet::Shape::builder()
+            .id(::facet::ConstTypeId::of::<Self>())
+            .layout(::core::alloc::Layout::new::<Self>())
+            .vtable(vtable)
+            .def(::facet::Def::Struct(
+                ::facet::StructDef::builder()
+                    .kind(::facet::StructKind::Struct)
+                    .fields(fields)
+                    .build(),
+            ))
+            .doc(&[" yes 😄", " no"])
+            .build()
+    };
+}

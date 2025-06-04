@@ -1,0 +1,49 @@
+---
+source: facet-macros-emit/tests/codegen/mod.rs
+expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(rename_all = \"lowercase\")]\n        struct LowerCaseExample {\n            field_one: String,\n            field_two: String,\n        }\n        \"#)"
+---
+#[used]
+static LOWER_CASE_EXAMPLE_SHAPE: &'static ::facet::Shape =
+    <LowerCaseExample as ::facet::Facet>::SHAPE;
+#[automatically_derived]
+unsafe impl<'__facet> ::facet::Facet<'__facet> for LowerCaseExample {
+    const SHAPE: &'static ::facet::Shape = &const {
+        let fields: &'static [::facet::Field] = &const {
+            [
+                ::facet::Field::builder()
+                    .name("field_one")
+                    .shape(|| ::facet::shape_of(&|s: &LowerCaseExample| &s.field_one))
+                    .offset(::core::mem::offset_of!(LowerCaseExample, field_one))
+                    .flags(::facet::FieldFlags::EMPTY)
+                    .attributes(&const { [::facet::FieldAttribute::Rename("field_one")] })
+                    .build(),
+                ::facet::Field::builder()
+                    .name("field_two")
+                    .shape(|| ::facet::shape_of(&|s: &LowerCaseExample| &s.field_two))
+                    .offset(::core::mem::offset_of!(LowerCaseExample, field_two))
+                    .flags(::facet::FieldFlags::EMPTY)
+                    .attributes(&const { [::facet::FieldAttribute::Rename("field_two")] })
+                    .build(),
+            ]
+        };
+        let vtable = &const {
+            let mut vtable = ::facet::value_vtable!(
+                Self,
+                |f, _opts| ::core::fmt::Write::write_str(f, "LowerCaseExample")
+            );
+            vtable
+        };
+        ::facet::Shape::builder()
+            .id(::facet::ConstTypeId::of::<Self>())
+            .layout(::core::alloc::Layout::new::<Self>())
+            .vtable(vtable)
+            .def(::facet::Def::Struct(
+                ::facet::StructDef::builder()
+                    .kind(::facet::StructKind::Struct)
+                    .fields(fields)
+                    .build(),
+            ))
+            .attributes(&[::facet::ShapeAttribute::RenameAll("lowercase")])
+            .build()
+    };
+}

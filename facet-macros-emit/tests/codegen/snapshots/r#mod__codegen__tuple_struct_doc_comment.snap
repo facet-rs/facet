@@ -1,0 +1,37 @@
+---
+source: facet-macros-emit/tests/codegen/mod.rs
+assertion_line: 360
+expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(transparent)]\n        /// This is a struct for sure\n        struct Blah(u32);\n        \"#)"
+---
+#[used]
+static BLAH_SHAPE: &'static ::facet::Shape = <Blah as ::facet::Facet>::SHAPE;
+#[automatically_derived]
+unsafe impl<'__facet> ::facet::Facet<'__facet> for Blah {
+    const VTABLE: &'static ::facet::ValueVTable = &const {
+        let mut vtable =
+            ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "Blah"));
+        vtable
+    };
+    const SHAPE: &'static ::facet::Shape<'static> = &const {
+        let fields: &'static [::facet::Field] = &const {
+            [{
+                ::facet::Field::builder()
+                    .name("0")
+                    .shape(::facet::shape_of(&|s: &Blah| &s.0))
+                    .offset(::core::mem::offset_of!(Blah, 0))
+                    .build()
+            }]
+        };
+        ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("Blah")
+            .ty(::facet::Type::User(::facet::UserType::Struct(
+                ::facet::StructType::builder()
+                    .repr(::facet::Repr::c())
+                    .kind(::facet::StructKind::TupleStruct)
+                    .fields(fields)
+                    .build(),
+            )))
+            .doc(&[" This is a struct for sure"])
+            .build()
+    };
+}

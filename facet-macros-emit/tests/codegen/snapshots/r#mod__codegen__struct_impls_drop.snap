@@ -1,0 +1,45 @@
+---
+source: facet-macros-emit/tests/codegen/mod.rs
+assertion_line: 601
+expression: "expand(r#\"\n        #[derive(Facet)]\n        struct BarFoo {\n            bar: u32,\n            foo: String,\n        }\n        // The Drop impl doesn't affect the derive macro input:\n        // impl Drop for BarFoo { fn drop(&mut self) {} }\n        \"#)"
+---
+#[used]
+static BAR_FOO_SHAPE: &'static ::facet::Shape = <BarFoo as ::facet::Facet>::SHAPE;
+#[automatically_derived]
+unsafe impl<'__facet> ::facet::Facet<'__facet> for BarFoo {
+    const VTABLE: &'static ::facet::ValueVTable = &const {
+        let mut vtable =
+            ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "BarFoo"));
+        vtable
+    };
+    const SHAPE: &'static ::facet::Shape<'static> = &const {
+        let fields: &'static [::facet::Field] = &const {
+            [
+                {
+                    ::facet::Field::builder()
+                        .name("bar")
+                        .shape(::facet::shape_of(&|s: &BarFoo| &s.bar))
+                        .offset(::core::mem::offset_of!(BarFoo, bar))
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("foo")
+                        .shape(::facet::shape_of(&|s: &BarFoo| &s.foo))
+                        .offset(::core::mem::offset_of!(BarFoo, foo))
+                        .build()
+                },
+            ]
+        };
+        ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("BarFoo")
+            .ty(::facet::Type::User(::facet::UserType::Struct(
+                ::facet::StructType::builder()
+                    .repr(::facet::Repr::c())
+                    .kind(::facet::StructKind::Struct)
+                    .fields(fields)
+                    .build(),
+            )))
+            .build()
+    };
+}

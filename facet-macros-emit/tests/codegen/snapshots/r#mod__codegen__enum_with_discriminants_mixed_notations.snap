@@ -1,0 +1,69 @@
+---
+source: facet-macros-emit/tests/codegen/mod.rs
+expression: "expand(r#\"\n        #[repr(u32)]\n        #[derive(Facet)]\n        enum Status {\n            Ok = 1,\n            Warn = 0xA,\n            Error = 0b1111,\n            Timeout = 0o77,\n        }\n        \"#)"
+---
+#[used]
+static STATUS_SHAPE: &'static ::facet::Shape = <Status as ::facet::Facet>::SHAPE;
+#[automatically_derived]
+#[allow(non_camel_case_types)]
+unsafe impl<'__facet> ::facet::Facet<'__facet> for Status {
+    const VTABLE: &'static ::facet::ValueVTable = &const {
+        ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "Status"))
+    };
+    const SHAPE: &'static ::facet::Shape<'static> = &const {
+        let __facet_variants: &'static [::facet::Variant] = &const {
+            [
+                ::facet::Variant::builder()
+                    .name("Ok")
+                    .discriminant(1 as i64)
+                    .data(
+                        ::facet::StructType::builder()
+                            .repr(::facet::Repr::c())
+                            .unit()
+                            .build(),
+                    )
+                    .build(),
+                ::facet::Variant::builder()
+                    .name("Warn")
+                    .discriminant(0xA as i64)
+                    .data(
+                        ::facet::StructType::builder()
+                            .repr(::facet::Repr::c())
+                            .unit()
+                            .build(),
+                    )
+                    .build(),
+                ::facet::Variant::builder()
+                    .name("Error")
+                    .discriminant(0b1111 as i64)
+                    .data(
+                        ::facet::StructType::builder()
+                            .repr(::facet::Repr::c())
+                            .unit()
+                            .build(),
+                    )
+                    .build(),
+                ::facet::Variant::builder()
+                    .name("Timeout")
+                    .discriminant(0o77 as i64)
+                    .data(
+                        ::facet::StructType::builder()
+                            .repr(::facet::Repr::c())
+                            .unit()
+                            .build(),
+                    )
+                    .build(),
+            ]
+        };
+        ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("Status")
+            .ty(::facet::Type::User(::facet::UserType::Enum(
+                ::facet::EnumType::builder()
+                    .variants(__facet_variants)
+                    .repr(::facet::Repr::c())
+                    .enum_repr(::facet::EnumRepr::U32)
+                    .build(),
+            )))
+            .build()
+    };
+}

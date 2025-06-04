@@ -1,0 +1,72 @@
+---
+source: facet-macros-emit/tests/codegen/mod.rs
+expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(C)]\n        enum EnumWithEmptyStructVariant {\n            Variant1 { },\n        }\n        \"#)"
+---
+#[used]
+static ENUM_WITH_EMPTY_STRUCT_VARIANT_SHAPE: &'static ::facet::Shape =
+    <EnumWithEmptyStructVariant as ::facet::Facet>::SHAPE;
+#[automatically_derived]
+#[allow(non_camel_case_types)]
+unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithEmptyStructVariant {
+    const VTABLE: &'static ::facet::ValueVTable = &const {
+        ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
+            f,
+            "EnumWithEmptyStructVariant"
+        ))
+    };
+    const SHAPE: &'static ::facet::Shape<'static> = &const {
+        #[repr(C)]
+        #[allow(dead_code)]
+        enum __Shadow_CRepr_Discriminant_for_EnumWithEmptyStructVariant {
+            Variant1,
+        }
+        #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
+        union __Shadow_CRepr_Fields_Union_for_EnumWithEmptyStructVariant<'__facet> {
+            Variant1: ::core::mem::ManuallyDrop<
+                __Shadow_CRepr_FieldEnumWithEmptyStructVariant_Variant1<'__facet>,
+            >,
+        }
+        #[repr(C)]
+        #[allow(non_snake_case)]
+        #[allow(dead_code)]
+        struct __Shadow_CRepr_Struct_for_EnumWithEmptyStructVariant<'__facet> {
+            _discriminant: __Shadow_CRepr_Discriminant_for_EnumWithEmptyStructVariant,
+            _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
+            _fields: __Shadow_CRepr_Fields_Union_for_EnumWithEmptyStructVariant<'__facet>,
+        }
+        #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
+        struct __Shadow_CRepr_FieldEnumWithEmptyStructVariant_Variant1<'__facet> {
+            _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
+        }
+        let __facet_variants: &'static [::facet::Variant] = &const {
+            [{
+                let fields: &'static [::facet::Field] = &const { [] };
+                ::facet::Variant::builder()
+                    .name("Variant1")
+                    .discriminant(0i64 as i64)
+                    .data(
+                        ::facet::StructType::builder()
+                            .repr(::facet::Repr::c())
+                            .struct_()
+                            .fields(fields)
+                            .build(),
+                    )
+                    .build()
+            }]
+        };
+        ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("EnumWithEmptyStructVariant")
+            .ty(::facet::Type::User(::facet::UserType::Enum(
+                ::facet::EnumType::builder()
+                    .variants(__facet_variants)
+                    .repr(::facet::Repr::c())
+                    .enum_repr(::facet::EnumRepr::from_discriminant_size::<
+                        __Shadow_CRepr_Discriminant_for_EnumWithEmptyStructVariant,
+                    >())
+                    .build(),
+            )))
+            .build()
+    };
+}

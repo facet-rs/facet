@@ -1,0 +1,30 @@
+---
+source: facet-macros-emit/tests/codegen/mod.rs
+assertion_line: 18
+expression: "expand(r#\"\n        #[derive(Facet)]\n        struct UnitStruct;\n        \"#)"
+---
+#[used]
+static UNIT_STRUCT_SHAPE: &'static ::facet::Shape = <UnitStruct as ::facet::Facet>::SHAPE;
+#[automatically_derived]
+unsafe impl<'__facet> ::facet::Facet<'__facet> for UnitStruct {
+    const VTABLE: &'static ::facet::ValueVTable = &const {
+        let mut vtable = ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
+            f,
+            "UnitStruct"
+        ));
+        vtable
+    };
+    const SHAPE: &'static ::facet::Shape<'static> = &const {
+        let fields: &'static [::facet::Field] = &const { [] };
+        ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("UnitStruct")
+            .ty(::facet::Type::User(::facet::UserType::Struct(
+                ::facet::StructType::builder()
+                    .repr(::facet::Repr::c())
+                    .kind(::facet::StructKind::Unit)
+                    .fields(fields)
+                    .build(),
+            )))
+            .build()
+    };
+}

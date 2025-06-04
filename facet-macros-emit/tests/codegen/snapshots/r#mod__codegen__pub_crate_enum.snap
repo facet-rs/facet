@@ -1,0 +1,71 @@
+---
+source: facet-macros-emit/tests/codegen/mod.rs
+expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n        pub(crate) enum LogLevel {\n            Debug,\n            Info,\n            Warn,\n            Error,\n        }\n        \"#)"
+---
+#[used]
+static LOG_LEVEL_SHAPE: &'static ::facet::Shape = <LogLevel as ::facet::Facet>::SHAPE;
+#[automatically_derived]
+#[allow(non_camel_case_types)]
+unsafe impl<'__facet> ::facet::Facet<'__facet> for LogLevel {
+    const VTABLE: &'static ::facet::ValueVTable = &const {
+        ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
+            f, "LogLevel"
+        ))
+    };
+    const SHAPE: &'static ::facet::Shape<'static> = &const {
+        let __facet_variants: &'static [::facet::Variant] = &const {
+            [
+                ::facet::Variant::builder()
+                    .name("Debug")
+                    .discriminant(0i64 as i64)
+                    .data(
+                        ::facet::StructType::builder()
+                            .repr(::facet::Repr::c())
+                            .unit()
+                            .build(),
+                    )
+                    .build(),
+                ::facet::Variant::builder()
+                    .name("Info")
+                    .discriminant(1i64 as i64)
+                    .data(
+                        ::facet::StructType::builder()
+                            .repr(::facet::Repr::c())
+                            .unit()
+                            .build(),
+                    )
+                    .build(),
+                ::facet::Variant::builder()
+                    .name("Warn")
+                    .discriminant(2i64 as i64)
+                    .data(
+                        ::facet::StructType::builder()
+                            .repr(::facet::Repr::c())
+                            .unit()
+                            .build(),
+                    )
+                    .build(),
+                ::facet::Variant::builder()
+                    .name("Error")
+                    .discriminant(3i64 as i64)
+                    .data(
+                        ::facet::StructType::builder()
+                            .repr(::facet::Repr::c())
+                            .unit()
+                            .build(),
+                    )
+                    .build(),
+            ]
+        };
+        ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("LogLevel")
+            .ty(::facet::Type::User(::facet::UserType::Enum(
+                ::facet::EnumType::builder()
+                    .variants(__facet_variants)
+                    .repr(::facet::Repr::c())
+                    .enum_repr(::facet::EnumRepr::U8)
+                    .build(),
+            )))
+            .build()
+    };
+}

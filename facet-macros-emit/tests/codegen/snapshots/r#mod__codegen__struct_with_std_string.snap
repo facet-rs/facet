@@ -1,0 +1,46 @@
+---
+source: facet-macros-emit/tests/codegen/mod.rs
+assertion_line: 506
+expression: "expand(r#\"\n        #[derive(Facet)]\n        struct FileInfo {\n            path: std::string::String, // Explicitly use std::string::String\n            size: u64,\n        }\n        \"#)"
+---
+#[used]
+static FILE_INFO_SHAPE: &'static ::facet::Shape = <FileInfo as ::facet::Facet>::SHAPE;
+#[automatically_derived]
+unsafe impl<'__facet> ::facet::Facet<'__facet> for FileInfo {
+    const VTABLE: &'static ::facet::ValueVTable = &const {
+        let mut vtable = ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
+            f, "FileInfo"
+        ));
+        vtable
+    };
+    const SHAPE: &'static ::facet::Shape<'static> = &const {
+        let fields: &'static [::facet::Field] = &const {
+            [
+                {
+                    ::facet::Field::builder()
+                        .name("path")
+                        .shape(::facet::shape_of(&|s: &FileInfo| &s.path))
+                        .offset(::core::mem::offset_of!(FileInfo, path))
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("size")
+                        .shape(::facet::shape_of(&|s: &FileInfo| &s.size))
+                        .offset(::core::mem::offset_of!(FileInfo, size))
+                        .build()
+                },
+            ]
+        };
+        ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("FileInfo")
+            .ty(::facet::Type::User(::facet::UserType::Struct(
+                ::facet::StructType::builder()
+                    .repr(::facet::Repr::c())
+                    .kind(::facet::StructKind::Struct)
+                    .fields(fields)
+                    .build(),
+            )))
+            .build()
+    };
+}

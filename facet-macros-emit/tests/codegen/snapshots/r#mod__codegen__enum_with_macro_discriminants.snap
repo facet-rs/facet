@@ -1,0 +1,51 @@
+---
+source: facet-macros-emit/tests/codegen/mod.rs
+expression: "expand(r#\"\n        #[repr(u16)]\n        #[derive(Facet)]\n        enum TestEnum {\n            Value1 = test_macro!(1, 2),\n            Value2 = test_macro!(3, 4),\n        }\n        \"#)"
+---
+#[used]
+static TEST_ENUM_SHAPE: &'static ::facet::Shape = <TestEnum as ::facet::Facet>::SHAPE;
+#[automatically_derived]
+#[allow(non_camel_case_types)]
+unsafe impl<'__facet> ::facet::Facet<'__facet> for TestEnum {
+    const VTABLE: &'static ::facet::ValueVTable = &const {
+        ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
+            f, "TestEnum"
+        ))
+    };
+    const SHAPE: &'static ::facet::Shape<'static> = &const {
+        let __facet_variants: &'static [::facet::Variant] = &const {
+            [
+                ::facet::Variant::builder()
+                    .name("Value1")
+                    .discriminant(test_macro!(1, 2) as i64)
+                    .data(
+                        ::facet::StructType::builder()
+                            .repr(::facet::Repr::c())
+                            .unit()
+                            .build(),
+                    )
+                    .build(),
+                ::facet::Variant::builder()
+                    .name("Value2")
+                    .discriminant(test_macro!(3, 4) as i64)
+                    .data(
+                        ::facet::StructType::builder()
+                            .repr(::facet::Repr::c())
+                            .unit()
+                            .build(),
+                    )
+                    .build(),
+            ]
+        };
+        ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("TestEnum")
+            .ty(::facet::Type::User(::facet::UserType::Enum(
+                ::facet::EnumType::builder()
+                    .variants(__facet_variants)
+                    .repr(::facet::Repr::c())
+                    .enum_repr(::facet::EnumRepr::U16)
+                    .build(),
+            )))
+            .build()
+    };
+}

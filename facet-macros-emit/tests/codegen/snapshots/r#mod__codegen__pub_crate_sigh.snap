@@ -1,0 +1,43 @@
+---
+source: facet-macros-emit/tests/codegen/mod.rs
+expression: "expand(r#\"\n        #[derive(Facet)]\n        pub(crate) struct Foo {\n            foo: String,\n            bar: u32,\n        }\n        \"#)"
+---
+#[used]
+static FOO_SHAPE: &'static ::facet::Shape = <Foo as ::facet::Facet>::SHAPE;
+#[automatically_derived]
+unsafe impl<'__facet> ::facet::Facet<'__facet> for Foo {
+    const VTABLE: &'static ::facet::ValueVTable = &const {
+        let mut vtable =
+            ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "Foo"));
+        vtable
+    };
+    const SHAPE: &'static ::facet::Shape = &const {
+        let fields: &'static [::facet::Field] = &const {
+            [
+                {
+                    ::facet::Field::builder()
+                        .name("foo")
+                        .shape(::facet::shape_of(&|s: &Foo| &s.foo))
+                        .offset(::core::mem::offset_of!(Foo, foo))
+                        .build()
+                },
+                {
+                    ::facet::Field::builder()
+                        .name("bar")
+                        .shape(::facet::shape_of(&|s: &Foo| &s.bar))
+                        .offset(::core::mem::offset_of!(Foo, bar))
+                        .build()
+                },
+            ]
+        };
+        ::facet::Shape::builder_for_sized::<Self>()
+            .ty(::facet::Type::User(::facet::UserType::Struct(
+                ::facet::StructType::builder()
+                    .repr(::facet::Repr::c())
+                    .kind(::facet::StructKind::Struct)
+                    .fields(fields)
+                    .build(),
+            )))
+            .build()
+    };
+}

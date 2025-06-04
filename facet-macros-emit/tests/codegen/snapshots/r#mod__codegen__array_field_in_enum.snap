@@ -1,0 +1,103 @@
+---
+source: facet-macros-emit/tests/codegen/mod.rs
+expression: "expand(r#\"\n        /// Network packet types\n        #[derive(Facet)]\n        #[repr(u8)]\n        pub enum Packet {\n            /// Array of bytes representing the header\n            Header([u8; 4]),\n            Payload(Vec<u8>), // Add another variant for completeness\n        }\n        \"#)"
+---
+#[used]
+static PACKET_SHAPE: &'static ::facet::Shape = <Packet as ::facet::Facet>::SHAPE;
+#[automatically_derived]
+#[allow(non_camel_case_types)]
+unsafe impl<'__facet> ::facet::Facet<'__facet> for Packet {
+    const VTABLE: &'static ::facet::ValueVTable = &const {
+        ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "Packet"))
+    };
+    const SHAPE: &'static ::facet::Shape<'static> = &const {
+        #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
+        struct __Shadow_RustRepr_Tuple_for_Packet_Header<'__facet> {
+            _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
+            _0: [u8; 4],
+        }
+        #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
+        struct __Shadow_RustRepr_Tuple_for_Packet_Payload<'__facet> {
+            _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
+            _0: Vec<u8>,
+        }
+        let __facet_variants: &'static [::facet::Variant] = &const {
+            [
+                {
+                    let fields: &'static [::facet::Field] = &const {
+                        [{
+                            ::facet::Field::builder()
+                                .name("0")
+                                .shape(::facet::shape_of(
+                                    &|s: &__Shadow_RustRepr_Tuple_for_Packet_Header<'__facet>| {
+                                        &s._0
+                                    },
+                                ))
+                                .offset(::core::mem::offset_of!(
+                                    __Shadow_RustRepr_Tuple_for_Packet_Header<'__facet>,
+                                    _0
+                                ))
+                                .build()
+                        }]
+                    };
+                    ::facet::Variant::builder()
+                        .name("Header")
+                        .discriminant(0i64 as i64)
+                        .data(
+                            ::facet::StructType::builder()
+                                .repr(::facet::Repr::c())
+                                .tuple()
+                                .fields(fields)
+                                .build(),
+                        )
+                        .doc(&[" Array of bytes representing the header"])
+                        .build()
+                },
+                {
+                    let fields: &'static [::facet::Field] = &const {
+                        [{
+                            ::facet::Field::builder()
+                                .name("0")
+                                .shape(::facet::shape_of(
+                                    &|s: &__Shadow_RustRepr_Tuple_for_Packet_Payload<'__facet>| {
+                                        &s._0
+                                    },
+                                ))
+                                .offset(::core::mem::offset_of!(
+                                    __Shadow_RustRepr_Tuple_for_Packet_Payload<'__facet>,
+                                    _0
+                                ))
+                                .build()
+                        }]
+                    };
+                    ::facet::Variant::builder()
+                        .name("Payload")
+                        .discriminant(1i64 as i64)
+                        .data(
+                            ::facet::StructType::builder()
+                                .repr(::facet::Repr::c())
+                                .tuple()
+                                .fields(fields)
+                                .build(),
+                        )
+                        .build()
+                },
+            ]
+        };
+        ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("Packet")
+            .ty(::facet::Type::User(::facet::UserType::Enum(
+                ::facet::EnumType::builder()
+                    .variants(__facet_variants)
+                    .repr(::facet::Repr::c())
+                    .enum_repr(::facet::EnumRepr::U8)
+                    .build(),
+            )))
+            .doc(&[" Network packet types"])
+            .build()
+    };
+}

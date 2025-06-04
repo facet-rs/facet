@@ -1,0 +1,100 @@
+---
+source: facet-macros-emit/tests/codegen/mod.rs
+expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n        #[facet(rename_all = \"snake_case\")]\n        enum ApiResponse {\n            OkResponse {\n                #[facet(rename = \"responseData\")]\n                data: String,\n            },\n            ErrorResponse {\n                code: u32,\n                message: String,\n            },\n        }\n        \"#)"
+---
+#[used]
+static API_RESPONSE_SHAPE: &'static ::facet::Shape = <ApiResponse as ::facet::Facet>::SHAPE;
+#[automatically_derived]
+#[allow(non_camel_case_types)]
+unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
+    const VTABLE: &'static ::facet::ValueVTable = &const {
+        ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
+            f,
+            "ApiResponse"
+        ))
+    };
+    const SHAPE: &'static ::facet::Shape<'static> = &const {
+        #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
+        struct __Shadow_RustRepr_Struct_for_ApiResponse_OkResponse<'__facet> {
+            _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
+            data: String,
+        }
+        #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
+        struct __Shadow_RustRepr_Struct_for_ApiResponse_ErrorResponse<'__facet> {
+            _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
+            code: u32,
+            message: String,
+        }
+        let __facet_variants: &'static [::facet::Variant] = &const {
+            [
+                {
+                    let fields: &'static [::facet::Field] = &const {
+                        [{
+                            ::facet::Field::builder()
+                                .name("responseData")
+                                .shape(::facet::shape_of(
+                                    &|s: &__Shadow_RustRepr_Struct_for_ApiResponse_OkResponse<
+                                        '__facet,
+                                    >| &s.data,
+                                ))
+                                .offset(::core::mem::offset_of!(
+                                    __Shadow_RustRepr_Struct_for_ApiResponse_OkResponse<'__facet>,
+                                    data
+                                ))
+                                .build()
+                        }]
+                    };
+                    ::facet::Variant::builder()
+                        .name("ok_response")
+                        .discriminant(0i64 as i64)
+                        .data(
+                            ::facet::StructType::builder()
+                                .repr(::facet::Repr::c())
+                                .struct_()
+                                .fields(fields)
+                                .build(),
+                        )
+                        .build()
+                },
+                {
+                    let fields: &'static [::facet::Field] = &const {
+                        [
+                            {
+                                :: facet :: Field :: builder () . name ("code") . shape (:: facet :: shape_of (& | s : & __Shadow_RustRepr_Struct_for_ApiResponse_ErrorResponse < '__facet > | & s . code)) . offset (:: core :: mem :: offset_of ! (__Shadow_RustRepr_Struct_for_ApiResponse_ErrorResponse < '__facet > , code)) . build ()
+                            },
+                            {
+                                :: facet :: Field :: builder () . name ("message") . shape (:: facet :: shape_of (& | s : & __Shadow_RustRepr_Struct_for_ApiResponse_ErrorResponse < '__facet > | & s . message)) . offset (:: core :: mem :: offset_of ! (__Shadow_RustRepr_Struct_for_ApiResponse_ErrorResponse < '__facet > , message)) . build ()
+                            },
+                        ]
+                    };
+                    ::facet::Variant::builder()
+                        .name("error_response")
+                        .discriminant(1i64 as i64)
+                        .data(
+                            ::facet::StructType::builder()
+                                .repr(::facet::Repr::c())
+                                .struct_()
+                                .fields(fields)
+                                .build(),
+                        )
+                        .build()
+                },
+            ]
+        };
+        ::facet::Shape::builder_for_sized::<Self>()
+            .type_identifier("ApiResponse")
+            .ty(::facet::Type::User(::facet::UserType::Enum(
+                ::facet::EnumType::builder()
+                    .variants(__facet_variants)
+                    .repr(::facet::Repr::c())
+                    .enum_repr(::facet::EnumRepr::U8)
+                    .build(),
+            )))
+            .attributes(&const { [::facet::ShapeAttribute::RenameAll("")] })
+            .build()
+    };
+}

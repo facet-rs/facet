@@ -391,7 +391,7 @@ dependencies = [
  "cargo-husky",
  "eyre",
  "facet-core",
- "facet-derive",
+ "facet-macros",
  "facet-reflect",
  "facet-testhelpers 0.17.5",
  "ordered-float",
@@ -463,35 +463,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-derive"
-version = "0.27.11"
-dependencies = [
- "facet-core",
- "facet-derive-emit",
-]
-
-[[package]]
-name = "facet-derive-emit"
-version = "0.27.11"
-dependencies = [
- "facet-derive-parse",
- "insta",
- "owo-colors",
- "quote",
- "rust-format",
- "tempfile",
-]
-
-[[package]]
-name = "facet-derive-parse"
-version = "0.27.11"
-dependencies = [
- "proc-macro2",
- "quote",
- "unsynn",
-]
-
-[[package]]
 name = "facet-deserialize"
 version = "0.24.17"
 dependencies = [
@@ -550,7 +521,7 @@ version = "0.23.18"
 dependencies = [
  "facet",
  "facet-core",
- "facet-derive",
+ "facet-macros",
  "insta",
 ]
 
@@ -565,6 +536,35 @@ dependencies = [
  "indoc",
  "kdl",
  "log",
+]
+
+[[package]]
+name = "facet-macros"
+version = "0.27.11"
+dependencies = [
+ "facet-core",
+ "facet-macros-emit",
+]
+
+[[package]]
+name = "facet-macros-emit"
+version = "0.27.11"
+dependencies = [
+ "facet-macros-parse",
+ "insta",
+ "owo-colors",
+ "quote",
+ "rust-format",
+ "tempfile",
+]
+
+[[package]]
+name = "facet-macros-parse"
+version = "0.27.11"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unsynn",
 ]
 
 [[package]]
