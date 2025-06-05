@@ -521,7 +521,12 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     pub fn set_default(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
         let frame = self.frames.last().unwrap(); // Get frame to access vtable
 
-        if let Some(default_fn) = (frame.shape.vtable.default_in_place)() {
+        if let Some(default_fn) = frame
+            .shape
+            .vtable
+            .sized()
+            .and_then(|v| (v.default_in_place)())
+        {
             // Initialize with default value using set_from_function
             // SAFETY: set_from_function handles the active check, dropping,
             // and setting tracker. The closure passes the correct pointer type
@@ -569,7 +574,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
 
         // Check if we need to drop an existing value
         if matches!(frame.tracker, Tracker::Init) {
-            if let Some(drop_fn) = (frame.shape.vtable.drop_in_place)() {
+            if let Some(drop_fn) = frame.shape.vtable.sized().and_then(|v| (v.drop_in_place)()) {
                 unsafe { drop_fn(PtrMut::new(frame.data.as_mut_byte_ptr())) };
             }
         }
@@ -605,7 +610,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         let frame = self.frames.last_mut().unwrap();
 
         // Check if the type has a parse function
-        let parse_fn = match (frame.shape.vtable.parse)() {
+        let parse_fn = match frame.shape.vtable.sized().and_then(|v| (v.parse)()) {
             Some(parse_fn) => parse_fn,
             None => {
                 return Err(ReflectError::OperationFailed {
@@ -617,7 +622,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
 
         // Check if we need to drop an existing value
         if matches!(frame.tracker, Tracker::Init) {
-            if let Some(drop_fn) = (frame.shape.vtable.drop_in_place)() {
+            if let Some(drop_fn) = frame.shape.vtable.sized().and_then(|v| (v.drop_in_place)()) {
                 unsafe { drop_fn(PtrMut::new(frame.data.as_mut_byte_ptr())) };
             }
         }
@@ -957,7 +962,9 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                             if iset.get(idx) {
                                 // Drop the existing value before re-initializing
                                 let field_ptr = unsafe { frame.data.field_init_at(field.offset) };
-                                if let Some(drop_fn) = (field.shape.vtable.drop_in_place)() {
+                                if let Some(drop_fn) =
+                                    field.shape.vtable.sized().and_then(|v| (v.drop_in_place)())
+                                {
                                     unsafe { drop_fn(field_ptr) };
                                 }
                                 // Unset the bit so we can re-initialize
@@ -1057,7 +1064,9 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                             if iset.get(idx) {
                                 // Drop the existing value before re-initializing
                                 let element_ptr = unsafe { frame.data.field_init_at(offset) };
-                                if let Some(drop_fn) = (array_def.t.vtable.drop_in_place)() {
+                                if let Some(drop_fn) =
+                                    array_def.t.vtable.sized().and_then(|v| (v.drop_in_place)())
+                                {
                                     unsafe { drop_fn(element_ptr) };
                                 }
                                 // Unset the bit so we can re-initialize
@@ -1153,7 +1162,9 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                     // The field offset already includes the discriminant offset
                     let field_ptr = unsafe { frame.data.as_mut_byte_ptr().add(field.offset) };
 
-                    if let Some(drop_fn) = (field.shape.vtable.drop_in_place)() {
+                    if let Some(drop_fn) =
+                        field.shape.vtable.sized().and_then(|v| (v.drop_in_place)())
+                    {
                         unsafe { drop_fn(PtrMut::new(field_ptr)) };
                     }
 
@@ -1594,7 +1605,12 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         let needs_conversion = matches!(parent_frame.tracker, Tracker::Uninit)
             && parent_frame.shape.inner.is_some()
             && parent_frame.shape.inner.unwrap()() == popped_frame.shape
-            && (parent_frame.shape.vtable.try_from)().is_some();
+            && parent_frame
+                .shape
+                .vtable
+                .sized()
+                .and_then(|v| (v.try_from)())
+                .is_some();
 
         if needs_conversion {
             trace!(
@@ -1602,7 +1618,12 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                 popped_frame.shape, parent_frame.shape
             );
             // Perform the conversion
-            if let Some(try_from_fn) = (parent_frame.shape.vtable.try_from)() {
+            if let Some(try_from_fn) = parent_frame
+                .shape
+                .vtable
+                .sized()
+                .and_then(|v| (v.try_from)())
+            {
                 let inner_ptr = unsafe { popped_frame.data.assume_init().as_const() };
                 let inner_shape = popped_frame.shape;
 
@@ -1897,7 +1918,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         }
 
         // Check invariants if present
-        if let Some(invariants_fn) = (frame.shape.vtable.invariants)() {
+        if let Some(invariants_fn) = frame.shape.vtable.sized().and_then(|v| (v.invariants)()) {
             // Safety: The value is fully initialized at this point (we just checked with require_full_initialization)
             let value_ptr = unsafe { frame.data.assume_init().as_const() };
             let invariants_ok = unsafe { invariants_fn(value_ptr) };
@@ -2199,7 +2220,12 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
             let frame = self.frames.last().unwrap();
             if let Some(inner_fn) = frame.shape.inner {
                 let inner_shape = inner_fn();
-                let has_try_from = (frame.shape.vtable.try_from)().is_some();
+                let has_try_from = frame
+                    .shape
+                    .vtable
+                    .sized()
+                    .and_then(|v| (v.try_from)())
+                    .is_some();
                 (Some(inner_shape), has_try_from, frame.shape)
             } else {
                 (None, false, frame.shape)
@@ -2713,7 +2739,9 @@ impl<'facet, 'shape> Drop for Partial<'facet, 'shape> {
                 }
                 Tracker::Init => {
                     // Fully initialized, drop it
-                    if let Some(drop_fn) = (frame.shape.vtable.drop_in_place)() {
+                    if let Some(drop_fn) =
+                        frame.shape.vtable.sized().and_then(|v| (v.drop_in_place)())
+                    {
                         unsafe { drop_fn(PtrMut::new(frame.data.as_mut_byte_ptr())) };
                     }
                 }
@@ -2728,7 +2756,9 @@ impl<'facet, 'shape> Drop for Partial<'facet, 'shape> {
                                 if iset.get(idx) {
                                     let offset = layout.size() * idx;
                                     let element_ptr = unsafe { frame.data.field_init_at(offset) };
-                                    if let Some(drop_fn) = (array_def.t.vtable.drop_in_place)() {
+                                    if let Some(drop_fn) =
+                                        array_def.t.vtable.sized().and_then(|v| (v.drop_in_place)())
+                                    {
                                         unsafe { drop_fn(element_ptr) };
                                     }
                                 }
@@ -2743,7 +2773,9 @@ impl<'facet, 'shape> Drop for Partial<'facet, 'shape> {
                             if iset.get(idx) {
                                 // This field was initialized, drop it
                                 let field_ptr = unsafe { frame.data.field_init_at(field.offset) };
-                                if let Some(drop_fn) = (field.shape.vtable.drop_in_place)() {
+                                if let Some(drop_fn) =
+                                    field.shape.vtable.sized().and_then(|v| (v.drop_in_place)())
+                                {
                                     unsafe { drop_fn(field_ptr) };
                                 }
                             }
@@ -2757,7 +2789,9 @@ impl<'facet, 'shape> Drop for Partial<'facet, 'shape> {
                             // This field was initialized, drop it
                             let field_ptr =
                                 unsafe { frame.data.as_mut_byte_ptr().add(field.offset) };
-                            if let Some(drop_fn) = (field.shape.vtable.drop_in_place)() {
+                            if let Some(drop_fn) =
+                                field.shape.vtable.sized().and_then(|v| (v.drop_in_place)())
+                            {
                                 unsafe { drop_fn(PtrMut::new(field_ptr)) };
                             }
                         }
@@ -2766,7 +2800,9 @@ impl<'facet, 'shape> Drop for Partial<'facet, 'shape> {
                 Tracker::SmartPointer { is_initialized } => {
                     // Drop the initialized Box
                     if *is_initialized {
-                        if let Some(drop_fn) = (frame.shape.vtable.drop_in_place)() {
+                        if let Some(drop_fn) =
+                            frame.shape.vtable.sized().and_then(|v| (v.drop_in_place)())
+                        {
                             unsafe { drop_fn(PtrMut::new(frame.data.as_mut_byte_ptr())) };
                         }
                     }
@@ -2774,9 +2810,11 @@ impl<'facet, 'shape> Drop for Partial<'facet, 'shape> {
                     // the Box's drop will handle that
                 }
                 Tracker::List { is_initialized, .. } => {
-                    // Drop the initialized list
+                    // Drop the initialized List
                     if *is_initialized {
-                        if let Some(drop_fn) = (frame.shape.vtable.drop_in_place)() {
+                        if let Some(drop_fn) =
+                            frame.shape.vtable.sized().and_then(|v| (v.drop_in_place)())
+                        {
                             unsafe { drop_fn(PtrMut::new(frame.data.as_mut_byte_ptr())) };
                         }
                     }
@@ -2785,9 +2823,11 @@ impl<'facet, 'shape> Drop for Partial<'facet, 'shape> {
                     is_initialized,
                     insert_state,
                 } => {
-                    // Drop the initialized map
+                    // Drop the initialized Map
                     if *is_initialized {
-                        if let Some(drop_fn) = (frame.shape.vtable.drop_in_place)() {
+                        if let Some(drop_fn) =
+                            frame.shape.vtable.sized().and_then(|v| (v.drop_in_place)())
+                        {
                             unsafe { drop_fn(PtrMut::new(frame.data.as_mut_byte_ptr())) };
                         }
                     }
@@ -2815,7 +2855,9 @@ impl<'facet, 'shape> Drop for Partial<'facet, 'shape> {
                             // Drop and deallocate both key and value buffers
                             if let Def::Map(map_def) = frame.shape.def {
                                 // Drop and deallocate the key
-                                if let Some(drop_fn) = (map_def.k().vtable.drop_in_place)() {
+                                if let Some(drop_fn) =
+                                    map_def.k().vtable.sized().and_then(|v| (v.drop_in_place)())
+                                {
                                     unsafe { drop_fn(PtrMut::new(key_ptr.as_mut_byte_ptr())) };
                                 }
                                 if let Ok(key_shape) = map_def.k().layout.sized_layout() {
@@ -2853,7 +2895,9 @@ impl<'facet, 'shape> Drop for Partial<'facet, 'shape> {
                     // initialized or remain uninitialized
                     if !building_inner {
                         // Option is fully initialized, drop it normally
-                        if let Some(drop_fn) = (frame.shape.vtable.drop_in_place)() {
+                        if let Some(drop_fn) =
+                            frame.shape.vtable.sized().and_then(|v| (v.drop_in_place)())
+                        {
                             unsafe { drop_fn(PtrMut::new(frame.data.as_mut_byte_ptr())) };
                         }
                     }

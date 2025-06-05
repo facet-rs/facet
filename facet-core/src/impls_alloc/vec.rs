@@ -15,7 +15,7 @@ where
             .type_name(|f, opts| {
                 if let Some(opts) = opts.for_children() {
                     write!(f, "{}<", Self::SHAPE.type_identifier)?;
-                    (T::SHAPE.vtable.type_name)(f, opts)?;
+                    T::SHAPE.vtable.type_name()(f, opts)?;
                     write!(f, ">")
                 } else {
                     write!(f, "{}<⋯>", Self::SHAPE.type_identifier)
@@ -23,7 +23,7 @@ where
             })
             .default_in_place(|| Some(|target| unsafe { target.put(Self::default()) }))
             .clone_into(|| {
-                if (T::SHAPE.vtable.clone_into)().is_some() {
+                if T::SHAPE.vtable.has_clone_into() {
                     Some(|src, dst| unsafe {
                         let mut new_vec = Vec::with_capacity(src.len());
 
@@ -48,7 +48,7 @@ where
                 }
             })
             .debug(|| {
-                if (T::SHAPE.vtable.debug)().is_some() {
+                if T::SHAPE.vtable.has_debug() {
                     Some(|value, f| {
                         write!(f, "[")?;
                         for (i, item) in value.iter().enumerate() {
@@ -64,7 +64,7 @@ where
                 }
             })
             .partial_eq(|| {
-                if (T::SHAPE.vtable.partial_eq)().is_some() {
+                if T::SHAPE.vtable.has_partial_eq() {
                     Some(|a, b| {
                         if a.len() != b.len() {
                             return false;
@@ -81,7 +81,7 @@ where
                 }
             })
             .hash(|| {
-                if (T::SHAPE.vtable.hash)().is_some() {
+                if T::SHAPE.vtable.has_hash() {
                     Some(|vec, hasher_this, hasher_write_fn| unsafe {
                         use crate::HasherProxy;
                         let t_hash = <VTableView<T>>::of().hash().unwrap_unchecked();

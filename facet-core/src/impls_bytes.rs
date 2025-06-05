@@ -16,22 +16,25 @@ unsafe impl Facet<'_> for Bytes {
             "{}",
             Self::SHAPE.type_identifier
         ));
-        vtable.try_from = || {
-            Some(
-                |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
-                    if source_shape.is_type::<BytesMut>() {
-                        let source = unsafe { source.read::<BytesMut>() };
-                        let bytes = source.freeze();
-                        Ok(unsafe { target.put(bytes) })
-                    } else {
-                        Err(crate::TryFromError::UnsupportedSourceShape {
-                            src_shape: source_shape,
-                            expected: &[Bytes::SHAPE],
-                        })
-                    }
-                },
-            )
-        };
+        {
+            let vtable = vtable.sized_mut().unwrap();
+            vtable.try_from = || {
+                Some(
+                    |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
+                        if source_shape.is_type::<BytesMut>() {
+                            let source = unsafe { source.read::<BytesMut>() };
+                            let bytes = source.freeze();
+                            Ok(unsafe { target.put(bytes) })
+                        } else {
+                            Err(crate::TryFromError::UnsupportedSourceShape {
+                                src_shape: source_shape,
+                                expected: &[Bytes::SHAPE],
+                            })
+                        }
+                    },
+                )
+            };
+        }
 
         vtable
     };

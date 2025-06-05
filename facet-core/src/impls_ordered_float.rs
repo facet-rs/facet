@@ -21,12 +21,13 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                         let ord = OrderedFloat(*value);
                         Ok(unsafe { dst.put(ord) })
                     } else {
-                        let inner_try_from = (<$float as Facet>::SHAPE.vtable.try_from)().ok_or(
-                            TryFromError::UnsupportedSourceShape {
-                                src_shape,
-                                expected: &[<$float as Facet>::SHAPE],
-                            },
-                        )?;
+                        let inner_try_from =
+                            (<$float as Facet>::SHAPE.vtable.sized().unwrap().try_from)().ok_or(
+                                TryFromError::UnsupportedSourceShape {
+                                    src_shape,
+                                    expected: &[<$float as Facet>::SHAPE],
+                                },
+                            )?;
                         // fallback to inner's try_from
                         // This relies on the fact that `dst` is the same size as `OrderedFloat<$float>`
                         // which should be true because `OrderedFloat` is `repr(transparent)`
@@ -62,13 +63,16 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
 
                 let mut vtable =
                     value_vtable!((), |f, _opts| write!(f, "{}", Self::SHAPE.type_identifier));
-                vtable.parse = || {
-                    // `OrderedFloat` is `repr(transparent)`
-                    (<$float as Facet>::SHAPE.vtable.parse)()
-                };
-                vtable.try_from = || Some(try_from);
-                vtable.try_into_inner = || Some(try_into_inner);
-                vtable.try_borrow_inner = || Some(try_borrow_inner);
+                {
+                    let vtable = vtable.sized_mut().unwrap();
+                    vtable.parse = || {
+                        // `OrderedFloat` is `repr(transparent)`
+                        (<$float as Facet>::SHAPE.vtable.sized().unwrap().parse)()
+                    };
+                    vtable.try_from = || Some(try_from);
+                    vtable.try_into_inner = || Some(try_into_inner);
+                    vtable.try_borrow_inner = || Some(try_borrow_inner);
+                }
                 vtable
             };
 
@@ -112,12 +116,13 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                             NotNan::new(value).map_err(|_| TryFromError::Generic("was NaN"))?;
                         Ok(unsafe { dst.put(nn) })
                     } else {
-                        let inner_try_from = (<$float as Facet>::SHAPE.vtable.try_from)().ok_or(
-                            TryFromError::UnsupportedSourceShape {
-                                src_shape,
-                                expected: &[<$float as Facet>::SHAPE],
-                            },
-                        )?;
+                        let inner_try_from =
+                            (<$float as Facet>::SHAPE.vtable.sized().unwrap().try_from)().ok_or(
+                                TryFromError::UnsupportedSourceShape {
+                                    src_shape,
+                                    expected: &[<$float as Facet>::SHAPE],
+                                },
+                            )?;
 
                         // fallback to inner's try_from
                         // This relies on the fact that `dst` is the same size as `NotNan<$float>`
@@ -158,22 +163,25 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                 let mut vtable =
                     value_vtable!((), |f, _opts| write!(f, "{}", Self::SHAPE.type_identifier));
                 // Accept parsing as inner T, but enforce NotNan invariant
-                vtable.parse = || {
-                    Some(|s, target| match s.parse::<$float>() {
-                        Ok(inner) => match NotNan::new(inner) {
-                            Ok(not_nan) => Ok(unsafe { target.put(not_nan) }),
-                            Err(_) => {
-                                Err(crate::ParseError::Generic("NaN is not allowed for NotNan"))
-                            }
-                        },
-                        Err(_) => Err(crate::ParseError::Generic(
-                            "Failed to parse inner type for NotNan",
-                        )),
-                    })
-                };
-                vtable.try_from = || Some(try_from);
-                vtable.try_into_inner = || Some(try_into_inner);
-                vtable.try_borrow_inner = || Some(try_borrow_inner);
+                {
+                    let vtable = vtable.sized_mut().unwrap();
+                    vtable.parse = || {
+                        Some(|s, target| match s.parse::<$float>() {
+                            Ok(inner) => match NotNan::new(inner) {
+                                Ok(not_nan) => Ok(unsafe { target.put(not_nan) }),
+                                Err(_) => {
+                                    Err(crate::ParseError::Generic("NaN is not allowed for NotNan"))
+                                }
+                            },
+                            Err(_) => Err(crate::ParseError::Generic(
+                                "Failed to parse inner type for NotNan",
+                            )),
+                        })
+                    };
+                    vtable.try_from = || Some(try_from);
+                    vtable.try_into_inner = || Some(try_into_inner);
+                    vtable.try_borrow_inner = || Some(try_borrow_inner);
+                }
                 vtable
             };
 

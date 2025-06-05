@@ -88,12 +88,12 @@ fn create_array_shape<'a, T: Facet<'a>>() {
     let vtable = {
         // Implementation of partial_ord for arrays
         let partial_ord = || {
-            if (T::SHAPE.vtable.partial_ord)().is_some() {
+            if T::SHAPE.vtable.sized().and_then(|v| (v.partial_ord)()).is_some() {
                 Some(|a: PtrConst, b: PtrConst| {
                     let a = unsafe { a.get::<[T; 1]>() };
                     let b = unsafe { b.get::<[T; 1]>() };
                     unsafe {
-                        ((T::SHAPE.vtable.partial_ord)().unwrap_unchecked())(
+                        (T::SHAPE.vtable.sized().and_then(|v| (v.partial_ord)()).unwrap_unchecked())(
                             PtrConst::new(&a[0]),
                             PtrConst::new(&b[0]),
                         )

@@ -33,16 +33,16 @@ where
             .type_name(|f, opts| {
                 if let Some(opts) = opts.for_children() {
                     write!(f, "{}<", Self::SHAPE.type_identifier)?;
-                    (K::SHAPE.vtable.type_name)(f, opts)?;
+                    K::SHAPE.vtable.type_name()(f, opts)?;
                     write!(f, ", ")?;
-                    (V::SHAPE.vtable.type_name)(f, opts)?;
+                    V::SHAPE.vtable.type_name()(f, opts)?;
                     write!(f, ">")
                 } else {
                     write!(f, "{}<⋯>", Self::SHAPE.type_identifier)
                 }
             })
             .debug(|| {
-                if (K::SHAPE.vtable.debug)().is_some() && (V::SHAPE.vtable.debug)().is_some() {
+                if K::SHAPE.vtable.has_debug() && V::SHAPE.vtable.has_debug() {
                     Some(|value, f| {
                         let k_debug = <VTableView<K>>::of().debug().unwrap();
                         let v_debug = <VTableView<V>>::of().debug().unwrap();
@@ -63,9 +63,7 @@ where
             })
             .default_in_place(|| Some(|target| unsafe { target.put(Self::default()) }))
             .clone_into(|| {
-                if (K::SHAPE.vtable.clone_into)().is_some()
-                    && (V::SHAPE.vtable.clone_into)().is_some()
-                {
+                if K::SHAPE.vtable.has_clone_into() && V::SHAPE.vtable.has_clone_into() {
                     Some(|src, dst| unsafe {
                         let map = src;
                         let mut new_map =
@@ -97,7 +95,7 @@ where
                 }
             })
             .partial_eq(|| {
-                if (V::SHAPE.vtable.partial_eq)().is_some() {
+                if V::SHAPE.vtable.has_partial_eq() {
                     Some(|a, b| {
                         let v_eq = <VTableView<V>>::of().partial_eq().unwrap();
                         a.len() == b.len()
@@ -110,7 +108,7 @@ where
                 }
             })
             .hash(|| {
-                if (V::SHAPE.vtable.hash)().is_some() {
+                if V::SHAPE.vtable.has_hash() {
                     Some(|map, hasher_this, hasher_write_fn| unsafe {
                         use crate::HasherProxy;
                         let v_hash = <VTableView<V>>::of().hash().unwrap();

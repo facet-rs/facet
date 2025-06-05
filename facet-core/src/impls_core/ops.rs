@@ -42,7 +42,7 @@ unsafe impl<'a, Idx: Facet<'a>> Facet<'a> for core::ops::Range<Idx> {
                 write!(f, "{}", Self::SHAPE.type_identifier)?;
                 if let Some(opts) = opts.for_children() {
                     write!(f, "<")?;
-                    (Idx::SHAPE.vtable.type_name)(f, opts)?;
+                    Idx::SHAPE.vtable.type_name()(f, opts)?;
                     write!(f, ">")?;
                 } else {
                     write!(f, "<…>")?;
@@ -50,7 +50,7 @@ unsafe impl<'a, Idx: Facet<'a>> Facet<'a> for core::ops::Range<Idx> {
                 Ok(())
             })
             .debug(|| {
-                if Idx::SHAPE.is_debug() {
+                if Idx::SHAPE.vtable.has_debug() {
                     Some(|this, f| {
                         (<VTableView<Idx>>::of().debug().unwrap())(&this.start, f)?;
                         write!(f, "..")?;

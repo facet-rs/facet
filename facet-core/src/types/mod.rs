@@ -365,7 +365,7 @@ impl Shape<'_> {
 // Helper struct to format the name for display
 impl core::fmt::Display for Shape<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        (self.vtable.type_name)(f, TypeNameOpts::default())
+        (self.vtable.type_name())(f, TypeNameOpts::default())
     }
 }
 

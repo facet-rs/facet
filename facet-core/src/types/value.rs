@@ -1,5 +1,5 @@
 use crate::{
-    TypedPtrUninit,
+    PtrConstWide, PtrMutWide, PtrUninitWide, TypedPtrUninit,
     ptr::{PtrConst, PtrMut, PtrUninit},
 };
 use bitflags::bitflags;
@@ -76,6 +76,14 @@ impl TypeNameOpts {
 ///
 /// The `value` parameter must point to aligned, initialized memory of the correct type.
 pub type InvariantsFn = for<'mem> unsafe fn(value: PtrConst<'mem>) -> bool;
+
+/// Function to validate the invariants of a value. If it returns false, the value is considered invalid (wide pointer version).
+///
+/// # Safety
+///
+/// The `value` parameter must point to aligned, initialized memory of the correct type.
+pub type InvariantsFnWide = for<'mem> unsafe fn(value: PtrConstWide<'mem>) -> bool;
+
 /// Function to validate the invariants of a value. If it returns false, the value is considered invalid.
 pub type InvariantsFnTyped<T> = fn(value: &T) -> bool;
 
@@ -89,6 +97,15 @@ pub type InvariantsFnTyped<T> = fn(value: &T) -> bool;
 /// After calling this function, the memory pointed to by `value` should not be accessed again
 /// until it is properly reinitialized.
 pub type DropInPlaceFn = for<'mem> unsafe fn(value: PtrMut<'mem>) -> PtrUninit<'mem>;
+
+/// Function to drop a value (wide pointer version)
+///
+/// # Safety
+///
+/// The `value` parameter must point to aligned, initialized memory of the correct type.
+/// After calling this function, the memory pointed to by `value` should not be accessed again
+/// until it is properly reinitialized.
+pub type DropInPlaceFnWide = for<'mem> unsafe fn(value: PtrMutWide<'mem>) -> PtrUninitWide<'mem>;
 
 /// Function to clone a value into another already-allocated value
 ///
@@ -297,6 +314,13 @@ impl core::error::Error for TryIntoInnerError {}
 /// as long as the wrapper is valid and not mutated.
 pub type TryBorrowInnerFn =
     for<'src> unsafe fn(src_ptr: PtrConst<'src>) -> Result<PtrConst<'src>, TryBorrowInnerError>;
+
+/// Function to borrow the inner value from a transparent/newtype wrapper without copying (wide pointer version).
+pub type TryBorrowInnerFnWide =
+    for<'src> unsafe fn(
+        src_ptr: PtrConstWide<'src>,
+    ) -> Result<PtrConstWide<'src>, TryBorrowInnerError>;
+
 /// Function to borrow the inner value from a transparent/newtype wrapper without copying.
 ///
 /// This is used for types that wrap another type (like smart pointers, newtypes, etc.)
@@ -340,6 +364,13 @@ impl core::error::Error for TryBorrowInnerError {}
 ///
 /// Both `left` and `right` parameters must point to aligned, initialized memory of the correct type.
 pub type PartialEqFn = for<'l, 'r> unsafe fn(left: PtrConst<'l>, right: PtrConst<'r>) -> bool;
+/// Function to check if two values are partially equal (wide pointer version)
+///
+/// # Safety
+///
+/// Both `left` and `right` parameters must point to aligned, initialized memory of the correct type.
+pub type PartialEqFnWide =
+    for<'l, 'r> unsafe fn(left: PtrConstWide<'l>, right: PtrConstWide<'r>) -> bool;
 /// Function to check if two values are partially equal
 pub type PartialEqFnTyped<T> = fn(left: &T, right: &T) -> bool;
 
@@ -350,6 +381,13 @@ pub type PartialEqFnTyped<T> = fn(left: &T, right: &T) -> bool;
 /// Both `left` and `right` parameters must point to aligned, initialized memory of the correct type.
 pub type PartialOrdFn =
     for<'l, 'r> unsafe fn(left: PtrConst<'l>, right: PtrConst<'r>) -> Option<Ordering>;
+/// Function to compare two values and return their ordering if comparable (wide pointer version)
+///
+/// # Safety
+///
+/// Both `left` and `right` parameters must point to aligned, initialized memory of the correct type.
+pub type PartialOrdFnWide =
+    for<'l, 'r> unsafe fn(left: PtrConstWide<'l>, right: PtrConstWide<'r>) -> Option<Ordering>;
 /// Function to compare two values and return their ordering if comparable
 pub type PartialOrdFnTyped<T> = fn(left: &T, right: &T) -> Option<Ordering>;
 
@@ -359,6 +397,13 @@ pub type PartialOrdFnTyped<T> = fn(left: &T, right: &T) -> Option<Ordering>;
 ///
 /// Both `left` and `right` parameters must point to aligned, initialized memory of the correct type.
 pub type CmpFn = for<'l, 'r> unsafe fn(left: PtrConst<'l>, right: PtrConst<'r>) -> Ordering;
+/// Function to compare two values and return their ordering (wide pointer version)
+///
+/// # Safety
+///
+/// Both `left` and `right` parameters must point to aligned, initialized memory of the correct type.
+pub type CmpFnWide =
+    for<'l, 'r> unsafe fn(left: PtrConstWide<'l>, right: PtrConstWide<'r>) -> Ordering;
 /// Function to compare two values and return their ordering
 pub type CmpFnTyped<T> = fn(left: &T, right: &T) -> Ordering;
 
@@ -372,9 +417,25 @@ pub type CmpFnTyped<T> = fn(left: &T, right: &T) -> Ordering;
 /// The hasher pointer must be a valid pointer to a Hasher trait object.
 pub type HashFn = for<'mem> unsafe fn(
     value: PtrConst<'mem>,
+    // TODO: Should this be wide? According to the documentation this is a trait object
     hasher_this: PtrMut<'mem>,
     hasher_write_fn: HasherWriteFn,
 );
+
+/// Function to hash a value
+///
+/// # Safety
+///
+/// The `value` parameter must point to aligned, initialized memory of the correct type.
+/// The hasher pointer must be a valid pointer to a Hasher trait object.
+pub type HashFnWide = for<'mem> unsafe fn(
+    value: PtrConstWide<'mem>,
+
+    // TODO: Should this be wide? According to the documentation this is a trait object
+    hasher_this: PtrMut<'mem>,
+    hasher_write_fn: HasherWriteFn,
+);
+
 /// Function to hash a value
 pub type HashFnTyped<T> =
     for<'mem> fn(value: &'mem T, hasher_this: PtrMut<'mem>, hasher_write_fn: HasherWriteFn);
@@ -454,6 +515,19 @@ bitflags! {
 /// The `value` parameter must point to aligned, initialized memory of the correct type.
 pub type DisplayFn =
     for<'mem> unsafe fn(value: PtrConst<'mem>, f: &mut core::fmt::Formatter) -> core::fmt::Result;
+
+/// Function to format a value for display (wide pointer version)
+///
+/// If both [`DisplayFnWide`] and [`ParseFn`] are set, we should be able to round-trip the value.
+///
+/// # Safety
+///
+/// The `value` parameter must point to aligned, initialized memory of the correct type.
+pub type DisplayFnWide = for<'mem> unsafe fn(
+    value: PtrConstWide<'mem>,
+    f: &mut core::fmt::Formatter,
+) -> core::fmt::Result;
+
 /// Function to format a value for display
 ///
 /// If both [`DisplayFn`] and [`ParseFn`] are set, we should be able to round-trip the value.
@@ -463,15 +537,38 @@ pub type DisplayFnTyped<T> = fn(value: &T, f: &mut core::fmt::Formatter) -> core
 /// If this returns None, the shape did not implement Debug.
 pub type DebugFn =
     for<'mem> unsafe fn(value: PtrConst<'mem>, f: &mut core::fmt::Formatter) -> core::fmt::Result;
+
+/// Function to format a value for debug (wide pointer version).
+/// If this returns None, the shape did not implement Debug (wide).
+pub type DebugFnWide = for<'mem> unsafe fn(
+    value: PtrConstWide<'mem>,
+    f: &mut core::fmt::Formatter,
+) -> core::fmt::Result;
+
 /// Function to format a value for debug.
 /// If this returns None, the shape did not implement Debug.
 pub type DebugFnTyped<T> = fn(value: &T, f: &mut core::fmt::Formatter) -> core::fmt::Result;
 
-/// VTable for common operations that can be performed on any shape
+/// A vtable representing the operations that can be performed on a type,
+/// either for sized or unsized types.
+///
+/// This enum encapsulates the specific vtables for sized ([`ValueVTableSized`])
+/// and unsized ([`ValueVTableUnsized`]) shapes, allowing generic type-agnostic
+/// dynamic dispatch for core capabilities (clone, drop, compare, hash, etc).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(C)]
+pub enum ValueVTable {
+    /// VTable for operations on sized types.
+    Sized(ValueVTableSized),
+    /// VTable for operations on unsized types.
+    Unsized(ValueVTableUnsized),
+}
+
+/// VTable for common operations that can be performed on any `Sized` shape
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(C)]
 #[non_exhaustive]
-pub struct ValueVTable {
+pub struct ValueVTableSized {
     /// cf. [`TypeNameFn`]
     pub type_name: TypeNameFn,
     /// Marker traits implemented by the type
@@ -537,10 +634,120 @@ pub struct ValueVTable {
     pub try_borrow_inner: fn() -> Option<TryBorrowInnerFn>,
 }
 
+/// VTable for common operations that can be performed on any `!Sized` shape
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(C)]
+#[non_exhaustive]
+pub struct ValueVTableUnsized {
+    /// cf. [`TypeNameFn`]
+    pub type_name: TypeNameFn,
+    /// Marker traits implemented by the type
+    // FIXME: move out of vtable, it's not really... functions.
+    // Belongs in Shape directly.
+    pub marker_traits: fn() -> MarkerTraits,
+
+    /// cf. [`DropInPlaceFn`] — if None, drops without side-effects
+    pub drop_in_place: fn() -> Option<DropInPlaceFnWide>,
+
+    /// cf. [`InvariantsFn`]
+    pub invariants: fn() -> Option<InvariantsFnWide>,
+
+    /// cf. [`DisplayFn`]
+    pub display: fn() -> Option<DisplayFnWide>,
+
+    /// cf. [`DebugFn`]
+    pub debug: fn() -> Option<DebugFnWide>,
+
+    /// cf. [`PartialEqFn`] for equality comparison
+    pub partial_eq: fn() -> Option<PartialEqFnWide>,
+
+    /// cf. [`PartialOrdFn`] for partial ordering comparison
+    pub partial_ord: fn() -> Option<PartialOrdFnWide>,
+
+    /// cf. [`CmpFn`] for total ordering
+    pub ord: fn() -> Option<CmpFnWide>,
+
+    /// cf. [`HashFn`]
+    pub hash: fn() -> Option<HashFnWide>,
+
+    /// cf. [`TryBorrowInnerFn`]
+    ///
+    /// This is used by transparent types to efficiently access the inner value without copying.
+    pub try_borrow_inner: fn() -> Option<TryBorrowInnerFnWide>,
+}
+
+macro_rules! has_fn {
+    ($self:expr, $name:tt) => {
+        match $self {
+            ValueVTable::Sized(inner) => (inner.$name)().is_some(),
+            ValueVTable::Unsized(inner) => (inner.$name)().is_some(),
+        }
+    };
+}
+
+macro_rules! has_fn_sized {
+    ($self:expr, $name:tt) => {
+        match $self {
+            ValueVTable::Sized(inner) => (inner.$name)().is_some(),
+            ValueVTable::Unsized(_) => false,
+        }
+    };
+}
+
 impl ValueVTable {
+    /// Returns a reference to the [`ValueVTableSized`] if this vtable is for a sized type.
+    ///
+    /// # Returns
+    ///
+    /// - `Some(&ValueVTableSized)` if the type is sized.
+    /// - `None` if the type is unsized.
+    pub const fn sized(&self) -> Option<&ValueVTableSized> {
+        match self {
+            ValueVTable::Sized(inner) => Some(inner),
+            ValueVTable::Unsized(_) => None,
+        }
+    }
+
+    /// Returns a mutable reference to the [`ValueVTableSized`] if this vtable is for a sized type.
+    ///
+    /// # Returns
+    ///
+    /// - `Some(&mut ValueVTableSized)` if the type is sized.
+    /// - `None` if the type is unsized.
+    pub const fn sized_mut(&mut self) -> Option<&mut ValueVTableSized> {
+        match self {
+            ValueVTable::Sized(inner) => Some(inner),
+            ValueVTable::Unsized(_) => None,
+        }
+    }
+
+    /// Returns a reference to the [`ValueVTableUnsized`] if this vtable is for an unsized type.
+    ///
+    /// # Returns
+    ///
+    /// - `Some(&ValueVTableUnsized)` if the type is unsized.
+    /// - `None` if the type is sized.
+    pub const fn r#unsized(&self) -> Option<&ValueVTableUnsized> {
+        match self {
+            ValueVTable::Sized(_) => None,
+            ValueVTable::Unsized(inner) => Some(inner),
+        }
+    }
+
     /// Get the marker traits implemented for the type
     pub fn marker_traits(&self) -> MarkerTraits {
-        (self.marker_traits)()
+        match self {
+            ValueVTable::Sized(inner) => (inner.marker_traits)(),
+            ValueVTable::Unsized(inner) => (inner.marker_traits)(),
+        }
+    }
+
+    /// Get the type name fn of the type
+    pub const fn type_name(&self) -> TypeNameFn {
+        match self {
+            ValueVTable::Sized(inner) => inner.type_name,
+            ValueVTable::Unsized(inner) => inner.type_name,
+        }
     }
 
     /// Check if the type implements the [`Eq`] marker trait
@@ -578,6 +785,50 @@ impl ValueVTable {
         self.marker_traits().contains(MarkerTraits::REF_UNWIND_SAFE)
     }
 
+    /// Returns `true` if the type implements the [`Display`](core::fmt::Display) trait and the `display` function is available in the vtable.
+    pub fn has_display(&self) -> bool {
+        has_fn!(self, display)
+    }
+
+    /// Returns `true` if the type implements the [`Debug`] trait and the `debug` function is available in the vtable.
+    pub fn has_debug(&self) -> bool {
+        has_fn!(self, debug)
+    }
+
+    /// Returns `true` if the type implements the [`PartialEq`] trait and the `partial_eq` function is available in the vtable.
+    pub fn has_partial_eq(&self) -> bool {
+        has_fn!(self, partial_eq)
+    }
+
+    /// Returns `true` if the type implements the [`PartialOrd`] trait and the `partial_ord` function is available in the vtable.
+    pub fn has_partial_ord(&self) -> bool {
+        has_fn!(self, partial_ord)
+    }
+
+    /// Returns `true` if the type implements the [`Ord`] trait and the `ord` function is available in the vtable.
+    pub fn has_ord(&self) -> bool {
+        has_fn!(self, ord)
+    }
+
+    /// Returns `true` if the type implements the [`Hash`] trait and the `hash` function is available in the vtable.
+    pub fn has_hash(&self) -> bool {
+        has_fn!(self, hash)
+    }
+
+    /// Returns `true` if the type supports default-in-place construction via the vtable.
+    pub fn has_default_in_place(&self) -> bool {
+        has_fn_sized!(self, default_in_place)
+    }
+
+    /// Returns `true` if the type supports in-place cloning via the vtable.
+    pub fn has_clone_into(&self) -> bool {
+        has_fn_sized!(self, clone_into)
+    }
+
+    /// Returns `true` if the type supports parsing from a string via the vtable.
+    pub fn has_parse(&self) -> bool {
+        has_fn_sized!(self, parse)
+    }
     /// Creates a new [`ValueVTableBuilder`]
     pub const fn builder<T>() -> ValueVTableBuilder<T> {
         ValueVTableBuilder::new()
@@ -607,65 +858,86 @@ impl<'a, T: crate::Facet<'a> + ?Sized> VTableView<&'a T> {
     }
 }
 
+macro_rules! get_fn {
+    ($self:expr, $name:tt) => {
+        match $self.0 {
+            ValueVTable::Sized(inner) => (inner.$name)().map(|f| unsafe { mem::transmute(f) }),
+            ValueVTable::Unsized(inner) => (inner.$name)().map(|f| unsafe { mem::transmute(f) }),
+        }
+    };
+}
+
 impl<'a, T: crate::Facet<'a> + ?Sized> VTableView<T> {
     /// Fetches the vtable for the type.
     pub fn of() -> Self {
-        Self(T::SHAPE.vtable, PhantomData)
+        let this = Self(T::SHAPE.vtable, PhantomData);
+
+        match this.0 {
+            ValueVTable::Sized(_) => {
+                assert!(T::SHAPE.layout.sized_layout().is_ok());
+                assert_eq!(
+                    core::mem::size_of::<*const T>(),
+                    core::mem::size_of::<*const ()>()
+                );
+            }
+            ValueVTable::Unsized(_) => {
+                assert!(T::SHAPE.layout.sized_layout().is_err());
+                assert_eq!(
+                    core::mem::size_of::<*const T>(),
+                    2 * core::mem::size_of::<*const ()>()
+                );
+            }
+        }
+
+        this
     }
 
     /// cf. [`TypeNameFn`]
     #[inline(always)]
     pub fn type_name(&self) -> TypeNameFn {
-        self.0.type_name
+        self.0.type_name()
     }
 
     /// cf. [`InvariantsFn`]
     #[inline(always)]
     pub fn invariants(&self) -> Option<InvariantsFnTyped<T>> {
-        (self.0.invariants)().map(|invariants| unsafe {
-            mem::transmute::<InvariantsFn, InvariantsFnTyped<T>>(invariants)
-        })
+        get_fn!(self, invariants)
     }
 
     /// cf. [`DisplayFn`]
     #[inline(always)]
     pub fn display(&self) -> Option<DisplayFnTyped<T>> {
-        (self.0.display)()
-            .map(|display| unsafe { mem::transmute::<DisplayFn, DisplayFnTyped<T>>(display) })
+        get_fn!(self, display)
     }
 
     /// cf. [`DebugFn`]
     #[inline(always)]
     pub fn debug(&self) -> Option<DebugFnTyped<T>> {
-        (self.0.debug)().map(|debug| unsafe { mem::transmute::<DebugFn, DebugFnTyped<T>>(debug) })
+        get_fn!(self, debug)
     }
 
     /// cf. [`PartialEqFn`] for equality comparison
     #[inline(always)]
     pub fn partial_eq(&self) -> Option<PartialEqFnTyped<T>> {
-        (self.0.partial_eq)().map(|partial_eq| unsafe {
-            mem::transmute::<PartialEqFn, PartialEqFnTyped<T>>(partial_eq)
-        })
+        get_fn!(self, partial_eq)
     }
 
     /// cf. [`PartialOrdFn`] for partial ordering comparison
     #[inline(always)]
     pub fn partial_ord(&self) -> Option<PartialOrdFnTyped<T>> {
-        (self.0.partial_ord)().map(|partial_ord| unsafe {
-            mem::transmute::<PartialOrdFn, PartialOrdFnTyped<T>>(partial_ord)
-        })
+        get_fn!(self, partial_ord)
     }
 
     /// cf. [`CmpFn`] for total ordering
     #[inline(always)]
     pub fn ord(&self) -> Option<CmpFnTyped<T>> {
-        (self.0.ord)().map(|ord| unsafe { mem::transmute::<CmpFn, CmpFnTyped<T>>(ord) })
+        get_fn!(self, ord)
     }
 
     /// cf. [`HashFn`]
     #[inline(always)]
     pub fn hash(&self) -> Option<HashFnTyped<T>> {
-        (self.0.hash)().map(|hash| unsafe { mem::transmute::<HashFn, HashFnTyped<T>>(hash) })
+        get_fn!(self, hash)
     }
 
     /// cf. [`TryBorrowInnerFn`]
@@ -673,9 +945,7 @@ impl<'a, T: crate::Facet<'a> + ?Sized> VTableView<T> {
     /// This is used by transparent types to efficiently access the inner value without copying.
     #[inline(always)]
     pub fn try_borrow_inner(&self) -> Option<TryBorrowInnerFnTyped<T>> {
-        (self.0.try_borrow_inner)().map(|try_borrow_inner| unsafe {
-            mem::transmute::<TryBorrowInnerFn, TryBorrowInnerFnTyped<T>>(try_borrow_inner)
-        })
+        get_fn!(self, try_borrow_inner)
     }
 }
 
@@ -683,7 +953,7 @@ impl<'a, T: crate::Facet<'a>> VTableView<T> {
     /// cf. [`DefaultInPlaceFn`]
     #[inline(always)]
     pub fn default_in_place(&self) -> Option<DefaultInPlaceFnTyped<T>> {
-        (self.0.default_in_place)().map(|default_in_place| unsafe {
+        (self.0.sized().unwrap().default_in_place)().map(|default_in_place| unsafe {
             mem::transmute::<DefaultInPlaceFn, DefaultInPlaceFnTyped<T>>(default_in_place)
         })
     }
@@ -691,7 +961,7 @@ impl<'a, T: crate::Facet<'a>> VTableView<T> {
     /// cf. [`CloneIntoFn`]
     #[inline(always)]
     pub fn clone_into(&self) -> Option<CloneIntoFnTyped<T>> {
-        (self.0.clone_into)().map(|clone_into| unsafe {
+        (self.0.sized().unwrap().clone_into)().map(|clone_into| unsafe {
             mem::transmute::<CloneIntoFn, CloneIntoFnTyped<T>>(clone_into)
         })
     }
@@ -699,7 +969,8 @@ impl<'a, T: crate::Facet<'a>> VTableView<T> {
     /// cf. [`ParseFn`]
     #[inline(always)]
     pub fn parse(&self) -> Option<ParseFnTyped<T>> {
-        (self.0.parse)().map(|parse| unsafe { mem::transmute::<ParseFn, ParseFnTyped<T>>(parse) })
+        (self.0.sized().unwrap().parse)()
+            .map(|parse| unsafe { mem::transmute::<ParseFn, ParseFnTyped<T>>(parse) })
     }
 
     /// cf. [`TryFromFn`]
@@ -715,7 +986,7 @@ impl<'a, T: crate::Facet<'a>> VTableView<T> {
     ///
     #[inline(always)]
     pub fn try_from(&self) -> Option<TryFromFnTyped<T>> {
-        (self.0.try_from)()
+        (self.0.sized().unwrap().try_from)()
             .map(|try_from| unsafe { mem::transmute::<TryFromFn, TryFromFnTyped<T>>(try_from) })
     }
 
@@ -725,12 +996,11 @@ impl<'a, T: crate::Facet<'a>> VTableView<T> {
     /// Primarily used during serialization.
     #[inline(always)]
     pub fn try_into_inner(&self) -> Option<TryIntoInnerFnTyped<T>> {
-        (self.0.try_into_inner)().map(|try_into_inner| unsafe {
+        (self.0.sized().unwrap().try_into_inner)().map(|try_into_inner| unsafe {
             mem::transmute::<TryIntoInnerFn, TryIntoInnerFnTyped<T>>(try_into_inner)
         })
     }
 }
-
 /// Builds a [`ValueVTable`]
 pub struct ValueVTableBuilder<T> {
     type_name: Option<TypeNameFn>,
@@ -933,7 +1203,7 @@ impl<T> ValueVTableBuilder<T> {
 
     /// Builds the [`ValueVTable`] from the current state of the builder.
     pub const fn build(self) -> ValueVTable {
-        ValueVTable {
+        ValueVTable::Sized(ValueVTableSized {
             type_name: self.type_name.unwrap(),
             marker_traits: self.marker_traits,
             invariants: self.invariants,
@@ -950,22 +1220,22 @@ impl<T> ValueVTableBuilder<T> {
             try_into_inner: self.try_into_inner,
             try_borrow_inner: self.try_borrow_inner,
             drop_in_place: self.drop_in_place,
-        }
+        })
     }
 }
 
 /// Builds a [`ValueVTable`] for a `!Sized` type
 pub struct ValueVTableBuilderUnsized<T: ?Sized> {
     type_name: Option<TypeNameFn>,
-    display: fn() -> Option<DisplayFn>,
-    debug: fn() -> Option<DebugFn>,
+    display: fn() -> Option<DisplayFnWide>,
+    debug: fn() -> Option<DebugFnWide>,
     marker_traits: fn() -> MarkerTraits,
-    partial_eq: fn() -> Option<PartialEqFn>,
-    partial_ord: fn() -> Option<PartialOrdFn>,
-    ord: fn() -> Option<CmpFn>,
-    hash: fn() -> Option<HashFn>,
-    invariants: fn() -> Option<InvariantsFn>,
-    try_borrow_inner: fn() -> Option<TryBorrowInnerFn>,
+    partial_eq: fn() -> Option<PartialEqFnWide>,
+    partial_ord: fn() -> Option<PartialOrdFnWide>,
+    ord: fn() -> Option<CmpFnWide>,
+    hash: fn() -> Option<HashFnWide>,
+    invariants: fn() -> Option<InvariantsFnWide>,
+    try_borrow_inner: fn() -> Option<TryBorrowInnerFnWide>,
     _pd: PhantomData<T>,
 }
 
@@ -997,7 +1267,9 @@ impl<T: ?Sized> ValueVTableBuilderUnsized<T> {
     /// Sets the display function for this builder.
     pub const fn display(mut self, display: fn() -> Option<DisplayFnTyped<T>>) -> Self {
         self.display = unsafe {
-            mem::transmute::<fn() -> Option<DisplayFnTyped<T>>, fn() -> Option<DisplayFn>>(display)
+            mem::transmute::<fn() -> Option<DisplayFnTyped<T>>, fn() -> Option<DisplayFnWide>>(
+                display,
+            )
         };
         self
     }
@@ -1005,7 +1277,7 @@ impl<T: ?Sized> ValueVTableBuilderUnsized<T> {
     /// Sets the debug function for this builder.
     pub const fn debug(mut self, debug: fn() -> Option<DebugFnTyped<T>>) -> Self {
         self.debug = unsafe {
-            mem::transmute::<fn() -> Option<DebugFnTyped<T>>, fn() -> Option<DebugFn>>(debug)
+            mem::transmute::<fn() -> Option<DebugFnTyped<T>>, fn() -> Option<DebugFnWide>>(debug)
         };
         self
     }
@@ -1019,7 +1291,7 @@ impl<T: ?Sized> ValueVTableBuilderUnsized<T> {
     /// Sets the eq function for this builder.
     pub const fn partial_eq(mut self, partial_eq: fn() -> Option<PartialEqFnTyped<T>>) -> Self {
         self.partial_eq = unsafe {
-            mem::transmute::<fn() -> Option<PartialEqFnTyped<T>>, fn() -> Option<PartialEqFn>>(
+            mem::transmute::<fn() -> Option<PartialEqFnTyped<T>>, fn() -> Option<PartialEqFnWide>>(
                 partial_eq,
             )
         };
@@ -1029,7 +1301,7 @@ impl<T: ?Sized> ValueVTableBuilderUnsized<T> {
     /// Sets the partial_ord function for this builder.
     pub const fn partial_ord(mut self, partial_ord: fn() -> Option<PartialOrdFnTyped<T>>) -> Self {
         self.partial_ord = unsafe {
-            mem::transmute::<fn() -> Option<PartialOrdFnTyped<T>>, fn() -> Option<PartialOrdFn>>(
+            mem::transmute::<fn() -> Option<PartialOrdFnTyped<T>>, fn() -> Option<PartialOrdFnWide>>(
                 partial_ord,
             )
         };
@@ -1038,15 +1310,16 @@ impl<T: ?Sized> ValueVTableBuilderUnsized<T> {
 
     /// Sets the ord function for this builder.
     pub const fn ord(mut self, ord: fn() -> Option<CmpFnTyped<T>>) -> Self {
-        self.ord =
-            unsafe { mem::transmute::<fn() -> Option<CmpFnTyped<T>>, fn() -> Option<CmpFn>>(ord) };
+        self.ord = unsafe {
+            mem::transmute::<fn() -> Option<CmpFnTyped<T>>, fn() -> Option<CmpFnWide>>(ord)
+        };
         self
     }
 
     /// Sets the hash function for this builder.
     pub const fn hash(mut self, hash: fn() -> Option<HashFnTyped<T>>) -> Self {
         self.hash = unsafe {
-            mem::transmute::<fn() -> Option<HashFnTyped<T>>, fn() -> Option<HashFn>>(hash)
+            mem::transmute::<fn() -> Option<HashFnTyped<T>>, fn() -> Option<HashFnWide>>(hash)
         };
         self
     }
@@ -1054,7 +1327,7 @@ impl<T: ?Sized> ValueVTableBuilderUnsized<T> {
     /// Sets the invariants function for this builder.
     pub const fn invariants(mut self, invariants: fn() -> Option<InvariantsFnTyped<T>>) -> Self {
         self.invariants = unsafe {
-            mem::transmute::<fn() -> Option<InvariantsFnTyped<T>>, fn() -> Option<InvariantsFn>>(
+            mem::transmute::<fn() -> Option<InvariantsFnTyped<T>>, fn() -> Option<InvariantsFnWide>>(
                 invariants,
             )
         };
@@ -1069,7 +1342,7 @@ impl<T: ?Sized> ValueVTableBuilderUnsized<T> {
         self.try_borrow_inner = unsafe {
             mem::transmute::<
                 fn() -> Option<TryBorrowInnerFnTyped<T>>,
-                fn() -> Option<TryBorrowInnerFn>,
+                fn() -> Option<TryBorrowInnerFnWide>,
             >(try_borrow_inner)
         };
         self
@@ -1077,24 +1350,19 @@ impl<T: ?Sized> ValueVTableBuilderUnsized<T> {
 
     /// Builds the [`ValueVTable`] from the current state of the builder.
     pub const fn build(self) -> ValueVTable {
-        ValueVTable {
+        ValueVTable::Unsized(ValueVTableUnsized {
             type_name: self.type_name.unwrap(),
             marker_traits: self.marker_traits,
             invariants: self.invariants,
             display: self.display,
             debug: self.debug,
-            default_in_place: || None,
-            clone_into: || None,
             partial_eq: self.partial_eq,
             partial_ord: self.partial_ord,
             ord: self.ord,
             hash: self.hash,
-            parse: || None,
-            try_from: || None,
-            try_into_inner: || None,
             try_borrow_inner: self.try_borrow_inner,
             // TODO: Add support for this
             drop_in_place: || None,
-        }
+        })
     }
 }

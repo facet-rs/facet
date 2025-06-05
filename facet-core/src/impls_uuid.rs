@@ -45,14 +45,17 @@ unsafe impl Facet<'_> for Uuid {
             "{}",
             Self::SHAPE.type_identifier
         ));
-        vtable.parse = || {
-            Some(|s, target| match Uuid::parse_str(s) {
-                Ok(uuid) => Ok(unsafe { target.put(uuid) }),
-                Err(_) => Err(ParseError::Generic("UUID parsing failed")),
-            })
-        };
-        vtable.try_from = || Some(try_from);
-        vtable.try_into_inner = || Some(try_into_inner);
+        {
+            let vtable = vtable.sized_mut().unwrap();
+            vtable.parse = || {
+                Some(|s, target| match Uuid::parse_str(s) {
+                    Ok(uuid) => Ok(unsafe { target.put(uuid) }),
+                    Err(_) => Err(ParseError::Generic("UUID parsing failed")),
+                })
+            };
+            vtable.try_from = || Some(try_from);
+            vtable.try_into_inner = || Some(try_into_inner);
+        }
         vtable
     };
 

@@ -54,7 +54,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
             write!(f, "{}", Self::SHAPE.type_identifier)?;
             if let Some(opts) = opts.for_children() {
                 write!(f, "<")?;
-                (T::SHAPE.vtable.type_name)(f, opts)?;
+                (T::SHAPE.vtable.type_name())(f, opts)?;
                 write!(f, ">")?;
             } else {
                 write!(f, "<…>")?;
@@ -62,9 +62,12 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
             Ok(())
         });
 
-        vtable.try_from = || Some(try_from::<T>);
-        vtable.try_into_inner = || Some(try_into_inner::<T>);
-        vtable.try_borrow_inner = || Some(try_borrow_inner::<T>);
+        {
+            let vtable = vtable.sized_mut().unwrap();
+            vtable.try_from = || Some(try_from::<T>);
+            vtable.try_into_inner = || Some(try_into_inner::<T>);
+            vtable.try_borrow_inner = || Some(try_borrow_inner::<T>);
+        }
         vtable
     };
 
@@ -119,7 +122,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Weak<T> {
             write!(f, "{}", Self::SHAPE.type_identifier)?;
             if let Some(opts) = opts.for_children() {
                 write!(f, "<")?;
-                (T::SHAPE.vtable.type_name)(f, opts)?;
+                (T::SHAPE.vtable.type_name())(f, opts)?;
                 write!(f, ">")?;
             } else {
                 write!(f, "<…>")?;
@@ -215,7 +218,8 @@ mod tests {
         assert_eq!(unsafe { borrowed_ptr.get::<String>() }, "example");
 
         // Get the function pointer for dropping the Arc
-        let drop_fn = (arc_shape.vtable.drop_in_place)().expect("Arc<T> should have drop_in_place");
+        let drop_fn = (arc_shape.vtable.sized().unwrap().drop_in_place)()
+            .expect("Arc<T> should have drop_in_place");
 
         // Drop the Arc in place
         // SAFETY: arc_ptr points to a valid Arc<String>
@@ -273,8 +277,8 @@ mod tests {
         assert_eq!(unsafe { borrowed_ptr.get::<String>() }, "example");
 
         // 4. Drop everything and free memory
-        let arc_drop_fn = (arc_shape.vtable.drop_in_place)().unwrap();
-        let weak_drop_fn = (weak_shape.vtable.drop_in_place)().unwrap();
+        let arc_drop_fn = (arc_shape.vtable.sized().unwrap().drop_in_place)().unwrap();
+        let weak_drop_fn = (weak_shape.vtable.sized().unwrap().drop_in_place)().unwrap();
 
         unsafe {
             // Drop Arcs
@@ -321,7 +325,7 @@ mod tests {
         let weak1_ptr = unsafe { downgrade_into_fn(arc1_ptr, weak1_uninit_ptr) };
 
         // 3. Drop and free the strong pointer (arc1)
-        let arc_drop_fn = (arc_shape.vtable.drop_in_place)().unwrap();
+        let arc_drop_fn = (arc_shape.vtable.sized().unwrap().drop_in_place)().unwrap();
         unsafe {
             arc_drop_fn(arc1_ptr);
             arc_shape.deallocate_mut(arc1_ptr)?;
@@ -340,7 +344,7 @@ mod tests {
         );
 
         // 5. Clean up: Deallocate the memory intended for the failed upgrade and drop/deallocate the weak pointer
-        let weak_drop_fn = (weak_shape.vtable.drop_in_place)().unwrap();
+        let weak_drop_fn = (weak_shape.vtable.sized().unwrap().drop_in_place)().unwrap();
         unsafe {
             // Deallocate the *uninitialized* memory allocated for the failed upgrade attempt
             arc_shape.deallocate_uninit(arc2_uninit_ptr)?;
@@ -373,7 +377,8 @@ mod tests {
         let arc_uninit_ptr = arc_shape.allocate()?;
 
         // 3. Get the try_from function from the Arc<String> shape's ValueVTable
-        let try_from_fn = (arc_shape.vtable.try_from)().expect("Arc<T> should have try_from");
+        let try_from_fn =
+            (arc_shape.vtable.sized().unwrap().try_from)().expect("Arc<T> should have try_from");
 
         // 4. Try to convert String to Arc<String>
         let arc_ptr = unsafe { try_from_fn(value_ptr, string_shape, arc_uninit_ptr) }
@@ -391,7 +396,8 @@ mod tests {
         assert_eq!(unsafe { borrowed_ptr.get::<String>() }, "try_from test");
 
         // 6. Clean up
-        let drop_fn = (arc_shape.vtable.drop_in_place)().expect("Arc<T> should have drop_in_place");
+        let drop_fn = (arc_shape.vtable.sized().unwrap().drop_in_place)()
+            .expect("Arc<T> should have drop_in_place");
 
         unsafe {
             drop_fn(arc_ptr);
@@ -428,8 +434,8 @@ mod tests {
         let string_uninit_ptr = string_shape.allocate()?;
 
         // 3. Get the try_into_inner function from the Arc<String>'s ValueVTable
-        let try_into_inner_fn =
-            (arc_shape.vtable.try_into_inner)().expect("Arc<T> Shape should have try_into_inner");
+        let try_into_inner_fn = (arc_shape.vtable.sized().unwrap().try_into_inner)()
+            .expect("Arc<T> Shape should have try_into_inner");
 
         // 4. Try to extract the String from the Arc<String>
         // This should succeed because we have exclusive access to the Arc (strong count = 1)
@@ -443,8 +449,8 @@ mod tests {
         );
 
         // 6. Clean up
-        let string_drop_fn =
-            (string_shape.vtable.drop_in_place)().expect("String should have drop_in_place");
+        let string_drop_fn = (string_shape.vtable.sized().unwrap().drop_in_place)()
+            .expect("String should have drop_in_place");
 
         unsafe {
             // The Arc should already be dropped by try_into_inner

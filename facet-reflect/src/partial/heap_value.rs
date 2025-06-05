@@ -17,7 +17,7 @@ pub struct HeapValue<'facet, 'shape> {
 impl<'facet, 'shape> Drop for HeapValue<'facet, 'shape> {
     fn drop(&mut self) {
         if let Some(guard) = self.guard.take() {
-            if let Some(drop_fn) = (self.shape.vtable.drop_in_place)() {
+            if let Some(drop_fn) = (self.shape.vtable.sized().unwrap().drop_in_place)() {
                 unsafe { drop_fn(PtrMut::new(guard.ptr)) };
             }
             drop(guard);
@@ -68,7 +68,7 @@ impl<'facet, 'shape> HeapValue<'facet, 'shape> {
 impl<'facet, 'shape> HeapValue<'facet, 'shape> {
     /// Formats the value using its Display implementation, if available
     pub fn fmt_display(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if let Some(display_fn) = (self.shape.vtable.display)() {
+        if let Some(display_fn) = self.shape.vtable.sized().and_then(|v| (v.display)()) {
             unsafe { display_fn(PtrConst::new(self.guard.as_ref().unwrap().ptr), f) }
         } else {
             write!(f, "⟨{}⟩", self.shape)
@@ -77,7 +77,7 @@ impl<'facet, 'shape> HeapValue<'facet, 'shape> {
 
     /// Formats the value using its Debug implementation, if available
     pub fn fmt_debug(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if let Some(debug_fn) = (self.shape.vtable.debug)() {
+        if let Some(debug_fn) = self.shape.vtable.sized().and_then(|v| (v.debug)()) {
             unsafe { debug_fn(PtrConst::new(self.guard.as_ref().unwrap().ptr), f) }
         } else {
             write!(f, "⟨{}⟩", self.shape)
@@ -102,7 +102,7 @@ impl<'facet, 'shape> PartialEq for HeapValue<'facet, 'shape> {
         if self.shape != other.shape {
             return false;
         }
-        if let Some(eq_fn) = (self.shape.vtable.partial_eq)() {
+        if let Some(eq_fn) = self.shape.vtable.sized().and_then(|v| (v.partial_eq)()) {
             unsafe {
                 eq_fn(
                     PtrConst::new(self.guard.as_ref().unwrap().ptr),
@@ -120,7 +120,7 @@ impl<'facet, 'shape> PartialOrd for HeapValue<'facet, 'shape> {
         if self.shape != other.shape {
             return None;
         }
-        if let Some(partial_ord_fn) = (self.shape.vtable.partial_ord)() {
+        if let Some(partial_ord_fn) = self.shape.vtable.sized().and_then(|v| (v.partial_ord)()) {
             unsafe {
                 partial_ord_fn(
                     PtrConst::new(self.guard.as_ref().unwrap().ptr),

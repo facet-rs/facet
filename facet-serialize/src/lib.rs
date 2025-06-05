@@ -381,7 +381,9 @@ where
                                     | ScalarAffinity::Path(_)
                                     | ScalarAffinity::ULID(_)
                                     | ScalarAffinity::UUID(_) => {
-                                        if let Some(_display) = (cpeek.shape().vtable.display)() {
+                                        if let Some(_display) =
+                                            cpeek.shape().vtable.sized().and_then(|v| (v.display)())
+                                        {
                                             // Use display formatting if available
                                             serializer
                                                 .serialize_str(&alloc::format!("{}", cpeek))?

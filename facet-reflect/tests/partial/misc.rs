@@ -644,7 +644,7 @@ fn clone_into() {
     assert_eq!(CLONES.load(Ordering::SeqCst), 1);
 
     let mut f3: MaybeUninit<Foo> = MaybeUninit::uninit();
-    let clone_into = (<Foo as Facet>::SHAPE.vtable.clone_into)().unwrap();
+    let clone_into = (<Foo as Facet>::SHAPE.vtable.sized().unwrap().clone_into)().unwrap();
     unsafe {
         clone_into(PtrConst::new(&f), PtrUninit::from_maybe_uninit(&mut f3));
     }
@@ -656,7 +656,7 @@ fn clone_into_vec() {
     type Type = Vec<String>;
     let mut vec: Type = vec!["hello".to_owned()];
     let mut vec_clone: MaybeUninit<Type> = MaybeUninit::uninit();
-    let clone_into = (<Type as Facet>::SHAPE.vtable.clone_into)().unwrap();
+    let clone_into = (<Type as Facet>::SHAPE.vtable.sized().unwrap().clone_into)().unwrap();
     let clone_vec = unsafe {
         clone_into(
             PtrConst::new(&vec),
@@ -677,7 +677,7 @@ fn clone_into_hash_map() {
     map.insert("key".to_owned(), 42);
 
     let mut map_clone: MaybeUninit<Type> = MaybeUninit::uninit();
-    let clone_into = (<Type as Facet>::SHAPE.vtable.clone_into)().unwrap();
+    let clone_into = (<Type as Facet>::SHAPE.vtable.sized().unwrap().clone_into)().unwrap();
     let clone_map = unsafe {
         clone_into(
             PtrConst::new(&map),
@@ -702,7 +702,7 @@ fn clone_into_btree_map() {
     map.insert("key".to_owned(), 42);
 
     let mut map_clone: MaybeUninit<Type> = MaybeUninit::uninit();
-    let clone_into = (<Type as Facet>::SHAPE.vtable.clone_into)().unwrap();
+    let clone_into = (<Type as Facet>::SHAPE.vtable.sized().unwrap().clone_into)().unwrap();
     let clone_map = unsafe {
         clone_into(
             PtrConst::new(&map),

@@ -2,7 +2,7 @@
 //!
 //! Type-erased pointer helpers for working with reflected values
 
-use core::{marker::PhantomData, ptr::NonNull};
+use core::{marker::PhantomData, mem::transmute, ptr::NonNull};
 
 use crate::{Shape, UnsizedError};
 
@@ -334,5 +334,121 @@ impl<'mem> PtrMut<'mem> {
     /// - The memory must already be initialized to a valid T value
     pub unsafe fn replace<T>(self, value: T) -> Self {
         unsafe { self.drop_in_place::<T>().put(value) }
+    }
+}
+
+#[derive(Clone, Copy)]
+#[repr(C)]
+/// Wide pointer (fat pointer) structure holding a data pointer and metadata (for unsized types).
+struct PtrWide {
+    ptr: *mut (),
+    metadata: usize,
+}
+
+impl PtrWide {
+    const fn from_ptr<T: ?Sized>(ptr: *mut T) -> Self {
+        if size_of_val(&ptr) != size_of::<Self>() {
+            panic!("Tried to construct a wide pointer from a thin pointer");
+        }
+        let ptr_ref = &ptr;
+        let self_ref = unsafe { transmute::<&*mut T, &Self>(ptr_ref) };
+        *self_ref
+    }
+
+    unsafe fn to_ptr<T: ?Sized>(self) -> *mut T {
+        if size_of::<*mut T>() != size_of::<Self>() {
+            panic!("Tried to get a wide pointer as a thin pointer");
+        }
+        let self_ref = &self;
+        let ptr_ref = unsafe { transmute::<&Self, &*mut T>(self_ref) };
+        *ptr_ref
+    }
+}
+
+/// A type-erased, wide pointer to an uninitialized value.
+///
+/// This can be useful for working with dynamically sized types, like slices or trait objects,
+/// where both a pointer and metadata (such as length or vtable) need to be stored.
+///
+/// The lifetime `'mem` represents the borrow of the underlying uninitialized memory.
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+pub struct PtrUninitWide<'mem> {
+    ptr: PtrWide,
+    phantom: PhantomData<&'mem mut ()>,
+}
+
+/// A type-erased, read-only wide pointer to an initialized value.
+///
+/// Like [`PtrConst`], but for unsized types where metadata is needed. Cannot be null
+/// (but may be dangling for ZSTs). The lifetime `'mem` represents the borrow of the
+/// underlying memory, which must remain valid and initialized.
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+pub struct PtrConstWide<'mem> {
+    ptr: PtrWide,
+    phantom: PhantomData<&'mem ()>,
+}
+
+impl<'mem> PtrConstWide<'mem> {
+    /// Creates a new wide const pointer from a raw pointer to a (potentially unsized) object.
+    ///
+    /// # Arguments
+    ///
+    /// * `ptr` - Raw pointer to the object. Can be a pointer to a DST (e.g., slice, trait object).
+    ///
+    /// # Panics
+    ///
+    /// Panics if a thin pointer is provided where a wide pointer is expected.
+    pub const fn new<T: ?Sized>(ptr: *const T) -> Self {
+        Self {
+            ptr: PtrWide::from_ptr(ptr.cast_mut()),
+            phantom: PhantomData,
+        }
+    }
+
+    /// Returns the underlying data pointer as a pointer to `u8` (the address of the object).
+    pub fn as_byte_ptr(self) -> *const u8 {
+        self.ptr.ptr.cast::<u8>()
+    }
+
+    /// Borrows the underlying object as a reference of type `T`.
+    ///
+    /// # Safety
+    ///
+    /// - `T` must be the actual underlying (potentially unsized) type of the pointed-to memory.
+    /// - The memory must remain valid and not be mutated while this reference exists.
+    /// - The pointer must be correctly aligned and point to a valid, initialized value for type `T`.
+    pub unsafe fn get<T: ?Sized>(self) -> &'mem T {
+        unsafe { self.ptr.to_ptr::<T>().as_ref().unwrap() }
+    }
+}
+
+/// A type-erased, mutable wide pointer to an initialized value.
+///
+/// Like [`PtrMut`], but for unsized types where metadata is needed. Provides mutable access
+/// to the underlying object, whose borrow is tracked by lifetime `'mem`.
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+pub struct PtrMutWide<'mem> {
+    ptr: PtrWide,
+    phantom: PhantomData<&'mem mut ()>,
+}
+
+impl<'mem> PtrMutWide<'mem> {
+    /// Creates a new mutable wide pointer from a raw pointer to a (potentially unsized) object.
+    ///
+    /// # Arguments
+    ///
+    /// * `ptr` - Raw mutable pointer to the object. Can be a pointer to a DST (e.g., slice, trait object).
+    ///
+    /// # Panics
+    ///
+    /// Panics if a thin pointer is provided where a wide pointer is expected.
+    pub const fn new<T: ?Sized>(ptr: *mut T) -> Self {
+        Self {
+            ptr: PtrWide::from_ptr(ptr),
+            phantom: PhantomData,
+        }
     }
 }
