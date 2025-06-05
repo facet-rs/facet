@@ -22,7 +22,7 @@ pub struct TomlDeError<'input, 'shape> {
     /// Which part of the TOML this error applies to.
     #[cfg_attr(not(feature = "rich-diagnostics"), allow(dead_code))]
     span: Option<Range<usize>>,
-    /// Full Wip path.
+    /// Full Partial path.
     path: String,
 }
 

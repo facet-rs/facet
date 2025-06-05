@@ -46,7 +46,7 @@ Thanks to all individual and corporate sponsors, without whom this work could no
 </a> </p>
 
 
-Allows building values, via `Wip`, and inspecting existing values, via `PeekValue`.
+Allows building values, via `Partial`, and inspecting existing values, via `PeekValue`.
 
 ## License
 

@@ -96,7 +96,7 @@ impl<'input, 'facet: 'shape, 'shape> KdlDeserializer<'input> {
 
         // PERF: This definitely isn't zero-copy, so it might be worth seeing if that's something that can be added to
         // `kdl-rs` at some point in the future?
-        // PERF: Would be be better / quicker if I did this parsing incrementally? Using information from the `Wip` to
+        // PERF: Would be be better / quicker if I did this parsing incrementally? Using information from the `Partial` to
         // decide when to call `KdlNode::parse` and `KdlEntry::parse`? Probably would be if I'm only trying to parse
         // some of the KDL text, but I'm not so sure otherwise? Will need benchmarking...
         let document: KdlDocument = dbg!(kdl.parse()?);
@@ -129,7 +129,7 @@ impl<'input, 'facet: 'shape, 'shape> KdlDeserializer<'input> {
 
         // First check the type system (Type)
         if let Type::User(UserType::Struct(struct_def)) = &wip.shape().ty {
-            log::trace!("Document `Wip` is a struct: {struct_def:#?}");
+            log::trace!("Document `Partial` is a struct: {struct_def:#?}");
             // QUESTION: Would be be possible, once we allow custom types, to make all attributes arbitrary? With
             // the sort of general tool that `facet` is, I think it might actually be best if we didn't try to
             // "bake-in" anything like sensitive, default, skip, etc...
@@ -180,7 +180,7 @@ impl<'input, 'facet: 'shape, 'shape> KdlDeserializer<'input> {
 
         // TODO: Planning to step through those entries one at a time then dispatch a method like
         // `deserialize_argument()` or `deserialize_property()` depending on which it is. Then I need a way to keep
-        // track of which `Wip` fields have already been filled? I think that shouldn't be too bad, then I can just
+        // track of which `Partial` fields have already been filled? I think that shouldn't be too bad, then I can just
         // grab the next "unfilled" argument field if it's an argument, or search all of the (filled or unfilled) fields
         // if it's a parameter?
         for entry in node.entries() {

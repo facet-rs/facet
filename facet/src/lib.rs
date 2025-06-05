@@ -49,7 +49,7 @@ pub use facet_core::*;
 ///
 /// * `skip_serializing_if = ".."` Don't allow this type to be serialized if the function returns `true`.
 ///
-/// * `invariants = ".."` Called when doing `Wip::build`. **TODO**
+/// * `invariants = ".."` Called when doing `Partial::build`. **TODO**
 ///
 /// # Field Attributes
 ///

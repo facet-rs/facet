@@ -1,2 +1,2 @@
 
-Allows building values, via `Wip`, and inspecting existing values, via `PeekValue`.
+Allows building values, via `Partial`, and inspecting existing values, via `PeekValue`.

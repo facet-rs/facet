@@ -58,7 +58,7 @@ However, vtables are low-level and unsafe, and you would normally invoke stuff t
 [facet-reflect](https://docs.rs/facet-reflect) types like:
 
   * [Peek](https://docs.rs/facet-reflect/latest/facet_reflect/struct.Peek.html) when reading from a value
-  * [Wip](https://docs.rs/facet-reflect/latest/facet_reflect/struct.Wip.html) when building values from scratch
+  * [Partial](https://docs.rs/facet-reflect/latest/facet_reflect/struct.Partial.html) when building values from scratch
 
 These two abstractions are used by serializers and deserializers respectively,
 and are fully safe, despite dealing with partially-initialized values under the hood.

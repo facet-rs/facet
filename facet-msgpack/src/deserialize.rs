@@ -44,7 +44,7 @@ pub fn from_slice<T: Facet<'static>>(msgpack: &[u8]) -> Result<T, DecodeError<'s
 
 /// Deserializes MessagePack-encoded data into a Facet value.
 ///
-/// This function takes a MessagePack byte array and populates a Wip object
+/// This function takes a MessagePack byte array and populates a Partial object
 /// according to the shape description, returning an Opaque value.
 ///
 /// # Example
@@ -71,7 +71,7 @@ pub fn from_slice<T: Facet<'static>>(msgpack: &[u8]) -> Result<T, DecodeError<'s
 /// ```
 ///
 /// # Parameters
-/// * `wip` - A Wip object that will be filled with deserialized data
+/// * `wip` - A Partial object that will be filled with deserialized data
 /// * `msgpack` - A byte slice containing MessagePack-encoded data
 ///
 /// # Returns

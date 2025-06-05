@@ -52,7 +52,7 @@ pub enum PFacetAttr {
 
     /// Valid in container
     /// `#[facet(invariants = "Self::invariants_func")]` — returns a bool, is called
-    /// when doing `Wip::build`
+    /// when doing `Partial::build`
     Invariants { expr: TokenStream },
 
     /// Valid in container

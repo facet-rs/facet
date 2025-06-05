@@ -85,7 +85,7 @@ pub struct Shape<'shape> {
     ///
     /// Same for `Utf8PathBuf`, which is parsed from and serialized to "just a string".
     ///
-    /// See Wip's `innermost_shape` function (and its support in `put`).
+    /// See Partial's `innermost_shape` function (and its support in `put`).
     pub inner: Option<fn() -> &'shape Shape<'shape>>,
 }
 

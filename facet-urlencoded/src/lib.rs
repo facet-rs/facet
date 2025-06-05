@@ -82,7 +82,7 @@ pub fn from_str<'input: 'facet, 'facet, T: Facet<'facet>>(
 
 /// Deserializes a URL encoded form data string into an heap-allocated value.
 ///
-/// This is the lower-level function that works with `Wip` directly.
+/// This is the lower-level function that works with `Partial` directly.
 fn from_str_value<'mem, 'shape>(
     wip: &mut Partial<'mem, 'shape>,
     urlencoded: &str,

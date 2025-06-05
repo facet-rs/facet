@@ -427,7 +427,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         })
     }
 
-    /// Creates a Wip from an existing pointer and shape (used for nested initialization)
+    /// Creates a Partial from an existing pointer and shape (used for nested initialization)
     pub fn from_ptr(data: PtrUninit<'_>, shape: &'shape Shape<'shape>) -> Self {
         // We need to convert the lifetime, which is safe because we're storing it in a frame
         // that will manage the lifetime correctly
@@ -1562,7 +1562,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         if self.frames.len() <= 1 {
             // Never pop the last/root frame.
             return Err(ReflectError::InvariantViolation {
-                invariant: "Wip::end() called with only one frame on the stack",
+                invariant: "Partial::end() called with only one frame on the stack",
             });
         }
 
@@ -1882,7 +1882,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         if self.frames.len() != 1 {
             self.state = PartialState::BuildFailed;
             return Err(ReflectError::InvariantViolation {
-                invariant: "Wip::build() expects a single frame — pop until that's the case",
+                invariant: "Partial::build() expects a single frame — pop until that's the case",
             });
         }
 
@@ -2428,7 +2428,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 }
 
-/// A typed wrapper around `Wip`, for when you want to statically
+/// A typed wrapper around `Partial`, for when you want to statically
 /// ensure that `build` gives you the proper type.
 pub struct TypedPartial<'facet, 'shape, T> {
     inner: Partial<'facet, 'shape>,
@@ -2695,7 +2695,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
 
 impl<'facet, 'shape, T> core::fmt::Debug for TypedPartial<'facet, 'shape, T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("TypedWip")
+        f.debug_struct("TypedPartial")
             .field("shape", &self.inner.frames.last().map(|frame| frame.shape))
             .finish()
     }
@@ -2703,7 +2703,7 @@ impl<'facet, 'shape, T> core::fmt::Debug for TypedPartial<'facet, 'shape, T> {
 
 impl<'facet, 'shape> Drop for Partial<'facet, 'shape> {
     fn drop(&mut self) {
-        trace!("🧹 Wip is being dropped");
+        trace!("🧹 Partial is being dropped");
 
         // We need to properly drop all initialized fields
         while let Some(frame) = self.frames.pop() {
