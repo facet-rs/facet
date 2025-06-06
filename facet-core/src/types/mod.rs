@@ -406,18 +406,33 @@ impl core::fmt::Debug for Shape<'_> {
         } else {
             let mut debug_struct = f.debug_struct("Shape");
 
-            // Always show the type name
-            debug_struct.field("type", &format_args!("{}", self));
-
-            // Show def if it's not Undefined
-            if !matches!(self.def, Def::Undefined) {
-                debug_struct.field("def", &format_args!("{:?}", self.def));
+            macro_rules! field {
+                ( $field:literal, $( $fmt_args:tt )* ) => {{
+                    debug_struct.field($field, &format_args!($($fmt_args)*));
+                }};
             }
 
-            // Show inner if present
-            if self.inner.is_some() {
-                debug_struct.field("inner", &format_args!("Some(..)"));
-            }
+            field!("id", "{:?}", self.id);
+
+            field!("layout", "{:?}", self.layout);
+
+            field!("vtable", "{:?}", self.vtable);
+
+            field!("ty", "{:?}", self.ty);
+
+            field!("def", "{:?}", self.def);
+
+            field!("type_identifier", "{:?}", self.type_identifier);
+
+            field!("type_params", "{:?}", self.type_params);
+
+            field!("doc", "{:?}", self.doc);
+
+            field!("attributes", "{:?}", self.attributes);
+
+            field!("type_tag", "{:?}", self.type_tag);
+
+            field!("inner", "{:?}", self.inner);
 
             debug_struct.finish()
         }
