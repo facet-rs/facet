@@ -371,6 +371,24 @@ impl core::fmt::Display for Shape<'_> {
 
 impl core::fmt::Debug for Shape<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        // NOTE:
+        // This dummy destructuring is present to ensure that if fields are added,
+        // developers will get a compiler error in this function, reminding them
+        // to carefully consider whether it should be shown when debug formatting.
+        let Self {
+            id: _,
+            layout: _,
+            vtable: _,
+            ty: _,
+            def: _,
+            type_identifier: _,
+            type_params: _,
+            doc: _,
+            attributes: _,
+            type_tag: _,
+            inner: _,
+        } = self;
+
         if f.alternate() {
             f.debug_struct("Shape")
                 .field("id", &self.id)
