@@ -70,6 +70,7 @@ impl<'mem> GenericPtr<'mem> {
     }
 
     /// Returns the inner [`PtrConst`] if this is a thin pointer, or `None` if this is a wide pointer.
+    #[inline(always)]
     pub fn thin(self) -> Option<PtrConst<'mem>> {
         match self {
             GenericPtr::Thin(ptr) => Some(ptr),
@@ -102,6 +103,7 @@ impl<'mem> GenericPtr<'mem> {
     ///
     /// Offset must be within the bounds of the allocated memory,
     /// and the resulting pointer must be properly aligned.
+    #[inline(always)]
     pub unsafe fn field(self, offset: usize) -> GenericPtr<'mem> {
         match self {
             GenericPtr::Thin(ptr) => GenericPtr::Thin(unsafe { ptr.field(offset) }),
