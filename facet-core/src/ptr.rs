@@ -369,7 +369,7 @@ impl<'mem> PtrMut<'mem> {
 #[repr(C)]
 /// Wide pointer (fat pointer) structure holding a data pointer and metadata (for unsized types).
 struct PtrWide {
-    ptr: *mut (),
+    ptr: NonNull<u8>,
     metadata: usize,
 }
 
@@ -439,7 +439,7 @@ impl<'mem> PtrConstWide<'mem> {
     /// Returns the underlying data pointer as a pointer to `u8` (the address of the object).
     #[inline]
     pub fn as_byte_ptr(self) -> *const u8 {
-        self.ptr.ptr.cast::<u8>()
+        self.ptr.ptr.as_ptr()
     }
 
     /// Borrows the underlying object as a reference of type `T`.
