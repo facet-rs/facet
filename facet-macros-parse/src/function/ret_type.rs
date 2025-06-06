@@ -1,6 +1,4 @@
 use crate::VerbatimUntil;
-#[cfg(test)]
-use proc_macro2::TokenStream;
 use unsynn::*;
 
 unsynn! {

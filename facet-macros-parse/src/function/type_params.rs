@@ -1,4 +1,3 @@
-use proc_macro2::TokenStream;
 use unsynn::*;
 
 // Re-use the generics parser

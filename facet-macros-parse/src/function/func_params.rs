@@ -1,5 +1,4 @@
 use crate::VerbatimUntil;
-use proc_macro2::TokenStream;
 use unsynn::*;
 
 unsynn! {
