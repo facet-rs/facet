@@ -1,7 +1,7 @@
 use facet_macros_parse::{ToTokens, *};
 use quote::quote;
 
-use crate::{LifetimeName, RenameRule, process_enum, process_struct};
+use crate::{LifetimeName, process_enum, process_struct};
 
 pub fn facet_macros(input: TokenStream) -> TokenStream {
     let mut i = input.to_token_iter();
@@ -21,18 +21,18 @@ pub fn facet_macros(input: TokenStream) -> TokenStream {
     }
 }
 
-/// Generate a static declaration that exports the crate
-pub(crate) fn generate_static_decl(type_name: &Ident) -> TokenStream {
-    let type_name_str = type_name.to_string();
-    let screaming_snake_name = RenameRule::ScreamingSnakeCase.apply(&type_name_str);
+// /// Generate a static declaration that exports the crate
+// pub(crate) fn generate_static_decl(type_name: &Ident) -> TokenStream {
+//     let type_name_str = type_name.to_string();
+//     let screaming_snake_name = RenameRule::ScreamingSnakeCase.apply(&type_name_str);
 
-    let static_name_ident = quote::format_ident!("{}_SHAPE", screaming_snake_name);
+//     let static_name_ident = quote::format_ident!("{}_SHAPE", screaming_snake_name);
 
-    quote! {
-        #[used]
-        static #static_name_ident: &'static ::facet::Shape = <#type_name as ::facet::Facet>::SHAPE;
-    }
-}
+//     quote! {
+//         #[used]
+//         static #static_name_ident: &'static ::facet::Shape = <#type_name as ::facet::Facet>::SHAPE;
+//     }
+// }
 
 pub(crate) fn build_where_clauses(
     where_clauses: Option<&WhereClauses>,
