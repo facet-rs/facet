@@ -220,7 +220,7 @@ Other data formats (protobuf? postcard?) would also probably benefit from additi
 
 ### Better JSON schemas
 
-facet gives you access to doc comments, so generating JSON-scheams
+facet gives you access to doc comments, so generating JSON-schemas
 
 ### Derive `Error`
 
