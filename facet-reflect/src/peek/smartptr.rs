@@ -28,7 +28,7 @@ impl<'mem, 'facet, 'shape> PeekSmartPointer<'mem, 'facet, 'shape> {
         let pointee_shape = self.def.pointee()?;
 
         // SAFETY: We have a valid smart pointer and borrow_fn is provided by the vtable
-        let inner_ptr = unsafe { borrow_fn(self.value.data) };
+        let inner_ptr = unsafe { borrow_fn(self.value.data.thin().unwrap()) };
 
         // SAFETY: The borrow_fn returns a valid pointer to the inner value with the correct shape
         let inner_peek = unsafe { Peek::unchecked_new(inner_ptr, pointee_shape) };

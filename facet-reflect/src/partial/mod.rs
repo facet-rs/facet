@@ -2298,7 +2298,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
 
         // Safety: This is a safe wrapper around set_shape
         // The peek guarantees the source data is valid for its shape
-        unsafe { self.set_shape(src_ptr, src_shape) }
+        unsafe { self.set_shape(src_ptr.thin().unwrap(), src_shape) }
     }
 
     /// Copy a field from a struct's default value (safe wrapper for deserialization)

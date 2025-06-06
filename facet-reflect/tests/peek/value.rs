@@ -19,7 +19,7 @@ fn test_peek_value_twoints() {
     let h1 = h.finish();
 
     let mut h = DefaultHasher::new();
-    av.hash(&mut h);
+    av.hash(&mut h).unwrap();
     let h2 = h.finish();
 
     assert_eq!(h1, h2);

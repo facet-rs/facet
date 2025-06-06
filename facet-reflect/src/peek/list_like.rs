@@ -121,8 +121,8 @@ impl<'mem, 'facet, 'shape> PeekListLike<'mem, 'facet, 'shape> {
     /// Creates a new peek list
     pub fn new(value: Peek<'mem, 'facet, 'shape>, def: ListLikeDef<'shape>) -> Self {
         let len = match def {
-            ListLikeDef::List(v) => unsafe { (v.vtable.len)(value.data()) },
-            ListLikeDef::Slice(v) => unsafe { (v.vtable.len)(value.data()) },
+            ListLikeDef::List(v) => unsafe { (v.vtable.len)(value.data().thin().unwrap()) },
+            ListLikeDef::Slice(v) => unsafe { (v.vtable.len)(value.data().thin().unwrap()) },
             ListLikeDef::Array(v) => v.n,
         };
         Self { value, def, len }
@@ -145,7 +145,7 @@ impl<'mem, 'facet, 'shape> PeekListLike<'mem, 'facet, 'shape> {
         let as_ptr = match self.def {
             ListLikeDef::List(def) => {
                 // Call get from the list's vtable directly if available
-                let item = unsafe { (def.vtable.get)(self.value.data(), index)? };
+                let item = unsafe { (def.vtable.get)(self.value.data().thin().unwrap(), index)? };
                 return Some(unsafe { Peek::unchecked_new(item, self.def.t()) });
             }
             ListLikeDef::Array(def) => def.vtable.as_ptr,
@@ -157,7 +157,7 @@ impl<'mem, 'facet, 'shape> PeekListLike<'mem, 'facet, 'shape> {
         }
 
         // Get the base pointer of the array
-        let base_ptr = unsafe { as_ptr(self.value.data()) };
+        let base_ptr = unsafe { as_ptr(self.value.data().thin().unwrap()) };
 
         // Get the layout of the element type
         let elem_layout = match self.def.t().layout {
@@ -184,7 +184,7 @@ impl<'mem, 'facet, 'shape> PeekListLike<'mem, 'facet, 'shape> {
 
         let state = match (as_ptr_fn, iter_vtable) {
             (Some(as_ptr_fn), _) => {
-                let data = unsafe { as_ptr_fn(self.value.data()) };
+                let data = unsafe { as_ptr_fn(self.value.data().thin().unwrap()) };
                 let layout = self
                     .def
                     .t()
@@ -196,7 +196,8 @@ impl<'mem, 'facet, 'shape> PeekListLike<'mem, 'facet, 'shape> {
                 PeekListLikeIterState::Ptr { data, stride }
             }
             (None, Some(vtable)) => {
-                let iter = unsafe { (vtable.init_with_value.unwrap())(self.value.data()) };
+                let iter =
+                    unsafe { (vtable.init_with_value.unwrap())(self.value.data().thin().unwrap()) };
                 PeekListLikeIterState::Iter { iter, vtable }
             }
             (None, None) => unreachable!(),

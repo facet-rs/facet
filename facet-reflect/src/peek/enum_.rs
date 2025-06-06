@@ -19,11 +19,7 @@ pub struct PeekEnum<'mem, 'facet, 'shape> {
 
 impl core::fmt::Debug for PeekEnum<'_, '_, '_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if let Some(debug_fn) = self.vtable().sized().and_then(|v| (v.debug)()) {
-            unsafe { debug_fn(self.data, f) }
-        } else {
-            write!(f, "⟨{}⟩", self.shape)
-        }
+        write!(f, "{:?}", self.value)
     }
 }
 
@@ -90,7 +86,11 @@ impl<'mem, 'facet, 'shape> PeekEnum<'mem, 'facet, 'shape> {
     pub fn discriminant(self) -> i64 {
         // Read the discriminant based on the enum representation
         unsafe {
-            let data = self.value.data();
+            let data = self
+                .value
+                .data()
+                .thin()
+                .expect("discriminant must be Sized");
             match self.ty.enum_repr {
                 EnumRepr::U8 => data.read::<u8>() as i64,
                 EnumRepr::U16 => data.read::<u16>() as i64,
@@ -122,7 +122,7 @@ impl<'mem, 'facet, 'shape> PeekEnum<'mem, 'facet, 'shape> {
                 .sized_layout()
                 .expect("Unsized enums in NPO repr are unsupported");
 
-            let data = self.value.data();
+            let data = self.value.data().thin().unwrap();
             let slice = unsafe { core::slice::from_raw_parts(data.as_byte_ptr(), layout.size()) };
             let all_zero = slice.iter().all(|v| *v == 0);
 
@@ -213,7 +213,13 @@ impl<'mem, 'facet, 'shape> PeekEnum<'mem, 'facet, 'shape> {
         }
 
         let field = &fields[index];
-        let field_data = unsafe { self.value.data().field(field.offset) };
+        let field_data = unsafe {
+            self.value
+                .data()
+                .thin()
+                .ok_or(VariantError::Unsized)?
+                .field(field.offset)
+        };
         Ok(Some(unsafe {
             Peek::unchecked_new(field_data, field.shape())
         }))
@@ -253,20 +259,43 @@ impl<'mem, 'facet, 'shape> HasFields<'mem, 'facet, 'shape> for PeekEnum<'mem, 'f
 pub enum VariantError {
     /// Error indicating that enum internals are opaque and cannot be determined
     OpaqueInternals,
+
+    /// Error indicating the enum value is unsized and cannot be accessed by field offset.
+    Unsized,
 }
 
 impl core::fmt::Display for VariantError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "enum layout is opaque, cannot determine variant")
+        match self {
+            VariantError::OpaqueInternals => {
+                write!(f, "enum layout is opaque, cannot determine variant")
+            }
+            VariantError::Unsized => {
+                write!(
+                    f,
+                    "enum value is unsized and cannot be accessed by field offset"
+                )
+            }
+        }
     }
 }
 
 impl core::fmt::Debug for VariantError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "VariantError::OpaqueInternals: enum layout is opaque, cannot determine variant"
-        )
+        match self {
+            VariantError::OpaqueInternals => {
+                write!(
+                    f,
+                    "VariantError::OpaqueInternals: enum layout is opaque, cannot determine variant"
+                )
+            }
+            VariantError::Unsized => {
+                write!(
+                    f,
+                    "VariantError::Unsized: enum value is unsized and cannot be accessed by field offset"
+                )
+            }
+        }
     }
 }
 
