@@ -26,7 +26,7 @@ pub fn parse_return_type(tokens: Vec<TokenTree>) -> TokenStream {
         Ok(ret_type) => ret_type.return_type.to_token_stream(),
         Err(_) => {
             // No return type found, default to unit type
-            quote::quote! { () }
+            quote! { () }
         }
     }
 }
@@ -34,7 +34,6 @@ pub fn parse_return_type(tokens: Vec<TokenTree>) -> TokenStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quote::quote;
 
     #[test]
     fn test_no_return_type() {

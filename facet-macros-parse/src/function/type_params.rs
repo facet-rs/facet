@@ -10,7 +10,7 @@ pub fn extract_type_params(generics_ts: TokenStream) -> TokenStream {
 
     match it.parse::<GenericParams>() {
         Ok(generics) => {
-            let type_param_names: Vec<_> = generics
+            let type_param_names: CommaDelimitedVec<_> = generics
                 .params
                 .0
                 .into_iter()
@@ -18,17 +18,16 @@ pub fn extract_type_params(generics_ts: TokenStream) -> TokenStream {
                 .collect();
 
             if type_param_names.is_empty() {
-                quote::quote! { () }
+                quote! { () }
             } else if type_param_names.len() == 1 {
-                let param = &type_param_names[0];
-                quote::quote! { #param }
+                quote! { #type_param_names }
             } else {
-                quote::quote! { ( #( #type_param_names ),* ) }
+                quote! { ( #type_param_names ) }
             }
         }
         Err(_) => {
             // Fallback to unit type if parsing fails
-            quote::quote! { () }
+            quote! { () }
         }
     }
 }
@@ -36,7 +35,6 @@ pub fn extract_type_params(generics_ts: TokenStream) -> TokenStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quote::quote;
 
     #[test]
     fn test_single_type_param() {

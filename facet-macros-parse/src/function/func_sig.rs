@@ -99,7 +99,7 @@ pub fn parse_function_signature(input: TokenStream) -> FunctionSignature {
             let return_type = sig
                 .return_type
                 .map(|rt| rt.return_type.to_token_stream())
-                .unwrap_or_else(|| quote::quote! { () });
+                .unwrap_or_else(|| quote! { () });
 
             // Extract body
             let body = sig.body.to_token_stream();
@@ -125,7 +125,6 @@ pub fn parse_function_signature(input: TokenStream) -> FunctionSignature {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quote::quote;
 
     #[test]
     fn test_simple_function() {

@@ -39,7 +39,6 @@ pub fn parse_generics_for_test(input: TokenStream) -> Option<GenericParams> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quote::quote;
 
     #[test]
     fn test_no_generics() {

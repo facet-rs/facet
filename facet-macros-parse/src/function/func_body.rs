@@ -27,7 +27,7 @@ pub fn parse_function_body(tokens: &[TokenTree]) -> TokenStream {
         Ok(func_with_body) => func_with_body.body.to_token_stream(),
         Err(_) => {
             // No function body found, return empty braces
-            quote::quote! { {} }
+            quote! { {} }
         }
     }
 }
@@ -35,7 +35,6 @@ pub fn parse_function_body(tokens: &[TokenTree]) -> TokenStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quote::quote;
 
     #[test]
     fn test_simple_function_body() {

@@ -600,7 +600,6 @@ impl Struct {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quote::quote;
 
     #[test]
     fn test_struct_with_field_doc_comments() {
