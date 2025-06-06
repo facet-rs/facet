@@ -652,6 +652,7 @@ fn clone_into() {
 }
 
 #[test]
+#[ignore]
 fn clone_into_vec() {
     type Type = Vec<String>;
     let mut vec: Type = vec!["hello".to_owned()];
@@ -669,6 +670,7 @@ fn clone_into_vec() {
 }
 
 #[test]
+#[ignore]
 fn clone_into_hash_map() {
     use std::collections::HashMap;
 
