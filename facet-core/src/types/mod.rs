@@ -428,7 +428,7 @@ impl core::fmt::Debug for Shape<'_> {
 
             // Omit the `inner` field if this shape is not a transparent wrapper.
             if let Some(inner) = self.inner {
-                field!("inner", "{:?}", inner);
+                field!("inner", "{:?}", (inner)());
             }
 
             field!("ty", "{:?}", self.ty);
