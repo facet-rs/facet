@@ -376,7 +376,7 @@ impl core::fmt::Debug for Shape<'_> {
         // developers will get a compiler error in this function, reminding them
         // to carefully consider whether it should be shown when debug formatting.
         let Self {
-            id: _,
+            id: _, // omit by default
             layout: _,
             vtable: _, // omit by default
             ty: _,
@@ -411,8 +411,6 @@ impl core::fmt::Debug for Shape<'_> {
                     debug_struct.field($field, &format_args!($($fmt_args)*));
                 }};
             }
-
-            field!("id", "{:?}", self.id);
 
             field!("layout", "{:?}", self.layout);
 
