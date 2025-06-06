@@ -378,7 +378,7 @@ impl core::fmt::Debug for Shape<'_> {
         let Self {
             id: _,
             layout: _,
-            vtable: _,
+            vtable: _, // omit by default
             ty: _,
             def: _,
             type_identifier: _,
@@ -393,7 +393,7 @@ impl core::fmt::Debug for Shape<'_> {
             f.debug_struct("Shape")
                 .field("id", &self.id)
                 .field("layout", &self.layout)
-                .field("vtable", &self.vtable)
+                .field("vtable", &format_args!("ValueVTable {{ .. }}"))
                 .field("ty", &self.ty)
                 .field("def", &self.def)
                 .field("type_identifier", &self.type_identifier)
@@ -416,8 +416,6 @@ impl core::fmt::Debug for Shape<'_> {
 
             field!("layout", "{:?}", self.layout);
 
-            field!("vtable", "{:?}", self.vtable);
-
             field!("ty", "{:?}", self.ty);
 
             field!("def", "{:?}", self.def);
@@ -434,7 +432,7 @@ impl core::fmt::Debug for Shape<'_> {
 
             field!("inner", "{:?}", self.inner);
 
-            debug_struct.finish()
+            debug_struct.finish_non_exhaustive()
         }
     }
 }
