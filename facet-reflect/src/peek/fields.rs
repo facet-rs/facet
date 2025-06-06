@@ -1,6 +1,6 @@
 use core::ops::Range;
 
-use facet_core::{Field, FieldFlags};
+use facet_core::{Field, FieldFlags, Type, UserType};
 
 use crate::Peek;
 use alloc::{vec, vec::Vec};
@@ -170,34 +170,41 @@ impl<'mem, 'facet, 'shape> Iterator for FieldsForSerializeIter<'mem, 'facet, 'sh
             }
 
             if field.flags.contains(FieldFlags::FLATTEN) && !field.flattened {
-                if let Ok(struct_peek) = peek.into_struct() {
-                    self.stack.push(FieldIter::new_struct(struct_peek))
-                } else if let Ok(enum_peek) = peek.into_enum() {
-                    // normally we'd serialize to something like:
-                    //
-                    //   {
-                    //     "field_on_struct": {
-                    //       "VariantName": { "field_on_variant": "foo" }
-                    //     }
-                    //   }
-                    //
-                    // But since `field_on_struct` is flattened, instead we do:
-                    //
-                    //   {
-                    //     "VariantName": { "field_on_variant": "foo" }
-                    //   }
-                    field.name = enum_peek
-                        .active_variant()
-                        .expect("Failed to get active variant")
-                        .name;
-                    field.flattened = true;
-                    self.stack.push(FieldIter {
-                        range: 0..1,
-                        state: FieldIterState::FlattenedEnum { field, value: peek },
-                    });
-                } else {
-                    // TODO: fail more gracefully
-                    panic!("cannot flatten a {}", field.shape())
+                match peek.shape.ty {
+                    Type::User(UserType::Struct(ty)) => {
+                        let struct_peek = PeekStruct { value: peek, ty };
+                        self.stack.push(FieldIter::new_struct(struct_peek))
+                    }
+                    Type::User(UserType::Enum(ty)) => {
+                        // normally we'd serialize to something like:
+                        //
+                        //   {
+                        //     "field_on_struct": {
+                        //       "VariantName": { "field_on_variant": "foo" }
+                        //     }
+                        //   }
+                        //
+                        // But since `field_on_struct` is flattened, instead we do:
+                        //
+                        //   {
+                        //     "VariantName": { "field_on_variant": "foo" }
+                        //   }
+                        let enum_peek = PeekEnum { value: peek, ty };
+                        field.name = enum_peek
+                            .active_variant()
+                            .expect("Failed to get active variant")
+                            .name;
+                        field.flattened = true;
+                        self.stack.push(FieldIter {
+                            range: 0..1,
+                            state: FieldIterState::FlattenedEnum { field, value: peek },
+                        });
+                    }
+
+                    _ => {
+                        // TODO: fail more gracefully
+                        panic!("cannot flatten a {}", field.shape())
+                    }
                 }
             } else {
                 return Some((field, peek));
