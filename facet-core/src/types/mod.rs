@@ -416,7 +416,10 @@ impl core::fmt::Debug for Shape<'_> {
 
             field!("ty", "{:?}", self.ty);
 
-            field!("def", "{:?}", self.def);
+            // If `def` is `Undefined`, the information in `ty` would be more useful.
+            if !matches!(self.def, Def::Undefined) {
+                field!("def", "{:?}", self.def);
+            }
 
             field!("type_identifier", "{:?}", self.type_identifier);
 
