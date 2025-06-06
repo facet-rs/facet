@@ -392,7 +392,7 @@ impl core::fmt::Debug for Shape<'_> {
         if f.alternate() {
             f.debug_struct("Shape")
                 .field("id", &self.id)
-                .field("layout", &self.layout)
+                .field("layout", &format_args!("{:?}", self.layout))
                 .field("vtable", &format_args!("ValueVTable {{ .. }}"))
                 .field("ty", &self.ty)
                 .field("def", &self.def)
