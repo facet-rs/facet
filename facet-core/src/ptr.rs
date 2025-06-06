@@ -19,6 +19,7 @@ impl<'mem> PtrUninit<'mem> {
     /// - The source pointer must be valid for reads of `len` bytes
     /// - This pointer must be valid for writes of `len` bytes and properly aligned
     /// - The regions may not overlap
+    #[inline]
     pub unsafe fn copy_from<'src, 'shape>(
         self,
         src: PtrConst<'src>,
@@ -38,6 +39,7 @@ impl<'mem> PtrUninit<'mem> {
     /// Create a new opaque pointer from a mutable pointer
     ///
     /// This is safe because it's generic over T
+    #[inline]
     pub fn new<T>(ptr: *mut T) -> Self {
         Self(ptr as *mut u8, PhantomData)
     }
@@ -47,6 +49,7 @@ impl<'mem> PtrUninit<'mem> {
     /// The pointer will point to the potentially uninitialized contents
     ///
     /// This is safe because it's generic over T
+    #[inline]
     pub fn from_maybe_uninit<T>(borrow: &'mem mut core::mem::MaybeUninit<T>) -> Self {
         Self(borrow.as_mut_ptr() as *mut u8, PhantomData)
     }
@@ -56,6 +59,7 @@ impl<'mem> PtrUninit<'mem> {
     /// # Safety
     ///
     /// The pointer must actually be pointing to initialized memory of the correct type.
+    #[inline]
     pub unsafe fn assume_init(self) -> PtrMut<'mem> {
         let ptr = unsafe { NonNull::new_unchecked(self.0) };
         PtrMut(ptr, PhantomData)
@@ -67,6 +71,7 @@ impl<'mem> PtrUninit<'mem> {
     ///
     /// The pointer must be properly aligned for T and point to allocated memory
     /// that can be safely written to.
+    #[inline]
     pub unsafe fn put<T>(self, value: T) -> PtrMut<'mem> {
         unsafe {
             core::ptr::write(self.0 as *mut T, value);
@@ -75,11 +80,13 @@ impl<'mem> PtrUninit<'mem> {
     }
 
     /// Returns the underlying raw pointer as a byte pointer
+    #[inline]
     pub fn as_mut_byte_ptr(self) -> *mut u8 {
         self.0
     }
 
     /// Returns the underlying raw pointer as a const byte pointer
+    #[inline]
     pub fn as_byte_ptr(self) -> *const u8 {
         self.0
     }
@@ -101,6 +108,7 @@ impl<'mem> PtrUninit<'mem> {
     /// - Within bounds of the allocated object
     /// - Properly aligned for the type being pointed to
     /// - Point to initialized data of the correct type
+    #[inline]
     pub unsafe fn field_init_at(self, offset: usize) -> PtrMut<'mem> {
         PtrMut(
             unsafe { NonNull::new_unchecked(self.0.add(offset)) },
@@ -124,6 +132,7 @@ impl<'mem, T> TypedPtrUninit<'mem, T> {
     /// Create a new opaque pointer from a mutable pointer
     ///
     /// This is safe because it's generic over T
+    #[inline]
     pub fn new(ptr: *mut T) -> Self {
         Self(ptr, PhantomData)
     }
@@ -134,6 +143,7 @@ impl<'mem, T> TypedPtrUninit<'mem, T> {
     ///
     /// The pointer must be properly aligned for T and point to allocated memory
     /// that can be safely written to.
+    #[inline]
     pub unsafe fn put(self, value: T) -> &'mem mut T {
         unsafe {
             core::ptr::write(self.0, value);
@@ -145,6 +155,7 @@ impl<'mem, T> TypedPtrUninit<'mem, T> {
     /// # Safety
     ///
     /// The pointer must actually be pointing to initialized memory of the correct type.
+    #[inline]
     pub unsafe fn assume_init(self) -> &'mem mut T {
         unsafe { &mut *self.0 }
     }
@@ -154,6 +165,7 @@ impl<'mem, T> TypedPtrUninit<'mem, T> {
     /// # Safety
     ///
     /// Offset is within the bounds of the allocated memory and `U` is the correct type for the field.
+    #[inline]
     pub unsafe fn field_uninit_at<U>(&mut self, offset: usize) -> TypedPtrUninit<'mem, U> {
         TypedPtrUninit(unsafe { self.0.byte_add(offset).cast() }, PhantomData)
     }
@@ -178,11 +190,13 @@ impl<'mem> PtrConst<'mem> {
     /// of the correct type, and be valid for lifetime `'mem`.
     ///
     /// It's encouraged to take the address of something with `&raw const x`, rather than `&x`
+    #[inline]
     pub const fn new<T>(ptr: *const T) -> Self {
         unsafe { Self(NonNull::new_unchecked(ptr as *mut u8), PhantomData) }
     }
 
     /// Gets the underlying raw pointer as a byte pointer
+    #[inline]
     pub const fn as_byte_ptr(self) -> *const u8 {
         self.0.as_ptr()
     }
@@ -192,6 +206,7 @@ impl<'mem> PtrConst<'mem> {
     /// # Safety
     ///
     /// Must be called with the original type T that was used to create this pointer
+    #[inline]
     pub const unsafe fn as_ptr<T>(self) -> *const T {
         if core::mem::size_of::<*const T>() == core::mem::size_of::<*const u8>() {
             unsafe { core::mem::transmute_copy(&(self.0.as_ptr())) }
@@ -205,6 +220,7 @@ impl<'mem> PtrConst<'mem> {
     /// # Safety
     ///
     /// `T` must be the _actual_ underlying type. You're downcasting with no guardrails.
+    #[inline]
     pub const unsafe fn get<'borrow: 'mem, T>(self) -> &'borrow T {
         // TODO: rename to `get`, or something else? it's technically a borrow...
         unsafe { &*(self.0.as_ptr() as *const T) }
@@ -216,6 +232,7 @@ impl<'mem> PtrConst<'mem> {
     ///
     /// Offset must be within the bounds of the allocated memory,
     /// and the resulting pointer must be properly aligned.
+    #[inline]
     pub const unsafe fn field(self, offset: usize) -> PtrConst<'mem> {
         PtrConst(
             unsafe { NonNull::new_unchecked(self.0.as_ptr().byte_add(offset)) },
@@ -229,6 +246,7 @@ impl<'mem> PtrConst<'mem> {
     ///
     /// `T` must be the actual underlying type of the pointed-to memory.
     /// The memory must be properly initialized and aligned for type `T`.
+    #[inline]
     pub const unsafe fn read<T>(self) -> T {
         unsafe { core::ptr::read(self.as_ptr()) }
     }
@@ -248,6 +266,7 @@ impl<'mem> PtrMut<'mem> {
     /// of the correct type, and be valid for lifetime `'mem`.
     ///
     /// It's encouraged to take the address of something with `&raw mut x`, rather than `&x`
+    #[inline]
     pub const fn new<T>(ptr: *mut T) -> Self {
         Self(
             unsafe { NonNull::new_unchecked(ptr as *mut u8) },
@@ -256,11 +275,13 @@ impl<'mem> PtrMut<'mem> {
     }
 
     /// Gets the underlying raw pointer
+    #[inline]
     pub const fn as_byte_ptr(self) -> *const u8 {
         self.0.as_ptr()
     }
 
     /// Gets the underlying raw pointer as mutable
+    #[inline]
     pub const fn as_mut_byte_ptr(self) -> *mut u8 {
         self.0.as_ptr()
     }
@@ -270,6 +291,7 @@ impl<'mem> PtrMut<'mem> {
     /// # Safety
     ///
     /// Must be called with the original type T that was used to create this pointer
+    #[inline]
     pub const unsafe fn as_ptr<T>(self) -> *const T {
         self.0.as_ptr() as *const T
     }
@@ -279,6 +301,7 @@ impl<'mem> PtrMut<'mem> {
     /// # Safety
     ///
     /// `T` must be the _actual_ underlying type. You're downcasting with no guardrails.
+    #[inline]
     pub const unsafe fn as_mut<'borrow: 'mem, T>(self) -> &'borrow mut T {
         unsafe { &mut *(self.0.as_ptr() as *mut T) }
     }
@@ -292,11 +315,13 @@ impl<'mem> PtrMut<'mem> {
     /// calling as_mut is UB.
     ///
     /// Basically this is UB land. Careful.
+    #[inline]
     pub const unsafe fn get<'borrow: 'mem, T>(self) -> &'borrow T {
         unsafe { &*(self.0.as_ptr() as *const T) }
     }
 
     /// Make a const ptr out of this mut ptr
+    #[inline]
     pub const fn as_const<'borrow: 'mem>(self) -> PtrConst<'borrow> {
         PtrConst(self.0, PhantomData)
     }
@@ -307,6 +332,7 @@ impl<'mem> PtrMut<'mem> {
     ///
     /// `T` must be the actual underlying type of the pointed-to memory.
     /// The memory must be properly initialized and aligned for type `T`.
+    #[inline]
     pub const unsafe fn read<T>(self) -> T {
         unsafe { core::ptr::read(self.as_mut()) }
     }
@@ -319,6 +345,7 @@ impl<'mem> PtrMut<'mem> {
     /// The memory must be properly initialized and aligned for type `T`.
     /// After calling this function, the memory should not be accessed again
     /// until it is properly reinitialized.
+    #[inline]
     pub unsafe fn drop_in_place<T>(self) -> PtrUninit<'mem> {
         unsafe { core::ptr::drop_in_place(self.as_mut::<T>()) }
         PtrUninit(self.0.as_ptr(), PhantomData)
@@ -332,6 +359,7 @@ impl<'mem> PtrMut<'mem> {
     ///   that can be safely written to.
     /// - T must be the actual type of the object being pointed to
     /// - The memory must already be initialized to a valid T value
+    #[inline]
     pub unsafe fn replace<T>(self, value: T) -> Self {
         unsafe { self.drop_in_place::<T>().put(value) }
     }
@@ -400,6 +428,7 @@ impl<'mem> PtrConstWide<'mem> {
     /// # Panics
     ///
     /// Panics if a thin pointer is provided where a wide pointer is expected.
+    #[inline]
     pub const fn new<T: ?Sized>(ptr: *const T) -> Self {
         Self {
             ptr: PtrWide::from_ptr(ptr.cast_mut()),
@@ -408,6 +437,7 @@ impl<'mem> PtrConstWide<'mem> {
     }
 
     /// Returns the underlying data pointer as a pointer to `u8` (the address of the object).
+    #[inline]
     pub fn as_byte_ptr(self) -> *const u8 {
         self.ptr.ptr.cast::<u8>()
     }
@@ -419,6 +449,7 @@ impl<'mem> PtrConstWide<'mem> {
     /// - `T` must be the actual underlying (potentially unsized) type of the pointed-to memory.
     /// - The memory must remain valid and not be mutated while this reference exists.
     /// - The pointer must be correctly aligned and point to a valid, initialized value for type `T`.
+    #[inline]
     pub unsafe fn get<T: ?Sized>(self) -> &'mem T {
         unsafe { self.ptr.to_ptr::<T>().as_ref().unwrap() }
     }
@@ -445,6 +476,7 @@ impl<'mem> PtrMutWide<'mem> {
     /// # Panics
     ///
     /// Panics if a thin pointer is provided where a wide pointer is expected.
+    #[inline]
     pub const fn new<T: ?Sized>(ptr: *mut T) -> Self {
         Self {
             ptr: PtrWide::from_ptr(ptr),
