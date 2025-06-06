@@ -16,3 +16,6 @@ pub(crate) mod results;
 
 #[allow(unused)]
 pub use format::from_slice;
+
+#[allow(unused)]
+pub use format::from_std_args;

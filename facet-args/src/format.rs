@@ -29,6 +29,21 @@ where
     facet_deserialize::deserialize(args, Cli)
 }
 
+/// Parse command line arguments provided by std::env::args() into a Facet-compatible type
+pub fn from_std_args<'input, 'facet, 'shape, T: Facet<'facet>>()
+-> Result<T, DeserError<'input, 'shape>>
+where
+    'input: 'facet + 'shape,
+{
+    let args = std::env::args().skip(1).collect::<Vec<String>>();
+    let args_str: Vec<&'static str> = args
+        .into_iter()
+        .map(|s| Box::leak(s.into_boxed_str()) as &str)
+        .collect();
+
+    from_slice(Box::leak(args_str.into_boxed_slice()))
+}
+
 impl Format for Cli {
     type Input<'input> = [&'input str];
     type SpanType = Raw;
