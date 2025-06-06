@@ -59,6 +59,7 @@ impl<'a> From<PtrConstWide<'a>> for GenericPtr<'a> {
 }
 
 impl<'mem> GenericPtr<'mem> {
+    #[inline(always)]
     fn new<T: ?Sized>(ptr: *const T) -> Self {
         if size_of_val(&ptr) == size_of::<PtrConst>() {
             GenericPtr::Thin(PtrConst::new(ptr.cast::<()>()))
@@ -78,6 +79,7 @@ impl<'mem> GenericPtr<'mem> {
         }
     }
 
+    #[inline(always)]
     unsafe fn get<T: ?Sized>(self) -> &'mem T {
         match self {
             GenericPtr::Thin(ptr) => {
@@ -90,6 +92,7 @@ impl<'mem> GenericPtr<'mem> {
         }
     }
 
+    #[inline(always)]
     fn as_byte_ptr(self) -> *const u8 {
         match self {
             GenericPtr::Thin(ptr) => ptr.as_byte_ptr(),
