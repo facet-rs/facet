@@ -1,0 +1,11 @@
+[package]
+name = "ks-facet-json-read"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+facet-json = { version = "0.24.13", path = "../../facet-json" }
+ks-types = { version = "0.1.0", path = "../ks-types", features = ["facet"] }

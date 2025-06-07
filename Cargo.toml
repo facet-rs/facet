@@ -33,7 +33,7 @@ members = [
     "facet-jsonschema",
     "facet-deserialize",
     "facet-bench",
-    "facet-testhelpers-macros",
+    "facet-testhelpers-macros", "outside-workspace/ks-facet-json-read", "outside-workspace/ks-facet-json-write", "outside-workspace/ks-facet-pretty", "outside-workspace/ks-debug", "outside-workspace/ks-serde-json-read", "outside-workspace/ks-serde-json-write", "outside-workspace/ks-facet", "outside-workspace/ks-serde", "outside-workspace/ks-mock",
 ]
 exclude = ["outside-workspace"]
 resolver = "3"

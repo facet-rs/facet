@@ -1,0 +1,9 @@
+[package]
+name = "ks-serde-json-write"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
