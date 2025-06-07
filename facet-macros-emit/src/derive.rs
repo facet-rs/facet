@@ -130,8 +130,9 @@ pub(crate) fn generate_type_name_fn(
             let write_each = params.filter_map(|param| match &param.value {
                 // Lifetimes not shown by `std::any::type_name`, this is parity.
                 GenericParam::Lifetime { .. } => None,
-                // TODO: should const generics be displayed?
-                GenericParam::Const { .. } => None,
+                GenericParam::Const { name, .. } => Some(quote! {
+                    write!(f, "{:?}", #name)?;
+                }),
                 GenericParam::Type { name, .. } => Some(quote! {
                     <#name as ::facet::Facet>::SHAPE.vtable.type_name()(f, opts)?;
                 }),
