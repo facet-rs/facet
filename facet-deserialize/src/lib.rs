@@ -42,6 +42,10 @@ pub enum Scalar<'input> {
     I64(i64),
     /// 64-bit floating-point scalar.
     F64(f64),
+    /// 128-bit unsigned integer scalar.
+    U128(u128),
+    /// 128-bit signed integer scalar.
+    I128(i128),
     /// Boolean scalar.
     Bool(bool),
     /// Null scalar (e.g. for formats supporting explicit null).
@@ -108,6 +112,8 @@ impl fmt::Display for Scalar<'_> {
             Scalar::U64(val) => write!(f, "u64 {}", val),
             Scalar::I64(val) => write!(f, "i64 {}", val),
             Scalar::F64(val) => write!(f, "f64 {}", val),
+            Scalar::U128(val) => write!(f, "u128 {}", val),
+            Scalar::I128(val) => write!(f, "i128 {}", val),
             Scalar::Bool(val) => write!(f, "bool {}", val),
             Scalar::Null => write!(f, "null"),
         }
@@ -123,6 +129,8 @@ impl Outcome<'_> {
                     Scalar::U64(val) => Scalar::U64(val),
                     Scalar::I64(val) => Scalar::I64(val),
                     Scalar::F64(val) => Scalar::F64(val),
+                    Scalar::U128(val) => Scalar::U128(val),
+                    Scalar::I128(val) => Scalar::I128(val),
                     Scalar::Bool(val) => Scalar::Bool(val),
                     Scalar::Null => Scalar::Null,
                 };
@@ -848,6 +856,104 @@ impl NumericConvert for f64 {
     }
 }
 
+impl NumericConvert for u128 {
+    const TYPE_NAME: &'static str = "u128";
+
+    fn to_i8(self) -> Option<i8> {
+        self.try_into().ok()
+    }
+    fn to_i16(self) -> Option<i16> {
+        self.try_into().ok()
+    }
+    fn to_i32(self) -> Option<i32> {
+        self.try_into().ok()
+    }
+    fn to_i64(self) -> Option<i64> {
+        self.try_into().ok()
+    }
+    fn to_i128(self) -> Option<i128> {
+        Some(self as i128)
+    }
+    fn to_isize(self) -> Option<isize> {
+        self.try_into().ok()
+    }
+
+    fn to_u8(self) -> Option<u8> {
+        self.try_into().ok()
+    }
+    fn to_u16(self) -> Option<u16> {
+        self.try_into().ok()
+    }
+    fn to_u32(self) -> Option<u32> {
+        self.try_into().ok()
+    }
+    fn to_u64(self) -> Option<u64> {
+        self.try_into().ok()
+    }
+    fn to_u128(self) -> Option<u128> {
+        Some(self)
+    }
+    fn to_usize(self) -> Option<usize> {
+        self.try_into().ok()
+    }
+
+    fn to_f32(self) -> Option<f32> {
+        Some(self as f32)
+    }
+    fn to_f64(self) -> Option<f64> {
+        Some(self as f64)
+    }
+}
+
+impl NumericConvert for i128 {
+    const TYPE_NAME: &'static str = "i128";
+
+    fn to_i8(self) -> Option<i8> {
+        self.try_into().ok()
+    }
+    fn to_i16(self) -> Option<i16> {
+        self.try_into().ok()
+    }
+    fn to_i32(self) -> Option<i32> {
+        self.try_into().ok()
+    }
+    fn to_i64(self) -> Option<i64> {
+        self.try_into().ok()
+    }
+    fn to_i128(self) -> Option<i128> {
+        Some(self)
+    }
+    fn to_isize(self) -> Option<isize> {
+        self.try_into().ok()
+    }
+
+    fn to_u8(self) -> Option<u8> {
+        self.try_into().ok()
+    }
+    fn to_u16(self) -> Option<u16> {
+        self.try_into().ok()
+    }
+    fn to_u32(self) -> Option<u32> {
+        self.try_into().ok()
+    }
+    fn to_u64(self) -> Option<u64> {
+        self.try_into().ok()
+    }
+    fn to_u128(self) -> Option<u128> {
+        self.try_into().ok()
+    }
+    fn to_usize(self) -> Option<usize> {
+        self.try_into().ok()
+    }
+
+    fn to_f32(self) -> Option<f32> {
+        Some(self as f32)
+    }
+    fn to_f64(self) -> Option<f64> {
+        Some(self as f64)
+    }
+}
+
 #[doc(hidden)]
 /// Maintains the parsing state and context necessary to drive deserialization.
 ///
@@ -1391,6 +1497,12 @@ where
                 self.set_numeric_value(wip, value)?;
             }
             Scalar::F64(value) => {
+                self.set_numeric_value(wip, value)?;
+            }
+            Scalar::U128(value) => {
+                self.set_numeric_value(wip, value)?;
+            }
+            Scalar::I128(value) => {
                 self.set_numeric_value(wip, value)?;
             }
             Scalar::Bool(value) => {
