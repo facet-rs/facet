@@ -3,9 +3,12 @@ use clap::{Parser, Subcommand};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
+use std::collections::HashMap;
+use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Instant;
+use toml_edit::{Document, Item, Table, Value};
 
 #[derive(Parser)]
 #[command(name = "measure-bloat")]
@@ -114,10 +117,10 @@ struct BuildResult {
     variant: String,
     file_size: u64,
     text_section_size: u64,
-    build_time_ms: u128,
+    build_time_ms: u64,
     top_functions: Vec<BloatFunction>,
     top_crates: Vec<BloatCrate>,
-    llvm_lines: Option<u32>,
+    llvm_lines: LlvmLinesSummary,
 }
 
 fn main() -> Result<()> {
@@ -130,7 +133,14 @@ fn main() -> Result<()> {
             skip_serde,
             skip_main,
         } => run_comparison(output, skip_serde, skip_main),
-        Commands::Test { component, variant } => test_component(component, variant),
+        Commands::Test { component, variant } => {
+            // Test TOML transformation first
+            if component == "debug-toml" {
+                test_toml_transformation()?;
+                return Ok(());
+            }
+            test_component(component, variant)
+        }
     }
 }
 
@@ -237,16 +247,78 @@ measure-bloat plan
 }
 
 fn run_comparison(output: PathBuf, skip_serde: bool, skip_main: bool) -> Result<()> {
-    println!("🚧 Full comparison not yet implemented!");
-    println!("This will measure all targets across all variants");
+    println!("🚀 Starting full comparison...");
     println!("Output directory: {}", output.display());
     println!("Skip serde: {}", skip_serde);
     println!("Skip main: {}", skip_main);
 
-    // TODO: Implement the full comparison logic
-    // 1. Setup output directory
-    // 2. For each target, measure each variant
-    // 3. Generate comparison report
+    // Setup output directory
+    fs::create_dir_all(&output).context("Failed to create output directory")?;
+
+    // Define measurement targets
+    let targets = get_measurement_targets();
+
+    let mut all_results = Vec::new();
+
+    // Measure ks-facet with HEAD and main variants
+    let facet_target = &targets[0]; // ks-facet target
+    if !skip_main {
+        // Measure with both HEAD and main
+        for &variant in &["facet-pr", "facet-main"] {
+            println!("\n🔄 Measuring {} with {}", facet_target.name, variant);
+            setup_cargo_patches(variant)?;
+            match measure_target_complete(facet_target, variant) {
+                Ok(result) => {
+                    println!("✅ Measurement complete");
+                    all_results.push(result);
+                }
+                Err(e) => {
+                    println!("❌ Measurement failed: {}", e);
+                }
+            }
+            cleanup_cargo_patches()?;
+        }
+    } else {
+        // Measure only HEAD
+        let variant = "facet-pr";
+        println!("\n🔄 Measuring {} with {}", facet_target.name, variant);
+        setup_cargo_patches(variant)?;
+        match measure_target_complete(facet_target, variant) {
+            Ok(result) => {
+                println!("✅ Measurement complete");
+                all_results.push(result);
+            }
+            Err(e) => {
+                println!("❌ Measurement failed: {}", e);
+            }
+        }
+        cleanup_cargo_patches()?;
+    }
+
+    // Measure ks-serde if not skipped
+    if !skip_serde {
+        let serde_target = &targets[1]; // ks-serde target
+        let variant = "serde";
+        println!("\n🔄 Measuring {} with {}", serde_target.name, variant);
+        setup_cargo_patches(variant)?;
+        match measure_target_complete(serde_target, variant) {
+            Ok(result) => {
+                println!("✅ Measurement complete");
+                all_results.push(result);
+            }
+            Err(e) => {
+                println!("❌ Measurement failed: {}", e);
+            }
+        }
+        cleanup_cargo_patches()?;
+    }
+
+    // Generate comparison report
+    let report_path = output.join("comparison_report.md");
+    generate_comparison_report(&all_results, &report_path)?;
+
+    println!("\n🎉 Comparison complete!");
+    println!("📄 Report generated: {}", report_path.display());
 
     Ok(())
 }
@@ -257,13 +329,42 @@ fn test_component(component: String, variant: String) -> Result<()> {
         component, variant
     );
 
+    let targets = get_measurement_targets();
+
     match component.as_str() {
+        "ks-facet" => {
+            if variant == "facet-pr" || variant == "facet-main" {
+                setup_cargo_patches(&variant)?;
+                let result = measure_target(&targets[0], &variant);
+                cleanup_cargo_patches()?;
+                result
+            } else {
+                println!(
+                    "❌ Invalid variant '{}' for ks-facet. Use 'facet-pr' or 'facet-main'",
+                    variant
+                );
+                Ok(())
+            }
+        }
+        "ks-serde" => {
+            if variant == "serde" {
+                setup_cargo_patches(&variant)?;
+                let result = measure_target(&targets[1], &variant);
+                cleanup_cargo_patches()?;
+                result
+            } else {
+                println!("❌ Invalid variant '{}' for ks-serde. Use 'serde'", variant);
+                Ok(())
+            }
+        }
         "json-benchmark" => test_json_benchmark(&variant),
         "pretty-benchmark" => test_pretty_benchmark(&variant),
         "core-benchmark" => test_core_benchmark(&variant),
         _ => {
             println!("❌ Unknown component: {}", component);
-            println!("Available components: json-benchmark, pretty-benchmark, core-benchmark");
+            println!(
+                "Available components: ks-facet, ks-serde, json-benchmark, pretty-benchmark, core-benchmark"
+            );
             Ok(())
         }
     }
@@ -332,6 +433,354 @@ fn test_core_benchmark(variant: &str) -> Result<()> {
     measure_target(&target, variant)
 }
 
+fn get_measurement_targets() -> Vec<MeasurementTarget> {
+    vec![
+        // ks-facet target (measured with facet-pr and facet-main variants)
+        MeasurementTarget {
+            name: "ks-facet".to_string(),
+            facet_crates: vec![
+                "ks-facet".to_string(),
+                "ks-mock".to_string(),
+                "ks-types".to_string(),
+                "ks-facet-json-read".to_string(),
+                "ks-facet-json-write".to_string(),
+                "ks-facet-pretty".to_string(),
+            ],
+            serde_crates: vec![], // Not used for this target
+            binary_crate: "ks-facet".to_string(),
+        },
+        // ks-serde target (measured with serde variant)
+        MeasurementTarget {
+            name: "ks-serde".to_string(),
+            facet_crates: vec![], // Not used for this target
+            serde_crates: vec![
+                "ks-serde".to_string(),
+                "ks-mock".to_string(),
+                "ks-types".to_string(),
+                "ks-serde-json-read".to_string(),
+                "ks-serde-json-write".to_string(),
+                "ks-serde-pretty".to_string(),
+            ],
+            binary_crate: "ks-serde".to_string(),
+        },
+    ]
+}
+
+fn setup_cargo_patches(variant: &str) -> Result<()> {
+    match variant {
+        "facet-pr" => {
+            // No changes needed - use current state
+            println!("✅ Using current facet PR state (no changes needed)");
+        }
+        "facet-main" => {
+            // Modify Cargo.toml files to use git dependencies from main branch
+            modify_cargo_tomls_for_main_branch()?;
+            println!("✅ Modified Cargo.toml files for facet-main variant");
+        }
+        "serde" => {
+            // For serde variant, we'd need different Cargo.toml files
+            // For now, just note this needs implementation
+            println!("🚧 Serde variant setup not yet implemented");
+        }
+        _ => {
+            anyhow::bail!("Unknown variant: {}", variant);
+        }
+    }
+    Ok(())
+}
+
+fn modify_cargo_tomls_for_main_branch() -> Result<()> {
+    // Store original Cargo.toml files and replace facet dependencies with git refs
+    let crates_to_modify = vec![
+        "../ks-facet-json-read",
+        "../ks-facet-json-write",
+        "../ks-facet-pretty",
+        "../ks-mock",
+    ];
+
+    for crate_path in crates_to_modify {
+        let cargo_toml_path = PathBuf::from(crate_path).join("Cargo.toml");
+        let backup_path = PathBuf::from(crate_path).join("Cargo.toml.backup");
+
+        // Read original content
+        let original_content = fs::read_to_string(&cargo_toml_path)
+            .context(format!("Failed to read {}", cargo_toml_path.display()))?;
+
+        // Backup original
+        fs::write(&backup_path, &original_content).context("Failed to create backup")?;
+
+        // Replace local facet dependencies with git dependencies
+        let modified_content = replace_facet_deps_with_git(&original_content)?;
+
+        // Write modified content
+        fs::write(&cargo_toml_path, modified_content).context(format!(
+            "Failed to write modified {}",
+            cargo_toml_path.display()
+        ))?;
+    }
+
+    Ok(())
+}
+
+fn replace_facet_deps_with_git(content: &str) -> Result<String> {
+    let mut doc = content
+        .parse::<Document>()
+        .context("Failed to parse TOML")?;
+
+    println!("🔍 Original TOML content:\n{}", content);
+
+    // List of facet crates to replace
+    let facet_crates = vec![
+        "facet",
+        "facet-core",
+        "facet-reflect",
+        "facet-macros",
+        "facet-deserialize",
+        "facet-serialize",
+        "facet-json",
+        "facet-yaml",
+        "facet-pretty",
+    ];
+
+    // Check dependencies section
+    if let Some(deps) = doc
+        .get_mut("dependencies")
+        .and_then(|item| item.as_table_mut())
+    {
+        println!("🔍 Found dependencies section");
+        for crate_name in &facet_crates {
+            if let Some(dep) = deps.get_mut(crate_name) {
+                println!("🔍 Found dependency: {}", crate_name);
+                if let Some(dep_table) = dep.as_inline_table_mut() {
+                    // If it has a path dependency, replace with git
+                    if dep_table.contains_key("path") {
+                        println!("✅ Replacing inline table dependency: {}", crate_name);
+                        // Remove path and version, add git and branch
+                        dep_table.remove("path");
+                        dep_table.remove("version");
+                        dep_table.insert("git", Value::from("https://github.com/facet-rs/facet"));
+                        dep_table.insert("branch", Value::from("main"));
+                    }
+                } else if let Some(dep_table) = dep.as_table_mut() {
+                    // Handle table format dependencies
+                    if dep_table.contains_key("path") {
+                        println!("✅ Replacing table dependency: {}", crate_name);
+                        dep_table.remove("path");
+                        dep_table.remove("version");
+                        dep_table.insert(
+                            "git",
+                            Item::Value(Value::from("https://github.com/facet-rs/facet")),
+                        );
+                        dep_table.insert("branch", Item::Value(Value::from("main")));
+                    }
+                }
+            }
+        }
+    }
+
+    // Check dev-dependencies section
+    if let Some(deps) = doc
+        .get_mut("dev-dependencies")
+        .and_then(|item| item.as_table_mut())
+    {
+        for crate_name in &facet_crates {
+            if let Some(dep) = deps.get_mut(crate_name) {
+                if let Some(dep_table) = dep.as_inline_table_mut() {
+                    if dep_table.contains_key("path") {
+                        dep_table.remove("path");
+                        dep_table.remove("version");
+                        dep_table.insert("git", Value::from("https://github.com/facet-rs/facet"));
+                        dep_table.insert("branch", Value::from("main"));
+                    }
+                } else if let Some(dep_table) = dep.as_table_mut() {
+                    if dep_table.contains_key("path") {
+                        dep_table.remove("path");
+                        dep_table.remove("version");
+                        dep_table.insert(
+                            "git",
+                            Item::Value(Value::from("https://github.com/facet-rs/facet")),
+                        );
+                        dep_table.insert("branch", Item::Value(Value::from("main")));
+                    }
+                }
+            }
+        }
+    }
+
+    let result = doc.to_string();
+    println!("🔍 Modified TOML content:\n{}", result);
+    Ok(result)
+}
+
+fn test_toml_transformation() -> Result<()> {
+    let test_toml = r#"[package]
+name = "ks-facet-json-read"
+version = "0.1.0"
+
+[dependencies]
+facet-json = { version = "0.24.13", path = "../../facet-json" }
+ks-types = { version = "0.1.0", path = "../ks-types", features = ["facet"] }
+"#;
+
+    println!("🧪 Testing TOML transformation");
+    println!("Original:\n{}", test_toml);
+
+    let result = replace_facet_deps_with_git(test_toml)?;
+    println!("Transformed:\n{}", result);
+
+    Ok(())
+}
+
+fn cleanup_cargo_patches() -> Result<()> {
+    // Restore original Cargo.toml files from backups
+    let crates_to_restore = vec![
+        "../ks-facet-json-read",
+        "../ks-facet-json-write",
+        "../ks-facet-pretty",
+        "../ks-mock",
+    ];
+
+    for crate_path in crates_to_restore {
+        let cargo_toml_path = PathBuf::from(crate_path).join("Cargo.toml");
+        let backup_path = PathBuf::from(crate_path).join("Cargo.toml.backup");
+
+        if backup_path.exists() {
+            // Restore original content
+            let original_content =
+                fs::read_to_string(&backup_path).context("Failed to read backup file")?;
+            fs::write(&cargo_toml_path, original_content)
+                .context("Failed to restore original Cargo.toml")?;
+
+            // Remove backup file
+            fs::remove_file(&backup_path).context("Failed to remove backup file")?;
+        }
+    }
+
+    println!("🧹 Cleaned up Cargo.toml modifications");
+    Ok(())
+}
+
+fn measure_target_complete(target: &MeasurementTarget, variant: &str) -> Result<BuildResult> {
+    let crates_to_use = match variant {
+        "serde" => &target.serde_crates,
+        "facet-pr" | "facet-main" => &target.facet_crates,
+        _ => {
+            anyhow::bail!("Unknown variant: {}", variant);
+        }
+    };
+
+    // Use the binary crate as the measurement target
+    let manifest_path = format!("../{}/Cargo.toml", target.binary_crate);
+
+    // Run measurements
+    let start = Instant::now();
+
+    // Measure binary size
+    let bloat_functions = run_cargo_bloat(&manifest_path, false)?;
+    let bloat_crates = run_cargo_bloat(&manifest_path, true)?;
+
+    // Measure LLVM lines
+    let llvm_lines = run_cargo_llvm_lines_for_crates(crates_to_use)?;
+
+    // Measure build time
+    let build_timing = measure_build_time(&manifest_path)?;
+
+    let measurement_duration = start.elapsed();
+    println!(
+        "⏱️  Total measurement time: {:.2}s",
+        measurement_duration.as_secs_f64()
+    );
+
+    Ok(BuildResult {
+        target: target.name.clone(),
+        variant: variant.to_string(),
+        file_size: bloat_functions.file_size,
+        text_section_size: bloat_functions.text_section_size,
+        build_time_ms: (build_timing.total_duration * 1000.0) as u64,
+        top_functions: bloat_functions.functions.into_iter().take(10).collect(),
+        top_crates: bloat_crates.crates.into_iter().take(5).collect(),
+        llvm_lines,
+    })
+}
+
+fn generate_comparison_report(results: &[BuildResult], report_path: &PathBuf) -> Result<()> {
+    let mut report = String::new();
+
+    report.push_str("# Facet vs Serde Comparison Report\n\n");
+    report.push_str(&format!(
+        "Generated on: {}\n\n",
+        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+    ));
+
+    // Group results by target
+    let mut targets: std::collections::HashMap<String, Vec<&BuildResult>> =
+        std::collections::HashMap::new();
+    for result in results {
+        targets
+            .entry(result.target.clone())
+            .or_default()
+            .push(result);
+    }
+
+    for (target_name, target_results) in targets {
+        report.push_str(&format!("## {}\n\n", target_name));
+
+        // Summary table
+        report.push_str("| Variant | File Size | Text Size | Build Time | LLVM Lines |\n");
+        report.push_str("|---------|-----------|-----------|------------|------------|\n");
+
+        for result in &target_results {
+            let total_llvm_lines: u32 = result
+                .llvm_lines
+                .crate_results
+                .iter()
+                .map(|(_, lines, _)| lines)
+                .sum();
+            report.push_str(&format!(
+                "| {} | {} | {} | {:.2}s | {} |\n",
+                result.variant,
+                format_bytes(result.file_size),
+                format_bytes(result.text_section_size),
+                result.build_time_ms as f64 / 1000.0,
+                format_number(total_llvm_lines)
+            ));
+        }
+
+        report.push_str("\n");
+
+        // Detailed breakdown for each variant
+        for result in &target_results {
+            report.push_str(&format!("### {} - {}\n\n", target_name, result.variant));
+
+            report.push_str("**Top Functions by Size:**\n");
+            for (i, func) in result.top_functions.iter().take(5).enumerate() {
+                report.push_str(&format!(
+                    "{}. `{}::{}` - {}\n",
+                    i + 1,
+                    func.crate_name,
+                    func.name,
+                    format_bytes(func.size)
+                ));
+            }
+
+            report.push_str("\n**LLVM Lines by Crate:**\n");
+            for (crate_name, lines, copies) in &result.llvm_lines.crate_results {
+                report.push_str(&format!(
+                    "- `{}`: {} lines ({} copies)\n",
+                    crate_name,
+                    format_number(*lines),
+                    format_number(*copies)
+                ));
+            }
+
+            report.push_str("\n");
+        }
+    }
+
+    fs::write(report_path, report).context("Failed to write comparison report")?;
+    Ok(())
+}
+
 fn measure_target(target: &MeasurementTarget, variant: &str) -> Result<()> {
     println!(
         "📏 Measuring target: {} with variant: {}",
@@ -350,130 +799,37 @@ fn measure_target(target: &MeasurementTarget, variant: &str) -> Result<()> {
 
     println!("📦 Crates to measure: {:?}", crates_to_use);
 
-    // TODO: Implement actual measurement
-    // 1. Setup appropriate Cargo.toml for variant
-    // 2. Run cargo bloat
-    // 3. Run cargo llvm-lines
-    // 4. Parse outputs
-    // 5. Return BuildResult
+    // Run the complete measurement
+    match measure_target_complete(target, variant) {
+        Ok(result) => {
+            println!(
+                "✅ Measurement complete for {} ({})",
+                result.target, result.variant
+            );
 
-    match variant {
-        "facet-main" => {
-            println!("🔄 Would switch to main branch and patch with PR ks-* crates");
+            // Display summary
+            println!("📊 Summary:");
+            println!("   File size: {}", format_bytes(result.file_size));
+            println!(
+                "   Text section size: {}",
+                format_bytes(result.text_section_size)
+            );
+            println!(
+                "   Build time: {:.2}s",
+                result.build_time_ms as f64 / 1000.0
+            );
+
+            let total_llvm_lines: u32 = result
+                .llvm_lines
+                .crate_results
+                .iter()
+                .map(|(_, lines, _)| lines)
+                .sum();
+            println!("   Total LLVM lines: {}", format_number(total_llvm_lines));
         }
-        "serde" => {
-            println!("📊 Would measure using serde ecosystem");
+        Err(e) => {
+            println!("❌ Measurement failed: {}", e);
         }
-        "facet-pr" => {
-            println!("🚀 Would measure using current facet PR");
-
-            // For now, let's try to actually run cargo bloat on ks-facet
-            match run_cargo_bloat("../ks-facet/Cargo.toml", false) {
-                Ok(bloat_output) => {
-                    println!("✅ cargo-bloat (functions) results:");
-                    println!("   File size: {}", format_bytes(bloat_output.file_size));
-                    println!(
-                        "   Text section size: {}",
-                        format_bytes(bloat_output.text_section_size)
-                    );
-                    println!("   Top 25 functions:");
-                    for (i, func) in bloat_output.functions.iter().take(25).enumerate() {
-                        println!(
-                            "   {}. {} ({}): {}",
-                            i + 1,
-                            func.crate_name,
-                            func.name,
-                            format_bytes(func.size)
-                        );
-                    }
-                }
-                Err(e) => {
-                    println!("❌ Failed to run cargo-bloat (functions): {}", e);
-                }
-            }
-
-            // Also run crates analysis
-            match run_cargo_bloat("../ks-facet/Cargo.toml", true) {
-                Ok(bloat_output) => {
-                    println!("\n✅ cargo-bloat (crates) results:");
-                    println!("   Top 5 crates:");
-                    for (i, crate_info) in bloat_output.crates.iter().take(5).enumerate() {
-                        println!(
-                            "   {}. {}: {}",
-                            i + 1,
-                            crate_info.name,
-                            format_bytes(crate_info.size)
-                        );
-                    }
-                }
-                Err(e) => {
-                    println!("❌ Failed to run cargo-bloat (crates): {}", e);
-                }
-            }
-
-            // Run LLVM lines analysis for each target crate
-            match run_cargo_llvm_lines_for_crates(&target.facet_crates) {
-                Ok(llvm_summary) => {
-                    println!("\n✅ cargo-llvm-lines results:");
-                    for (crate_name, line_count, copy_count) in &llvm_summary.crate_results {
-                        println!(
-                            "   {}: {} LLVM IR lines ({} copies)",
-                            crate_name,
-                            format_number(*line_count),
-                            format_number(*copy_count)
-                        );
-                    }
-                    let total_lines: u32 = llvm_summary
-                        .crate_results
-                        .iter()
-                        .map(|(_, count, _)| count)
-                        .sum();
-                    let total_copies: u32 = llvm_summary
-                        .crate_results
-                        .iter()
-                        .map(|(_, _, copies)| copies)
-                        .sum();
-                    println!(
-                        "   Total: {} LLVM IR lines ({} copies)",
-                        format_number(total_lines),
-                        format_number(total_copies)
-                    );
-
-                    println!("\n   Top 15 functions by LLVM lines:");
-                    for (i, func) in llvm_summary.top_functions.iter().take(15).enumerate() {
-                        println!(
-                            "   {}. {}: {} lines ({} copies)",
-                            i + 1,
-                            func.name,
-                            format_number(func.lines),
-                            format_number(func.copies)
-                        );
-                    }
-                }
-                Err(e) => {
-                    println!("❌ Failed to run cargo-llvm-lines: {}", e);
-                }
-            }
-
-            // Measure build times
-            match measure_build_time("../ks-facet/Cargo.toml") {
-                Ok(timing_summary) => {
-                    println!("\n✅ Build timing results:");
-                    println!("   Total build time: {:.2}s", timing_summary.total_duration);
-                    println!("   Top 5 slowest crates:");
-
-                    for (i, (crate_name, duration)) in
-                        timing_summary.crate_timings.iter().take(5).enumerate()
-                    {
-                        println!("   {}. {}: {:.2}s", i + 1, crate_name, duration);
-                    }
-                }
-                Err(e) => {
-                    println!("❌ Failed to measure build time: {}", e);
-                }
-            }
-        }
-        _ => unreachable!(),
     }
 
     Ok(())
