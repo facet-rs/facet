@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::Instant;
@@ -70,6 +71,27 @@ struct BloatOutput {
     functions: Vec<BloatFunction>,
     #[serde(default)]
     crates: Vec<BloatCrate>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct CargoTimingTarget {
+    name: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct CargoTimingEntry {
+    reason: String,
+    package_id: String,
+    target: CargoTimingTarget,
+    duration: f64,
+    #[serde(default)]
+    rmeta_time: Option<f64>,
+}
+
+#[derive(Debug)]
+struct BuildTimingSummary {
+    total_duration: f64,
+    crate_timings: Vec<(String, f64)>,
 }
 
 #[derive(Debug)]
@@ -362,6 +384,35 @@ fn measure_target(target: &MeasurementTarget, variant: &str) -> Result<()> {
                     println!("❌ Failed to run cargo-bloat (crates): {}", e);
                 }
             }
+
+            // Run LLVM lines analysis
+            match run_cargo_llvm_lines("../ks-facet/Cargo.toml") {
+                Ok(llvm_lines) => {
+                    println!("\n✅ cargo-llvm-lines results:");
+                    println!("   Total LLVM IR lines: {}", llvm_lines);
+                }
+                Err(e) => {
+                    println!("❌ Failed to run cargo-llvm-lines: {}", e);
+                }
+            }
+
+            // Measure build times
+            match measure_build_time("../ks-facet/Cargo.toml") {
+                Ok(timing_summary) => {
+                    println!("\n✅ Build timing results:");
+                    println!("   Total build time: {:.2}s", timing_summary.total_duration);
+                    println!("   Top 5 slowest crates:");
+
+                    for (i, (crate_name, duration)) in
+                        timing_summary.crate_timings.iter().take(5).enumerate()
+                    {
+                        println!("   {}. {}: {:.2}s", i + 1, crate_name, duration);
+                    }
+                }
+                Err(e) => {
+                    println!("❌ Failed to measure build time: {}", e);
+                }
+            }
         }
         _ => unreachable!(),
     }
@@ -446,6 +497,68 @@ fn format_bytes(bytes: u64) -> String {
     } else {
         format!("{:.2} {}", size, UNITS[unit_index])
     }
+}
+
+fn measure_build_time(manifest_path: &str) -> Result<BuildTimingSummary> {
+    let start = Instant::now();
+
+    // First, clean to ensure we're measuring a fresh build
+    let clean_output = Command::new("cargo")
+        .args(&["clean", "--manifest-path", manifest_path])
+        .env("RUSTC_BOOTSTRAP", "1")
+        .output()
+        .context("Failed to run cargo clean")?;
+
+    if !clean_output.status.success() {
+        let stderr = String::from_utf8_lossy(&clean_output.stderr);
+        anyhow::bail!("cargo clean failed: {}", stderr);
+    }
+
+    // Now build with timing information
+    let output = Command::new("cargo")
+        .args(&[
+            "build",
+            "--release",
+            "--manifest-path",
+            manifest_path,
+            "--timings=json",
+            "-Zunstable-options",
+        ])
+        .env("RUSTC_BOOTSTRAP", "1")
+        .output()
+        .context("Failed to execute cargo build with timings")?;
+
+    let total_duration = start.elapsed().as_secs_f64();
+    println!("⏱️  cargo build (with timing) took: {:.2}s", total_duration);
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("cargo build failed: {}", stderr);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut crate_timings = Vec::new();
+
+    // Parse each JSON line for timing info
+    for line in stdout.lines() {
+        if line.trim().starts_with('{') && line.contains("timing-info") {
+            if let Ok(timing_entry) = serde_json::from_str::<CargoTimingEntry>(line.trim()) {
+                if timing_entry.reason == "timing-info" {
+                    // Use the target name which is the actual crate name
+                    let crate_name = timing_entry.target.name.replace('-', "_");
+                    crate_timings.push((crate_name, timing_entry.duration));
+                }
+            }
+        }
+    }
+
+    // Sort by duration (descending)
+    crate_timings.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    Ok(BuildTimingSummary {
+        total_duration,
+        crate_timings,
+    })
 }
 
 fn parse_llvm_lines_output(output: &str) -> Result<u32> {
