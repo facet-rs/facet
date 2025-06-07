@@ -11,8 +11,9 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     // Use already-parsed PEnum, including container/variant/field attributes and rename rules
     let pe = PEnum::parse(&parsed);
 
-    let enum_name = pe.container.name.clone();
+    let enum_name = &pe.container.name;
     let enum_name_str = enum_name.to_string();
+
     let bgp = pe.container.bgp.clone();
     // Use the AST directly for where clauses and generics, as PContainer/PEnum doesn't store them
     let where_clauses_tokens =
@@ -561,7 +562,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
 
     // Only make static_decl for non-generic enums
     let static_decl = if parsed.generics.is_none() {
-        generate_static_decl(&enum_name)
+        generate_static_decl(enum_name)
     } else {
         quote! {}
     };
