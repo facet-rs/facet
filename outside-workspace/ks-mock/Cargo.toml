@@ -1,0 +1,10 @@
+[package]
+name = "ks-mock"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ks-types = { version = "0.1.0", path = "../ks-types" }

@@ -1,0 +1,11 @@
+[package]
+name = "ks-facet-pretty"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+facet-pretty = { version = "0.23.19", path = "../../facet-pretty" }
+ks-types = { version = "0.1.0", path = "../ks-types", features = ["facet"] }
