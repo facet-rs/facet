@@ -157,6 +157,7 @@ dependencies = [
  "iana-time-zone",
  "js-sys",
  "num-traits",
+ "serde",
  "wasm-bindgen",
  "windows-link",
 ]
@@ -1072,6 +1073,9 @@ dependencies = [
 [[package]]
 name = "ks-debug"
 version = "0.1.0"
+dependencies = [
+ "ks-types",
+]
 
 [[package]]
 name = "ks-facet"
@@ -1117,14 +1121,28 @@ dependencies = [
 [[package]]
 name = "ks-serde"
 version = "0.1.0"
+dependencies = [
+ "ks-debug",
+ "ks-mock",
+ "ks-serde-json-read",
+ "ks-serde-json-write",
+]
 
 [[package]]
 name = "ks-serde-json-read"
 version = "0.1.0"
+dependencies = [
+ "ks-types",
+ "serde_json",
+]
 
 [[package]]
 name = "ks-serde-json-write"
 version = "0.1.0"
+dependencies = [
+ "ks-types",
+ "serde_json",
+]
 
 [[package]]
 name = "ks-types"
@@ -1132,6 +1150,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "facet",
+ "serde",
  "uuid",
 ]
 
@@ -1872,6 +1891,7 @@ checksum = "3cf4199d1e5d15ddd86a694e4d0dffa9c323ce759fea589f00fef9d81cc1931d"
 dependencies = [
  "getrandom",
  "js-sys",
+ "serde",
  "wasm-bindgen",
 ]
 

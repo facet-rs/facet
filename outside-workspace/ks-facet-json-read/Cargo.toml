@@ -1,10 +1,10 @@
 [package]
 name = "ks-facet-json-read"
 version = "0.1.0"
-edition.workspace = true
-rust-version.workspace = true
-license.workspace = true
-repository.workspace = true
+edition = "2024"
+rust-version = "1.87.0"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/facet-rs/facet"
 
 [dependencies]
 facet-json = { version = "0.24.13", path = "../../facet-json" }

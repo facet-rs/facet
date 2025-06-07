@@ -2,13 +2,11 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
-use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{self, Command};
 use std::time::Instant;
-use toml_edit::{Document, Item, Table, Value};
+use toml_edit::{DocumentMut, Item, Value};
 
 #[derive(Parser)]
 #[command(name = "measure-bloat")]
@@ -459,7 +457,7 @@ fn get_measurement_targets() -> Vec<MeasurementTarget> {
                 "ks-types".to_string(),
                 "ks-serde-json-read".to_string(),
                 "ks-serde-json-write".to_string(),
-                "ks-serde-pretty".to_string(),
+                "ks-debug".to_string(),
             ],
             binary_crate: "ks-serde".to_string(),
         },
@@ -490,33 +488,86 @@ fn setup_cargo_patches(variant: &str) -> Result<()> {
 }
 
 fn modify_cargo_tomls_for_main_branch() -> Result<()> {
-    // Store original Cargo.toml files and replace facet dependencies with git refs
-    let crates_to_modify = vec![
-        "../ks-facet-json-read",
-        "../ks-facet-json-write",
-        "../ks-facet-pretty",
-        "../ks-mock",
+    println!("✅ Creating temp workspace for facet-main");
+
+    // Create unique temp directory outside source tree
+    let temp_dir = std::env::temp_dir().join(format!("measure-bloat-{}", process::id()));
+    let source_workspace = PathBuf::from("..");
+    let temp_workspace = temp_dir.join("outside-workspace");
+
+    // Remove existing temp directory if it exists
+    if temp_dir.exists() {
+        fs::remove_dir_all(&temp_dir)
+            .context(format!("Failed to remove existing {}", temp_dir.display()))?;
+    }
+
+    // Create temp directory
+    fs::create_dir_all(&temp_dir).context(format!(
+        "Failed to create temp directory {}",
+        temp_dir.display()
+    ))?;
+
+    // Copy entire outside-workspace to temp location
+    copy_dir_recursive(&source_workspace, &temp_workspace)?;
+
+    // Store temp workspace path for later use
+    let temp_workspace_path = temp_workspace.to_string_lossy().to_string();
+    println!("📁 Temp workspace created at: {}", temp_workspace_path);
+
+    // Patch all Cargo.toml files in the temp workspace
+    let crates_to_patch = vec![
+        "ks-facet-json-read",
+        "ks-facet-json-write",
+        "ks-facet-pretty",
+        "ks-mock",
+        "ks-types",
+        "ks-facet",
     ];
 
-    for crate_path in crates_to_modify {
-        let cargo_toml_path = PathBuf::from(crate_path).join("Cargo.toml");
-        let backup_path = PathBuf::from(crate_path).join("Cargo.toml.backup");
+    for crate_name in crates_to_patch {
+        let cargo_toml_path = temp_workspace.join(crate_name).join("Cargo.toml");
 
-        // Read original content
-        let original_content = fs::read_to_string(&cargo_toml_path)
-            .context(format!("Failed to read {}", cargo_toml_path.display()))?;
+        if cargo_toml_path.exists() {
+            // Read original content
+            let original_content = fs::read_to_string(&cargo_toml_path)
+                .context(format!("Failed to read {}", cargo_toml_path.display()))?;
 
-        // Backup original
-        fs::write(&backup_path, &original_content).context("Failed to create backup")?;
+            // Replace local facet dependencies with git dependencies
+            let modified_content = replace_facet_deps_with_git(&original_content)?;
 
-        // Replace local facet dependencies with git dependencies
-        let modified_content = replace_facet_deps_with_git(&original_content)?;
+            // Write modified content back
+            fs::write(&cargo_toml_path, modified_content)
+                .context(format!("Failed to write {}", cargo_toml_path.display()))?;
+        }
+    }
 
-        // Write modified content
-        fs::write(&cargo_toml_path, modified_content).context(format!(
-            "Failed to write modified {}",
-            cargo_toml_path.display()
-        ))?;
+    Ok(())
+}
+
+fn copy_dir_recursive(src: &PathBuf, dst: &PathBuf) -> Result<()> {
+    if !src.exists() {
+        return Err(anyhow::anyhow!(
+            "Source directory does not exist: {}",
+            src.display()
+        ));
+    }
+
+    fs::create_dir_all(dst).context(format!("Failed to create directory {}", dst.display()))?;
+
+    for entry in fs::read_dir(src).context(format!("Failed to read directory {}", src.display()))? {
+        let entry = entry.context("Failed to read directory entry")?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            fs::copy(&src_path, &dst_path).context(format!(
+                "Failed to copy {} to {}",
+                src_path.display(),
+                dst_path.display()
+            ))?;
+        }
     }
 
     Ok(())
@@ -524,7 +575,7 @@ fn modify_cargo_tomls_for_main_branch() -> Result<()> {
 
 fn replace_facet_deps_with_git(content: &str) -> Result<String> {
     let mut doc = content
-        .parse::<Document>()
+        .parse::<DocumentMut>()
         .context("Failed to parse TOML")?;
 
     println!("🔍 Original TOML content:\n{}", content);
@@ -632,31 +683,17 @@ ks-types = { version = "0.1.0", path = "../ks-types", features = ["facet"] }
 }
 
 fn cleanup_cargo_patches() -> Result<()> {
-    // Restore original Cargo.toml files from backups
-    let crates_to_restore = vec![
-        "../ks-facet-json-read",
-        "../ks-facet-json-write",
-        "../ks-facet-pretty",
-        "../ks-mock",
-    ];
+    // Remove temp directory
+    let temp_dir = std::env::temp_dir().join(format!("measure-bloat-{}", process::id()));
 
-    for crate_path in crates_to_restore {
-        let cargo_toml_path = PathBuf::from(crate_path).join("Cargo.toml");
-        let backup_path = PathBuf::from(crate_path).join("Cargo.toml.backup");
-
-        if backup_path.exists() {
-            // Restore original content
-            let original_content =
-                fs::read_to_string(&backup_path).context("Failed to read backup file")?;
-            fs::write(&cargo_toml_path, original_content)
-                .context("Failed to restore original Cargo.toml")?;
-
-            // Remove backup file
-            fs::remove_file(&backup_path).context("Failed to remove backup file")?;
-        }
+    if temp_dir.exists() {
+        fs::remove_dir_all(&temp_dir).context(format!(
+            "Failed to remove temp directory {}",
+            temp_dir.display()
+        ))?;
     }
 
-    println!("🧹 Cleaned up Cargo.toml modifications");
+    println!("🧹 Cleaned up temp workspace");
     Ok(())
 }
 
@@ -669,8 +706,18 @@ fn measure_target_complete(target: &MeasurementTarget, variant: &str) -> Result<
         }
     };
 
-    // Use the binary crate as the measurement target
-    let manifest_path = format!("../{}/Cargo.toml", target.binary_crate);
+    // Use the binary crate as the measurement target, with temp workspace for facet-main
+    let manifest_path = match variant {
+        "facet-main" => {
+            let temp_dir = std::env::temp_dir().join(format!("measure-bloat-{}", process::id()));
+            format!(
+                "{}/outside-workspace/{}/Cargo.toml",
+                temp_dir.to_string_lossy(),
+                target.binary_crate
+            )
+        }
+        _ => format!("../{}/Cargo.toml", target.binary_crate),
+    };
 
     // Run measurements
     let start = Instant::now();
@@ -679,8 +726,18 @@ fn measure_target_complete(target: &MeasurementTarget, variant: &str) -> Result<
     let bloat_functions = run_cargo_bloat(&manifest_path, false)?;
     let bloat_crates = run_cargo_bloat(&manifest_path, true)?;
 
-    // Measure LLVM lines
-    let llvm_lines = run_cargo_llvm_lines_for_crates(crates_to_use)?;
+    // Measure LLVM lines - crate names stay the same, just in different workspace
+    let workspace_path = match variant {
+        "facet-main" => {
+            let temp_dir = std::env::temp_dir().join(format!("measure-bloat-{}", process::id()));
+            temp_dir
+                .join("outside-workspace")
+                .to_string_lossy()
+                .to_string()
+        }
+        _ => "..".to_string(),
+    };
+    let llvm_lines = run_cargo_llvm_lines_for_crates(crates_to_use, &workspace_path)?;
 
     // Measure build time
     let build_timing = measure_build_time(&manifest_path)?;
@@ -697,8 +754,8 @@ fn measure_target_complete(target: &MeasurementTarget, variant: &str) -> Result<
         file_size: bloat_functions.file_size,
         text_section_size: bloat_functions.text_section_size,
         build_time_ms: (build_timing.total_duration * 1000.0) as u64,
-        top_functions: bloat_functions.functions.into_iter().take(10).collect(),
-        top_crates: bloat_crates.crates.into_iter().take(5).collect(),
+        top_functions: bloat_functions.functions.into_iter().take(50).collect(),
+        top_crates: bloat_crates.crates.into_iter().take(20).collect(),
         llvm_lines,
     })
 }
@@ -725,6 +782,10 @@ fn generate_comparison_report(results: &[BuildResult], report_path: &PathBuf) ->
     for (target_name, target_results) in targets {
         report.push_str(&format!("## {}\n\n", target_name));
 
+        // Find facet-pr and facet-main results for diff analysis
+        let facet_pr = target_results.iter().find(|r| r.variant == "facet-pr");
+        let facet_main = target_results.iter().find(|r| r.variant == "facet-main");
+
         // Summary table
         report.push_str("| Variant | File Size | Text Size | Build Time | LLVM Lines |\n");
         report.push_str("|---------|-----------|-----------|------------|------------|\n");
@@ -748,12 +809,17 @@ fn generate_comparison_report(results: &[BuildResult], report_path: &PathBuf) ->
 
         report.push_str("\n");
 
+        // Add diff analysis if we have both facet-pr and facet-main
+        if let (Some(pr_result), Some(main_result)) = (facet_pr, facet_main) {
+            generate_facet_diff_analysis(&mut report, pr_result, main_result);
+        }
+
         // Detailed breakdown for each variant
         for result in &target_results {
             report.push_str(&format!("### {} - {}\n\n", target_name, result.variant));
 
             report.push_str("**Top Functions by Size:**\n");
-            for (i, func) in result.top_functions.iter().take(5).enumerate() {
+            for (i, func) in result.top_functions.iter().take(10).enumerate() {
                 report.push_str(&format!(
                     "{}. `{}::{}` - {}\n",
                     i + 1,
@@ -779,6 +845,374 @@ fn generate_comparison_report(results: &[BuildResult], report_path: &PathBuf) ->
 
     fs::write(report_path, report).context("Failed to write comparison report")?;
     Ok(())
+}
+
+fn generate_facet_diff_analysis(
+    report: &mut String,
+    pr_result: &BuildResult,
+    main_result: &BuildResult,
+) {
+    report.push_str("### 🔍 PR vs Main Branch Analysis\n\n");
+
+    // Calculate deltas
+    let file_size_delta = pr_result.file_size as i64 - main_result.file_size as i64;
+    let text_size_delta = pr_result.text_section_size as i64 - main_result.text_section_size as i64;
+    let build_time_delta = pr_result.build_time_ms as i64 - main_result.build_time_ms as i64;
+
+    let pr_llvm_total: u32 = pr_result
+        .llvm_lines
+        .crate_results
+        .iter()
+        .map(|(_, lines, _)| lines)
+        .sum();
+    let main_llvm_total: u32 = main_result
+        .llvm_lines
+        .crate_results
+        .iter()
+        .map(|(_, lines, _)| lines)
+        .sum();
+    let llvm_lines_delta = pr_llvm_total as i64 - main_llvm_total as i64;
+
+    // Summary table with deltas
+    report.push_str("**Summary of Changes:**\n\n");
+    report.push_str("| Metric | Main | PR | Change | % Change |\n");
+    report.push_str("|--------|------|----|---------|-----------|\n");
+
+    let file_size_pct = if main_result.file_size > 0 {
+        (file_size_delta as f64 / main_result.file_size as f64) * 100.0
+    } else {
+        0.0
+    };
+    report.push_str(&format!(
+        "| File Size | {} | {} | {} | {:+.2}% |\n",
+        format_bytes(main_result.file_size),
+        format_bytes(pr_result.file_size),
+        format_signed_bytes(file_size_delta),
+        file_size_pct
+    ));
+
+    let text_size_pct = if main_result.text_section_size > 0 {
+        (text_size_delta as f64 / main_result.text_section_size as f64) * 100.0
+    } else {
+        0.0
+    };
+    report.push_str(&format!(
+        "| Text Size | {} | {} | {} | {:+.2}% |\n",
+        format_bytes(main_result.text_section_size),
+        format_bytes(pr_result.text_section_size),
+        format_signed_bytes(text_size_delta),
+        text_size_pct
+    ));
+
+    let build_time_pct = if main_result.build_time_ms > 0 {
+        (build_time_delta as f64 / main_result.build_time_ms as f64) * 100.0
+    } else {
+        0.0
+    };
+    report.push_str(&format!(
+        "| Build Time | {:.2}s | {:.2}s | {:+.2}s | {:+.2}% |\n",
+        main_result.build_time_ms as f64 / 1000.0,
+        pr_result.build_time_ms as f64 / 1000.0,
+        build_time_delta as f64 / 1000.0,
+        build_time_pct
+    ));
+
+    let llvm_lines_pct = if main_llvm_total > 0 {
+        (llvm_lines_delta as f64 / main_llvm_total as f64) * 100.0
+    } else {
+        0.0
+    };
+    report.push_str(&format!(
+        "| LLVM Lines | {} | {} | {:+} | {:+.2}% |\n",
+        format_number(main_llvm_total),
+        format_number(pr_llvm_total),
+        llvm_lines_delta,
+        llvm_lines_pct
+    ));
+
+    report.push_str("\n");
+
+    // Function-level diff analysis
+    generate_function_diff_analysis(report, pr_result, main_result);
+
+    // LLVM crate-level diff analysis
+    generate_llvm_crate_diff_analysis(report, pr_result, main_result);
+
+    // Regression/improvement highlights
+    generate_highlights(
+        report,
+        file_size_delta,
+        text_size_delta,
+        build_time_delta,
+        llvm_lines_delta,
+    );
+}
+
+fn generate_function_diff_analysis(
+    report: &mut String,
+    pr_result: &BuildResult,
+    main_result: &BuildResult,
+) {
+    report.push_str("**Function Size Changes (Top 30):**\n\n");
+
+    // Create maps for easy lookup
+    let mut main_funcs: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    for func in &main_result.top_functions {
+        let key = format!("{}::{}", func.crate_name, func.name);
+        main_funcs.insert(key, func.size);
+    }
+
+    let mut pr_funcs: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    for func in &pr_result.top_functions {
+        let key = format!("{}::{}", func.crate_name, func.name);
+        pr_funcs.insert(key, func.size);
+    }
+
+    // Collect all function changes
+    let mut function_changes = Vec::new();
+
+    // Check functions in PR
+    for func in &pr_result.top_functions {
+        let key = format!("{}::{}", func.crate_name, func.name);
+        if let Some(&main_size) = main_funcs.get(&key) {
+            let delta = func.size as i64 - main_size as i64;
+            if delta != 0 {
+                function_changes.push((key, main_size, func.size, delta));
+            }
+        } else {
+            // New function in PR
+            function_changes.push((key, 0, func.size, func.size as i64));
+        }
+    }
+
+    // Check for functions that disappeared in PR
+    for func in &main_result.top_functions {
+        let key = format!("{}::{}", func.crate_name, func.name);
+        if !pr_funcs.contains_key(&key) {
+            function_changes.push((key, func.size, 0, -(func.size as i64)));
+        }
+    }
+
+    // Sort by absolute delta size
+    function_changes.sort_by_key(|(_, _, _, delta)| std::cmp::Reverse(delta.abs()));
+
+    if function_changes.is_empty() {
+        report.push_str("*No significant function size changes detected.*\n\n");
+    } else {
+        report.push_str("| Function | Main | PR | Change |\n");
+        report.push_str("|----------|------|----|---------|\n");
+
+        for (func_name, main_size, pr_size, delta) in function_changes.iter().take(30) {
+            let main_str = if *main_size == 0 {
+                "N/A".to_string()
+            } else {
+                format_bytes(*main_size)
+            };
+            let pr_str = if *pr_size == 0 {
+                "N/A".to_string()
+            } else {
+                format_bytes(*pr_size)
+            };
+            report.push_str(&format!(
+                "| `{}` | {} | {} | {} |\n",
+                func_name,
+                main_str,
+                pr_str,
+                format_signed_bytes(*delta)
+            ));
+        }
+        report.push_str("\n");
+    }
+}
+
+fn generate_llvm_crate_diff_analysis(
+    report: &mut String,
+    pr_result: &BuildResult,
+    main_result: &BuildResult,
+) {
+    report.push_str("**LLVM Lines Changes by Crate (All Crates):**\n\n");
+
+    // Create maps for crate LLVM lines
+    let mut main_crates: std::collections::HashMap<String, (u32, u32)> =
+        std::collections::HashMap::new();
+    for (crate_name, lines, copies) in &main_result.llvm_lines.crate_results {
+        main_crates.insert(crate_name.clone(), (*lines, *copies));
+    }
+
+    let mut pr_crates: std::collections::HashMap<String, (u32, u32)> =
+        std::collections::HashMap::new();
+    for (crate_name, lines, copies) in &pr_result.llvm_lines.crate_results {
+        pr_crates.insert(crate_name.clone(), (*lines, *copies));
+    }
+
+    let mut all_crate_data = Vec::new();
+
+    // Check all crates from both results
+    let mut all_crates = std::collections::HashSet::new();
+    for (crate_name, _, _) in &main_result.llvm_lines.crate_results {
+        all_crates.insert(crate_name.clone());
+    }
+    for (crate_name, _, _) in &pr_result.llvm_lines.crate_results {
+        all_crates.insert(crate_name.clone());
+    }
+
+    for crate_name in all_crates {
+        let (main_lines, main_copies) = main_crates.get(&crate_name).unwrap_or(&(0, 0));
+        let (pr_lines, pr_copies) = pr_crates.get(&crate_name).unwrap_or(&(0, 0));
+
+        let lines_delta = *pr_lines as i64 - *main_lines as i64;
+        let copies_delta = *pr_copies as i64 - *main_copies as i64;
+
+        all_crate_data.push((
+            crate_name,
+            (*main_lines, *main_copies),
+            (*pr_lines, *pr_copies),
+            lines_delta,
+            copies_delta,
+        ));
+    }
+
+    // Sort by absolute lines delta (largest changes first), then by crate name
+    all_crate_data.sort_by(|a, b| {
+        let delta_cmp = b.3.abs().cmp(&a.3.abs());
+        if delta_cmp == std::cmp::Ordering::Equal {
+            a.0.cmp(&b.0)
+        } else {
+            delta_cmp
+        }
+    });
+
+    if all_crate_data.is_empty() {
+        report.push_str("*No crates found.*\n\n");
+    } else {
+        report.push_str("| Crate | Main Lines | PR Lines | Lines Δ | Copies Δ |\n");
+        report.push_str("|-------|------------|----------|---------|----------|\n");
+
+        for (
+            crate_name,
+            (main_lines, main_copies),
+            (pr_lines, pr_copies),
+            lines_delta,
+            copies_delta,
+        ) in all_crate_data
+        {
+            let main_lines_str = if main_lines == 0 {
+                "N/A".to_string()
+            } else {
+                format_number(main_lines)
+            };
+            let pr_lines_str = if pr_lines == 0 {
+                "N/A".to_string()
+            } else {
+                format_number(pr_lines)
+            };
+
+            let lines_delta_str = if lines_delta == 0 {
+                "0".to_string()
+            } else {
+                format!("{:+}", lines_delta)
+            };
+
+            let copies_delta_str = if copies_delta == 0 {
+                "0".to_string()
+            } else {
+                format!("{:+}", copies_delta)
+            };
+
+            report.push_str(&format!(
+                "| `{}` | {} ({}) | {} ({}) | {} | {} |\n",
+                crate_name,
+                main_lines_str,
+                format_number(main_copies),
+                pr_lines_str,
+                format_number(pr_copies),
+                lines_delta_str,
+                copies_delta_str
+            ));
+        }
+        report.push_str("\n");
+    }
+}
+
+fn generate_highlights(
+    report: &mut String,
+    file_size_delta: i64,
+    _text_size_delta: i64,
+    build_time_delta: i64,
+    llvm_lines_delta: i64,
+) {
+    report.push_str("**Key Findings:**\n\n");
+
+    let mut findings = Vec::new();
+
+    // File size analysis
+    if file_size_delta.abs() > 1024 {
+        // More than 1KB change
+        if file_size_delta > 0 {
+            findings.push(format!(
+                "⚠️  **Binary size increased** by {}",
+                format_bytes(file_size_delta as u64)
+            ));
+        } else {
+            findings.push(format!(
+                "✅ **Binary size reduced** by {}",
+                format_bytes((-file_size_delta) as u64)
+            ));
+        }
+    }
+
+    // Build time analysis
+    if build_time_delta.abs() > 100 {
+        // More than 100ms change
+        if build_time_delta > 0 {
+            findings.push(format!(
+                "⚠️  **Build time increased** by {:.2}s",
+                build_time_delta as f64 / 1000.0
+            ));
+        } else {
+            findings.push(format!(
+                "✅ **Build time improved** by {:.2}s",
+                (-build_time_delta) as f64 / 1000.0
+            ));
+        }
+    }
+
+    // LLVM complexity analysis
+    if llvm_lines_delta.abs() > 1000 {
+        // More than 1K lines change
+        if llvm_lines_delta > 0 {
+            findings.push(format!(
+                "⚠️  **Code complexity increased** by {} LLVM lines",
+                format_number(llvm_lines_delta as u32)
+            ));
+        } else {
+            findings.push(format!(
+                "✅ **Code complexity reduced** by {} LLVM lines",
+                format_number((-llvm_lines_delta) as u32)
+            ));
+        }
+    }
+
+    if findings.is_empty() {
+        findings.push(
+            "📊 **No significant changes detected** - metrics are within normal variance"
+                .to_string(),
+        );
+    }
+
+    for finding in findings {
+        report.push_str(&format!("- {}\n", finding));
+    }
+
+    report.push_str("\n");
+}
+
+fn format_signed_bytes(bytes: i64) -> String {
+    if bytes >= 0 {
+        format!("+{}", format_bytes(bytes as u64))
+    } else {
+        format!("-{}", format_bytes((-bytes) as u64))
+    }
 }
 
 fn measure_target(target: &MeasurementTarget, variant: &str) -> Result<()> {
@@ -874,13 +1308,20 @@ fn run_cargo_bloat(manifest_path: &str, crates_mode: bool) -> Result<BloatOutput
     Ok(bloat_output)
 }
 
-fn run_cargo_llvm_lines_for_crates(crate_names: &[String]) -> Result<LlvmLinesSummary> {
+fn run_cargo_llvm_lines_for_crates(
+    crate_names: &[String],
+    workspace_path: &str,
+) -> Result<LlvmLinesSummary> {
     let mut crate_results = Vec::new();
     let mut all_functions = Vec::new();
 
     for crate_name in crate_names {
-        // Convert crate name to manifest path
-        let manifest_path = format!("../{}/Cargo.toml", crate_name.replace('_', "-"));
+        // Convert crate name to manifest path with workspace prefix
+        let manifest_path = format!(
+            "{}/{}/Cargo.toml",
+            workspace_path,
+            crate_name.replace('_', "-")
+        );
 
         match run_cargo_llvm_lines_single(&manifest_path) {
             Ok((line_count, copy_count, functions)) => {
