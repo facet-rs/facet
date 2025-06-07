@@ -1,10 +1,7 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
-assertion_line: 556
 expression: "expand(r#\"\n        #[derive(Debug, Facet, PartialEq)]\n        struct Macroed {\n            // NOTICE type is variable here\n            value: u32,\n        }\n        \"#)"
 ---
-#[used]
-static MACROED_SHAPE: &'static ::facet::Shape = <Macroed as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for Macroed {
     const VTABLE: &'static ::facet::ValueVTable = &const {

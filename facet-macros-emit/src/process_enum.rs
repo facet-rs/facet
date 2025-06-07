@@ -552,13 +552,6 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         }
     };
 
-    // // Only make static_decl for non-generic enums
-    // let static_decl = if parsed.generics.is_none() {
-    //     generate_static_decl(&enum_name)
-    // } else {
-    //     quote! {}
-    // };
-
     // Set up generics for impl blocks
     let facet_bgp = bgp.with_lifetime(LifetimeName(format_ident!("__facet")));
     let bgp_def = facet_bgp.display_with_bounds();
@@ -566,8 +559,6 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
 
     // Generate the impl
     quote! {
-        // #static_decl
-
         #[automatically_derived]
         #[allow(non_camel_case_types)]
         unsafe impl #bgp_def ::facet::Facet<'__facet> for #enum_name #bgp_without_bounds #where_clauses_tokens {

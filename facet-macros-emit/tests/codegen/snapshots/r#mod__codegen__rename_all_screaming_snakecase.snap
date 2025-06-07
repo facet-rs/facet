@@ -1,11 +1,7 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
-assertion_line: 931
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(rename_all = \"SCREAMING_SNAKE_CASE\")]\n        struct ScreamingSnakeCaseExample {\n            field_one: String,\n            field_two: String,\n        }\n        \"#)"
 ---
-#[used]
-static SCREAMING_SNAKE_CASE_EXAMPLE_SHAPE: &'static ::facet::Shape =
-    <ScreamingSnakeCaseExample as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for ScreamingSnakeCaseExample {
     const VTABLE: &'static ::facet::ValueVTable = &const {

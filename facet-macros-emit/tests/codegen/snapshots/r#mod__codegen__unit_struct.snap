@@ -1,10 +1,7 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
-assertion_line: 18
 expression: "expand(r#\"\n        #[derive(Facet)]\n        struct UnitStruct;\n        \"#)"
 ---
-#[used]
-static UNIT_STRUCT_SHAPE: &'static ::facet::Shape = <UnitStruct as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for UnitStruct {
     const VTABLE: &'static ::facet::ValueVTable = &const {
