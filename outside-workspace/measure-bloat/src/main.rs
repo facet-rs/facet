@@ -95,6 +95,11 @@ struct BuildTimingSummary {
 }
 
 #[derive(Debug)]
+struct LlvmLinesSummary {
+    crate_results: Vec<(String, u32)>,
+}
+
+#[derive(Debug)]
 struct BuildResult {
     target: String,
     variant: String,
@@ -261,12 +266,14 @@ fn test_json_benchmark(variant: &str) -> Result<()> {
         facet_crates: vec![
             "ks-facet".to_string(),
             "ks-mock".to_string(),
+            "ks-types".to_string(),
             "ks-facet-json-read".to_string(),
             "ks-facet-json-write".to_string(),
         ],
         serde_crates: vec![
             "ks-serde".to_string(),
             "ks-mock".to_string(),
+            "ks-types".to_string(),
             "ks-serde-json-read".to_string(),
             "ks-serde-json-write".to_string(),
         ],
@@ -282,11 +289,13 @@ fn test_pretty_benchmark(variant: &str) -> Result<()> {
         facet_crates: vec![
             "ks-facet".to_string(),
             "ks-mock".to_string(),
+            "ks-types".to_string(),
             "ks-facet-pretty".to_string(),
         ],
         serde_crates: vec![
             "ks-serde".to_string(),
             "ks-mock".to_string(),
+            "ks-types".to_string(),
             "ks-debug".to_string(), // Note: it's ks-debug not ks-debug-print in the directory
         ],
         binary_crate: "ks-facet".to_string(),
@@ -298,8 +307,16 @@ fn test_pretty_benchmark(variant: &str) -> Result<()> {
 fn test_core_benchmark(variant: &str) -> Result<()> {
     let target = MeasurementTarget {
         name: "core-benchmark".to_string(),
-        facet_crates: vec!["ks-facet".to_string(), "ks-mock".to_string()],
-        serde_crates: vec!["ks-serde".to_string(), "ks-mock".to_string()],
+        facet_crates: vec![
+            "ks-facet".to_string(),
+            "ks-mock".to_string(),
+            "ks-types".to_string(),
+        ],
+        serde_crates: vec![
+            "ks-serde".to_string(),
+            "ks-mock".to_string(),
+            "ks-types".to_string(),
+        ],
         binary_crate: "ks-facet".to_string(),
     };
 
@@ -385,11 +402,19 @@ fn measure_target(target: &MeasurementTarget, variant: &str) -> Result<()> {
                 }
             }
 
-            // Run LLVM lines analysis
-            match run_cargo_llvm_lines("../ks-facet/Cargo.toml") {
-                Ok(llvm_lines) => {
+            // Run LLVM lines analysis for each target crate
+            match run_cargo_llvm_lines_for_crates(&target.facet_crates) {
+                Ok(llvm_summary) => {
                     println!("\n✅ cargo-llvm-lines results:");
-                    println!("   Total LLVM IR lines: {}", llvm_lines);
+                    for (crate_name, line_count) in &llvm_summary.crate_results {
+                        println!("   {}: {} LLVM IR lines", crate_name, line_count);
+                    }
+                    let total_lines: u32 = llvm_summary
+                        .crate_results
+                        .iter()
+                        .map(|(_, count)| count)
+                        .sum();
+                    println!("   Total: {} LLVM IR lines", total_lines);
                 }
                 Err(e) => {
                     println!("❌ Failed to run cargo-llvm-lines: {}", e);
@@ -459,13 +484,53 @@ fn run_cargo_bloat(manifest_path: &str, crates_mode: bool) -> Result<BloatOutput
     Ok(bloat_output)
 }
 
-fn run_cargo_llvm_lines(manifest_path: &str) -> Result<String> {
+fn run_cargo_llvm_lines_for_crates(crate_names: &[String]) -> Result<LlvmLinesSummary> {
+    let mut crate_results = Vec::new();
+
+    for crate_name in crate_names {
+        // Convert crate name to manifest path
+        let manifest_path = format!("../{}/Cargo.toml", crate_name.replace('_', "-"));
+
+        match run_cargo_llvm_lines_single(&manifest_path) {
+            Ok(line_count) => {
+                crate_results.push((crate_name.clone(), line_count));
+            }
+            Err(e) => {
+                println!(
+                    "⚠️  Failed to run cargo-llvm-lines for {}: {}",
+                    crate_name, e
+                );
+                // Continue with other crates instead of failing completely
+                crate_results.push((crate_name.clone(), 0));
+            }
+        }
+    }
+
+    Ok(LlvmLinesSummary { crate_results })
+}
+
+fn run_cargo_llvm_lines_single(manifest_path: &str) -> Result<u32> {
     let start = Instant::now();
 
-    let output = Command::new("cargo")
+    // First try with binary target
+    let mut output = Command::new("cargo")
         .args(&["llvm-lines", "--release", "--manifest-path", manifest_path])
         .output()
         .context("Failed to execute cargo llvm-lines")?;
+
+    // If binary target fails, try with --lib for library crates
+    if !output.status.success() {
+        output = Command::new("cargo")
+            .args(&[
+                "llvm-lines",
+                "--release",
+                "--lib",
+                "--manifest-path",
+                manifest_path,
+            ])
+            .output()
+            .context("Failed to execute cargo llvm-lines with --lib")?;
+    }
 
     let duration = start.elapsed();
 
@@ -477,7 +542,7 @@ fn run_cargo_llvm_lines(manifest_path: &str) -> Result<String> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     println!("⏱️  cargo llvm-lines took: {:?}", duration);
 
-    Ok(stdout.to_string())
+    parse_llvm_lines_output(&stdout)
 }
 
 fn format_bytes(bytes: u64) -> String {
@@ -502,9 +567,18 @@ fn format_bytes(bytes: u64) -> String {
 fn measure_build_time(manifest_path: &str) -> Result<BuildTimingSummary> {
     let start = Instant::now();
 
+    // Use a specific target directory to avoid conflicts
+    let target_dir = format!("../target-timing-{}", std::process::id());
+
     // First, clean to ensure we're measuring a fresh build
     let clean_output = Command::new("cargo")
-        .args(&["clean", "--manifest-path", manifest_path])
+        .args(&[
+            "clean",
+            "--manifest-path",
+            manifest_path,
+            "--target-dir",
+            &target_dir,
+        ])
         .env("RUSTC_BOOTSTRAP", "1")
         .output()
         .context("Failed to run cargo clean")?;
@@ -521,6 +595,8 @@ fn measure_build_time(manifest_path: &str) -> Result<BuildTimingSummary> {
             "--release",
             "--manifest-path",
             manifest_path,
+            "--target-dir",
+            &target_dir,
             "--timings=json",
             "-Zunstable-options",
         ])
