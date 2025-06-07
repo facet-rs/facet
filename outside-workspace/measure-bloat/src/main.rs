@@ -20,9 +20,6 @@ struct Cli {
 enum Commands {
     /// Run the full comparison between serde, facet-pr, and facet-main
     Compare {
-        /// Output directory for results
-        #[arg(short, long, default_value = "bloat-results")]
-        output: PathBuf,
         /// Skip serde comparison
         #[arg(long)]
         skip_serde: bool,
@@ -127,10 +124,9 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::Plan => show_plan(),
         Commands::Compare {
-            output,
             skip_serde,
             skip_main,
-        } => run_comparison(output, skip_serde, skip_main),
+        } => run_comparison(skip_serde, skip_main),
         Commands::Test { component, variant } => {
             // Test TOML transformation first
             if component == "debug-toml" {
@@ -244,13 +240,14 @@ measure-bloat plan
     Ok(())
 }
 
-fn run_comparison(output: PathBuf, skip_serde: bool, skip_main: bool) -> Result<()> {
+fn run_comparison(skip_serde: bool, skip_main: bool) -> Result<()> {
     println!("🚀 Starting full comparison...");
-    println!("Output directory: {}", output.display());
     println!("Skip serde: {}", skip_serde);
     println!("Skip main: {}", skip_main);
 
     // Setup output directory
+    let output = PathBuf::from("bloat-results");
+    println!("Output directory: {}", output.display());
     fs::create_dir_all(&output).context("Failed to create output directory")?;
 
     // Define measurement targets
@@ -476,9 +473,8 @@ fn setup_cargo_patches(variant: &str) -> Result<()> {
             println!("✅ Modified Cargo.toml files for facet-main variant");
         }
         "serde" => {
-            // For serde variant, we'd need different Cargo.toml files
-            // For now, just note this needs implementation
-            println!("🚧 Serde variant setup not yet implemented");
+            // Serde variant uses current state - no changes needed
+            println!("✅ Using current serde implementation (no changes needed)");
         }
         _ => {
             anyhow::bail!("Unknown variant: {}", variant);
@@ -786,25 +782,130 @@ fn generate_comparison_report(results: &[BuildResult], report_path: &PathBuf) ->
         let facet_pr = target_results.iter().find(|r| r.variant == "facet-pr");
         let facet_main = target_results.iter().find(|r| r.variant == "facet-main");
 
-        // Summary table
-        report.push_str("| Variant | File Size | Text Size | Build Time | LLVM Lines |\n");
-        report.push_str("|---------|-----------|-----------|------------|------------|\n");
+        // Sort results to show facet-main first (baseline), then facet-pr
+        let mut sorted_results = target_results.clone();
+        sorted_results.sort_by(|a, b| match (a.variant.as_str(), b.variant.as_str()) {
+            ("facet-main", _) => std::cmp::Ordering::Less,
+            (_, "facet-main") => std::cmp::Ordering::Greater,
+            ("facet-pr", _) => std::cmp::Ordering::Less,
+            (_, "facet-pr") => std::cmp::Ordering::Greater,
+            _ => a.variant.cmp(&b.variant),
+        });
 
-        for result in &target_results {
-            let total_llvm_lines: u32 = result
+        // Summary table with deltas
+        if target_results.len() == 1 {
+            // Single variant - no deltas
+            report.push_str("| Variant | File Size | Text Size | Build Time | LLVM Lines |\n");
+            report.push_str("|---------|-----------|-----------|------------|------------|\n");
+
+            for result in &target_results {
+                let total_llvm_lines: u32 = result
+                    .llvm_lines
+                    .crate_results
+                    .iter()
+                    .map(|(_, lines, _)| lines)
+                    .sum();
+                report.push_str(&format!(
+                    "| {} | {} | {} | {:.2}s | {} |\n",
+                    result.variant,
+                    format_bytes(result.file_size),
+                    format_bytes(result.text_section_size),
+                    result.build_time_ms as f64 / 1000.0,
+                    format_number(total_llvm_lines)
+                ));
+            }
+        } else {
+            // Multiple variants - show deltas
+            report.push_str(
+                "| Variant | File Size | Δ | Text Size | Δ | Build Time | Δ | LLVM Lines | Δ |\n",
+            );
+            report.push_str(
+                "|---------|-----------|---|-----------|---|------------|---|------------|---|\n",
+            );
+
+            let baseline_result = &sorted_results[0];
+            let baseline_llvm_total: u32 = baseline_result
                 .llvm_lines
                 .crate_results
                 .iter()
                 .map(|(_, lines, _)| lines)
                 .sum();
-            report.push_str(&format!(
-                "| {} | {} | {} | {:.2}s | {} |\n",
-                result.variant,
-                format_bytes(result.file_size),
-                format_bytes(result.text_section_size),
-                result.build_time_ms as f64 / 1000.0,
-                format_number(total_llvm_lines)
-            ));
+
+            for (i, result) in sorted_results.iter().enumerate() {
+                let total_llvm_lines: u32 = result
+                    .llvm_lines
+                    .crate_results
+                    .iter()
+                    .map(|(_, lines, _)| lines)
+                    .sum();
+
+                if i == 0 {
+                    // First variant - baseline, no deltas
+                    report.push_str(&format!(
+                        "| {} | {} | - | {} | - | {:.2}s | - | {} | - |\n",
+                        result.variant,
+                        format_bytes(result.file_size),
+                        format_bytes(result.text_section_size),
+                        result.build_time_ms as f64 / 1000.0,
+                        format_number(total_llvm_lines)
+                    ));
+                } else {
+                    // Calculate deltas from baseline
+                    let file_size_delta =
+                        result.file_size as i64 - baseline_result.file_size as i64;
+                    let text_size_delta =
+                        result.text_section_size as i64 - baseline_result.text_section_size as i64;
+                    let build_time_delta =
+                        result.build_time_ms as i64 - baseline_result.build_time_ms as i64;
+                    let llvm_lines_delta = total_llvm_lines as i64 - baseline_llvm_total as i64;
+
+                    let file_emoji = if file_size_delta > 0 {
+                        "📈"
+                    } else if file_size_delta < 0 {
+                        "📉"
+                    } else {
+                        "➖"
+                    };
+                    let text_emoji = if text_size_delta > 0 {
+                        "📈"
+                    } else if text_size_delta < 0 {
+                        "📉"
+                    } else {
+                        "➖"
+                    };
+                    let time_emoji = if build_time_delta > 0 {
+                        "📈"
+                    } else if build_time_delta < 0 {
+                        "📉"
+                    } else {
+                        "➖"
+                    };
+                    let llvm_emoji = if llvm_lines_delta > 0 {
+                        "📈"
+                    } else if llvm_lines_delta < 0 {
+                        "📉"
+                    } else {
+                        "➖"
+                    };
+
+                    report.push_str(&format!(
+                        "| {} | {} | {}{} | {} | {}{} | {:.2}s | {}{:.2}s | {} | {}{} |\n",
+                        result.variant,
+                        format_bytes(result.file_size),
+                        file_emoji,
+                        format_signed_bytes(file_size_delta),
+                        format_bytes(result.text_section_size),
+                        text_emoji,
+                        format_signed_bytes(text_size_delta),
+                        result.build_time_ms as f64 / 1000.0,
+                        time_emoji,
+                        build_time_delta as f64 / 1000.0,
+                        format_number(total_llvm_lines),
+                        llvm_emoji,
+                        llvm_lines_delta
+                    ));
+                }
+            }
         }
 
         report.push_str("\n");
@@ -815,7 +916,7 @@ fn generate_comparison_report(results: &[BuildResult], report_path: &PathBuf) ->
         }
 
         // Detailed breakdown for each variant
-        for result in &target_results {
+        for result in &sorted_results {
             report.push_str(&format!("### {} - {}\n\n", target_name, result.variant));
 
             report.push_str("**Top Functions by Size:**\n");
@@ -854,7 +955,7 @@ fn generate_facet_diff_analysis(
 ) {
     report.push_str("### 🔍 PR vs Main Branch Analysis\n\n");
 
-    // Calculate deltas
+    // Calculate deltas for Key Findings section
     let file_size_delta = pr_result.file_size as i64 - main_result.file_size as i64;
     let text_size_delta = pr_result.text_section_size as i64 - main_result.text_section_size as i64;
     let build_time_delta = pr_result.build_time_ms as i64 - main_result.build_time_ms as i64;
@@ -872,65 +973,6 @@ fn generate_facet_diff_analysis(
         .map(|(_, lines, _)| lines)
         .sum();
     let llvm_lines_delta = pr_llvm_total as i64 - main_llvm_total as i64;
-
-    // Summary table with deltas
-    report.push_str("**Summary of Changes:**\n\n");
-    report.push_str("| Metric | Main | PR | Change | % Change |\n");
-    report.push_str("|--------|------|----|---------|-----------|\n");
-
-    let file_size_pct = if main_result.file_size > 0 {
-        (file_size_delta as f64 / main_result.file_size as f64) * 100.0
-    } else {
-        0.0
-    };
-    report.push_str(&format!(
-        "| File Size | {} | {} | {} | {:+.2}% |\n",
-        format_bytes(main_result.file_size),
-        format_bytes(pr_result.file_size),
-        format_signed_bytes(file_size_delta),
-        file_size_pct
-    ));
-
-    let text_size_pct = if main_result.text_section_size > 0 {
-        (text_size_delta as f64 / main_result.text_section_size as f64) * 100.0
-    } else {
-        0.0
-    };
-    report.push_str(&format!(
-        "| Text Size | {} | {} | {} | {:+.2}% |\n",
-        format_bytes(main_result.text_section_size),
-        format_bytes(pr_result.text_section_size),
-        format_signed_bytes(text_size_delta),
-        text_size_pct
-    ));
-
-    let build_time_pct = if main_result.build_time_ms > 0 {
-        (build_time_delta as f64 / main_result.build_time_ms as f64) * 100.0
-    } else {
-        0.0
-    };
-    report.push_str(&format!(
-        "| Build Time | {:.2}s | {:.2}s | {:+.2}s | {:+.2}% |\n",
-        main_result.build_time_ms as f64 / 1000.0,
-        pr_result.build_time_ms as f64 / 1000.0,
-        build_time_delta as f64 / 1000.0,
-        build_time_pct
-    ));
-
-    let llvm_lines_pct = if main_llvm_total > 0 {
-        (llvm_lines_delta as f64 / main_llvm_total as f64) * 100.0
-    } else {
-        0.0
-    };
-    report.push_str(&format!(
-        "| LLVM Lines | {} | {} | {:+} | {:+.2}% |\n",
-        format_number(main_llvm_total),
-        format_number(pr_llvm_total),
-        llvm_lines_delta,
-        llvm_lines_pct
-    ));
-
-    report.push_str("\n");
 
     // Function-level diff analysis
     generate_function_diff_analysis(report, pr_result, main_result);
@@ -1013,11 +1055,21 @@ fn generate_function_diff_analysis(
             } else {
                 format_bytes(*pr_size)
             };
+
+            let emoji = if *delta > 0 {
+                "📈"
+            } else if *delta < 0 {
+                "📉"
+            } else {
+                "➖"
+            };
+
             report.push_str(&format!(
-                "| `{}` | {} | {} | {} |\n",
+                "| `{}` | {} | {} | {}{} |\n",
                 func_name,
                 main_str,
                 pr_str,
+                emoji,
                 format_signed_bytes(*delta)
             ));
         }
@@ -1107,6 +1159,22 @@ fn generate_llvm_crate_diff_analysis(
                 format_number(pr_lines)
             };
 
+            let lines_emoji = if lines_delta > 0 {
+                "📈"
+            } else if lines_delta < 0 {
+                "📉"
+            } else {
+                "➖"
+            };
+
+            let copies_emoji = if copies_delta > 0 {
+                "📈"
+            } else if copies_delta < 0 {
+                "📉"
+            } else {
+                "➖"
+            };
+
             let lines_delta_str = if lines_delta == 0 {
                 "0".to_string()
             } else {
@@ -1120,13 +1188,15 @@ fn generate_llvm_crate_diff_analysis(
             };
 
             report.push_str(&format!(
-                "| `{}` | {} ({}) | {} ({}) | {} | {} |\n",
+                "| `{}` | {} ({}) | {} ({}) | {}{} | {}{} |\n",
                 crate_name,
                 main_lines_str,
                 format_number(main_copies),
                 pr_lines_str,
                 format_number(pr_copies),
+                lines_emoji,
                 lines_delta_str,
+                copies_emoji,
                 copies_delta_str
             ));
         }
