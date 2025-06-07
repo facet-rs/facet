@@ -1,6 +1,5 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
-assertion_line: 405
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(transparent)]\n        struct Blah<'a, T: Facet + core::hash::Hash, const C: usize = 3>(T, core::marker::PhantomData<&'a [u8; C]>)\n        where\n            T: Debug; // Added a Debug bound for demonstration\n        \"#)"
 ---
 #[automatically_derived]
@@ -13,8 +12,17 @@ where
     T: ::facet::Facet<'__facet>,
 {
     const VTABLE: &'static ::facet::ValueVTable = &const {
-        let mut vtable =
-            ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "Blah"));
+        let mut vtable = ::facet::value_vtable!(Self, |f, opts| {
+            write!(f, "Blah")?;
+            if let Some(opts) = opts.for_children() {
+                write!(f, "<")?;
+                (<T as ::facet::Facet>::SHAPE.vtable.type_name)(f, opts)?;
+                write!(f, ">")?;
+            } else {
+                write!(f, "<…>")?;
+            }
+            Ok(())
+        });
         vtable
     };
     const SHAPE: &'static ::facet::Shape<'static> = &const {
