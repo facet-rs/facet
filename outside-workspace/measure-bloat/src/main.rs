@@ -20,8 +20,6 @@ struct Cli {
 enum Commands {
     /// Run the full comparison between serde, facet-pr, and facet-main
     Compare,
-    /// Show the implementation plan
-    Plan,
     /// Test individual components
     Test {
         /// Component to test
@@ -115,7 +113,6 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Plan => show_plan(),
         Commands::Compare => run_comparison(),
         Commands::Test { component, variant } => {
             // Test TOML transformation first
@@ -126,108 +123,6 @@ fn main() -> Result<()> {
             test_component(component, variant)
         }
     }
-}
-
-fn show_plan() -> Result<()> {
-    println!(
-        r#"
-# MEASURE-BLOAT IMPLEMENTATION PLAN
-
-## Overview
-This tool will compare binary sizes and build times across three scenarios:
-1. **serde-latest**: Using the latest serde ecosystem
-2. **facet-pr**: Using facet from current PR/HEAD
-3. **facet-main**: Using facet from main branch (with PR's ks-* crates)
-
-## Measurement Targets
-
-### 1. JSON Read/Write Benchmark
-- **Facet crates**: ks-facet, ks-mock, ks-facet-json-read, ks-facet-json-write
-- **Serde crates**: ks-serde, ks-mock, ks-serde-json-read, ks-serde-json-write
-- **Binary**: Composite benchmark that does JSON read + write operations
-
-### 2. Pretty Printing Benchmark
-- **Facet crates**: ks-facet, ks-mock, ks-facet-pretty
-- **Serde crates**: ks-serde, ks-mock, ks-debug-print
-- **Binary**: Pretty print formatting benchmark
-
-### 3. Core Library Size
-- **Facet crates**: ks-facet, ks-mock
-- **Serde crates**: ks-serde, ks-mock
-- **Binary**: Minimal binary using just core functionality
-
-## Implementation Phases
-
-### Phase 1: Infrastructure (CURRENT)
-- [x] Create project structure
-- [x] Define measurement targets
-- [ ] Implement cargo command execution
-- [ ] Implement size parsing (cargo-bloat output)
-- [ ] Implement LLVM lines parsing (cargo-llvm-lines output)
-
-### Phase 2: Basic Measurements
-- [ ] Implement single-target measurement
-- [ ] Test with current ks-facet crates
-- [ ] Validate cargo-bloat and cargo-llvm-lines integration
-
-### Phase 3: Multi-Variant Support
-- [ ] Implement git branch switching for facet-main comparison
-- [ ] Implement [patch.crates-io] for mixing PR ks-* with main facet
-- [ ] Handle Cargo.toml manipulation safely
-
-### Phase 4: Serde Integration
-- [ ] Implement serde-based variants of ks-* crates
-- [ ] Create equivalent benchmarks using serde ecosystem
-- [ ] Ensure fair comparison methodology
-
-### Phase 5: Reporting
-- [ ] Generate markdown reports
-- [ ] Create comparison tables
-- [ ] Add diff generation for detailed analysis
-- [ ] GitHub Actions integration
-
-## Technical Challenges
-
-### 1. Dependency Management
-**Problem**: Need to test facet-main with PR's ks-* crates
-**Solution**: Use `[patch.crates-io]` or `[patch."https://github.com/..."]` in Cargo.toml
-
-### 2. Serde Equivalents
-**Problem**: ks-serde-* crates are currently stubbed
-**Solution**: Implement minimal but equivalent functionality for fair comparison
-
-### 3. Build Isolation
-**Problem**: Cargo caches can interfere between builds
-**Solution**: Use separate target directories or cargo clean between variants
-
-### 4. Git State Management
-**Problem**: Need to switch between branches without losing working changes
-**Solution**: Use git stash/unstash or separate worktrees
-
-## Usage Examples
-
-```bash
-# Full comparison (will take time!)
-measure-bloat compare
-
-# Skip serde comparison during development
-measure-bloat compare --skip-serde
-
-# Test individual component
-measure-bloat test json-benchmark facet-pr
-
-# Show this plan
-measure-bloat plan
-```
-
-## Output Format
-- Markdown report with size comparisons
-- CSV data for further analysis
-- Detailed logs for debugging
-- GitHub Actions artifact compatibility
-"#
-    );
-    Ok(())
 }
 
 fn run_comparison() -> Result<()> {
