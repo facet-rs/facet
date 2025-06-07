@@ -19,14 +19,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Run the full comparison between serde, facet-pr, and facet-main
-    Compare {
-        /// Skip serde comparison
-        #[arg(long)]
-        skip_serde: bool,
-        /// Skip facet-main comparison
-        #[arg(long)]
-        skip_main: bool,
-    },
+    Compare,
     /// Show the implementation plan
     Plan,
     /// Test individual components
@@ -123,10 +116,7 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Plan => show_plan(),
-        Commands::Compare {
-            skip_serde,
-            skip_main,
-        } => run_comparison(skip_serde, skip_main),
+        Commands::Compare => run_comparison(),
         Commands::Test { component, variant } => {
             // Test TOML transformation first
             if component == "debug-toml" {
@@ -240,10 +230,8 @@ measure-bloat plan
     Ok(())
 }
 
-fn run_comparison(skip_serde: bool, skip_main: bool) -> Result<()> {
+fn run_comparison() -> Result<()> {
     println!("🚀 Starting full comparison...");
-    println!("Skip serde: {}", skip_serde);
-    println!("Skip main: {}", skip_main);
 
     // Setup output directory
     let output = PathBuf::from("bloat-results");
@@ -255,27 +243,9 @@ fn run_comparison(skip_serde: bool, skip_main: bool) -> Result<()> {
 
     let mut all_results = Vec::new();
 
-    // Measure ks-facet with HEAD and main variants
+    // Measure ks-facet with both PR and main variants
     let facet_target = &targets[0]; // ks-facet target
-    if !skip_main {
-        // Measure with both HEAD and main
-        for &variant in &["facet-pr", "facet-main"] {
-            println!("\n🔄 Measuring {} with {}", facet_target.name, variant);
-            setup_cargo_patches(variant)?;
-            match measure_target_complete(facet_target, variant) {
-                Ok(result) => {
-                    println!("✅ Measurement complete");
-                    all_results.push(result);
-                }
-                Err(e) => {
-                    println!("❌ Measurement failed: {}", e);
-                }
-            }
-            cleanup_cargo_patches()?;
-        }
-    } else {
-        // Measure only HEAD
-        let variant = "facet-pr";
+    for &variant in &["facet-pr", "facet-main"] {
         println!("\n🔄 Measuring {} with {}", facet_target.name, variant);
         setup_cargo_patches(variant)?;
         match measure_target_complete(facet_target, variant) {
@@ -290,23 +260,21 @@ fn run_comparison(skip_serde: bool, skip_main: bool) -> Result<()> {
         cleanup_cargo_patches()?;
     }
 
-    // Measure ks-serde if not skipped
-    if !skip_serde {
-        let serde_target = &targets[1]; // ks-serde target
-        let variant = "serde";
-        println!("\n🔄 Measuring {} with {}", serde_target.name, variant);
-        setup_cargo_patches(variant)?;
-        match measure_target_complete(serde_target, variant) {
-            Ok(result) => {
-                println!("✅ Measurement complete");
-                all_results.push(result);
-            }
-            Err(e) => {
-                println!("❌ Measurement failed: {}", e);
-            }
+    // Measure ks-serde
+    let serde_target = &targets[1]; // ks-serde target
+    let variant = "serde";
+    println!("\n🔄 Measuring {} with {}", serde_target.name, variant);
+    setup_cargo_patches(variant)?;
+    match measure_target_complete(serde_target, variant) {
+        Ok(result) => {
+            println!("✅ Measurement complete");
+            all_results.push(result);
         }
-        cleanup_cargo_patches()?;
+        Err(e) => {
+            println!("❌ Measurement failed: {}", e);
+        }
     }
+    cleanup_cargo_patches()?;
 
     // Generate comparison report
     let report_path = output.join("comparison_report.md");
@@ -765,7 +733,7 @@ fn generate_comparison_report(results: &[BuildResult], report_path: &PathBuf) ->
         chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
     ));
 
-    // Group results by target
+    // Group results by target, but we'll create a unified table
     let mut targets: std::collections::HashMap<String, Vec<&BuildResult>> =
         std::collections::HashMap::new();
     for result in results {
@@ -775,14 +743,147 @@ fn generate_comparison_report(results: &[BuildResult], report_path: &PathBuf) ->
             .push(result);
     }
 
+    // Find all variants across targets for unified table
+    let empty_facet = vec![];
+    let empty_serde = vec![];
+    let facet_results = targets.get("ks-facet").unwrap_or(&empty_facet);
+    let serde_results = targets.get("ks-serde").unwrap_or(&empty_serde);
+
+    // Create unified comparison - use ks-facet as the main target name
+    let main_target_name = "ks-facet";
+    report.push_str(&format!("## {}\n\n", main_target_name));
+
+    // Find facet results for diff analysis
+    let facet_pr = facet_results.iter().find(|r| r.variant == "facet-pr");
+    let facet_main = facet_results.iter().find(|r| r.variant == "facet-main");
+    let serde_result = serde_results.iter().find(|r| r.variant == "serde");
+
+    // Create unified sorted results: facet-main, facet-pr, then serde
+    let mut all_results = Vec::new();
+    if let Some(main) = facet_main {
+        all_results.push(*main);
+    }
+    if let Some(pr) = facet_pr {
+        all_results.push(*pr);
+    }
+    if let Some(serde) = serde_result {
+        all_results.push(*serde);
+    }
+
+    // Summary table - show deltas for facet variants, no deltas for serde
+    report.push_str(
+        "| Variant | File Size | Δ | Text Size | Δ | Build Time | Δ | LLVM Lines | Δ |\n",
+    );
+    report.push_str(
+        "|---------|-----------|---|-----------|---|------------|---|------------|---|\n",
+    );
+
+    // Find facet-main as baseline for deltas
+    let baseline_result = all_results.iter().find(|r| r.variant == "facet-main");
+    let baseline_llvm_total: Option<u32> = baseline_result.map(|result| {
+        result
+            .llvm_lines
+            .crate_results
+            .iter()
+            .map(|(_, lines, _)| lines)
+            .sum()
+    });
+
+    for result in all_results.iter() {
+        let total_llvm_lines: u32 = result
+            .llvm_lines
+            .crate_results
+            .iter()
+            .map(|(_, lines, _)| lines)
+            .sum();
+
+        if result.variant == "facet-main" {
+            // Baseline - no deltas
+            report.push_str(&format!(
+                "| {} | {} | - | {} | - | {:.2}s | - | {} | - |\n",
+                result.variant,
+                format_bytes(result.file_size),
+                format_bytes(result.text_section_size),
+                result.build_time_ms as f64 / 1000.0,
+                format_number(total_llvm_lines)
+            ));
+        } else if result.variant == "facet-pr" && baseline_result.is_some() {
+            // Calculate deltas from facet-main baseline
+            let baseline = baseline_result.unwrap();
+            let file_size_delta = result.file_size as i64 - baseline.file_size as i64;
+            let text_size_delta =
+                result.text_section_size as i64 - baseline.text_section_size as i64;
+            let build_time_delta = result.build_time_ms as i64 - baseline.build_time_ms as i64;
+            let llvm_lines_delta = total_llvm_lines as i64 - baseline_llvm_total.unwrap() as i64;
+
+            let file_emoji = if file_size_delta > 0 {
+                "📈"
+            } else if file_size_delta < 0 {
+                "📉"
+            } else {
+                "➖"
+            };
+            let text_emoji = if text_size_delta > 0 {
+                "📈"
+            } else if text_size_delta < 0 {
+                "📉"
+            } else {
+                "➖"
+            };
+            let time_emoji = if build_time_delta > 0 {
+                "📈"
+            } else if build_time_delta < 0 {
+                "📉"
+            } else {
+                "➖"
+            };
+            let llvm_emoji = if llvm_lines_delta > 0 {
+                "📈"
+            } else if llvm_lines_delta < 0 {
+                "📉"
+            } else {
+                "➖"
+            };
+
+            report.push_str(&format!(
+                "| {} | {} | {}{} | {} | {}{} | {:.2}s | {}{:.2}s | {} | {}{} |\n",
+                result.variant,
+                format_bytes(result.file_size),
+                file_emoji,
+                format_signed_bytes(file_size_delta),
+                format_bytes(result.text_section_size),
+                text_emoji,
+                format_signed_bytes(text_size_delta),
+                result.build_time_ms as f64 / 1000.0,
+                time_emoji,
+                build_time_delta as f64 / 1000.0,
+                format_number(total_llvm_lines),
+                llvm_emoji,
+                llvm_lines_delta
+            ));
+        } else {
+            // Serde or other variants - no deltas
+            report.push_str(&format!(
+                "| {} | {} | - | {} | - | {:.2}s | - | {} | - |\n",
+                result.variant,
+                format_bytes(result.file_size),
+                format_bytes(result.text_section_size),
+                result.build_time_ms as f64 / 1000.0,
+                format_number(total_llvm_lines)
+            ));
+        }
+    }
+
+    report.push_str("\n");
+
+    // Add diff analysis if we have both facet-pr and facet-main
+    if let (Some(pr_result), Some(main_result)) = (facet_pr, facet_main) {
+        generate_facet_diff_analysis(&mut report, pr_result, main_result);
+    }
+
+    // Detailed breakdown for each target and variant
     for (target_name, target_results) in targets {
-        report.push_str(&format!("## {}\n\n", target_name));
-
-        // Find facet-pr and facet-main results for diff analysis
-        let facet_pr = target_results.iter().find(|r| r.variant == "facet-pr");
-        let facet_main = target_results.iter().find(|r| r.variant == "facet-main");
-
-        // Sort results to show facet-main first (baseline), then facet-pr
+        // Sort results for consistent ordering
         let mut sorted_results = target_results.clone();
         sorted_results.sort_by(|a, b| match (a.variant.as_str(), b.variant.as_str()) {
             ("facet-main", _) => std::cmp::Ordering::Less,
@@ -792,130 +893,6 @@ fn generate_comparison_report(results: &[BuildResult], report_path: &PathBuf) ->
             _ => a.variant.cmp(&b.variant),
         });
 
-        // Summary table with deltas
-        if target_results.len() == 1 {
-            // Single variant - no deltas
-            report.push_str("| Variant | File Size | Text Size | Build Time | LLVM Lines |\n");
-            report.push_str("|---------|-----------|-----------|------------|------------|\n");
-
-            for result in &target_results {
-                let total_llvm_lines: u32 = result
-                    .llvm_lines
-                    .crate_results
-                    .iter()
-                    .map(|(_, lines, _)| lines)
-                    .sum();
-                report.push_str(&format!(
-                    "| {} | {} | {} | {:.2}s | {} |\n",
-                    result.variant,
-                    format_bytes(result.file_size),
-                    format_bytes(result.text_section_size),
-                    result.build_time_ms as f64 / 1000.0,
-                    format_number(total_llvm_lines)
-                ));
-            }
-        } else {
-            // Multiple variants - show deltas
-            report.push_str(
-                "| Variant | File Size | Δ | Text Size | Δ | Build Time | Δ | LLVM Lines | Δ |\n",
-            );
-            report.push_str(
-                "|---------|-----------|---|-----------|---|------------|---|------------|---|\n",
-            );
-
-            let baseline_result = &sorted_results[0];
-            let baseline_llvm_total: u32 = baseline_result
-                .llvm_lines
-                .crate_results
-                .iter()
-                .map(|(_, lines, _)| lines)
-                .sum();
-
-            for (i, result) in sorted_results.iter().enumerate() {
-                let total_llvm_lines: u32 = result
-                    .llvm_lines
-                    .crate_results
-                    .iter()
-                    .map(|(_, lines, _)| lines)
-                    .sum();
-
-                if i == 0 {
-                    // First variant - baseline, no deltas
-                    report.push_str(&format!(
-                        "| {} | {} | - | {} | - | {:.2}s | - | {} | - |\n",
-                        result.variant,
-                        format_bytes(result.file_size),
-                        format_bytes(result.text_section_size),
-                        result.build_time_ms as f64 / 1000.0,
-                        format_number(total_llvm_lines)
-                    ));
-                } else {
-                    // Calculate deltas from baseline
-                    let file_size_delta =
-                        result.file_size as i64 - baseline_result.file_size as i64;
-                    let text_size_delta =
-                        result.text_section_size as i64 - baseline_result.text_section_size as i64;
-                    let build_time_delta =
-                        result.build_time_ms as i64 - baseline_result.build_time_ms as i64;
-                    let llvm_lines_delta = total_llvm_lines as i64 - baseline_llvm_total as i64;
-
-                    let file_emoji = if file_size_delta > 0 {
-                        "📈"
-                    } else if file_size_delta < 0 {
-                        "📉"
-                    } else {
-                        "➖"
-                    };
-                    let text_emoji = if text_size_delta > 0 {
-                        "📈"
-                    } else if text_size_delta < 0 {
-                        "📉"
-                    } else {
-                        "➖"
-                    };
-                    let time_emoji = if build_time_delta > 0 {
-                        "📈"
-                    } else if build_time_delta < 0 {
-                        "📉"
-                    } else {
-                        "➖"
-                    };
-                    let llvm_emoji = if llvm_lines_delta > 0 {
-                        "📈"
-                    } else if llvm_lines_delta < 0 {
-                        "📉"
-                    } else {
-                        "➖"
-                    };
-
-                    report.push_str(&format!(
-                        "| {} | {} | {}{} | {} | {}{} | {:.2}s | {}{:.2}s | {} | {}{} |\n",
-                        result.variant,
-                        format_bytes(result.file_size),
-                        file_emoji,
-                        format_signed_bytes(file_size_delta),
-                        format_bytes(result.text_section_size),
-                        text_emoji,
-                        format_signed_bytes(text_size_delta),
-                        result.build_time_ms as f64 / 1000.0,
-                        time_emoji,
-                        build_time_delta as f64 / 1000.0,
-                        format_number(total_llvm_lines),
-                        llvm_emoji,
-                        llvm_lines_delta
-                    ));
-                }
-            }
-        }
-
-        report.push_str("\n");
-
-        // Add diff analysis if we have both facet-pr and facet-main
-        if let (Some(pr_result), Some(main_result)) = (facet_pr, facet_main) {
-            generate_facet_diff_analysis(&mut report, pr_result, main_result);
-        }
-
-        // Detailed breakdown for each variant
         for result in &sorted_results {
             report.push_str(&format!("### {} - {}\n\n", target_name, result.variant));
 
