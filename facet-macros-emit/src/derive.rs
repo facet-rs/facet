@@ -1,5 +1,5 @@
 use facet_macros_parse::{ToTokens, *};
-use quote::quote;
+use quote::{TokenStreamExt as _, quote};
 
 use crate::{LifetimeName, RenameRule, process_enum, process_struct};
 
@@ -114,5 +114,49 @@ pub(crate) fn build_type_params(generics: Option<&GenericParams>) -> TokenStream
         quote! {}
     } else {
         quote! { .type_params(&[#(#type_params),*]) }
+    }
+}
+
+/// Generate the `type_name` function for the `ValueVTable`,
+/// displaying realized generics if present.
+pub(crate) fn generate_type_name_fn(
+    type_name: &Ident,
+    generics: Option<&GenericParams>,
+) -> TokenStream {
+    let type_name_str = type_name.to_string();
+    if let Some(generics) = generics {
+        let write_generics = {
+            let params = generics.params.0.iter();
+            let write_each = params.filter_map(|param| match &param.value {
+                // Lifetimes not shown by `std::any::type_name`, this is parity.
+                GenericParam::Lifetime { .. } => None,
+                // TODO: should const generics be displayed?
+                GenericParam::Const { .. } => None,
+                GenericParam::Type { name, .. } => Some(quote! {
+                    <#name as ::facet::Facet>::SHAPE.vtable.type_name()(f, opts)?;
+                }),
+            });
+            // TODO: is there a way to construct a DelimitedVec from an iterator?
+            let mut tokens = TokenStream::new();
+            tokens.append_separated(write_each, quote! { write!(f, ", ")?; });
+            tokens
+        };
+        quote! {
+            |f, opts| {
+                write!(f, #type_name_str)?;
+                if let Some(opts) = opts.for_children() {
+                    write!(f, "<")?;
+                    #write_generics
+                    write!(f, ">")?;
+                } else {
+                    write!(f, "<…>")?;
+                }
+                Ok(())
+            }
+        }
+    } else {
+        quote! {
+            |f, _opts| ::core::fmt::Write::write_str(f, #type_name_str)
+        }
     }
 }
