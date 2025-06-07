@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::path::PathBuf;
@@ -95,8 +96,16 @@ struct BuildTimingSummary {
 }
 
 #[derive(Debug)]
+struct LlvmFunction {
+    name: String,
+    lines: u32,
+    copies: u32,
+}
+
+#[derive(Debug)]
 struct LlvmLinesSummary {
-    crate_results: Vec<(String, u32)>,
+    crate_results: Vec<(String, u32, u32)>, // (name, lines, copies)
+    top_functions: Vec<LlvmFunction>,
 }
 
 #[derive(Debug)]
@@ -362,19 +371,19 @@ fn measure_target(target: &MeasurementTarget, variant: &str) -> Result<()> {
             match run_cargo_bloat("../ks-facet/Cargo.toml", false) {
                 Ok(bloat_output) => {
                     println!("✅ cargo-bloat (functions) results:");
-                    println!("   File size: {} bytes", bloat_output.file_size);
+                    println!("   File size: {}", format_bytes(bloat_output.file_size));
                     println!(
-                        "   Text section size: {} bytes",
-                        bloat_output.text_section_size
+                        "   Text section size: {}",
+                        format_bytes(bloat_output.text_section_size)
                     );
-                    println!("   Top 5 functions:");
-                    for (i, func) in bloat_output.functions.iter().take(5).enumerate() {
+                    println!("   Top 25 functions:");
+                    for (i, func) in bloat_output.functions.iter().take(25).enumerate() {
                         println!(
-                            "   {}. {} ({}): {} bytes",
+                            "   {}. {} ({}): {}",
                             i + 1,
                             func.crate_name,
                             func.name,
-                            func.size
+                            format_bytes(func.size)
                         );
                     }
                 }
@@ -390,10 +399,10 @@ fn measure_target(target: &MeasurementTarget, variant: &str) -> Result<()> {
                     println!("   Top 5 crates:");
                     for (i, crate_info) in bloat_output.crates.iter().take(5).enumerate() {
                         println!(
-                            "   {}. {}: {} bytes",
+                            "   {}. {}: {}",
                             i + 1,
                             crate_info.name,
-                            crate_info.size
+                            format_bytes(crate_info.size)
                         );
                     }
                 }
@@ -406,15 +415,40 @@ fn measure_target(target: &MeasurementTarget, variant: &str) -> Result<()> {
             match run_cargo_llvm_lines_for_crates(&target.facet_crates) {
                 Ok(llvm_summary) => {
                     println!("\n✅ cargo-llvm-lines results:");
-                    for (crate_name, line_count) in &llvm_summary.crate_results {
-                        println!("   {}: {} LLVM IR lines", crate_name, line_count);
+                    for (crate_name, line_count, copy_count) in &llvm_summary.crate_results {
+                        println!(
+                            "   {}: {} LLVM IR lines ({} copies)",
+                            crate_name,
+                            format_number(*line_count),
+                            format_number(*copy_count)
+                        );
                     }
                     let total_lines: u32 = llvm_summary
                         .crate_results
                         .iter()
-                        .map(|(_, count)| count)
+                        .map(|(_, count, _)| count)
                         .sum();
-                    println!("   Total: {} LLVM IR lines", total_lines);
+                    let total_copies: u32 = llvm_summary
+                        .crate_results
+                        .iter()
+                        .map(|(_, _, copies)| copies)
+                        .sum();
+                    println!(
+                        "   Total: {} LLVM IR lines ({} copies)",
+                        format_number(total_lines),
+                        format_number(total_copies)
+                    );
+
+                    println!("\n   Top 15 functions by LLVM lines:");
+                    for (i, func) in llvm_summary.top_functions.iter().take(15).enumerate() {
+                        println!(
+                            "   {}. {}: {} lines ({} copies)",
+                            i + 1,
+                            func.name,
+                            format_number(func.lines),
+                            format_number(func.copies)
+                        );
+                    }
                 }
                 Err(e) => {
                     println!("❌ Failed to run cargo-llvm-lines: {}", e);
@@ -456,7 +490,7 @@ fn run_cargo_bloat(manifest_path: &str, crates_mode: bool) -> Result<BloatOutput
         "--manifest-path",
         manifest_path,
         "-n",
-        "20",
+        "25",
     ];
 
     if crates_mode {
@@ -486,14 +520,16 @@ fn run_cargo_bloat(manifest_path: &str, crates_mode: bool) -> Result<BloatOutput
 
 fn run_cargo_llvm_lines_for_crates(crate_names: &[String]) -> Result<LlvmLinesSummary> {
     let mut crate_results = Vec::new();
+    let mut all_functions = Vec::new();
 
     for crate_name in crate_names {
         // Convert crate name to manifest path
         let manifest_path = format!("../{}/Cargo.toml", crate_name.replace('_', "-"));
 
         match run_cargo_llvm_lines_single(&manifest_path) {
-            Ok(line_count) => {
-                crate_results.push((crate_name.clone(), line_count));
+            Ok((line_count, copy_count, functions)) => {
+                crate_results.push((crate_name.clone(), line_count, copy_count));
+                all_functions.extend(functions);
             }
             Err(e) => {
                 println!(
@@ -501,15 +537,21 @@ fn run_cargo_llvm_lines_for_crates(crate_names: &[String]) -> Result<LlvmLinesSu
                     crate_name, e
                 );
                 // Continue with other crates instead of failing completely
-                crate_results.push((crate_name.clone(), 0));
+                crate_results.push((crate_name.clone(), 0, 0));
             }
         }
     }
 
-    Ok(LlvmLinesSummary { crate_results })
+    // Sort all functions by line count (descending)
+    all_functions.sort_by(|a, b| b.lines.cmp(&a.lines));
+
+    Ok(LlvmLinesSummary {
+        crate_results,
+        top_functions: all_functions,
+    })
 }
 
-fn run_cargo_llvm_lines_single(manifest_path: &str) -> Result<u32> {
+fn run_cargo_llvm_lines_single(manifest_path: &str) -> Result<(u32, u32, Vec<LlvmFunction>)> {
     let start = Instant::now();
 
     // First try with binary target
@@ -564,6 +606,21 @@ fn format_bytes(bytes: u64) -> String {
     }
 }
 
+fn format_number(num: u32) -> String {
+    // Add thousands separators for readability
+    let num_str = num.to_string();
+    let mut result = String::new();
+
+    for (i, c) in num_str.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            result.push(',');
+        }
+        result.push(c);
+    }
+
+    result.chars().rev().collect()
+}
+
 fn measure_build_time(manifest_path: &str) -> Result<BuildTimingSummary> {
     let start = Instant::now();
 
@@ -612,6 +669,9 @@ fn measure_build_time(manifest_path: &str) -> Result<BuildTimingSummary> {
         anyhow::bail!("cargo build failed: {}", stderr);
     }
 
+    // Clean up the temporary target directory
+    let _ = std::fs::remove_dir_all(&target_dir);
+
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut crate_timings = Vec::new();
 
@@ -637,23 +697,62 @@ fn measure_build_time(manifest_path: &str) -> Result<BuildTimingSummary> {
     })
 }
 
-fn parse_llvm_lines_output(output: &str) -> Result<u32> {
-    // Parse cargo-llvm-lines output to extract total line count
-    // Look for line like "123456 (100.0%, 100.0%) (TOTAL)"
+fn parse_llvm_lines_output(output: &str) -> Result<(u32, u32, Vec<LlvmFunction>)> {
+    // Parse cargo-llvm-lines output to extract total line count, copy count, and individual functions
+    // Look for line like "1876                94                (TOTAL)"
+    // And function lines like "   99 (5.3%,  5.3%)   1 (1.1%,  1.1%)  ks_facet::main"
+
+    let mut total_lines = 0;
+    let mut total_copies = 0;
+    let mut functions = Vec::new();
 
     for line in output.lines() {
         if line.contains("(TOTAL)") {
             let parts: Vec<&str> = line.split_whitespace().collect();
-            if let Some(count_str) = parts.first() {
-                let count: u32 = count_str
+            if parts.len() >= 3 {
+                total_lines = parts[0]
                     .parse()
                     .context("Failed to parse LLVM line count")?;
-                return Ok(count);
+                total_copies = parts[1]
+                    .parse()
+                    .context("Failed to parse LLVM copy count")?;
+            }
+        } else if line
+            .trim_start()
+            .chars()
+            .next()
+            .map_or(false, |c| c.is_ascii_digit())
+            && line.contains('%')
+        {
+            // Parse function lines: "   99 (5.3%,  5.3%)   1 (1.1%,  1.1%)  ks_facet::main"
+            // Use regex to precisely extract: lines, copies, and function name
+            let re = Regex::new(r"^\s*(\d+)\s+\([^)]+\)\s+(\d+)\s+\([^)]+\)\s+(.+)$").unwrap();
+
+            if let Some(captures) = re.captures(line) {
+                if let (Ok(lines), Ok(copies)) =
+                    (captures[1].parse::<u32>(), captures[2].parse::<u32>())
+                {
+                    let function_name = captures[3].trim().to_string();
+                    functions.push(LlvmFunction {
+                        name: function_name,
+                        lines,
+                        copies,
+                    });
+                }
             }
         }
     }
 
-    anyhow::bail!("Could not find (TOTAL) line in cargo-llvm-lines output");
+    if total_lines == 0 && total_copies == 0 {
+        // Handle case where there are no functions (like ks-types)
+        return Ok((0, 0, functions));
+    }
+
+    if total_lines == 0 {
+        anyhow::bail!("Could not find (TOTAL) line in cargo-llvm-lines output");
+    }
+
+    Ok((total_lines, total_copies, functions))
 }
 
 #[cfg(test)]
