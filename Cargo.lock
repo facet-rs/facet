@@ -155,10 +155,7 @@ checksum = "c469d952047f47f91b68d1cba3f10d63c11d73e4636f24f08daf0278abf01c4d"
 dependencies = [
  "android-tzdata",
  "iana-time-zone",
- "js-sys",
  "num-traits",
- "serde",
- "wasm-bindgen",
  "windows-link",
 ]
 
@@ -1071,90 +1068,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ks-debug"
-version = "0.1.0"
-dependencies = [
- "ks-types",
-]
-
-[[package]]
-name = "ks-facet"
-version = "0.1.0"
-dependencies = [
- "ks-facet-json-read",
- "ks-facet-json-write",
- "ks-facet-pretty",
- "ks-mock",
-]
-
-[[package]]
-name = "ks-facet-json-read"
-version = "0.1.0"
-dependencies = [
- "facet-json",
- "ks-types",
-]
-
-[[package]]
-name = "ks-facet-json-write"
-version = "0.1.0"
-dependencies = [
- "facet-json",
- "ks-types",
-]
-
-[[package]]
-name = "ks-facet-pretty"
-version = "0.1.0"
-dependencies = [
- "facet-pretty",
- "ks-types",
-]
-
-[[package]]
-name = "ks-mock"
-version = "0.1.0"
-dependencies = [
- "ks-types",
-]
-
-[[package]]
-name = "ks-serde"
-version = "0.1.0"
-dependencies = [
- "ks-debug",
- "ks-mock",
- "ks-serde-json-read",
- "ks-serde-json-write",
-]
-
-[[package]]
-name = "ks-serde-json-read"
-version = "0.1.0"
-dependencies = [
- "ks-types",
- "serde_json",
-]
-
-[[package]]
-name = "ks-serde-json-write"
-version = "0.1.0"
-dependencies = [
- "ks-types",
- "serde_json",
-]
-
-[[package]]
-name = "ks-types"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "facet",
- "serde",
- "uuid",
-]
-
-[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1891,7 +1804,6 @@ checksum = "3cf4199d1e5d15ddd86a694e4d0dffa9c323ce759fea589f00fef9d81cc1931d"
 dependencies = [
  "getrandom",
  "js-sys",
- "serde",
  "wasm-bindgen",
 ]
 
