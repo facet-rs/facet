@@ -1,0 +1,10 @@
+[package]
+name = "ks-debug"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.87.0"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/facet-rs/facet"
+
+[dependencies]
+ks-types = { version = "0.1.0", path = "../ks-types", features = ["serde"] }

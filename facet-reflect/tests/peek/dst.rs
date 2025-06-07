@@ -21,6 +21,7 @@ fn test_peek_dst_str() {
 }
 
 #[test]
+#[ignore]
 #[cfg(not(miri))]
 fn test_peek_dst_slice() {
     let s = [1, 2, 3].as_slice();

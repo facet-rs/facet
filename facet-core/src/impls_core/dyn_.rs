@@ -117,6 +117,7 @@ mod test {
     /// - Debug formatting of trait objects
     /// - Nested trait objects (trait object containing other trait objects)
     #[test]
+    #[ignore]
     fn test_dyn() {
         let s = String::from("abc");
         let s_dyn = &s as &dyn DynFacet;

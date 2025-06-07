@@ -10,3 +10,8 @@ tarpaulin-report.html
 **/.claude/settings.local.json
 **/CLAUDE.local.md
 *.sw[op]
+
+# measure-bloat output directories
+outside-workspace/measure-bloat/bloat-results/
+outside-workspace/measure-bloat/comparison-results/
+outside-workspace/measure-bloat/test-results/

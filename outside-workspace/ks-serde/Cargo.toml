@@ -1,0 +1,13 @@
+[package]
+name = "ks-serde"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.87.0"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/facet-rs/facet"
+
+[dependencies]
+ks-serde-json-read = { version = "0.1.0", path = "../ks-serde-json-read" }
+ks-serde-json-write = { version = "0.1.0", path = "../ks-serde-json-write" }
+ks-debug = { version = "0.1.0", path = "../ks-debug" }
+ks-mock = { version = "0.1.0", path = "../ks-mock" }

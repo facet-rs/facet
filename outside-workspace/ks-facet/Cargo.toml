@@ -1,0 +1,13 @@
+[package]
+name = "ks-facet"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.87.0"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/facet-rs/facet"
+
+[dependencies]
+ks-facet-json-read = { version = "0.1.0", path = "../ks-facet-json-read" }
+ks-facet-json-write = { version = "0.1.0", path = "../ks-facet-json-write" }
+ks-facet-pretty = { version = "0.1.0", path = "../ks-facet-pretty" }
+ks-mock = { version = "0.1.0", path = "../ks-mock" }

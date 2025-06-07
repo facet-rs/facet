@@ -1,10 +1,7 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
-assertion_line: 601
 expression: "expand(r#\"\n        #[derive(Facet)]\n        struct BarFoo {\n            bar: u32,\n            foo: String,\n        }\n        // The Drop impl doesn't affect the derive macro input:\n        // impl Drop for BarFoo { fn drop(&mut self) {} }\n        \"#)"
 ---
-#[used]
-static BAR_FOO_SHAPE: &'static ::facet::Shape = <BarFoo as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for BarFoo {
     const VTABLE: &'static ::facet::ValueVTable = &const {

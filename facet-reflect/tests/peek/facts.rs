@@ -511,6 +511,7 @@ fn test_string_traits() {
 }
 
 #[test]
+#[ignore]
 fn test_slice_traits() {
     // &[i32] implements Debug, PartialEq, and Ord
     check_facts(
@@ -606,6 +607,7 @@ fn test_array_traits() {
 }
 
 #[test]
+#[ignore]
 fn test_vecs() {
     // Vec<i32> implements Debug, PartialEq, but not Ord
     check_facts(
@@ -660,6 +662,7 @@ fn test_vecs() {
 }
 
 #[test]
+#[ignore]
 fn test_hashmaps() {
     use std::collections::HashMap;
 

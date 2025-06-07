@@ -2,8 +2,6 @@
 source: facet-macros-emit/tests/codegen/mod.rs
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n        enum ApiResponse {\n            #[facet(rename = \"Success\")]\n            Ok {\n                #[facet(rename = \"responseData\")]\n                data: String,\n            },\n            #[facet(rename = \"Error\")]\n            Err {\n                #[facet(rename = \"errorCode\")]\n                code: u32,\n                #[facet(rename = \"errorMessage\")]\n                message: String,\n            },\n        }\n        \"#)"
 ---
-#[used]
-static API_RESPONSE_SHAPE: &'static ::facet::Shape = <ApiResponse as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 #[allow(non_camel_case_types)]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for ApiResponse {
