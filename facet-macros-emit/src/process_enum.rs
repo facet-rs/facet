@@ -14,6 +14,8 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     let enum_name = &pe.container.name;
     let enum_name_str = enum_name.to_string();
 
+    let type_name_fn = generate_type_name_fn(enum_name, parsed.generics.as_ref());
+
     let bgp = pe.container.bgp.clone();
     // Use the AST directly for where clauses and generics, as PContainer/PEnum doesn't store them
     let where_clauses_tokens =
@@ -579,10 +581,9 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         #[automatically_derived]
         #[allow(non_camel_case_types)]
         unsafe impl #bgp_def ::facet::Facet<'__facet> for #enum_name #bgp_without_bounds #where_clauses_tokens {
-            const VTABLE: &'static ::facet::ValueVTable = &const { ::facet::value_vtable!(
-                Self,
-                |f, _opts| ::core::fmt::Write::write_str(f, #enum_name_str)
-            )};
+            const VTABLE: &'static ::facet::ValueVTable = &const {
+                ::facet::value_vtable!(Self, #type_name_fn)
+            };
 
             const SHAPE: &'static ::facet::Shape<'static> = &const {
                 #(#shadow_struct_defs)*
