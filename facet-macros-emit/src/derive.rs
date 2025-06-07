@@ -124,24 +124,30 @@ pub(crate) fn generate_type_name_fn(
     generics: Option<&GenericParams>,
 ) -> TokenStream {
     let type_name_str = type_name.to_string();
-    if let Some(generics) = generics {
-        let write_generics = {
-            let params = generics.params.0.iter();
-            let write_each = params.filter_map(|param| match &param.value {
-                // Lifetimes not shown by `std::any::type_name`, this is parity.
-                GenericParam::Lifetime { .. } => None,
-                GenericParam::Const { name, .. } => Some(quote! {
-                    write!(f, "{:?}", #name)?;
-                }),
-                GenericParam::Type { name, .. } => Some(quote! {
-                    <#name as ::facet::Facet>::SHAPE.vtable.type_name()(f, opts)?;
-                }),
-            });
-            // TODO: is there a way to construct a DelimitedVec from an iterator?
-            let mut tokens = TokenStream::new();
-            tokens.append_separated(write_each, quote! { write!(f, ", ")?; });
-            tokens
-        };
+
+    let write_generics = generics.and_then(|generics| {
+        let params = generics.params.0.iter();
+        let write_each = params.filter_map(|param| match &param.value {
+            // Lifetimes not shown by `std::any::type_name`, this is parity.
+            GenericParam::Lifetime { .. } => None,
+            GenericParam::Const { name, .. } => Some(quote! {
+                write!(f, "{:?}", #name)?;
+            }),
+            GenericParam::Type { name, .. } => Some(quote! {
+                <#name as ::facet::Facet>::SHAPE.vtable.type_name()(f, opts)?;
+            }),
+        });
+        // TODO: is there a way to construct a DelimitedVec from an iterator?
+        let mut tokens = TokenStream::new();
+        tokens.append_separated(write_each, quote! { write!(f, ", ")?; });
+        if tokens.is_empty() {
+            None
+        } else {
+            Some(tokens)
+        }
+    });
+
+    if let Some(write_generics) = write_generics {
         quote! {
             |f, opts| {
                 write!(f, #type_name_str)?;
