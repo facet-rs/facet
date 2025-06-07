@@ -1,5 +1,5 @@
 use super::*;
-use quote::{format_ident, quote};
+use quote::{TokenStreamExt, format_ident, quote};
 
 /// Generates the `::facet::Field` definition `TokenStream` from a `PStructField`.
 pub(crate) fn gen_field_from_pfield(
@@ -196,6 +196,44 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     let struct_name_ident = format_ident!("{}", ps.container.name);
     let struct_name = &ps.container.name;
     let struct_name_str = struct_name.to_string();
+
+    // Generate the `type_name` function for the vtable,
+    // displaying realized generics if present.
+    let type_name_fn = if let Some(generics) = parsed.generics.as_ref() {
+        let write_generics = {
+            let params = generics.params.0.iter();
+            let write_each = params.filter_map(|param| match &param.value {
+                // Lifetimes not shown by `std::any::type_name`, this is parity.
+                GenericParam::Lifetime { .. } => None,
+                // TODO: should const generics be displayed?
+                GenericParam::Const { .. } => None,
+                GenericParam::Type { name, .. } => Some(quote! {
+                    <#name as ::facet::Facet>::SHAPE.vtable.type_name()(f, opts)?;
+                }),
+            });
+            // TODO: is there a way to construct a DelimitedVec from an iterator?
+            let mut tokens = TokenStream::new();
+            tokens.append_separated(write_each, quote! { write!(f, ", ")?; });
+            tokens
+        };
+        quote! {
+            |f, opts| {
+                write!(f, #struct_name_str)?;
+                if let Some(opts) = opts.for_children() {
+                    write!(f, "<")?;
+                    #write_generics
+                    write!(f, ">")?;
+                } else {
+                    write!(f, "<…>")?;
+                }
+                Ok(())
+            }
+        }
+    } else {
+        quote! {
+            |f, _opts| ::core::fmt::Write::write_str(f, #struct_name_str)
+        }
+    };
 
     // TODO: I assume the `PrimitiveRepr` is only relevant for enums, and does not need to be preserved?
     let repr = match &ps.container.attrs.repr {
@@ -495,10 +533,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         #[automatically_derived]
         unsafe impl #bgp_def ::facet::Facet<'__facet> for #struct_name_ident #bgp_without_bounds #where_clauses {
             const VTABLE: &'static ::facet::ValueVTable = &const {
-                let mut vtable = ::facet::value_vtable!(
-                    Self,
-                    |f, _opts| ::core::fmt::Write::write_str(f, #struct_name_str)
-                );
+                let mut vtable = ::facet::value_vtable!(Self, #type_name_fn);
                 #invariant_maybe
                 #try_from_inner_code // Use the generated code for transparent types
                 vtable
