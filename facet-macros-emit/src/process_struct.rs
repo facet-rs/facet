@@ -425,18 +425,18 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
             quote! {
                 // Define the try_from function for the value vtable (ZST case)
                 unsafe fn try_from<'src, 'dst>(
-                     src_ptr: ::facet::PtrConst<'src>,
-                     src_shape: &'static ::facet::Shape,
-                     dst: ::facet::PtrUninit<'dst>
+                    src_ptr: ::facet::PtrConst<'src>,
+                    src_shape: &'static ::facet::Shape,
+                    dst: ::facet::PtrUninit<'dst>
                 ) -> Result<::facet::PtrMut<'dst>, ::facet::TryFromError> {
-                     if src_shape.layout.size() == 0 {
+                    if src_shape.layout.size() == 0 {
                          Ok(unsafe { dst.put(#struct_name_ident) }) // Construct ZST
-                     } else {
-                         Err(::facet::TryFromError::UnsupportedSourceShape {
-                             src_shape,
-                             expected: const { &[ <() as ::facet::Facet>::SHAPE ] }, // Expect unit-like shape
-                         })
-                     }
+                    } else {
+                        Err(::facet::TryFromError::UnsupportedSourceShape {
+                            src_shape,
+                            expected: const { &[ <() as ::facet::Facet>::SHAPE ] }, // Expect unit-like shape
+                        })
+                    }
                 }
 
                 {
