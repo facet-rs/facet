@@ -1,14 +1,9 @@
 // measure-bloat/src/report.rs
 
 use crate::types::{BuildResult, CrateLlvmLines, CrateRlibSize, CrateSizeChange, LlvmCrateDiff};
-use anyhow::{Context, Result};
+use anyhow::Result;
+use owo_colors::OwoColorize;
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::Write;
-use std::path::Path;
-
-// Uses itertools for sorted iteration
-use itertools::Itertools;
 
 // --- Formatting Utilities ---
 
@@ -124,7 +119,11 @@ pub(crate) fn generate_comparison_report_content(results: &[BuildResult]) -> Res
         }
     }
     report_md.push_str("\n\n");
-    log::info!("[report] Generated overall summary table.");
+    log::info!(
+        "{} {} Generated overall summary table.",
+        "📊".bright_green(),
+        "[report]".bright_black()
+    );
 
     // --- Detailed Comparisons per Target ---
     report_md.push_str("## Detailed Comparisons per Target\n\n");
@@ -156,7 +155,11 @@ pub(crate) fn generate_comparison_report_content(results: &[BuildResult]) -> Res
             report_md.push('\n');
         }
     }
-    log::info!("[report] Generated detailed comparison sections.");
+    log::info!(
+        "{} {} Generated detailed comparison sections.",
+        "✅".green(),
+        "[report]".bright_black()
+    );
     Ok(report_md)
 }
 
@@ -276,7 +279,7 @@ fn generate_rlib_size_diff_table(
     let mut all_crate_names: Vec<_> = baseline_map.keys().cloned().collect();
     for name_ref in primary_map.keys() {
         if !baseline_map.contains_key(name_ref) {
-            all_crate_names.push(name_ref.clone());
+            all_crate_names.push(name_ref);
         }
     }
     all_crate_names.sort_unstable();
@@ -357,7 +360,7 @@ fn generate_llvm_crate_diff_table(
     let mut all_crate_names: Vec<_> = baseline_map.keys().cloned().collect();
     for name_ref in primary_map.keys() {
         if !baseline_map.contains_key(name_ref) {
-            all_crate_names.push(name_ref.clone());
+            all_crate_names.push(name_ref);
         }
     }
     all_crate_names.sort_unstable();
@@ -417,17 +420,4 @@ fn generate_llvm_crate_diff_table(
     }
     report_part.push('\n');
     report_part
-}
-
-/// Helper to write the report content to a file.
-pub(crate) fn write_report_to_file(report_content: &str, output_file_path: &Path) -> Result<()> {
-    let mut file = File::create(output_file_path).with_context(|| {
-        format!(
-            "[report] Failed to create report file at: {:?}",
-            output_file_path
-        )
-    })?;
-    file.write_all(report_content.as_bytes())
-        .context("[report] Failed to write report content to file")?;
-    Ok(())
 }

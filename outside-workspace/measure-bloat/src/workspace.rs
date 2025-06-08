@@ -1,6 +1,7 @@
 // measure-bloat/src/workspace.rs
 
 use anyhow::{Context, Result};
+use owo_colors::OwoColorize;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -280,8 +281,12 @@ pub(crate) fn rewrite_paths_in_hybrid_workspace_ks_crates(
 
                         if modified_toml {
                             println!(
-                                "  Rewrote path for dep '{}' in {:?} to: {}",
-                                dep_name_str, ks_cargo_toml_path, new_path_val_str
+                                "    {} {} Rewrote path for dep {} in {} to: {}",
+                                "🔗".bright_green(),
+                                "[workspace]".bright_black(),
+                                dep_name_str.bright_yellow(),
+                                ks_cargo_toml_path.to_string_lossy().bright_cyan(),
+                                new_path_val_str.bright_green()
                             );
                         }
                     }
@@ -309,8 +314,11 @@ pub(crate) fn cleanup_prepared_workspace(
     base_repo_path_for_worktree_ops: Option<&Path>, // Required if it was a git worktree
 ) -> Result<()> {
     println!(
-        "[workspace] Cleaning up workspace for variant: '{}' at path: {:?}",
-        prepared_ws.variant_name, prepared_ws.path
+        "{} {} Cleaning up workspace for variant: {} at path: {}",
+        "🧹".bright_yellow(),
+        "[workspace]".bright_black(),
+        prepared_ws.variant_name.bright_yellow(),
+        prepared_ws.path.to_string_lossy().bright_cyan()
     );
 
     if prepared_ws.is_temporary {
@@ -322,7 +330,12 @@ pub(crate) fn cleanup_prepared_workspace(
                     worktree_path
                 )
             })?;
-            println!("[workspace] Removing git worktree at: {:?}", worktree_path);
+            println!(
+                "  {} {} Removing git worktree at: {}",
+                "🗑️".bright_red(),
+                "[workspace]".bright_black(),
+                worktree_path.to_string_lossy().bright_cyan()
+            );
             let status = Command::new("git")
                 .arg("-C")
                 .arg(base_path)

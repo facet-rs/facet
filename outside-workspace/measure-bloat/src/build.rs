@@ -1,6 +1,7 @@
 // measure-bloat/src/build.rs
 
 use anyhow::{Context, Result};
+use owo_colors::OwoColorize;
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
@@ -88,7 +89,12 @@ pub(crate) fn build_project_for_analysis(
             command.env(key, value);
         }
     }
-    log::debug!("[build] Running cargo command: {:?}", command);
+    log::debug!(
+        "{} {} Running cargo command: {:?}",
+        "🚀".bright_blue(),
+        "[build]".bright_black(),
+        command
+    );
 
     let output = command.output().with_context(|| {
         format!(
@@ -101,7 +107,11 @@ pub(crate) fn build_project_for_analysis(
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);
-        pb.finish_with_message(format!("❌ [build] Build FAILED for '{}'", binary_to_build));
+        pb.finish_with_message(format!(
+            "{} [build] Build FAILED for {}",
+            "❌".red(),
+            binary_to_build.bright_red()
+        ));
         anyhow::bail!(
             "cargo build for LLVM IR failed for '{}':\nStatus: {}\nCWD: {:?}\nManifest: {}\nTarget Dir: {:?}\nStderr:\n{}\nStdout:\n{}",
             binary_to_build,
@@ -114,8 +124,9 @@ pub(crate) fn build_project_for_analysis(
         );
     }
     pb.finish_with_message(format!(
-        "✅ [build] Build SUCCEEDED for '{}'",
-        binary_to_build
+        "{} [build] Build SUCCEEDED for {}",
+        "✅".green(),
+        binary_to_build.bright_green()
     ));
 
     let timing_summary = parse_cargo_timings(build_artifacts_target_dir).with_context(|| {
@@ -126,10 +137,10 @@ pub(crate) fn build_project_for_analysis(
     })?;
 
     log::info!(
-        "[build] LLVM IR build for '{}' completed in {:.2}s. Artifacts in: {:?}",
-        binary_to_build,
-        start_time.elapsed().as_secs_f64(),
-        build_artifacts_target_dir
+        "[build] LLVM IR build for {} completed in {}s. Artifacts in: {}",
+        binary_to_build.bright_green(),
+        format!("{:.2}", start_time.elapsed().as_secs_f64()).bright_yellow(),
+        build_artifacts_target_dir.to_string_lossy().bright_cyan()
     );
 
     Ok(LlvmBuildOutput {
@@ -145,8 +156,10 @@ fn parse_cargo_timings(build_artifacts_target_dir: &Path) -> Result<BuildTimingS
 
     if !timings_file_path.exists() {
         log::warn!(
-            "[build] cargo-timings.json not found at {:?}. Build time breakdown will be incomplete.",
-            timings_file_path
+            "{} {} cargo-timings.json not found at {}. Build time breakdown will be incomplete.",
+            "⚠️".yellow(),
+            "[build]".bright_black(),
+            timings_file_path.to_string_lossy().bright_red()
         );
         return Ok(BuildTimingSummary {
             total_duration: std::time::Duration::from_secs(0), // Signifies missing detailed data
@@ -154,8 +167,10 @@ fn parse_cargo_timings(build_artifacts_target_dir: &Path) -> Result<BuildTimingS
         });
     }
     log::debug!(
-        "[build] Parsing cargo timings from: {:?}",
-        timings_file_path
+        "{} {} Parsing cargo timings from: {}",
+        "📊".bright_blue(),
+        "[build]".bright_black(),
+        timings_file_path.to_string_lossy().bright_cyan()
     );
     parse_cargo_timings_from_file(&timings_file_path)
 }
@@ -206,7 +221,9 @@ fn parse_cargo_timings_from_file(file_path: &Path) -> Result<BuildTimingSummary>
         // Fallback: sum of compiler-artifact durations if build-finished event is missing or malformed.
         // This is less accurate as it might miss some parts of the build or double count.
         log::warn!(
-            "[build] 'build-finished' event with 'total_time_in_seconds' not found or zero in timings file. Summing artifact durations as a fallback."
+            "{} {} 'build-finished' event with 'total_time_in_seconds' not found or zero in timings file. Summing artifact durations as a fallback.",
+            "⚠️".yellow(),
+            "[build]".bright_black()
         );
         crate_timings_map.values().sum()
     };
@@ -234,7 +251,7 @@ fn parse_cargo_timings_from_file(file_path: &Path) -> Result<BuildTimingSummary>
 /// * `build_artifacts_target_dir`: Path to the target directory from `LlvmBuildOutput`.
 /// * `binary_to_analyze`: The name of the binary or example that was built.
 /// * `_crates_to_analyze`: (Currently unused) List of crate names to focus analysis on.
-///                       `cargo llvm-lines` output typically includes all linked crates.
+///   `cargo llvm-lines` output typically includes all linked crates.
 /// * `active_workspace_manifest_path`: Path to `Cargo.toml` of the workspace for `cargo llvm-lines`.
 pub(crate) fn fetch_llvm_lines_data(
     build_artifacts_target_dir: &Path,
@@ -273,7 +290,12 @@ pub(crate) fn fetch_llvm_lines_data(
     } else {
         command.arg("--bin").arg(binary_to_analyze);
     }
-    log::debug!("[build] Running cargo llvm-lines command: {:?}", command);
+    log::debug!(
+        "{} {} Running cargo llvm-lines command: {:?}",
+        "🚀".bright_blue(),
+        "[build]".bright_black(),
+        command
+    );
 
     let output = command.output().with_context(|| {
         format!(
@@ -286,8 +308,9 @@ pub(crate) fn fetch_llvm_lines_data(
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         pb.finish_with_message(format!(
-            "❌ [build] cargo llvm-lines FAILED for '{}'",
-            binary_to_analyze
+            "{} [build] cargo llvm-lines FAILED for {}",
+            "❌".red(),
+            binary_to_analyze.bright_red()
         ));
         anyhow::bail!(
             "cargo llvm-lines failed for binary/example '{}':\nManifest: {:?}\nTarget Dir: {:?}\nStderr: {}",
@@ -298,8 +321,9 @@ pub(crate) fn fetch_llvm_lines_data(
         );
     }
     pb.finish_with_message(format!(
-        "✅ [build] cargo llvm-lines SUCCEEDED for '{}'",
-        binary_to_analyze
+        "{} [build] cargo llvm-lines SUCCEEDED for {}",
+        "✅".green(),
+        binary_to_analyze.bright_green()
     ));
 
     let stdout = String::from_utf8_lossy(&output.stdout);

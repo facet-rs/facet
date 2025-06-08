@@ -1,6 +1,7 @@
 // measure-bloat/src/analysis.rs
 
 use anyhow::{Context, Result};
+use owo_colors::OwoColorize;
 use std::fs;
 use std::path::Path;
 
@@ -10,13 +11,15 @@ use crate::types::CrateRlibSize;
 /// Collects the sizes of .rlib files for specified crates from the build artifacts directory.
 ///
 /// # Arguments
+///
 /// * `build_artifacts_target_dir`: Path to the root of the target directory where `cargo build` placed artifacts.
-///                                 Example: `/tmp/facet-measure-artifacts/head-facet/my_target/`
+///   Example: `/tmp/facet-measure-artifacts/head-facet/my_target/`
 /// * `crates_to_analyze`: A list of crate names (as they appear in `Cargo.toml`, e.g., "my-crate")
-///                        whose .rlib files should be found and measured.
+///   whose .rlib files should be found and measured.
 ///
 /// # Returns
-/// A `Result` containing a vector of `CrateRlibSize` structs.
+///
+/// * A `Result` containing a vector of `CrateRlibSize` structs.
 pub(crate) fn collect_rlib_sizes(
     build_artifacts_target_dir: &Path,
     crates_to_analyze: &[String],
@@ -25,15 +28,19 @@ pub(crate) fn collect_rlib_sizes(
     let deps_dir = build_artifacts_target_dir.join("release").join("deps");
 
     log::debug!(
-        "[analysis] Collecting .rlib sizes from deps_dir: {:?}, for crates: {:?}",
-        deps_dir,
+        "{} {} Collecting .rlib sizes from deps_dir: {}, for crates: {:?}",
+        "📊".bright_blue(),
+        "[analysis]".bright_black(),
+        deps_dir.to_string_lossy().bright_cyan(),
         crates_to_analyze
     );
 
     if !deps_dir.exists() || !deps_dir.is_dir() {
         log::warn!(
-            "[analysis] deps directory not found or not a directory: {:?}. No .rlib sizes will be collected.",
-            deps_dir
+            "{} {} deps directory not found or not a directory: {}. No .rlib sizes will be collected.",
+            "⚠️".yellow(),
+            "[analysis]".bright_black(),
+            deps_dir.to_string_lossy().bright_red()
         );
         return Ok(rlib_sizes);
     }
@@ -65,10 +72,12 @@ pub(crate) fn collect_rlib_sizes(
                                 format!("[analysis] Failed to get metadata for rlib: {:?}", path)
                             })?;
                             log::trace!(
-                                "[analysis] Found .rlib for \'{}\': {:?} (size: {})",
-                                crate_name_from_config,
-                                path,
-                                metadata.len()
+                                "{} {} Found .rlib for {}: {} (size: {})",
+                                "📦".bright_green(),
+                                "[analysis]".bright_black(),
+                                crate_name_from_config.bright_yellow(),
+                                path.to_string_lossy().bright_cyan(),
+                                format!("{}", metadata.len()).bright_magenta()
                             );
                             rlib_sizes.push(CrateRlibSize {
                                 name: crate_name_from_config.clone(), // Use original name from config for reporting
@@ -90,7 +99,12 @@ pub(crate) fn collect_rlib_sizes(
     // .rlib files that match this pattern (unlikely for direct dependencies), this could be an issue.
     // However, `crates_to_analyze` should contain unique crate names.
 
-    log::debug!("[analysis] Collected .rlib sizes: {:?}", rlib_sizes);
+    log::debug!(
+        "{} {} Collected .rlib sizes: {:?}",
+        "✅".green(),
+        "[analysis]".bright_black(),
+        rlib_sizes
+    );
     Ok(rlib_sizes)
 }
 
@@ -99,7 +113,7 @@ pub(crate) fn collect_rlib_sizes(
 /// # Arguments
 /// * `build_artifacts_target_dir`: Path to the root of the target directory.
 /// * `binary_name_from_config`: The name of the binary or example as specified in `MeasurementTarget`
-///                              (e.g., "my_app", "example_benchmark").
+///   (e.g., "my_app", "example_benchmark").
 ///
 /// # Returns
 /// A `Result` containing an `Option<u64>` with the file size in bytes, or `None` if not found.
@@ -110,9 +124,11 @@ pub(crate) fn get_main_executable_size(
     let release_dir = build_artifacts_target_dir.join("release");
 
     log::debug!(
-        "[analysis] Searching for main executable \'{}\' in directory: {:?}",
-        binary_name_from_config,
-        release_dir
+        "{} {} Searching for main executable {} in directory: {}",
+        "🔍".bright_blue(),
+        "[analysis]".bright_black(),
+        binary_name_from_config.bright_yellow(),
+        release_dir.to_string_lossy().bright_cyan()
     );
 
     // Cargo might replace hyphens with underscores in the actual filename.
@@ -139,19 +155,23 @@ pub(crate) fn get_main_executable_size(
                 )
             })?;
             log::info!(
-                "[analysis] Found main executable at: {:?} (size: {})",
-                path_candidate,
-                metadata.len()
+                "{} {} Found main executable at: {} (size: {})",
+                "🎯".bright_green(),
+                "[analysis]".bright_black(),
+                path_candidate.to_string_lossy().bright_cyan(),
+                format!("{} bytes", metadata.len()).bright_magenta()
             );
             return Ok(Some(metadata.len()));
         }
     }
 
     log::warn!(
-        "[analysis] Main executable \'{}\' (or variants like \'{}\') not found in {:?}. Tested candidates.",
-        name_hyphens,
-        name_underscores,
-        release_dir
+        "{} {} Main executable {} (or variants like {}) not found in {}. Tested candidates.",
+        "⚠️".yellow(),
+        "[analysis]".bright_black(),
+        name_hyphens.bright_yellow(),
+        name_underscores.bright_yellow(),
+        release_dir.to_string_lossy().bright_red()
     );
     Ok(None)
 }

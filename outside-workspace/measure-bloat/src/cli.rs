@@ -16,8 +16,9 @@ pub enum Commands {
     Compare {
         /// Path to the root of the repository to be measured.
         /// Assumed to be a non-shallow git clone. The current checkout (HEAD) will be measured.
-        #[clap(long, default_value = ".")]
-        repo_path: String,
+        /// If not provided, will attempt to find repository root from current directory.
+        #[clap(long)]
+        repo_path: Option<String>,
 
         /// Path where the Markdown comparison report will be saved.
         #[clap(long, default_value = "comparison_report.md")]
