@@ -1,5 +1,6 @@
-use super::*;
 use quote::{format_ident, quote};
+
+use super::*;
 
 /// Generates the `::facet::Field` definition `TokenStream` from a `PStructField`.
 pub(crate) fn gen_field_from_pfield(
@@ -196,6 +197,8 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     let struct_name_ident = format_ident!("{}", ps.container.name);
     let struct_name = &ps.container.name;
     let struct_name_str = struct_name.to_string();
+
+    let type_name_fn = generate_type_name_fn(struct_name, parsed.generics.as_ref());
 
     // Use PStruct for kind and fields
     let (kind, fields_vec) = match &ps.kind {
@@ -418,18 +421,18 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
             quote! {
                 // Define the try_from function for the value vtable (ZST case)
                 unsafe fn try_from<'src, 'dst>(
-                     src_ptr: ::facet::PtrConst<'src>,
-                     src_shape: &'static ::facet::Shape,
-                     dst: ::facet::PtrUninit<'dst>
+                    src_ptr: ::facet::PtrConst<'src>,
+                    src_shape: &'static ::facet::Shape,
+                    dst: ::facet::PtrUninit<'dst>
                 ) -> Result<::facet::PtrMut<'dst>, ::facet::TryFromError> {
-                     if src_shape.layout.size() == 0 {
+                    if src_shape.layout.size() == 0 {
                          Ok(unsafe { dst.put(#struct_name_ident) }) // Construct ZST
-                     } else {
-                         Err(::facet::TryFromError::UnsupportedSourceShape {
-                             src_shape,
-                             expected: const { &[ <() as ::facet::Facet>::SHAPE ] }, // Expect unit-like shape
-                         })
-                     }
+                    } else {
+                        Err(::facet::TryFromError::UnsupportedSourceShape {
+                            src_shape,
+                            expected: const { &[ <() as ::facet::Facet>::SHAPE ] }, // Expect unit-like shape
+                        })
+                    }
                 }
 
                 {
@@ -488,10 +491,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         #[automatically_derived]
         unsafe impl #bgp_def ::facet::Facet<'__facet> for #struct_name_ident #bgp_without_bounds #where_clauses {
             const VTABLE: &'static ::facet::ValueVTable = &const {
-                let mut vtable = ::facet::value_vtable!(
-                    Self,
-                    |f, _opts| ::core::fmt::Write::write_str(f, #struct_name_str)
-                );
+                let mut vtable = ::facet::value_vtable!(Self, #type_name_fn);
                 #invariant_maybe
                 #try_from_inner_code // Use the generated code for transparent types
                 vtable

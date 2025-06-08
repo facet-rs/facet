@@ -105,7 +105,7 @@ impl quote::ToTokens for AsPhantomData<'_> {
             }
         }
         tokens.extend(quote! {
-         ::core::marker::PhantomData<(#temp)>
+            ::core::marker::PhantomData<(#temp)>
         })
     }
 }

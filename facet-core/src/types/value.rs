@@ -33,17 +33,17 @@ impl Default for TypeNameOpts {
 }
 
 impl TypeNameOpts {
-    /// Create a new `NameOpts` for which none of the type parameters are formatted
+    /// Create a new [`TypeNameOpts`] for which none of the type parameters are formatted
     pub fn none() -> Self {
         Self { recurse_ttl: 0 }
     }
 
-    /// Create a new `NameOpts` for which only the direct children are formatted
+    /// Create a new [`TypeNameOpts`] for which only the direct children are formatted
     pub fn one() -> Self {
         Self { recurse_ttl: 1 }
     }
 
-    /// Create a new `NameOpts` for which all type parameters are formatted
+    /// Create a new [`TypeNameOpts`] for which all type parameters are formatted
     pub fn infinite() -> Self {
         Self { recurse_ttl: -1 }
     }
