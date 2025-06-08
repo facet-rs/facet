@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use owo_colors::OwoColorize;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -57,7 +58,7 @@ struct MeasurementTarget {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct BloatFunction {
-    #[serde(rename = "crate")]
+    #[serde(default, rename = "crate")]
     crate_name: String,
     name: String,
     size: u64,
@@ -327,7 +328,8 @@ fn run_comparison() -> Result<()> {
                 all_results.push(result);
             }
             Err(e) => {
-                println!("❌ Measurement failed: {}", e);
+                println!("❌ Measurement failed: {:?}", e);
+                std::process::exit(1);
             }
         }
         cleanup_cargo_patches()?;
@@ -344,7 +346,8 @@ fn run_comparison() -> Result<()> {
             all_results.push(result);
         }
         Err(e) => {
-            println!("❌ Measurement failed: {}", e);
+            println!("❌ Measurement failed: {:?}", e);
+            std::process::exit(1);
         }
     }
     cleanup_cargo_patches()?;
@@ -505,7 +508,7 @@ fn replace_facet_deps_with_git(content: &str) -> Result<String> {
         .parse::<DocumentMut>()
         .context("Failed to parse TOML")?;
 
-    println!("🔍 Original TOML content:\n{}", content);
+    println!("🔍 Original TOML content:\n{}", content.dimmed());
 
     // List of facet crates to replace
     let facet_crates = vec![
@@ -586,27 +589,8 @@ fn replace_facet_deps_with_git(content: &str) -> Result<String> {
     }
 
     let result = doc.to_string();
-    println!("🔍 Modified TOML content:\n{}", result);
+    println!("🔍 Modified TOML content:\n{}", result.dimmed());
     Ok(result)
-}
-
-fn test_toml_transformation() -> Result<()> {
-    let test_toml = r#"[package]
-name = "ks-facet-json-read"
-version = "0.1.0"
-
-[dependencies]
-facet-json = { version = "0.24.13", path = "../../facet-json" }
-ks-types = { version = "0.1.0", path = "../ks-types", features = ["facet"] }
-"#;
-
-    println!("🧪 Testing TOML transformation");
-    println!("Original:\n{}", test_toml);
-
-    let result = replace_facet_deps_with_git(test_toml)?;
-    println!("Transformed:\n{}", result);
-
-    Ok(())
 }
 
 fn cleanup_cargo_patches() -> Result<()> {
@@ -651,7 +635,13 @@ fn measure_target_complete(target: &MeasurementTarget, variant: &str) -> Result<
 
     // Define a persistent target directory to be used for all builds in this function
     let persistent_target_dir = PathBuf::from("../target-measure-bloat");
-    // Ensure the directory exists (cargo build usually creates it, but good practice for clarity)
+    let _ = fs::remove_dir_all(&persistent_target_dir);
+    if fs::exists(&persistent_target_dir).unwrap() {
+        panic!(
+            "Failed to remove persistent target directory: {}",
+            persistent_target_dir.display()
+        );
+    }
     fs::create_dir_all(&persistent_target_dir).context(format!(
         "Failed to create persistent target directory: {}",
         persistent_target_dir.display()
@@ -1313,7 +1303,8 @@ fn measure_target(target: &MeasurementTarget, variant: &str) -> Result<()> {
             println!("   Total LLVM lines: {}", format_number(total_llvm_lines));
         }
         Err(e) => {
-            println!("❌ Measurement failed: {}", e);
+            println!("❌ Measurement failed: {:?}", e);
+            std::process::exit(1);
         }
     }
 

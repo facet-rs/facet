@@ -1,3 +1,4 @@
 target-timing-*
 target-llvm-*
+target-measure-bloat
 Cargo.main-branch.toml
