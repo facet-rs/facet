@@ -153,7 +153,7 @@ pub(crate) fn generate_comparison_report_content(results: &[BuildResult]) -> Res
                 report_md.push_str("#### HEAD Facet vs. Serde\n\n");
                 report_md.push_str(&generate_individual_comparison_section(head_facet, serde)?);
             }
-            report_md.push_str("\n");
+            report_md.push('\n');
         }
     }
     log::info!("[report] Generated detailed comparison sections.");
@@ -216,7 +216,7 @@ fn generate_individual_comparison_section(
             section.push_str("- **Executable Size**: N/A for both variants.\n");
         }
     }
-    section.push_str("\n");
+    section.push('\n');
 
     // .rlib Size Analysis for analyzed crates
     section.push_str(&generate_rlib_size_diff_table(
@@ -227,7 +227,7 @@ fn generate_individual_comparison_section(
             primary_res.variant_name, baseline_res.variant_name
         ),
     ));
-    section.push_str("\n");
+    section.push('\n');
 
     // LLVM Crates Analysis (if available for both)
     if let (Some(primary_llvm), Some(baseline_llvm)) =
@@ -241,7 +241,7 @@ fn generate_individual_comparison_section(
                 primary_res.variant_name, baseline_res.variant_name
             ),
         ));
-        section.push_str("\n");
+        section.push('\n');
 
         // Overall LLVM Lines from analyzed crates
         let primary_total_llvm: u64 = primary_llvm.crate_results.iter().map(|c| c.lines).sum();
@@ -255,7 +255,7 @@ fn generate_individual_comparison_section(
             format_signed_number(llvm_delta),
             format_percentage_change(primary_total_llvm, baseline_total_llvm)
         ));
-        section.push_str("\n");
+        section.push('\n');
     }
 
     Ok(section)
@@ -332,7 +332,7 @@ fn generate_rlib_size_diff_table(
             format_percentage_change(change.current_size, change.base_size)
         ));
     }
-    report_part.push_str("\n");
+    report_part.push('\n');
     report_part
 }
 
@@ -415,7 +415,7 @@ fn generate_llvm_crate_diff_table(
             format_signed_number(diff_entry.delta_copies)
         ));
     }
-    report_part.push_str("\n");
+    report_part.push('\n');
     report_part
 }
 

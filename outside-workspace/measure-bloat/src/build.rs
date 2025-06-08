@@ -2,13 +2,13 @@
 
 use anyhow::{Context, Result};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use std::time::Instant;
 
 use crate::types::{
-    BuildTimingSummary, BuildWithLllvmIrOpts, CargoTimingEntry, CrateLlvmLines, CrateTiming,
-    LlvmBuildOutput, LlvmFunction, LlvmLinesSummary,
+    BuildTimingSummary, BuildWithLllvmIrOpts, CrateLlvmLines, CrateTiming, LlvmBuildOutput,
+    LlvmFunction, LlvmLinesSummary,
 };
 use indicatif::{ProgressBar, ProgressStyle}; // For progress indication
 
@@ -345,7 +345,7 @@ fn parse_llvm_lines_output(output: &str) -> Result<LlvmLinesSummary> {
         let mut current_idx = 1;
         if parts
             .get(current_idx)
-            .map_or(false, |s| s.starts_with('(') && s.ends_with('%'))
+            .is_some_and(|s| s.starts_with('(') && s.ends_with('%'))
         {
             current_idx += 1; // Skip percentage for lines
         }
@@ -369,7 +369,7 @@ fn parse_llvm_lines_output(output: &str) -> Result<LlvmLinesSummary> {
 
         if parts
             .get(current_idx)
-            .map_or(false, |s| s.starts_with('(') && s.ends_with('%'))
+            .is_some_and(|s| s.starts_with('(') && s.ends_with('%'))
         {
             current_idx += 1; // Skip percentage for copies
         }
