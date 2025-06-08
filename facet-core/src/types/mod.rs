@@ -437,7 +437,10 @@ impl core::fmt::Debug for Shape<'_> {
                 field!("type_tag", "{:?}", type_tag);
             }
 
-            field!("inner", "{:?}", self.inner);
+            // Omit the `inner` field if this shape is not a transparent wrapper.
+            if let Some(inner) = self.inner {
+                field!("inner", "{:?}", inner);
+            }
 
             debug_struct.finish_non_exhaustive()
         }
