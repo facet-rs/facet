@@ -983,67 +983,123 @@ fn generate_function_diff_analysis(
         pr_funcs.insert(key, size);
     }
 
+    let mut top_pr_funcs: Vec<(String, u64)> = pr_funcs
+        .iter()
+        .map(|(name, size)| (name.clone(), *size))
+        .collect();
+    top_pr_funcs.sort_by(|a, b| b.1.cmp(&a.1));
+
+    let mut top_main_funcs: Vec<(String, u64)> = main_funcs
+        .iter()
+        .map(|(name, size)| (name.clone(), *size))
+        .collect();
+    top_main_funcs.sort_by(|a, b| b.1.cmp(&a.1));
+
+    struct FunctionChange {
+        key: String,
+        main_size: u64,
+        pr_size: u64,
+        delta: i64,
+    }
+
     // Collect all function changes
-    let mut function_changes = Vec::new();
+    let mut function_changes: Vec<FunctionChange> = Vec::new();
 
     // Check functions in PR
     for func in &pr_result.top_functions {
         let key = format!("{}::{}", func.crate_name, func.name);
-        if let Some(&main_size) = main_funcs.get(&key) {
-            let delta = func.size as i64 - main_size as i64;
-            if delta != 0 {
-                function_changes.push((key, main_size, func.size, delta));
-            }
-        } else {
-            // New function in PR
-            function_changes.push((key, 0, func.size, func.size as i64));
+        let pr_size = pr_funcs.get(&key).copied().unwrap_or(0); // Use aggregated size from pr_funcs
+        let main_size = main_funcs.get(&key).copied().unwrap_or(0);
+        let delta = pr_size as i64 - main_size as i64;
+
+        if delta != 0 {
+            // Add or update entry. Since we iterate pr_result.top_functions,
+            // we are effectively creating entries for all functions present in PR.
+            // If a function is only in PR, main_size will be 0.
+            // If a function is in both, delta will be calculated correctly.
+            function_changes.push(FunctionChange {
+                key: key.clone(),
+                main_size,
+                pr_size,
+                delta,
+            });
+        } else if main_size == 0 && pr_size > 0 {
+            // Function new in PR, but delta was 0 (this case might be redundant if pr_size > 0 implies delta != 0 if main_size is 0)
+            // This ensures new functions are captured even if their size is 0 (unlikely but possible)
+            // More robustly: if it's in pr_funcs but not main_funcs.
+            // However, the current pr_funcs iteration covers this.
+            // Let's refine the logic for adding:
+            // Add if it's in PR. The delta calculation will handle new/changed/unchanged.
         }
     }
 
-    // Check for functions that disappeared in PR
-    for func in &main_result.top_functions {
-        let key = format!("{}::{}", func.crate_name, func.name);
-        if !pr_funcs.contains_key(&key) {
-            function_changes.push((key, func.size, 0, -(func.size as i64)));
+    // More robust way to collect changes:
+    let mut processed_keys = std::collections::HashSet::new();
+    function_changes.clear(); // Clear previous attempt, start fresh
+
+    // Iterate over all functions in PR result
+    for (key, &pr_size) in &pr_funcs {
+        let main_size = main_funcs.get(key).copied().unwrap_or(0);
+        let delta = pr_size as i64 - main_size as i64;
+        function_changes.push(FunctionChange {
+            key: key.clone(),
+            main_size,
+            pr_size,
+            delta,
+        });
+        processed_keys.insert(key.clone());
+    }
+
+    // Iterate over all functions in Main result to find those not in PR (disappeared)
+    for (key, &main_size) in &main_funcs {
+        if !processed_keys.contains(key) {
+            // This function was in main but not in PR
+            function_changes.push(FunctionChange {
+                key: key.clone(),
+                main_size,
+                pr_size: 0,
+                delta: -(main_size as i64),
+            });
         }
     }
 
     // Sort by absolute delta size
-    function_changes.sort_by_key(|(_, _, _, delta)| std::cmp::Reverse(delta.abs()));
+    function_changes.sort_by_key(|fc| std::cmp::Reverse(fc.delta.abs()));
 
     if function_changes.is_empty() {
-        report.push_str("*No significant function size changes detected.*\n\n");
+        report.push_str("*No function size changes detected.*\n\n");
     } else {
         report.push_str("| Function | Main | PR | Change |\n");
         report.push_str("|----------|------|----|---------|\n");
 
-        for (func_name, main_size, pr_size, delta) in function_changes.iter().take(30) {
-            let main_str = if *main_size == 0 {
+        for change in function_changes.iter().filter(|fc| fc.delta != 0).take(30) {
+            let main_str = if change.main_size == 0 {
                 "N/A".to_string()
             } else {
-                format_bytes(*main_size)
+                format_bytes(change.main_size)
             };
-            let pr_str = if *pr_size == 0 {
+            let pr_str = if change.pr_size == 0 {
                 "N/A".to_string()
             } else {
-                format_bytes(*pr_size)
+                format_bytes(change.pr_size)
             };
 
-            let emoji = if *delta > 0 {
+            let emoji = if change.delta > 0 {
                 "📈"
-            } else if *delta < 0 {
+            } else if change.delta < 0 {
                 "📉"
             } else {
+                // This case should be filtered out by .filter(|fc| fc.delta != 0)
                 "➖"
             };
 
             report.push_str(&format!(
                 "| `{}` | {} | {} | {}{} |\n",
-                func_name,
+                change.key,
                 main_str,
                 pr_str,
                 emoji,
-                format_signed_bytes(*delta)
+                format_signed_bytes(change.delta)
             ));
         }
         report.push('\n');
