@@ -884,7 +884,12 @@ fn pre_push() {
         },
         CommandInfo {
             name: "test".to_string(),
-            command: vec!["cargo".into(), "nextest".into(), "run".into()],
+            command: vec![
+                "cargo".into(),
+                "nextest".into(),
+                "run".into(),
+                "--no-fail-fast".into(),
+            ],
         },
     ];
     let total_commands = commands.len();
