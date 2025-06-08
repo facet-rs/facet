@@ -69,6 +69,10 @@ pub enum Token<'input> {
     I64(i64),
     /// An unsigned 64-bit integer number value — used if the value does not contain a decimal point and does not contain a sign
     U64(u64),
+    /// A 128-bit unsigned integer number value
+    U128(u128),
+    /// A 128-bit signed integer number value
+    I128(i128),
     /// The JSON boolean value 'true'
     True,
     /// The JSON boolean value 'false'
@@ -92,6 +96,8 @@ impl Display for Token<'_> {
             Token::F64(n) => write!(f, "{}", n),
             Token::I64(n) => write!(f, "{}", n),
             Token::U64(n) => write!(f, "{}", n),
+            Token::U128(n) => write!(f, "{}", n),
+            Token::I128(n) => write!(f, "{}", n),
             Token::True => write!(f, "true"),
             Token::False => write!(f, "false"),
             Token::Null => write!(f, "null"),
@@ -428,12 +434,18 @@ impl<'input> Tokenizer<'input> {
             match text.parse::<i64>() {
                 Ok(n) => Token::I64(n),
                 Err(_) => {
-                    // If i64 parsing fails, try to parse as f64 for error reporting
-                    let num = text.parse::<f64>().unwrap_or(0.0);
-                    return Err(TokenError {
-                        kind: TokenErrorKind::NumberOutOfRange(num),
-                        span,
-                    });
+                    // If i64 parsing fails, try to parse as i128
+                    match text.parse::<i128>() {
+                        Ok(n) => Token::I128(n),
+                        Err(_) => {
+                            // If i128 parsing fails, try to parse as f64 for error reporting
+                            let num = text.parse::<f64>().unwrap_or(0.0);
+                            return Err(TokenError {
+                                kind: TokenErrorKind::NumberOutOfRange(num),
+                                span,
+                            });
+                        }
+                    }
                 }
             }
         } else {
@@ -441,12 +453,18 @@ impl<'input> Tokenizer<'input> {
             match text.parse::<u64>() {
                 Ok(n) => Token::U64(n),
                 Err(_) => {
-                    // If u64 parsing fails, try to parse as f64 for error reporting
-                    let num = text.parse::<f64>().unwrap_or(0.0);
-                    return Err(TokenError {
-                        kind: TokenErrorKind::NumberOutOfRange(num),
-                        span,
-                    });
+                    // If u64 parsing fails, try to parse as u128
+                    match text.parse::<u128>() {
+                        Ok(n) => Token::U128(n),
+                        Err(_) => {
+                            // If u128 parsing fails, try to parse as f64 for error reporting
+                            let num = text.parse::<f64>().unwrap_or(0.0);
+                            return Err(TokenError {
+                                kind: TokenErrorKind::NumberOutOfRange(num),
+                                span,
+                            });
+                        }
+                    }
                 }
             }
         };

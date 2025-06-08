@@ -86,6 +86,14 @@ impl Format for crate::Json {
                     node: Outcome::Scalar(Scalar::U64(n)),
                     span,
                 }),
+                Token::U128(n) => Ok(Spanned {
+                    node: Outcome::Scalar(Scalar::U128(n)),
+                    span,
+                }),
+                Token::I128(n) => Ok(Spanned {
+                    node: Outcome::Scalar(Scalar::I128(n)),
+                    span,
+                }),
                 Token::True => Ok(Spanned {
                     node: Outcome::Scalar(Scalar::Bool(true)),
                     span,

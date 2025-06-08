@@ -192,6 +192,20 @@ fn test_usize() -> Result<()> {
 }
 
 #[test]
+fn test_u128() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Root {
+        value: u128,
+    }
+
+    assert_serialize!(Root, Root { value: 1 },);
+
+    Ok(())
+}
+
+#[test]
 fn test_u64() -> Result<()> {
     facet_testhelpers::setup();
 
@@ -254,6 +268,20 @@ fn test_isize() -> Result<()> {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: isize,
+    }
+
+    assert_serialize!(Root, Root { value: 1 },);
+
+    Ok(())
+}
+
+#[test]
+fn test_i128() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Root {
+        value: i128,
     }
 
     assert_serialize!(Root, Root { value: 1 },);

@@ -14,6 +14,8 @@ fn json_read_more_types() {
         i32_val: i32,
         u64_val: u64,
         i64_val: i64,
+        u128_val: u128,
+        i128_val: i128,
         f32_val: f32,
         f64_val: f64,
     }
@@ -27,6 +29,8 @@ fn json_read_more_types() {
         "i32_val": -2147483648,
         "u64_val": 18446744073709551615,
         "i64_val": -9223372036854775808,
+        "u128_val": 340282366920938463463374607431768211455,
+        "i128_val": -170141183460469231731687303715884105728,
         "f32_val": 3.141592653589793,
         "f64_val": 3.141592653589793
     }"#;
@@ -41,6 +45,14 @@ fn json_read_more_types() {
     assert_eq!(test_struct.i32_val, -2147483648);
     assert_eq!(test_struct.u64_val, 18446744073709551615);
     assert_eq!(test_struct.i64_val, -9223372036854775808);
+    assert_eq!(
+        test_struct.u128_val,
+        340282366920938463463374607431768211455
+    );
+    assert_eq!(
+        test_struct.i128_val,
+        -170141183460469231731687303715884105728
+    );
     assert!((test_struct.f32_val - std::f32::consts::PI).abs() < f32::EPSILON);
     assert!((test_struct.f64_val - std::f64::consts::PI).abs() < f64::EPSILON);
 }

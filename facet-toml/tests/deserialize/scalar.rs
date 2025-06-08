@@ -266,6 +266,29 @@ fn test_usize() {
 }
 
 #[test]
+fn test_u128() {
+    #[derive(Debug, Facet, PartialEq)]
+    struct Root {
+        value: u128,
+    }
+
+    assert_eq!(
+        facet_toml::from_str::<Root>("value = 1")?,
+        Root { value: 1 },
+    );
+    assert!(facet_toml::from_str::<Root>("value = -1").is_err());
+    assert_eq!(
+        facet_toml::from_str::<Root>("value = true")
+            .unwrap_err()
+            .kind,
+        TomlDeErrorKind::ExpectedType {
+            expected: "number",
+            got: "boolean"
+        }
+    );
+}
+
+#[test]
 fn test_u64() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
@@ -362,6 +385,28 @@ fn test_isize() {
     #[derive(Debug, Facet, PartialEq)]
     struct Root {
         value: isize,
+    }
+
+    assert_eq!(
+        facet_toml::from_str::<Root>("value = 1")?,
+        Root { value: 1 },
+    );
+    assert_eq!(
+        facet_toml::from_str::<Root>("value = true")
+            .unwrap_err()
+            .kind,
+        TomlDeErrorKind::ExpectedType {
+            expected: "number",
+            got: "boolean"
+        }
+    );
+}
+
+#[test]
+fn test_i128() {
+    #[derive(Debug, Facet, PartialEq)]
+    struct Root {
+        value: i128,
     }
 
     assert_eq!(
