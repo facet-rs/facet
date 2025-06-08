@@ -967,7 +967,7 @@ fn generate_comparison_report(results: &[BuildResult], report_path: &PathBuf) ->
         }
     }
 
-    report.push_str("\n");
+    report.push('\n');
 
     // Add diff analysis if we have both facet-pr and facet-main
     if let (Some(pr_result), Some(main_result)) = (facet_pr, facet_main) {
@@ -1010,7 +1010,7 @@ fn generate_comparison_report(results: &[BuildResult], report_path: &PathBuf) ->
                 ));
             }
 
-            report.push_str("\n");
+            report.push('\n');
         }
     }
 
@@ -1143,7 +1143,7 @@ fn generate_function_diff_analysis(
                 format_signed_bytes(*delta)
             ));
         }
-        report.push_str("\n");
+        report.push('\n');
     }
 }
 
@@ -1276,7 +1276,7 @@ fn generate_llvm_crate_diff_analysis(
                 copies_delta_str
             ));
         }
-        report.push_str("\n");
+        report.push('\n');
     }
 }
 
@@ -1350,7 +1350,7 @@ fn generate_highlights(
         report.push_str(&format!("- {}\n", finding));
     }
 
-    report.push_str("\n");
+    report.push('\n');
 }
 
 fn format_signed_bytes(bytes: i64) -> String {
@@ -1515,14 +1515,14 @@ fn run_cargo_llvm_lines_single(manifest_path: &str) -> Result<(u32, u32, Vec<Llv
 
     // First try with binary target
     let mut output = Command::new("cargo")
-        .args(&["llvm-lines", "--release", "--manifest-path", manifest_path])
+        .args(["llvm-lines", "--release", "--manifest-path", manifest_path])
         .output()
         .context("Failed to execute cargo llvm-lines")?;
 
     // If binary target fails, try with --lib for library crates
     if !output.status.success() {
         output = Command::new("cargo")
-            .args(&[
+            .args([
                 "llvm-lines",
                 "--release",
                 "--lib",
@@ -1588,7 +1588,7 @@ fn measure_build_time(manifest_path: &str) -> Result<BuildTimingSummary> {
 
     // First, clean to ensure we're measuring a fresh build
     let clean_output = Command::new("cargo")
-        .args(&[
+        .args([
             "clean",
             "--manifest-path",
             manifest_path,
@@ -1606,7 +1606,7 @@ fn measure_build_time(manifest_path: &str) -> Result<BuildTimingSummary> {
 
     // Now build with timing information
     let output = Command::new("cargo")
-        .args(&[
+        .args([
             "build",
             "--release",
             "--manifest-path",
@@ -1687,7 +1687,7 @@ fn parse_llvm_lines_output(output: &str) -> Result<(u32, u32, Vec<LlvmFunction>)
             .trim_start()
             .chars()
             .next()
-            .map_or(false, |c| c.is_ascii_digit())
+            .is_some_and(|c| c.is_ascii_digit())
             && line.contains('%')
         {
             // Parse function lines: "   99 (5.3%,  5.3%)   1 (1.1%,  1.1%)  ks_facet::main"
