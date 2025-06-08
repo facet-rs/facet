@@ -1,22 +1,19 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
-expression: "expand(r#\"\n        struct Foo<K, V> where K: Eq + Hash {\n            inner: HashMap<K, V>,\n        }\n        \"#)"
+assertion_line: 1100
+expression: "expand(r#\"\n        #[derive(Facet)]\n        struct Foo<'a> {\n            #[facet(default)]\n            name: Option<Cow<'a, str>>,\n        }\n        \"#)"
 ---
 #[automatically_derived]
-unsafe impl<'__facet, K, V> ::facet::Facet<'__facet> for Foo<K, V>
+unsafe impl<'a, '__facet> ::facet::Facet<'__facet> for Foo<'a>
 where
-    K: Eq + Hash,
-    K: ::facet::Facet<'__facet>,
-    V: ::facet::Facet<'__facet>,
+    'a: '__facet,
+    '__facet: 'a,
 {
     const VTABLE: &'static ::facet::ValueVTable = &const {
         let mut vtable = ::facet::value_vtable!(Self, |f, opts| {
             write!(f, "Foo")?;
             if let Some(opts) = opts.for_children() {
                 write!(f, "<")?;
-                <K as ::facet::Facet>::SHAPE.vtable.type_name()(f, opts)?;
-                write!(f, ", ")?;
-                <V as ::facet::Facet>::SHAPE.vtable.type_name()(f, opts)?;
                 write!(f, ">")?;
             } else {
                 write!(f, "<…>")?;
@@ -28,28 +25,20 @@ where
     const SHAPE: &'static ::facet::Shape<'static> = &const {
         let fields: &'static [::facet::Field] = &const {
             [{
+                :: facet :: static_assertions :: assert_impl_all ! (Option < Cow < 'static , str > > : :: core :: default :: Default);
                 ::facet::Field::builder()
-                    .name("inner")
-                    .shape(::facet::shape_of(&|s: &Foo<K, V>| &s.inner))
-                    .offset(:: core :: mem :: offset_of ! (Foo < K , V > , inner))
+                    .name("name")
+                    .shape(::facet::shape_of(&|s: &Foo<'a>| &s.name))
+                    .offset(::core::mem::offset_of!(Foo<'a>, name))
+                    .flags(::facet::FieldFlags::DEFAULT)
                     .build()
             }]
         };
         ::facet::Shape::builder_for_sized::<Self>()
             .type_identifier("Foo")
-            .type_params(&[
-                ::facet::TypeParam {
-                    name: "K",
-                    shape: || <K as ::facet::Facet>::SHAPE,
-                },
-                ::facet::TypeParam {
-                    name: "V",
-                    shape: || <V as ::facet::Facet>::SHAPE,
-                },
-            ])
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
-                    .repr(::facet::Repr::default())
+                    .repr(::facet::Repr::c())
                     .kind(::facet::StructKind::Struct)
                     .fields(fields)
                     .build(),
