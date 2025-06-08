@@ -352,7 +352,6 @@ fn run_comparison() -> Result<()> {
     }
     cleanup_cargo_patches()?;
 
-    // Generate comparison report
     let report_path = output.join("comparison_report.md");
     generate_comparison_report(&all_results, &report_path)?;
 
@@ -712,6 +711,26 @@ fn measure_target_complete(target: &MeasurementTarget, variant: &str) -> Result<
     })
 }
 
+fn aggregate_and_sort_functions(bloat_functions: &[BloatFunction]) -> Vec<BloatFunction> {
+    let mut aggregated_map: std::collections::HashMap<(String, String), u64> =
+        std::collections::HashMap::new();
+    for func in bloat_functions {
+        *aggregated_map
+            .entry((func.crate_name.clone(), func.name.clone()))
+            .or_insert(0) += func.size;
+    }
+    let mut aggregated_list: Vec<BloatFunction> = aggregated_map
+        .into_iter()
+        .map(|((crate_name, name), size)| BloatFunction {
+            crate_name,
+            name,
+            size,
+        })
+        .collect();
+    aggregated_list.sort_by(|a, b| b.size.cmp(&a.size)); // Sort by size descending
+    aggregated_list
+}
+
 fn generate_comparison_report(results: &[BuildResult], report_path: &PathBuf) -> Result<()> {
     let mut report = String::new();
 
@@ -885,7 +904,8 @@ fn generate_comparison_report(results: &[BuildResult], report_path: &PathBuf) ->
             report.push_str(&format!("### {} - {}\n\n", target_name, result.variant));
 
             report.push_str("**Top Functions by Size:**\n");
-            for (i, func) in result.top_functions.iter().take(10).enumerate() {
+            let aggregated_functions = aggregate_and_sort_functions(&result.top_functions);
+            for (i, func) in aggregated_functions.iter().take(10).enumerate() {
                 report.push_str(&format!(
                     "{}. `{}::{}` - {}\n",
                     i + 1,
@@ -944,6 +964,9 @@ fn generate_facet_diff_analysis(
 
     // LLVM crate-level diff analysis
     generate_llvm_crate_diff_analysis(report, pr_result, main_result);
+
+    // bloat analysis
+    generate_crate_diff_analysis(report, pr_result, main_result);
 
     // Regression/improvement highlights
     generate_highlights(
@@ -1233,6 +1256,113 @@ fn generate_llvm_crate_diff_analysis(
                 lines_delta_str,
                 copies_emoji,
                 copies_delta_str
+            ));
+        }
+        report.push('\n');
+    }
+}
+
+struct CrateSizeChange {
+    name: String,
+    main_size: u64,
+    pr_size: u64,
+    delta: i64,
+}
+
+fn generate_crate_diff_analysis(
+    report: &mut String,
+    pr_result: &BuildResult,
+    main_result: &BuildResult,
+) {
+    report.push_str("**Crate Size Changes (PR vs Main):**\n\n");
+
+    let mut main_crates_map: std::collections::HashMap<String, u64> =
+        std::collections::HashMap::new();
+    for crate_data in &main_result.top_crates {
+        main_crates_map.insert(crate_data.name.clone(), crate_data.size);
+    }
+
+    let mut pr_crates_map: std::collections::HashMap<String, u64> =
+        std::collections::HashMap::new();
+    for crate_data in &pr_result.top_crates {
+        pr_crates_map.insert(crate_data.name.clone(), crate_data.size);
+    }
+
+    let mut all_crate_names = std::collections::HashSet::new();
+    for crate_data in &main_result.top_crates {
+        all_crate_names.insert(crate_data.name.clone());
+    }
+    for crate_data in &pr_result.top_crates {
+        all_crate_names.insert(crate_data.name.clone());
+    }
+
+    let mut crate_size_changes = Vec::new();
+
+    for crate_name in all_crate_names {
+        let main_size = *main_crates_map.get(&crate_name).unwrap_or(&0);
+        let pr_size = *pr_crates_map.get(&crate_name).unwrap_or(&0);
+        let delta = pr_size as i64 - main_size as i64;
+
+        crate_size_changes.push(CrateSizeChange {
+            name: crate_name,
+            main_size,
+            pr_size,
+            delta,
+        });
+    }
+
+    // Sort by absolute delta (largest changes first), then by crate name
+    crate_size_changes.sort_by(|a, b| {
+        let delta_cmp = b.delta.abs().cmp(&a.delta.abs());
+        if delta_cmp == std::cmp::Ordering::Equal {
+            a.name.cmp(&b.name)
+        } else {
+            delta_cmp
+        }
+    });
+
+    if crate_size_changes.is_empty() {
+        report.push_str("*No crate data found for comparison.*\n\n");
+    } else {
+        report.push_str("| Crate | Main Size | PR Size | Δ Size |\n");
+        report.push_str("|-------|-----------|---------|--------|\n");
+
+        for change in crate_size_changes {
+            let main_size_str = if change.main_size == 0 && change.pr_size > 0 {
+                "N/A (New)".to_string()
+            } else if change.main_size == 0 {
+                "N/A".to_string()
+            } else {
+                format_bytes(change.main_size)
+            };
+
+            let pr_size_str = if change.pr_size == 0 && change.main_size > 0 {
+                "N/A (Removed)".to_string()
+            } else if change.pr_size == 0 {
+                "N/A".to_string()
+            } else {
+                format_bytes(change.pr_size)
+            };
+
+            let emoji = if change.main_size == 0 && change.pr_size > 0 {
+                "🆕" // New
+            } else if change.pr_size == 0 && change.main_size > 0 {
+                "🗑️" // Removed
+            } else if change.delta > 0 {
+                "📈"
+            } else if change.delta < 0 {
+                "📉"
+            } else {
+                "➖"
+            };
+
+            report.push_str(&format!(
+                "| `{}` | {} | {} | {}{} |\n",
+                change.name,
+                main_size_str,
+                pr_size_str,
+                emoji,
+                format_signed_bytes(change.delta)
             ));
         }
         report.push('\n');
