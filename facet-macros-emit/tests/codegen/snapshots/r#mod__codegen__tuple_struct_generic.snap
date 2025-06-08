@@ -17,6 +17,8 @@ where
             if let Some(opts) = opts.for_children() {
                 write!(f, "<")?;
                 <T as ::facet::Facet>::SHAPE.vtable.type_name()(f, opts)?;
+                write!(f, ", ")?;
+                write!(f, "{:?}", C)?;
                 write!(f, ">")?;
             } else {
                 write!(f, "<…>")?;
