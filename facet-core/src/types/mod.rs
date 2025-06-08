@@ -412,36 +412,36 @@ impl core::fmt::Debug for Shape<'_> {
                 }};
             }
 
-            field!("layout", "{:?}", self.layout);
-
-            field!("ty", "{:?}", self.ty);
-
-            // If `def` is `Undefined`, the information in `ty` would be more useful.
-            if !matches!(self.def, Def::Undefined) {
-                field!("def", "{:?}", self.def);
-            }
-
             field!("type_identifier", "{:?}", self.type_identifier);
 
             if !self.type_params.is_empty() {
                 field!("type_params", "{:?}", self.type_params);
             }
 
-            if !self.doc.is_empty() {
-                field!("doc", "{:?}", self.doc);
+            if let Some(type_tag) = self.type_tag {
+                field!("type_tag", "{:?}", type_tag);
             }
 
             if !self.attributes.is_empty() {
                 field!("attributes", "{:?}", self.attributes);
             }
 
-            if let Some(type_tag) = self.type_tag {
-                field!("type_tag", "{:?}", type_tag);
-            }
-
             // Omit the `inner` field if this shape is not a transparent wrapper.
             if let Some(inner) = self.inner {
                 field!("inner", "{:?}", inner);
+            }
+
+            field!("ty", "{:?}", self.ty);
+
+            field!("layout", "{:?}", self.layout);
+
+            // If `def` is `Undefined`, the information in `ty` would be more useful.
+            if !matches!(self.def, Def::Undefined) {
+                field!("def", "{:?}", self.def);
+            }
+
+            if !self.doc.is_empty() {
+                field!("doc", "{:?}", self.doc);
             }
 
             debug_struct.finish_non_exhaustive()
