@@ -44,7 +44,7 @@ pub(crate) fn collect_rlib_sizes(
         let entry = entry_res.context("[analysis] Failed to read directory entry in deps")?;
         let path = entry.path();
 
-        if path.is_file() && path.extension().map_or(false, |ext| ext == "rlib") {
+        if path.is_file() && path.extension().is_some_and(|ext| ext == "rlib") {
             if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                 // stem is like "libcrate_name_with_underscores-hash" or "libcrate_name_with_underscores"
                 for crate_name_from_config in crates_to_analyze {
