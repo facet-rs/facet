@@ -779,25 +779,21 @@ fn measure_target_complete(target: &MeasurementTarget, variant: &str) -> Result<
     // Run measurements
     let start = Instant::now();
 
-    // Measure binary size
+    // Build once with LLVM IR emission and timing
+    println!("🔨 Building with LLVM IR emission...");
+    let build_output = build_with_llvm_ir(&manifest_path)?;
+
+    // Analyze LLVM files from the build
+    println!("📊 Analyzing LLVM lines...");
+    let llvm_lines = analyze_llvm_files(&build_output.target_dir, crates_to_use)?;
+
+    // Measure binary size (separate build for now as requested)
+    println!("📏 Measuring binary size...");
     let bloat_functions = run_cargo_bloat(&manifest_path, CargoBloatMode::Functions)?;
     let bloat_crates = run_cargo_bloat(&manifest_path, CargoBloatMode::Crates)?;
 
-    // Measure LLVM lines - crate names stay the same, just in different workspace
-    let workspace_path = match variant {
-        "facet-main" => {
-            let temp_dir = std::env::temp_dir().join(format!("measure-bloat-{}", process::id()));
-            temp_dir
-                .join("outside-workspace")
-                .to_string_lossy()
-                .to_string()
-        }
-        _ => "..".to_string(),
-    };
-    let llvm_lines = run_cargo_llvm_lines_for_crates(crates_to_use, &workspace_path)?;
-
-    // Measure build time
-    let build_timing = measure_build_time(&manifest_path)?;
+    // Clean up the LLVM build directory
+    let _ = std::fs::remove_dir_all(&build_output.target_dir);
 
     let measurement_duration = start.elapsed();
     println!(
@@ -810,7 +806,7 @@ fn measure_target_complete(target: &MeasurementTarget, variant: &str) -> Result<
         variant: variant.to_string(),
         file_size: bloat_functions.file_size,
         text_section_size: bloat_functions.text_section_size,
-        build_time_ms: (build_timing.total_duration * 1000.0) as u64,
+        build_time_ms: (build_output.timing_summary.total_duration * 1000.0) as u64,
         top_functions: bloat_functions.functions.into_iter().take(50).collect(),
         top_crates: bloat_crates.crates.into_iter().take(20).collect(),
         llvm_lines,
@@ -1580,6 +1576,109 @@ fn format_number(num: u32) -> String {
     result.chars().rev().collect()
 }
 
+/// Output from the LLVM IR build process
+#[derive(Debug)]
+struct LlvmBuildOutput {
+    /// Directory where LLVM IR files and build artifacts are stored
+    /// Example: "../target-llvm-12345"
+    /// Obtained from: build_with_llvm_ir function, dynamically generated
+    /// Used for: Locating .ll files for analysis and cleanup
+    target_dir: String,
+
+    /// Summary of build timing information from this build
+    /// Obtained from: Parsing cargo build --timings output
+    /// Used for: Populating build time metrics in BuildResult
+    timing_summary: BuildTimingSummary,
+}
+
+/// Build the project with LLVM IR emission and timing information
+fn build_with_llvm_ir(manifest_path: &str) -> Result<LlvmBuildOutput> {
+    let start = Instant::now();
+
+    // Use a specific target directory to avoid conflicts
+    let target_dir = format!("../target-llvm-{}", std::process::id());
+
+    // First, clean to ensure we're measuring a fresh build
+    let clean_output = Command::new("cargo")
+        .args([
+            "clean",
+            "--manifest-path",
+            manifest_path,
+            "--target-dir",
+            &target_dir,
+        ])
+        .env("RUSTC_BOOTSTRAP", "1")
+        .output()
+        .context("Failed to run cargo clean")?;
+
+    if !clean_output.status.success() {
+        let stderr = String::from_utf8_lossy(&clean_output.stderr);
+        anyhow::bail!("cargo clean failed: {}", stderr);
+    }
+
+    // Build with LLVM IR emission and timing information
+    let output = Command::new("cargo")
+        .args([
+            "build",
+            "--release",
+            "--manifest-path",
+            manifest_path,
+            "--target-dir",
+            &target_dir,
+            "--timings=json",
+            "-Zunstable-options",
+        ])
+        .env("RUSTC_BOOTSTRAP", "1")
+        .env("RUSTFLAGS", "--emit=llvm-ir")
+        .output()
+        .context("Failed to execute cargo build with LLVM IR")?;
+
+    let total_duration = start.elapsed().as_secs_f64();
+    println!(
+        "⏱️  cargo build (with LLVM IR) took: {:.2}s",
+        total_duration
+    );
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("cargo build failed: {}", stderr);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut crate_timings = Vec::new();
+
+    // Parse each JSON line for timing info
+    for line in stdout.lines() {
+        if line.trim().starts_with('{') && line.contains("timing-info") {
+            if let Ok(timing_entry) = serde_json::from_str::<CargoTimingEntry>(line.trim()) {
+                if timing_entry.reason == "timing-info" {
+                    // Use the target name which is the actual crate name
+                    let crate_name = timing_entry.target.name.replace('-', "_");
+                    crate_timings.push(CrateTiming {
+                        name: crate_name,
+                        duration: timing_entry.duration,
+                    });
+                }
+            }
+        }
+    }
+
+    // Sort by duration (descending)
+    crate_timings.sort_by(|a, b| {
+        b.duration
+            .partial_cmp(&a.duration)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    Ok(LlvmBuildOutput {
+        target_dir,
+        timing_summary: BuildTimingSummary {
+            total_duration,
+            crate_timings,
+        },
+    })
+}
+
 fn measure_build_time(manifest_path: &str) -> Result<BuildTimingSummary> {
     let start = Instant::now();
 
@@ -1663,6 +1762,105 @@ fn measure_build_time(manifest_path: &str) -> Result<BuildTimingSummary> {
     })
 }
 
+/// Analyze LLVM IR files to get lines of code information
+fn analyze_llvm_files(target_dir: &str, crate_names: &[String]) -> Result<LlvmLinesSummary> {
+    use std::fs;
+    use std::path::Path;
+
+    let deps_dir = Path::new(target_dir).join("release").join("deps");
+
+    if !deps_dir.exists() {
+        anyhow::bail!("Target deps directory does not exist: {:?}", deps_dir);
+    }
+
+    let mut crate_results = Vec::new();
+    let mut all_functions = Vec::new();
+
+    // For each crate, find its .ll file and analyze it
+    for crate_name in crate_names {
+        // Convert crate name to file prefix (underscores to hyphens)
+        let file_prefix = crate_name.replace('_', "-");
+
+        // Find .ll files matching this crate
+        let mut ll_files = Vec::new();
+        for entry in fs::read_dir(&deps_dir)? {
+            let entry = entry?;
+            let file_name = entry.file_name();
+            let file_name_str = file_name.to_string_lossy();
+
+            // Match files like "crate_name-hash.ll"
+            if file_name_str.starts_with(&file_prefix) && file_name_str.ends_with(".ll") {
+                // Skip build script artifacts
+                if !file_name_str.contains("build_script") {
+                    ll_files.push(entry.path());
+                }
+            }
+        }
+
+        if ll_files.is_empty() {
+            println!("⚠️  No .ll files found for crate: {}", crate_name);
+            crate_results.push(CrateLlvmLines {
+                name: crate_name.clone(),
+                lines: 0,
+                copies: 0,
+            });
+            continue;
+        }
+
+        // Use the first matching .ll file (there should typically be only one)
+        let ll_file = &ll_files[0];
+        println!("📊 Analyzing LLVM IR for {}: {:?}", crate_name, ll_file);
+
+        // Run cargo llvm-lines with --files option
+        let output = Command::new("cargo")
+            .args(["llvm-lines", "--files", &ll_file.to_string_lossy()])
+            .output()
+            .context("Failed to execute cargo llvm-lines")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            println!("⚠️  cargo llvm-lines failed for {}: {}", crate_name, stderr);
+            crate_results.push(CrateLlvmLines {
+                name: crate_name.clone(),
+                lines: 0,
+                copies: 0,
+            });
+            continue;
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        match parse_llvm_lines_output(&stdout) {
+            Ok((line_count, copy_count, functions)) => {
+                crate_results.push(CrateLlvmLines {
+                    name: crate_name.clone(),
+                    lines: line_count,
+                    copies: copy_count,
+                });
+                all_functions.extend(functions);
+            }
+            Err(e) => {
+                println!(
+                    "⚠️  Failed to parse llvm-lines output for {}: {}",
+                    crate_name, e
+                );
+                crate_results.push(CrateLlvmLines {
+                    name: crate_name.clone(),
+                    lines: 0,
+                    copies: 0,
+                });
+            }
+        }
+    }
+
+    // Sort all functions by line count (descending)
+    all_functions.sort_by(|a, b| b.lines.cmp(&a.lines));
+
+    Ok(LlvmLinesSummary {
+        crate_results,
+        top_functions: all_functions,
+    })
+}
+
 fn parse_llvm_lines_output(output: &str) -> Result<(u32, u32, Vec<LlvmFunction>)> {
     // Parse cargo-llvm-lines output to extract total line count, copy count, and individual functions
     // Look for line like "1876                94                (TOTAL)"
@@ -1671,6 +1869,10 @@ fn parse_llvm_lines_output(output: &str) -> Result<(u32, u32, Vec<LlvmFunction>)
     let mut total_lines = 0;
     let mut total_copies = 0;
     let mut functions = Vec::new();
+
+    // Parse function lines: "   99 (5.3%,  5.3%)   1 (1.1%,  1.1%)  ks_facet::main"
+    // Use regex to precisely extract: lines, copies, and function name
+    let re = Regex::new(r"^\s*(\d+)\s+\([^)]+\)\s+(\d+)\s+\([^)]+\)\s+(.+)$").unwrap();
 
     for line in output.lines() {
         if line.contains("(TOTAL)") {
@@ -1690,10 +1892,6 @@ fn parse_llvm_lines_output(output: &str) -> Result<(u32, u32, Vec<LlvmFunction>)
             .is_some_and(|c| c.is_ascii_digit())
             && line.contains('%')
         {
-            // Parse function lines: "   99 (5.3%,  5.3%)   1 (1.1%,  1.1%)  ks_facet::main"
-            // Use regex to precisely extract: lines, copies, and function name
-            let re = Regex::new(r"^\s*(\d+)\s+\([^)]+\)\s+(\d+)\s+\([^)]+\)\s+(.+)$").unwrap();
-
             if let Some(captures) = re.captures(line) {
                 if let (Ok(lines), Ok(copies)) =
                     (captures[1].parse::<u32>(), captures[2].parse::<u32>())
