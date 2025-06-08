@@ -26,18 +26,6 @@ enum Commands {
     /// Run the full comparison between serde, facet-pr, and facet-main
     /// Used for: Complete performance analysis across all variants
     Compare,
-    /// Test individual components with specific variants
-    /// Used for: Focused testing and debugging of specific targets
-    Test {
-        /// Component to test
-        /// Example: "ks-facet", "json-benchmark", "pretty-benchmark"
-        /// Used for: Selecting which measurement target to analyze
-        component: String,
-        /// Variant to test (serde, facet-pr, facet-main)
-        /// Example: "facet-pr", "serde"
-        /// Used for: Selecting which implementation variant to measure
-        variant: String,
-    },
 }
 
 /// Configuration for measuring a specific comparison target
@@ -291,12 +279,12 @@ struct BuildResult {
     /// Used for: Build performance comparison between variants
     build_time_ms: u64,
 
-    /// Top functions contributing to binary size (limited to top 50)
+    /// Top functions contributing to binary size
     /// Obtained from: cargo bloat function analysis
     /// Used for: Detailed function-level size analysis in reports
     top_functions: Vec<BloatFunction>,
 
-    /// Top crates contributing to binary size (limited to top 20)
+    /// Top crates contributing to binary size
     /// Obtained from: cargo bloat --crates analysis
     /// Used for: High-level crate size comparison in reports
     top_crates: Vec<BloatCrate>,
@@ -312,14 +300,6 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Compare => run_comparison(),
-        Commands::Test { component, variant } => {
-            // Test TOML transformation first
-            if component == "debug-toml" {
-                test_toml_transformation()?;
-                return Ok(());
-            }
-            test_component(component, variant)
-        }
     }
 }
 
@@ -377,116 +357,6 @@ fn run_comparison() -> Result<()> {
     println!("📄 Report generated: {}", report_path.display());
 
     Ok(())
-}
-
-fn test_component(component: String, variant: String) -> Result<()> {
-    println!(
-        "🧪 Testing component: {} with variant: {}",
-        component, variant
-    );
-
-    let targets = get_measurement_targets();
-
-    match component.as_str() {
-        "ks-facet" => {
-            if variant == "facet-pr" || variant == "facet-main" {
-                setup_cargo_patches(&variant)?;
-                let result = measure_target(&targets[0], &variant);
-                cleanup_cargo_patches()?;
-                result
-            } else {
-                println!(
-                    "❌ Invalid variant '{}' for ks-facet. Use 'facet-pr' or 'facet-main'",
-                    variant
-                );
-                Ok(())
-            }
-        }
-        "ks-serde" => {
-            if variant == "serde" {
-                setup_cargo_patches(&variant)?;
-                let result = measure_target(&targets[1], &variant);
-                cleanup_cargo_patches()?;
-                result
-            } else {
-                println!("❌ Invalid variant '{}' for ks-serde. Use 'serde'", variant);
-                Ok(())
-            }
-        }
-        "json-benchmark" => test_json_benchmark(&variant),
-        "pretty-benchmark" => test_pretty_benchmark(&variant),
-        "core-benchmark" => test_core_benchmark(&variant),
-        _ => {
-            println!("❌ Unknown component: {}", component);
-            println!(
-                "Available components: ks-facet, ks-serde, json-benchmark, pretty-benchmark, core-benchmark"
-            );
-            Ok(())
-        }
-    }
-}
-
-fn test_json_benchmark(variant: &str) -> Result<()> {
-    let target = MeasurementTarget {
-        name: "json-benchmark".to_string(),
-        facet_crates: vec![
-            "ks-facet".to_string(),
-            "ks-mock".to_string(),
-            "ks-types".to_string(),
-            "ks-facet-json-read".to_string(),
-            "ks-facet-json-write".to_string(),
-        ],
-        serde_crates: vec![
-            "ks-serde".to_string(),
-            "ks-mock".to_string(),
-            "ks-types".to_string(),
-            "ks-serde-json-read".to_string(),
-            "ks-serde-json-write".to_string(),
-        ],
-        binary_crate: "ks-facet".to_string(), // For now, use ks-facet as the binary
-    };
-
-    measure_target(&target, variant)
-}
-
-fn test_pretty_benchmark(variant: &str) -> Result<()> {
-    let target = MeasurementTarget {
-        name: "pretty-benchmark".to_string(),
-        facet_crates: vec![
-            "ks-facet".to_string(),
-            "ks-mock".to_string(),
-            "ks-types".to_string(),
-            "ks-facet-pretty".to_string(),
-        ],
-        serde_crates: vec![
-            "ks-serde".to_string(),
-            "ks-mock".to_string(),
-            "ks-types".to_string(),
-            "ks-debug".to_string(), // Note: it's ks-debug not ks-debug-print in the directory
-        ],
-        binary_crate: "ks-facet".to_string(),
-    };
-
-    measure_target(&target, variant)
-}
-
-fn test_core_benchmark(variant: &str) -> Result<()> {
-    let target = MeasurementTarget {
-        name: "core-benchmark".to_string(),
-        facet_crates: vec![
-            "ks-facet".to_string(),
-            "ks-mock".to_string(),
-            "ks-types".to_string(),
-        ],
-        serde_crates: vec![
-            "ks-serde".to_string(),
-            "ks-mock".to_string(),
-            "ks-types".to_string(),
-        ],
-        binary_crate: "ks-facet".to_string(),
-    };
-
-    measure_target(&target, variant)
 }
 
 fn get_measurement_targets() -> Vec<MeasurementTarget> {
@@ -779,25 +649,64 @@ fn measure_target_complete(target: &MeasurementTarget, variant: &str) -> Result<
     // Run measurements
     let start = Instant::now();
 
-    // Build once with LLVM IR emission and timing
-    println!("🔨 Building with LLVM IR emission...");
-    let build_output = build_with_llvm_ir(&manifest_path)?;
+    // Define a persistent target directory to be used for all builds in this function
+    let persistent_target_dir = PathBuf::from("../target-measure-bloat");
+    // Ensure the directory exists (cargo build usually creates it, but good practice for clarity)
+    fs::create_dir_all(&persistent_target_dir).context(format!(
+        "Failed to create persistent target directory: {}",
+        persistent_target_dir.display()
+    ))?;
+    let persistent_target_dir_str = persistent_target_dir.to_string_lossy().to_string();
 
-    // Analyze LLVM files from the build
+    let mut consistent_env_vars = std::collections::HashMap::new();
+    consistent_env_vars.insert("RUSTC_BOOTSTRAP".to_string(), "1".to_string());
+    consistent_env_vars.insert("RUSTFLAGS".to_string(), "--emit=llvm-ir".to_string());
+
+    // --- Build with LLVM IR emission and timing ---
+    println!("🔨 Building with LLVM IR emission...");
+    let llvm_ir_opts = BuildWithLllvmIrOpts {
+        manifest_path: manifest_path.clone(),
+        target_dir: persistent_target_dir_str.clone(), // Use persistent target dir
+        env_vars: consistent_env_vars.clone(),         // See comment above.
+    };
+    let build_output = build_with_llvm_ir(&llvm_ir_opts)?; // This build uses persistent_target_dir_str
+
+    // --- Analyze LLVM files from the build ---
     println!("📊 Analyzing LLVM lines...");
+    // `build_output.target_dir` is the `persistent_target_dir_str`
     let llvm_lines = analyze_llvm_files(&build_output.target_dir, crates_to_use)?;
 
-    // Measure binary size (separate build for now as requested)
+    // --- Measure binary size with cargo-bloat ---
     println!("📏 Measuring binary size...");
-    let bloat_functions = run_cargo_bloat(&manifest_path, CargoBloatMode::Functions)?;
-    let bloat_crates = run_cargo_bloat(&manifest_path, CargoBloatMode::Crates)?;
 
-    // Clean up the LLVM build directory
-    let _ = std::fs::remove_dir_all(&build_output.target_dir);
+    // For `cargo bloat` to reuse artifacts and avoid rebuilds, its internal `cargo build`
+    // (if triggered) must see the same RUSTFLAGS and other relevant environment variables
+    // that `build_with_llvm_ir` effectively used.
+    // `build_with_llvm_ir` effectively uses: RUSTC_BOOTSTRAP="1", RUSTFLAGS="--emit=llvm-ir".
+
+    let bloat_functions_opts = CargoBloatOpts {
+        manifest_path: manifest_path.clone(),
+        target_dir: Some(persistent_target_dir_str.clone()), // Use persistent target dir
+        mode: CargoBloatMode::Functions,
+        env_vars: consistent_env_vars.clone(),
+    };
+    let bloat_functions = run_cargo_bloat(&bloat_functions_opts)?;
+
+    let bloat_crates_opts = CargoBloatOpts {
+        manifest_path: manifest_path.clone(),
+        target_dir: Some(persistent_target_dir_str.clone()), // Use persistent target dir
+        mode: CargoBloatMode::Crates,
+        env_vars: consistent_env_vars,
+    };
+    let bloat_crates = run_cargo_bloat(&bloat_crates_opts)?;
+
+    // --- Do NOT clean up the persistent build directory ---
+    // The previous lines that removed build_output.target_dir (which was temporary)
+    // and target_dir_bloat are no longer needed as we use a persistent directory.
 
     let measurement_duration = start.elapsed();
     println!(
-        "⏱️  Total measurement time: {:.2}s",
+        "⏰ Total measurement time: {:.2}s",
         measurement_duration.as_secs_f64()
     );
 
@@ -807,8 +716,8 @@ fn measure_target_complete(target: &MeasurementTarget, variant: &str) -> Result<
         file_size: bloat_functions.file_size,
         text_section_size: bloat_functions.text_section_size,
         build_time_ms: (build_output.timing_summary.total_duration * 1000.0) as u64,
-        top_functions: bloat_functions.functions.into_iter().take(50).collect(),
-        top_crates: bloat_crates.crates.into_iter().take(20).collect(),
+        top_functions: bloat_functions.functions,
+        top_crates: bloat_crates.crates,
         llvm_lines,
     })
 }
@@ -1418,39 +1327,92 @@ enum CargoBloatMode {
     Crates,
 }
 
-fn run_cargo_bloat(manifest_path: &str, mode: CargoBloatMode) -> Result<BloatOutput> {
+/// Options for running cargo-bloat.
+/// Used to configure the cargo-bloat execution.
+#[derive(Debug, Clone)]
+struct CargoBloatOpts {
+    /// Path to the Cargo.toml manifest file for the crate to analyze.
+    /// Example: "../ks-facet/Cargo.toml"
+    /// Obtained from: MeasurementTarget configuration or manual specification.
+    /// Used for: Specifying which crate to analyze.
+    manifest_path: String,
+
+    /// Target directory for the build artifacts. If None, cargo's default is used.
+    /// Example: Some("../target-bloat-12345")
+    /// Obtained from: Dynamically generated or set to None.
+    /// Used for: Isolating build outputs if necessary.
+    target_dir: Option<String>,
+
+    /// Mode for cargo-bloat: function-level or crate-level analysis.
+    /// Obtained from: Internal logic deciding which analysis to run.
+    /// Used for: Controlling the type of bloat report generated.
+    mode: CargoBloatMode,
+
+    /// Environment variables to set for the cargo-bloat command.
+    /// Example: `HashMap::from([("RUSTFLAGS".to_string(), "-Zunstable-options".to_string())])`
+    /// Obtained from: Specific measurement requirements.
+    /// Used for: Customizing the build environment for cargo-bloat.
+    env_vars: std::collections::HashMap<String, String>,
+}
+
+fn run_cargo_bloat(opts: &CargoBloatOpts) -> Result<BloatOutput> {
+    let pb = indicatif::ProgressBar::new_spinner();
+    let style = indicatif::ProgressStyle::default_spinner()
+        .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ")
+        .template("{spinner:.green} {msg}")
+        .expect("BUG: Invalid indicatif template"); // template() on default_spinner should not fail with valid str
+    pb.set_style(style);
+    pb.set_message(format!("Running cargo bloat ({:?})...", opts.mode));
+    pb.enable_steady_tick(std::time::Duration::from_millis(100));
+
     let start = Instant::now();
 
     let mut args = vec![
-        "bloat",
-        "--release",
-        "--message-format",
-        "json",
-        "--manifest-path",
-        manifest_path,
-        "-n",
-        "25",
+        "bloat".to_string(),
+        "--release".to_string(),
+        "--message-format".to_string(),
+        "json".to_string(),
+        "--manifest-path".to_string(),
+        opts.manifest_path.clone(),
+        "-n".to_string(),
+        "500".to_string(), // Keep default -n 500
     ];
 
-    match mode {
-        CargoBloatMode::Crates => args.push("--crates"),
+    if let Some(target_dir) = &opts.target_dir {
+        args.push("--target-dir".to_string());
+        args.push(target_dir.clone());
+    }
+
+    match opts.mode {
+        CargoBloatMode::Crates => args.push("--crates".to_string()),
         CargoBloatMode::Functions => {} // No additional args needed
     }
 
-    let output = Command::new("cargo")
-        .args(&args)
-        .output()
-        .context("Failed to execute cargo bloat")?;
+    let mut command = Command::new("cargo");
+    command.args(&args);
+
+    for (key, value) in &opts.env_vars {
+        command.env(key, value);
+    }
+
+    let output = command.output().context("Failed to execute cargo bloat")?;
 
     let duration = start.elapsed();
+    pb.disable_steady_tick(); // Stop animation before printing final message
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
+        pb.finish_with_message(format!("❌ cargo bloat ({:?}) failed", opts.mode));
         anyhow::bail!("cargo bloat failed: {}", stderr);
     }
 
+    pb.finish_with_message(format!(
+        "✅ cargo bloat ({:?}) completed in {:.2}s",
+        opts.mode,
+        duration.as_secs_f64()
+    ));
+
     let stdout = String::from_utf8_lossy(&output.stdout);
-    println!("⏱️  cargo bloat took: {:?}", duration);
 
     let bloat_output: BloatOutput =
         serde_json::from_str(&stdout).context("Failed to parse cargo bloat JSON output")?;
@@ -1591,58 +1553,82 @@ struct LlvmBuildOutput {
     timing_summary: BuildTimingSummary,
 }
 
+/// Options for building with LLVM IR emission.
+/// Used to configure the build process for LLVM analysis.
+#[derive(Debug, Clone)]
+struct BuildWithLllvmIrOpts {
+    /// Path to the Cargo.toml manifest file for the crate to build.
+    /// Example: "../ks-facet/Cargo.toml"
+    /// Obtained from: MeasurementTarget configuration or manual specification.
+    /// Used for: Specifying which crate to build.
+    manifest_path: String,
+
+    /// Target directory for the build artifacts.
+    /// Example: "../target-llvm-12345"
+    /// Obtained from: Dynamically generated to avoid conflicts.
+    /// Used for: Isolating build outputs and locating .ll files.
+    target_dir: String,
+
+    /// Environment variables to set for the cargo-bloat command.
+    /// Example: `HashMap::from([("RUSTFLAGS".to_string(), "-Zunstable-options".to_string())])`
+    /// Obtained from: Specific measurement requirements.
+    /// Used for: Customizing the build environment for cargo-bloat.
+    env_vars: std::collections::HashMap<String, String>,
+}
+
 /// Build the project with LLVM IR emission and timing information
-fn build_with_llvm_ir(manifest_path: &str) -> Result<LlvmBuildOutput> {
+fn build_with_llvm_ir(opts: &BuildWithLllvmIrOpts) -> Result<LlvmBuildOutput> {
+    let pb = indicatif::ProgressBar::new_spinner();
+    let style = indicatif::ProgressStyle::default_spinner()
+        .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ")
+        .template("{spinner:.green} {msg}")
+        .expect("BUG: Invalid indicatif template"); // template() on default_spinner should not fail with valid str
+    pb.set_style(style);
+    pb.set_message("Building with LLVM IR emission and timing...");
+    pb.enable_steady_tick(std::time::Duration::from_millis(100));
+
     let start = Instant::now();
 
-    // Use a specific target directory to avoid conflicts
-    let target_dir = format!("../target-llvm-{}", std::process::id());
+    // Build with LLVM IR emission and timing information
+    let mut command = Command::new("cargo");
+    command.args([
+        "build",
+        "--release",
+        "--manifest-path",
+        &opts.manifest_path,
+        "--target-dir",
+        &opts.target_dir,
+        "--timings=json",
+        "-Zunstable-options", // This -Z flag is for cargo's --timings, not rustc
+    ]);
 
-    // First, clean to ensure we're measuring a fresh build
-    let clean_output = Command::new("cargo")
-        .args([
-            "clean",
-            "--manifest-path",
-            manifest_path,
-            "--target-dir",
-            &target_dir,
-        ])
-        .env("RUSTC_BOOTSTRAP", "1")
-        .output()
-        .context("Failed to run cargo clean")?;
-
-    if !clean_output.status.success() {
-        let stderr = String::from_utf8_lossy(&clean_output.stderr);
-        anyhow::bail!("cargo clean failed: {}", stderr);
+    // Apply environment variables from opts
+    for (key, value) in &opts.env_vars {
+        command.env(key, value);
     }
 
-    // Build with LLVM IR emission and timing information
-    let output = Command::new("cargo")
-        .args([
-            "build",
-            "--release",
-            "--manifest-path",
-            manifest_path,
-            "--target-dir",
-            &target_dir,
-            "--timings=json",
-            "-Zunstable-options",
-        ])
-        .env("RUSTC_BOOTSTRAP", "1")
-        .env("RUSTFLAGS", "--emit=llvm-ir")
+    let output = command
         .output()
         .context("Failed to execute cargo build with LLVM IR")?;
 
     let total_duration = start.elapsed().as_secs_f64();
-    println!(
-        "⏱️  cargo build (with LLVM IR) took: {:.2}s",
-        total_duration
-    );
+    pb.disable_steady_tick(); // Stop animation before printing final message
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("cargo build failed: {}", stderr);
+        pb.finish_with_message("❌ Cargo build (LLVM IR) failed");
+        anyhow::bail!(
+            "cargo build failed: {}\nSTDOUT:\n{}\nSTDERR:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            stderr
+        );
     }
+
+    pb.finish_with_message(format!(
+        "✅ Cargo build (LLVM IR) completed in {:.2}s",
+        total_duration
+    ));
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut crate_timings = Vec::new();
@@ -1671,7 +1657,7 @@ fn build_with_llvm_ir(manifest_path: &str) -> Result<LlvmBuildOutput> {
     });
 
     Ok(LlvmBuildOutput {
-        target_dir,
+        target_dir: opts.target_dir.clone(),
         timing_summary: BuildTimingSummary {
             total_duration,
             crate_timings,
@@ -1775,51 +1761,70 @@ fn analyze_llvm_files(target_dir: &str, crate_names: &[String]) -> Result<LlvmLi
 
     let mut crate_results = Vec::new();
     let mut all_functions = Vec::new();
+    // Collect all relevant .ll files from the deps_dir first
+    let mut all_ll_files = Vec::new();
+    for entry in fs::read_dir(&deps_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_name = entry.file_name();
+        let file_name_str = file_name.to_string_lossy();
 
-    // For each crate, find its .ll file and analyze it
-    for crate_name in crate_names {
-        // Convert crate name to file prefix (underscores to hyphens)
-        let file_prefix = crate_name.replace('_', "-");
-
-        // Find .ll files matching this crate
-        let mut ll_files = Vec::new();
-        for entry in fs::read_dir(&deps_dir)? {
-            let entry = entry?;
-            let file_name = entry.file_name();
-            let file_name_str = file_name.to_string_lossy();
-
-            // Match files like "crate_name-hash.ll"
-            if file_name_str.starts_with(&file_prefix) && file_name_str.ends_with(".ll") {
-                // Skip build script artifacts
-                if !file_name_str.contains("build_script") {
-                    ll_files.push(entry.path());
-                }
+        if path.is_file() && file_name_str.ends_with(".ll") {
+            // Skip build script artifacts
+            if !file_name_str.contains("build_script") {
+                all_ll_files.push(path);
             }
         }
+    }
 
-        if ll_files.is_empty() {
-            println!("⚠️  No .ll files found for crate: {}", crate_name);
-            crate_results.push(CrateLlvmLines {
-                name: crate_name.clone(),
-                lines: 0,
-                copies: 0,
-            });
-            continue;
+    // For each crate, find its .ll file from the collected list and analyze it
+    for crate_name in crate_names {
+        // Convert crate name to file prefix (hyphens to underscores)
+        let file_prefix = crate_name.replace('-', "_");
+
+        // Find the .ll file for this crate from the pre-filtered list
+        // Match files like "crate_name-hash.ll" or "crate_name.ll" (if no hash)
+        let ll_file_path = all_ll_files.iter().find(|path| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with(&file_prefix))
+        });
+
+        if ll_file_path.is_none() {
+            // It's possible some crates don't produce .ll files (e.g. proc-macros, or if they are empty)
+            // Or if the build command didn't actually build them with --emit=llvm-ir
+            // For now, we will panic as this was the previous behavior, but this could be a warning.
+            // Consider if all `crate_names` are *expected* to have an .ll file.
+            // If `cargo llvm-lines` is run directly, it might handle missing .ll for some crates in a workspace build.
+            // Here, since we are specifically looking for .ll files from a `cargo build --emit=llvm-ir`,
+            // it's more likely an issue if one is missing for a crate we expect to analyze.
+            panic!(
+                "⚠️  No .ll files found for crate: {} in {:?}. Searched prefix: {}",
+                crate_name, deps_dir, file_prefix
+            );
         }
 
-        // Use the first matching .ll file (there should typically be only one)
-        let ll_file = &ll_files[0];
-        println!("📊 Analyzing LLVM IR for {}: {:?}", crate_name, ll_file);
+        let ll_file = ll_file_path.unwrap();
+        println!(
+            "📊 Analyzing LLVM IR for {}: {:?}",
+            crate_name,
+            ll_file.file_name().unwrap_or_default()
+        );
 
         // Run cargo llvm-lines with --files option
         let output = Command::new("cargo")
             .args(["llvm-lines", "--files", &ll_file.to_string_lossy()])
             .output()
-            .context("Failed to execute cargo llvm-lines")?;
+            .context(format!(
+                "Failed to execute cargo llvm-lines for file: {}",
+                ll_file.display()
+            ))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            println!("⚠️  cargo llvm-lines failed for {}: {}", crate_name, stderr);
+            println!(
+                "⚠️  cargo llvm-lines failed for crate {}: {}",
+                crate_name, stderr
+            );
             crate_results.push(CrateLlvmLines {
                 name: crate_name.clone(),
                 lines: 0,
@@ -1840,7 +1845,7 @@ fn analyze_llvm_files(target_dir: &str, crate_names: &[String]) -> Result<LlvmLi
             }
             Err(e) => {
                 println!(
-                    "⚠️  Failed to parse llvm-lines output for {}: {}",
+                    "⚠️  Failed to parse llvm-lines output for crate {}: {}",
                     crate_name, e
                 );
                 crate_results.push(CrateLlvmLines {

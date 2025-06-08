@@ -1,2 +1,3 @@
-./target-timing-*
+target-timing-*
+target-llvm-*
 Cargo.main-branch.toml
