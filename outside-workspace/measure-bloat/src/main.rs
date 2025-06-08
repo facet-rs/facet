@@ -8,32 +8,62 @@ use std::process::{self, Command};
 use std::time::Instant;
 use toml_edit::{DocumentMut, Item, Value};
 
+/// Command-line interface for the measure-bloat utility
+/// Used for: Parsing command line arguments and routing to appropriate functionality
 #[derive(Parser)]
 #[command(name = "measure-bloat")]
 #[command(about = "A utility to measure and compare binary sizes and build times")]
 struct Cli {
+    /// The subcommand to execute
+    /// Used for: Determining whether to run full comparison or test individual components
     #[command(subcommand)]
     command: Commands,
 }
 
+/// Available commands for the measure-bloat utility
 #[derive(Subcommand)]
 enum Commands {
     /// Run the full comparison between serde, facet-pr, and facet-main
+    /// Used for: Complete performance analysis across all variants
     Compare,
-    /// Test individual components
+    /// Test individual components with specific variants
+    /// Used for: Focused testing and debugging of specific targets
     Test {
         /// Component to test
+        /// Example: "ks-facet", "json-benchmark", "pretty-benchmark"
+        /// Used for: Selecting which measurement target to analyze
         component: String,
         /// Variant to test (serde, facet-pr, facet-main)
+        /// Example: "facet-pr", "serde"
+        /// Used for: Selecting which implementation variant to measure
         variant: String,
     },
 }
 
+/// Configuration for measuring a specific comparison target
+/// Used to define what crates to include when comparing different serialization implementations
 #[derive(Debug, Clone)]
 struct MeasurementTarget {
+    /// Display name for this measurement target
+    /// Example: "ks-facet", "json-benchmark"
+    /// Used for: Report generation and logging
     name: String,
+
+    /// List of crates to include when measuring with facet variants
+    /// Example: ["ks-facet", "ks-mock", "ks-types", "ks-facet-json-read"]
+    /// Obtained from: Manual configuration based on project structure
+    /// Used for: LLVM lines analysis and determining what to measure
     facet_crates: Vec<String>,
+
+    /// List of crates to include when measuring with serde variant
+    /// Example: ["ks-serde", "ks-mock", "ks-types", "ks-serde-json-read"]
+    /// Obtained from: Manual configuration based on project structure
+    /// Used for: LLVM lines analysis and determining what to measure
     serde_crates: Vec<String>,
+
+    /// The main binary crate to compile and measure
+    /// Example: "ks-facet", "ks-serde"
+    /// Used for: cargo bloat and build time measurements
     binary_crate: String,
 }
 
@@ -45,67 +75,235 @@ struct BloatFunction {
     size: u64,
 }
 
+/// Crate-level size information from cargo-bloat
+/// Represents one crate's total contribution to binary size
+/// Crate-level size information from cargo-bloat analysis
 #[derive(Debug, Serialize, Deserialize)]
 struct BloatCrate {
+    /// Name of the crate
+    /// Example: "ks_facet", "serde", "tokio"
+    /// Obtained from: cargo-bloat --crates JSON output
+    /// Used for: Understanding which crates contribute most to binary size
     name: String,
+
+    /// Total size contributed by this crate in bytes
+    /// Example: 50000, 1024000
+    /// Obtained from: cargo-bloat --crates JSON output
+    /// Used for: High-level crate size comparison
     size: u64,
 }
 
+/// Complete output from cargo-bloat command
+/// Contains both high-level metrics and detailed breakdowns
+/// Complete output from cargo-bloat analysis containing size information
 #[derive(Debug, Serialize, Deserialize)]
 struct BloatOutput {
+    /// Total binary file size in bytes
+    /// Example: 2097152, 1548576
+    /// Obtained from: cargo-bloat JSON output
+    /// Used for: Overall binary size comparison between variants
     #[serde(rename = "file-size")]
     file_size: u64,
+
+    /// Size of the text (code) section in bytes
+    /// Example: 1500000, 3500000
+    /// Obtained from: cargo-bloat JSON output
+    /// Used for: Measuring actual executable code size
     #[serde(rename = "text-section-size")]
     text_section_size: u64,
+
+    /// List of functions and their sizes (only present in function mode)
+    /// Obtained from: cargo-bloat function analysis
+    /// Used for: Detailed function-level size breakdown
     #[serde(default)]
     functions: Vec<BloatFunction>,
+
+    /// List of crates and their sizes (only present in crates mode)
+    /// Obtained from: cargo-bloat --crates analysis
+    /// Used for: High-level crate size breakdown
     #[serde(default)]
     crates: Vec<BloatCrate>,
 }
 
+/// Target information from cargo timing output
 #[derive(Debug, Serialize, Deserialize)]
 struct CargoTimingTarget {
+    /// Name of the compilation target (usually the crate name)
+    /// Example: "ks-facet", "serde"
+    /// Obtained from: cargo build --timings JSON output
+    /// Used for: Identifying which crate the timing data belongs to
     name: String,
 }
 
+/// Individual timing entry from cargo build timing output
 #[derive(Debug, Serialize, Deserialize)]
 struct CargoTimingEntry {
+    /// Type of timing event
+    /// Example: "timing-info", "build-start"
+    /// Obtained from: cargo build --timings JSON output
+    /// Used for: Filtering relevant timing events
     reason: String,
+
+    /// Full package identifier with version
+    /// Example: "ks-facet 0.1.0", "serde 1.0.152"
+    /// Obtained from: cargo build --timings JSON output
+    /// Used for: Package identification and version tracking
     package_id: String,
+
+    /// Target information for this timing entry
+    /// Obtained from: cargo build --timings JSON output
+    /// Used for: Associating timing with specific build targets
     target: CargoTimingTarget,
+
+    /// Compilation duration in seconds
+    /// Example: 2.5, 0.8, 12.3
+    /// Obtained from: cargo build timing measurements
+    /// Used for: Measuring and comparing build performance
     duration: f64,
+
+    /// Time spent generating .rmeta files (optional)
+    /// Example: Some(1.2), None
+    /// Obtained from: cargo build timing measurements
+    /// Used for: Advanced build timing analysis
     #[serde(default)]
     rmeta_time: Option<f64>,
 }
 
+/// Build timing information for a single crate
 #[derive(Debug)]
-struct BuildTimingSummary {
-    total_duration: f64,
-    crate_timings: Vec<(String, f64)>,
+struct CrateTiming {
+    /// Name of the crate
+    /// Example: "ks_facet", "serde", "tokio"
+    /// Obtained from: cargo build --timings output, with hyphens converted to underscores
+    /// Used for: Identifying which crate took how long to build
+    name: String,
+
+    /// Time taken to compile this crate in seconds
+    /// Example: 2.5, 0.8, 12.3
+    /// Obtained from: cargo build timing measurements
+    /// Used for: Comparing build performance between crates and variants
+    duration: f64,
 }
 
+/// Summary of build timing information for all crates
+#[derive(Debug)]
+struct BuildTimingSummary {
+    /// Total time for the entire build process in seconds
+    /// Example: 15.7, 45.2, 120.8
+    /// Obtained from: Measuring elapsed time during cargo build
+    /// Used for: Overall build performance comparison between variants
+    total_duration: f64,
+
+    /// Per-crate timing information, sorted by duration (descending)
+    /// Obtained from: cargo build --timings JSON output
+    /// Used for: Identifying which crates are slowest to build
+    crate_timings: Vec<CrateTiming>,
+}
+
+/// LLVM IR function information from cargo llvm-lines analysis
 #[derive(Debug)]
 struct LlvmFunction {
+    /// Function name (may be mangled)
+    /// Example: "ks_facet::serialize_data", "_ZN8ks_facet9serialize17h123456789abcdefE"
+    /// Obtained from: cargo llvm-lines output parsing
+    /// Used for: Identifying functions that generate most LLVM IR
     name: String,
+
+    /// Number of LLVM IR lines for this function
+    /// Example: 150, 89, 2341
+    /// Obtained from: cargo llvm-lines analysis of compiled output
+    /// Used for: Measuring code complexity and compilation overhead
     lines: u32,
+
+    /// Number of copies/instances of this function
+    /// Example: 1, 5, 23
+    /// Obtained from: cargo llvm-lines analysis (monomorphization count)
+    /// Used for: Identifying functions with high monomorphization overhead
     copies: u32,
 }
 
+/// LLVM IR lines summary for a single crate
+#[derive(Debug)]
+struct CrateLlvmLines {
+    /// Name of the crate
+    /// Example: "ks_facet", "serde", "std"
+    /// Obtained from: cargo llvm-lines analysis per crate
+    /// Used for: Grouping LLVM complexity by crate
+    name: String,
+
+    /// Total LLVM IR lines generated by this crate
+    /// Example: 1250, 890, 15600
+    /// Obtained from: Aggregating cargo llvm-lines output for each crate
+    /// Used for: Measuring per-crate code complexity
+    lines: u32,
+
+    /// Total function copies/instances in this crate
+    /// Example: 45, 23, 156
+    /// Obtained from: Aggregating cargo llvm-lines monomorphization data
+    /// Used for: Measuring per-crate monomorphization overhead
+    copies: u32,
+}
+
+/// Complete LLVM lines analysis summary across all measured crates
 #[derive(Debug)]
 struct LlvmLinesSummary {
-    crate_results: Vec<(String, u32, u32)>, // (name, lines, copies)
+    /// LLVM IR summary for each crate
+    /// Obtained from: Running cargo llvm-lines on each crate individually
+    /// Used for: Per-crate complexity comparison and total complexity calculation
+    crate_results: Vec<CrateLlvmLines>,
+
+    /// Top functions by LLVM IR line count across all crates
+    /// Obtained from: Aggregating and sorting all functions from cargo llvm-lines
+    /// Used for: Identifying the most complex individual functions
     top_functions: Vec<LlvmFunction>,
 }
 
+/// Complete measurement results for a single target/variant combination
 #[derive(Debug)]
 struct BuildResult {
+    /// Name of the measurement target
+    /// Example: "ks-facet", "ks-serde", "json-benchmark"
+    /// Obtained from: MeasurementTarget configuration
+    /// Used for: Grouping results and generating reports
     target: String,
+
+    /// Variant being measured
+    /// Example: "facet-pr", "facet-main", "serde"
+    /// Obtained from: Command line argument or comparison setup
+    /// Used for: Comparing different versions/implementations
     variant: String,
+
+    /// Total binary file size in bytes
+    /// Example: 2097152, 1548576, 3145728
+    /// Obtained from: cargo bloat file-size measurement
+    /// Used for: High-level binary size comparison
     file_size: u64,
+
+    /// Size of executable code section in bytes
+    /// Example: 1048576, 987234, 1234567
+    /// Obtained from: cargo bloat text-section-size measurement
+    /// Used for: Measuring actual code size excluding metadata
     text_section_size: u64,
+
+    /// Total build time in milliseconds
+    /// Example: 15700, 45200, 120800
+    /// Obtained from: Measuring elapsed time during cargo build
+    /// Used for: Build performance comparison between variants
     build_time_ms: u64,
+
+    /// Top functions contributing to binary size (limited to top 50)
+    /// Obtained from: cargo bloat function analysis
+    /// Used for: Detailed function-level size analysis in reports
     top_functions: Vec<BloatFunction>,
+
+    /// Top crates contributing to binary size (limited to top 20)
+    /// Obtained from: cargo bloat --crates analysis
+    /// Used for: High-level crate size comparison in reports
     top_crates: Vec<BloatCrate>,
+
+    /// Complete LLVM IR complexity analysis
+    /// Obtained from: cargo llvm-lines analysis across all relevant crates
+    /// Used for: Code complexity comparison and monomorphization analysis
     llvm_lines: LlvmLinesSummary,
 }
 
@@ -582,8 +780,8 @@ fn measure_target_complete(target: &MeasurementTarget, variant: &str) -> Result<
     let start = Instant::now();
 
     // Measure binary size
-    let bloat_functions = run_cargo_bloat(&manifest_path, false)?;
-    let bloat_crates = run_cargo_bloat(&manifest_path, true)?;
+    let bloat_functions = run_cargo_bloat(&manifest_path, CargoBloatMode::Functions)?;
+    let bloat_crates = run_cargo_bloat(&manifest_path, CargoBloatMode::Crates)?;
 
     // Measure LLVM lines - crate names stay the same, just in different workspace
     let workspace_path = match variant {
@@ -680,7 +878,7 @@ fn generate_comparison_report(results: &[BuildResult], report_path: &PathBuf) ->
             .llvm_lines
             .crate_results
             .iter()
-            .map(|(_, lines, _)| lines)
+            .map(|crate_llvm| crate_llvm.lines)
             .sum()
     });
 
@@ -689,7 +887,7 @@ fn generate_comparison_report(results: &[BuildResult], report_path: &PathBuf) ->
             .llvm_lines
             .crate_results
             .iter()
-            .map(|(_, lines, _)| lines)
+            .map(|crate_llvm| crate_llvm.lines)
             .sum();
 
         if result.variant == "facet-main" {
@@ -803,12 +1001,12 @@ fn generate_comparison_report(results: &[BuildResult], report_path: &PathBuf) ->
             }
 
             report.push_str("\n**LLVM Lines by Crate:**\n");
-            for (crate_name, lines, copies) in &result.llvm_lines.crate_results {
+            for crate_llvm in &result.llvm_lines.crate_results {
                 report.push_str(&format!(
                     "- `{}`: {} lines ({} copies)\n",
-                    crate_name,
-                    format_number(*lines),
-                    format_number(*copies)
+                    crate_llvm.name,
+                    format_number(crate_llvm.lines),
+                    format_number(crate_llvm.copies)
                 ));
             }
 
@@ -836,13 +1034,13 @@ fn generate_facet_diff_analysis(
         .llvm_lines
         .crate_results
         .iter()
-        .map(|(_, lines, _)| lines)
+        .map(|crate_llvm| crate_llvm.lines)
         .sum();
     let main_llvm_total: u32 = main_result
         .llvm_lines
         .crate_results
         .iter()
-        .map(|(_, lines, _)| lines)
+        .map(|crate_llvm| crate_llvm.lines)
         .sum();
     let llvm_lines_delta = pr_llvm_total as i64 - main_llvm_total as i64;
 
@@ -959,25 +1157,31 @@ fn generate_llvm_crate_diff_analysis(
     // Create maps for crate LLVM lines
     let mut main_crates: std::collections::HashMap<String, (u32, u32)> =
         std::collections::HashMap::new();
-    for (crate_name, lines, copies) in &main_result.llvm_lines.crate_results {
-        main_crates.insert(crate_name.clone(), (*lines, *copies));
+    for crate_llvm in &main_result.llvm_lines.crate_results {
+        main_crates.insert(
+            crate_llvm.name.clone(),
+            (crate_llvm.lines, crate_llvm.copies),
+        );
     }
 
     let mut pr_crates: std::collections::HashMap<String, (u32, u32)> =
         std::collections::HashMap::new();
-    for (crate_name, lines, copies) in &pr_result.llvm_lines.crate_results {
-        pr_crates.insert(crate_name.clone(), (*lines, *copies));
+    for crate_llvm in &pr_result.llvm_lines.crate_results {
+        pr_crates.insert(
+            crate_llvm.name.clone(),
+            (crate_llvm.lines, crate_llvm.copies),
+        );
     }
 
     let mut all_crate_data = Vec::new();
 
     // Check all crates from both results
     let mut all_crates = std::collections::HashSet::new();
-    for (crate_name, _, _) in &main_result.llvm_lines.crate_results {
-        all_crates.insert(crate_name.clone());
+    for crate_llvm in &main_result.llvm_lines.crate_results {
+        all_crates.insert(crate_llvm.name.clone());
     }
-    for (crate_name, _, _) in &pr_result.llvm_lines.crate_results {
-        all_crates.insert(crate_name.clone());
+    for crate_llvm in &pr_result.llvm_lines.crate_results {
+        all_crates.insert(crate_llvm.name.clone());
     }
 
     for crate_name in all_crates {
@@ -1199,7 +1403,7 @@ fn measure_target(target: &MeasurementTarget, variant: &str) -> Result<()> {
                 .llvm_lines
                 .crate_results
                 .iter()
-                .map(|(_, lines, _)| lines)
+                .map(|crate_llvm| crate_llvm.lines)
                 .sum();
             println!("   Total LLVM lines: {}", format_number(total_llvm_lines));
         }
@@ -1211,7 +1415,14 @@ fn measure_target(target: &MeasurementTarget, variant: &str) -> Result<()> {
     Ok(())
 }
 
-fn run_cargo_bloat(manifest_path: &str, crates_mode: bool) -> Result<BloatOutput> {
+/// Modes for cargo-bloat: function-level or crate-level analysis
+#[derive(Debug, Clone, Copy)]
+enum CargoBloatMode {
+    Functions,
+    Crates,
+}
+
+fn run_cargo_bloat(manifest_path: &str, mode: CargoBloatMode) -> Result<BloatOutput> {
     let start = Instant::now();
 
     let mut args = vec![
@@ -1225,8 +1436,9 @@ fn run_cargo_bloat(manifest_path: &str, crates_mode: bool) -> Result<BloatOutput
         "25",
     ];
 
-    if crates_mode {
-        args.push("--crates");
+    match mode {
+        CargoBloatMode::Crates => args.push("--crates"),
+        CargoBloatMode::Functions => {} // No additional args needed
     }
 
     let output = Command::new("cargo")
@@ -1267,7 +1479,11 @@ fn run_cargo_llvm_lines_for_crates(
 
         match run_cargo_llvm_lines_single(&manifest_path) {
             Ok((line_count, copy_count, functions)) => {
-                crate_results.push((crate_name.clone(), line_count, copy_count));
+                crate_results.push(CrateLlvmLines {
+                    name: crate_name.clone(),
+                    lines: line_count,
+                    copies: copy_count,
+                });
                 all_functions.extend(functions);
             }
             Err(e) => {
@@ -1276,7 +1492,11 @@ fn run_cargo_llvm_lines_for_crates(
                     crate_name, e
                 );
                 // Continue with other crates instead of failing completely
-                crate_results.push((crate_name.clone(), 0, 0));
+                crate_results.push(CrateLlvmLines {
+                    name: crate_name.clone(),
+                    lines: 0,
+                    copies: 0,
+                });
             }
         }
     }
@@ -1421,14 +1641,21 @@ fn measure_build_time(manifest_path: &str) -> Result<BuildTimingSummary> {
                 if timing_entry.reason == "timing-info" {
                     // Use the target name which is the actual crate name
                     let crate_name = timing_entry.target.name.replace('-', "_");
-                    crate_timings.push((crate_name, timing_entry.duration));
+                    crate_timings.push(CrateTiming {
+                        name: crate_name,
+                        duration: timing_entry.duration,
+                    });
                 }
             }
         }
     }
 
     // Sort by duration (descending)
-    crate_timings.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    crate_timings.sort_by(|a, b| {
+        b.duration
+            .partial_cmp(&a.duration)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     Ok(BuildTimingSummary {
         total_duration,
