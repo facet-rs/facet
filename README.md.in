@@ -72,5 +72,13 @@ facet supports deserialization from multiple data formats through dedicated crat
 
 Internal crates include:
 
-- [facet-codegen](https://github.com/facet-rs/facet/tree/main/facet-codegen) is internal and generates some of the code of `facet-core`
+- [facet-dev](https://github.com/facet-rs/facet/tree/main/facet-dev) is internal and handles pre-commit/pre-push hooks, README generation from templates, generating `sample_generated_code.rs`, etc.
 - [facet-testhelpers](https://github.com/facet-rs/facet/tree/main/facet-testhelpers) a simpler log logger and color-backtrace configured with the lightweight btparse backend
+
+In `outside-workspace/` we have:
+
+- [measure-bloat](https://github.com/facet-rs/facet/tree/main/outside-workspace/measure-bloat)
+  which leverages `cargo-bloat`, `cargo-llvm-lines` and `cargo build --timings`
+  to generate markdown reports for PRs.
+- `ks-*` crates, for "kitchen sink", which pull in a bunch of dependencies and serve as a sample
+  project to be built by measure-bloat.
