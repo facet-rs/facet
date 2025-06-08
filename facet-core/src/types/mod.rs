@@ -423,7 +423,9 @@ impl core::fmt::Debug for Shape<'_> {
 
             field!("type_identifier", "{:?}", self.type_identifier);
 
-            field!("type_params", "{:?}", self.type_params);
+            if !self.type_params.is_empty() {
+                field!("type_params", "{:?}", self.type_params);
+            }
 
             field!("doc", "{:?}", self.doc);
 
