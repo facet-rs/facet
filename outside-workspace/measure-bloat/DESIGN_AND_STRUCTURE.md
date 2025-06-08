@@ -21,20 +21,29 @@ A key aspect of the "main" branch comparison is a hybrid build strategy:
 
 ## Build Variant Definitions
 
-1.  **`HEAD` Variant**:
-    *   **Source**: Uses the current repository checkout (where the `measure-bloat` tool is run).
-    *   **Workspace**: Assumes the `Cargo.toml` files in the `HEAD` checkout have correct relative `path` dependencies for all workspace members (both `ks-*` and `facet-*` crates).
-    *   **Patching**: No specific patching of internal `path` dependencies is typically needed.
-    *   **Build Artifacts**: Stored in an isolated temporary directory (e.g., `/tmp/facet-build-artifacts/head/...`).
+In addition to comparing `HEAD` and `main` versions of Facet-based targets, the utility also supports comparing against a Serde-based implementation for specific targets.
 
-2.  **`main` Variant (Hybrid Build)**:
+1.  **`HEAD` Variant (Facet)**:
+    *   **Source**: Uses the current repository checkout (where the `measure-bloat` tool is run).
+    *   **Workspace**: Assumes the `Cargo.toml` files in the `HEAD` checkout have correct relative `path` dependencies for all workspace members (both `ks-*` and `facet-*` crates involved in the Facet implementation).
+    *   **Patching**: No specific patching of internal `path` dependencies is typically needed for the Facet build.
+    *   **Build Artifacts**: Stored in an isolated temporary directory (e.g., `/tmp/facet-build-artifacts/head-facet/...`).
+
+2.  **`main` Variant (Facet - Hybrid Build)**:
     *   **Source `facet-*` crates**: A temporary `git worktree` is created from the specified `main` branch to get the source code for `facet-*` core crates.
     *   **Source `ks-*` crates & Root Workspace**: Copied from the `HEAD` repository checkout. This includes the root `Cargo.toml`, `Cargo.lock`, and directories like `outside-workspace/`.
     *   **Synthetic Workspace**: A new temporary directory is created (e.g., `/tmp/hybrid-main-build-XYZ/`).
         *   The `facet-*` crate sources (from the `main` worktree) are copied into this synthetic workspace.
         *   The `ks-*` crate sources and the root `Cargo.toml`/`Cargo.lock` (from `HEAD`) are copied into this synthetic workspace.
     *   **Path Rewriting**: The `Cargo.toml` files for the `ks-*` crates (now in the synthetic workspace) have their `path` dependencies (which originally pointed to `facet-*` crates relative to the `HEAD` checkout) rewritten. These paths are adjusted to point correctly to the `facet-*` crates now also located within the synthetic workspace. This is done using `toml_edit`.
-    *   **Build Artifacts**: Stored in an isolated temporary directory (e.g., `/tmp/facet-build-artifacts/main/...`).
+    *   **Build Artifacts**: Stored in an isolated temporary directory (e.g., `/tmp/facet-build-artifacts/main-facet/...`).
+
+3.  **`serde` Variant**:
+    *   **Purpose**: To provide a performance and size baseline using `serde` for equivalent functionality defined in a measurement target.
+    *   **Source**: Uses the current `HEAD` repository checkout. The `ks-*` crates (e.g., `ks-serde`, `ks-mock` using serde) are built as they exist in the `HEAD`.
+    *   **Workspace**: Assumes the `Cargo.toml` files in the `HEAD` checkout are correctly configured for the Serde implementation (e.g., `ks-serde` might depend on `serde`, `serde_json`, etc., and `ks-mock` would use these).
+    *   **Patching**: No special patching of internal `path` dependencies related to Facet core is relevant here. Standard Cargo dependency resolution applies.
+    *   **Build Artifacts**: Stored in an isolated temporary directory (e.g., `/tmp/facet-build-artifacts/serde/...`).
 
 ## Module Structure (`measure-bloat/src/`)
 
@@ -43,11 +52,18 @@ A key aspect of the "main" branch comparison is a hybrid build strategy:
 *   **Contents**:
     *   `main()` function.
     *   `run_comparison()`: Manages the overall workflow.
-        *   Sets up checkouts/workspaces for `HEAD` and `main` variants using the `workspace` module.
-        *   Loops through `MeasurementTarget`s defined in `config` module.
-        *   Calls `measure_single_target_variant()` for each target and variant.
-        *   Aggregates `BuildResult`s.
-        *   Calls `report::generate_comparison_report()`.
+        *   For each `MeasurementTarget` defined in `config` module:
+            *   **HEAD (Facet) Variant**:
+                *   Sets up the HEAD workspace (typically using the current directory).
+                *   Calls `measure_single_target_variant()` for the "head-facet" variant, using `facet_binary_name` and `facet_crates_to_analyze`.
+            *   **main (Facet) Variant (Hybrid)**:
+                *   Sets up the hybrid main workspace (main `facet-*` sources, HEAD `ks-*` sources).
+                *   Calls `measure_single_target_variant()` for the "main-facet" variant, using `facet_binary_name` and `facet_crates_to_analyze`.
+            *   **serde Variant (if `serde_binary_name` is Some)**:
+                *   Uses the HEAD workspace (as `ks-serde` etc. are from HEAD).
+                *   Calls `measure_single_target_variant()` for the "serde" variant, using `serde_binary_name` and `serde_crates_to_analyze`.
+        *   Aggregates all `BuildResult`s (`HEAD` Facet, `main` Facet, `serde`).
+        *   Calls `report::generate_comparison_report()` which will now include Serde results in comparisons.
         *   Handles high-level error reporting and progress indication.
 *   **Dependencies**: `cli`, `config`, `workspace`, `build`, `analysis`, `report`, `types`.
 
@@ -59,9 +75,14 @@ A key aspect of the "main" branch comparison is a hybrid build strategy:
 ### 3. `config.rs`
 *   **Responsibility**: Definition and loading of measurement configurations.
 *   **Contents**:
-    *   `MeasurementTarget` struct: Defines what to measure (binary name, relevant facet/serde crates).
-    *   `get_measurement_targets()`: Provides the list of targets.
-    *   Lists/definitions of which crates are considered "core facet" vs. "ks/other" for the hybrid build.
+    *   `MeasurementTarget` struct: Defines what to measure. Key fields include:
+        *   `name`: User-friendly name for the measurement target (e.g., "json-serialization-test").
+        *   `facet_binary_name`: The binary or example name for the Facet implementation (e.g., "test-json-facet").
+        *   `serde_binary_name`: Optional: The binary or example name for the Serde implementation (e.g., "test-json-serde"). If `None`, this target might not have a Serde comparison.
+        *   `facet_crates_to_analyze`: List of Facet-related crates (e.g., "facet-core", "ks-facet") for specific analysis like LLVM lines or .rlib sizes.
+        *   `serde_crates_to_analyze`: List of Serde-related crates (e.g., "serde", "serde_json", "ks-serde") for analysis when measuring the Serde variant.
+    *   `get_measurement_targets()`: Provides the list of `MeasurementTarget`s.
+    *   Lists/definitions of which crates are considered "core facet" (for hybrid main build) vs. "ks/other".
 *   **Dependencies**: `serde`, `types`.
 
 ### 4. `types.rs`
@@ -132,11 +153,25 @@ fn measure_single_target_variant(
 
     // 1. Define isolated build artifacts directory
     let build_artifacts_target_dir = temp_dir().join(format!(
-        "facet-build-artifacts/{}/{}",
-        variant_name,
+        "facet-build-artifacts/{}/{}", // e.g., .../head-facet/json-test
+        variant_name,                 // variant_name now includes "facet" or "serde"
         target_config.name // Sanitize name for path
     ));
     // Ensure this directory is clean/created
+
+    // Determine binary name and crates to analyze based on variant
+    let (actual_binary_to_build, actual_crates_for_analysis) =
+        if variant_name == "serde" { // Example: variant_name could be "head-facet", "main-facet", "serde"
+            (
+                target_config.serde_binary_name.as_ref().expect("Serde binary name missing for serde variant"),
+                &target_config.serde_crates_to_analyze
+            )
+        } else { // "head-facet" or "main-facet"
+            (
+                &target_config.facet_binary_name,
+                &target_config.facet_crates_to_analyze
+            )
+        };
 
     // 2. Build the project, get target_dir (which is build_artifacts_target_dir) and timing_summary
     let build_opts = types::BuildWithLllvmIrOpts {
@@ -145,7 +180,7 @@ fn measure_single_target_variant(
         env_vars: HashMap::new(), // Customize as needed
     };
     let llvm_build_output = build::build_project_for_analysis(
-        target_config,
+        actual_binary_to_build, // Pass the correct binary name
         active_workspace_path, // CWD for cargo build
         &build_artifacts_target_dir, // Output target dir
         &build_opts,
@@ -154,20 +189,21 @@ fn measure_single_target_variant(
     // 3. Fetch LLVM lines data using artifacts from build_artifacts_target_dir
     let llvm_lines_summary = build::fetch_llvm_lines_data(
         &llvm_build_output.target_dir, // This is build_artifacts_target_dir
-        target_config,
+        actual_binary_to_build,
+        actual_crates_for_analysis,
         &active_workspace_path.join("Cargo.toml"), // Manifest for llvm-lines
     )?;
 
     // 4. Analyze .rlib sizes from build_artifacts_target_dir
     let rlib_sizes = analysis::collect_rlib_sizes(
         &llvm_build_output.target_dir, // This is build_artifacts_target_dir
-        target_config,
+        actual_crates_for_analysis,
     )?;
 
     // 5. Get main executable size from build_artifacts_target_dir
     let executable_size = analysis::get_main_executable_size(
         &llvm_build_output.target_dir, // This is build_artifacts_target_dir
-        target_config,
+        actual_binary_to_build,
     )?;
 
     Ok(types::BuildResult {
