@@ -9,10 +9,17 @@ where
     T: ::facet::Facet<'__facet>,
 {
     const VTABLE: &'static ::facet::ValueVTable = &const {
-        ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
-            f,
-            "OneLevelNested"
-        ))
+        ::facet::value_vtable!(Self, |f, opts| {
+            write!(f, "OneLevelNested")?;
+            if let Some(opts) = opts.for_children() {
+                write!(f, "<")?;
+                <T as ::facet::Facet>::SHAPE.vtable.type_name()(f, opts)?;
+                write!(f, ">")?;
+            } else {
+                write!(f, "<…>")?;
+            }
+            Ok(())
+        })
     };
     const SHAPE: &'static ::facet::Shape<'static> = &const {
         #[repr(C)]
