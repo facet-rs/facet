@@ -11,8 +11,6 @@ use std::time::Duration;
 pub struct BuildWithLllvmIrOpts {
     /// Path to the Cargo.toml manifest file for the crate or workspace.
     pub manifest_path: String,
-    /// Target directory for the build artifacts.
-    pub target_dir: Option<PathBuf>,
     /// Environment variables to set for the cargo build command.
     pub env_vars: HashMap<String, String>,
 }

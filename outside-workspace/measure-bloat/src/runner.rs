@@ -1,6 +1,7 @@
 // measure-bloat/src/runner.rs
 
 use anyhow::{Context, Result};
+use owo_colors::OwoColorize;
 use std::collections::HashMap;
 use std::env;
 use std::fs;
@@ -29,29 +30,39 @@ pub fn run_global_comparison(
     let output_path = Path::new(cli_output_path_str);
 
     println!(
-        "🚀 Starting measurement comparison for repository: {:?}",
-        base_repo_path
+        "{} Starting measurement comparison for repository: {:?}",
+        "🚀".green(),
+        base_repo_path.to_string_lossy().bright_blue()
     );
-    println!("Comparing against main branch: '{}'", cli_main_branch_name);
+    println!(
+        "Comparing against main branch: {}",
+        cli_main_branch_name.bright_yellow()
+    );
 
     let measurement_targets = config::get_measurement_targets();
     if measurement_targets.is_empty() {
-        println!("No measurement targets defined in config.rs. Exiting.");
+        println!(
+            "{} No measurement targets defined in config.rs. Exiting.",
+            "⚠️".yellow()
+        );
         return Ok(());
     }
 
     let mut all_results: Vec<types::BuildResult> = Vec::new();
 
     // --- HEAD Variant Setup ---
-    // The HEAD workspace is simply the provided base_repo_path.
-    // No special copying or git operations needed for its source.
-    // If HEAD needed specific .cargo/config.toml patching (e.g. for external deps), it would be done here.
-    // For now, assuming HEAD's Cargo.toml setup for internal deps is correct.
+    // The base_repo_path should be the root of the facet repository (containing facet/, facet-core/, etc.)
     let head_workspace_path = base_repo_path.clone();
-    println!("HEAD workspace path: {:?}", head_workspace_path);
+    println!(
+        "HEAD workspace path: {}",
+        head_workspace_path.to_string_lossy().bright_cyan()
+    );
 
     // --- Main Variant (Hybrid) Setup ---
-    println!("\nSetting up 'main-facet' (hybrid) variant workspace...");
+    println!(
+        "\n{} Setting up 'main-facet' (hybrid) variant workspace...",
+        "🔧".blue()
+    );
     let main_facet_source_worktree_prep = workspace::setup_variant_source_checkout(
         "main-facet-sources",
         &base_repo_path,
@@ -69,7 +80,7 @@ pub fn run_global_comparison(
         .prefix("hybrid-main-ws-")
         .tempdir_in(hybrid_ws_root_parent)
         .context("Failed to create temporary directory for hybrid workspace")?
-        .into_path(); // Keep the PathBuf
+        .keep(); // Keep the PathBuf
 
     workspace::create_hybrid_main_variant_workspace(
         &hybrid_ws_root,
@@ -87,16 +98,21 @@ pub fn run_global_comparison(
     )
     .context("Failed to rewrite paths in hybrid workspace ks-crates")?;
     println!(
-        "'main-facet' (hybrid) workspace prepared at: {:?}",
-        hybrid_ws_root
+        "{} 'main-facet' (hybrid) workspace prepared at: {}",
+        "✓".green(),
+        hybrid_ws_root.to_string_lossy().bright_cyan()
     );
 
     // --- Iterate through Measurement Targets ---
     for target_config in &measurement_targets {
-        println!("\n🎯 Measuring Target: '{}'", target_config.name);
+        println!(
+            "\n{} Measuring Target: {}",
+            "🎯".bright_blue(),
+            target_config.name.bright_magenta()
+        );
 
         // 1. Measure HEAD (Facet)
-        println!("   Variant: head-facet");
+        println!("   Variant: {}", "head-facet".bright_green());
         let head_result = measure_single_target_variant(
             target_config,
             &head_workspace_path,
@@ -112,7 +128,7 @@ pub fn run_global_comparison(
         all_results.push(head_result);
 
         // 2. Measure main (Facet - Hybrid)
-        println!("   Variant: main-facet (hybrid)");
+        println!("   Variant: {}", "main-facet (hybrid)".bright_yellow());
         let main_result = measure_single_target_variant(
             target_config,
             &hybrid_ws_root, // Use the prepared hybrid workspace
@@ -129,7 +145,7 @@ pub fn run_global_comparison(
 
         // 3. Measure Serde (if applicable for this target)
         if target_config.serde_binary_name.is_some() {
-            println!("   Variant: serde (from HEAD)");
+            println!("   Variant: {}", "serde (from HEAD)".bright_cyan());
             let serde_result = measure_single_target_variant(
                 target_config,
                 &head_workspace_path, // Serde variant is built from HEAD sources
@@ -147,30 +163,43 @@ pub fn run_global_comparison(
     }
 
     // --- Cleanup ---
-    println!("\n🧹 Cleaning up workspaces...");
+    println!("\n{} Cleaning up workspaces...", "🧹".bright_yellow());
     if let Err(e) = workspace::cleanup_prepared_workspace(
         main_facet_source_worktree_prep,
         Some(&base_repo_path),
     ) {
-        eprintln!("Error cleaning up main facet source worktree: {:?}", e);
+        eprintln!(
+            "{} Error cleaning up main facet source worktree: {:?}",
+            "⚠️".yellow(),
+            e
+        );
     }
     if let Err(e) = fs::remove_dir_all(&hybrid_ws_root) {
         eprintln!(
-            "Error cleaning up hybrid workspace directory {:?}: {:?}",
-            hybrid_ws_root, e
+            "{} Error cleaning up hybrid workspace directory {:?}: {:?}",
+            "⚠️".yellow(),
+            hybrid_ws_root,
+            e
         );
     }
 
     // --- Generate Report ---
     if !all_results.is_empty() {
-        println!("\n📊 Generating comparison report...");
+        println!("\n{} Generating comparison report...", "📊".bright_blue());
         let report_content = report::generate_comparison_report(&all_results)
             .context("Failed to generate comparison report content")?;
         fs::write(output_path, report_content)
             .with_context(|| format!("Failed to write report to {:?}", output_path))?;
-        println!("✅ Comparison report generated at: {:?}", output_path);
+        println!(
+            "{} Comparison report generated at: {}",
+            "✅".green(),
+            output_path.to_string_lossy().bright_cyan()
+        );
     } else {
-        println!("No results collected. Report generation skipped.");
+        println!(
+            "{} No results collected. Report generation skipped.",
+            "⚠️".yellow()
+        );
     }
 
     Ok(())
@@ -182,13 +211,23 @@ pub fn run_global_comparison(
 /// and main executable size measurement for the given configuration.
 fn measure_single_target_variant(
     target_config: &config::MeasurementTarget,
-    active_workspace_path: &Path, // Path to the root of the workspace to build (HEAD or hybrid)
+    active_workspace_path: &Path, // Path to the root of the repository (HEAD or hybrid)
     variant_name: &str,           // "head-facet", "main-facet", or "serde"
     _base_repo_path: &Path,       // Original repo path, for context (e.g. git ops if needed)
 ) -> Result<types::BuildResult> {
+    // Determine the crate name first for display purposes
+    let display_crate_name = if variant_name.contains("serde") && target_config.name == "ks-facet" {
+        "ks-serde"
+    } else {
+        target_config.name.as_str()
+    };
+
     println!(
-        "    Measuring variant: '{}' for target '{}' in workspace {:?}...",
-        variant_name, target_config.name, active_workspace_path
+        "    {} Measuring variant: {} for target {} (crate: {})...",
+        "📏".bright_blue(),
+        variant_name.bright_yellow(),
+        target_config.name.bright_magenta(),
+        display_crate_name.bright_cyan()
     );
 
     // 1. Define isolated build artifacts directory
@@ -215,43 +254,67 @@ fn measure_single_target_variant(
         )
     })?;
     println!(
-        "    Artifacts will be stored in: {:?}",
-        variant_build_target_dir
+        "    {} Artifacts will be stored in: {}",
+        "📦".bright_blue(),
+        variant_build_target_dir.to_string_lossy().bright_cyan()
     );
 
     // Determine binary name and crates to analyze based on variant
-    let (actual_binary_to_build, actual_crates_for_analysis) = if variant_name.contains("serde") {
-        (
-            target_config.serde_binary_name.as_ref().ok_or_else(|| {
+    let (actual_binary_to_build, actual_crates_for_analysis, crate_name) =
+        if variant_name.contains("serde") {
+            let binary_name = target_config.serde_binary_name.as_ref().ok_or_else(|| {
                 anyhow::anyhow!(
                     "Serde binary name is None for target '{}' but 'serde' variant was requested.",
                     target_config.name
                 )
-            })?,
-            &target_config.serde_crates_to_analyze,
-        )
-    } else {
-        // "head-facet" or "main-facet"
-        (
-            &target_config.facet_binary_name,
-            &target_config.facet_crates_to_analyze,
-        )
-    };
-    println!("    Building binary/example: '{}'", actual_binary_to_build);
+            })?;
+            // For serde variant, the crate name is typically ks-serde
+            let crate_name = if target_config.name == "ks-facet" {
+                "ks-serde"
+            } else {
+                binary_name.as_str()
+            };
+            (
+                binary_name,
+                &target_config.serde_crates_to_analyze,
+                crate_name,
+            )
+        } else {
+            // "head-facet" or "main-facet"
+            // For facet variants, use the target name as the crate name
+            (
+                &target_config.facet_binary_name,
+                &target_config.facet_crates_to_analyze,
+                target_config.name.as_str(),
+            )
+        };
+    println!(
+        "    {} Building binary/example: {}",
+        "🔨".bright_blue(),
+        actual_binary_to_build.bright_green()
+    );
 
     // 2. Build the project
+    // Find the actual crate directory under outside-workspace/
+    let crate_dir = active_workspace_path
+        .join("outside-workspace")
+        .join(crate_name);
+
+    if !crate_dir.exists() {
+        return Err(anyhow::anyhow!(
+            "Crate directory does not exist: {:?}",
+            crate_dir
+        ));
+    }
+
     let build_opts = types::BuildWithLllvmIrOpts {
-        manifest_path: active_workspace_path
-            .join("Cargo.toml")
-            .to_string_lossy()
-            .into_owned(),
-        target_dir: Some(variant_build_target_dir.clone()),
+        manifest_path: crate_dir.join("Cargo.toml").to_string_lossy().into_owned(),
         env_vars: HashMap::new(), // Customize with RUSTFLAGS or other vars if needed
     };
 
     let llvm_build_output = build::build_project_for_analysis(
         actual_binary_to_build,
-        active_workspace_path,     // CWD for cargo build
+        &crate_dir,                // CWD for cargo build - the actual crate directory
         &variant_build_target_dir, // Output target dir for cargo
         &build_opts,
     )
@@ -268,7 +331,7 @@ fn measure_single_target_variant(
         &llvm_build_output.target_dir,
         actual_binary_to_build,
         actual_crates_for_analysis,
-        &active_workspace_path.join("Cargo.toml"), // Manifest for llvm-lines to find the package/target
+        &crate_dir.join("Cargo.toml"), // Manifest for llvm-lines to find the package/target
     )
     .with_context(|| {
         format!(
@@ -302,8 +365,10 @@ fn measure_single_target_variant(
     })?;
 
     println!(
-        "    Measurement complete for variant: '{}', target '{}'",
-        variant_name, target_config.name
+        "    {} Measurement complete for variant: {}, target {}",
+        "✓".green(),
+        variant_name.bright_yellow(),
+        target_config.name.bright_magenta()
     );
 
     Ok(types::BuildResult {

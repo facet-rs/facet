@@ -17,6 +17,7 @@ chrono = { version = "0.4", features = ["serde"] }
 toml_edit = "0.22"
 indicatif = "0.17.11"
 owo-colors = "4.2.1"
+color-backtrace = "0.6"
 pathdiff = "0.2.3"
 log = "0.4.27"
 itertools = "0.14.0"

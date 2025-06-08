@@ -47,6 +47,7 @@ pub struct MeasurementTarget {
     /// Each tuple contains:
     ///  1. The crate name (e.g., "ks-types").
     ///  2. The path to this crate relative to the repository root (e.g., "outside-workspace/ks-types").
+    ///
     /// This is used for constructing the hybrid `main-facet` workspace.
     /// These paths are also used to locate the `Cargo.toml` files for path rewriting.
     pub head_specific_crates_config: Vec<(String, String)>,
@@ -79,58 +80,6 @@ pub fn get_measurement_targets() -> Vec<MeasurementTarget> {
                 "ks-serde-json-write".to_string(),
                 "ks-debug".to_string(),
             ],
-            core_facet_crate_names: get_core_facet_crate_names(),
-            head_specific_crates_config: get_ks_crates_config(),
-        },
-        // JSON benchmark component
-        MeasurementTarget {
-            name: "json-benchmark".to_string(),
-            facet_binary_name: "ks-facet".to_string(), // Reuses ks-facet binary
-            serde_binary_name: Some("ks-serde".to_string()), // Reuses ks-serde binary
-            facet_crates_to_analyze: vec![
-                "ks-facet-json-read".to_string(),
-                "ks-facet-json-write".to_string(),
-                "ks-mock".to_string(),
-                "ks-types".to_string(),
-            ],
-            serde_crates_to_analyze: vec![
-                "ks-serde-json-read".to_string(),
-                "ks-serde-json-write".to_string(),
-                "ks-mock".to_string(),
-                "ks-types".to_string(),
-            ],
-            core_facet_crate_names: get_core_facet_crate_names(),
-            head_specific_crates_config: get_ks_crates_config(),
-        },
-        // Pretty printing benchmark component
-        MeasurementTarget {
-            name: "pretty-benchmark".to_string(),
-            facet_binary_name: "ks-facet".to_string(),
-            serde_binary_name: Some("ks-serde".to_string()),
-            facet_crates_to_analyze: vec![
-                "ks-facet-pretty".to_string(),
-                "ks-mock".to_string(),
-                "ks-types".to_string(),
-            ],
-            serde_crates_to_analyze: vec![
-                "ks-debug".to_string(),
-                "ks-mock".to_string(),
-                "ks-types".to_string(),
-            ],
-            core_facet_crate_names: get_core_facet_crate_names(),
-            head_specific_crates_config: get_ks_crates_config(),
-        },
-        // Core benchmark component (facet only, no serde comparison)
-        MeasurementTarget {
-            name: "core-benchmark".to_string(),
-            facet_binary_name: "ks-facet".to_string(),
-            serde_binary_name: None, // No serde comparison for core
-            facet_crates_to_analyze: vec![
-                "ks-facet".to_string(),
-                "ks-mock".to_string(),
-                "ks-types".to_string(),
-            ],
-            serde_crates_to_analyze: vec![], // Not used since serde_binary_name is None
             core_facet_crate_names: get_core_facet_crate_names(),
             head_specific_crates_config: get_ks_crates_config(),
         },
