@@ -429,7 +429,9 @@ impl core::fmt::Debug for Shape<'_> {
 
             field!("doc", "{:?}", self.doc);
 
-            field!("attributes", "{:?}", self.attributes);
+            if !self.attributes.is_empty() {
+                field!("attributes", "{:?}", self.attributes);
+            }
 
             if let Some(type_tag) = self.type_tag {
                 field!("type_tag", "{:?}", type_tag);
