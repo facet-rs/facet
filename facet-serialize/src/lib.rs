@@ -428,7 +428,7 @@ where
                     }
                     (Def::Array(ad), _) => {
                         if ad.t().is_type::<u8>() {
-                            let bytes: Vec<u8> = peek
+                            let bytes: Vec<u8> = cpeek
                                 .into_list_like()
                                 .unwrap()
                                 .iter()
