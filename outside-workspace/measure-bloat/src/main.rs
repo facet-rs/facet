@@ -966,13 +966,21 @@ fn generate_function_diff_analysis(
     let mut main_funcs: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
     for func in &main_result.top_functions {
         let key = format!("{}::{}", func.crate_name, func.name);
-        main_funcs.insert(key, func.size);
+        let mut size = func.size;
+        if let Some(old) = main_funcs.remove(&key) {
+            size += old;
+        }
+        main_funcs.insert(key, size);
     }
 
     let mut pr_funcs: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
     for func in &pr_result.top_functions {
         let key = format!("{}::{}", func.crate_name, func.name);
-        pr_funcs.insert(key, func.size);
+        let mut size = func.size;
+        if let Some(old) = pr_funcs.remove(&key) {
+            size += old;
+        }
+        pr_funcs.insert(key, size);
     }
 
     // Collect all function changes
