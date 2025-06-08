@@ -429,7 +429,9 @@ impl core::fmt::Debug for Shape<'_> {
 
             field!("attributes", "{:?}", self.attributes);
 
-            field!("type_tag", "{:?}", self.type_tag);
+            if let Some(type_tag) = self.type_tag {
+                field!("type_tag", "{:?}", type_tag);
+            }
 
             field!("inner", "{:?}", self.inner);
 
