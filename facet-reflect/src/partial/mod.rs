@@ -1578,24 +1578,51 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         }
 
         // Require that the top frame is fully initialized before popping.
-        {
-            let frame = self.frames.last().unwrap();
-            trace!(
-                "end(): Checking full initialization for frame with shape {}",
-                frame.shape
-            );
-            frame.require_full_initialization()?
+        self.validate_frame_initialization()?;
+
+        // Pop the frame and get parent frame
+        let popped_frame = self.pop_frame();
+
+        // Try conversion if needed
+        if self.try_conversion(&popped_frame)? {
+            return Ok(self);
         }
 
-        // Pop the frame and save its data pointer for SmartPointer handling
+        // Update parent tracker
+        self.update_parent_tracker(&popped_frame)?;
+
+        Ok(self)
+    }
+
+    /// Validates that the top frame is fully initialized before it can be popped. This ensures we
+    /// don't pop partially constructed values.
+    fn validate_frame_initialization(&self) -> Result<(), ReflectError<'shape>> {
+        let frame = self.frames.last().unwrap();
+        trace!(
+            "end(): Checking full initialization for frame with shape {}",
+            frame.shape
+        );
+        frame.require_full_initialization()
+    }
+
+    /// Pops the top frame from the stack with appropriate logging. Returns the popped frame for
+    /// further processing.
+    fn pop_frame(&mut self) -> Frame<'shape> {
         let popped_frame = self.frames.pop().unwrap();
         let _is_conversion = false;
         trace!(
             "end(): Popped frame with shape {}, is_conversion={}",
             popped_frame.shape, _is_conversion
         );
+        popped_frame
+    }
 
-        // Update parent frame's tracking when popping from a child
+    /// Attempts implicit type conversion when the parent frame expects a different type. Returns
+    /// true if conversion was performed, false if no conversion was needed.
+    fn try_conversion(
+        &mut self,
+        popped_frame: &Frame<'shape>,
+    ) -> Result<bool, ReflectError<'shape>> {
         let parent_frame = self.frames.last_mut().unwrap();
 
         // Check if we need to do a conversion - this happens when:
@@ -1612,75 +1639,73 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                 .and_then(|v| (v.try_from)())
                 .is_some();
 
-        if needs_conversion {
-            trace!(
-                "Detected implicit conversion needed from {} to {}",
-                popped_frame.shape, parent_frame.shape
-            );
-            // Perform the conversion
-            if let Some(try_from_fn) = parent_frame
-                .shape
-                .vtable
-                .sized()
-                .and_then(|v| (v.try_from)())
-            {
-                let inner_ptr = unsafe { popped_frame.data.assume_init().as_const() };
-                let inner_shape = popped_frame.shape;
+        if !needs_conversion {
+            return Ok(false);
+        }
 
-                trace!("Converting from {} to {}", inner_shape, parent_frame.shape);
-                let result = unsafe { try_from_fn(inner_ptr, inner_shape, parent_frame.data) };
+        trace!(
+            "Detected implicit conversion needed from {} to {}",
+            popped_frame.shape, parent_frame.shape
+        );
 
-                if let Err(e) = result {
-                    trace!("Conversion failed: {:?}", e);
+        if let Some(try_from_fn) = parent_frame
+            .shape
+            .vtable
+            .sized()
+            .and_then(|v| (v.try_from)())
+        {
+            let inner_ptr = unsafe { popped_frame.data.assume_init().as_const() };
+            let inner_shape = popped_frame.shape;
+            let dst_shape = parent_frame.shape;
 
-                    // Deallocate the inner value's memory since conversion failed
-                    if let FrameOwnership::Owned = popped_frame.ownership {
-                        if let Ok(layout) = popped_frame.shape.layout.sized_layout() {
-                            if layout.size() > 0 {
-                                trace!(
-                                    "Deallocating conversion frame memory after failure: size={}, align={}",
-                                    layout.size(),
-                                    layout.align()
-                                );
-                                unsafe {
-                                    alloc::alloc::dealloc(
-                                        popped_frame.data.as_mut_byte_ptr(),
-                                        layout,
-                                    );
-                                }
-                            }
-                        }
-                    }
+            trace!("Converting from {} to {}", inner_shape, dst_shape);
+            let result = unsafe { try_from_fn(inner_ptr, inner_shape, parent_frame.data) };
 
-                    return Err(ReflectError::TryFromError {
-                        src_shape: inner_shape,
-                        dst_shape: parent_frame.shape,
-                        inner: e,
-                    });
-                }
+            if let Err(e) = result {
+                trace!("Conversion failed: {:?}", e);
+                Self::deallocate_frame_memory_static(popped_frame);
+                return Err(ReflectError::TryFromError {
+                    src_shape: inner_shape,
+                    dst_shape,
+                    inner: e,
+                });
+            }
 
-                trace!("Conversion succeeded, marking parent as initialized");
-                parent_frame.tracker = Tracker::Init;
+            trace!("Conversion succeeded, marking parent as initialized");
+            parent_frame.tracker = Tracker::Init;
+            Self::deallocate_frame_memory_static(popped_frame);
+            return Ok(true);
+        }
 
-                // Deallocate the inner value's memory since try_from consumed it
-                if let FrameOwnership::Owned = popped_frame.ownership {
-                    if let Ok(layout) = popped_frame.shape.layout.sized_layout() {
-                        if layout.size() > 0 {
-                            trace!(
-                                "Deallocating conversion frame memory: size={}, align={}",
-                                layout.size(),
-                                layout.align()
-                            );
-                            unsafe {
-                                alloc::alloc::dealloc(popped_frame.data.as_mut_byte_ptr(), layout);
-                            }
-                        }
+        Ok(false)
+    }
+
+    /// Deallocates memory for owned frames that are no longer needed. Only deallocates if the frame
+    /// owns its memory and has non-zero size.
+    fn deallocate_frame_memory_static(frame: &Frame<'shape>) {
+        if let FrameOwnership::Owned = frame.ownership {
+            if let Ok(layout) = frame.shape.layout.sized_layout() {
+                if layout.size() > 0 {
+                    trace!(
+                        "Deallocating frame memory: size={}, align={}",
+                        layout.size(),
+                        layout.align()
+                    );
+                    unsafe {
+                        alloc::alloc::dealloc(frame.data.as_mut_byte_ptr(), layout);
                     }
                 }
-
-                return Ok(self);
             }
         }
+    }
+
+    /// Updates the parent frame's tracker state after a child frame is popped. Handles
+    /// type-specific logic for structs, arrays, smart pointers, enums, lists, maps, and options.
+    fn update_parent_tracker(
+        &mut self,
+        popped_frame: &Frame<'shape>,
+    ) -> Result<(), ReflectError<'shape>> {
+        let parent_frame = self.frames.last_mut().unwrap();
 
         match &mut parent_frame.tracker {
             Tracker::Struct {
@@ -1702,35 +1727,20 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                 }
             }
             Tracker::SmartPointer { is_initialized } => {
-                // We just popped the inner value frame, so now we need to create the Box
-                if let Def::SmartPointer(smart_ptr_def) = parent_frame.shape.def {
+                let parent_shape = parent_frame.shape;
+                let parent_data = parent_frame.data;
+
+                if let Def::SmartPointer(smart_ptr_def) = parent_shape.def {
                     if let Some(new_into_fn) = smart_ptr_def.vtable.new_into_fn {
-                        // The child frame contained the inner value
                         let inner_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
-
-                        // Use new_into_fn to create the Box
                         unsafe {
-                            new_into_fn(parent_frame.data, inner_ptr);
+                            new_into_fn(parent_data, inner_ptr);
                         }
-
-                        // Deallocate the inner value's memory since new_into_fn moved it
-                        if let FrameOwnership::Owned = popped_frame.ownership {
-                            if let Ok(layout) = popped_frame.shape.layout.sized_layout() {
-                                if layout.size() > 0 {
-                                    unsafe {
-                                        alloc::alloc::dealloc(
-                                            popped_frame.data.as_mut_byte_ptr(),
-                                            layout,
-                                        );
-                                    }
-                                }
-                            }
-                        }
-
+                        Self::deallocate_frame_memory_static(popped_frame);
                         *is_initialized = true;
                     } else {
                         return Err(ReflectError::OperationFailed {
-                            shape: parent_frame.shape,
+                            shape: parent_shape,
                             operation: "SmartPointer missing new_into_fn",
                         });
                     }
@@ -1751,38 +1761,20 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                 current_child,
             } => {
                 if *current_child {
-                    // We just popped an element frame, now push it to the list
-                    if let Def::List(list_def) = parent_frame.shape.def {
+                    let parent_shape = parent_frame.shape;
+                    let parent_data = parent_frame.data;
+
+                    if let Def::List(list_def) = parent_shape.def {
                         if let Some(push_fn) = list_def.vtable.push {
-                            // The child frame contained the element value
                             let element_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
-
-                            // Use push to add element to the list
                             unsafe {
-                                push_fn(
-                                    PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
-                                    element_ptr,
-                                );
+                                push_fn(PtrMut::new(parent_data.as_mut_byte_ptr()), element_ptr);
                             }
-
-                            // Deallocate the element's memory since push moved it
-                            if let FrameOwnership::Owned = popped_frame.ownership {
-                                if let Ok(layout) = popped_frame.shape.layout.sized_layout() {
-                                    if layout.size() > 0 {
-                                        unsafe {
-                                            alloc::alloc::dealloc(
-                                                popped_frame.data.as_mut_byte_ptr(),
-                                                layout,
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-
+                            Self::deallocate_frame_memory_static(popped_frame);
                             *current_child = false;
                         } else {
                             return Err(ReflectError::OperationFailed {
-                                shape: parent_frame.shape,
+                                shape: parent_shape,
                                 operation: "List missing push function",
                             });
                         }
@@ -1793,11 +1785,12 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                 is_initialized: true,
                 insert_state,
             } => {
+                let parent_shape = parent_frame.shape;
+                let parent_data = parent_frame.data;
+
                 match insert_state {
                     MapInsertState::PushingKey { key_ptr } => {
-                        // We just popped the key frame
                         if let Some(key_ptr) = key_ptr {
-                            // Transition to PushingValue state
                             *insert_state = MapInsertState::PushingValue {
                                 key_ptr: *key_ptr,
                                 value_ptr: None,
@@ -1805,26 +1798,18 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                         }
                     }
                     MapInsertState::PushingValue { key_ptr, value_ptr } => {
-                        // We just popped the value frame, now insert the pair
-                        if let (Some(value_ptr), Def::Map(map_def)) =
-                            (value_ptr, parent_frame.shape.def)
+                        if let (Some(value_ptr), Def::Map(map_def)) = (value_ptr, parent_shape.def)
                         {
                             let insert_fn = map_def.vtable.insert_fn;
-
-                            // Use insert to add key-value pair to the map
                             unsafe {
                                 insert_fn(
-                                    PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
+                                    PtrMut::new(parent_data.as_mut_byte_ptr()),
                                     PtrMut::new(key_ptr.as_mut_byte_ptr()),
                                     PtrMut::new(value_ptr.as_mut_byte_ptr()),
                                 );
                             }
 
-                            // Note: We don't deallocate the key and value memory here.
-                            // The insert function has semantically moved the values into the map,
-                            // but we still need to deallocate the temporary buffers.
-                            // However, since we don't have frames for them anymore (they were popped),
-                            // we need to handle deallocation here.
+                            // Deallocate key and value temporary buffers
                             if let Ok(key_shape) = map_def.k().layout.sized_layout() {
                                 if key_shape.size() > 0 {
                                     unsafe {
@@ -1843,7 +1828,6 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                                 }
                             }
 
-                            // Reset to idle state
                             *insert_state = MapInsertState::Idle;
                         }
                     }
@@ -1853,39 +1837,21 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                 }
             }
             Tracker::Option { building_inner } => {
-                // We just popped the inner value frame for an Option's Some variant
                 if *building_inner {
-                    if let Def::Option(option_def) = parent_frame.shape.def {
-                        // Use the Option vtable to initialize Some(inner_value)
+                    let parent_shape = parent_frame.shape;
+                    let parent_data = parent_frame.data;
+
+                    if let Def::Option(option_def) = parent_shape.def {
                         let init_some_fn = option_def.vtable.init_some_fn;
-
-                        // The popped frame contains the inner value
                         let inner_value_ptr = unsafe { popped_frame.data.assume_init().as_const() };
-
-                        // Initialize the Option as Some(inner_value)
                         unsafe {
-                            init_some_fn(parent_frame.data, inner_value_ptr);
+                            init_some_fn(parent_data, inner_value_ptr);
                         }
-
-                        // Deallocate the inner value's memory since init_some_fn moved it
-                        if let FrameOwnership::Owned = popped_frame.ownership {
-                            if let Ok(layout) = popped_frame.shape.layout.sized_layout() {
-                                if layout.size() > 0 {
-                                    unsafe {
-                                        alloc::alloc::dealloc(
-                                            popped_frame.data.as_mut_byte_ptr(),
-                                            layout,
-                                        );
-                                    }
-                                }
-                            }
-                        }
-
-                        // Mark that we're no longer building the inner value
+                        Self::deallocate_frame_memory_static(popped_frame);
                         *building_inner = false;
                     } else {
                         return Err(ReflectError::OperationFailed {
-                            shape: parent_frame.shape,
+                            shape: parent_shape,
                             operation: "Option frame without Option definition",
                         });
                     }
@@ -1893,8 +1859,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
             }
             _ => {}
         }
-
-        Ok(self)
+        Ok(())
     }
 
     /// Builds the value
