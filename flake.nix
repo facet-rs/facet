@@ -44,6 +44,7 @@
               }))
 
             cargo-nextest
+            cargo-insta
             just
           ];
 
