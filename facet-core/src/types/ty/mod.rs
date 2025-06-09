@@ -66,11 +66,15 @@ impl core::fmt::Display for Type<'_> {
             Type::User(UserType::Opaque) => {
                 write!(f, "User(Opaque)")?;
             }
-            Type::Pointer(PointerType::Reference(_value_ptr_type)) => {
-                write!(f, "Pointer(Reference(_))")?;
+            Type::Pointer(PointerType::Reference(ptr_type)) => {
+                let show_ref = if ptr_type.mutable { "&mut " } else { "&" };
+                let target = ptr_type.target();
+                write!(f, "Pointer(Reference({show_ref}{target}))")?;
             }
-            Type::Pointer(PointerType::Raw(_value_ptr_type)) => {
-                write!(f, "Pointer(Raw(_))")?;
+            Type::Pointer(PointerType::Raw(ptr_type)) => {
+                let show_raw = if ptr_type.mutable { "*mut " } else { "*const " };
+                let target = ptr_type.target();
+                write!(f, "Pointer(Raw({show_raw}{target}))")?;
             }
             Type::Pointer(PointerType::Function(_fn_ptr_def)) => {
                 write!(f, "Pointer(Function(_))")?;
