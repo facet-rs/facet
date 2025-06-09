@@ -40,3 +40,42 @@ pub enum Type<'shape> {
     /// Pointer type (reference, raw, function pointer).
     Pointer(PointerType<'shape>),
 }
+
+impl core::fmt::Display for Type<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Type::Primitive(_) => {
+                // Defer to `Debug`, which correctly produces the intended formatting.
+                write!(f, "{self:?}")?;
+            }
+            Type::Sequence(SequenceType::Array(ArrayType { t, n })) => {
+                write!(f, "Sequence(Array([{t}, {n}]))")?;
+            }
+            Type::Sequence(SequenceType::Slice(SliceType { t })) => {
+                write!(f, "Sequence(Slice(&[{t}]))")?;
+            }
+            Type::User(UserType::Struct(struct_type)) => {
+                write!(f, "User(Struct(«kind: {:?}»))", struct_type.kind)?;
+            }
+            Type::User(UserType::Enum(_enum_type)) => {
+                write!(f, "User(Enum(_))")?;
+            }
+            Type::User(UserType::Union(_union_type)) => {
+                write!(f, "User(Union(_))")?;
+            }
+            Type::User(UserType::Opaque) => {
+                write!(f, "User(Opaque)")?;
+            }
+            Type::Pointer(PointerType::Reference(_value_ptr_type)) => {
+                write!(f, "Pointer(Reference(_))")?;
+            }
+            Type::Pointer(PointerType::Raw(_value_ptr_type)) => {
+                write!(f, "Pointer(Raw(_))")?;
+            }
+            Type::Pointer(PointerType::Function(_fn_ptr_def)) => {
+                write!(f, "Pointer(Function(_))")?;
+            }
+        }
+        Ok(())
+    }
+}
