@@ -60,7 +60,7 @@ jobs:
             const { data: runs } = await github.rest.actions.listWorkflowRuns({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              workflow_id: 'cargo-bloat.yml',
+              workflow_id: 'limpid.yml',
               event: 'pull_request',
               status: 'success'
             });
@@ -85,7 +85,7 @@ jobs:
       - name: ✨ Download analysis artifacts
         uses: dawidd6/action-download-artifact@v6
         with:
-          workflow: cargo-bloat.yml
+          workflow: limpid.yml
           run_id: ${{ steps.find_run.outputs.result }}
           name: bloat-analysis-report
           path: ./artifacts
