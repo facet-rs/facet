@@ -464,49 +464,80 @@ where
         enum_tuple_current_field: None,
     };
 
-    macro_rules! next {
-        ($runner:ident, $wip:ident, $expectation:expr, $method:ident) => {{
-            let nd = NextData {
-                start: $runner.last_span.end(), // or supply the appropriate start value if available
-                runner: $runner,
-                wip: $wip,
-            };
-            let (nd, res) = format.next(nd, $expectation);
-            $runner = nd.runner;
-            $wip = nd.wip;
-            let outcome = res.map_err(|span_kind| {
-                $runner.last_span = span_kind.span;
-                let error = $runner.err(span_kind.node);
-                // Convert the error's span to Cooked
-                DeserError {
-                    input: error.input,
-                    span: error.span.to_cooked(format, input),
-                    kind: error.kind,
-                    source_id: error.source_id,
-                }
-            })?;
-            if F::SpanType::USES_SUBSTACK {
-                if !$runner.substack.get().is_empty() {
-                    trace!("Substack: {}", "carried".cyan());
-                } else {
-                    trace!("Substack: {}", "-".red());
-                }
+    // Helper function to handle the common pattern of calling format methods
+    #[allow(clippy::type_complexity)]
+    fn handle_next_with_method<'input, 'facet, 'shape, F, Method>(
+        mut runner: StackRunner<'input, F::SpanType, F::Input<'input>>,
+        wip: Partial<'facet, 'shape>,
+        format: &mut F,
+        input: &'input F::Input<'input>,
+        expectation: Expectation,
+        method: Method,
+    ) -> Result<
+        (
+            StackRunner<'input, F::SpanType, F::Input<'input>>,
+            Partial<'facet, 'shape>,
+        ),
+        DeserError<'input, 'shape, Cooked>,
+    >
+    where
+        F: Format + 'shape,
+        F::SpanType: SubstackBehavior,
+        F::Input<'input>: InputDebug,
+        Span<F::SpanType>: ToCooked<'input, F>,
+        'input: 'facet,
+        'shape: 'input,
+        Method: FnOnce(
+            &mut StackRunner<'input, F::SpanType, F::Input<'input>>,
+            Partial<'facet, 'shape>,
+            Spanned<Outcome<'input>, F::SpanType>,
+        )
+            -> Result<Partial<'facet, 'shape>, DeserError<'input, 'shape, F::SpanType>>,
+    {
+        let nd = NextData {
+            start: runner.last_span.end(),
+            runner,
+            wip,
+        };
+        let (nd, res) = format.next(nd, expectation);
+        runner = nd.runner;
+        let mut wip = nd.wip;
+
+        let outcome = res.map_err(|span_kind| {
+            runner.last_span = span_kind.span;
+            let error = runner.err(span_kind.node);
+            DeserError {
+                input: error.input,
+                span: error.span.to_cooked(format, input),
+                kind: error.kind,
+                source_id: error.source_id,
             }
-            $runner.last_span = outcome.span;
-            if F::SpanType::USES_SUBSTACK {
-                if let Outcome::Resegmented(subspans) = &outcome.node {
-                    $runner.substack = subspans.clone().into();
-                }
+        })?;
+
+        if F::SpanType::USES_SUBSTACK {
+            if !runner.substack.get().is_empty() {
+                trace!("Substack: {}", "carried".cyan());
+            } else {
+                trace!("Substack: {}", "-".red());
             }
-            $wip = $runner.$method($wip, outcome).map_err(|error| {
-                DeserError {
-                    input:  error.input,
-                    span:   error.span.to_cooked(format, input),
-                    kind:   error.kind,
-                    source_id: error.source_id,
-                }
-            })?;
-        }};
+        }
+
+        runner.last_span = outcome.span;
+
+        if F::SpanType::USES_SUBSTACK {
+            if let Outcome::Resegmented(subspans) = &outcome.node {
+                runner.substack = subspans.clone().into();
+            }
+        }
+
+        wip = method(&mut runner, wip, outcome).map_err(|error| DeserError {
+            input: error.input,
+            span: error.span.to_cooked(format, input),
+            kind: error.kind,
+            source_id: error.source_id,
+        })?;
+
+        Ok((runner, wip))
     }
 
     loop {
@@ -574,23 +605,40 @@ where
                     ValueReason::TopLevel => Expectation::Value,
                     ValueReason::ObjectVal => Expectation::ObjectVal,
                 };
-                next!(runner, wip, expectation, value);
+                let (new_runner, new_wip) = handle_next_with_method(
+                    runner,
+                    wip,
+                    format,
+                    input,
+                    expectation,
+                    |runner, wip, outcome| runner.value(wip, outcome),
+                )?;
+                runner = new_runner;
+                wip = new_wip;
             }
             Instruction::ObjectKeyOrObjectClose => {
-                next!(
+                let (new_runner, new_wip) = handle_next_with_method(
                     runner,
                     wip,
+                    format,
+                    input,
                     Expectation::ObjectKeyOrObjectClose,
-                    object_key_or_object_close
-                );
+                    |runner, wip, outcome| runner.object_key_or_object_close(wip, outcome),
+                )?;
+                runner = new_runner;
+                wip = new_wip;
             }
             Instruction::ListItemOrListClose => {
-                next!(
+                let (new_runner, new_wip) = handle_next_with_method(
                     runner,
                     wip,
+                    format,
+                    input,
                     Expectation::ListItemOrListClose,
-                    list_item_or_list_close
-                );
+                    |runner, wip, outcome| runner.list_item_or_list_close(wip, outcome),
+                )?;
+                runner = new_runner;
+                wip = new_wip;
             }
             Instruction::SubstackClose => {
                 runner.substack.clear();
