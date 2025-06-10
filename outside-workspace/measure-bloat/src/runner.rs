@@ -8,6 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf}; // For temp_dir
 
 use crate::{analysis, build, config, report, types, workspace};
+use substance::{AnalysisConfig, ArtifactKind, BloatAnalyzer};
 
 /// Main orchestration function for running the entire comparison.
 ///
@@ -325,20 +326,100 @@ fn measure_single_target_variant(
         )
     })?;
 
-    // 3. Fetch LLVM lines data
-    // Note: fetch_llvm_lines_data uses llvm_build_output.target_dir which is variant_build_target_dir
-    let llvm_lines_summary = build::fetch_llvm_lines_data(
-        &llvm_build_output.target_dir,
-        actual_binary_to_build,
-        actual_crates_for_analysis,
-        &crate_dir.join("Cargo.toml"), // Manifest for llvm-lines to find the package/target
-    )
-    .with_context(|| {
-        format!(
-            "LLVM lines analysis failed for target '{}', variant '{}'",
-            target_config.name, variant_name
-        )
-    })?;
+    // --- START Substance Analysis ---
+    let mut captured_substance_analysis_wrapper: Option<types::SubstanceAnalysisDataWrapper> = None;
+    let mut captured_calculated_crate_contributions: Option<HashMap<String, u64>> = None;
+
+    println!(
+        "    {} Attempting Substance analysis for binary: {}...",
+        "🔬".bright_blue(),
+        actual_binary_to_build.bright_green()
+    );
+
+    // Use a block to handle potential errors from substance analysis gracefully
+    // This closure now returns both the AnalysisResult and the calculated crate contributions
+    let substance_analysis_attempt =
+        || -> Result<(substance::AnalysisResult, HashMap<String, u64>)> {
+            let cargo_json_lines_str = &llvm_build_output.cargo_stdout_json_lines;
+            let json_lines_vec: Vec<&str> = cargo_json_lines_str.lines().collect();
+
+            let substance_context = BloatAnalyzer::from_cargo_metadata(
+                &json_lines_vec,
+                &variant_build_target_dir, // This is llvm_build_output.target_dir
+                None,                      // auto-detect target triple
+            )
+            .context("Substance: Failed to create context from cargo metadata")?;
+
+            let binary_artifact_to_analyze = substance_context
+            .artifacts
+            .iter()
+            .find(|a| a.kind == ArtifactKind::Binary && a.name == *actual_binary_to_build) // Dereference actual_binary_to_build
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Substance: Binary artifact '{}' not found in substance context. Available: {:?}",
+                    actual_binary_to_build,
+                    substance_context.artifacts.iter().map(|a| &a.name).collect::<Vec<_>>()
+                )
+            })?;
+
+            let analysis_config = AnalysisConfig {
+                symbols_section: None, // Default .text
+                split_std: false,      // Consider making this configurable later
+                analyze_llvm_ir: true,
+                target_dir: Some(variant_build_target_dir.clone()),
+            };
+
+            let result = BloatAnalyzer::analyze_binary(
+                &binary_artifact_to_analyze.path,
+                &substance_context,
+                &analysis_config,
+            )
+            .context("Substance: Failed to analyze binary")?;
+
+            // Calculate crate contributions from substance symbols
+            let mut crate_sizes_map: HashMap<String, u64> = HashMap::new();
+            for symbol_info in &result.symbols {
+                // Iterate by reference
+                let (crate_name, _is_exact) = substance::crate_name::from_sym(
+                    &substance_context,
+                    analysis_config.split_std,
+                    &symbol_info.name,
+                );
+                *crate_sizes_map.entry(crate_name).or_insert(0) += symbol_info.size;
+            }
+            Ok((result, crate_sizes_map)) // Return AnalysisResult and crate contributions
+        };
+
+    match substance_analysis_attempt() {
+        Ok((raw_analysis_result_val, crate_contributions_val)) => {
+            // Create the wrapper
+            captured_substance_analysis_wrapper = Some(types::SubstanceAnalysisDataWrapper {
+                file_size: raw_analysis_result_val.file_size,
+                text_size: raw_analysis_result_val.text_size,
+                symbols: raw_analysis_result_val.symbols,
+                section_name: raw_analysis_result_val.section_name,
+                llvm_ir_data: raw_analysis_result_val.llvm_ir_data,
+            });
+            captured_calculated_crate_contributions = Some(crate_contributions_val);
+            println!(
+                "    {} Substance analysis successful for variant {}",
+                "✨".green(),
+                variant_name.bright_yellow()
+            );
+        }
+        Err(e) => {
+            // Correctly handle Err arm
+            println!(
+                "    {} Substance analysis failed for variant {}: {:?}",
+                "⚠️".yellow(),
+                variant_name.bright_yellow(),
+                e
+            );
+        }
+    }
+    // --- END Substance Analysis ---
+
+    // Old LLVM lines data fetching is removed. build::fetch_llvm_lines_data is no longer called.
 
     // 4. Analyze .rlib sizes
     let rlib_sizes = analysis::collect_rlib_sizes(
@@ -352,17 +433,7 @@ fn measure_single_target_variant(
         )
     })?;
 
-    // 5. Get main executable size
-    let main_executable_size = analysis::get_main_executable_size(
-        &llvm_build_output.target_dir, // Search in the specific variant's target dir
-        actual_binary_to_build,
-    )
-    .with_context(|| {
-        format!(
-            "Main executable size check failed for target '{}', variant '{}'",
-            target_config.name, variant_name
-        )
-    })?;
+    // Old main executable size fetching is removed. analysis::get_main_executable_size is no longer called.
 
     println!(
         "    {} Measurement complete for variant: {}, target {}",
@@ -374,11 +445,12 @@ fn measure_single_target_variant(
     Ok(types::BuildResult {
         target_name: target_config.name.clone(),
         variant_name: variant_name.to_string(),
-        main_executable_size,
         // text_section_size: None, // No tool for this yet
         build_time_ms: llvm_build_output.timing_summary.total_duration.as_millis(),
         rlib_sizes,
-        llvm_lines: Some(llvm_lines_summary),
         build_timing_summary: llvm_build_output.timing_summary,
+        // Wrapper for substance analysis result
+        substance_analysis_wrapper: captured_substance_analysis_wrapper,
+        substance_calculated_crate_contributions: captured_calculated_crate_contributions,
     })
 }

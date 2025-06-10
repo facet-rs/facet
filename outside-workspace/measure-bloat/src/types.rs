@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
+// Specific use statements for substance::SymbolInfo and substance::llvm_ir::LlvmIrAnalysisResult removed.
+// Using fully qualified paths instead.
 
 // --- Build Process Types ---
 
@@ -23,6 +25,8 @@ pub struct LlvmBuildOutput {
     pub target_dir: PathBuf,
     /// Summary of build timings gathered during the LLVM IR generation build.
     pub timing_summary: BuildTimingSummary,
+    /// Captured stdout from cargo build, containing JSON lines.
+    pub cargo_stdout_json_lines: String,
 }
 
 // --- Build Timing Types ---
@@ -69,34 +73,6 @@ pub struct BuildTimingSummary {
     pub crate_timings: Vec<CrateTiming>,
 }
 
-// --- LLVM Lines Analysis Types ---
-
-/// Represents a single function's contribution to LLVM lines.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct LlvmFunction {
-    pub name: String,
-    pub lines: u64,
-    pub copies: u64,
-    // pub crate_name: Option<String>, // Potentially add if easily available from parser
-}
-
-/// LLVM line count summary for a single crate.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct CrateLlvmLines {
-    pub name: String,
-    pub lines: u64,
-    pub copies: u64,
-}
-
-/// Summary of LLVM lines analysis, including top crates and functions.
-#[derive(Debug, Serialize, Deserialize, Clone, Default)]
-pub struct LlvmLinesSummary {
-    /// LLVM line results per crate, sorted by line count descending.
-    pub crate_results: Vec<CrateLlvmLines>,
-    /// Top functions by LLVM IR line count, sorted descending.
-    pub top_functions: Vec<LlvmFunction>,
-}
-
 // --- Size Measurement Types ---
 
 /// Represents the size of a compiled .rlib artifact for a crate.
@@ -105,6 +81,16 @@ pub struct CrateRlibSize {
     pub name: String,
     /// Size of the .rlib file in bytes.
     pub size: u64,
+}
+
+/// Wrapper for substance::AnalysisResult to derive necessary traits.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SubstanceAnalysisDataWrapper {
+    pub file_size: u64,
+    pub text_size: u64,
+    pub symbols: Vec<substance::analysis::SymbolInfo>,
+    pub section_name: Option<String>,
+    pub llvm_ir_data: Option<substance::llvm_ir::LlvmIrAnalysisResult>,
 }
 
 // --- Consolidated Build Result ---
@@ -116,17 +102,17 @@ pub struct BuildResult {
     pub target_name: String,
     /// Variant of the build ("head-facet", "main-facet", "serde").
     pub variant_name: String,
-    /// Total file size of the main binary artifact in bytes (optional).
-    pub main_executable_size: Option<u64>,
     // pub text_section_size: Option<u64>, // Currently no tool to populate this easily
     /// Total build time in milliseconds.
     pub build_time_ms: u128,
     /// Sizes of .rlib files for tracked dependencies.
     pub rlib_sizes: Vec<CrateRlibSize>,
-    /// Summary of LLVM lines analysis (optional).
-    pub llvm_lines: Option<LlvmLinesSummary>,
     /// Detailed build timing summary.
     pub build_timing_summary: BuildTimingSummary,
+
+    // Wrapper for substance analysis result
+    pub substance_analysis_wrapper: Option<SubstanceAnalysisDataWrapper>,
+    pub substance_calculated_crate_contributions: Option<HashMap<String, u64>>,
 }
 
 // --- Reporting Types ---
@@ -140,18 +126,6 @@ pub struct CrateSizeChange {
     /// Size in the current version being compared (e.g., HEAD).
     pub current_size: u64,
     pub delta: i64,
-}
-
-/// Represents the difference in LLVM metrics for a single crate between two variants.
-#[derive(Debug, Clone)]
-pub struct LlvmCrateDiff {
-    pub crate_name: String,
-    pub base_lines: u64,
-    pub current_lines: u64,
-    pub base_copies: u64,
-    pub current_copies: u64,
-    pub delta_lines: i64,
-    pub delta_copies: i64,
 }
 
 // Potentially add more report-specific intermediate structs if needed
