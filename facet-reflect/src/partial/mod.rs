@@ -127,7 +127,6 @@ mod tests;
 use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::{String, ToString};
-use alloc::vec;
 
 mod iset;
 
@@ -409,8 +408,11 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
             .allocate()
             .map_err(|_| ReflectError::Unsized { shape })?;
 
+        let mut frames = Vec::with_capacity(8);
+        frames.push(Frame::new(data, shape, FrameOwnership::Owned));
+
         Ok(Self {
-            frames: vec![Frame::new(data, shape, FrameOwnership::Owned)],
+            frames,
             state: PartialState::Active,
             invariant: PhantomData,
         })
@@ -432,8 +434,11 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         // We need to convert the lifetime, which is safe because we're storing it in a frame
         // that will manage the lifetime correctly
         let data_static = PtrUninit::new(data.as_mut_byte_ptr());
+        let mut frames = Vec::with_capacity(8);
+        frames.push(Frame::new(data_static, shape, FrameOwnership::Field));
+
         Self {
-            frames: vec![Frame::new(data_static, shape, FrameOwnership::Field)],
+            frames,
             state: PartialState::Active,
             invariant: PhantomData,
         }
