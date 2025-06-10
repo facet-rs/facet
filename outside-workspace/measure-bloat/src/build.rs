@@ -106,7 +106,7 @@ pub(crate) fn build_project_for_analysis(
     pb.disable_steady_tick();
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stdout_for_error = String::from_utf8_lossy(&output.stdout);
         pb.finish_with_message(format!(
             "{} [build] Build FAILED for {}",
             "❌".red(),
@@ -120,7 +120,7 @@ pub(crate) fn build_project_for_analysis(
             opts.manifest_path,
             build_artifacts_target_dir,
             stderr,
-            stdout
+            stdout_for_error
         );
     }
     pb.finish_with_message(format!(
@@ -128,6 +128,10 @@ pub(crate) fn build_project_for_analysis(
         "✅".green(),
         binary_to_build.bright_green()
     ));
+
+    // Capture stdout for substance analysis. This must be valid UTF-8.
+    let cargo_stdout_json_lines = String::from_utf8(output.stdout)
+        .context("Failed to convert cargo build stdout to UTF-8 string")?;
 
     let timing_summary = parse_cargo_timings(build_artifacts_target_dir).with_context(|| {
         format!(
@@ -146,6 +150,7 @@ pub(crate) fn build_project_for_analysis(
     Ok(LlvmBuildOutput {
         target_dir: build_artifacts_target_dir.to_path_buf(),
         timing_summary,
+        cargo_stdout_json_lines,
     })
 }
 
