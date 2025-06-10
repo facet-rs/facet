@@ -22,26 +22,34 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: ✨ Install cargo-bloat and cargo-llvm-lines
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-bloat,cargo-llvm-lines
-
-      - name: ✨ Build measure-bloat tool
+      - name: ✨ Clone limpid alongside facet
         shell: bash
         run: |
-          cd outside-workspace/measure-bloat
+          # Get the parent directory of the facet repository
+          PARENT_DIR=$(dirname $GITHUB_WORKSPACE)
+          cd $PARENT_DIR
+          
+          # Clone limpid repository
+          git clone https://github.com/facet-rs/limpid.git
+          
+          # Configure git safe directory for limpid
+          git config --global --add safe.directory $PARENT_DIR/limpid
+
+      - name: ✨ Build limpid
+        shell: bash
+        run: |
+          PARENT_DIR=$(dirname $GITHUB_WORKSPACE)
+          cd $PARENT_DIR/limpid/limpid
           cargo build --release
 
       - name: ✨ Run binary size analysis
         shell: bash
         run: |
-          cd outside-workspace/measure-bloat
-          # Run the full comparison which will generate a comprehensive markdown report
-          cargo run --release -- compare
+          PARENT_DIR=$(dirname $GITHUB_WORKSPACE)
+          cd $PARENT_DIR/limpid
           
-          # Copy the generated report to the workspace root for artifact upload
-          cp bloat-results/comparison_report.md ../../bloat-report.md
+          # Run limpid with markdown output
+          ./target/release/limpid --markdown > $GITHUB_WORKSPACE/bloat-report.md
 
       - name: ✨ Save PR info
         run: |
