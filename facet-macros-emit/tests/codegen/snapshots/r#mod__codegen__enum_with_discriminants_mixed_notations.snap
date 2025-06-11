@@ -60,7 +60,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Status {
             .ty(::facet::Type::User(::facet::UserType::Enum(
                 ::facet::EnumType::builder()
                     .variants(__facet_variants)
-                    .repr(::facet::Repr::c())
+                    .repr(::facet::Repr::default())
                     .enum_repr(::facet::EnumRepr::U32)
                     .build(),
             )))
