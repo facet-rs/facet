@@ -1,0 +1,26 @@
+# facet-xdr
+
+An XDR serializer and deserializer based on facet
+
+## Reference
+
+| XDR IDL                    | Rust                          |
+|----------------------------|-------------------------------|
+| `int`                      | `i32`                         |
+| `unsigned int`             | `u32`                         |
+| `enum`                     | Unit `enum`                   |
+| `bool`                     | `bool`                        |
+| `hyper`                    | `i64`                         |
+| `unsigned hyper`           | `u64`                         |
+| `float`                    | `f32`                         |
+| `double`                   | `f64`                         |
+| `quadruple`                | Not currently supported       |
+| `opaque [n]`               | `[u8; N]`                     |
+| `opaque<>`                 | `Vec<u8>` or `&[u8]`          |
+| `string<>`                 | `String`                      |
+| Fixed length array `[n]`   | `[T; N]`                      |
+| Variable length array `<>` | `Vec<T>` or `&[T]`            |
+| `struct`                   | `struct`                      |
+| `union`                    | `enum`                        |
+| `void`                     | Unit `struct` or unit variant |
+| `*` (optional-data)        | `Option`                      |
