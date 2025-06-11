@@ -1,6 +1,5 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
-assertion_line: 782
 expression: "expand(r#\"\n        #[derive(Facet)]\n        struct Person {\n            #[facet(rename = \"firstName\")]\n            first_name: String,\n            #[facet(rename = \"lastName\")]\n            last_name: String,\n            age: u32,\n        }\n        \"#)"
 ---
 #[used]
@@ -42,7 +41,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Person {
             .type_identifier("Person")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
-                    .repr(::facet::Repr::c())
+                    .repr(::facet::Repr::default())
                     .kind(::facet::StructKind::Struct)
                     .fields(fields)
                     .build(),

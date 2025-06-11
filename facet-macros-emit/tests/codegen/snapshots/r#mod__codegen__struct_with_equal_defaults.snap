@@ -1,6 +1,5 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
-assertion_line: 680
 expression: "expand(r#\"\n        #[derive(Facet)]\n        struct StructWithDefaults {\n            field1: i32 = 42,\n            field2: String = \"default\".to_string(),\n        }\n        \"#)"
 ---
 #[used]
@@ -38,7 +37,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithDefaults {
             .type_identifier("StructWithDefaults")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
-                    .repr(::facet::Repr::c())
+                    .repr(::facet::Repr::default())
                     .kind(::facet::StructKind::Struct)
                     .fields(fields)
                     .build(),

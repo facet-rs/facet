@@ -1,6 +1,5 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
-assertion_line: 710
 expression: "expand(r#\"\n        struct Foo<T> where T: Copy {\n            inner: Vec<T>,\n        }\n        \"#)"
 ---
 #[automatically_derived]
@@ -32,7 +31,7 @@ where
             }])
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
-                    .repr(::facet::Repr::c())
+                    .repr(::facet::Repr::default())
                     .kind(::facet::StructKind::Struct)
                     .fields(fields)
                     .build(),

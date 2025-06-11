@@ -1,6 +1,5 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
-assertion_line: 601
 expression: "expand(r#\"\n        #[derive(Facet)]\n        struct BarFoo {\n            bar: u32,\n            foo: String,\n        }\n        // The Drop impl doesn't affect the derive macro input:\n        // impl Drop for BarFoo { fn drop(&mut self) {} }\n        \"#)"
 ---
 #[used]
@@ -35,7 +34,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for BarFoo {
             .type_identifier("BarFoo")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
-                    .repr(::facet::Repr::c())
+                    .repr(::facet::Repr::default())
                     .kind(::facet::StructKind::Struct)
                     .fields(fields)
                     .build(),

@@ -1,6 +1,5 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
-assertion_line: 336
 expression: "expand(r#\"\n        #[derive(Facet)]\n        struct Foo {\n            /// This is a public field\n            pub bar: u32,\n        }\n        \"#)"
 ---
 #[used]
@@ -27,7 +26,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Foo {
             .type_identifier("Foo")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
-                    .repr(::facet::Repr::c())
+                    .repr(::facet::Repr::default())
                     .kind(::facet::StructKind::Struct)
                     .fields(fields)
                     .build(),

@@ -1,6 +1,5 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
-assertion_line: 901
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(rename_all = \"camelCase\")]\n        struct CamelCaseExample {\n            field_one: String,\n            field_two: String,\n        }\n        \"#)"
 ---
 #[used]
@@ -38,7 +37,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for CamelCaseExample {
             .type_identifier("CamelCaseExample")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
-                    .repr(::facet::Repr::c())
+                    .repr(::facet::Repr::default())
                     .kind(::facet::StructKind::Struct)
                     .fields(fields)
                     .build(),

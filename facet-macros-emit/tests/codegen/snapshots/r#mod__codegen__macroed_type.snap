@@ -1,6 +1,5 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
-assertion_line: 556
 expression: "expand(r#\"\n        #[derive(Debug, Facet, PartialEq)]\n        struct Macroed {\n            // NOTICE type is variable here\n            value: u32,\n        }\n        \"#)"
 ---
 #[used]
@@ -26,7 +25,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Macroed {
             .type_identifier("Macroed")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
-                    .repr(::facet::Repr::c())
+                    .repr(::facet::Repr::default())
                     .kind(::facet::StructKind::Struct)
                     .fields(fields)
                     .build(),

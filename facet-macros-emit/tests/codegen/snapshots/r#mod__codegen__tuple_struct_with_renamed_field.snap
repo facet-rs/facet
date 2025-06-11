@@ -1,6 +1,5 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
-assertion_line: 976
 expression: "expand(r#\"\n        #[derive(Facet)]\n        struct Point(\n            #[facet(rename = \"x_coordinate\")]\n            f32,\n            #[facet(rename = \"y_coordinate\")]\n            f32,\n            #[facet(rename = \"z_coordinate\")]\n            f32,\n        );\n        \"#)"
 ---
 #[used]
@@ -42,7 +41,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Point {
             .type_identifier("Point")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
-                    .repr(::facet::Repr::c())
+                    .repr(::facet::Repr::default())
                     .kind(::facet::StructKind::TupleStruct)
                     .fields(fields)
                     .build(),

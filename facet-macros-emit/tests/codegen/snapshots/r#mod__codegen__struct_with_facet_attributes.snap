@@ -64,7 +64,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithAttributes {
             .type_identifier("StructWithAttributes")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
-                    .repr(::facet::Repr::c())
+                    .repr(::facet::Repr::default())
                     .kind(::facet::StructKind::Struct)
                     .fields(fields)
                     .build(),

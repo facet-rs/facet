@@ -1,6 +1,5 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
-assertion_line: 405
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(transparent)]\n        struct Blah<'a, T: Facet + core::hash::Hash, const C: usize = 3>(T, core::marker::PhantomData<&'a [u8; C]>)\n        where\n            T: Debug; // Added a Debug bound for demonstration\n        \"#)"
 ---
 #[automatically_derived]
@@ -44,7 +43,7 @@ where
             }])
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
-                    .repr(::facet::Repr::c())
+                    .repr(::facet::Repr::transparent())
                     .kind(::facet::StructKind::TupleStruct)
                     .fields(fields)
                     .build(),

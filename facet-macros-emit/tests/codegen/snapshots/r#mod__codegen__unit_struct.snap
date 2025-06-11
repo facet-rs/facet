@@ -1,6 +1,5 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
-assertion_line: 18
 expression: "expand(r#\"\n        #[derive(Facet)]\n        struct UnitStruct;\n        \"#)"
 ---
 #[used]
@@ -20,7 +19,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for UnitStruct {
             .type_identifier("UnitStruct")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
-                    .repr(::facet::Repr::c())
+                    .repr(::facet::Repr::default())
                     .kind(::facet::StructKind::Unit)
                     .fields(fields)
                     .build(),

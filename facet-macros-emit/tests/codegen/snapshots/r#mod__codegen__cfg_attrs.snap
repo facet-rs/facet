@@ -1,6 +1,5 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
-assertion_line: 473
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[cfg_attr(feature = \"testfeat\", derive(Debug))]\n        #[cfg_attr(feature = \"testfeat\", facet(deny_unknown_fields))]\n        pub struct CubConfig {}\n        \"#)"
 ---
 #[used]
@@ -20,7 +19,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for CubConfig {
             .type_identifier("CubConfig")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
-                    .repr(::facet::Repr::c())
+                    .repr(::facet::Repr::default())
                     .kind(::facet::StructKind::Struct)
                     .fields(fields)
                     .build(),

@@ -1,6 +1,5 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
-assertion_line: 1097
 expression: "expand(r#\"\n        #[derive(Facet)]\n        struct Foo<'a> {\n            #[facet(default)]\n            name: Option<Cow<'a, str>>,\n        }\n        \"#)"
 ---
 #[automatically_derived]
@@ -30,7 +29,7 @@ where
             .type_identifier("Foo")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
-                    .repr(::facet::Repr::c())
+                    .repr(::facet::Repr::default())
                     .kind(::facet::StructKind::Struct)
                     .fields(fields)
                     .build(),

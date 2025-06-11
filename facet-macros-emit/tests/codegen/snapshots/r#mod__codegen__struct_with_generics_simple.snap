@@ -1,6 +1,5 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
-assertion_line: 176
 expression: "expand(r#\"\n        #[derive(Facet)]\n        struct StructWithGenericsSimple<T, U> {\n            field1: T,\n            field2: U,\n        }\n        \"#)"
 ---
 #[automatically_derived]
@@ -41,7 +40,7 @@ where
             ])
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
-                    .repr(::facet::Repr::c())
+                    .repr(::facet::Repr::default())
                     .kind(::facet::StructKind::Struct)
                     .fields(fields)
                     .build(),

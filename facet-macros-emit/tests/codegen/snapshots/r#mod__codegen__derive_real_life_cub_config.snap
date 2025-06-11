@@ -1,6 +1,5 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
-assertion_line: 520
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[cfg_attr(feature = \"testfeat\", facet(deny_unknown_fields))]\n        pub struct CubConfig {\n            /// size the disk cache is allowed to use\n            #[cfg_attr(feature = \"testfeat\", facet(skip_serializing))]\n            #[cfg_attr(\n                feature = \"testfeat\",\n                facet(default = \"serde_defaults::default_disk_cache_size\")\n            )]\n            pub disk_cache_size: String,\n\n            /// Listen address without http, something like \"127.0.0.1:1111\"\n            #[cfg_attr(feature = \"testfeat\", facet(default = \"serde_defaults::address\"))]\n            pub address: std::string::String,\n\n            /// Something like `http://localhost:1118`\n            /// or `http://mom.svc.cluster.local:1118`, never\n            /// a trailing slash.\n            #[cfg_attr(feature = \"testfeat\", facet(default = \"serde_defaults::mom_base_url\"))]\n            pub mom_base_url: String,\n\n            /// API key used to talk to mom\n            #[cfg_attr(feature = \"testfeat\", facet(default = \"serde_defaults::mom_api_key\"))]\n            #[cfg_attr(feature = \"testfeat\", facet(sensitive))] // Example addition\n            pub mom_api_key: String,\n        }\n        \"#)"
 ---
 #[used]
@@ -59,7 +58,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for CubConfig {
             .type_identifier("CubConfig")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
-                    .repr(::facet::Repr::c())
+                    .repr(::facet::Repr::default())
                     .kind(::facet::StructKind::Struct)
                     .fields(fields)
                     .build(),

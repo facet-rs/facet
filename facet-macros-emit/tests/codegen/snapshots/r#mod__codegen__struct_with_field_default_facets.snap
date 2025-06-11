@@ -1,6 +1,5 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
-assertion_line: 693
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(default)]\n        struct ForFacetDefaultDemo {\n            #[facet(default)]\n            field1: u32,\n            #[facet(default = my_field_default_fn())]\n            field2: String,\n            field3: bool,\n        }\n        \"#)"
 ---
 #[used]
@@ -57,7 +56,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ForFacetDefaultDemo {
             .type_identifier("ForFacetDefaultDemo")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
-                    .repr(::facet::Repr::c())
+                    .repr(::facet::Repr::default())
                     .kind(::facet::StructKind::Struct)
                     .fields(fields)
                     .build(),

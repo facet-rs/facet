@@ -1,6 +1,5 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
-assertion_line: 732
 expression: "expand(r#\"\n        struct Foo<T>(Vec<T>);\n        \"#)"
 ---
 #[automatically_derived]
@@ -31,7 +30,7 @@ where
             }])
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
-                    .repr(::facet::Repr::c())
+                    .repr(::facet::Repr::default())
                     .kind(::facet::StructKind::TupleStruct)
                     .fields(fields)
                     .build(),

@@ -1,6 +1,5 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
-assertion_line: 871
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(rename_all = \"SCREAMING_SNAKE_CASE\")]\n        struct UpperCaseExample {\n            field_one: String,\n            field_two: String,\n        }\n        \"#)"
 ---
 #[used]
@@ -38,7 +37,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for UpperCaseExample {
             .type_identifier("UpperCaseExample")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
-                    .repr(::facet::Repr::c())
+                    .repr(::facet::Repr::default())
                     .kind(::facet::StructKind::Struct)
                     .fields(fields)
                     .build(),

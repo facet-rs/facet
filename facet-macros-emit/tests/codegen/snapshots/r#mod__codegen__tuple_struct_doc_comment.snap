@@ -1,6 +1,5 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
-assertion_line: 360
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(transparent)]\n        /// This is a struct for sure\n        struct Blah(u32);\n        \"#)"
 ---
 #[used]
@@ -26,7 +25,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Blah {
             .type_identifier("Blah")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
-                    .repr(::facet::Repr::c())
+                    .repr(::facet::Repr::transparent())
                     .kind(::facet::StructKind::TupleStruct)
                     .fields(fields)
                     .build(),

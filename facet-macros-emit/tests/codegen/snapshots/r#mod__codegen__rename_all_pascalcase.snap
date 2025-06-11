@@ -1,6 +1,5 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
-assertion_line: 886
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(rename_all = \"PascalCase\")]\n        struct PascalCaseExample {\n            field_one: String,\n            field_two: String,\n        }\n        \"#)"
 ---
 #[used]
@@ -38,7 +37,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for PascalCaseExample {
             .type_identifier("PascalCaseExample")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
-                    .repr(::facet::Repr::c())
+                    .repr(::facet::Repr::default())
                     .kind(::facet::StructKind::Struct)
                     .fields(fields)
                     .build(),

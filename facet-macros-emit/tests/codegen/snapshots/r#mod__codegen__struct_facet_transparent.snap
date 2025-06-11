@@ -77,7 +77,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Wrapper {
             .type_identifier("Wrapper")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
-                    .repr(::facet::Repr::c())
+                    .repr(::facet::Repr::default())
                     .kind(::facet::StructKind::TupleStruct)
                     .fields(fields)
                     .build(),

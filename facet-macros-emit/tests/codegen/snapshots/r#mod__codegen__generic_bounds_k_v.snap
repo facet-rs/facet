@@ -1,6 +1,5 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
-assertion_line: 721
 expression: "expand(r#\"\n        struct Foo<K, V> where K: Eq + Hash {\n            inner: HashMap<K, V>,\n        }\n        \"#)"
 ---
 #[automatically_derived]
@@ -39,7 +38,7 @@ where
             ])
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
-                    .repr(::facet::Repr::c())
+                    .repr(::facet::Repr::default())
                     .kind(::facet::StructKind::Struct)
                     .fields(fields)
                     .build(),

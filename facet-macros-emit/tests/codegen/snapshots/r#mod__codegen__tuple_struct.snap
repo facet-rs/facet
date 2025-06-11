@@ -1,6 +1,5 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
-assertion_line: 28
 expression: "expand(r#\"\n        #[derive(Facet)]\n        struct TupleStruct(i32, String);\n        \"#)"
 ---
 #[used]
@@ -37,7 +36,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for TupleStruct {
             .type_identifier("TupleStruct")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()
-                    .repr(::facet::Repr::c())
+                    .repr(::facet::Repr::default())
                     .kind(::facet::StructKind::TupleStruct)
                     .fields(fields)
                     .build(),
