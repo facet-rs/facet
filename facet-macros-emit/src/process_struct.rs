@@ -197,6 +197,13 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     let struct_name = &ps.container.name;
     let struct_name_str = struct_name.to_string();
 
+    // TODO: I assume the `PrimitiveRepr` is only relevant for enums, and does not need to be preserved?
+    let repr = match &ps.container.attrs.repr {
+        PRepr::Transparent => quote! { ::facet::Repr::transparent() },
+        PRepr::Rust(_) => quote! { ::facet::Repr::default() },
+        PRepr::C(_) => quote! { ::facet::Repr::c() },
+    };
+
     // Use PStruct for kind and fields
     let (kind, fields_vec) = match &ps.kind {
         PStructKind::Struct { fields } => {
@@ -506,7 +513,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                     .type_identifier(#struct_name_str)
                     #type_params // Still from parsed.generics
                     .ty(::facet::Type::User(::facet::UserType::Struct(::facet::StructType::builder()
-                        .repr(::facet::Repr::c())
+                        .repr(#repr)
                         .kind(#kind)
                         .fields(fields)
                         .build()

@@ -482,7 +482,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkStruct {
             .type_identifier("KitchenSinkStruct")
             .ty(crate::Type::User(crate::UserType::Struct(
                 crate::StructType::builder()
-                    .repr(crate::Repr::c())
+                    .repr(crate::Repr::default())
                     .kind(crate::StructKind::Struct)
                     .fields(fields)
                     .build(),
@@ -910,7 +910,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for Point {
             .type_identifier("Point")
             .ty(crate::Type::User(crate::UserType::Struct(
                 crate::StructType::builder()
-                    .repr(crate::Repr::c())
+                    .repr(crate::Repr::default())
                     .kind(crate::StructKind::Struct)
                     .fields(fields)
                     .build(),
