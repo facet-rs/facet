@@ -55,7 +55,41 @@ impl core::fmt::Display for Type<'_> {
                 write!(f, "Sequence(Slice(&[{t}]))")?;
             }
             Type::User(UserType::Struct(struct_type)) => {
-                write!(f, "User(Struct(«kind: {:?}»))", struct_type.kind)?;
+                struct __Display<'a>(&'a StructType<'a>);
+                impl core::fmt::Display for __Display<'_> {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "«")?; // Guillemet indicates some kind of fake syntax.
+                        write!(f, "kind: {:?}", self.0.kind)?;
+                        // Field count for `TupleStruct` and `Tuple`, and field names for `Struct`.
+                        // For `Unit`, we don't show anything.
+                        if let StructKind::Struct = self.0.kind {
+                            write!(f, ", fields: (")?;
+                            let mut fields_iter = self.0.fields.iter();
+                            if let Some(field) = fields_iter.next() {
+                                write!(f, "{}", field.name)?;
+                                for field in fields_iter {
+                                    write!(f, ", {}", field.name)?;
+                                }
+                            }
+                            write!(f, ")")?;
+                        } else if let StructKind::TupleStruct | StructKind::Tuple = self.0.kind {
+                            write!(f, ", fields: {}", self.0.fields.len())?;
+                        }
+                        // Only show the `#[repr(_)]` if it's not `Rust`.
+                        if let BaseRepr::C = self.0.repr.base {
+                            write!(f, ", repr: C")?;
+                        } else if let BaseRepr::Transparent = self.0.repr.base {
+                            write!(f, ", repr: transparent")?;
+                        }
+                        // Display as a "flag" if the type is packed.
+                        if self.0.repr.packed {
+                            write!(f, ", packed")?;
+                        }
+                        write!(f, "»")
+                    }
+                }
+                let show_struct = __Display(struct_type);
+                write!(f, "User(Struct({show_struct}))")?;
             }
             Type::User(UserType::Enum(_enum_type)) => {
                 write!(f, "User(Enum(_))")?;
