@@ -68,6 +68,13 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     // Determine enum repr (already resolved by PEnum::parse())
     let valid_repr = &pe.repr;
 
+    // Are these relevant for enums? Or is it always `repr(C)` if a `PrimitiveRepr` is present?
+    let repr = match &valid_repr {
+        PRepr::Transparent => unreachable!("this should be caught by PRepr::parse"),
+        PRepr::Rust(_) => quote! { ::facet::Repr::default() },
+        PRepr::C(_) => quote! { ::facet::Repr::c() },
+    };
+
     // Helper for EnumRepr TS (token stream) generation for primitives
     fn enum_repr_ts_from_primitive(primitive_repr: PrimitiveRepr) -> TokenStream {
         let type_name_str = primitive_repr.type_name().to_string();
@@ -590,7 +597,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                             // Use variant expressions that just reference the shadow structs
                             // which are now defined above
                             .variants(__facet_variants)
-                            .repr(::facet::Repr::c())
+                            .repr(#repr)
                             .enum_repr(#enum_repr_type_tokenstream)
                             .build())
                     ))

@@ -1627,7 +1627,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
             .ty(crate::Type::User(crate::UserType::Enum(
                 crate::EnumType::builder()
                     .variants(__facet_variants)
-                    .repr(crate::Repr::c())
+                    .repr(crate::Repr::default())
                     .enum_repr(crate::EnumRepr::U8)
                     .build(),
             )))
@@ -2139,7 +2139,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for SubEnum {
             .ty(crate::Type::User(crate::UserType::Enum(
                 crate::EnumType::builder()
                     .variants(__facet_variants)
-                    .repr(crate::Repr::c())
+                    .repr(crate::Repr::default())
                     .enum_repr(crate::EnumRepr::U8)
                     .build(),
             )))
