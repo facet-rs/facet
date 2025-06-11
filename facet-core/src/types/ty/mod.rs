@@ -94,8 +94,38 @@ impl core::fmt::Display for Type<'_> {
             Type::User(UserType::Enum(_enum_type)) => {
                 write!(f, "User(Enum(_))")?;
             }
-            Type::User(UserType::Union(_union_type)) => {
-                write!(f, "User(Union(_))")?;
+            Type::User(UserType::Union(union_type)) => {
+                struct __Display<'a>(&'a UnionType<'a>);
+                impl<'a> core::fmt::Display for __Display<'a> {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "«")?;
+                        write!(f, "fields: (")?;
+                        let mut fields_iter = self.0.fields.iter();
+                        if let Some(field) = fields_iter.next() {
+                            write!(f, "{}", field.name)?;
+                            for field in fields_iter {
+                                write!(f, ", {}", field.name)?;
+                            }
+                        }
+                        write!(f, ")")?;
+                        // Only show the `#[repr(_)]` if it's not `Rust`.
+                        if let BaseRepr::C = self.0.repr.base {
+                            write!(f, ", repr: C")?;
+                        } else if let BaseRepr::Transparent = self.0.repr.base {
+                            // Nothing needs to change if `transparent_unions` is stabilized.
+                            // <https://github.com/rust-lang/rust/issues/60405>
+                            write!(f, ", repr: transparent")?;
+                        }
+                        // Display as a "flag" if the type is packed.
+                        if self.0.repr.packed {
+                            write!(f, ", packed")?;
+                        }
+                        write!(f, "»")?;
+                        Ok(())
+                    }
+                }
+                let show_union = __Display(union_type);
+                write!(f, "User(Union({show_union}))")?;
             }
             Type::User(UserType::Opaque) => {
                 write!(f, "User(Opaque)")?;
