@@ -49,7 +49,7 @@ jobs:
           cd $PARENT_DIR/limpid
           
           # Run limpid with markdown output
-          ./target/release/limpid --markdown > $GITHUB_WORKSPACE/bloat-report.md
+          ./target/release/limpid --markdown $GITHUB_WORKSPACE/bloat-report.md
 
       - name: ✨ Save PR info
         run: |
