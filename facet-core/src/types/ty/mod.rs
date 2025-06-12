@@ -91,8 +91,50 @@ impl core::fmt::Display for Type<'_> {
                 let show_struct = __Display(struct_type);
                 write!(f, "User(Struct({show_struct}))")?;
             }
-            Type::User(UserType::Enum(_enum_type)) => {
-                write!(f, "User(Enum(_))")?;
+            Type::User(UserType::Enum(enum_type)) => {
+                struct __Display<'a>(&'a EnumType<'a>);
+                impl<'a> core::fmt::Display for __Display<'a> {
+                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "«")?;
+                        write!(f, "variants: (")?;
+                        let mut variants_iter = self.0.variants.iter();
+                        if let Some(variant) = variants_iter.next() {
+                            write!(f, "{}", variant.name)?;
+                            for variant in variants_iter {
+                                write!(f, ", {}", variant.name)?;
+                            }
+                        }
+                        write!(f, ")")?;
+                        match (self.0.repr.base, self.0.enum_repr) {
+                            (BaseRepr::C, EnumRepr::RustNPO) => {
+                                unreachable!("this hint is only valid for `repr(Rust)`")
+                            }
+                            (BaseRepr::C, EnumRepr::U8) => write!(f, ", repr: (C, u8)")?,
+                            (BaseRepr::C, EnumRepr::U16) => write!(f, ", repr: (C, u16)")?,
+                            (BaseRepr::C, EnumRepr::U32) => write!(f, ", repr: (C, u32)")?,
+                            (BaseRepr::C, EnumRepr::U64) => write!(f, ", repr: (C, u64)")?,
+                            (BaseRepr::C, EnumRepr::USize) => write!(f, ", repr: (C, usize)")?,
+                            (BaseRepr::C, EnumRepr::I8) => write!(f, ", repr: (C, i8)")?,
+                            (BaseRepr::C, EnumRepr::I16) => write!(f, ", repr: (C, i16)")?,
+                            (BaseRepr::C, EnumRepr::I32) => write!(f, ", repr: (C, i32)")?,
+                            (BaseRepr::C, EnumRepr::I64) => write!(f, ", repr: (C, i64)")?,
+                            (BaseRepr::C, EnumRepr::ISize) => write!(f, ", repr: (C, isize)")?,
+                            // Extra variant hints are not supported for `repr(transparent)`.
+                            (BaseRepr::Transparent, _) => {
+                                write!(f, ", repr: transparent")?;
+                            }
+                            // Only show the `#[repr(_)]` if it's not `Rust`.
+                            (BaseRepr::Rust, _) => (),
+                        }
+                        // Display as a "flag" if the type is packed.
+                        if self.0.repr.packed {
+                            write!(f, ", packed")?;
+                        }
+                        write!(f, "»")
+                    }
+                }
+                let show_enum = __Display(enum_type);
+                write!(f, "User(Enum({show_enum}))")?;
             }
             Type::User(UserType::Union(union_type)) => {
                 struct __Display<'a>(&'a UnionType<'a>);
