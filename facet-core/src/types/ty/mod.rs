@@ -41,6 +41,10 @@ pub enum Type<'shape> {
     Pointer(PointerType<'shape>),
 }
 
+// This implementation of `Display` is user-facing output, where the users are developers.
+// It is intended to show structure up to a certain depth, but for readability and brevity,
+// some complicated types have custom formatting surrounded by guillemet characters
+// (`«` and `»`) to indicate divergence from AST.
 impl core::fmt::Display for Type<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -49,16 +53,16 @@ impl core::fmt::Display for Type<'_> {
                 write!(f, "{self:?}")?;
             }
             Type::Sequence(SequenceType::Array(ArrayType { t, n })) => {
-                write!(f, "Sequence(Array([{t}, {n}]))")?;
+                write!(f, "Sequence(Array(«[{t}, {n}]»))")?;
             }
             Type::Sequence(SequenceType::Slice(SliceType { t })) => {
-                write!(f, "Sequence(Slice(&[{t}]))")?;
+                write!(f, "Sequence(Slice(«&[{t}]»))")?;
             }
             Type::User(UserType::Struct(struct_type)) => {
                 struct __Display<'a>(&'a StructType<'a>);
                 impl core::fmt::Display for __Display<'_> {
                     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                        write!(f, "«")?; // Guillemet indicates some kind of fake syntax.
+                        write!(f, "«")?;
                         write!(f, "kind: {:?}", self.0.kind)?;
                         // Field count for `TupleStruct` and `Tuple`, and field names for `Struct`.
                         // For `Unit`, we don't show anything.
@@ -201,17 +205,18 @@ impl core::fmt::Display for Type<'_> {
             Type::Pointer(PointerType::Reference(ptr_type)) => {
                 let show_ref = if ptr_type.mutable { "&mut " } else { "&" };
                 let target = ptr_type.target();
-                write!(f, "Pointer(Reference({show_ref}{target}))")?;
+                write!(f, "Pointer(Reference(«{show_ref}{target}»))")?;
             }
             Type::Pointer(PointerType::Raw(ptr_type)) => {
                 let show_raw = if ptr_type.mutable { "*mut " } else { "*const " };
                 let target = ptr_type.target();
-                write!(f, "Pointer(Raw({show_raw}{target}))")?;
+                write!(f, "Pointer(Raw(«{show_raw}{target}»))")?;
             }
             Type::Pointer(PointerType::Function(fn_ptr_def)) => {
                 struct __Display<'a>(&'a FunctionPointerDef);
                 impl core::fmt::Display for __Display<'_> {
                     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                        write!(f, "«")?;
                         write!(f, "fn(")?;
                         let mut args_iter = self.0.parameters.iter().map(|f| f());
                         if let Some(arg) = args_iter.next() {
@@ -222,6 +227,7 @@ impl core::fmt::Display for Type<'_> {
                         }
                         let ret_ty = (self.0.return_type)();
                         write!(f, ") -> {ret_ty}")?;
+                        write!(f, "»")?;
                         Ok(())
                     }
                 }
