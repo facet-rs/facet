@@ -75,15 +75,25 @@ impl core::fmt::Display for Type<'_> {
                         } else if let StructKind::TupleStruct | StructKind::Tuple = self.0.kind {
                             write!(f, ", fields: {}", self.0.fields.len())?;
                         }
-                        // Only show the `#[repr(_)]` if it's not `Rust`.
+                        // Only show the `#[repr(_)]` if it's not `Rust` (unless it's `repr(packed)`).
                         if let BaseRepr::C = self.0.repr.base {
-                            write!(f, ", repr: C")?;
+                            if self.0.repr.packed {
+                                // If there are multiple `repr` hints, display as a parenthesized list.
+                                write!(f, ", repr: (C, packed)")?;
+                            } else {
+                                write!(f, ", repr: C")?;
+                            }
                         } else if let BaseRepr::Transparent = self.0.repr.base {
                             write!(f, ", repr: transparent")?;
-                        }
-                        // Display as a "flag" if the type is packed.
-                        if self.0.repr.packed {
-                            write!(f, ", packed")?;
+                            // Verbatim compiler error:
+                            assert!(
+                                !self.0.repr.packed,
+                                "transparent struct cannot have other repr hints"
+                            );
+                        } else if self.0.repr.packed {
+                            // This is potentially meaningless, but we'll show it anyway.
+                            // In this circumstance, you can assume it's `repr(Rust)`.
+                            write!(f, ", repr: packed")?;
                         }
                         write!(f, "»")
                     }
@@ -105,31 +115,37 @@ impl core::fmt::Display for Type<'_> {
                             }
                         }
                         write!(f, ")")?;
-                        match (self.0.repr.base, self.0.enum_repr) {
-                            (BaseRepr::C, EnumRepr::RustNPO) => {
-                                unreachable!("this hint is only valid for `repr(Rust)`")
-                            }
-                            (BaseRepr::C, EnumRepr::U8) => write!(f, ", repr: (C, u8)")?,
-                            (BaseRepr::C, EnumRepr::U16) => write!(f, ", repr: (C, u16)")?,
-                            (BaseRepr::C, EnumRepr::U32) => write!(f, ", repr: (C, u32)")?,
-                            (BaseRepr::C, EnumRepr::U64) => write!(f, ", repr: (C, u64)")?,
-                            (BaseRepr::C, EnumRepr::USize) => write!(f, ", repr: (C, usize)")?,
-                            (BaseRepr::C, EnumRepr::I8) => write!(f, ", repr: (C, i8)")?,
-                            (BaseRepr::C, EnumRepr::I16) => write!(f, ", repr: (C, i16)")?,
-                            (BaseRepr::C, EnumRepr::I32) => write!(f, ", repr: (C, i32)")?,
-                            (BaseRepr::C, EnumRepr::I64) => write!(f, ", repr: (C, i64)")?,
-                            (BaseRepr::C, EnumRepr::ISize) => write!(f, ", repr: (C, isize)")?,
+                        // Only show the `#[repr(_)]` if it's not `Rust`.
+                        if let BaseRepr::C = self.0.repr.base {
+                            // TODO: `EnumRepr` should probably be optional, and contain the fields of `Repr`.
+                            // I think it is wrong to have both `Repr` and `EnumRepr` in the same type,
+                            // since that allows constructing impossible states.
+                            let repr_ty = match self.0.enum_repr {
+                                EnumRepr::RustNPO => unreachable!(
+                                    "null-pointer optimization is only valid for `repr(Rust)`"
+                                ),
+                                EnumRepr::U8 => "u8",
+                                EnumRepr::U16 => "u16",
+                                EnumRepr::U32 => "u32",
+                                EnumRepr::U64 => "u64",
+                                EnumRepr::USize => "usize",
+                                EnumRepr::I8 => "i8",
+                                EnumRepr::I16 => "i16",
+                                EnumRepr::I32 => "i32",
+                                EnumRepr::I64 => "i64",
+                                EnumRepr::ISize => "isize",
+                            };
+                            // If there are multiple `repr` hints, display as a parenthesized list.
+                            write!(f, ", repr: (C, {repr_ty})")?;
+                        } else if let BaseRepr::Transparent = self.0.repr.base {
                             // Extra variant hints are not supported for `repr(transparent)`.
-                            (BaseRepr::Transparent, _) => {
-                                write!(f, ", repr: transparent")?;
-                            }
-                            // Only show the `#[repr(_)]` if it's not `Rust`.
-                            (BaseRepr::Rust, _) => (),
+                            write!(f, ", repr: transparent")?;
                         }
-                        // Display as a "flag" if the type is packed.
-                        if self.0.repr.packed {
-                            write!(f, ", packed")?;
-                        }
+                        // Verbatim compiler error:
+                        assert!(
+                            !self.0.repr.packed,
+                            "attribute should be applied to a struct or union"
+                        );
                         write!(f, "»")
                     }
                 }
@@ -150,17 +166,27 @@ impl core::fmt::Display for Type<'_> {
                             }
                         }
                         write!(f, ")")?;
-                        // Only show the `#[repr(_)]` if it's not `Rust`.
+                        // Only show the `#[repr(_)]` if it's not `Rust` (unless it's `repr(packed)`).
                         if let BaseRepr::C = self.0.repr.base {
-                            write!(f, ", repr: C")?;
+                            if self.0.repr.packed {
+                                // If there are multiple `repr` hints, display as a parenthesized list.
+                                write!(f, ", repr: (C, packed)")?;
+                            } else {
+                                write!(f, ", repr: C")?;
+                            }
                         } else if let BaseRepr::Transparent = self.0.repr.base {
                             // Nothing needs to change if `transparent_unions` is stabilized.
                             // <https://github.com/rust-lang/rust/issues/60405>
                             write!(f, ", repr: transparent")?;
-                        }
-                        // Display as a "flag" if the type is packed.
-                        if self.0.repr.packed {
-                            write!(f, ", packed")?;
+                            // Verbatim compiler error:
+                            assert!(
+                                !self.0.repr.packed,
+                                "transparent union cannot have other repr hints"
+                            );
+                        } else if self.0.repr.packed {
+                            // Here `Rust` is displayed because a lint asks you to specify explicitly,
+                            // despite the fact that `repr(Rust)` is the default.
+                            write!(f, ", repr: (Rust, packed)")?;
                         }
                         write!(f, "»")?;
                         Ok(())
