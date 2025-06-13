@@ -56,11 +56,11 @@ jobs:
           script: |
             const pr_number = ${{ github.event.inputs.pr_number }};
             
-            // Find the most recent successful cargo-bloat workflow run for this PR
+            // Find the most recent successful Binary Size Analysis workflow run for this PR
             const { data: runs } = await github.rest.actions.listWorkflowRuns({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              workflow_id: 'cargo-bloat.yml',
+              workflow_id: 'limpid.yml',
               event: 'pull_request',
               status: 'success'
             });
@@ -77,7 +77,7 @@ jobs:
             );
             
             if (!targetRun) {
-              throw new Error(`No successful cargo-bloat workflow run found for PR #${pr_number}`);
+              throw new Error(`No successful Binary Size Analysis workflow run found for PR #${pr_number}`);
             }
             
             return targetRun.id;
@@ -85,7 +85,7 @@ jobs:
       - name: ✨ Download analysis artifacts
         uses: dawidd6/action-download-artifact@v6
         with:
-          workflow: cargo-bloat.yml
+          workflow: limpid.yml
           run_id: ${{ steps.find_run.outputs.result }}
           name: bloat-analysis-report
           path: ./artifacts

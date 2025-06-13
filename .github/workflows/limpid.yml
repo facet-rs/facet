@@ -1,0 +1,56 @@
+name: Binary Size Analysis
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  bloat-check:
+    runs-on: depot-ubuntu-24.04-16
+
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest-amd64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: ✨ Configure git safe directory
+        shell: bash
+        run: |
+          git config --global --add safe.directory $GITHUB_WORKSPACE
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: ✨ Clone limpid alongside facet
+        shell: bash
+        run: |
+          # Get the parent directory of the facet repository
+          PARENT_DIR=$(dirname $GITHUB_WORKSPACE)
+          cd $PARENT_DIR
+
+          # Clone limpid repository
+          git clone https://github.com/facet-rs/limpid.git
+
+          # Configure git safe directory for limpid
+          git config --global --add safe.directory $PARENT_DIR/limpid
+
+      - name: ✨ Build limpid
+        shell: bash
+        run: |
+          PARENT_DIR=$(dirname $GITHUB_WORKSPACE)
+          cd $PARENT_DIR/limpid
+          cargo run -- --markdown $GITHUB_WORKSPACE/bloat-report.md
+
+      - name: ✨ Save PR info
+        run: |
+          echo "${{ github.event.pull_request.number }}" > pr-number.txt
+
+      - name: ✨ Upload analysis report
+        uses: actions/upload-artifact@v4
+        with:
+          name: bloat-analysis-report
+          path: |
+            bloat-report.md
+            pr-number.txt
+          retention-days: 7
