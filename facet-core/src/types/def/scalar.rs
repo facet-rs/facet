@@ -70,6 +70,8 @@ pub enum ScalarAffinity<'shape> {
     UUID(UuidAffinity),
     /// ULID or ULID-like identifier, containing 16 bytes of information
     ULID(UlidAffinity),
+    /// OID or OID-like identifier, containing 39 bytes of information
+    OID(OidAffinity),
     /// Timestamp or Datetime-like scalar affinity
     Time(TimeAffinity<'shape>),
     /// Something you're not supposed to look inside of
@@ -131,6 +133,11 @@ impl<'shape> ScalarAffinity<'shape> {
     /// Returns a UlidAffinityBuilder
     pub const fn ulid() -> UlidAffinityBuilder {
         UlidAffinityBuilder::new()
+    }
+
+    /// Returns a OidAffinityBuilder
+    pub const fn oid() -> OidAffinityBuilder {
+        OidAffinityBuilder::new()
     }
 
     /// Returns an TimeAffinityBuilder
@@ -792,6 +799,36 @@ impl UlidAffinityBuilder {
     /// Builds the ScalarAffinity
     pub const fn build(self) -> ScalarAffinity<'static> {
         ScalarAffinity::ULID(UlidAffinity {})
+    }
+}
+
+/// Definition for OID and OID-like scalar affinities
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[repr(C)]
+#[non_exhaustive]
+pub struct OidAffinity {}
+
+impl OidAffinity {
+    /// Returns a builder for UuidAffinity
+    pub const fn builder() -> OidAffinityBuilder {
+        OidAffinityBuilder::new()
+    }
+}
+
+/// Builder for UlidAffinity
+#[repr(C)]
+pub struct OidAffinityBuilder {}
+
+impl OidAffinityBuilder {
+    /// Creates a new UlidAffinityBuilder
+    #[allow(clippy::new_without_default)]
+    pub const fn new() -> Self {
+        OidAffinityBuilder {}
+    }
+
+    /// Builds the ScalarAffinity
+    pub const fn build(self) -> ScalarAffinity<'static> {
+        ScalarAffinity::OID(OidAffinity {})
     }
 }
 

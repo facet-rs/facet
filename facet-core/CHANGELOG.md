@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Add support for `const_oid::ObjectIdentifier` and `ScalarAffinity::OID`
+
 ## [0.27.12](https://github.com/facet-rs/facet/compare/facet-core-v0.27.11...facet-core-v0.27.12) - 2025-06-04
 
 ### Other

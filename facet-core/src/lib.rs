@@ -59,6 +59,9 @@ mod impls_url;
 #[cfg(feature = "jiff02")]
 mod impls_jiff;
 
+#[cfg(feature = "const-oid")]
+mod impls_const_oid;
+
 // Const type Id
 mod typeid;
 pub use typeid::*;

@@ -96,6 +96,7 @@ impl<'shape> core::fmt::Debug for Def<'shape> {
                     crate::ScalarAffinity::Url(_) => "Url",
                     crate::ScalarAffinity::UUID(_) => "UUID",
                     crate::ScalarAffinity::ULID(_) => "ULID",
+                    crate::ScalarAffinity::OID(_) => "OID",
                     crate::ScalarAffinity::Time(_) => "Time",
                     crate::ScalarAffinity::Opaque(_) => "Opaque",
                     crate::ScalarAffinity::Other(_) => "Other",
