@@ -1,4 +1,3 @@
-use proc_macro2::TokenStream;
 use unsynn::*;
 
 // Re-use the generics parser from our other module
@@ -42,7 +41,6 @@ pub fn parse_fn_shape_input(input: TokenStream) -> ParsedFnShapeInput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quote::quote;
 
     #[test]
     fn test_simple_function_name() {
