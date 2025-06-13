@@ -45,32 +45,54 @@ Thanks to all individual and corporate sponsors, without whom this work could no
 </picture>
 </a> </p>
 
-# facet-xdr
+# facet-asn1
 
-An XDR serializer and deserializer based on facet
+A `#![no_std]` ASN.1 serializer and deserializer based on facet
 
-## Reference
+Currently supports Distinguished Encoding Rules (DER) only
 
-| XDR IDL                    | Rust                          |
-|----------------------------|-------------------------------|
-| `int`                      | `i32`                         |
-| `unsigned int`             | `u32`                         |
-| `enum`                     | Unit `enum`                   |
-| `bool`                     | `bool`                        |
-| `hyper`                    | `i64`                         |
-| `unsigned hyper`           | `u64`                         |
-| `float`                    | `f32`                         |
-| `double`                   | `f64`                         |
-| `quadruple`                | Not currently supported       |
-| `opaque [n]`               | `[u8; N]`                     |
-| `opaque<>`                 | `Vec<u8>` or `&[u8]`          |
-| `string<>`                 | `String`                      |
-| Fixed length array `[n]`   | `[T; N]`                      |
-| Variable length array `<>` | `Vec<T>` or `&[T]`            |
-| `struct`                   | `struct`                      |
-| `union`                    | `enum`                        |
-| `void`                     | Unit `struct` or unit variant |
-| `*` (optional-data)        | `Option`                      |
+## Basic Types
+
+| ASN.1 Type        | Rust                                                                 |
+|-------------------|----------------------------------------------------------------------|
+| BOOLEAN           | `bool`                                                               |
+| INTEGER           | `i8`, `i16`, `i32`, or `i64`                                         |
+| OCTET STRING      | `Vec<u8>`                                                            |
+| NULL              | Any unit struct                                                      |
+| OBJECT IDENTIFIER | `const_oid::ObjectIdentifier` (with the `const-oid` feature enabled) |
+| REAL              | `f32` or `f64`                                                       |
+| UTF8String        | `String`                                                             |
+| CHOICE            | `enum`                                                               |
+| SEQUENCE          | `struct`                                                             |
+
+## Other ASN.1 Types
+
+Newtype structs using the `facet::Shape::type_tag` property can be used to create other basic types without any content validation:
+
+```rust
+#[derive(Debug, Clone, Facet, PartialEq, Eq)]
+#[facet(type_tag = "IA5String", transparent)]
+struct IA5String(String);
+```
+
+## Context Specific Type Tags
+
+You can also set context specific BER/DER tags to a given number. Implicit tags must be set as transparent.
+
+```rust
+// ImplicitString ::= [5] IMPLICIT UTF8String
+#[derive(Debug, Facet, PartialEq, Eq)]
+#[facet(type_tag = "5", transparent)]
+struct ImplicitString(String);
+
+// ExplciitString ::= [5] EXPLICIT UTF8String
+#[derive(Debug, Facet, PartialEq, Eq)]
+#[facet(type_tag = "5")]
+struct ExplicitString(String);
+```
+
+The tag classes `UNIVERSAL`, `APPLICATION`, and `PRIVATE` are also supported in `type_tag`s for greater flexibility.
+
 
 ## License
 

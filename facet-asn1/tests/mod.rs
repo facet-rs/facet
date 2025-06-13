@@ -213,6 +213,36 @@ fn test_serialize_null() {
     assert_eq!(&expected_der[..], &der[..]);
 }
 
+#[test]
+fn test_deserialize_octet_string() {
+    let der: [u8; 6] = [0x04, 0x04, 0x00, 0x01, 0x02, 0x03];
+    let octet_string: Vec<u8> = deserialize_der(&der).unwrap();
+    assert_eq!(octet_string, vec![0x00, 0x01, 0x02, 0x03]);
+}
+
+#[test]
+fn test_serialize_octet_string() {
+    let octet_string: Vec<u8> = vec![0x00, 0x01, 0x02, 0x03];
+    let der = to_vec_der(&octet_string).unwrap();
+    let expected_der: [u8; 6] = [0x04, 0x04, 0x00, 0x01, 0x02, 0x03];
+    assert_eq!(&expected_der[..], &der);
+}
+
+#[test]
+fn test_deserialize_object_identifier() {
+    let der: [u8; 5] = [0x06, 0x03, 0x55, 0x04, 0x31];
+    let oid: const_oid::ObjectIdentifier = deserialize_der(&der).unwrap();
+    assert_eq!(oid, const_oid::db::rfc4519::DISTINGUISHED_NAME);
+}
+
+#[test]
+fn test_serialize_object_identifier() {
+    let oid = const_oid::db::rfc4519::DISTINGUISHED_NAME;
+    let der = to_vec_der(&oid).unwrap();
+    let expected_der: [u8; 5] = [0x06, 0x03, 0x55, 0x04, 0x31];
+    assert_eq!(&expected_der[..], &der);
+}
+
 // Division ::= CHOICE {
 //   r-and-d [1] IMPLICIT SEQUENCE {
 //     labID INTEGER,

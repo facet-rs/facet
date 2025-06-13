@@ -12,6 +12,9 @@ use alloc::{
 };
 use core::{f64, num::FpCategory, str::FromStr};
 
+#[cfg(feature = "const-oid")]
+use const_oid::ObjectIdentifier;
+
 use facet_core::{
     Def, Facet, NumberBits, ScalarAffinity, Shape, ShapeAttribute, StructKind, Type, UserType,
 };
@@ -21,7 +24,9 @@ mod tag;
 
 const ASN1_TYPE_TAG_BOOLEAN: u8 = 0x01;
 const ASN1_TYPE_TAG_INTEGER: u8 = 0x02;
+const ASN1_TYPE_TAG_OCTET_STRING: u8 = 0x04;
 const ASN1_TYPE_TAG_NULL: u8 = 0x05;
+const ASN1_TYPE_TAG_OBJECT_IDENTIFIER: u8 = 0x06;
 const ASN1_TYPE_TAG_REAL: u8 = 0x09;
 const ASN1_TYPE_TAG_UTF8STRING: u8 = 0x0C;
 const ASN1_TYPE_TAG_SEQUENCE: u8 = 0x10;
@@ -272,19 +277,35 @@ fn serialize_der_recursive<'shape, 'w, W: Asn1Write>(
                 serializer.serialize_str(tag.unwrap_or(ASN1_TYPE_TAG_UTF8STRING), value);
                 Ok(())
             }
+            #[cfg(feature = "const-oid")]
+            ScalarAffinity::OID(_) => {
+                let value = pv.get::<ObjectIdentifier>().unwrap();
+                serializer.serialize_tlv(
+                    tag.unwrap_or(ASN1_TYPE_TAG_OBJECT_IDENTIFIER),
+                    value.as_bytes(),
+                );
+                Ok(())
+            }
             _ => Err(Asn1SerError::UnsupportedShape),
         },
-        (Def::List(_), _) => {
-            let pv = pv.into_list().unwrap();
-            let mut value = Vec::new();
-            for pv in pv.iter() {
-                let mut inner_serializer = DerSerializer { writer: &mut value };
-                serialize_der_recursive(pv, &mut inner_serializer, None)?;
+        (Def::List(ld), _) => {
+            if ld.t().is_type::<u8>() && shape.is_type::<Vec<u8>>() {
+                serializer.serialize_tlv(
+                    tag.unwrap_or(ASN1_TYPE_TAG_OCTET_STRING),
+                    pv.get::<Vec<u8>>().unwrap(),
+                );
+            } else {
+                let pv = pv.into_list().unwrap();
+                let mut value = Vec::new();
+                for pv in pv.iter() {
+                    let mut inner_serializer = DerSerializer { writer: &mut value };
+                    serialize_der_recursive(pv, &mut inner_serializer, None)?;
+                }
+                serializer.serialize_tlv(
+                    tag.unwrap_or(ASN1_TYPE_TAG_SEQUENCE | ASN1_FORM_CONSTRUCTED),
+                    &value,
+                );
             }
-            serializer.serialize_tlv(
-                tag.unwrap_or(ASN1_TYPE_TAG_SEQUENCE | ASN1_FORM_CONSTRUCTED),
-                &value,
-            );
             Ok(())
         }
         (Def::Option(_), _) => {
@@ -409,6 +430,14 @@ pub enum Asn1DeserError {
         /// Underlying UTF-8 error
         source: core::str::Utf8Error,
     },
+    #[cfg(feature = "const-oid")]
+    /// Invalid OID
+    InvalidOid {
+        /// Position of this error in bytes
+        position: usize,
+        /// Underlying const-oid error
+        source: const_oid::Error,
+    },
     /// Sequence length didn't match content length
     SequenceSizeMismatch {
         /// Position of the end of the sequence in bytes
@@ -446,6 +475,10 @@ impl core::fmt::Display for Asn1DeserError {
             Asn1DeserError::InvalidString { position, .. } => {
                 write!(f, "Invalid string at byte {}", position)
             }
+            #[cfg(feature = "const-oid")]
+            Asn1DeserError::InvalidOid { position, .. } => {
+                write!(f, "Invalid OID at byte {}", position)
+            }
             Asn1DeserError::SequenceSizeMismatch {
                 sequence_end,
                 content_end,
@@ -465,6 +498,8 @@ impl core::error::Error for Asn1DeserError {
         match self {
             Asn1DeserError::TypeTag(source) => Some(source),
             Asn1DeserError::InvalidString { source, .. } => Some(source),
+            #[cfg(feature = "const-oid")]
+            Asn1DeserError::InvalidOid { source, .. } => Some(source),
             _ => None,
         }
     }
@@ -518,11 +553,18 @@ fn ber_tag_for_shape(shape: &Shape<'_>) -> Result<Option<u8>, Asn1DeserError> {
                 _ => Err(Asn1DeserError::UnsupportedShape),
             },
             ScalarAffinity::String(_) => Ok(Some(type_tag.unwrap_or(ASN1_TYPE_TAG_UTF8STRING))),
+            ScalarAffinity::OID(_) => Ok(Some(type_tag.unwrap_or(ASN1_TYPE_TAG_OBJECT_IDENTIFIER))),
             _ => Err(Asn1DeserError::UnsupportedShape),
         },
-        (Def::List(_), _) => Ok(Some(
-            type_tag.unwrap_or(ASN1_TYPE_TAG_SEQUENCE) | ASN1_FORM_CONSTRUCTED,
-        )),
+        (Def::List(ld), _) => {
+            if ld.t().is_type::<u8>() && shape.is_type::<Vec<u8>>() {
+                Ok(Some(type_tag.unwrap_or(ASN1_TYPE_TAG_OCTET_STRING)))
+            } else {
+                Ok(Some(
+                    type_tag.unwrap_or(ASN1_TYPE_TAG_SEQUENCE) | ASN1_FORM_CONSTRUCTED,
+                ))
+            }
+        }
         (Def::Option(od), _) => Ok(type_tag.or(ber_tag_for_shape(od.t)?)),
         (_, Type::User(ut)) => match ut {
             UserType::Struct(st) => match st.kind {
@@ -730,14 +772,31 @@ impl<'shape, 'input> Asn1DeserializerStack<'input> {
                     wip.set(value.to_string()).unwrap();
                     Ok(wip)
                 }
+                #[cfg(feature = "const-oid")]
+                ScalarAffinity::OID(_) => {
+                    let bytes = self.next_tlv(tag_for_shape.unwrap())?;
+                    let value = ObjectIdentifier::from_bytes(bytes).map_err(|source| {
+                        Asn1DeserError::InvalidOid {
+                            position: self.pos,
+                            source,
+                        }
+                    })?;
+                    wip.set(value).unwrap();
+                    Ok(wip)
+                }
                 _ => Err(Asn1DeserError::UnsupportedShape),
             },
             (Def::List(_), _) => {
-                let len = self.next_tl(tag_for_shape.unwrap())?;
-                self.stack.push(DeserializeTask::Pop(PopReason::ListVal {
-                    end: self.pos + len,
-                }));
-                self.stack.push(DeserializeTask::Value { with_tag: None });
+                if shape.is_type::<Vec<u8>>() {
+                    let bytes = self.next_tlv(tag_for_shape.unwrap())?;
+                    wip.set(bytes.to_vec()).unwrap();
+                } else {
+                    let len = self.next_tl(tag_for_shape.unwrap())?;
+                    self.stack.push(DeserializeTask::Pop(PopReason::ListVal {
+                        end: self.pos + len,
+                    }));
+                    self.stack.push(DeserializeTask::Value { with_tag: None });
+                }
                 Ok(wip)
             }
             (Def::Option(od), _) => {

@@ -13,12 +13,15 @@ categories = ["encoding", "parsing", "data-structures"]
 # TODO features for different encoding rules
 std = ["alloc", "facet-core/std", "facet-reflect/std"]
 alloc = ["facet-core/alloc", "facet-reflect/alloc"]
-default = ["std"]
+default = ["std", "const-oid"]
+const-oid = ["facet-core/const-oid", "dep:const-oid"]
 
 [dependencies]
 facet-core = { version = "0.27.12", path = "../facet-core", default-features = false }
 facet-reflect = { version = "0.27.12", path = "../facet-reflect", default-features = false }
+const-oid = { version = "0.10.1", optional = true }
 
 [dev-dependencies]
 facet = { path = "../facet" }
 facet-testhelpers = { path = "../facet-testhelpers" }
+const-oid = { version = "0.10.1", features = ["db"] }
