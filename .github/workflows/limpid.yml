@@ -28,10 +28,10 @@ jobs:
           # Get the parent directory of the facet repository
           PARENT_DIR=$(dirname $GITHUB_WORKSPACE)
           cd $PARENT_DIR
-          
+
           # Clone limpid repository
           git clone https://github.com/facet-rs/limpid.git
-          
+
           # Configure git safe directory for limpid
           git config --global --add safe.directory $PARENT_DIR/limpid
 
@@ -39,17 +39,8 @@ jobs:
         shell: bash
         run: |
           PARENT_DIR=$(dirname $GITHUB_WORKSPACE)
-          cd $PARENT_DIR/limpid/limpid
-          cargo build --release
-
-      - name: ✨ Run binary size analysis
-        shell: bash
-        run: |
-          PARENT_DIR=$(dirname $GITHUB_WORKSPACE)
           cd $PARENT_DIR/limpid
-          
-          # Run limpid with markdown output
-          ./target/release/limpid --markdown $GITHUB_WORKSPACE/bloat-report.md
+          cargo run -- --markdown $GITHUB_WORKSPACE/bloat-report.md
 
       - name: ✨ Save PR info
         run: |
