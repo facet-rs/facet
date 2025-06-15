@@ -240,13 +240,6 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     let where_clauses = build_where_clauses(where_clauses_ast, parsed.generics.as_ref());
     let type_params = build_type_params(parsed.generics.as_ref());
 
-    // Static decl using PStruct BGP
-    let static_decl = if ps.container.bgp.params.is_empty() {
-        generate_static_decl(struct_name)
-    } else {
-        TokenStream::new()
-    };
-
     // Doc comments from PStruct
     let maybe_container_doc = if ps.container.attrs.doc.is_empty() {
         quote! {}
@@ -493,8 +486,6 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
 
     // Final quote block using refactored parts
     let result = quote! {
-        #static_decl
-
         #[automatically_derived]
         unsafe impl #bgp_def ::facet::Facet<'__facet> for #struct_name_ident #bgp_without_bounds #where_clauses {
             const VTABLE: &'static ::facet::ValueVTable = &const {
