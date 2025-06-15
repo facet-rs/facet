@@ -2,7 +2,6 @@
 source: facet-macros-emit/tests/codegen/mod.rs
 expression: "expand(r#\"\n        #[derive(Facet)]\n        struct Person {\n            #[facet(rename = \"firstName\")]\n            first_name: String,\n            #[facet(rename = \"lastName\")]\n            last_name: String,\n            age: u32,\n        }\n        \"#)"
 ---
-#[used]
 static PERSON_SHAPE: &'static ::facet::Shape = <Person as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for Person {

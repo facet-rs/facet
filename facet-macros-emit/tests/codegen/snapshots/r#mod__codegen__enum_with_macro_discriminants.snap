@@ -2,7 +2,6 @@
 source: facet-macros-emit/tests/codegen/mod.rs
 expression: "expand(r#\"\n        #[repr(u16)]\n        #[derive(Facet)]\n        enum TestEnum {\n            Value1 = test_macro!(1, 2),\n            Value2 = test_macro!(3, 4),\n        }\n        \"#)"
 ---
-#[used]
 static TEST_ENUM_SHAPE: &'static ::facet::Shape = <TestEnum as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 #[allow(non_camel_case_types)]

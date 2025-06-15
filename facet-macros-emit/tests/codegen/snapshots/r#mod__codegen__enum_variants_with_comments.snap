@@ -2,7 +2,6 @@
 source: facet-macros-emit/tests/codegen/mod.rs
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n        enum CommentedEnum {\n            /// This is variant A\n            #[allow(dead_code)]\n            A,\n            /// This is variant B\n            /// with multiple lines\n            #[allow(dead_code)]\n            B(u32),\n            /// This is variant C\n            /// which has named fields\n            #[allow(dead_code)]\n            C {\n                /// This is field x\n                x: u32,\n                /// This is field y\n                y: String,\n            },\n        }\n        \"#)"
 ---
-#[used]
 static COMMENTED_ENUM_SHAPE: &'static ::facet::Shape = <CommentedEnum as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 #[allow(non_camel_case_types)]

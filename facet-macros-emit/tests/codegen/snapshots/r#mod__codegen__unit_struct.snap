@@ -2,7 +2,6 @@
 source: facet-macros-emit/tests/codegen/mod.rs
 expression: "expand(r#\"\n        #[derive(Facet)]\n        struct UnitStruct;\n        \"#)"
 ---
-#[used]
 static UNIT_STRUCT_SHAPE: &'static ::facet::Shape = <UnitStruct as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for UnitStruct {

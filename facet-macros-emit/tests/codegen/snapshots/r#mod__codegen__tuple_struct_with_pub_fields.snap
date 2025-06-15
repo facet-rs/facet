@@ -2,7 +2,6 @@
 source: facet-macros-emit/tests/codegen/mod.rs
 expression: "expand(r#\"\n        #[derive(Facet)]\n        /// This is a struct for sure\n        struct Blah(\n            /// and this is a public field\n            pub u32,\n            /// and this is a crate public field\n            pub(crate) u32,\n        );\n        \"#)"
 ---
-#[used]
 static BLAH_SHAPE: &'static ::facet::Shape = <Blah as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for Blah {

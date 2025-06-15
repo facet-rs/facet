@@ -2,7 +2,6 @@
 source: facet-macros-emit/tests/codegen/mod.rs
 expression: "expand(r#\"\n        /// Network packet types\n        #[derive(Facet)]\n        #[repr(u8)]\n        pub enum Packet {\n            /// Array of bytes representing the header\n            Header([u8; 4]),\n            Payload(Vec<u8>), // Add another variant for completeness\n        }\n        \"#)"
 ---
-#[used]
 static PACKET_SHAPE: &'static ::facet::Shape = <Packet as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 #[allow(non_camel_case_types)]

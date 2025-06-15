@@ -2,7 +2,6 @@
 source: facet-macros-emit/tests/codegen/mod.rs
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(transparent)]\n        struct Wrapper(u32);\n        \"#)"
 ---
-#[used]
 static WRAPPER_SHAPE: &'static ::facet::Shape = <Wrapper as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for Wrapper {

@@ -2,7 +2,6 @@
 source: facet-macros-emit/tests/codegen/mod.rs
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(C)]\n        enum EnumWithVariants {\n            /// Comment A\n            Variant1,\n            /// Comment B\n            Variant2(i32),\n            Variant3 { field1: i32, field2: String },\n        }\n        \"#)"
 ---
-#[used]
 static ENUM_WITH_VARIANTS_SHAPE: &'static ::facet::Shape =
     <EnumWithVariants as ::facet::Facet>::SHAPE;
 #[automatically_derived]
