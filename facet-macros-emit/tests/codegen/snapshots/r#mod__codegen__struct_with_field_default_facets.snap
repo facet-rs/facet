@@ -2,7 +2,6 @@
 source: facet-macros-emit/tests/codegen/mod.rs
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(default)]\n        struct ForFacetDefaultDemo {\n            #[facet(default)]\n            field1: u32,\n            #[facet(default = my_field_default_fn())]\n            field2: String,\n            field3: bool,\n        }\n        \"#)"
 ---
-#[used]
 static FOR_FACET_DEFAULT_DEMO_SHAPE: &'static ::facet::Shape =
     <ForFacetDefaultDemo as ::facet::Facet>::SHAPE;
 #[automatically_derived]

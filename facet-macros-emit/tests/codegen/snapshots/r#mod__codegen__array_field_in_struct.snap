@@ -2,7 +2,6 @@
 source: facet-macros-emit/tests/codegen/mod.rs
 expression: "expand(r#\"\n        #[derive(Facet)]\n        pub struct DataPacket {\n            header: [u8; 16],\n            payload: Vec<u8>,\n            metadata: [MetadataTag; 4],\n        }\n        \"#)"
 ---
-#[used]
 static DATA_PACKET_SHAPE: &'static ::facet::Shape = <DataPacket as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for DataPacket {

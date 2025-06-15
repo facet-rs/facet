@@ -2,7 +2,6 @@
 source: facet-macros-emit/tests/codegen/mod.rs
 expression: "expand(r#\"\n        #[derive(Facet)]\n        struct TupleStruct(i32, String);\n        \"#)"
 ---
-#[used]
 static TUPLE_STRUCT_SHAPE: &'static ::facet::Shape = <TupleStruct as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for TupleStruct {

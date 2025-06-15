@@ -2,7 +2,6 @@
 source: facet-macros-emit/tests/codegen/mod.rs
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(rename_all = \"snake_case\")]\n        struct SnakeCaseExample {\n            field_one: String,\n            field_two: String,\n        }\n        \"#)"
 ---
-#[used]
 static SNAKE_CASE_EXAMPLE_SHAPE: &'static ::facet::Shape =
     <SnakeCaseExample as ::facet::Facet>::SHAPE;
 #[automatically_derived]

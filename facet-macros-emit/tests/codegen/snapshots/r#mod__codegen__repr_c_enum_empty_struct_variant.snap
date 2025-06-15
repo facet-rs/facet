@@ -2,7 +2,6 @@
 source: facet-macros-emit/tests/codegen/mod.rs
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(C)]\n        enum EnumWithEmptyStructVariant {\n            Variant1 { },\n        }\n        \"#)"
 ---
-#[used]
 static ENUM_WITH_EMPTY_STRUCT_VARIANT_SHAPE: &'static ::facet::Shape =
     <EnumWithEmptyStructVariant as ::facet::Facet>::SHAPE;
 #[automatically_derived]

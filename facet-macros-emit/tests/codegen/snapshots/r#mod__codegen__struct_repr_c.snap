@@ -1,9 +1,7 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
-assertion_line: 203
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(C)]\n        struct Blah {\n            foo: u32,\n            bar: String,\n        }\n        \"#)"
 ---
-#[used]
 static BLAH_SHAPE: &'static ::facet::Shape = <Blah as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for Blah {
