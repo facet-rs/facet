@@ -2,9 +2,6 @@
 source: facet-macros-emit/tests/codegen/mod.rs
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(rename_all = \"camelCase\")]\n        struct CamelCaseExample {\n            field_one: String,\n            field_two: String,\n        }\n        \"#)"
 ---
-#[used]
-static CAMEL_CASE_EXAMPLE_SHAPE: &'static ::facet::Shape =
-    <CamelCaseExample as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for CamelCaseExample {
     const VTABLE: &'static ::facet::ValueVTable = &const {

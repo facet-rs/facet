@@ -2,8 +2,6 @@
 source: facet-macros-emit/tests/codegen/mod.rs
 expression: "expand(r#\"\n        #[repr(u16)]\n        #[derive(Facet)]\n        enum Color {\n          Red      = 0x01,\n          Blue     = 0x7F,\n          Green    = 0x80,\n          Yellow   = 0x10,\n          Magenta  = 0xfeed,\n          Cyan     = 0xBEEF,\n        }\n        \"#)"
 ---
-#[used]
-static COLOR_SHAPE: &'static ::facet::Shape = <Color as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 #[allow(non_camel_case_types)]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for Color {

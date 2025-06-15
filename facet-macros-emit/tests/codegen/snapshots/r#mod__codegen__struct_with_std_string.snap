@@ -2,8 +2,6 @@
 source: facet-macros-emit/tests/codegen/mod.rs
 expression: "expand(r#\"\n        #[derive(Facet)]\n        struct FileInfo {\n            path: std::string::String, // Explicitly use std::string::String\n            size: u64,\n        }\n        \"#)"
 ---
-#[used]
-static FILE_INFO_SHAPE: &'static ::facet::Shape = <FileInfo as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for FileInfo {
     const VTABLE: &'static ::facet::ValueVTable = &const {

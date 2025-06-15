@@ -2,8 +2,6 @@
 source: facet-macros-emit/tests/codegen/mod.rs
 expression: "expand(r#\"\n        #[derive(Facet)]\n        struct User {\n            #[facet(rename = \"userName\")]\n            name: String,\n            #[facet(rename = \"userEmail\", sensitive)]\n            email: String,\n            #[facet(sensitive)]\n            password: String,\n        }\n        \"#)"
 ---
-#[used]
-static USER_SHAPE: &'static ::facet::Shape = <User as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for User {
     const VTABLE: &'static ::facet::ValueVTable = &const {

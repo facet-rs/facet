@@ -2,8 +2,6 @@
 source: facet-macros-emit/tests/codegen/mod.rs
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[cfg_attr(feature = \"testfeat\", derive(Debug))]\n        #[cfg_attr(feature = \"testfeat\", facet(deny_unknown_fields))]\n        pub struct CubConfig {\n            /// size the disk cache is allowed to use\n            #[cfg_attr(feature = \"testfeat\", facet(skip_serializing))]\n            #[cfg_attr(\n                feature = \"testfeat\",\n                facet(default = \"serde_defaults::default_disk_cache_size\")\n            )]\n            pub disk_cache_size: String,\n        }\n        \"#)"
 ---
-#[used]
-static CUB_CONFIG_SHAPE: &'static ::facet::Shape = <CubConfig as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for CubConfig {
     const VTABLE: &'static ::facet::ValueVTable = &const {
