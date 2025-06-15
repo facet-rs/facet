@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.12](https://github.com/facet-rs/facet/compare/facet-yaml-v0.25.11...facet-yaml-v0.25.12) - 2025-06-15
+
+### Added
+
+- add 128 bit integer support in facet-json and facet-toml
+
 ## [0.25.11](https://github.com/facet-rs/facet/compare/facet-yaml-v0.25.10...facet-yaml-v0.25.11) - 2025-06-04
 
 ### Other

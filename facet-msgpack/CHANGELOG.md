@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.14](https://github.com/facet-rs/facet/compare/facet-msgpack-v0.25.13...facet-msgpack-v0.25.14) - 2025-06-15
+
+### Other
+
+- s/Wip/Partial
+
 ## [0.25.13](https://github.com/facet-rs/facet/compare/facet-msgpack-v0.25.12...facet-msgpack-v0.25.13) - 2025-06-04
 
 ### Other

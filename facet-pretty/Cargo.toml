@@ -1,6 +1,6 @@
 [package]
 name = "facet-pretty"
-version = "0.23.19"
+version = "0.23.20"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -20,8 +20,8 @@ alloc = ["facet-core/alloc", "facet-reflect/alloc"] # Enables alloc support
 camino = ["alloc", "facet-core/camino"]
 
 [dependencies]
-facet-core = { version = "0.27.12", path = "../facet-core" }
-facet-reflect = { version = "0.27.12", path = "../facet-reflect" }
+facet-core = { version = "0.27.13", path = "../facet-core" }
+facet-reflect = { version = "0.27.13", path = "../facet-reflect" }
 
 [dev-dependencies]
 camino = "1.1.9"

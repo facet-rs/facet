@@ -6,6 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.13](https://github.com/facet-rs/facet/compare/facet-reflect-v0.27.12...facet-reflect-v0.27.13) - 2025-06-15
+
+### Other
+
+- Disable some tests under miri :(
+- Add tests for Peek'ing DSTs
+- inline all the things
+- inline more things
+- inline(always) maybe?
+- Introduce GenericPtr
+- Introduced sized/unsized ValueVTable variants
+- s/Wip/Partial
+
 ## [0.27.10](https://github.com/facet-rs/facet/compare/facet-reflect-v0.27.9...facet-reflect-v0.27.10) - 2025-06-03
 
 ### Other

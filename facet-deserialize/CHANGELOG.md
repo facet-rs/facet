@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.19](https://github.com/facet-rs/facet/compare/facet-deserialize-v0.24.18...facet-deserialize-v0.24.19) - 2025-06-15
+
+### Added
+
+- support 128-bit integers in facet-deserialize
+
 ## [0.24.18](https://github.com/facet-rs/facet/compare/facet-deserialize-v0.24.17...facet-deserialize-v0.24.18) - 2025-06-04
 
 ### Other

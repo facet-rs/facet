@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.14](https://github.com/facet-rs/facet/compare/facet-json-v0.24.13...facet-json-v0.24.14) - 2025-06-15
+
+### Added
+
+- add 128 bit integer support in facet-json and facet-toml
+
+### Other
+
+- actually use the cpeek instead of the main peek when serializing arrays
+
 ## [0.24.13](https://github.com/facet-rs/facet/compare/facet-json-v0.24.12...facet-json-v0.24.13) - 2025-06-04
 
 ### Other

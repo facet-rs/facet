@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.13](https://github.com/facet-rs/facet/compare/facet-v0.27.12...facet-v0.27.13) - 2025-06-15
+
+### Added
+
+- *(fn)* capture function docstring in shape
+
+### Other
+
+- Use exact versions of dependencies in `facet`, closes #748
+- Keep static, but make it not #[used]
+- process_enum: output the correct Repr
+- process_struct: output the correct Repr
+- Introduced sized/unsized ValueVTable variants
+- s/Wip/Partial
+
 ## [0.27.12](https://github.com/facet-rs/facet/compare/facet-v0.27.11...facet-v0.27.12) - 2025-06-04
 
 ### Other

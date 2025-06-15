@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.15](https://github.com/facet-rs/facet/compare/facet-args-v0.19.14...facet-args-v0.19.15) - 2025-06-15
+
+### Other
+
+- Add a new QOL function to parse std args.
+
 ## [0.19.14](https://github.com/facet-rs/facet/compare/facet-args-v0.19.13...facet-args-v0.19.14) - 2025-06-04
 
 ### Other

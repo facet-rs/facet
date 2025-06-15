@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.13](https://github.com/facet-rs/facet/compare/facet-core-v0.27.12...facet-core-v0.27.13) - 2025-06-15
+
+### Other
+
+- Type: Display: be consistent with guillemet chars
+- Type: Display: format repr(packed) in parenthesized lists
+- Type: Display: custom format for EnumType
+- Type: Display: custom format for UnionType
+- Type: Display: custom format for StructKind
+- Type: Display: custom format for fn pointers
+- Type: Display: custom format for ref and raw pointers
+- types: impl Display for Type
+- Shape: Debug: exhaustive destructure to force errors
+- Shape: Debug: add alternate form
+- Disable some tests under miri :(
+- NonNull
+- inline all the things
+- Introduced sized/unsized ValueVTable variants
+- s/Wip/Partial
+
 ## [0.27.12](https://github.com/facet-rs/facet/compare/facet-core-v0.27.11...facet-core-v0.27.12) - 2025-06-04
 
 ### Other

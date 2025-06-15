@@ -1,6 +1,6 @@
 [package]
 name = "facet-macros-parse"
-version = "0.27.12"
+version = "0.27.13"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

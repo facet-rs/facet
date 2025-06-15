@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.13](https://github.com/facet-rs/facet/compare/facet-macros-emit-v0.27.12...facet-macros-emit-v0.27.13) - 2025-06-15
+
+### Added
+
+- *(fn)* capture function docstring in shape
+
+### Other
+
+- Update snapshots
+- Keep static, but make it not #[used]
+- generate_type_name_fn: no generics if all lifetimes
+- snapshots: run cargo insta review
+- generate_type_name_fn: also display const generics
+- snapshots: run cargo insta review
+- process_enum: use new generator for type_name fn
+- process_enum: do not clone enum_name
+- generics: fix some indentation
+- generate_type_name_fn: move from process_struct
+- snapshots: run cargo insta review
+- process_struct: show generics from type_name fn
+- process_struct: fix some indentation
+- snapshots: run cargo insta review
+- process_enum: output the correct Repr
+- snapshots: run cargo insta review
+- process_struct: output the correct Repr
+- parse `Struct::doc` as `String`, don't leave as `TokenStream`
+- Introduced sized/unsized ValueVTable variants
+- s/Wip/Partial
+
 ## [0.27.12](https://github.com/facet-rs/facet/compare/facet-macros-emit-v0.27.11...facet-macros-emit-v0.27.12) - 2025-06-04
 
 ### Other
