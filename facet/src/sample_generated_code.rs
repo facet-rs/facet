@@ -23,7 +23,6 @@ pub struct KitchenSinkStruct {
     /// A field containing another struct that derives Facet.
     pub nested_struct_field: Point,
 }
-#[used]
 static KITCHEN_SINK_STRUCT_SHAPE: &'static crate::Shape =
     <KitchenSinkStruct as crate::Facet>::SHAPE;
 #[automatically_derived]
@@ -498,7 +497,6 @@ pub struct Point {
     /// Nested sensitive data within the struct.
     pub metadata: String,
 }
-#[used]
 static POINT_SHAPE: &'static crate::Shape = <Point as crate::Facet>::SHAPE;
 #[automatically_derived]
 unsafe impl<'__facet> crate::Facet<'__facet> for Point {
@@ -965,7 +963,6 @@ pub enum KitchenSinkEnum {
     /// The nested `SubEnum` indicates a specific sub-state or option.
     NestedEnumVariant(SubEnum),
 }
-#[used]
 static KITCHEN_SINK_ENUM_SHAPE: &'static crate::Shape = <KitchenSinkEnum as crate::Facet>::SHAPE;
 #[automatically_derived]
 #[allow(non_camel_case_types)]
@@ -1650,7 +1647,6 @@ pub enum SubEnum {
     /// An arbitrary option.
     ArbitraryOption(u8),
 }
-#[used]
 static SUB_ENUM_SHAPE: &'static crate::Shape = <SubEnum as crate::Facet>::SHAPE;
 #[automatically_derived]
 #[allow(non_camel_case_types)]

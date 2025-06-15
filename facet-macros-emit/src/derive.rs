@@ -29,7 +29,6 @@ pub(crate) fn generate_static_decl(type_name: &Ident) -> TokenStream {
     let static_name_ident = quote::format_ident!("{}_SHAPE", screaming_snake_name);
 
     quote! {
-        #[used]
         static #static_name_ident: &'static ::facet::Shape = <#type_name as ::facet::Facet>::SHAPE;
     }
 }
