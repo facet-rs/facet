@@ -449,7 +449,8 @@ impl core::fmt::Debug for Shape<'_> {
                 field!("inner", "{:?}", (inner)());
             }
 
-            field!("ty", "{:?}", self.ty);
+            // Uses `Display` to potentially format with shorthand syntax.
+            field!("ty", "{}", self.ty);
 
             field!("layout", "{:?}", self.layout);
 
