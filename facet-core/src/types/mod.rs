@@ -415,17 +415,20 @@ impl core::fmt::Debug for Shape<'_> {
             field!("type_identifier", "{:?}", self.type_identifier);
 
             if !self.type_params.is_empty() {
+                // Use `[]` to indicate empty `type_params` (a real empty slice),
+                // and `«(...)»` to show custom-formatted parameter sets when present.
+                // Avoids visual conflict with array types like `[T; N]` in other fields.
                 field!("type_params", "{}", {
                     struct TypeParams<'shape>(&'shape [TypeParam<'shape>]);
                     impl core::fmt::Display for TypeParams<'_> {
                         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                             let mut iter = self.0.iter();
                             if let Some(first) = iter.next() {
-                                write!(f, "<{}: {}", first.name, (first.shape)())?;
+                                write!(f, "«({}: {}", first.name, (first.shape)())?;
                                 for next in iter {
                                     write!(f, ", {}: {}", next.name, (next.shape)())?;
                                 }
-                                write!(f, ">")?;
+                                write!(f, ")»")?;
                             } else {
                                 write!(f, "[]")?;
                             }
