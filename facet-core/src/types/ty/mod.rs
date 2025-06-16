@@ -53,7 +53,7 @@ impl core::fmt::Display for Type<'_> {
                 write!(f, "{self:?}")?;
             }
             Type::Sequence(SequenceType::Array(ArrayType { t, n })) => {
-                write!(f, "Sequence(Array(«[{t}, {n}]»))")?;
+                write!(f, "Sequence(Array(«[{t}; {n}]»))")?;
             }
             Type::Sequence(SequenceType::Slice(SliceType { t })) => {
                 write!(f, "Sequence(Slice(«&[{t}]»))")?;
