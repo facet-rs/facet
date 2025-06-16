@@ -460,7 +460,8 @@ impl core::fmt::Debug for Shape<'_> {
             }
 
             if !self.doc.is_empty() {
-                field!("doc", "{:?}", self.doc);
+                // TODO: Should these be called "strings"? Because `#[doc]` can contain newlines.
+                field!("doc", "«{} lines»", self.doc.len());
             }
 
             debug_struct.finish_non_exhaustive()
