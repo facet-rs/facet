@@ -452,7 +452,18 @@ impl core::fmt::Debug for Shape<'_> {
             // Uses `Display` to potentially format with shorthand syntax.
             field!("ty", "{}", self.ty);
 
-            field!("layout", "{:?}", self.layout);
+            // For sized layouts, display size and alignment in shorthand.
+            // NOTE: If you wish to display the bitshift for alignment, please open an issue.
+            if let ShapeLayout::Sized(layout) = self.layout {
+                field!(
+                    "layout",
+                    "Sized(«{} align {}»)",
+                    layout.size(),
+                    layout.align()
+                );
+            } else {
+                field!("layout", "{:?}", self.layout);
+            }
 
             // If `def` is `Undefined`, the information in `ty` would be more useful.
             if !matches!(self.def, Def::Undefined) {
