@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.14](https://github.com/facet-rs/facet/compare/facet-core-v0.27.13...facet-core-v0.27.14) - 2025-06-17
+
+### Other
+
+- Shape: Debug: format type_params as structured group
+- Shape: Debug: show sized layout in shorthand
+- Shape: Debug: show line count for doc
+- Shape: Debug: use Display for ty
+- Shape: Debug: shorthand for type_params
+- Shape: Debug: show layout on a single line
+- Shape: Debug: show the inner type fully
+- Shape: Debug: reorder fields by order of usefulness/size
+- Shape: Debug: omit doc if empty
+- Shape: Debug: omit inner if None
+- Shape: Debug: omit attributes if empty
+- Shape: Debug: omit type_params if empty
+- Shape: Debug: omit type_tag if None
+- Shape: Debug: omit def if Undefined
+- Shape: Debug: omit field id by default
+- Shape: Debug: omit field vtable
+- Shape: Debug: show all fields values in debug form
+- Type: Display: fix delimiter in custom array format
+
 ## [0.27.13](https://github.com/facet-rs/facet/compare/facet-core-v0.27.12...facet-core-v0.27.13) - 2025-06-15
 
 ### Other

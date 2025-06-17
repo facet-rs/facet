@@ -1,6 +1,6 @@
 [package]
 name = "facet-xdr"
-version = "0.1.15"
+version = "0.1.16"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -15,9 +15,9 @@ alloc = ["facet-core/alloc", "facet-reflect/alloc", "facet-serialize/alloc"]
 default = ["std"]
 
 [dependencies]
-facet-core = { version = "0.27.13", path = "../facet-core", default-features = false }
-facet-reflect = { version = "0.27.13", path = "../facet-reflect", default-features = false }
-facet-serialize = { version = "0.24.14", path = "../facet-serialize", default-features = false }
+facet-core = { version = "0.27.14", path = "../facet-core", default-features = false }
+facet-reflect = { version = "0.27.14", path = "../facet-reflect", default-features = false }
+facet-serialize = { version = "0.24.15", path = "../facet-serialize", default-features = false }
 
 [dev-dependencies]
 facet = { path = "../facet" }

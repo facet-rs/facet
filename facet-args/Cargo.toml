@@ -1,6 +1,6 @@
 [package]
 name = "facet-args"
-version = "0.19.15"
+version = "0.19.16"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -11,9 +11,9 @@ keywords = ["cli", "args", "parser", "facet"]
 categories = ["command-line-interface"]
 
 [dependencies]
-facet-reflect = { path = "../facet-reflect", version = "0.27.13" }
-facet-core = { path = "../facet-core", version = "0.27.13" }
-facet-deserialize = { path = "../facet-deserialize", version = "0.24.19" }
+facet-reflect = { path = "../facet-reflect", version = "0.27.14" }
+facet-core = { path = "../facet-core", version = "0.27.14" }
+facet-deserialize = { path = "../facet-deserialize", version = "0.24.20" }
 log = "0.4.27"
 
 [dev-dependencies]
