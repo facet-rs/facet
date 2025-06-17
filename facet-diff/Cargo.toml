@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+facet = { version = "0.27.13", path = "../facet" }
 facet-core = { version = "0.27.13", path = "../facet-core" }
 facet-pretty = { version = "0.23.20", path = "../facet-pretty" }
 facet-reflect = { version = "0.27.13", path = "../facet-reflect" }
