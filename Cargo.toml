@@ -35,6 +35,7 @@ members = [
     "facet-bench",
     "facet-testhelpers-macros",
     "facet-inspect",
+    "facet-diff",
 ]
 exclude = ["outside-workspace"]
 resolver = "3"

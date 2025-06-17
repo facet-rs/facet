@@ -526,6 +526,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-diff"
+version = "0.1.0"
+dependencies = [
+ "facet-core",
+ "facet-pretty",
+ "facet-reflect",
+]
+
+[[package]]
 name = "facet-inspect"
 version = "0.1.0"
 dependencies = [
