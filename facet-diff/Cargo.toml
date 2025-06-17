@@ -1,0 +1,12 @@
+[package]
+name = "facet-diff"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+facet-core = { version = "0.27.13", path = "../facet-core" }
+facet-pretty = { version = "0.23.20", path = "../facet-pretty" }
+facet-reflect = { version = "0.27.13", path = "../facet-reflect" }
