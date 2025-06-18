@@ -5,7 +5,6 @@ use super::{IterVTable, Shape};
 /// Fields for map types
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-#[non_exhaustive]
 pub struct MapDef<'shape> {
     /// vtable for interacting with the map
     pub vtable: &'shape MapVTable,

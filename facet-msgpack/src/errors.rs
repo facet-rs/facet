@@ -3,7 +3,6 @@ use core::fmt;
 use facet_reflect::ReflectError;
 
 #[derive(Debug)]
-#[non_exhaustive]
 /// Errors that can occur during MessagePack encoding/decoding operations
 pub enum Error<'shape> {
     /// Encountered a MessagePack type that doesn't match the expected type

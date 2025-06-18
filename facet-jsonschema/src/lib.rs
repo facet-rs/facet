@@ -5,9 +5,10 @@
 #![doc = include_str!("../README.md")]
 
 extern crate facet_core as facet;
-use facet::{PointerType, SmartPointerDef};
-use facet_core::{Def, Facet, ScalarDef, Shape, Type, UserType};
+use facet::{PointerType, PrimitiveType, SmartPointerDef, TextualType};
+use facet_core::{Def, Facet, Shape, Type, UserType};
 
+use core::alloc::Layout;
 use std::io::Write;
 
 /// Convert a `Facet` type to a JSON schema string.
@@ -92,7 +93,24 @@ fn serialize<'shape, W: Write>(
 
     // Then check the def system (Def)
     match shape.def {
-        Def::Scalar(ref scalar_def) => serialize_scalar(scalar_def, writer)?,
+        Def::Scalar => match shape.ty {
+            Type::Primitive(PrimitiveType::Numeric(numeric_type)) => {
+                serialize_scalar(&shape.layout.sized_layout().unwrap(), numeric_type, writer)?
+            }
+            Type::Primitive(PrimitiveType::Boolean) => {
+                write!(writer, "\"type\": \"boolean\"")?;
+            }
+            Type::Primitive(PrimitiveType::Textual(TextualType::Str)) => {
+                write!(writer, "\"type\": \"string\"")?;
+            }
+            Type::Primitive(PrimitiveType::Textual(TextualType::Char)) => {
+                write!(writer, "\"type\": \"string\", \"maxLength\": 1")?;
+            }
+            _ => {
+                // For other scalar types (like Path, UUID, etc.), default to string
+                write!(writer, "\"type\": \"string\"")?;
+            }
+        },
         Def::Map(_map_def) => todo!("Map"),
         Def::List(list_def) => serialize_list(list_def, writer)?,
         Def::Slice(slice_def) => serialize_slice(slice_def, writer)?,
@@ -148,46 +166,30 @@ fn serialize_doc<W: Write>(doc: &[&str], writer: &mut W) -> Result<(), std::io::
 }
 
 /// Serialize a scalar definition to JSON schema format.
-fn serialize_scalar<W: Write>(scalar_def: &ScalarDef, writer: &mut W) -> std::io::Result<()> {
-    match scalar_def.affinity {
-        facet_core::ScalarAffinity::Number(number_affinity) => {
-            match number_affinity.bits {
-                facet_core::NumberBits::Integer { size, sign } => {
-                    write!(writer, "\"type\": \"integer\"")?;
-                    let bits = match size {
-                        facet_core::IntegerSize::Fixed(bits) => bits,
-                        facet_core::IntegerSize::PointerSized => core::mem::size_of::<usize>() * 8,
-                    };
-                    match sign {
-                        facet_core::Signedness::Unsigned => {
-                            write!(writer, ", \"format\": \"uint{bits}\"")?;
-                            write!(writer, ", \"minimum\": 0")?;
-                        }
-                        facet_core::Signedness::Signed => {
-                            write!(writer, ", \"format\": \"int{bits}\"")?;
-                        }
-                    }
-                }
-                facet_core::NumberBits::Float { .. } => {
-                    write!(writer, "\"type\": \"number\"")?;
-                    write!(writer, ", \"format\": \"double\"")?;
-                }
-                _ => unimplemented!(),
+fn serialize_scalar<W: Write>(
+    layout: &Layout,
+    numeric_type: facet_core::NumericType,
+    writer: &mut W,
+) -> std::io::Result<()> {
+    use facet_core::NumericType;
+
+    match numeric_type {
+        NumericType::Integer { signed } => {
+            write!(writer, "\"type\": \"integer\"")?;
+            let bits = layout.size() * 8;
+            if signed {
+                write!(writer, ", \"format\": \"int{bits}\"")?;
+            } else {
+                write!(writer, ", \"format\": \"uint{bits}\"")?;
+                write!(writer, ", \"minimum\": 0")?;
             }
-            Ok(())
         }
-        facet_core::ScalarAffinity::String(_) => {
-            write!(writer, "\"type\": \"string\"")?;
-            Ok(())
+        NumericType::Float => {
+            write!(writer, "\"type\": \"number\"")?;
+            write!(writer, ", \"format\": \"double\"")?;
         }
-        facet_core::ScalarAffinity::Boolean(_) => {
-            write!(writer, "\"type\": \"boolean\"")?;
-            Ok(())
-        }
-        _ => Err(std::io::Error::other(format!(
-            "facet-jsonschema: nsupported scalar type: {scalar_def:#?}"
-        ))),
     }
+    Ok(())
 }
 
 fn serialize_struct<W: Write>(

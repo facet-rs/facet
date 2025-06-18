@@ -6,7 +6,6 @@ use bitflags::bitflags;
 /// Describes a field in a struct or tuple
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-#[non_exhaustive]
 pub struct Field<'shape> {
     /// key for the struct field (for tuples and tuple-structs, this is the 0-based index)
     pub name: &'shape str,
@@ -54,7 +53,6 @@ impl Field<'_> {
 /// Vtable for field-specific operations
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-#[non_exhaustive]
 pub struct FieldVTable {
     /// Function to determine if serialization should be skipped for this field
     pub skip_serializing_if: Option<SkipSerializingIfFn>,
@@ -85,7 +83,6 @@ impl<'shape> Field<'shape> {
 }
 
 /// An attribute that can be set on a field
-#[non_exhaustive]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
 pub enum FieldAttribute<'shape> {
@@ -293,7 +290,6 @@ impl core::fmt::Display for FieldFlags {
 
 /// Errors encountered when calling `field_by_index` or `field_by_name`
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-#[non_exhaustive]
 pub enum FieldError {
     /// `field_by_name` was called on a struct, and there is no static field
     /// with the given key.

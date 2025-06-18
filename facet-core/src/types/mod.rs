@@ -22,7 +22,6 @@ use crate::{ConstTypeId, Facet};
 /// Schema for reflection of a type
 #[derive(Clone, Copy)]
 #[repr(C)]
-#[non_exhaustive]
 pub struct Shape<'shape> {
     /// Unique type identifier, provided by the compiler.
     pub id: ConstTypeId,

@@ -4,8 +4,8 @@ use alloc::string::String;
 use url::Url;
 
 use crate::{
-    Def, Facet, ParseError, PtrConst, PtrMut, PtrUninit, ScalarAffinity, ScalarDef, Shape,
-    TryBorrowInnerError, TryIntoInnerError, Type, UserType, ValueVTable, value_vtable,
+    Def, Facet, ParseError, PtrConst, PtrMut, PtrUninit, Shape, TryBorrowInnerError,
+    TryIntoInnerError, Type, UserType, ValueVTable, value_vtable,
 };
 
 unsafe impl Facet<'_> for Url {
@@ -73,11 +73,7 @@ unsafe impl Facet<'_> for Url {
         Shape::builder_for_sized::<Self>()
             .type_identifier("Url")
             .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar(
-                ScalarDef::builder()
-                    .affinity(&const { ScalarAffinity::url().build() })
-                    .build(),
-            ))
+            .def(Def::Scalar)
             .inner(inner_shape)
             .build()
     };

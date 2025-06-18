@@ -753,12 +753,6 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
             | EnumRepr::ISize => {
                 // These are supported, continue
             }
-            _ => {
-                return Err(ReflectError::OperationFailed {
-                    shape: fr.shape,
-                    operation: "Unknown enum representation",
-                });
-            }
         }
 
         // All checks passed, now we can safely make changes
@@ -888,7 +882,6 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                 shape: frame.shape,
                 operation: "cannot select a field from a pointer type",
             }),
-            _ => todo!(),
         }
     }
 
@@ -1149,12 +1142,6 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                             return Err(ReflectError::OperationFailed {
                                 shape: frame.shape,
                                 operation: "RustNPO enums are not supported",
-                            });
-                        }
-                        _ => {
-                            return Err(ReflectError::OperationFailed {
-                                shape: frame.shape,
-                                operation: "Unknown enum representation",
                             });
                         }
                     };

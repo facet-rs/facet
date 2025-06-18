@@ -3,7 +3,6 @@ use crate::Shape;
 /// Common fields for function pointer types
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-#[non_exhaustive]
 pub struct FunctionPointerDef {
     /// The calling abi of the function pointer
     pub abi: FunctionAbi,
@@ -18,7 +17,6 @@ pub struct FunctionPointerDef {
 /// The calling ABI of a function pointer
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 #[repr(C)]
-#[non_exhaustive]
 pub enum FunctionAbi {
     /// C ABI
     C,

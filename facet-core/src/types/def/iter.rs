@@ -42,7 +42,6 @@ pub type IterDeallocFn = for<'iter> unsafe fn(iter: PtrMut<'iter>);
 /// VTable for an iterator
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-#[non_exhaustive]
 pub struct IterVTable<T: IterItem> {
     /// cf. [`IterInitWithValueFn`]
     pub init_with_value: Option<IterInitWithValueFn>,

@@ -1,4 +1,4 @@
-use crate::{Def, ScalarAffinity, ScalarDef, ValueVTable, value_vtable};
+use crate::{Def, ValueVTable, value_vtable};
 use crate::{Facet, Shape, Type, UserType};
 
 /// Helper type for opaque members
@@ -15,11 +15,7 @@ unsafe impl<'a, T: 'a> Facet<'a> for Opaque<T> {
         Shape::builder_for_sized::<Self>()
             .type_identifier("Opaque")
             .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar(
-                ScalarDef::builder()
-                    .affinity(&const { ScalarAffinity::opaque().build() })
-                    .build(),
-            ))
+            .def(Def::Scalar)
             .build()
     };
 }

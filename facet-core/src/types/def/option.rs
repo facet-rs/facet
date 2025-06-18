@@ -5,7 +5,6 @@ use crate::ptr::{PtrConst, PtrMut, PtrUninit};
 /// and the inner shape (the `T` in `Option<T>`).
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-#[non_exhaustive]
 pub struct OptionDef<'shape> {
     /// vtable for interacting with the option
     pub vtable: &'shape OptionVTable,
@@ -110,7 +109,6 @@ pub type OptionReplaceWithFn =
 
 /// Virtual table for `Option<T>`
 #[derive(Clone, Copy, Debug)]
-#[non_exhaustive]
 #[repr(C)]
 pub struct OptionVTable {
     /// cf. [`OptionIsSomeFn`]

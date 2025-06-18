@@ -5,8 +5,8 @@ use std::hash::RandomState;
 use crate::ptr::{PtrConst, PtrMut};
 
 use crate::{
-    Def, Facet, IterVTable, MapDef, MapVTable, MarkerTraits, ScalarAffinity, ScalarDef, Shape,
-    Type, TypeParam, UserType, VTableView, ValueVTable, value_vtable,
+    Def, Facet, IterVTable, MapDef, MapVTable, MarkerTraits, Shape, Type, TypeParam, UserType,
+    VTableView, ValueVTable, value_vtable,
 };
 
 type HashMapIterator<'mem, K, V> = std::collections::hash_map::Iter<'mem, K, V>;
@@ -216,11 +216,7 @@ unsafe impl Facet<'_> for RandomState {
         Shape::builder_for_sized::<Self>()
             .type_identifier("RandomState")
             .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar(
-                ScalarDef::builder()
-                    .affinity(&const { ScalarAffinity::opaque().build() })
-                    .build(),
-            ))
+            .def(Def::Scalar)
             .build()
     };
 }

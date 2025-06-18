@@ -13,11 +13,7 @@ unsafe impl Facet<'_> for std::path::PathBuf {
         Shape::builder_for_sized::<Self>()
             .type_identifier("PathBuf")
             .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar(
-                ScalarDef::builder()
-                    .affinity(&const { ScalarAffinity::path().build() })
-                    .build(),
-            ))
+            .def(Def::Scalar)
             .build()
     };
 }
@@ -35,11 +31,7 @@ unsafe impl Facet<'_> for std::path::Path {
         Shape::builder_for_unsized::<Self>()
             .type_identifier("Path")
             .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar(
-                ScalarDef::builder()
-                    .affinity(&const { ScalarAffinity::path().build() })
-                    .build(),
-            ))
+            .def(Def::Scalar)
             .build()
     };
 }

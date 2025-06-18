@@ -10,9 +10,7 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use facet_core::{
-    Def, Facet, Field, PointerType, ScalarAffinity, ShapeAttribute, StructKind, Type, UserType,
-};
+use facet_core::{Def, Facet, Field, PointerType, ShapeAttribute, StructKind, Type, UserType};
 use facet_reflect::{
     FieldIter, FieldsForSerializeIter, HasFields, Peek, PeekListLikeIter, PeekMapIter, ScalarType,
 };
@@ -301,7 +299,7 @@ where
                     cpeek.shape()
                 );
                 match (cpeek.shape().def, cpeek.shape().ty) {
-                    (Def::Scalar(sd), _) => {
+                    (Def::Scalar, _) => {
                         let cpeek = cpeek.innermost_peek();
 
                         // Dispatch to appropriate scalar serialization method based on type
@@ -374,29 +372,15 @@ where
                                 panic!("facet-serialize: unsupported scalar type: {unsupported:?}")
                             }
                             None => {
-                                match sd.affinity {
-                                    ScalarAffinity::Time(_)
-                                    | ScalarAffinity::Path(_)
-                                    | ScalarAffinity::ULID(_)
-                                    | ScalarAffinity::UUID(_) => {
-                                        if let Some(_display) =
-                                            cpeek.shape().vtable.sized().and_then(|v| (v.display)())
-                                        {
-                                            // Use display formatting if available
-                                            serializer.serialize_str(&alloc::format!("{cpeek}"))?
-                                        } else {
-                                            panic!(
-                                                "Unsupported shape (no display): {}",
-                                                cpeek.shape()
-                                            )
-                                        }
-                                    }
-                                    _ => {
-                                        panic!(
-                                            "Unsupported shape (unsupported affinity): {}",
-                                            cpeek.shape()
-                                        )
-                                    }
+                                // For other scalar types that don't have a specific ScalarType variant,
+                                // try to use Display formatting if available
+                                if let Some(_display) =
+                                    cpeek.shape().vtable.sized().and_then(|v| (v.display)())
+                                {
+                                    // Use display formatting if available
+                                    serializer.serialize_str(&alloc::format!("{}", cpeek))?
+                                } else {
+                                    panic!("Unsupported shape (no display): {}", cpeek.shape())
                                 }
                             }
                         }
@@ -542,9 +526,6 @@ where
                                 trace!(
                                     "  Pushed ObjectFields to stack, will handle {fields} fields"
                                 );
-                            }
-                            _ => {
-                                unreachable!()
                             }
                         }
                     }

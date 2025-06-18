@@ -5,7 +5,6 @@ use super::{IterVTable, Shape};
 /// Fields for set types
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-#[non_exhaustive]
 pub struct SetDef<'shape> {
     /// vtable for interacting with the set
     pub vtable: &'shape SetVTable,

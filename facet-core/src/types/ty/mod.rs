@@ -29,7 +29,6 @@ pub use pointer::*;
 /// See <https://doc.rust-lang.org/reference/types.html>
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-#[non_exhaustive]
 pub enum Type<'shape> {
     /// Built-in primitive.
     Primitive(PrimitiveType),
