@@ -20,6 +20,8 @@ pub enum Diff<'mem, 'facet> {
         from: &'static Shape<'static>,
         to: &'static Shape<'static>,
         updates: HashMap<&'static str, Diff<'mem, 'facet>>,
+        deletions: HashMap<&'static str, Peek<'mem, 'facet, 'static>>,
+        insertions: HashMap<&'static str, Peek<'mem, 'facet, 'static>>,
     },
 }
 
@@ -51,6 +53,8 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                 let to_ty = to.into_struct().unwrap();
 
                 let mut updates = HashMap::new();
+                let mut deletions = HashMap::new();
+                let mut insertions = HashMap::new();
 
                 for (field, from) in from_ty.fields() {
                     if let Ok(to) = to_ty.field_by_name(field.name) {
@@ -58,13 +62,23 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                         if !diff.is_equal() {
                             updates.insert(field.name, diff);
                         }
+                    } else {
+                        deletions.insert(field.name, from);
+                    }
+                }
+
+                for (field, to) in to_ty.fields() {
+                    if from_ty.field_by_name(field.name).is_err() {
+                        insertions.insert(field.name, to);
                     }
                 }
 
                 Diff::Struct {
-                    updates,
                     from: from.shape(),
                     to: to.shape(),
+                    updates,
+                    deletions,
+                    insertions,
                 }
             }
             _ => Diff::Replace { from, to },
