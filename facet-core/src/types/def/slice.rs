@@ -5,7 +5,6 @@ use super::Shape;
 /// Fields for slice types
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-#[non_exhaustive]
 pub struct SliceDef<'shape> {
     /// vtable for interacting with the slice
     pub vtable: &'shape SliceVTable,
@@ -87,7 +86,6 @@ pub type SliceAsMutPtrFn = unsafe fn(slice: PtrMut) -> PtrMut;
 /// but also `HashSet<T>`, etc.)
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-#[non_exhaustive]
 pub struct SliceVTable {
     /// Number of items in the slice
     pub len: SliceLenFn,

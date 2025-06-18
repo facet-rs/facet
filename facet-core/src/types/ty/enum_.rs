@@ -3,7 +3,6 @@ use super::{Repr, StructType};
 /// Fields for enum types
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-#[non_exhaustive]
 pub struct EnumType<'shape> {
     /// Representation of the enum's data
     pub repr: Repr,
@@ -71,7 +70,6 @@ impl<'shape> EnumDefBuilder<'shape> {
 /// Describes a variant of an enum
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-#[non_exhaustive]
 pub struct Variant<'shape> {
     /// Name of the jariant, e.g. `Foo` for `enum FooBar { Foo, Bar }`
     pub name: &'shape str,
@@ -170,7 +168,6 @@ impl<'shape> VariantBuilder<'shape> {
 }
 
 /// An attribute that can be set on an enum variant
-#[non_exhaustive]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
 pub enum VariantAttribute<'shape> {
@@ -181,7 +178,6 @@ pub enum VariantAttribute<'shape> {
 /// All possible representations for Rust enums — ie. the type/size of the discriminant
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
-#[non_exhaustive]
 pub enum EnumRepr {
     /// Special-case representation discriminated by zeros under non-nullable pointer
     ///

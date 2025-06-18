@@ -103,7 +103,7 @@ fn deserialize_item<'input, 'facet, 'shape>(
 
     // Fall back to the def system for other types
     match wip.shape().def {
-        Def::Scalar(_) => deserialize_as_scalar(toml, wip, item)?,
+        Def::Scalar => deserialize_as_scalar(toml, wip, item)?,
         Def::List(_) => deserialize_as_list(toml, wip, item)?,
         Def::Map(_) => deserialize_as_map(toml, wip, item)?,
         Def::SmartPointer(_) => deserialize_as_smartpointer(toml, wip, item)?,

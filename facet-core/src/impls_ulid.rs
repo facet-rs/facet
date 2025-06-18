@@ -3,8 +3,8 @@ use alloc::string::String;
 use ulid::Ulid;
 
 use crate::{
-    Def, Facet, ParseError, PtrConst, PtrMut, PtrUninit, ScalarAffinity, ScalarDef, Shape,
-    TryFromError, TryIntoInnerError, Type, UserType, ValueVTable, value_vtable,
+    Def, Facet, ParseError, PtrConst, PtrMut, PtrUninit, Shape, TryFromError, TryIntoInnerError,
+    Type, UserType, ValueVTable, value_vtable,
 };
 
 unsafe impl Facet<'_> for Ulid {
@@ -67,11 +67,7 @@ unsafe impl Facet<'_> for Ulid {
         Shape::builder_for_sized::<Self>()
             .type_identifier("Ulid")
             .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar(
-                ScalarDef::builder()
-                    .affinity(&const { ScalarAffinity::ulid().build() })
-                    .build(),
-            ))
+            .def(Def::Scalar)
             .inner(inner_shape)
             .build()
     };

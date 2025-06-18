@@ -17,7 +17,6 @@ use super::UnsizedError;
 pub type TypeNameFn = fn(f: &mut core::fmt::Formatter, opts: TypeNameOpts) -> core::fmt::Result;
 
 /// Options for formatting the name of a type
-#[non_exhaustive]
 #[derive(Clone, Copy)]
 pub struct TypeNameOpts {
     /// as long as this is > 0, keep formatting the type parameters
@@ -151,7 +150,6 @@ pub type ParseFnTyped<T> =
     for<'mem> fn(s: &str, target: TypedPtrUninit<'mem, T>) -> Result<&'mem mut T, ParseError>;
 
 /// Error returned by [`ParseFn`]
-#[non_exhaustive]
 #[derive(Debug)]
 pub enum ParseError {
     /// Generic error message
@@ -191,7 +189,6 @@ pub type TryFromFnTyped<T> =
     ) -> Result<&'mem mut T, TryFromError<'shape>>;
 
 /// Error type for TryFrom conversion failures
-#[non_exhaustive]
 #[derive(Debug, PartialEq, Clone)]
 pub enum TryFromError<'shape> {
     /// Generic conversion error
@@ -277,7 +274,6 @@ pub type TryIntoInnerFnTyped<T> = for<'src, 'dst> fn(
 
 /// Error type returned by [`TryIntoInnerFn`] when attempting to extract
 /// the inner value from a wrapper type.
-#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TryIntoInnerError {
     /// Indicates that the inner value cannot be extracted at this time,
@@ -330,7 +326,6 @@ pub type TryBorrowInnerFnTyped<T> =
 
 /// Error type returned by [`TryBorrowInnerFn`] when attempting to borrow
 /// the inner value from a wrapper type.
-#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TryBorrowInnerError {
     /// Indicates that the inner value cannot be borrowed at this time,
@@ -567,7 +562,6 @@ pub enum ValueVTable {
 /// VTable for common operations that can be performed on any `Sized` shape
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
-#[non_exhaustive]
 pub struct ValueVTableSized {
     /// cf. [`TypeNameFn`]
     pub type_name: TypeNameFn,
@@ -637,7 +631,6 @@ pub struct ValueVTableSized {
 /// VTable for common operations that can be performed on any `!Sized` shape
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
-#[non_exhaustive]
 pub struct ValueVTableUnsized {
     /// cf. [`TypeNameFn`]
     pub type_name: TypeNameFn,

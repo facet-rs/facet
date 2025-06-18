@@ -235,7 +235,7 @@ fn deserialize_scalar_field<'mem, 'shape>(
     wip: &mut Partial<'mem, 'shape>,
 ) -> Result<(), UrlEncodedError<'shape>> {
     match wip.shape().def {
-        Def::Scalar(_sd) => {
+        Def::Scalar => {
             if wip.shape().is_type::<String>() {
                 let s = value.to_string();
                 wip.set(s)?;
@@ -308,7 +308,6 @@ fn deserialize_nested_field<'mem, 'shape>(
 
 /// Errors that can occur during URL encoded form data deserialization.
 #[derive(Debug)]
-#[non_exhaustive]
 pub enum UrlEncodedError<'shape> {
     /// The field value couldn't be parsed as a number.
     InvalidNumber(String, String),

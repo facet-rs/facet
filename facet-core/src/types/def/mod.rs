@@ -27,13 +27,9 @@ pub use smartptr::*;
 mod function;
 pub use function::*;
 
-mod scalar;
-pub use scalar::*;
-
 /// The semantic definition of a shape: is it more like a scalar, a map, a list?
 #[derive(Clone, Copy)]
 #[repr(C)]
-#[non_exhaustive]
 // this enum is only ever going to be owned in static space,
 // right?
 pub enum Def<'shape> {
@@ -44,7 +40,7 @@ pub enum Def<'shape> {
     /// You can interact with them through [`ValueVTable`].
     ///
     /// e.g. `u32`, `String`, `bool`, `SocketAddr`, etc.
-    Scalar(ScalarDef<'shape>),
+    Scalar,
 
     /// Map — keys are dynamic (and strings, sorry), values are homogeneous
     ///
@@ -84,25 +80,8 @@ impl<'shape> core::fmt::Debug for Def<'shape> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Def::Undefined => write!(f, "Undefined"),
-            Def::Scalar(scalar_def) => {
-                let affinity_name = match scalar_def.affinity {
-                    crate::ScalarAffinity::Number(_) => "Number",
-                    crate::ScalarAffinity::ComplexNumber(_) => "ComplexNumber",
-                    crate::ScalarAffinity::String(_) => "String",
-                    crate::ScalarAffinity::Boolean(_) => "Boolean",
-                    crate::ScalarAffinity::Empty(_) => "Empty",
-                    crate::ScalarAffinity::SocketAddr(_) => "SocketAddr",
-                    crate::ScalarAffinity::IpAddr(_) => "IpAddr",
-                    crate::ScalarAffinity::Url(_) => "Url",
-                    crate::ScalarAffinity::UUID(_) => "UUID",
-                    crate::ScalarAffinity::ULID(_) => "ULID",
-                    crate::ScalarAffinity::Time(_) => "Time",
-                    crate::ScalarAffinity::Opaque(_) => "Opaque",
-                    crate::ScalarAffinity::Other(_) => "Other",
-                    crate::ScalarAffinity::Char(_) => "Char",
-                    crate::ScalarAffinity::Path(_) => "Path",
-                };
-                write!(f, "Scalar({affinity_name})")
+            Def::Scalar => {
+                write!(f, "Scalar")
             }
             Def::Map(map_def) => write!(f, "Map<{}>", (map_def.v)()),
             Def::Set(set_def) => write!(f, "Set<{}>", (set_def.t)()),
@@ -123,9 +102,9 @@ impl<'shape> core::fmt::Debug for Def<'shape> {
 
 impl<'shape> Def<'shape> {
     /// Returns the `ScalarDef` wrapped in an `Ok` if this is a [`Def::Scalar`].
-    pub fn into_scalar(self) -> Result<ScalarDef<'shape>, Self> {
+    pub fn into_scalar(self) -> Result<(), Self> {
         match self {
-            Self::Scalar(def) => Ok(def),
+            Self::Scalar => Ok(()),
             _ => Err(self),
         }
     }

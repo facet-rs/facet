@@ -5,7 +5,6 @@ use super::{IterVTable, Shape};
 /// Fields for list types
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-#[non_exhaustive]
 pub struct ListDef<'shape> {
     /// vtable for interacting with the list
     pub vtable: &'shape ListVTable,
@@ -121,7 +120,6 @@ pub type ListAsMutPtrFn = unsafe fn(list: PtrMut) -> PtrMut;
 /// Virtual table for a list-like type (like `Vec<T>`)
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-#[non_exhaustive]
 pub struct ListVTable {
     /// cf. [`ListInitInPlaceWithCapacityFn`].
     /// Unbuildable lists exist, like arrays.

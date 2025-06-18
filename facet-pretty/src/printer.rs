@@ -177,7 +177,7 @@ impl PrettyPrinter {
                     // Process based on the peek variant and type
                     match (item.value.shape().def, item.value.shape().ty) {
                         // Handle scalar values
-                        (Def::Scalar(_def), _) => {
+                        (Def::Scalar, _) => {
                             self.format_scalar(item.value, f)?;
                         }
                         // Handle option types

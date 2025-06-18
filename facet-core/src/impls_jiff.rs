@@ -2,8 +2,7 @@ use alloc::string::String;
 use jiff::{Timestamp, Zoned, civil::DateTime};
 
 use crate::{
-    Def, Facet, ParseError, PtrConst, PtrUninit, ScalarAffinity, ScalarDef, Shape, Type, UserType,
-    ValueVTable, value_vtable,
+    Def, Facet, ParseError, PtrConst, PtrUninit, Shape, Type, UserType, ValueVTable, value_vtable,
 };
 
 const ZONED_ERROR: &str = "could not parse time-zone aware instant of time";
@@ -53,11 +52,7 @@ unsafe impl Facet<'_> for Zoned {
         Shape::builder_for_sized::<Self>()
             .type_identifier("Zoned")
             .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar(
-                ScalarDef::builder()
-                    .affinity(&const { ScalarAffinity::time().build() })
-                    .build(),
-            ))
+            .def(Def::Scalar)
             .build()
     };
 }
@@ -112,11 +107,7 @@ unsafe impl Facet<'_> for Timestamp {
         Shape::builder_for_sized::<Self>()
             .type_identifier("Timestamp")
             .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar(
-                ScalarDef::builder()
-                    .affinity(&const { ScalarAffinity::time().build() })
-                    .build(),
-            ))
+            .def(Def::Scalar)
             .build()
     };
 }
@@ -170,11 +161,7 @@ unsafe impl Facet<'_> for DateTime {
         Shape::builder_for_sized::<Self>()
             .type_identifier("DateTime")
             .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar(
-                ScalarDef::builder()
-                    .affinity(&const { ScalarAffinity::time().build() })
-                    .build(),
-            ))
+            .def(Def::Scalar)
             .build()
     };
 }

@@ -593,7 +593,7 @@ impl<'input, 'shape> Decoder<'input> {
         }
 
         // Then check the def system (Def)
-        if let Def::Scalar(_) = shape.def {
+        if let Def::Scalar = shape.def {
             trace!("Deserializing scalar");
             if shape.is_type::<String>() {
                 let s = self.decode_string()?;

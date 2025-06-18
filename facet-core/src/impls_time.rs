@@ -2,8 +2,7 @@ use alloc::string::String;
 use time::{OffsetDateTime, UtcDateTime};
 
 use crate::{
-    Def, Facet, ParseError, PtrConst, PtrUninit, ScalarAffinity, ScalarDef, Shape, Type, UserType,
-    ValueVTable, value_vtable,
+    Def, Facet, ParseError, PtrConst, PtrUninit, Shape, Type, UserType, ValueVTable, value_vtable,
 };
 
 unsafe impl Facet<'_> for UtcDateTime {
@@ -65,11 +64,7 @@ unsafe impl Facet<'_> for UtcDateTime {
         Shape::builder_for_sized::<Self>()
             .type_identifier("UtcDateTime")
             .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar(
-                ScalarDef::builder()
-                    .affinity(&const { ScalarAffinity::time().build() })
-                    .build(),
-            ))
+            .def(Def::Scalar)
             .build()
     };
 }
@@ -133,11 +128,7 @@ unsafe impl Facet<'_> for OffsetDateTime {
         Shape::builder_for_sized::<Self>()
             .type_identifier("OffsetDateTime")
             .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar(
-                ScalarDef::builder()
-                    .affinity(&const { ScalarAffinity::time().build() })
-                    .build(),
-            ))
+            .def(Def::Scalar)
             .build()
     };
 }

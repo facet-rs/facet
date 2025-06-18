@@ -19,7 +19,6 @@ pub enum PointerType<'shape> {
 /// Describes the raw/reference pointer
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-#[non_exhaustive]
 pub struct ValuePointerType<'shape> {
     /// Is the pointer mutable or not.
     pub mutable: bool,

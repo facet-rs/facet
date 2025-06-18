@@ -8,7 +8,6 @@ use super::Shape;
 /// and the inner shape (the pointee type in the smart pointer).
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-#[non_exhaustive]
 pub struct SmartPointerDef<'shape> {
     /// vtable for interacting with the smart pointer
     pub vtable: &'shape SmartPointerVTable,
@@ -399,7 +398,6 @@ impl SmartPointerVTableBuilder {
 }
 
 /// Represents common standard library smart pointer kinds
-#[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum KnownSmartPointer {
     /// [`Box<T>`](std::boxed::Box), heap-allocated values with single ownership

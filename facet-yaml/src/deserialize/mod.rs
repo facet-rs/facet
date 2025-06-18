@@ -10,7 +10,9 @@ use alloc::{
     string::{String, ToString},
 };
 use error::AnyErr;
-use facet_core::{Characteristic, Def, Facet, FieldFlags, Type, UserType};
+use facet_core::{
+    Characteristic, Def, Facet, FieldFlags, NumericType, PrimitiveType, Type, UserType,
+};
 use facet_reflect::Partial;
 use yaml_rust2::{Yaml, YamlLoader};
 
@@ -169,149 +171,132 @@ fn deserialize_value<'facet, 'shape>(
     // Then check the def system (Def) using innermost_shape instead of shape
     // This handles transparent types automatically by using the wrapped type
     match innermost_shape.def {
-        Def::Scalar(scalar_def) => {
+        Def::Scalar => {
             #[cfg(feature = "log")]
-            log::debug!(
-                "Processing scalar type with affinity: {:?}",
-                scalar_def.affinity
-            );
+            {
+                log::debug!("Processing scalar type");
+                log::debug!("  shape: {}", shape);
+                log::debug!("  innermost_shape: {}", innermost_shape);
+                log::debug!("  shape.ty: {:?}", shape.ty);
+                log::debug!("  innermost_shape.ty: {:?}", innermost_shape.ty);
+            }
 
-            // Handle numeric types with proper conversion
-            use facet_core::{IntegerSize, NumberBits, ScalarAffinity, Signedness};
-            if let ScalarAffinity::Number(num_affinity) = scalar_def.affinity {
-                match num_affinity.bits {
-                    NumberBits::Integer { size, sign } => match (size, sign) {
-                        (IntegerSize::Fixed(bits), Signedness::Unsigned) => {
-                            let u = yaml_to_u64(value)?;
-                            match bits {
-                                8 => {
-                                    let val = u8::try_from(u).map_err(|_| {
-                                        AnyErr(format!("Value {u} out of range for u8"))
+            // Check if it's a numeric type
+            if let Type::Primitive(PrimitiveType::Numeric(numeric_type)) = innermost_shape.ty {
+                let size = innermost_shape.layout.sized_layout().unwrap().size();
+                match numeric_type {
+                    NumericType::Integer { signed: false } => {
+                        let u = yaml_to_u64(value)?;
+                        match size {
+                            1 => {
+                                let val = u8::try_from(u).map_err(|_| {
+                                    AnyErr(format!("Value {} out of range for u8", u))
+                                })?;
+                                wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
+                            }
+                            2 => {
+                                let val = u16::try_from(u).map_err(|_| {
+                                    AnyErr(format!("Value {} out of range for u16", u))
+                                })?;
+                                wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
+                            }
+                            4 => {
+                                let val = u32::try_from(u).map_err(|_| {
+                                    AnyErr(format!("Value {} out of range for u32", u))
+                                })?;
+                                wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
+                            }
+                            8 => {
+                                // Check if it's usize or u64
+                                if innermost_shape.is_type::<usize>() {
+                                    let val = usize::try_from(u).map_err(|_| {
+                                        AnyErr(format!("Value {} out of range for usize", u))
                                     })?;
                                     wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
-                                }
-                                16 => {
-                                    let val = u16::try_from(u).map_err(|_| {
-                                        AnyErr(format!("Value {u} out of range for u16"))
-                                    })?;
-                                    wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
-                                }
-                                32 => {
-                                    let val = u32::try_from(u).map_err(|_| {
-                                        AnyErr(format!("Value {u} out of range for u32"))
-                                    })?;
-                                    wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
-                                }
-                                64 => {
+                                } else {
                                     wip.set(u).map_err(|e| AnyErr(e.to_string()))?;
                                 }
-                                128 => {
-                                    let val = u128::from(u);
-                                    wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
-                                }
-                                _ => {
-                                    return Err(AnyErr(format!(
-                                        "Unsupported fixed unsigned integer size: {bits}"
-                                    )));
-                                }
+                            }
+                            16 => {
+                                let val = u128::from(u);
+                                wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
+                            }
+                            _ => {
+                                // Handle usize
+                                let val = usize::try_from(u).map_err(|_| {
+                                    AnyErr(format!("Value {} out of range for usize", u))
+                                })?;
+                                wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
                             }
                         }
-                        (IntegerSize::PointerSized, Signedness::Unsigned) => {
-                            let u = yaml_to_u64(value)?;
-                            let val = usize::try_from(u)
-                                .map_err(|_| AnyErr(format!("Value {u} out of range for usize")))?;
-                            wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
-                        }
-                        (IntegerSize::Fixed(bits), Signedness::Signed) => {
-                            let i = match value {
-                                Yaml::Integer(i) => *i,
-                                Yaml::Real(r) => r
-                                    .parse::<i64>()
-                                    .map_err(|_| AnyErr("Failed to parse real as i64".into()))?,
-                                Yaml::String(s) => s
-                                    .parse::<i64>()
-                                    .map_err(|_| AnyErr("Failed to parse string as i64".into()))?,
-                                Yaml::Boolean(b) => {
-                                    if *b {
-                                        1
-                                    } else {
-                                        0
-                                    }
+                    }
+                    NumericType::Integer { signed: true } => {
+                        let i = match value {
+                            Yaml::Integer(i) => *i,
+                            Yaml::Real(r) => r
+                                .parse::<i64>()
+                                .map_err(|_| AnyErr("Failed to parse real as i64".into()))?,
+                            Yaml::String(s) => s
+                                .parse::<i64>()
+                                .map_err(|_| AnyErr("Failed to parse string as i64".into()))?,
+                            Yaml::Boolean(b) => {
+                                if *b {
+                                    1
+                                } else {
+                                    0
                                 }
-                                _ => {
-                                    return Err(AnyErr(format!(
-                                        "Cannot convert {} to i64",
-                                        yaml_type(value)
-                                    )));
-                                }
-                            };
-                            match bits {
-                                8 => {
-                                    let val = i8::try_from(i).map_err(|_| {
-                                        AnyErr(format!("Value {i} out of range for i8"))
+                            }
+                            _ => {
+                                return Err(AnyErr(format!(
+                                    "Cannot convert {} to i64",
+                                    yaml_type(value)
+                                )));
+                            }
+                        };
+                        match size {
+                            1 => {
+                                let val = i8::try_from(i).map_err(|_| {
+                                    AnyErr(format!("Value {} out of range for i8", i))
+                                })?;
+                                wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
+                            }
+                            2 => {
+                                let val = i16::try_from(i).map_err(|_| {
+                                    AnyErr(format!("Value {} out of range for i16", i))
+                                })?;
+                                wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
+                            }
+                            4 => {
+                                let val = i32::try_from(i).map_err(|_| {
+                                    AnyErr(format!("Value {} out of range for i32", i))
+                                })?;
+                                wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
+                            }
+                            8 => {
+                                // Check if it's isize or i64
+                                if innermost_shape.is_type::<isize>() {
+                                    let val = isize::try_from(i).map_err(|_| {
+                                        AnyErr(format!("Value {} out of range for isize", i))
                                     })?;
                                     wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
-                                }
-                                16 => {
-                                    let val = i16::try_from(i).map_err(|_| {
-                                        AnyErr(format!("Value {i} out of range for i16"))
-                                    })?;
-                                    wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
-                                }
-                                32 => {
-                                    let val = i32::try_from(i).map_err(|_| {
-                                        AnyErr(format!("Value {i} out of range for i32"))
-                                    })?;
-                                    wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
-                                }
-                                64 => {
+                                } else {
                                     wip.set(i).map_err(|e| AnyErr(e.to_string()))?;
                                 }
-                                128 => {
-                                    let val = i128::from(i);
-                                    wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
-                                }
-                                _ => {
-                                    return Err(AnyErr(format!(
-                                        "Unsupported fixed signed integer size: {bits}"
-                                    )));
-                                }
+                            }
+                            16 => {
+                                let val = i128::from(i);
+                                wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
+                            }
+                            _ => {
+                                // Handle isize
+                                let val = isize::try_from(i).map_err(|_| {
+                                    AnyErr(format!("Value {} out of range for isize", i))
+                                })?;
+                                wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
                             }
                         }
-                        (IntegerSize::PointerSized, Signedness::Signed) => {
-                            let i = match value {
-                                Yaml::Integer(i) => *i,
-                                Yaml::Real(r) => r
-                                    .parse::<i64>()
-                                    .map_err(|_| AnyErr("Failed to parse real as i64".into()))?,
-                                Yaml::String(s) => s
-                                    .parse::<i64>()
-                                    .map_err(|_| AnyErr("Failed to parse string as i64".into()))?,
-                                Yaml::Boolean(b) => {
-                                    if *b {
-                                        1
-                                    } else {
-                                        0
-                                    }
-                                }
-                                _ => {
-                                    return Err(AnyErr(format!(
-                                        "Cannot convert {} to i64",
-                                        yaml_type(value)
-                                    )));
-                                }
-                            };
-                            let val = isize::try_from(i)
-                                .map_err(|_| AnyErr(format!("Value {i} out of range for isize")))?;
-                            wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
-                        }
-                    },
-                    NumberBits::Float {
-                        sign_bits: _,
-                        exponent_bits: _,
-                        mantissa_bits,
-                        has_explicit_first_mantissa_bit: _,
-                    } => {
+                    }
+                    NumericType::Float => {
                         // Handle floating point numbers
                         let f = match value {
                             Yaml::Real(r) => r
@@ -328,24 +313,13 @@ fn deserialize_value<'facet, 'shape>(
                                 )));
                             }
                         };
-                        // Determine float type based on mantissa bits (f32 has 23, f64 has 52)
-                        if mantissa_bits <= 23 {
+                        // Determine float type based on size (f32 is 4 bytes, f64 is 8 bytes)
+                        if size == 4 {
                             let val = f as f32;
                             wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
                         } else {
                             wip.set(f).map_err(|e| AnyErr(e.to_string()))?;
                         }
-                    }
-                    NumberBits::Fixed { .. } | NumberBits::Decimal { .. } => {
-                        return Err(AnyErr(
-                            "Fixed and decimal number types not supported in YAML deserializer"
-                                .into(),
-                        ));
-                    }
-                    _ => {
-                        return Err(AnyErr(
-                            "Unsupported number type in YAML deserializer".into(),
-                        ));
                     }
                 }
             } else if innermost_shape.is_type::<bool>() {

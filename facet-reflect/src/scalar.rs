@@ -4,7 +4,6 @@ use facet_core::{ConstTypeId, Shape};
 
 /// All scalar types supported out of the box by peek and poke.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-#[non_exhaustive]
 pub enum ScalarType {
     /// Unit tuple `()`.
     Unit,

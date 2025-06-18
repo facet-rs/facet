@@ -10,6 +10,7 @@ extern crate alloc;
 use alloc::string::ToString;
 use alloc::{vec, vec::Vec};
 use core::fmt::Debug;
+use facet_core::{NumericType, PrimitiveType};
 
 mod debug;
 mod error;
@@ -19,9 +20,7 @@ pub use debug::InputDebug;
 pub use error::*;
 
 mod span;
-use facet_core::{
-    Characteristic, Def, Facet, FieldFlags, PointerType, ScalarAffinity, StructKind, Type, UserType,
-};
+use facet_core::{Characteristic, Def, Facet, FieldFlags, PointerType, StructKind, Type, UserType};
 use owo_colors::OwoColorize;
 pub use span::*;
 
@@ -640,317 +639,306 @@ fn has_no_fractional_part(value: f64) -> bool {
 }
 
 /// Trait for numeric type conversions
-trait NumericConvert: Sized {
-    const TYPE_NAME: &'static str;
+trait NumericConvert {
+    fn to_i8(&self) -> Option<i8>;
+    fn to_i16(&self) -> Option<i16>;
+    fn to_i32(&self) -> Option<i32>;
+    fn to_i64(&self) -> Option<i64>;
+    fn to_i128(&self) -> Option<i128>;
+    fn to_isize(&self) -> Option<isize>;
 
-    fn to_i8(self) -> Option<i8>;
-    fn to_i16(self) -> Option<i16>;
-    fn to_i32(self) -> Option<i32>;
-    fn to_i64(self) -> Option<i64>;
-    fn to_i128(self) -> Option<i128>;
-    fn to_isize(self) -> Option<isize>;
+    fn to_u8(&self) -> Option<u8>;
+    fn to_u16(&self) -> Option<u16>;
+    fn to_u32(&self) -> Option<u32>;
+    fn to_u64(&self) -> Option<u64>;
+    fn to_u128(&self) -> Option<u128>;
+    fn to_usize(&self) -> Option<usize>;
 
-    fn to_u8(self) -> Option<u8>;
-    fn to_u16(self) -> Option<u16>;
-    fn to_u32(self) -> Option<u32>;
-    fn to_u64(self) -> Option<u64>;
-    fn to_u128(self) -> Option<u128>;
-    fn to_usize(self) -> Option<usize>;
-
-    fn to_f32(self) -> Option<f32>;
-    fn to_f64(self) -> Option<f64>;
+    fn to_f32(&self) -> Option<f32>;
+    fn to_f64(&self) -> Option<f64>;
 }
 
 impl NumericConvert for u64 {
-    const TYPE_NAME: &'static str = "u64";
-
-    fn to_i8(self) -> Option<i8> {
-        self.try_into().ok()
+    fn to_i8(&self) -> Option<i8> {
+        (*self).try_into().ok()
     }
-    fn to_i16(self) -> Option<i16> {
-        self.try_into().ok()
+    fn to_i16(&self) -> Option<i16> {
+        (*self).try_into().ok()
     }
-    fn to_i32(self) -> Option<i32> {
-        self.try_into().ok()
+    fn to_i32(&self) -> Option<i32> {
+        (*self).try_into().ok()
     }
-    fn to_i64(self) -> Option<i64> {
-        self.try_into().ok()
+    fn to_i64(&self) -> Option<i64> {
+        (*self).try_into().ok()
     }
-    fn to_i128(self) -> Option<i128> {
-        Some(self as i128)
+    fn to_i128(&self) -> Option<i128> {
+        Some(*self as i128)
     }
-    fn to_isize(self) -> Option<isize> {
-        self.try_into().ok()
+    fn to_isize(&self) -> Option<isize> {
+        (*self).try_into().ok()
     }
 
-    fn to_u8(self) -> Option<u8> {
-        self.try_into().ok()
+    fn to_u8(&self) -> Option<u8> {
+        (*self).try_into().ok()
     }
-    fn to_u16(self) -> Option<u16> {
-        self.try_into().ok()
+    fn to_u16(&self) -> Option<u16> {
+        (*self).try_into().ok()
     }
-    fn to_u32(self) -> Option<u32> {
-        self.try_into().ok()
+    fn to_u32(&self) -> Option<u32> {
+        (*self).try_into().ok()
     }
-    fn to_u64(self) -> Option<u64> {
-        Some(self)
+    fn to_u64(&self) -> Option<u64> {
+        Some(*self)
     }
-    fn to_u128(self) -> Option<u128> {
-        Some(self as u128)
+    fn to_u128(&self) -> Option<u128> {
+        Some(*self as u128)
     }
-    fn to_usize(self) -> Option<usize> {
-        self.try_into().ok()
+    fn to_usize(&self) -> Option<usize> {
+        (*self).try_into().ok()
     }
 
-    fn to_f32(self) -> Option<f32> {
-        Some(self as f32)
+    fn to_f32(&self) -> Option<f32> {
+        Some(*self as f32)
     }
-    fn to_f64(self) -> Option<f64> {
-        Some(self as f64)
+    fn to_f64(&self) -> Option<f64> {
+        Some(*self as f64)
     }
 }
 
 impl NumericConvert for i64 {
-    const TYPE_NAME: &'static str = "i64";
-
-    fn to_i8(self) -> Option<i8> {
-        self.try_into().ok()
+    fn to_i8(&self) -> Option<i8> {
+        (*self).try_into().ok()
     }
-    fn to_i16(self) -> Option<i16> {
-        self.try_into().ok()
+    fn to_i16(&self) -> Option<i16> {
+        (*self).try_into().ok()
     }
-    fn to_i32(self) -> Option<i32> {
-        self.try_into().ok()
+    fn to_i32(&self) -> Option<i32> {
+        (*self).try_into().ok()
     }
-    fn to_i64(self) -> Option<i64> {
-        Some(self)
+    fn to_i64(&self) -> Option<i64> {
+        Some(*self)
     }
-    fn to_i128(self) -> Option<i128> {
-        Some(self as i128)
+    fn to_i128(&self) -> Option<i128> {
+        Some(*self as i128)
     }
-    fn to_isize(self) -> Option<isize> {
-        self.try_into().ok()
+    fn to_isize(&self) -> Option<isize> {
+        (*self).try_into().ok()
     }
 
-    fn to_u8(self) -> Option<u8> {
-        self.try_into().ok()
+    fn to_u8(&self) -> Option<u8> {
+        (*self).try_into().ok()
     }
-    fn to_u16(self) -> Option<u16> {
-        self.try_into().ok()
+    fn to_u16(&self) -> Option<u16> {
+        (*self).try_into().ok()
     }
-    fn to_u32(self) -> Option<u32> {
-        self.try_into().ok()
+    fn to_u32(&self) -> Option<u32> {
+        (*self).try_into().ok()
     }
-    fn to_u64(self) -> Option<u64> {
-        self.try_into().ok()
+    fn to_u64(&self) -> Option<u64> {
+        (*self).try_into().ok()
     }
-    fn to_u128(self) -> Option<u128> {
-        self.try_into().ok()
+    fn to_u128(&self) -> Option<u128> {
+        (*self).try_into().ok()
     }
-    fn to_usize(self) -> Option<usize> {
-        self.try_into().ok()
+    fn to_usize(&self) -> Option<usize> {
+        (*self).try_into().ok()
     }
 
-    fn to_f32(self) -> Option<f32> {
-        Some(self as f32)
+    fn to_f32(&self) -> Option<f32> {
+        Some(*self as f32)
     }
-    fn to_f64(self) -> Option<f64> {
-        Some(self as f64)
+    fn to_f64(&self) -> Option<f64> {
+        Some(*self as f64)
     }
 }
 
 impl NumericConvert for f64 {
-    const TYPE_NAME: &'static str = "f64";
-
-    fn to_i8(self) -> Option<i8> {
-        if has_no_fractional_part(self) && self >= i8::MIN as f64 && self <= i8::MAX as f64 {
-            Some(self as i8)
+    fn to_i8(&self) -> Option<i8> {
+        if has_no_fractional_part(*self) && *self >= i8::MIN as f64 && *self <= i8::MAX as f64 {
+            Some(*self as i8)
         } else {
             None
         }
     }
-    fn to_i16(self) -> Option<i16> {
-        if has_no_fractional_part(self) && self >= i16::MIN as f64 && self <= i16::MAX as f64 {
-            Some(self as i16)
+    fn to_i16(&self) -> Option<i16> {
+        if has_no_fractional_part(*self) && *self >= i16::MIN as f64 && *self <= i16::MAX as f64 {
+            Some(*self as i16)
         } else {
             None
         }
     }
-    fn to_i32(self) -> Option<i32> {
-        if has_no_fractional_part(self) && self >= i32::MIN as f64 && self <= i32::MAX as f64 {
-            Some(self as i32)
+    fn to_i32(&self) -> Option<i32> {
+        if has_no_fractional_part(*self) && *self >= i32::MIN as f64 && *self <= i32::MAX as f64 {
+            Some(*self as i32)
         } else {
             None
         }
     }
-    fn to_i64(self) -> Option<i64> {
-        if has_no_fractional_part(self) && self >= i64::MIN as f64 && self <= i64::MAX as f64 {
-            Some(self as i64)
+    fn to_i64(&self) -> Option<i64> {
+        if has_no_fractional_part(*self) && *self >= i64::MIN as f64 && *self <= i64::MAX as f64 {
+            Some(*self as i64)
         } else {
             None
         }
     }
-    fn to_i128(self) -> Option<i128> {
-        if has_no_fractional_part(self) && self >= i128::MIN as f64 && self <= i128::MAX as f64 {
-            Some(self as i128)
+    fn to_i128(&self) -> Option<i128> {
+        if has_no_fractional_part(*self) && *self >= i128::MIN as f64 && *self <= i128::MAX as f64 {
+            Some(*self as i128)
         } else {
             None
         }
     }
-    fn to_isize(self) -> Option<isize> {
-        if has_no_fractional_part(self) && self >= isize::MIN as f64 && self <= isize::MAX as f64 {
-            Some(self as isize)
-        } else {
-            None
-        }
-    }
-
-    fn to_u8(self) -> Option<u8> {
-        if has_no_fractional_part(self) && self >= 0.0 && self <= u8::MAX as f64 {
-            Some(self as u8)
-        } else {
-            None
-        }
-    }
-    fn to_u16(self) -> Option<u16> {
-        if has_no_fractional_part(self) && self >= 0.0 && self <= u16::MAX as f64 {
-            Some(self as u16)
-        } else {
-            None
-        }
-    }
-    fn to_u32(self) -> Option<u32> {
-        if has_no_fractional_part(self) && self >= 0.0 && self <= u32::MAX as f64 {
-            Some(self as u32)
-        } else {
-            None
-        }
-    }
-    fn to_u64(self) -> Option<u64> {
-        if has_no_fractional_part(self) && self >= 0.0 && self <= u64::MAX as f64 {
-            Some(self as u64)
-        } else {
-            None
-        }
-    }
-    fn to_u128(self) -> Option<u128> {
-        if has_no_fractional_part(self) && self >= 0.0 && self <= u128::MAX as f64 {
-            Some(self as u128)
-        } else {
-            None
-        }
-    }
-    fn to_usize(self) -> Option<usize> {
-        if has_no_fractional_part(self) && self >= 0.0 && self <= usize::MAX as f64 {
-            Some(self as usize)
+    fn to_isize(&self) -> Option<isize> {
+        if has_no_fractional_part(*self) && *self >= isize::MIN as f64 && *self <= isize::MAX as f64
+        {
+            Some(*self as isize)
         } else {
             None
         }
     }
 
-    fn to_f32(self) -> Option<f32> {
-        Some(self as f32)
+    fn to_u8(&self) -> Option<u8> {
+        if has_no_fractional_part(*self) && *self >= 0.0 && *self <= u8::MAX as f64 {
+            Some(*self as u8)
+        } else {
+            None
+        }
     }
-    fn to_f64(self) -> Option<f64> {
-        Some(self)
+    fn to_u16(&self) -> Option<u16> {
+        if has_no_fractional_part(*self) && *self >= 0.0 && *self <= u16::MAX as f64 {
+            Some(*self as u16)
+        } else {
+            None
+        }
+    }
+    fn to_u32(&self) -> Option<u32> {
+        if has_no_fractional_part(*self) && *self >= 0.0 && *self <= u32::MAX as f64 {
+            Some(*self as u32)
+        } else {
+            None
+        }
+    }
+    fn to_u64(&self) -> Option<u64> {
+        if has_no_fractional_part(*self) && *self >= 0.0 && *self <= u64::MAX as f64 {
+            Some(*self as u64)
+        } else {
+            None
+        }
+    }
+    fn to_u128(&self) -> Option<u128> {
+        if has_no_fractional_part(*self) && *self >= 0.0 && *self <= u128::MAX as f64 {
+            Some(*self as u128)
+        } else {
+            None
+        }
+    }
+    fn to_usize(&self) -> Option<usize> {
+        if has_no_fractional_part(*self) && *self >= 0.0 && *self <= usize::MAX as f64 {
+            Some(*self as usize)
+        } else {
+            None
+        }
+    }
+
+    fn to_f32(&self) -> Option<f32> {
+        Some(*self as f32)
+    }
+    fn to_f64(&self) -> Option<f64> {
+        Some(*self)
     }
 }
 
 impl NumericConvert for u128 {
-    const TYPE_NAME: &'static str = "u128";
-
-    fn to_i8(self) -> Option<i8> {
-        self.try_into().ok()
+    fn to_i8(&self) -> Option<i8> {
+        (*self).try_into().ok()
     }
-    fn to_i16(self) -> Option<i16> {
-        self.try_into().ok()
+    fn to_i16(&self) -> Option<i16> {
+        (*self).try_into().ok()
     }
-    fn to_i32(self) -> Option<i32> {
-        self.try_into().ok()
+    fn to_i32(&self) -> Option<i32> {
+        (*self).try_into().ok()
     }
-    fn to_i64(self) -> Option<i64> {
-        self.try_into().ok()
+    fn to_i64(&self) -> Option<i64> {
+        (*self).try_into().ok()
     }
-    fn to_i128(self) -> Option<i128> {
-        Some(self as i128)
+    fn to_i128(&self) -> Option<i128> {
+        Some(*self as i128)
     }
-    fn to_isize(self) -> Option<isize> {
-        self.try_into().ok()
+    fn to_isize(&self) -> Option<isize> {
+        (*self).try_into().ok()
     }
 
-    fn to_u8(self) -> Option<u8> {
-        self.try_into().ok()
+    fn to_u8(&self) -> Option<u8> {
+        (*self).try_into().ok()
     }
-    fn to_u16(self) -> Option<u16> {
-        self.try_into().ok()
+    fn to_u16(&self) -> Option<u16> {
+        (*self).try_into().ok()
     }
-    fn to_u32(self) -> Option<u32> {
-        self.try_into().ok()
+    fn to_u32(&self) -> Option<u32> {
+        (*self).try_into().ok()
     }
-    fn to_u64(self) -> Option<u64> {
-        self.try_into().ok()
+    fn to_u64(&self) -> Option<u64> {
+        (*self).try_into().ok()
     }
-    fn to_u128(self) -> Option<u128> {
-        Some(self)
+    fn to_u128(&self) -> Option<u128> {
+        Some(*self)
     }
-    fn to_usize(self) -> Option<usize> {
-        self.try_into().ok()
+    fn to_usize(&self) -> Option<usize> {
+        (*self).try_into().ok()
     }
 
-    fn to_f32(self) -> Option<f32> {
-        Some(self as f32)
+    fn to_f32(&self) -> Option<f32> {
+        Some(*self as f32)
     }
-    fn to_f64(self) -> Option<f64> {
-        Some(self as f64)
+    fn to_f64(&self) -> Option<f64> {
+        Some(*self as f64)
     }
 }
 
 impl NumericConvert for i128 {
-    const TYPE_NAME: &'static str = "i128";
-
-    fn to_i8(self) -> Option<i8> {
-        self.try_into().ok()
+    fn to_i8(&self) -> Option<i8> {
+        (*self).try_into().ok()
     }
-    fn to_i16(self) -> Option<i16> {
-        self.try_into().ok()
+    fn to_i16(&self) -> Option<i16> {
+        (*self).try_into().ok()
     }
-    fn to_i32(self) -> Option<i32> {
-        self.try_into().ok()
+    fn to_i32(&self) -> Option<i32> {
+        (*self).try_into().ok()
     }
-    fn to_i64(self) -> Option<i64> {
-        self.try_into().ok()
+    fn to_i64(&self) -> Option<i64> {
+        (*self).try_into().ok()
     }
-    fn to_i128(self) -> Option<i128> {
-        Some(self)
+    fn to_i128(&self) -> Option<i128> {
+        Some(*self)
     }
-    fn to_isize(self) -> Option<isize> {
-        self.try_into().ok()
+    fn to_isize(&self) -> Option<isize> {
+        (*self).try_into().ok()
     }
 
-    fn to_u8(self) -> Option<u8> {
-        self.try_into().ok()
+    fn to_u8(&self) -> Option<u8> {
+        (*self).try_into().ok()
     }
-    fn to_u16(self) -> Option<u16> {
-        self.try_into().ok()
+    fn to_u16(&self) -> Option<u16> {
+        (*self).try_into().ok()
     }
-    fn to_u32(self) -> Option<u32> {
-        self.try_into().ok()
+    fn to_u32(&self) -> Option<u32> {
+        (*self).try_into().ok()
     }
-    fn to_u64(self) -> Option<u64> {
-        self.try_into().ok()
+    fn to_u64(&self) -> Option<u64> {
+        (*self).try_into().ok()
     }
-    fn to_u128(self) -> Option<u128> {
-        self.try_into().ok()
+    fn to_u128(&self) -> Option<u128> {
+        (*self).try_into().ok()
     }
-    fn to_usize(self) -> Option<usize> {
-        self.try_into().ok()
+    fn to_usize(&self) -> Option<usize> {
+        (*self).try_into().ok()
     }
 
-    fn to_f32(self) -> Option<f32> {
-        Some(self as f32)
+    fn to_f32(&self) -> Option<f32> {
+        Some(*self as f32)
     }
-    fn to_f64(self) -> Option<f64> {
-        Some(self as f64)
+    fn to_f64(&self) -> Option<f64> {
+        Some(*self as f64)
     }
 }
 
@@ -1287,108 +1275,92 @@ where
 
     /// Internal common handler for GotScalar outcome, to deduplicate code.
     /// Helper to set numeric values with type conversion
-    fn set_numeric_value<'facet, N>(
+    fn set_numeric_value<'facet>(
         &self,
         wip: &mut Partial<'facet, 'shape>,
-        value: N,
+        value: &dyn NumericConvert,
     ) -> Result<(), DeserError<'input, 'shape, C>>
     where
         'input: 'facet,
-        N: NumericConvert,
     {
         let shape = wip.innermost_shape();
 
-        // Check if this is a numeric scalar
-        if let Def::Scalar(sd) = shape.def {
-            if let ScalarAffinity::Number(num_affinity) = sd.affinity {
-                use facet_core::{IntegerSize, NumberBits, Signedness};
+        let Type::Primitive(PrimitiveType::Numeric(numeric_type)) = shape.ty else {
+            return Err(self.err(DeserErrorKind::UnsupportedType {
+                got: shape,
+                wanted: "numeric type",
+            }));
+        };
 
-                // Helper closure to convert and set numeric value
-                macro_rules! convert_and_set {
-                    ($converter:expr, $target_type:expr) => {{
-                        let converted = $converter(value).ok_or_else(|| {
-                            self.err(DeserErrorKind::NumericConversion {
-                                from: N::TYPE_NAME,
-                                to: $target_type,
-                            })
-                        })?;
-                        wip.set(converted).map_err(|e| self.reflect_err(e))?;
-                    }};
-                }
+        // Get the size from the layout
+        let size_bytes = shape
+            .layout
+            .sized_layout()
+            .map_err(|_| {
+                self.err(DeserErrorKind::UnsupportedType {
+                    got: shape,
+                    wanted: "sized numeric type",
+                })
+            })?
+            .size();
 
-                // Check if it's integer or float based on the bits type
-                match num_affinity.bits {
-                    NumberBits::Integer { size, sign } => {
-                        // Integer type - check signed/unsigned and size
-                        match (size, sign) {
-                            (IntegerSize::Fixed(bits), Signedness::Signed) => match bits {
-                                8 => convert_and_set!(N::to_i8, "i8"),
-                                16 => convert_and_set!(N::to_i16, "i16"),
-                                32 => convert_and_set!(N::to_i32, "i32"),
-                                64 => convert_and_set!(N::to_i64, "i64"),
-                                128 => convert_and_set!(N::to_i128, "i128"),
-                                _ => {
-                                    return Err(self.err(DeserErrorKind::NumericConversion {
-                                        from: N::TYPE_NAME,
-                                        to: "unknown fixed-size signed integer",
-                                    }));
-                                }
-                            },
-                            (IntegerSize::Fixed(bits), Signedness::Unsigned) => match bits {
-                                8 => convert_and_set!(N::to_u8, "u8"),
-                                16 => convert_and_set!(N::to_u16, "u16"),
-                                32 => convert_and_set!(N::to_u32, "u32"),
-                                64 => convert_and_set!(N::to_u64, "u64"),
-                                128 => convert_and_set!(N::to_u128, "u128"),
-                                _ => {
-                                    return Err(self.err(DeserErrorKind::NumericConversion {
-                                        from: N::TYPE_NAME,
-                                        to: "unknown fixed-size unsigned integer",
-                                    }));
-                                }
-                            },
-                            (IntegerSize::PointerSized, Signedness::Signed) => {
-                                convert_and_set!(N::to_isize, "isize")
-                            }
-                            (IntegerSize::PointerSized, Signedness::Unsigned) => {
-                                convert_and_set!(N::to_usize, "usize")
-                            }
-                        }
-                    }
-                    NumberBits::Float {
-                        sign_bits,
-                        exponent_bits,
-                        mantissa_bits,
-                        ..
-                    } => {
-                        // Floating point - calculate total bits
-                        let total_bits = sign_bits + exponent_bits + mantissa_bits;
-                        match total_bits {
-                            32 => convert_and_set!(N::to_f32, "f32"),
-                            64 => convert_and_set!(N::to_f64, "f64"),
+        if matches!(shape.def, Def::Scalar) {
+            // Helper closure to convert and set numeric value
+            macro_rules! convert_and_set {
+                ($converter:expr, $target_type:expr) => {{
+                    let converted = $converter.ok_or_else(|| {
+                        self.err(DeserErrorKind::NumericConversion {
+                            from: "numeric",
+                            to: $target_type,
+                        })
+                    })?;
+                    wip.set(converted).map_err(|e| self.reflect_err(e))?;
+                }};
+            }
+
+            match numeric_type {
+                NumericType::Integer { signed } => {
+                    // First check if the shape is specifically usize or isize
+                    if !signed && shape.is_type::<usize>() {
+                        convert_and_set!(value.to_usize(), "usize")
+                    } else if signed && shape.is_type::<isize>() {
+                        convert_and_set!(value.to_isize(), "isize")
+                    } else {
+                        // Then check by size
+                        match (size_bytes, signed) {
+                            (1, true) => convert_and_set!(value.to_i8(), "i8"),
+                            (2, true) => convert_and_set!(value.to_i16(), "i16"),
+                            (4, true) => convert_and_set!(value.to_i32(), "i32"),
+                            (8, true) => convert_and_set!(value.to_i64(), "i64"),
+                            (16, true) => convert_and_set!(value.to_i128(), "i128"),
+                            (1, false) => convert_and_set!(value.to_u8(), "u8"),
+                            (2, false) => convert_and_set!(value.to_u16(), "u16"),
+                            (4, false) => convert_and_set!(value.to_u32(), "u32"),
+                            (8, false) => convert_and_set!(value.to_u64(), "u64"),
+                            (16, false) => convert_and_set!(value.to_u128(), "u128"),
                             _ => {
-                                // Unknown float size
                                 return Err(self.err(DeserErrorKind::NumericConversion {
-                                    from: N::TYPE_NAME,
-                                    to: "unknown float size",
+                                    from: "numeric",
+                                    to: if signed {
+                                        "unknown signed integer size"
+                                    } else {
+                                        "unknown unsigned integer size"
+                                    },
                                 }));
                             }
                         }
                     }
+                }
+                NumericType::Float => match size_bytes {
+                    4 => convert_and_set!(value.to_f32(), "f32"),
+                    8 => convert_and_set!(value.to_f64(), "f64"),
                     _ => {
-                        // Fixed-point, Decimal, or other numeric types not supported
                         return Err(self.err(DeserErrorKind::NumericConversion {
-                            from: N::TYPE_NAME,
-                            to: "fixed-point or decimal",
+                            from: "numeric",
+                            to: "unknown float size",
                         }));
                     }
-                }
-            } else {
-                // Not a number affinity - cannot convert
-                return Err(self.err(DeserErrorKind::UnsupportedType {
-                    got: shape,
-                    wanted: "numeric type",
-                }));
+                },
             }
         } else {
             // Not a scalar def - cannot convert
@@ -1445,43 +1417,36 @@ where
                     _ => {
                         // Check if this is a scalar type that can be parsed from a string
                         let shape = wip.innermost_shape();
-                        if let Def::Scalar(scalar_def) = shape.def {
-                            // Check if this is a type that expects to be parsed from string
+                        if matches!(shape.def, Def::Scalar) {
+                            // Try parse_from_str for scalar types that might parse from strings
                             // (like IpAddr, UUID, Path, etc.)
-                            if !matches!(scalar_def.affinity, facet_core::ScalarAffinity::String(_))
-                            {
-                                // Try parse_from_str for non-string scalar types
-                                match wip.parse_from_str(cow.as_ref()) {
-                                    Ok(_) => {
-                                        // Successfully parsed
-                                    }
-                                    Err(parse_err) => {
-                                        // Parsing failed - check if it's because parse isn't supported
-                                        // or if parsing actually failed
-                                        match parse_err {
-                                            ReflectError::OperationFailed {
-                                                shape: _,
-                                                operation,
-                                            } if operation.contains("does not support parsing") => {
-                                                // Type doesn't have a parse function, try direct conversion
-                                                wip.set(cow.to_string())
-                                                    .map_err(|e| self.reflect_err(e))?;
-                                            }
-                                            _ => {
-                                                // Actual parsing failure
-                                                return Err(self.err(DeserErrorKind::ReflectError(
-                                                    ReflectError::OperationFailed {
-                                                        shape,
-                                                        operation: "Failed to parse string value",
-                                                    }
-                                                )));
-                                            }
+                            match wip.parse_from_str(cow.as_ref()) {
+                                Ok(_) => {
+                                    // Successfully parsed
+                                }
+                                Err(parse_err) => {
+                                    // Parsing failed - check if it's because parse isn't supported
+                                    // or if parsing actually failed
+                                    match parse_err {
+                                        ReflectError::OperationFailed {
+                                            shape: _,
+                                            operation,
+                                        } if operation.contains("does not support parsing") => {
+                                            // Type doesn't have a parse function, try direct conversion
+                                            wip.set(cow.to_string())
+                                                .map_err(|e| self.reflect_err(e))?;
+                                        }
+                                        _ => {
+                                            // Actual parsing failure
+                                            return Err(self.err(DeserErrorKind::ReflectError(
+                                                ReflectError::OperationFailed {
+                                                    shape,
+                                                    operation: "Failed to parse string value",
+                                                },
+                                            )));
                                         }
                                     }
                                 }
-                            } else {
-                                // It's a string type, set directly
-                                wip.set(cow.to_string()).map_err(|e| self.reflect_err(e))?;
                             }
                         } else {
                             // Not a scalar, just set as String
@@ -1491,19 +1456,19 @@ where
                 }
             }
             Scalar::U64(value) => {
-                self.set_numeric_value(wip, value)?;
+                self.set_numeric_value(wip, &value)?;
             }
             Scalar::I64(value) => {
-                self.set_numeric_value(wip, value)?;
+                self.set_numeric_value(wip, &value)?;
             }
             Scalar::F64(value) => {
-                self.set_numeric_value(wip, value)?;
+                self.set_numeric_value(wip, &value)?;
             }
             Scalar::U128(value) => {
-                self.set_numeric_value(wip, value)?;
+                self.set_numeric_value(wip, &value)?;
             }
             Scalar::I128(value) => {
-                self.set_numeric_value(wip, value)?;
+                self.set_numeric_value(wip, &value)?;
             }
             Scalar::Bool(value) => {
                 wip.set(value).map_err(|e| self.reflect_err(e))?;
