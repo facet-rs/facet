@@ -61,7 +61,14 @@ impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
                 write!(indent, "{}", printer.format_peek(*to))?;
                 f.write_str("\n\x1b[m}") // Reset the colors
             }
-            Diff::Struct { from, to, updates } => {
+            Diff::Struct {
+                from,
+                to,
+                updates,
+                deletions,
+                insertions,
+            } => {
+                let printer = PrettyPrinter::default().with_colors(false);
                 let mut indent = PadAdapter {
                     fmt: f,
                     on_newline: false,
@@ -78,6 +85,22 @@ impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
                 writeln!(indent, "\x1b[m {{")?;
                 for (field, update) in updates {
                     writeln!(indent, "{field}: {update}")?;
+                }
+
+                for (field, value) in deletions {
+                    writeln!(
+                        indent,
+                        "\x1b[31m{field}: {}\x1b[m",
+                        printer.format_peek(*value)
+                    )?;
+                }
+
+                for (field, value) in insertions {
+                    writeln!(
+                        indent,
+                        "\x1b[32m{field}: {}\x1b[m",
+                        printer.format_peek(*value)
+                    )?;
                 }
 
                 f.write_str("}")
