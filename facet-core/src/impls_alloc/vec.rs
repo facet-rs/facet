@@ -22,31 +22,6 @@ where
                 }
             })
             .default_in_place(|| Some(|target| unsafe { target.put(Self::default()) }))
-            .clone_into(|| {
-                if T::SHAPE.vtable.has_clone_into() {
-                    Some(|src, dst| unsafe {
-                        let mut new_vec = Vec::with_capacity(src.len());
-
-                        let t_clone_into = <VTableView<T>>::of().clone_into().unwrap();
-
-                        for item in src {
-                            use crate::TypedPtrUninit;
-                            use core::mem::MaybeUninit;
-
-                            let mut new_item = MaybeUninit::<T>::uninit();
-                            let uninit_item = TypedPtrUninit::new(new_item.as_mut_ptr());
-
-                            (t_clone_into)(item, uninit_item);
-
-                            new_vec.push(new_item.assume_init());
-                        }
-
-                        dst.put(new_vec)
-                    })
-                } else {
-                    None
-                }
-            })
             .debug(|| {
                 if T::SHAPE.vtable.has_debug() {
                     Some(|value, f| {
