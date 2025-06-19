@@ -1203,7 +1203,7 @@ where
                                     .active_variant()
                                     .map_err(|e| self.err(DeserErrorKind::VariantError(e)))?;
 
-                                if default_variant == &variant {
+                                if default_variant.name == variant.name {
                                     // It's the same variant, fill in the missing fields
                                     for (index, _field) in variant.data.fields.iter().enumerate() {
                                         let is_set = wip.is_field_set(index).map_err(|err| {

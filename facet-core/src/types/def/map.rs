@@ -3,7 +3,7 @@ use crate::ptr::{PtrConst, PtrMut, PtrUninit};
 use super::{IterVTable, Shape};
 
 /// Fields for map types
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 #[non_exhaustive]
 pub struct MapDef<'shape> {
@@ -121,7 +121,7 @@ pub type MapGetValuePtrFn =
     for<'map, 'key> unsafe fn(map: PtrConst<'map>, key: PtrConst<'key>) -> Option<PtrConst<'map>>;
 
 /// Virtual table for a Map<K, V>
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct MapVTable {
     /// cf. [`MapInitInPlaceWithCapacityFn`]

@@ -140,7 +140,7 @@ impl<'shape> core::fmt::Debug for TomlDeError<'_, 'shape> {
 }
 
 /// Type of error.
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub enum TomlDeErrorKind<'shape> {
     /// Any error from facet.
     GenericReflect(ReflectError<'shape>),

@@ -28,7 +28,7 @@ fn test_scalar_list() {
         },
     );
 
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>("values = true")
             .unwrap_err()
             .kind,
@@ -36,7 +36,7 @@ fn test_scalar_list() {
             expected: "array",
             got: "boolean"
         }
-    );
+    ));
 }
 
 #[test]
@@ -68,7 +68,7 @@ fn test_unit_struct_list() {
         },
     );
 
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>("values = true")
             .unwrap_err()
             .kind,
@@ -76,8 +76,8 @@ fn test_unit_struct_list() {
             expected: "array",
             got: "boolean"
         }
-    );
-    assert_eq!(
+    ));
+    assert!(matches!(
         facet_toml::from_str::<Root>("values = [true]")
             .unwrap_err()
             .kind,
@@ -85,8 +85,8 @@ fn test_unit_struct_list() {
             expected: "number",
             got: "boolean"
         }
-    );
-    assert_eq!(
+    ));
+    assert!(matches!(
         facet_toml::from_str::<Root>("values = [1, true]")
             .unwrap_err()
             .kind,
@@ -94,7 +94,7 @@ fn test_unit_struct_list() {
             expected: "number",
             got: "boolean"
         }
-    );
+    ));
 }
 
 #[test]
@@ -129,7 +129,7 @@ fn test_nested_lists() {
         },
     );
 
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>("values = true")
             .unwrap_err()
             .kind,
@@ -137,8 +137,8 @@ fn test_nested_lists() {
             expected: "array",
             got: "boolean"
         }
-    );
-    assert_eq!(
+    ));
+    assert!(matches!(
         facet_toml::from_str::<Root>("values = [true]")
             .unwrap_err()
             .kind,
@@ -146,8 +146,8 @@ fn test_nested_lists() {
             expected: "array",
             got: "boolean"
         }
-    );
-    assert_eq!(
+    ));
+    assert!(matches!(
         facet_toml::from_str::<Root>("values = [[1], true]")
             .unwrap_err()
             .kind,
@@ -155,5 +155,5 @@ fn test_nested_lists() {
             expected: "array",
             got: "boolean"
         }
-    );
+    ));
 }

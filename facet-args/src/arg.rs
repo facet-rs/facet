@@ -22,7 +22,7 @@ impl<'a> ArgType<'a> {
         }
     }
 
-    pub(crate) fn kebab_to_snake(input: &str) -> Cow<str> {
+    pub(crate) fn kebab_to_snake(input: &str) -> Cow<'_, str> {
         if !input.contains('-') {
             return Cow::Borrowed(input);
         }

@@ -1,7 +1,7 @@
 use crate::Shape;
 
 /// Common fields for function pointer types
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 #[non_exhaustive]
 pub struct FunctionPointerDef {

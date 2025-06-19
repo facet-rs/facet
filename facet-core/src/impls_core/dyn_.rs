@@ -50,12 +50,12 @@ pub unsafe trait DynFacet<'a> {
     /// Returns a curried debug function for this value, if available.
     ///
     /// This allows dynamic dispatch of the debug formatting functionality.
-    fn debug(&self) -> Option<DebugFnCurried>;
+    fn debug(&self) -> Option<DebugFnCurried<'_>>;
 }
 
 // Blanket implementation of `DynFacet` for all types implementing `Facet`
 unsafe impl<'a, T: Facet<'a>> DynFacet<'a> for T {
-    fn debug(&self) -> Option<DebugFnCurried> {
+    fn debug(&self) -> Option<DebugFnCurried<'_>> {
         let debug = (T::VTABLE.sized().unwrap().debug)()?;
         Some(DebugFnCurried {
             ptr: PtrConst::new(self),

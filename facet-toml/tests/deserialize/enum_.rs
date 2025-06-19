@@ -31,12 +31,12 @@ fn test_unit_only_enum() {
         },
     );
 
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>("values = true")
             .unwrap_err()
             .kind,
         TomlDeErrorKind::ExpectedFieldWithName("value")
-    );
+    ));
 }
 
 #[test]

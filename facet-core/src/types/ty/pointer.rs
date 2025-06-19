@@ -3,7 +3,7 @@ use crate::FunctionPointerDef;
 use super::Shape;
 
 /// Describes all pointer types
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub enum PointerType<'shape> {
     /// Describees bound const and mut references (`&`/`&mut`)
@@ -17,7 +17,7 @@ pub enum PointerType<'shape> {
 }
 
 /// Describes the raw/reference pointer
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 #[non_exhaustive]
 pub struct ValuePointerType<'shape> {

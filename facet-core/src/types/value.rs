@@ -555,7 +555,7 @@ pub type DebugFnTyped<T> = fn(value: &T, f: &mut core::fmt::Formatter) -> core::
 /// This enum encapsulates the specific vtables for sized ([`ValueVTableSized`])
 /// and unsized ([`ValueVTableUnsized`]) shapes, allowing generic type-agnostic
 /// dynamic dispatch for core capabilities (clone, drop, compare, hash, etc).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub enum ValueVTable {
     /// VTable for operations on sized types.
@@ -565,7 +565,7 @@ pub enum ValueVTable {
 }
 
 /// VTable for common operations that can be performed on any `Sized` shape
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy)]
 #[repr(C)]
 #[non_exhaustive]
 pub struct ValueVTableSized {
@@ -635,7 +635,7 @@ pub struct ValueVTableSized {
 }
 
 /// VTable for common operations that can be performed on any `!Sized` shape
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy)]
 #[repr(C)]
 #[non_exhaustive]
 pub struct ValueVTableUnsized {
@@ -841,7 +841,7 @@ impl ValueVTable {
 }
 
 /// A typed view of a [`ValueVTable`].
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug)]
 pub struct VTableView<T: ?Sized>(&'static ValueVTable, PhantomData<T>);
 
 impl<'a, T: crate::Facet<'a> + ?Sized> VTableView<&'a mut T> {

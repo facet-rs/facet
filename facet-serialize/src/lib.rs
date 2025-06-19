@@ -18,8 +18,6 @@ use facet_reflect::{
 };
 use log::{debug, trace};
 
-mod debug_serializer;
-
 fn variant_is_newtype_like(variant: &facet_core::Variant) -> bool {
     variant.data.kind == facet_core::StructKind::Tuple && variant.data.fields.len() == 1
 }

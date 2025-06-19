@@ -1,7 +1,7 @@
 use super::{Repr, StructType};
 
 /// Fields for enum types
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 #[non_exhaustive]
 pub struct EnumType<'shape> {
@@ -69,7 +69,7 @@ impl<'shape> EnumDefBuilder<'shape> {
 }
 
 /// Describes a variant of an enum
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 #[non_exhaustive]
 pub struct Variant<'shape> {

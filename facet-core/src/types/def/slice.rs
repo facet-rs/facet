@@ -3,7 +3,7 @@ use crate::{PtrMut, ptr::PtrConst};
 use super::Shape;
 
 /// Fields for slice types
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 #[non_exhaustive]
 pub struct SliceDef<'shape> {
@@ -85,7 +85,7 @@ pub type SliceAsMutPtrFn = unsafe fn(slice: PtrMut) -> PtrMut;
 
 /// Virtual table for a slice-like type (like `Vec<T>`,
 /// but also `HashSet<T>`, etc.)
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 #[non_exhaustive]
 pub struct SliceVTable {
