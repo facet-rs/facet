@@ -1,5 +1,3 @@
-use core::hash::Hash;
-
 use alloc::boxed::Box;
 use alloc::collections::BTreeSet;
 
@@ -7,7 +5,7 @@ use crate::ptr::{PtrConst, PtrMut};
 
 use crate::{
     Def, Facet, IterVTable, MarkerTraits, SetDef, SetVTable, Shape, Type, TypeParam, UserType,
-    VTableView, ValueVTable,
+    ValueVTable,
 };
 
 type BTreeSetIterator<'mem, T> = alloc::collections::btree_set::Iter<'mem, T>;
@@ -35,65 +33,6 @@ where
                 }
             })
             .default_in_place(|| Some(|target| unsafe { target.put(Self::default()) }))
-            .partial_eq(|| Some(|a, b| a == b))
-            .debug(|| {
-                if T::SHAPE.vtable.has_debug() {
-                    Some(|value, f| {
-                        let t_debug = <VTableView<T>>::of().debug().unwrap();
-                        write!(f, "{{")?;
-                        for (i, item) in value.iter().enumerate() {
-                            if i > 0 {
-                                write!(f, ", ")?;
-                            }
-                            (t_debug)(item, f)?;
-                        }
-                        write!(f, "}}")
-                    })
-                } else {
-                    None
-                }
-            })
-            .clone_into(|| {
-                if T::SHAPE.vtable.has_clone_into() {
-                    Some(|src, dst| unsafe {
-                        let set = src;
-                        let mut new_set = BTreeSet::new();
-
-                        let t_clone_into = <VTableView<T>>::of().clone_into().unwrap();
-
-                        for item in set {
-                            use crate::TypedPtrUninit;
-                            use core::mem::MaybeUninit;
-
-                            let mut new_item = MaybeUninit::<T>::uninit();
-                            let uninit_item = TypedPtrUninit::new(new_item.as_mut_ptr());
-
-                            (t_clone_into)(item, uninit_item);
-
-                            new_set.insert(new_item.assume_init());
-                        }
-
-                        dst.put(new_set)
-                    })
-                } else {
-                    None
-                }
-            })
-            .hash(|| {
-                if T::SHAPE.vtable.has_hash() {
-                    Some(|set, hasher_this, hasher_write_fn| unsafe {
-                        use crate::HasherProxy;
-                        let t_hash = <VTableView<T>>::of().hash().unwrap();
-                        let mut hasher = HasherProxy::new(hasher_this, hasher_write_fn);
-                        set.len().hash(&mut hasher);
-                        for item in set {
-                            (t_hash)(item, hasher_this, hasher_write_fn);
-                        }
-                    })
-                } else {
-                    None
-                }
-            })
             .build()
     };
 
