@@ -1164,7 +1164,6 @@ fn test_vecs() {
             .debug()
             .partial_eq_and(false)
             .default()
-            .clone()
             .build(),
         TypedMarkerTraits::new()
             .eq()
@@ -1183,7 +1182,6 @@ fn test_vecs() {
             .debug()
             .partial_eq_and(false)
             .default()
-            .clone()
             .build(),
         TypedMarkerTraits::new()
             .eq()
@@ -1204,7 +1202,6 @@ fn test_vecs() {
             .debug()
             .partial_eq_and(true)
             .default()
-            .clone()
             .build(),
         TypedMarkerTraits::new()
             .eq()
@@ -1224,7 +1221,6 @@ fn test_vecs() {
             .debug()
             .partial_eq_and(true)
             .default()
-            .clone()
             .build(),
         TypedMarkerTraits::new()
             .eq()

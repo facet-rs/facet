@@ -652,23 +652,6 @@ fn clone_into() {
 }
 
 #[test]
-fn clone_into_vec() {
-    type Type = Vec<String>;
-    let mut vec: Type = vec!["hello".to_owned()];
-    let mut vec_clone: MaybeUninit<Type> = MaybeUninit::uninit();
-    let clone_into = (<Type as Facet>::SHAPE.vtable.sized().unwrap().clone_into)().unwrap();
-    let clone_vec = unsafe {
-        clone_into(
-            PtrConst::new(&vec),
-            PtrUninit::from_maybe_uninit(&mut vec_clone),
-        );
-        vec_clone.assume_init()
-    };
-    vec[0].push_str(" world");
-    assert_eq!(clone_vec[0], "hello");
-}
-
-#[test]
 fn clone_into_hash_map() {
     use std::collections::HashMap;
 
