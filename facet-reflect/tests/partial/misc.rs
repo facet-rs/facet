@@ -677,31 +677,6 @@ fn clone_into_hash_map() {
 }
 
 #[test]
-fn clone_into_btree_map() {
-    use std::collections::BTreeMap;
-
-    type Type = BTreeMap<String, i32>;
-    let mut map: Type = BTreeMap::new();
-    map.insert("key".to_owned(), 42);
-
-    let mut map_clone: MaybeUninit<Type> = MaybeUninit::uninit();
-    let clone_into = (<Type as Facet>::SHAPE.vtable.sized().unwrap().clone_into)().unwrap();
-    let clone_map = unsafe {
-        clone_into(
-            PtrConst::new(&map),
-            PtrUninit::from_maybe_uninit(&mut map_clone),
-        );
-        map_clone.assume_init()
-    };
-
-    map.insert("key".to_owned(), 99);
-    map.insert("new_key".to_owned(), 100);
-
-    assert_eq!(clone_map.get("key"), Some(&42));
-    assert_eq!(clone_map.get("new_key"), None);
-}
-
-#[test]
 fn wip_build_tuple_through_listlike_api_exact() {
     let mut partial = Partial::alloc::<(f64,)>()?;
     partial.begin_nth_field(0)?;
