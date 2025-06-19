@@ -10,16 +10,13 @@ unsafe impl Facet<'_> for alloc::string::String {
             Self::SHAPE.type_identifier
         ));
 
-        // Add a custom parse function for String
-        {
-            let vtable_sized = vtable.sized_mut().unwrap();
-            vtable_sized.parse = || {
-                Some(|s, target| {
-                    // For String, parsing from a string is just copying the string
-                    Ok(unsafe { target.put(s.to_string()) })
-                })
-            };
-        }
+        let vtable_sized = vtable.sized_mut().unwrap();
+        vtable_sized.parse = || {
+            Some(|s, target| {
+                // For String, parsing from a string is just copying the string
+                Ok(unsafe { target.put(s.to_string()) })
+            })
+        };
 
         vtable
     };
