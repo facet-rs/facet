@@ -151,7 +151,7 @@ impl NestedValues {
                         nested.flat.insert(nested_key.to_string(), value);
                     } else {
                         // Handle deeply nested case like user[address][city]=value
-                        let new_key = format!("{}{}", nested_key, remainder);
+                        let new_key = format!("{nested_key}{remainder}");
                         nested.insert(&new_key, value);
                     }
                     return;
@@ -200,7 +200,7 @@ fn deserialize_value<'mem, 'shape>(
                     deserialize_scalar_field(key, value, wip)?;
                     wip.end()?;
                 } else {
-                    trace!("Unknown field: {}", key);
+                    trace!("Unknown field: {key}");
                 }
             }
 
@@ -212,7 +212,7 @@ fn deserialize_value<'mem, 'shape>(
                     deserialize_nested_field(key, nested_values, wip)?;
                     wip.end()?;
                 } else {
-                    trace!("Unknown nested field: {}", key);
+                    trace!("Unknown nested field: {key}");
                 }
             }
 
@@ -258,8 +258,7 @@ fn deserialize_scalar_field<'mem, 'shape>(
         _ => {
             error!("Expected scalar field");
             Err(UrlEncodedError::UnsupportedShape(format!(
-                "Expected scalar for field '{}'",
-                key
+                "Expected scalar for field '{key}'"
             )))
         }
     }
@@ -274,7 +273,7 @@ fn deserialize_nested_field<'mem, 'shape>(
     let shape = wip.shape();
     match shape.ty {
         Type::User(UserType::Struct(_)) => {
-            trace!("Deserializing nested struct field: {}", key);
+            trace!("Deserializing nested struct field: {key}");
 
             // Process flat fields in the nested structure
             for nested_key in nested_values.keys() {
@@ -301,8 +300,7 @@ fn deserialize_nested_field<'mem, 'shape>(
         _ => {
             error!("Expected struct field for nested value");
             Err(UrlEncodedError::UnsupportedShape(format!(
-                "Expected struct for nested field '{}'",
-                key
+                "Expected struct for nested field '{key}'"
             )))
         }
     }
@@ -332,16 +330,16 @@ impl<'shape> core::fmt::Display for UrlEncodedError<'shape> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             UrlEncodedError::InvalidNumber(field, value) => {
-                write!(f, "Invalid number for field '{}': '{}'", field, value)
+                write!(f, "Invalid number for field '{field}': '{value}'")
             }
             UrlEncodedError::UnsupportedShape(shape) => {
-                write!(f, "Unsupported shape: {}", shape)
+                write!(f, "Unsupported shape: {shape}")
             }
             UrlEncodedError::UnsupportedType(ty) => {
-                write!(f, "Unsupported type: {}", ty)
+                write!(f, "Unsupported type: {ty}")
             }
             UrlEncodedError::ReflectError(err) => {
-                write!(f, "Reflection error: {}", err)
+                write!(f, "Reflection error: {err}")
             }
         }
     }

@@ -82,7 +82,7 @@ name = "nested name"
 
     let result: Result<Wide, _> = facet_toml::from_str(toml_str);
     if let Err(e) = &result {
-        eprintln!("Error: {}", e);
+        eprintln!("Error: {e}");
     }
     assert!(result.is_ok());
 }

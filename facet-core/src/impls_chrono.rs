@@ -51,7 +51,7 @@ unsafe impl Facet<'_> for DateTime<Utc> {
                     let dt = value.get::<DateTime<Utc>>();
                     use chrono::SecondsFormat;
                     let s = dt.to_rfc3339_opts(SecondsFormat::Secs, true);
-                    write!(f, "{}", s)
+                    write!(f, "{s}")
                 })
             };
         }
@@ -244,7 +244,7 @@ unsafe impl Facet<'_> for NaiveDateTime {
                 Some(|value, f| unsafe {
                     let dt = value.get::<NaiveDateTime>();
                     let formatted = dt.format("%Y-%m-%dT%H:%M:%S").to_string();
-                    write!(f, "{}", formatted)
+                    write!(f, "{formatted}")
                 })
             };
         }
@@ -306,7 +306,7 @@ unsafe impl Facet<'_> for NaiveDate {
                 Some(|value, f| unsafe {
                     let dt = value.get::<NaiveDate>();
                     let formatted = dt.format("%Y-%m-%d").to_string();
-                    write!(f, "{}", formatted)
+                    write!(f, "{formatted}")
                 })
             };
         }
@@ -370,7 +370,7 @@ unsafe impl Facet<'_> for NaiveTime {
                 Some(|value, f| unsafe {
                     let dt = value.get::<NaiveTime>();
                     let formatted = dt.format("%H:%M:%S").to_string();
-                    write!(f, "{}", formatted)
+                    write!(f, "{formatted}")
                 })
             };
         }

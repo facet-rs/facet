@@ -11,7 +11,7 @@ fn test_simple_option_some() {
 
     let result: Result<SimpleOption, _> = facet_toml::from_str(toml_str);
     if let Err(e) = &result {
-        eprintln!("Error: {}", e);
+        eprintln!("Error: {e}");
     }
     assert!(result.is_ok());
     assert_eq!(result.unwrap().value, Some("hello".to_string()));
@@ -23,7 +23,7 @@ fn test_simple_option_none() {
 
     let result: Result<SimpleOption, _> = facet_toml::from_str(toml_str);
     if let Err(e) = &result {
-        eprintln!("Error: {}", e);
+        eprintln!("Error: {e}");
     }
     assert!(result.is_ok());
     assert_eq!(result.unwrap().value, None);
@@ -45,7 +45,7 @@ opt3 = "world"
 
     let result: Result<MultipleOptions, _> = facet_toml::from_str(toml_str);
     if let Err(e) = &result {
-        eprintln!("Error: {}", e);
+        eprintln!("Error: {e}");
     }
     assert!(result.is_ok());
     let value = result.unwrap();

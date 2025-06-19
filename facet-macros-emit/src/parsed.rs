@@ -125,7 +125,7 @@ impl PFacetAttr {
                     if let Some(rule) = RenameRule::from_str(rule_str) {
                         dest.push(PFacetAttr::RenameAll { rule });
                     } else {
-                        panic!("Unknown #[facet(rename_all = ...)] rule: {}", rule_str);
+                        panic!("Unknown #[facet(rename_all = ...)] rule: {rule_str}");
                     }
                 }
                 FacetInner::Arbitrary(tt) => {
@@ -309,8 +309,7 @@ impl PRepr {
                 unknown => {
                     // Standard #[repr] only allows specific identifiers.
                     panic!(
-                        "Unknown token '{}' in #[repr(...)]. Only C, Rust, transparent, or primitive integer types allowed.",
-                        unknown
+                        "Unknown token '{unknown}' in #[repr(...)]. Only C, Rust, transparent, or primitive integer types allowed."
                     );
                 }
             }

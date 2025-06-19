@@ -34,10 +34,10 @@ use facet_deserialize::{Pos, Span, Spanned};
 impl Display for TokenErrorKind {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            TokenErrorKind::UnexpectedCharacter(c) => write!(f, "unexpected character: '{}'", c),
-            TokenErrorKind::UnexpectedEof(context) => write!(f, "unexpected EOF {}", context),
-            TokenErrorKind::InvalidUtf8(detail) => write!(f, "invalid UTF-8: {}", detail),
-            TokenErrorKind::NumberOutOfRange(n) => write!(f, "number out of range: {}", n),
+            TokenErrorKind::UnexpectedCharacter(c) => write!(f, "unexpected character: '{c}'"),
+            TokenErrorKind::UnexpectedEof(context) => write!(f, "unexpected EOF {context}"),
+            TokenErrorKind::InvalidUtf8(detail) => write!(f, "invalid UTF-8: {detail}"),
+            TokenErrorKind::NumberOutOfRange(n) => write!(f, "number out of range: {n}"),
         }
     }
 }
@@ -92,12 +92,12 @@ impl Display for Token<'_> {
             Token::RBracket => write!(f, "]"),
             Token::Colon => write!(f, ":"),
             Token::Comma => write!(f, ","),
-            Token::String(s) => write!(f, "\"{}\"", s),
-            Token::F64(n) => write!(f, "{}", n),
-            Token::I64(n) => write!(f, "{}", n),
-            Token::U64(n) => write!(f, "{}", n),
-            Token::U128(n) => write!(f, "{}", n),
-            Token::I128(n) => write!(f, "{}", n),
+            Token::String(s) => write!(f, "\"{s}\""),
+            Token::F64(n) => write!(f, "{n}"),
+            Token::I64(n) => write!(f, "{n}"),
+            Token::U64(n) => write!(f, "{n}"),
+            Token::U128(n) => write!(f, "{n}"),
+            Token::I128(n) => write!(f, "{n}"),
             Token::True => write!(f, "true"),
             Token::False => write!(f, "false"),
             Token::Null => write!(f, "null"),

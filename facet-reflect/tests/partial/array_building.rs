@@ -89,7 +89,7 @@ fn test_too_many_items_in_array() {
         Ok(_) => panic!(
             "Expected OperationFailed error for array index out of bounds, but operation succeeded"
         ),
-        Err(e) => panic!("Expected OperationFailed error, but got: {:?}", e),
+        Err(e) => panic!("Expected OperationFailed error, but got: {e:?}"),
     }
 }
 

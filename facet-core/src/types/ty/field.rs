@@ -283,7 +283,7 @@ impl core::fmt::Display for FieldFlags {
                     write!(f, ", ")?;
                 }
                 is_first = false;
-                write!(f, "{}", name)?;
+                write!(f, "{name}")?;
             }
         }
 
@@ -329,10 +329,10 @@ impl core::fmt::Display for FieldError {
         match self {
             FieldError::NoSuchField => write!(f, "No such field"),
             FieldError::IndexOutOfBounds { index, bound } => {
-                write!(f, "tried to access field {} of {}", index, bound)
+                write!(f, "tried to access field {index} of {bound}")
             }
             FieldError::TypeMismatch { expected, actual } => {
-                write!(f, "expected type {}, got {}", expected, actual)
+                write!(f, "expected type {expected}, got {actual}")
             }
             FieldError::Unsized => {
                 write!(f, "can't access field of !Sized type")

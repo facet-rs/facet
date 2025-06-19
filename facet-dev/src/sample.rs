@@ -112,12 +112,12 @@ pub fn cargo_expand_and_format() -> String {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let expanded_code = format!("{}\n#![allow(warnings)]\n{}", doc_comments, expanded_code);
+    let expanded_code = format!("{doc_comments}\n#![allow(warnings)]\n{expanded_code}");
 
     // Ensure a trailing newline for consistency
     if expanded_code.is_empty() {
         String::new()
     } else {
-        format!("{}\n", expanded_code)
+        format!("{expanded_code}\n")
     }
 }

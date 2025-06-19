@@ -26,7 +26,7 @@ pub enum XdrSerError {
 impl core::fmt::Display for XdrSerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            XdrSerError::Io(error) => write!(f, "IO error: {}", error),
+            XdrSerError::Io(error) => write!(f, "IO error: {error}"),
             XdrSerError::TooManyBytes => write!(f, "Too many bytes for field"),
             XdrSerError::TooManyVariants => write!(f, "Enum variant discriminant too large"),
             XdrSerError::UnsupportedType => write!(f, "Unsupported type"),
@@ -233,16 +233,16 @@ impl core::fmt::Display for XdrDeserError {
                 write!(f, "Unexpected end of input")
             }
             XdrDeserError::InvalidBoolean { position } => {
-                write!(f, "Invalid boolean at byte {}", position)
+                write!(f, "Invalid boolean at byte {position}")
             }
             XdrDeserError::InvalidOptional { position } => {
-                write!(f, "Invalid discriminant for optional at byte {}", position)
+                write!(f, "Invalid discriminant for optional at byte {position}")
             }
             XdrDeserError::InvalidVariant { position } => {
-                write!(f, "Invalid enum discriminant at byte {}", position)
+                write!(f, "Invalid enum discriminant at byte {position}")
             }
             XdrDeserError::InvalidString { position, .. } => {
-                write!(f, "Invalid string at byte {}", position)
+                write!(f, "Invalid string at byte {position}")
             }
         }
     }

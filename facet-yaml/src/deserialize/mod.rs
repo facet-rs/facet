@@ -110,13 +110,13 @@ fn deserialize_value<'facet, 'shape>(
                     .ok_or_else(|| AnyErr(format!("Expected string key, got: {}", yaml_type(k))))?;
                 let field_index = wip
                     .field_index(k)
-                    .ok_or_else(|| AnyErr(format!("Field '{}' not found", k)))?;
+                    .ok_or_else(|| AnyErr(format!("Field '{k}' not found")))?;
 
                 #[cfg(feature = "log")]
                 log::debug!("Processing struct field '{}' (index: {})", k, field_index);
 
                 wip.begin_nth_field(field_index)
-                    .map_err(|e| AnyErr(format!("Field '{}' error: {}", k, e)))?;
+                    .map_err(|e| AnyErr(format!("Field '{k}' error: {e}")))?;
                 deserialize_value(wip, v)?;
                 wip.end().map_err(|e| AnyErr(e.to_string()))?;
             }
@@ -161,7 +161,7 @@ fn deserialize_value<'facet, 'shape>(
             wip.fill_unset_fields_from_default()
                 .map_err(|e| AnyErr(e.to_string()))?;
         } else {
-            return Err(AnyErr(format!("Expected a YAML hash, got: {:?}", value)));
+            return Err(AnyErr(format!("Expected a YAML hash, got: {value:?}")));
         }
         return Ok(());
     }
@@ -186,19 +186,19 @@ fn deserialize_value<'facet, 'shape>(
                             match bits {
                                 8 => {
                                     let val = u8::try_from(u).map_err(|_| {
-                                        AnyErr(format!("Value {} out of range for u8", u))
+                                        AnyErr(format!("Value {u} out of range for u8"))
                                     })?;
                                     wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
                                 }
                                 16 => {
                                     let val = u16::try_from(u).map_err(|_| {
-                                        AnyErr(format!("Value {} out of range for u16", u))
+                                        AnyErr(format!("Value {u} out of range for u16"))
                                     })?;
                                     wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
                                 }
                                 32 => {
                                     let val = u32::try_from(u).map_err(|_| {
-                                        AnyErr(format!("Value {} out of range for u32", u))
+                                        AnyErr(format!("Value {u} out of range for u32"))
                                     })?;
                                     wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
                                 }
@@ -211,17 +211,15 @@ fn deserialize_value<'facet, 'shape>(
                                 }
                                 _ => {
                                     return Err(AnyErr(format!(
-                                        "Unsupported fixed unsigned integer size: {}",
-                                        bits
+                                        "Unsupported fixed unsigned integer size: {bits}"
                                     )));
                                 }
                             }
                         }
                         (IntegerSize::PointerSized, Signedness::Unsigned) => {
                             let u = yaml_to_u64(value)?;
-                            let val = usize::try_from(u).map_err(|_| {
-                                AnyErr(format!("Value {} out of range for usize", u))
-                            })?;
+                            let val = usize::try_from(u)
+                                .map_err(|_| AnyErr(format!("Value {u} out of range for usize")))?;
                             wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
                         }
                         (IntegerSize::Fixed(bits), Signedness::Signed) => {
@@ -250,19 +248,19 @@ fn deserialize_value<'facet, 'shape>(
                             match bits {
                                 8 => {
                                     let val = i8::try_from(i).map_err(|_| {
-                                        AnyErr(format!("Value {} out of range for i8", i))
+                                        AnyErr(format!("Value {i} out of range for i8"))
                                     })?;
                                     wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
                                 }
                                 16 => {
                                     let val = i16::try_from(i).map_err(|_| {
-                                        AnyErr(format!("Value {} out of range for i16", i))
+                                        AnyErr(format!("Value {i} out of range for i16"))
                                     })?;
                                     wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
                                 }
                                 32 => {
                                     let val = i32::try_from(i).map_err(|_| {
-                                        AnyErr(format!("Value {} out of range for i32", i))
+                                        AnyErr(format!("Value {i} out of range for i32"))
                                     })?;
                                     wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
                                 }
@@ -275,8 +273,7 @@ fn deserialize_value<'facet, 'shape>(
                                 }
                                 _ => {
                                     return Err(AnyErr(format!(
-                                        "Unsupported fixed signed integer size: {}",
-                                        bits
+                                        "Unsupported fixed signed integer size: {bits}"
                                     )));
                                 }
                             }
@@ -304,9 +301,8 @@ fn deserialize_value<'facet, 'shape>(
                                     )));
                                 }
                             };
-                            let val = isize::try_from(i).map_err(|_| {
-                                AnyErr(format!("Value {} out of range for isize", i))
-                            })?;
+                            let val = isize::try_from(i)
+                                .map_err(|_| AnyErr(format!("Value {i} out of range for isize")))?;
                             wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
                         }
                     },
@@ -414,7 +410,7 @@ fn deserialize_value<'facet, 'shape>(
             }
         }
         // Enum has been moved to Type system
-        _ => return Err(AnyErr(format!("Unsupported type: {:?}", shape))),
+        _ => return Err(AnyErr(format!("Unsupported type: {shape:?}"))),
     }
     Ok(())
 }

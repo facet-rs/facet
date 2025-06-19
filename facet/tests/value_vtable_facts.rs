@@ -221,7 +221,7 @@ where
             if eq_result { "==" } else { "!=" }.yellow(),
             r.style(REMARKABLE),
         );
-        eprintln!("Equality:   {}", eq_str);
+        eprintln!("Equality:   {eq_str}");
     }
 
     // Test ordering
@@ -236,7 +236,7 @@ where
             ord_str(Some(cmp_result)).yellow(),
             r.style(REMARKABLE),
         );
-        eprintln!("PartialOrd: {}", cmp_str);
+        eprintln!("PartialOrd: {cmp_str}");
     }
 
     if let Some(cmp_fn) = vtable.partial_ord() {
@@ -250,7 +250,7 @@ where
             ord_str(cmp_result).yellow(),
             r.style(REMARKABLE),
         );
-        eprintln!("Ord:        {}", cmp_str);
+        eprintln!("Ord:        {cmp_str}");
     }
 
     // Test default_in_place
@@ -264,7 +264,7 @@ where
         let debug = unsafe { debug(T::VTABLE, ptr.ptr.as_const()) };
         eprintln!(
             "Default:    {}",
-            format_args!("{:?}", debug).style(REMARKABLE)
+            format_args!("{debug:?}").style(REMARKABLE)
         );
     }
 
@@ -280,7 +280,7 @@ where
         let debug = unsafe { debug(T::VTABLE, ptr.ptr.as_const()) };
         eprintln!(
             "Clone:      {}",
-            format_args!("{:?}", debug).style(REMARKABLE)
+            format_args!("{debug:?}").style(REMARKABLE)
         );
     }
 
@@ -315,13 +315,13 @@ fn report_maybe_mismatch<'a, T>(
         r.blue(),
         expected_minus_actual
             .iter()
-            .map(|f| format!("- {}", f))
+            .map(|f| format!("- {f}"))
             .collect::<Vec<_>>()
             .join("\n")
             .yellow(),
         actual_minus_expected
             .iter()
-            .map(|f| format!("+ {}", f))
+            .map(|f| format!("+ {f}"))
             .collect::<Vec<_>>()
             .join("\n")
             .yellow(),
@@ -563,7 +563,7 @@ impl Display for Fact {
                     Ordering::Equal => "==",
                     Ordering::Greater => ">",
                 };
-                write!(f, "impl Ord and l {} r", ord_str)
+                write!(f, "impl Ord and l {ord_str} r")
             }
             Fact::PartialOrdAnd { l_ord_r } => {
                 let ord_str = match l_ord_r {
@@ -572,7 +572,7 @@ impl Display for Fact {
                     Some(Ordering::Greater) => ">",
                     None => "??",
                 };
-                write!(f, "impl PartialOrd and l {} r", ord_str)
+                write!(f, "impl PartialOrd and l {ord_str} r")
             }
             Fact::Default => write!(f, "impl Default"),
             Fact::Clone => write!(f, "impl Clone"),

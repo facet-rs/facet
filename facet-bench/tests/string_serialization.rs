@@ -14,11 +14,11 @@ fn test_string_serialization() {
 
     // Test with facet-json (returns String directly)
     let facet_str = facet_json::to_string(&test);
-    println!("facet_json result: {:?}", facet_str);
+    println!("facet_json result: {facet_str:?}");
 
     // Test with serde_json (returns Result<String, Error>)
     let serde_result = serde_json::to_string(&test);
-    println!("serde_json result: {:?}", serde_result);
+    println!("serde_json result: {serde_result:?}");
 
     // Verify serde serialization was successful
     assert!(

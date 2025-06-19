@@ -54,7 +54,7 @@ impl<'mem, 'facet, 'shape> FieldIter<'mem, 'facet, 'shape> {
         // Get the fields of the active variant
         let variant = match enum_.active_variant() {
             Ok(v) => v,
-            Err(e) => panic!("Cannot get active variant: {:?}", e),
+            Err(e) => panic!("Cannot get active variant: {e:?}"),
         };
         let fields = &variant.data.fields;
 
@@ -96,7 +96,7 @@ impl<'mem, 'facet, 'shape> FieldIter<'mem, 'facet, 'shape> {
                 let field_value = match peek_enum.field(index) {
                     Ok(Some(v)) => v,
                     Ok(None) => return None,
-                    Err(e) => panic!("Cannot get field: {:?}", e),
+                    Err(e) => panic!("Cannot get field: {e:?}"),
                 };
                 // Return the field definition and value
                 Some((field, field_value))

@@ -184,7 +184,7 @@ fn test_control_characters_in_mixed_strings() -> Result<(), Box<dyn std::error::
 
     for (input, expected) in test_cases {
         let serialized = facet_json::to_string(input);
-        assert_eq!(&serialized, expected, "Failed on mixed string: {:?}", input);
+        assert_eq!(&serialized, expected, "Failed on mixed string: {input:?}");
     }
     Ok(())
 }
@@ -220,7 +220,7 @@ fn test_hex_digit_generation() -> Result<(), Box<dyn std::error::Error>> {
     for (input_char, expected_hex) in edge_cases {
         let input_string = input_char.to_string();
         let serialized = facet_json::to_string(&input_string);
-        let expected = format!("\"\\u{}\"", expected_hex);
+        let expected = format!("\"\\u{expected_hex}\"");
 
         assert_eq!(
             serialized, expected,

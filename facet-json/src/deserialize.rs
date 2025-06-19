@@ -117,7 +117,7 @@ impl Format for crate::Json {
                             span,
                         })
                     } else {
-                        trace!("Did not expect closing brace, expected {:?}", expectation);
+                        trace!("Did not expect closing brace, expected {expectation:?}");
                         Err(DeserErrorKind::UnexpectedChar {
                             got: '}',
                             wanted: "a value",
@@ -148,7 +148,7 @@ impl Format for crate::Json {
                         expectation = Expectation::Value;
                         continue;
                     } else {
-                        trace!("Did not expect ObjectValue, expected {:?}", expectation);
+                        trace!("Did not expect ObjectValue, expected {expectation:?}");
                         Err(DeserErrorKind::UnexpectedChar {
                             got: ':',
                             wanted: "a value, not a colon",
@@ -162,7 +162,7 @@ impl Format for crate::Json {
                         continue;
                     }
                     other => {
-                        trace!("Did not expect comma, expected {:?}", other);
+                        trace!("Did not expect comma, expected {other:?}");
                         Err(DeserErrorKind::UnexpectedChar {
                             got: ',',
                             wanted: "<value or key>",
@@ -256,7 +256,7 @@ impl Format for crate::Json {
                 other => (
                     nd,
                     Err(DeserErrorKind::UnexpectedChar {
-                        got: format!("{:?}", other).chars().next().unwrap_or('?'),
+                        got: format!("{other:?}").chars().next().unwrap_or('?'),
                         wanted: "value",
                     }
                     .with_span(Span::new(token.span.start(), token.span.len()))),

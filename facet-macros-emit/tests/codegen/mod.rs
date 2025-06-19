@@ -12,7 +12,7 @@ fn expand(input: &str) -> String {
         Ok(ts) => RustFmt::default()
             .format_tokens(facet_macros(ts))
             .unwrap_or_else(|e| panic!("Expand error: {e}")),
-        Err(e) => panic!("Failed to parse input:\n{}\nError: {}", trimmed_input, e),
+        Err(e) => panic!("Failed to parse input:\n{trimmed_input}\nError: {e}"),
     }
 }
 
