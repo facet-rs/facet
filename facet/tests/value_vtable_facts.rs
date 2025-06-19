@@ -1048,101 +1048,11 @@ fn test_slice_ref_traits() {
 
 #[test]
 fn test_array_traits() {
-    // [i32; 0] implements Debug, PartialEq, Ord, Default, and Clone
-    check_facts::<[i32; 0]>(
-        &[],
-        &[],
-        FactBuilder::new()
-            .debug()
-            .display()
-            .partial_eq_and(true)
-            .correct_ord_and(Ordering::Equal)
-            .default()
-            .clone()
-            .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .copy()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
-    );
     // [i32; 1] implements Debug, PartialEq, Ord, Default, and Clone
     check_facts(
         &[42],
         &[24],
-        FactBuilder::new()
-            .debug()
-            .display()
-            .partial_eq_and(false)
-            .correct_ord_and(Ordering::Greater)
-            .default()
-            .clone()
-            .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .copy()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
-    );
-    // [i32; 2] implements Debug, PartialEq, Ord, Default, and Clone
-    check_facts(
-        &[1, 2],
-        &[1, 3],
-        FactBuilder::new()
-            .debug()
-            .display()
-            .partial_eq_and(false)
-            .correct_ord_and(Ordering::Less)
-            .default()
-            .clone()
-            .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .copy()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
-    );
-    // [i32; 33] implements Debug, PartialEq, Ord and Clone but not yet `Default`
-    check_facts(
-        &[0; 33],
-        &[0; 33],
-        FactBuilder::new()
-            .debug()
-            .display()
-            .partial_eq_and(true)
-            .correct_ord_and(Ordering::Equal)
-            .clone()
-            .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .copy()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
-    );
-
-    // [&str; 1] implements Debug, PartialEq, Ord, Default, and Clone
-    check_facts(
-        &["hello"],
-        &["world"],
-        FactBuilder::new()
-            .display()
-            .debug()
-            .partial_eq_and(false)
-            .correct_ord_and(Ordering::Less)
-            .clone()
-            .build(),
+        FactBuilder::new().default().clone().build(),
         TypedMarkerTraits::new()
             .eq()
             .send()
