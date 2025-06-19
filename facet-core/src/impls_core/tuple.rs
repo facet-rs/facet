@@ -1,4 +1,4 @@
-use core::{cmp::Ordering, fmt, mem};
+use core::{fmt, mem};
 
 use crate::{
     Characteristic, Facet, MarkerTraits, Repr, Shape, StructKind, StructType, Type, TypeNameOpts,
@@ -51,32 +51,6 @@ macro_rules! impl_facet_for_tuple {
         $first
         write!($f, ",)")
     };
-    { debug on $f:ident { $first:stmt; $($stmt:stmt;)+ } } => {
-        write!($f, "(")?;
-        $first
-        $(
-            write!($f, ", ")?;
-            $stmt
-        )+
-        write!($f, ")")
-    };
-    // Common structure of eq, partial_ord & ord
-    { ord on ($($elems:ident.$idx:tt,)+), $cmp:ident($a:ident, $b:ident), eq = $eq:expr } => {{
-        $(
-            unsafe {
-                let ordering = (<VTableView<$elems>>::of().$cmp().unwrap_unchecked())(
-                    &$a.$idx,
-                    &$b.$idx,
-                );
-
-                if ordering != $eq {
-                    return ordering;
-                }
-            }
-        )+
-
-        $eq
-    }};
     // Actually generate the trait implementation, and keep the remaining possible elements around
     {
         impl ($($elems:ident.$idx:tt,)+),
@@ -96,25 +70,6 @@ macro_rules! impl_facet_for_tuple {
                         MarkerTraits::all()
                             $(.intersection($elems::SHAPE.vtable.marker_traits()))+
                     )
-                    .debug(|| {
-                        let elem_shapes = const { &[$($elems::SHAPE),+] };
-                        if Characteristic::Debug.all(elem_shapes) {
-                            Some(|value, f| {
-                                impl_facet_for_tuple! {
-                                    debug on f {
-                                        $(
-                                            (<VTableView<$elems>>::of().debug().unwrap())(
-                                                &value.$idx,
-                                                f,
-                                            )?;
-                                        )+
-                                    }
-                                }
-                            })
-                        } else {
-                            None
-                        }
-                    })
                     .default_in_place(|| {
                         let elem_shapes = const { &[$($elems::SHAPE),+] };
                         if Characteristic::all_default(elem_shapes) {
@@ -128,78 +83,6 @@ macro_rules! impl_facet_for_tuple {
                                 )+
 
                                 unsafe { dst.assume_init() }
-                            })
-                        } else {
-                            None
-                        }
-                    })
-                    // .clone_into(|| {
-                    //     let elem_shapes = const { &[$($elems::SHAPE),+] };
-                    //     if Characteristic::Clone.all(elem_shapes) {
-                    //         Some(|src, dst| {
-                    //             $({
-                    //                 let offset = mem::offset_of!(Self, $idx);
-                    //                 unsafe {
-                    //                     (<VTableView<$elems>>::of().clone_into().unwrap())(
-                    //                         src.field(offset),
-                    //                         dst.field_uninit_at(offset),
-                    //                     );
-                    //                 }
-                    //             })+
-
-                    //             unsafe { dst.assume_init() }
-                    //         })
-                    //     } else {
-                    //         None
-                    //     }
-                    // })
-                    .partial_eq(|| {
-                        let elem_shapes = const { &[$($elems::SHAPE),+] };
-                        if Characteristic::all_partial_eq(elem_shapes) {
-                            Some(|a, b| impl_facet_for_tuple! {
-                                ord on ($($elems.$idx,)+),
-                                partial_eq(a, b),
-                                eq = true
-                            })
-                        } else {
-                            None
-                        }
-                    })
-                    .partial_ord(|| {
-                        let elem_shapes = const { &[$($elems::SHAPE),+] };
-                        if Characteristic::all_partial_ord(elem_shapes) {
-                            Some(|a, b| impl_facet_for_tuple! {
-                                ord on ($($elems.$idx,)+),
-                                partial_ord(a, b),
-                                eq = Some(Ordering::Equal)
-                            })
-                        } else {
-                            None
-                        }
-                    })
-                    .ord(|| {
-                        let elem_shapes = const { &[$($elems::SHAPE),+] };
-                        if Characteristic::all_ord(elem_shapes) {
-                            Some(|a, b| impl_facet_for_tuple! {
-                                ord on ($($elems.$idx,)+),
-                                ord(a, b),
-                                eq = Ordering::Equal
-                            })
-                        } else {
-                            None
-                        }
-                    })
-                    .hash(|| {
-                        let elem_shapes = const { &[$($elems::SHAPE),+] };
-                        if Characteristic::all_hash(elem_shapes) {
-                            Some(|value, hasher_this, hasher_write_fn| {
-                                $(
-                                    (<VTableView<$elems>>::of().hash().unwrap())(
-                                        &value.$idx,
-                                        hasher_this,
-                                        hasher_write_fn,
-                                    );
-                                )+
                             })
                         } else {
                             None
