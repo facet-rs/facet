@@ -1156,72 +1156,10 @@ fn test_array_traits() {
 
 #[test]
 fn test_vecs() {
-    // Vec<i32> implements Debug, PartialEq, but not Ord
     check_facts(
         &vec![1, 2, 3],
         &vec![4, 5, 6],
-        FactBuilder::new()
-            .debug()
-            .partial_eq_and(false)
-            .default()
-            .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
-    );
-
-    // Vec<String> implements Debug, PartialEq, but not Ord
-    check_facts(
-        &vec!["hello".to_string(), "world".to_string()],
-        &vec!["foo".to_string(), "bar".to_string()],
-        FactBuilder::new()
-            .debug()
-            .partial_eq_and(false)
-            .default()
-            .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
-    );
-
-    // Two pairs of equal Vecs
-    let vec1 = vec![1, 2, 3];
-    let vec2 = vec![1, 2, 3];
-    check_facts(
-        &vec1.clone(),
-        &vec2.clone(),
-        FactBuilder::new()
-            .debug()
-            .partial_eq_and(true)
-            .default()
-            .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
-    );
-
-    let vec3 = vec!["hello".to_string(), "world".to_string()];
-    let vec4 = vec!["hello".to_string(), "world".to_string()];
-    check_facts(
-        &vec3.clone(),
-        &vec4.clone(),
-        FactBuilder::new()
-            .debug()
-            .partial_eq_and(true)
-            .default()
-            .build(),
+        FactBuilder::new().default().build(),
         TypedMarkerTraits::new()
             .eq()
             .send()

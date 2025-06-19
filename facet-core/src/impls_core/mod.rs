@@ -3,7 +3,6 @@ mod array;
 #[cfg(feature = "fn-ptr")]
 mod fn_ptr;
 
-mod dyn_;
 mod ops;
 mod option;
 mod pointer;
