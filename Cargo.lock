@@ -291,6 +291,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "const-oid"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0dabb6555f92fb9ee4140454eb5dcd14c7960e1225c6d1a6cc361f032947713e"
+
+[[package]]
 name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -415,6 +421,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-asn1"
+version = "0.1.0"
+dependencies = [
+ "const-oid",
+ "facet",
+ "facet-core",
+ "facet-reflect",
+ "facet-testhelpers 0.17.5",
+]
+
+[[package]]
 name = "facet-bench"
 version = "0.23.0"
 dependencies = [
@@ -436,6 +453,7 @@ dependencies = [
  "bytes",
  "camino",
  "chrono",
+ "const-oid",
  "eyre",
  "facet-testhelpers 0.17.5",
  "impls",
