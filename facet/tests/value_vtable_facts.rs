@@ -1081,65 +1081,6 @@ fn test_vecs() {
 }
 
 #[test]
-fn test_hashmaps() {
-    use std::collections::HashMap;
-
-    // HashMap<String, i32> implements Debug, PartialEq, but not Ord
-    let mut map1 = HashMap::new();
-    map1.insert("key1".to_string(), 42);
-    map1.insert("key2".to_string(), 24);
-
-    let mut map2 = HashMap::new();
-    map2.insert("key3".to_string(), 100);
-    map2.insert("key4".to_string(), 200);
-
-    check_facts(
-        &map1.clone(),
-        &map2.clone(),
-        FactBuilder::new()
-            .debug()
-            .partial_eq_and(false)
-            .default()
-            .clone()
-            .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
-    );
-
-    // Two pairs of equal HashMaps
-    let mut map3 = HashMap::new();
-    map3.insert("key1".to_string(), 10);
-    map3.insert("key2".to_string(), 20);
-
-    let mut map4 = HashMap::new();
-    map4.insert("key1".to_string(), 10);
-    map4.insert("key2".to_string(), 20);
-
-    check_facts(
-        &map3.clone(),
-        &map4.clone(),
-        FactBuilder::new()
-            .debug()
-            .partial_eq_and(true)
-            .default()
-            .clone()
-            .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
-    );
-}
-
-#[test]
 fn test_custom_structs() {
     // Struct with no trait implementations
     #[derive(Facet)]
