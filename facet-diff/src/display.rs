@@ -61,9 +61,10 @@ impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
                 write!(indent, "{}", printer.format_peek(*to))?;
                 f.write_str("\n\x1b[m}") // Reset the colors
             }
-            Diff::Struct {
+            Diff::User {
                 from,
                 to,
+                variant,
                 updates,
                 deletions,
                 insertions,
@@ -77,9 +78,17 @@ impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
                 write!(indent, "\x1b[1m")?;
                 from.write_type_name(indent.fmt, TypeNameOpts::infinite())?;
 
+                if let Some(variant) = variant {
+                    write!(indent, "\x1b[m::\x1b[1m{variant}")?;
+                }
+
                 if from.id != to.id {
                     write!(indent, "\x1b[m => \x1b[1m")?;
                     to.write_type_name(indent.fmt, TypeNameOpts::infinite())?;
+
+                    if let Some(variant) = variant {
+                        write!(indent, "\x1b[m::\x1b[1m{variant}")?;
+                    }
                 }
 
                 writeln!(indent, "\x1b[m {{")?;
