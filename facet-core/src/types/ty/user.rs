@@ -1,7 +1,7 @@
 use super::{EnumType, StructType, UnionType};
 
 /// User-defined types (structs, enums, unions)
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub enum UserType<'shape> {
     /// Describes a `struct`

@@ -561,7 +561,7 @@ pub struct TypeParam<'shape> {
 
 impl<'shape> TypeParam<'shape> {
     /// Returns the shape of the type parameter.
-    pub fn shape(&self) -> &'shape Shape {
+    pub fn shape(&self) -> &'shape Shape<'shape> {
         (self.shape)()
     }
 }

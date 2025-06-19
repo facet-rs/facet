@@ -2,7 +2,7 @@ use facet_core::{Characteristic, EnumType, FieldError, Shape, TryFromError};
 use owo_colors::OwoColorize;
 
 /// Errors that can occur when reflecting on types.
-#[derive(PartialEq, Clone)]
+#[derive(Clone)]
 #[non_exhaustive]
 pub enum ReflectError<'shape> {
     /// Tried to set an enum to a variant that does not exist

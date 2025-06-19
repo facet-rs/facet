@@ -3,7 +3,7 @@ use crate::ptr::{PtrConst, PtrMut, PtrUninit};
 use super::{IterVTable, Shape};
 
 /// Fields for set types
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 #[non_exhaustive]
 pub struct SetDef<'shape> {
@@ -20,7 +20,7 @@ impl<'shape> SetDef<'shape> {
     }
 
     /// Returns the shape of the items in the set
-    pub fn t(&self) -> &'shape Shape {
+    pub fn t(&self) -> &'shape Shape<'shape> {
         (self.t)()
     }
 }
@@ -98,7 +98,7 @@ pub type SetContainsFn =
     for<'set, 'value> unsafe fn(set: PtrConst<'set>, value: PtrConst<'value>) -> bool;
 
 /// Virtual table for a `Set<T>`
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct SetVTable {
     /// cf. [`SetInitInPlaceWithCapacityFn`]

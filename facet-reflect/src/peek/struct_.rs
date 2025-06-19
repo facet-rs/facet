@@ -23,7 +23,7 @@ impl core::fmt::Debug for PeekStruct<'_, '_, '_> {
 impl<'mem, 'facet, 'shape> PeekStruct<'mem, 'facet, 'shape> {
     /// Returns the struct definition
     #[inline(always)]
-    pub fn ty(&self) -> &StructType {
+    pub fn ty(&self) -> &StructType<'shape> {
         &self.ty
     }
 

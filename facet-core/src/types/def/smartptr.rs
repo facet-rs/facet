@@ -6,7 +6,7 @@ use super::Shape;
 
 /// Describes a smart pointer — including a vtable to query and alter its state,
 /// and the inner shape (the pointee type in the smart pointer).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 #[non_exhaustive]
 pub struct SmartPointerDef<'shape> {
@@ -266,7 +266,7 @@ pub type ReadFn = for<'ptr> unsafe fn(opaque: PtrConst<'ptr>) -> Result<LockResu
 pub type WriteFn = for<'ptr> unsafe fn(opaque: PtrConst<'ptr>) -> Result<LockResult<'ptr>, ()>;
 
 /// Functions for interacting with a smart pointer
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy)]
 pub struct SmartPointerVTable {
     /// See [`UpgradeIntoFn`]
     pub upgrade_into_fn: Option<UpgradeIntoFn>,

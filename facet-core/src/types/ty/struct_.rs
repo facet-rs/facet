@@ -1,7 +1,7 @@
 use super::{Field, Repr};
 
 /// Common fields for struct-like types
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 #[non_exhaustive]
 pub struct StructType<'shape> {

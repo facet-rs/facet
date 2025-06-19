@@ -17,7 +17,7 @@ fn test_option_scalar() {
         Root { value: Some(1) },
     );
 
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>("value = false")
             .unwrap_err()
             .kind,
@@ -25,7 +25,7 @@ fn test_option_scalar() {
             expected: "number",
             got: "boolean"
         }
-    );
+    ));
 }
 
 #[test]
@@ -43,7 +43,7 @@ fn test_nested_option() {
         },
     );
 
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>("value = false")
             .unwrap_err()
             .kind,
@@ -51,7 +51,7 @@ fn test_nested_option() {
             expected: "number",
             got: "boolean"
         }
-    );
+    ));
 }
 
 #[test]
@@ -74,12 +74,12 @@ fn test_option_struct() {
         },
     );
 
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>("value.wrong-key = 2")
             .unwrap_err()
             .kind,
         TomlDeErrorKind::ExpectedFieldWithName("value")
-    );
+    ));
 }
 
 #[test]
@@ -102,7 +102,7 @@ fn test_option_struct_with_option() {
         },
     );
 
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>("value.sub = false")
             .unwrap_err()
             .kind,
@@ -110,7 +110,7 @@ fn test_option_struct_with_option() {
             expected: "number",
             got: "boolean"
         }
-    );
+    ));
 }
 
 #[test]
@@ -189,14 +189,14 @@ fn test_option_enum_option_scalar() {
         Root::B { b1: None, b2: None },
     );
 
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>("A = false").unwrap_err().kind,
         TomlDeErrorKind::ExpectedType {
             expected: "string",
             got: "boolean"
         }
-    );
-    assert_eq!(
+    ));
+    assert!(matches!(
         facet_toml::from_str::<Root>("B.b1 = false")
             .unwrap_err()
             .kind,
@@ -204,7 +204,7 @@ fn test_option_enum_option_scalar() {
             expected: "number",
             got: "boolean"
         }
-    );
+    ));
 }
 
 #[test]

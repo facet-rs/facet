@@ -4,7 +4,7 @@ use super::{DefaultInPlaceFn, Shape};
 use bitflags::bitflags;
 
 /// Describes a field in a struct or tuple
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 #[non_exhaustive]
 pub struct Field<'shape> {
@@ -52,7 +52,7 @@ impl Field<'_> {
 }
 
 /// Vtable for field-specific operations
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 #[non_exhaustive]
 pub struct FieldVTable {

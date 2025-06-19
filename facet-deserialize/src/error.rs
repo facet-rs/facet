@@ -48,7 +48,7 @@ impl<'input, 'shape, C> DeserError<'input, 'shape, C> {
 }
 
 /// An error kind for JSON parsing.
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub enum DeserErrorKind<'shape> {
     /// An unexpected byte was encountered in the input.
     UnexpectedByte {
@@ -150,7 +150,7 @@ pub enum DeserErrorKind<'shape> {
         /// Source type name
         from: &'static str,
 
-        /// Target type name  
+        /// Target type name
         to: &'static str,
     },
 }

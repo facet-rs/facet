@@ -33,7 +33,7 @@ fn test_scalar_map() {
         },
     );
 
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>("values = true")
             .unwrap_err()
             .kind,
@@ -41,8 +41,8 @@ fn test_scalar_map() {
             expected: "table like structure",
             got: "boolean"
         }
-    );
-    assert_eq!(
+    ));
+    assert!(matches!(
         facet_toml::from_str::<Root>("values.a = true")
             .unwrap_err()
             .kind,
@@ -50,14 +50,14 @@ fn test_scalar_map() {
             expected: "number",
             got: "boolean"
         }
-    );
-    assert_eq!(
+    ));
+    assert!(matches!(
         facet_toml::from_str::<Root>("[values.a]").unwrap_err().kind,
         TomlDeErrorKind::ExpectedType {
             expected: "value",
             got: "table"
         }
-    );
+    ));
 }
 
 #[test]
@@ -96,7 +96,7 @@ fn test_scalar_map_with_other_fields() {
         },
     );
 
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>("values = true")
             .unwrap_err()
             .kind,
@@ -104,8 +104,8 @@ fn test_scalar_map_with_other_fields() {
             expected: "table like structure",
             got: "boolean"
         }
-    );
-    assert_eq!(
+    ));
+    assert!(matches!(
         facet_toml::from_str::<Root>("values.a = true")
             .unwrap_err()
             .kind,
@@ -113,14 +113,14 @@ fn test_scalar_map_with_other_fields() {
             expected: "number",
             got: "boolean"
         }
-    );
-    assert_eq!(
+    ));
+    assert!(matches!(
         facet_toml::from_str::<Root>("[values.a]").unwrap_err().kind,
         TomlDeErrorKind::ExpectedType {
             expected: "value",
             got: "table"
         }
-    );
+    ));
 }
 
 #[test]
@@ -156,7 +156,7 @@ fn test_unit_struct_map() {
         },
     );
 
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>("values = true")
             .unwrap_err()
             .kind,
@@ -164,8 +164,8 @@ fn test_unit_struct_map() {
             expected: "table like structure",
             got: "boolean"
         }
-    );
-    assert_eq!(
+    ));
+    assert!(matches!(
         facet_toml::from_str::<Root>("values.a = 10")
             .unwrap_err()
             .kind,
@@ -173,7 +173,7 @@ fn test_unit_struct_map() {
             expected: "boolean",
             got: "integer"
         }
-    );
+    ));
 }
 
 #[test]
