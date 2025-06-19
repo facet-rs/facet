@@ -69,7 +69,7 @@ where
             if eq_result { "==" } else { "!=" }.yellow(),
             r.style(REMARKABLE),
         );
-        eprintln!("Equality:  {}", eq_str);
+        eprintln!("Equality:  {eq_str}");
     }
 
     // Test ordering
@@ -89,7 +89,7 @@ where
             cmp_symbol.yellow(),
             r.style(REMARKABLE),
         );
-        eprintln!("Ordering:  {}", cmp_str);
+        eprintln!("Ordering:  {cmp_str}");
     }
 
     // Test default_in_place
@@ -143,13 +143,13 @@ fn report_maybe_mismatch<'a, T>(
         r.blue(),
         expected_minus_actual
             .iter()
-            .map(|f| format!("- {}", f))
+            .map(|f| format!("- {f}"))
             .collect::<Vec<_>>()
             .join("\n")
             .yellow(),
         actual_minus_expected
             .iter()
-            .map(|f| format!("+ {}", f))
+            .map(|f| format!("+ {f}"))
             .collect::<Vec<_>>()
             .join("\n")
             .yellow(),
@@ -287,7 +287,7 @@ impl Display for Fact {
                     Some(Ordering::Greater) => ">",
                     None => "??",
                 };
-                write!(f, "impl Ord and l {} r", ord_str)
+                write!(f, "impl Ord and l {ord_str} r")
             }
             Fact::Default => write!(f, "impl Default"),
             Fact::Clone => write!(f, "impl Clone"),

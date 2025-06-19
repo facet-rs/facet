@@ -512,7 +512,7 @@ impl core::fmt::Display for AngleTokenTree {
                 }
                 write!(f, ">")?;
             }
-            Either::Second(it) => write!(f, "{}", it)?,
+            Either::Second(it) => write!(f, "{it}")?,
             Either::Third(Invalid) => unreachable!(),
             Either::Fourth(Invalid) => unreachable!(),
         };

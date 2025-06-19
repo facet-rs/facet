@@ -78,7 +78,7 @@ impl<W: crate::JsonWrite> JsonSerializer<W> {
                 }
             }
             Some(StackItem::ObjectItem { object_state }) => {
-                debug!("ObjectItem: object_state = {:?}", object_state);
+                debug!("ObjectItem: object_state = {object_state:?}");
                 match object_state {
                     ObjectItemState::FirstKey => {
                         *object_state = ObjectItemState::Value;

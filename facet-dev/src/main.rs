@@ -111,9 +111,9 @@ impl Job {
         for (i, change) in changes.iter().enumerate() {
             if show_line[i] {
                 match change.tag() {
-                    ChangeTag::Insert => print!("{}", format_args!("    +{}", change).green()),
-                    ChangeTag::Delete => print!("{}", format_args!("    -{}", change).red()),
-                    ChangeTag::Equal => print!("{}", format_args!("    {}", change).dimmed()),
+                    ChangeTag::Insert => print!("{}", format_args!("    +{change}").green()),
+                    ChangeTag::Delete => print!("{}", format_args!("    -{change}").red()),
+                    ChangeTag::Equal => print!("{}", format_args!("    {change}").dimmed()),
                 }
                 last_was_ellipsis = false;
             } else if !last_was_ellipsis {
@@ -140,7 +140,7 @@ pub fn enqueue_readme_jobs(sender: std::sync::mpsc::Sender<Job>) {
     let entries = match fs_err::read_dir(&workspace_dir) {
         Ok(e) => e,
         Err(e) => {
-            error!("Failed to read workspace directory ({})", e);
+            error!("Failed to read workspace directory ({e})");
             return;
         }
     };
@@ -453,7 +453,7 @@ pub fn show_jobs_and_apply_if_consent_is_given(jobs: &mut [Job]) {
 
     println!(
         "\n{}\n{}\n",
-        format_args!("{} GENERATION CHANGES {}", ACTION_REQUIRED, ACTION_REQUIRED)
+        format_args!("{ACTION_REQUIRED} GENERATION CHANGES {ACTION_REQUIRED}")
             .on_black()
             .bold()
             .yellow()
@@ -473,12 +473,12 @@ pub fn show_jobs_and_apply_if_consent_is_given(jobs: &mut [Job]) {
             (idx + 1).bold().cyan(),
             job.path.display().yellow(),
             if plus > 0 {
-                format!("+{}", plus).green().to_string()
+                format!("+{plus}").green().to_string()
             } else {
                 String::new()
             },
             if minus > 0 {
-                format!(" -{}", minus).red().to_string()
+                format!(" -{minus}").red().to_string()
             } else {
                 String::new()
             }
@@ -540,7 +540,7 @@ fn main() {
             "generate" => Subcommand::Generate,
             "prepush" => Subcommand::Prepush,
             other => {
-                eprintln!("Unknown subcommand: {}", other);
+                eprintln!("Unknown subcommand: {other}");
                 eprintln!("Usage: {} <check|generate|prepush>", args[0]);
                 std::process::exit(1);
             }
@@ -767,7 +767,7 @@ pub fn collect_staged_files() -> io::Result<StagedFiles> {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     log::trace!("Parsing {} output:", "`git status --porcelain`".blue());
-    log::trace!("---\n{}\n---", stdout);
+    log::trace!("---\n{stdout}\n---");
 
     let mut clean = Vec::new();
     let mut dirty = Vec::new();
@@ -1026,7 +1026,7 @@ fn pre_push() {
                     }
                 };
                 let duration_ms = duration.as_millis();
-                let time_str = format!("({} ms)", duration_ms);
+                let time_str = format!("({duration_ms} ms)");
 
                 if let Some(pb) = progress_bars.get(&name) {
                     match status {
@@ -1085,7 +1085,7 @@ fn pre_push() {
 
     let overall_duration = overall_start_time.elapsed(); // Stop overall timer
     let overall_duration_ms = overall_duration.as_millis();
-    let overall_time_str = format!("in {} ms", overall_duration_ms);
+    let overall_time_str = format!("in {overall_duration_ms} ms");
 
     // --- Process Results and Exit ---
     if interrupted.load(Ordering::SeqCst) {
@@ -1108,7 +1108,7 @@ fn pre_push() {
                     Output {
                         status: std::process::ExitStatus::from_raw(1),
                         stdout: Vec::new(),
-                        stderr: format!("Error executing command: {}", error).into_bytes(),
+                        stderr: format!("Error executing command: {error}").into_bytes(),
                     },
                 ));
             }

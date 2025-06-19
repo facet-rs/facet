@@ -75,14 +75,13 @@ fn test_missing_field_light() {
         match err {
             crate::UrlEncodedError::ReflectError(reflect_err) => {
                 // Convert to string and check if it contains the expected message
-                let err_msg = format!("{}", reflect_err);
+                let err_msg = format!("{reflect_err}");
                 assert!(
                     err_msg.contains("Field 'TestStruct::field2' was not initialized"),
-                    "Expected error about uninitialized field, got: {}",
-                    err_msg
+                    "Expected error about uninitialized field, got: {err_msg}"
                 );
             }
-            _ => panic!("Expected ReflectError, got: {:?}", err),
+            _ => panic!("Expected ReflectError, got: {err:?}"),
         }
     }
 }
@@ -156,14 +155,13 @@ fn test_partial_nested_struct() {
         match err {
             crate::UrlEncodedError::ReflectError(reflect_err) => {
                 // Convert to string and check if it contains the expected message
-                let err_msg = format!("{}", reflect_err);
+                let err_msg = format!("{reflect_err}");
                 assert!(
                     err_msg.contains("Field 'Address::city' was not initialized"),
-                    "Expected error about uninitialized field, got: {}",
-                    err_msg
+                    "Expected error about uninitialized field, got: {err_msg}"
                 );
             }
-            _ => panic!("Expected ReflectError, got: {:?}", err),
+            _ => panic!("Expected ReflectError, got: {err:?}"),
         }
     }
 }

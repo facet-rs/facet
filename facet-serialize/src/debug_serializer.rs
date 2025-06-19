@@ -34,119 +34,119 @@ where
 
     fn serialize_u8(&mut self, value: u8) -> Result<(), Self::Error> {
         self.write_comma()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.set_comma();
         Ok(())
     }
 
     fn serialize_u16(&mut self, value: u16) -> Result<(), Self::Error> {
         self.write_comma()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.set_comma();
         Ok(())
     }
 
     fn serialize_u32(&mut self, value: u32) -> Result<(), Self::Error> {
         self.write_comma()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.set_comma();
         Ok(())
     }
 
     fn serialize_u64(&mut self, value: u64) -> Result<(), Self::Error> {
         self.write_comma()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.set_comma();
         Ok(())
     }
 
     fn serialize_u128(&mut self, value: u128) -> Result<(), Self::Error> {
         self.write_comma()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.set_comma();
         Ok(())
     }
 
     fn serialize_usize(&mut self, value: usize) -> Result<(), Self::Error> {
         self.write_comma()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.set_comma();
         Ok(())
     }
 
     fn serialize_i8(&mut self, value: i8) -> Result<(), Self::Error> {
         self.write_comma()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.set_comma();
         Ok(())
     }
 
     fn serialize_i16(&mut self, value: i16) -> Result<(), Self::Error> {
         self.write_comma()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.set_comma();
         Ok(())
     }
 
     fn serialize_i32(&mut self, value: i32) -> Result<(), Self::Error> {
         self.write_comma()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.set_comma();
         Ok(())
     }
 
     fn serialize_i64(&mut self, value: i64) -> Result<(), Self::Error> {
         self.write_comma()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.set_comma();
         Ok(())
     }
 
     fn serialize_i128(&mut self, value: i128) -> Result<(), Self::Error> {
         self.write_comma()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.set_comma();
         Ok(())
     }
 
     fn serialize_isize(&mut self, value: isize) -> Result<(), Self::Error> {
         self.write_comma()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.set_comma();
         Ok(())
     }
 
     fn serialize_f32(&mut self, value: f32) -> Result<(), Self::Error> {
         self.write_comma()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.set_comma();
         Ok(())
     }
 
     fn serialize_f64(&mut self, value: f64) -> Result<(), Self::Error> {
         self.write_comma()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.set_comma();
         Ok(())
     }
 
     fn serialize_bool(&mut self, value: bool) -> Result<(), Self::Error> {
         self.write_comma()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.set_comma();
         Ok(())
     }
 
     fn serialize_char(&mut self, value: char) -> Result<(), Self::Error> {
         self.write_comma()?;
-        write!(self.writer, "\"{}\"", value)?;
+        write!(self.writer, "\"{value}\"")?;
         self.set_comma();
         Ok(())
     }
 
     fn serialize_str(&mut self, value: &str) -> Result<(), Self::Error> {
         self.write_comma()?;
-        write!(self.writer, "\"{}\"", value)?;
+        write!(self.writer, "\"{value}\"")?;
         self.set_comma();
         Ok(())
     }
@@ -158,7 +158,7 @@ where
         self.need_comma.push(false);
         for byte in value.iter() {
             self.write_comma()?;
-            write!(self.writer, "{}", byte)?;
+            write!(self.writer, "{byte}")?;
             self.set_comma();
         }
         self.need_comma.pop();
@@ -188,7 +188,7 @@ where
         variant_name: &str,
     ) -> Result<(), Self::Error> {
         self.write_comma()?;
-        write!(self.writer, "\"{}\"", variant_name)?;
+        write!(self.writer, "\"{variant_name}\"")?;
         self.set_comma();
         Ok(())
     }
@@ -237,7 +237,7 @@ where
 
     fn serialize_field_name(&mut self, name: &str) -> Result<(), Self::Error> {
         self.write_comma()?;
-        write!(self.writer, "\"{}\":", name)?;
+        write!(self.writer, "\"{name}\":")?;
         if let Some(need_comma) = self.need_comma.last_mut() {
             *need_comma = false;
         }

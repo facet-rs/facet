@@ -1987,7 +1987,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                             path_components.push(format!("{}", frame.shape));
                         }
                         if let Some(field_name) = field_str {
-                            path_components.push(format!(".{}", field_name));
+                            path_components.push(format!(".{field_name}"));
                         }
                     }
                     UserType::Enum(_enum_type) => {
@@ -2028,7 +2028,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                             ..
                         } = &frame.tracker
                         {
-                            path_components.push(format!("[{}]", idx));
+                            path_components.push(format!("[{idx}]"));
                         }
                     }
                     // You can add more for Slice, Vec, etc., if applicable

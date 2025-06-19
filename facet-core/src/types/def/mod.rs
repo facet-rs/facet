@@ -102,7 +102,7 @@ impl<'shape> core::fmt::Debug for Def<'shape> {
                     crate::ScalarAffinity::Char(_) => "Char",
                     crate::ScalarAffinity::Path(_) => "Path",
                 };
-                write!(f, "Scalar({})", affinity_name)
+                write!(f, "Scalar({affinity_name})")
             }
             Def::Map(map_def) => write!(f, "Map<{}>", (map_def.v)()),
             Def::Set(set_def) => write!(f, "Set<{}>", (set_def.t)()),

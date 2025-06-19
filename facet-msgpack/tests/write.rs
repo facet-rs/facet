@@ -85,8 +85,7 @@ fn test_integers() {
 
     assert_eq!(
         msgpack, expected,
-        "\nGot:     {:02x?}\nExpected: {:02x?}",
-        msgpack, expected
+        "\nGot:     {msgpack:02x?}\nExpected: {expected:02x?}"
     );
 }
 

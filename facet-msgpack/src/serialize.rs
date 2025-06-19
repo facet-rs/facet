@@ -28,22 +28,22 @@ impl<'shape, W: Write> Serializer<'shape> for MessagePackSerializer<'_, W> {
     // Most implementations will simply call the existing write_* helper functions.
 
     fn serialize_u8(&mut self, value: u8) -> Result<(), Self::Error> {
-        trace!("Serializing u8: {}", value);
+        trace!("Serializing u8: {value}");
         write_u8(self.writer, value)
     }
 
     fn serialize_u16(&mut self, value: u16) -> Result<(), Self::Error> {
-        trace!("Serializing u16: {}", value);
+        trace!("Serializing u16: {value}");
         write_u16(self.writer, value)
     }
 
     fn serialize_u32(&mut self, value: u32) -> Result<(), Self::Error> {
-        trace!("Serializing u32: {}", value);
+        trace!("Serializing u32: {value}");
         write_u32(self.writer, value)
     }
 
     fn serialize_u64(&mut self, value: u64) -> Result<(), Self::Error> {
-        trace!("Serializing u64: {}", value);
+        trace!("Serializing u64: {value}");
         write_u64(self.writer, value)
     }
 
@@ -56,27 +56,27 @@ impl<'shape, W: Write> Serializer<'shape> for MessagePackSerializer<'_, W> {
 
     // Map usize to u64 as MessagePack doesn't have a specific usize type
     fn serialize_usize(&mut self, value: usize) -> Result<(), Self::Error> {
-        trace!("Serializing usize: {}", value);
+        trace!("Serializing usize: {value}");
         write_u64(self.writer, value as u64) // Assuming usize fits in u64
     }
 
     fn serialize_i8(&mut self, value: i8) -> Result<(), Self::Error> {
-        trace!("Serializing i8: {}", value);
+        trace!("Serializing i8: {value}");
         write_i8(self.writer, value)
     }
 
     fn serialize_i16(&mut self, value: i16) -> Result<(), Self::Error> {
-        trace!("Serializing i16: {}", value);
+        trace!("Serializing i16: {value}");
         write_i16(self.writer, value)
     }
 
     fn serialize_i32(&mut self, value: i32) -> Result<(), Self::Error> {
-        trace!("Serializing i32: {}", value);
+        trace!("Serializing i32: {value}");
         write_i32(self.writer, value)
     }
 
     fn serialize_i64(&mut self, value: i64) -> Result<(), Self::Error> {
-        trace!("Serializing i64: {}", value);
+        trace!("Serializing i64: {value}");
         write_i64(self.writer, value)
     }
 
@@ -89,34 +89,34 @@ impl<'shape, W: Write> Serializer<'shape> for MessagePackSerializer<'_, W> {
 
     // Map isize to i64 as MessagePack doesn't have a specific isize type
     fn serialize_isize(&mut self, value: isize) -> Result<(), Self::Error> {
-        trace!("Serializing isize: {}", value);
+        trace!("Serializing isize: {value}");
         write_i64(self.writer, value as i64) // Assuming isize fits in i64
     }
 
     fn serialize_f32(&mut self, value: f32) -> Result<(), Self::Error> {
-        trace!("Serializing f32: {}", value);
+        trace!("Serializing f32: {value}");
         write_f32(self.writer, value)
     }
 
     fn serialize_f64(&mut self, value: f64) -> Result<(), Self::Error> {
-        trace!("Serializing f64: {}", value);
+        trace!("Serializing f64: {value}");
         write_f64(self.writer, value)
     }
 
     fn serialize_bool(&mut self, value: bool) -> Result<(), Self::Error> {
-        trace!("Serializing bool: {}", value);
+        trace!("Serializing bool: {value}");
         write_bool(self.writer, value)
     }
 
     // Characters are often serialized as strings in MessagePack
     fn serialize_char(&mut self, value: char) -> Result<(), Self::Error> {
-        trace!("Serializing char: {}", value);
+        trace!("Serializing char: {value}");
         let mut buf = [0; 4];
         write_str(self.writer, value.encode_utf8(&mut buf))
     }
 
     fn serialize_str(&mut self, value: &str) -> Result<(), Self::Error> {
-        trace!("Serializing str: {}", value);
+        trace!("Serializing str: {value}");
         write_str(self.writer, value)
     }
 
@@ -142,12 +142,12 @@ impl<'shape, W: Write> Serializer<'shape> for MessagePackSerializer<'_, W> {
         _variant_index: usize,
         variant_name: &'shape str,
     ) -> Result<(), Self::Error> {
-        trace!("Serializing unit variant: {}", variant_name);
+        trace!("Serializing unit variant: {variant_name}");
         write_str(self.writer, variant_name)
     }
 
     fn start_object(&mut self, len: Option<usize>) -> Result<(), Self::Error> {
-        trace!("Starting object, len: {:?}", len);
+        trace!("Starting object, len: {len:?}");
         if let Some(l) = len {
             write_map_len(self.writer, l)
         } else {
@@ -165,7 +165,7 @@ impl<'shape, W: Write> Serializer<'shape> for MessagePackSerializer<'_, W> {
     }
 
     fn start_array(&mut self, len: Option<usize>) -> Result<(), Self::Error> {
-        trace!("Starting array, len: {:?}", len);
+        trace!("Starting array, len: {len:?}");
         if let Some(l) = len {
             if l == 0 {
                 // In facet's reflection system, unit types `()` are represented as tuples with 0 elements,
@@ -191,7 +191,7 @@ impl<'shape, W: Write> Serializer<'shape> for MessagePackSerializer<'_, W> {
 
     // Maps in facet-serialize correspond to MessagePack maps
     fn start_map(&mut self, len: Option<usize>) -> Result<(), Self::Error> {
-        trace!("Starting map, len: {:?}", len);
+        trace!("Starting map, len: {len:?}");
         if let Some(l) = len {
             write_map_len(self.writer, l)
         } else {
@@ -207,7 +207,7 @@ impl<'shape, W: Write> Serializer<'shape> for MessagePackSerializer<'_, W> {
 
     // Field names are serialized as strings (keys) in MessagePack maps
     fn serialize_field_name(&mut self, name: &'shape str) -> Result<(), Self::Error> {
-        trace!("Serializing field name: {}", name);
+        trace!("Serializing field name: {name}");
         write_str(self.writer, name)
     }
 }

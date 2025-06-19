@@ -385,8 +385,7 @@ where
                                             cpeek.shape().vtable.sized().and_then(|v| (v.display)())
                                         {
                                             // Use display formatting if available
-                                            serializer
-                                                .serialize_str(&alloc::format!("{}", cpeek))?
+                                            serializer.serialize_str(&alloc::format!("{cpeek}"))?
                                         } else {
                                             panic!(
                                                 "Unsupported shape (no display): {}",
@@ -520,7 +519,7 @@ where
                                 debug!("  Handling tuple struct");
                                 let peek_struct = cpeek.into_struct().unwrap();
                                 let fields = peek_struct.fields_for_serialize().count();
-                                debug!("  Serializing {} fields as array", fields);
+                                debug!("  Serializing {fields} fields as array");
 
                                 stack.push(SerializeTask::TupleStruct {
                                     items: peek_struct.fields_for_serialize(),
@@ -528,15 +527,14 @@ where
                                     len: fields,
                                 });
                                 trace!(
-                                    "  Pushed TupleStructFields to stack, will handle {} fields",
-                                    fields
+                                    "  Pushed TupleStructFields to stack, will handle {fields} fields"
                                 );
                             }
                             StructKind::Struct => {
                                 debug!("  Handling record struct");
                                 let peek_struct = cpeek.into_struct().unwrap();
                                 let fields = peek_struct.fields_for_serialize().count();
-                                debug!("  Serializing {} fields as object", fields);
+                                debug!("  Serializing {fields} fields as object");
 
                                 stack.push(SerializeTask::Object {
                                     entries: peek_struct.fields_for_serialize(),
@@ -544,8 +542,7 @@ where
                                     len: fields,
                                 });
                                 trace!(
-                                    "  Pushed ObjectFields to stack, will handle {} fields",
-                                    fields
+                                    "  Pushed ObjectFields to stack, will handle {fields} fields"
                                 );
                             }
                             _ => {
@@ -561,10 +558,7 @@ where
                         let variant_index = peek_enum
                             .variant_index()
                             .expect("Failed to get variant index");
-                        trace!(
-                            "Active variant index is {}, variant is {:?}",
-                            variant_index, variant
-                        );
+                        trace!("Active variant index is {variant_index}, variant is {variant:?}");
                         let discriminant = variant
                             .discriminant
                             .map(|d| d as u64)

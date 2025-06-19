@@ -161,7 +161,7 @@ pub enum ParseError {
 impl core::fmt::Display for ParseError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            ParseError::Generic(msg) => write!(f, "Parse failed: {}", msg),
+            ParseError::Generic(msg) => write!(f, "Parse failed: {msg}"),
         }
     }
 }
@@ -216,7 +216,7 @@ pub enum TryFromError<'shape> {
 impl<'shape> core::fmt::Display for TryFromError<'shape> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            TryFromError::Generic(msg) => write!(f, "{}", msg),
+            TryFromError::Generic(msg) => write!(f, "{msg}"),
             TryFromError::Unimplemented => write!(
                 f,
                 "Shape doesn't implement any conversions (no try_from function)",
@@ -225,12 +225,12 @@ impl<'shape> core::fmt::Display for TryFromError<'shape> {
                 src_shape: source_shape,
                 expected,
             } => {
-                write!(f, "Incompatible types: {} (expected one of ", source_shape)?;
+                write!(f, "Incompatible types: {source_shape} (expected one of ")?;
                 for (index, sh) in expected.iter().enumerate() {
                     if index > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}", sh)?;
+                    write!(f, "{sh}")?;
                 }
                 write!(f, ")")?;
                 Ok(())
@@ -293,7 +293,7 @@ impl core::fmt::Display for TryIntoInnerError {
             TryIntoInnerError::Unavailable => {
                 write!(f, "inner value is unavailable for extraction")
             }
-            TryIntoInnerError::Other(msg) => write!(f, "{}", msg),
+            TryIntoInnerError::Other(msg) => write!(f, "{msg}"),
         }
     }
 }
@@ -348,7 +348,7 @@ impl core::fmt::Display for TryBorrowInnerError {
                 write!(f, "inner value is unavailable for borrowing")
             }
             TryBorrowInnerError::Other(msg) => {
-                write!(f, "{}", msg)
+                write!(f, "{msg}")
             }
         }
     }

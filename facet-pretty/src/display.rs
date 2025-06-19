@@ -60,7 +60,7 @@ mod tests {
         let display = test.pretty();
 
         let mut output = String::new();
-        write!(output, "{}", display).unwrap();
+        write!(output, "{display}").unwrap();
 
         // Just check that it contains the field name and doesn't panic
         assert!(output.contains("field"));
@@ -73,7 +73,7 @@ mod tests {
         let display = test.pretty_with(printer);
 
         let mut output = String::new();
-        write!(output, "{}", display).unwrap();
+        write!(output, "{display}").unwrap();
 
         // Just check that it contains the field name and doesn't panic
         assert!(output.contains("field"));

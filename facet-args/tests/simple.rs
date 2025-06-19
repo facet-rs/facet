@@ -8,7 +8,7 @@ fn test_cli_display() {
     let cli = Cli;
 
     // Test the Display implementation
-    let formatted = format!("{}", cli);
+    let formatted = format!("{cli}");
     assert_eq!(formatted, "Cli");
 }
 

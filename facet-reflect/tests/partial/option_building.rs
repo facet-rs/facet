@@ -64,7 +64,7 @@ fn test_option_building_with_begin_some() {
             assert_eq!(option_value, Some("hello".to_string()));
         }
         Err(e) => {
-            println!("begin_some failed as expected: {:?}", e);
+            println!("begin_some failed as expected: {e:?}");
             // This shows that begin_some is not properly implemented
         }
     }
@@ -165,6 +165,6 @@ fn explore_option_shape() {
     // Also check if it has an inner shape (transparent wrapper)
     if let Some(inner_fn) = wip.shape().inner {
         let inner_shape = inner_fn();
-        println!("Inner shape: {:?}", inner_shape);
+        println!("Inner shape: {inner_shape:?}");
     }
 }

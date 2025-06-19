@@ -24,7 +24,7 @@ fn test_nested_empty_tuple_field_check() {
 
     // Check if field 0 is initialized - this should be true!
     let field_0_initialized = partial.is_field_set(0).unwrap();
-    println!("Is field 0 of (()) initialized? {}", field_0_initialized);
+    println!("Is field 0 of (()) initialized? {field_0_initialized}");
 
     // Debug: Check the shape
     let shape = partial.shape();
@@ -36,7 +36,7 @@ fn test_nested_empty_tuple_field_check() {
 
         // Now we're at type (), which should be considered complete
         let inner_shape = partial.innermost_shape();
-        println!("Inner shape: {:?}", inner_shape);
+        println!("Inner shape: {inner_shape:?}");
 
         // No need to set anything - it's a ZST
         partial.end().unwrap();
@@ -57,8 +57,8 @@ fn test_double_empty_tuple() {
     let field_0_initialized = partial.is_field_set(0).unwrap();
     let field_1_initialized = partial.is_field_set(1).unwrap();
 
-    println!("Field 0 initialized: {}", field_0_initialized);
-    println!("Field 1 initialized: {}", field_1_initialized);
+    println!("Field 0 initialized: {field_0_initialized}");
+    println!("Field 1 initialized: {field_1_initialized}");
 
     // If not initialized, try setting them
     if !field_0_initialized {
@@ -83,19 +83,13 @@ fn test_deeply_nested_empty_tuple() {
 
     // Check if field 0 is initialized
     let field_0_initialized = partial.is_field_set(0).unwrap();
-    println!(
-        "Is field 0 of (((),),) initialized? {}",
-        field_0_initialized
-    );
+    println!("Is field 0 of (((),),) initialized? {field_0_initialized}");
 
     if !field_0_initialized {
         partial.begin_nth_field(0).unwrap(); // Now at ((),)
 
         let inner_field_0_initialized = partial.is_field_set(0).unwrap();
-        println!(
-            "Is field 0 of ((),) initialized? {}",
-            inner_field_0_initialized
-        );
+        println!("Is field 0 of ((),) initialized? {inner_field_0_initialized}");
 
         if !inner_field_0_initialized {
             partial.begin_nth_field(0).unwrap(); // Now at ()
@@ -118,10 +112,7 @@ fn test_is_field_set_for_nested_empty_tuples() {
     // (((),),) - field 0 is ((),) which contains only empty tuples
     let partial = Partial::alloc_shape(<(((),),)>::SHAPE).unwrap();
     let field_0_initialized = partial.is_field_set(0).unwrap();
-    println!(
-        "Is field 0 of (((),),) initialized? {}",
-        field_0_initialized
-    );
+    println!("Is field 0 of (((),),) initialized? {field_0_initialized}");
     assert!(
         !field_0_initialized,
         "Field 0 of (((),),) should NOT be considered initialized - it needs to be explicitly set"
@@ -130,10 +121,7 @@ fn test_is_field_set_for_nested_empty_tuples() {
     // ((((),),),) - even deeper nesting
     let partial = Partial::alloc_shape(<((((),),),)>::SHAPE).unwrap();
     let field_0_initialized = partial.is_field_set(0).unwrap();
-    println!(
-        "Is field 0 of ((((),),),) initialized? {}",
-        field_0_initialized
-    );
+    println!("Is field 0 of ((((),),),) initialized? {field_0_initialized}");
     assert!(
         !field_0_initialized,
         "Field 0 of ((((),),),) should NOT be considered initialized"
@@ -145,8 +133,7 @@ fn test_is_field_set_for_nested_empty_tuples() {
     let field_1_initialized = partial.is_field_set(1).unwrap();
     let field_2_initialized = partial.is_field_set(2).unwrap();
     println!(
-        "Fields of ((), (), ()): {}, {}, {}",
-        field_0_initialized, field_1_initialized, field_2_initialized
+        "Fields of ((), (), ()): {field_0_initialized}, {field_1_initialized}, {field_2_initialized}"
     );
     assert!(
         !field_0_initialized && !field_1_initialized && !field_2_initialized,
@@ -157,14 +144,8 @@ fn test_is_field_set_for_nested_empty_tuples() {
     let partial = Partial::alloc_shape(<(((), ()), ())>::SHAPE).unwrap();
     let field_0_initialized = partial.is_field_set(0).unwrap();
     let field_1_initialized = partial.is_field_set(1).unwrap();
-    println!(
-        "Field 0 of (((), ()), ()) initialized? {}",
-        field_0_initialized
-    );
-    println!(
-        "Field 1 of (((), ()), ()) initialized? {}",
-        field_1_initialized
-    );
+    println!("Field 0 of (((), ()), ()) initialized? {field_0_initialized}");
+    println!("Field 1 of (((), ()), ()) initialized? {field_1_initialized}");
     assert!(
         !field_0_initialized,
         "Field 0 should NOT be initialized - it's a non-empty tuple"

@@ -377,7 +377,7 @@ mod tests {
         println!("The deserialize func should get called next");
         let result: Result<TestConfig, _> = deserialize(invalid_args, MockCliFormat);
         assert!(result.is_err());
-        println!("{:?}", result);
+        println!("{result:?}");
 
         // Check that the error contains a properly converted span (from Raw to Cooked)
         if let Err(error) = result {

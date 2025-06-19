@@ -176,7 +176,7 @@ impl core::fmt::Display for ReflectError<'_> {
                 )
             }
             ReflectError::UninitializedField { shape, field_name } => {
-                write!(f, "Field '{}::{}' was not initialized", shape, field_name)
+                write!(f, "Field '{shape}::{field_name}' was not initialized")
             }
             ReflectError::UninitializedEnumField {
                 shape,
@@ -279,7 +279,7 @@ impl core::fmt::Display for ReflectError<'_> {
 impl core::fmt::Debug for ReflectError<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // Use Display implementation for more readable output
-        write!(f, "ReflectError({})", self)
+        write!(f, "ReflectError({self})")
     }
 }
 

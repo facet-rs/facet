@@ -9,7 +9,7 @@ fn unit_struct() {
     let shape = UnitStruct::SHAPE;
 
     // Check the name using Display
-    assert_eq!(format!("{}", shape), "UnitStruct");
+    assert_eq!(format!("{shape}"), "UnitStruct");
 
     let layout = shape.layout.sized_layout().unwrap();
     assert_eq!(layout.size(), 0);
@@ -35,7 +35,7 @@ fn simple_struct() {
         let shape = Blah::SHAPE;
 
         // Check the name using Display
-        assert_eq!(format!("{}", shape), "Blah");
+        assert_eq!(format!("{shape}"), "Blah");
 
         let layout = shape.layout.sized_layout().unwrap();
 
@@ -494,7 +494,7 @@ fn enum_rename_all_snake_case() {
 
     let shape = MaybeFontStyle::SHAPE;
 
-    assert_eq!(format!("{}", shape), "MaybeFontStyle");
+    assert_eq!(format!("{shape}"), "MaybeFontStyle");
 
     if let Type::User(UserType::Enum(enum_kind)) = shape.ty {
         assert_eq!(enum_kind.variants.len(), 3);

@@ -94,7 +94,7 @@ use core::fmt;
 impl fmt::Display for Outcome<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Outcome::Scalar(scalar) => write!(f, "scalar {}", scalar),
+            Outcome::Scalar(scalar) => write!(f, "scalar {scalar}"),
             Outcome::ListStarted => write!(f, "list start"),
             Outcome::ListEnded => write!(f, "list end"),
             Outcome::ObjectStarted => write!(f, "object start"),
@@ -108,13 +108,13 @@ impl fmt::Display for Outcome<'_> {
 impl fmt::Display for Scalar<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Scalar::String(s) => write!(f, "string \"{}\"", s),
-            Scalar::U64(val) => write!(f, "u64 {}", val),
-            Scalar::I64(val) => write!(f, "i64 {}", val),
-            Scalar::F64(val) => write!(f, "f64 {}", val),
-            Scalar::U128(val) => write!(f, "u128 {}", val),
-            Scalar::I128(val) => write!(f, "i128 {}", val),
-            Scalar::Bool(val) => write!(f, "bool {}", val),
+            Scalar::String(s) => write!(f, "string \"{s}\""),
+            Scalar::U64(val) => write!(f, "u64 {val}"),
+            Scalar::I64(val) => write!(f, "i64 {val}"),
+            Scalar::F64(val) => write!(f, "f64 {val}"),
+            Scalar::U128(val) => write!(f, "u128 {val}"),
+            Scalar::I128(val) => write!(f, "i128 {val}"),
+            Scalar::Bool(val) => write!(f, "bool {val}"),
             Scalar::Null => write!(f, "null"),
         }
     }
@@ -1028,7 +1028,7 @@ where
                 trace!("Let's check all fields are initialized");
                 for (index, field) in sd.fields.iter().enumerate() {
                     let is_set = wip.is_field_set(index).map_err(|err| {
-                        trace!("Error checking field set status: {:?}", err);
+                        trace!("Error checking field set status: {err:?}");
                         self.reflect_err(err)
                     })?;
                     if !is_set {
@@ -1087,7 +1087,7 @@ where
 
                         for (index, field) in sd.fields.iter().enumerate() {
                             let is_set = wip.is_field_set(index).map_err(|err| {
-                                trace!("Error checking field set status: {:?}", err);
+                                trace!("Error checking field set status: {err:?}");
                                 self.reflect_err(err)
                             })?;
                             if !is_set {
@@ -1110,7 +1110,7 @@ where
                         // Find the first uninitialized field to report in the error
                         for (index, field) in sd.fields.iter().enumerate() {
                             let is_set = wip.is_field_set(index).map_err(|err| {
-                                trace!("Error checking field set status: {:?}", err);
+                                trace!("Error checking field set status: {err:?}");
                                 self.reflect_err(err)
                             })?;
                             if !is_set {
@@ -1136,7 +1136,7 @@ where
 
                         for (index, field) in variant.data.fields.iter().enumerate() {
                             let is_set = wip.is_field_set(index).map_err(|err| {
-                                trace!("Error checking field set status: {:?}", err);
+                                trace!("Error checking field set status: {err:?}");
                                 self.reflect_err(err)
                             })?;
 
@@ -1207,7 +1207,7 @@ where
                                     // It's the same variant, fill in the missing fields
                                     for (index, _field) in variant.data.fields.iter().enumerate() {
                                         let is_set = wip.is_field_set(index).map_err(|err| {
-                                            trace!("Error checking field set status: {:?}", err);
+                                            trace!("Error checking field set status: {err:?}");
                                             self.reflect_err(err)
                                         })?;
                                         if !is_set {
@@ -1225,7 +1225,7 @@ where
                                 // Find the first uninitialized field to report in the error
                                 for (index, field) in variant.data.fields.iter().enumerate() {
                                     let is_set = wip.is_field_set(index).map_err(|err| {
-                                        trace!("Error checking field set status: {:?}", err);
+                                        trace!("Error checking field set status: {err:?}");
                                         self.reflect_err(err)
                                     })?;
                                     if !is_set {
@@ -1804,14 +1804,14 @@ where
                             let mut found_in_flatten = false;
                             for (index, field) in sd.fields.iter().enumerate() {
                                 if field.flags.contains(FieldFlags::FLATTEN) {
-                                    trace!("Found flattened field #{}", index);
+                                    trace!("Found flattened field #{index}");
                                     // Enter the flattened field
                                     wip.begin_nth_field(index)
                                         .map_err(|e| self.reflect_err(e))?;
 
                                     // Check if this flattened field has the requested key
                                     if let Some(subfield_index) = wip.field_index(&key) {
-                                        trace!("Found key {} in flattened field", key);
+                                        trace!("Found key {key} in flattened field");
                                         wip.begin_nth_field(subfield_index)
                                             .map_err(|e| self.reflect_err(e))?;
                                         found_in_flatten = true;
@@ -1820,7 +1820,7 @@ where
                                     } else if let Some((_variant_index, _variant)) =
                                         wip.find_variant(&key)
                                     {
-                                        trace!("Found key {} in flattened field", key);
+                                        trace!("Found key {key} in flattened field");
                                         wip.select_variant_named(&key)
                                             .map_err(|e| self.reflect_err(e))?;
                                         found_in_flatten = true;
