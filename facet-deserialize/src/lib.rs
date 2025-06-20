@@ -466,6 +466,7 @@ where
 
     // Helper function to handle the common pattern of calling format methods
     #[allow(clippy::type_complexity)]
+    #[inline(always)]
     fn handle_next_with_method<'input, 'facet, 'shape, F, Method>(
         mut runner: StackRunner<'input, F::SpanType, F::Input<'input>>,
         wip: Partial<'facet, 'shape>,
