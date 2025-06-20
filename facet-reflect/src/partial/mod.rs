@@ -1601,6 +1601,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
 
     /// Validates that the top frame is fully initialized before it can be popped. This ensures we
     /// don't pop partially constructed values.
+    #[inline(always)]
     fn validate_frame_initialization(&self) -> Result<(), ReflectError<'shape>> {
         let frame = self.frames.last().unwrap();
         trace!(
@@ -1612,6 +1613,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
 
     /// Pops the top frame from the stack with appropriate logging. Returns the popped frame for
     /// further processing.
+    #[inline(always)]
     fn pop_frame(&mut self) -> Frame<'shape> {
         let popped_frame = self.frames.pop().unwrap();
         let _is_conversion = false;
@@ -1624,6 +1626,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
 
     /// Attempts implicit type conversion when the parent frame expects a different type. Returns
     /// true if conversion was performed, false if no conversion was needed.
+    #[inline(always)]
     fn try_conversion(
         &mut self,
         popped_frame: &Frame<'shape>,
@@ -1687,6 +1690,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
 
     /// Deallocates memory for owned frames that are no longer needed. Only deallocates if the frame
     /// owns its memory and has non-zero size.
+    #[inline(always)]
     fn deallocate_frame_memory_static(frame: &Frame<'shape>) {
         if let FrameOwnership::Owned = frame.ownership {
             if let Ok(layout) = frame.shape.layout.sized_layout() {
@@ -1706,6 +1710,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
 
     /// Updates the parent frame's tracker state after a child frame is popped. Handles
     /// type-specific logic for structs, arrays, smart pointers, enums, lists, maps, and options.
+    #[inline(always)]
     fn update_parent_tracker(
         &mut self,
         popped_frame: &Frame<'shape>,
