@@ -26,11 +26,11 @@ pub enum Diff<'mem, 'facet> {
         /// The shape of the `from` struct.
         from: &'static Shape<'static>,
 
-        /// The name of the variant, this is [`None`] if the values are structs
-        variant: Option<&'static str>,
-
         /// The shape of the `to` struct.
         to: &'static Shape<'static>,
+
+        /// The name of the variant, this is [`None`] if the values are structs
+        variant: Option<&'static str>,
 
         /// The fields that are updated between the structs
         updates: HashMap<&'static str, Diff<'mem, 'facet>>,
@@ -44,6 +44,12 @@ pub enum Diff<'mem, 'facet> {
 
     /// A diff between two sequences
     Sequence {
+        /// The shape of the `from` sequence.
+        from: &'static Shape<'static>,
+
+        /// The shape of the `to` sequence.
+        to: &'static Shape<'static>,
+
         /// The updates on the sequence
         updates: Vec<Update<'mem, 'facet>>,
     },
@@ -70,14 +76,13 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
         }
 
         match (
-            from.shape().def,
-            from.shape().ty,
-            to.shape().def,
-            to.shape().ty,
+            (from.shape().def, from.shape().ty),
+            (to.shape().def, to.shape().ty),
         ) {
-            (_, Type::User(UserType::Struct(from_ty)), _, Type::User(UserType::Struct(to_ty)))
-                if from_ty.kind == to_ty.kind =>
-            {
+            (
+                (_, Type::User(UserType::Struct(from_ty))),
+                (_, Type::User(UserType::Struct(to_ty))),
+            ) if from_ty.kind == to_ty.kind => {
                 let from_ty = from.into_struct().unwrap();
                 let to_ty = to.into_struct().unwrap();
 
@@ -111,7 +116,7 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                     insertions,
                 }
             }
-            (_, Type::User(UserType::Enum(_)), _, Type::User(UserType::Enum(_))) => {
+            ((_, Type::User(UserType::Enum(_))), (_, Type::User(UserType::Enum(_)))) => {
                 let from_enum = from.into_enum().unwrap();
                 let to_enum = to.into_enum().unwrap();
 
@@ -157,7 +162,7 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                     insertions,
                 }
             }
-            (Def::Option(_), _, Def::Option(_), _) => {
+            ((Def::Option(_), _), (Def::Option(_), _)) => {
                 let from_option = from.into_option().unwrap();
                 let to_option = to.into_option().unwrap();
 
@@ -182,14 +187,28 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                     insertions: Default::default(),
                 }
             }
-            (_, Type::Sequence(_), _, Type::Sequence(_)) => {
-                let from = from.into_list_like().unwrap();
-                let to = to.into_list_like().unwrap();
-                let from = from.iter().collect::<Vec<_>>();
-                let to = to.iter().collect::<Vec<_>>();
-                let updates = sequences::diff(from, to);
+            (
+                (Def::List(_), _) | (_, Type::Sequence(_)),
+                (Def::List(_), _) | (_, Type::Sequence(_)),
+            ) => {
+                let from_list = from.into_list_like().unwrap();
+                let to_list = to.into_list_like().unwrap();
 
-                Diff::Sequence { updates }
+                let f_shape = from_list.def().t();
+                if f_shape.id != to_list.def().t().id || !f_shape.is_partial_eq() {
+                    return Diff::Replace { from, to };
+                }
+
+                let updates = sequences::diff(
+                    from_list.iter().collect::<Vec<_>>(),
+                    to_list.iter().collect::<Vec<_>>(),
+                );
+
+                Diff::Sequence {
+                    from: from.shape(),
+                    to: to.shape(),
+                    updates,
+                }
             }
             _ => Diff::Replace { from, to },
         }

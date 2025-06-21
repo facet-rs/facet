@@ -114,13 +114,23 @@ impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
 
                 f.write_str("}")
             }
-            Diff::Sequence { updates } => {
+            Diff::Sequence { from, to, updates } => {
+                write!(f, "\x1b[1m")?;
+                from.write_type_name(f, TypeNameOpts::infinite())?;
+                write!(f, "\x1b[m")?;
+
+                if from.id != to.id {
+                    write!(f, " => \x1b[1m")?;
+                    to.write_type_name(f, TypeNameOpts::infinite())?;
+                    write!(f, "\x1b[m")?;
+                }
+
                 let mut indent = PadAdapter {
                     fmt: f,
                     on_newline: false,
                 };
 
-                writeln!(indent, "[")?;
+                writeln!(indent, " [")?;
 
                 let printer = PrettyPrinter::default().with_colors(false);
 
