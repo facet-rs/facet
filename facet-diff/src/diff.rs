@@ -182,7 +182,7 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                     insertions: Default::default(),
                 }
             }
-            (_, Type::Sequence(from_ty), _, Type::Sequence(to_ty)) => {
+            (_, Type::Sequence(_), _, Type::Sequence(_)) => {
                 let from = from.into_list_like().unwrap();
                 let to = to.into_list_like().unwrap();
                 let from = from.iter().collect::<Vec<_>>();
