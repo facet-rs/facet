@@ -3,7 +3,7 @@ use std::fmt::{Display, Write};
 use facet::TypeNameOpts;
 use facet_pretty::PrettyPrinter;
 
-use crate::diff::Diff;
+use crate::{diff::Diff, sequences::Update};
 
 struct PadAdapter<'a, 'b: 'a> {
     fmt: &'a mut std::fmt::Formatter<'b>,
@@ -113,6 +113,32 @@ impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
                 }
 
                 f.write_str("}")
+            }
+            Diff::Sequence { updates } => {
+                let mut indent = PadAdapter {
+                    fmt: f,
+                    on_newline: false,
+                };
+
+                writeln!(indent, "[")?;
+
+                let printer = PrettyPrinter::default().with_colors(false);
+
+                for update in updates {
+                    match update {
+                        Update::Add(value) => {
+                            writeln!(indent, "\x1b[32m+ {}\x1b[m", printer.format_peek(*value))?;
+                        }
+                        Update::Remove(value) => {
+                            writeln!(indent, "\x1b[31m- {}\x1b[m", printer.format_peek(*value))?;
+                        }
+                        Update::Keep(value) => {
+                            writeln!(indent, "  {}", printer.format_peek(*value))?;
+                        }
+                    }
+                }
+
+                write!(f, "]")
             }
         }
     }
