@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use facet::Facet;
 use facet_diff::FacetDiff;
 
