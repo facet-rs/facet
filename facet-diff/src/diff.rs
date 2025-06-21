@@ -4,6 +4,8 @@ use facet::{Def, Shape, Type, UserType};
 use facet_core::Facet;
 use facet_reflect::{HasFields, Peek};
 
+use crate::sequences::{self, Update};
+
 /// The difference between two values.
 ///
 /// The `from` value does not necessarily have to have the same type as the `to` value.
@@ -33,11 +35,17 @@ pub enum Diff<'mem, 'facet> {
         /// The fields that are updated between the structs
         updates: HashMap<&'static str, Diff<'mem, 'facet>>,
 
-        /// THe fields that are in `from` but not in `to`.
+        /// The fields that are in `from` but not in `to`.
         deletions: HashMap<&'static str, Peek<'mem, 'facet, 'static>>,
 
-        /// THe fields that are in `to` but not in `from`.
+        /// The fields that are in `to` but not in `from`.
         insertions: HashMap<&'static str, Peek<'mem, 'facet, 'static>>,
+    },
+
+    /// A diff between two sequences
+    Sequence {
+        /// The updates on the sequence
+        updates: Vec<Update<'mem, 'facet>>,
     },
 }
 
@@ -173,6 +181,15 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                     deletions: Default::default(),
                     insertions: Default::default(),
                 }
+            }
+            (_, Type::Sequence(from_ty), _, Type::Sequence(to_ty)) => {
+                let from = from.into_list_like().unwrap();
+                let to = to.into_list_like().unwrap();
+                let from = from.iter().collect::<Vec<_>>();
+                let to = to.iter().collect::<Vec<_>>();
+                let updates = sequences::diff(from, to);
+
+                Diff::Sequence { updates }
             }
             _ => Diff::Replace { from, to },
         }
