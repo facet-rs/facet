@@ -65,6 +65,8 @@ impl ScalarType {
             return Some(ScalarType::String);
         } else if shape.id == ConstTypeId::of::<alloc::borrow::Cow<'_, str>>() {
             return Some(ScalarType::CowStr);
+        } else if shape.id == ConstTypeId::of::<str>() {
+            return Some(ScalarType::Str);
         } else if shape.id == ConstTypeId::of::<core::net::SocketAddr>() {
             return Some(ScalarType::SocketAddr);
         }

@@ -1,10 +1,12 @@
+use alloc::sync::{Arc, Weak};
+
 use crate::{
-    Def, Facet, KnownSmartPointer, PtrConst, PtrMut, PtrUninit, Shape, SmartPointerDef,
-    SmartPointerFlags, SmartPointerVTable, TryBorrowInnerError, TryFromError, TryIntoInnerError,
-    Type, UserType, ValueVTable, value_vtable,
+    Def, Facet, KnownSmartPointer, PtrConst, PtrConstWide, PtrMut, PtrUninit, Shape,
+    SmartPointerDef, SmartPointerFlags, SmartPointerVTable, TryBorrowInnerError, TryFromError,
+    TryIntoInnerError, Type, UserType, ValueVTable, value_vtable,
 };
 
-unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
+unsafe impl<'a, T: Facet<'a>> Facet<'a> for Arc<T> {
     const VTABLE: &'static ValueVTable = &const {
         // Define the functions for transparent conversion between Arc<T> and T
         unsafe fn try_from<'a, 'shape, 'src, 'dst, T: Facet<'a>>(
@@ -19,7 +21,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
                 });
             }
             let t = unsafe { src_ptr.read::<T>() };
-            let arc = alloc::sync::Arc::new(t);
+            let arc = Arc::new(t);
             Ok(unsafe { dst.put(arc) })
         }
 
@@ -46,7 +48,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
         unsafe fn try_borrow_inner<'a, 'src, T: Facet<'a>>(
             src_ptr: PtrConst<'src>,
         ) -> Result<PtrConst<'src>, TryBorrowInnerError> {
-            let arc = unsafe { src_ptr.get::<alloc::sync::Arc<T>>() };
+            let arc = unsafe { src_ptr.get::<Arc<T>>() };
             Ok(PtrConst::new(&**arc))
         }
 
@@ -89,22 +91,22 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
                     .pointee(|| T::SHAPE)
                     .flags(SmartPointerFlags::ATOMIC)
                     .known(KnownSmartPointer::Arc)
-                    .weak(|| <alloc::sync::Weak<T> as Facet>::SHAPE)
+                    .weak(|| <Weak<T> as Facet>::SHAPE)
                     .vtable(
                         &const {
                             SmartPointerVTable::builder()
                                 .borrow_fn(|this| {
-                                    let arc_ptr = unsafe { this.as_ptr::<alloc::sync::Arc<T>>() };
-                                    let ptr = unsafe { alloc::sync::Arc::as_ptr(&*arc_ptr) };
-                                    PtrConst::new(ptr)
+                                    let arc_ptr = unsafe { this.as_ptr::<Arc<T>>() };
+                                    let ptr = unsafe { Arc::as_ptr(&*arc_ptr) };
+                                    PtrConst::new(ptr).into()
                                 })
                                 .new_into_fn(|this, ptr| {
                                     let t = unsafe { ptr.read::<T>() };
-                                    let arc = alloc::sync::Arc::new(t);
+                                    let arc = Arc::new(t);
                                     unsafe { this.put(arc) }
                                 })
                                 .downgrade_into_fn(|strong, weak| unsafe {
-                                    weak.put(alloc::sync::Arc::downgrade(strong.get::<Self>()))
+                                    weak.put(Arc::downgrade(strong.get::<Self>()))
                                 })
                                 .build()
                         },
@@ -116,7 +118,61 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Arc<T> {
     };
 }
 
-unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Weak<T> {
+unsafe impl<'a> Facet<'a> for Arc<str> {
+    const VTABLE: &'static ValueVTable = &const {
+        value_vtable!(alloc::sync::Arc<str>, |f, opts| {
+            write!(f, "{}", Self::SHAPE.type_identifier)?;
+            if let Some(opts) = opts.for_children() {
+                write!(f, "<")?;
+                (str::SHAPE.vtable.type_name())(f, opts)?;
+                write!(f, ">")?;
+            } else {
+                write!(f, "<…>")?;
+            }
+            Ok(())
+        })
+    };
+
+    const SHAPE: &'static crate::Shape<'static> = &const {
+        // Function to return inner type's shape
+        fn inner_shape() -> &'static Shape<'static> {
+            str::SHAPE
+        }
+
+        crate::Shape::builder_for_sized::<Self>()
+            .type_identifier("Arc")
+            .type_params(&[crate::TypeParam {
+                name: "T",
+                shape: || str::SHAPE,
+            }])
+            .ty(Type::User(UserType::Opaque))
+            .def(Def::SmartPointer(
+                SmartPointerDef::builder()
+                    .pointee(|| str::SHAPE)
+                    .flags(SmartPointerFlags::ATOMIC)
+                    .known(KnownSmartPointer::Arc)
+                    .weak(|| <Weak<str> as Facet>::SHAPE)
+                    .vtable(
+                        &const {
+                            SmartPointerVTable::builder()
+                                .borrow_fn(|this| unsafe {
+                                    let concrete = this.get::<Arc<str>>();
+                                    let s: &str = concrete;
+                                    PtrConstWide::new(&raw const *s).into()
+                                })
+                                .new_into_fn(|_this, _ptr| todo!())
+                                .downgrade_into_fn(|_strong, _weak| todo!())
+                                .build()
+                        },
+                    )
+                    .build(),
+            ))
+            .inner(inner_shape)
+            .build()
+    };
+}
+
+unsafe impl<'a, T: Facet<'a>> Facet<'a> for Weak<T> {
     const VTABLE: &'static ValueVTable = &const {
         value_vtable!(alloc::sync::Weak<T>, |f, opts| {
             write!(f, "{}", Self::SHAPE.type_identifier)?;
@@ -149,7 +205,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Weak<T> {
                     .pointee(|| T::SHAPE)
                     .flags(SmartPointerFlags::ATOMIC.union(SmartPointerFlags::WEAK))
                     .known(KnownSmartPointer::ArcWeak)
-                    .strong(|| <alloc::sync::Arc<T> as Facet>::SHAPE)
+                    .strong(|| <Arc<T> as Facet>::SHAPE)
                     .vtable(
                         &const {
                             SmartPointerVTable::builder()
@@ -162,6 +218,54 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::sync::Weak<T> {
                     .build(),
             ))
             .inner(inner_shape::<T>)
+            .build()
+    };
+}
+
+unsafe impl<'a> Facet<'a> for Weak<str> {
+    const VTABLE: &'static ValueVTable = &const {
+        value_vtable!(alloc::sync::Weak<str>, |f, opts| {
+            write!(f, "{}", Self::SHAPE.type_identifier)?;
+            if let Some(opts) = opts.for_children() {
+                write!(f, "<")?;
+                (str::SHAPE.vtable.type_name())(f, opts)?;
+                write!(f, ">")?;
+            } else {
+                write!(f, "<…>")?;
+            }
+            Ok(())
+        })
+    };
+
+    const SHAPE: &'static crate::Shape<'static> = &const {
+        // Function to return inner type's shape
+        fn inner_shape() -> &'static Shape<'static> {
+            str::SHAPE
+        }
+
+        crate::Shape::builder_for_sized::<Self>()
+            .type_identifier("Weak")
+            .type_params(&[crate::TypeParam {
+                name: "T",
+                shape: || str::SHAPE,
+            }])
+            .ty(Type::User(UserType::Opaque))
+            .def(Def::SmartPointer(
+                SmartPointerDef::builder()
+                    .pointee(|| str::SHAPE)
+                    .flags(SmartPointerFlags::ATOMIC.union(SmartPointerFlags::WEAK))
+                    .known(KnownSmartPointer::ArcWeak)
+                    .strong(|| <Arc<str> as Facet>::SHAPE)
+                    .vtable(
+                        &const {
+                            SmartPointerVTable::builder()
+                                .upgrade_into_fn(|_weak, _strong| todo!())
+                                .build()
+                        },
+                    )
+                    .build(),
+            ))
+            .inner(inner_shape)
             .build()
     };
 }

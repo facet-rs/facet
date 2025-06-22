@@ -1,10 +1,12 @@
+use alloc::boxed::Box;
+
 use crate::{
-    Def, Facet, KnownSmartPointer, PtrConst, PtrMut, PtrUninit, Shape, SmartPointerDef,
-    SmartPointerFlags, SmartPointerVTable, TryBorrowInnerError, TryFromError, TryIntoInnerError,
-    Type, UserType, ValueVTable, value_vtable,
+    Def, Facet, KnownSmartPointer, PtrConst, PtrConstWide, PtrMut, PtrUninit, Shape,
+    SmartPointerDef, SmartPointerFlags, SmartPointerVTable, TryBorrowInnerError, TryFromError,
+    TryIntoInnerError, Type, UserType, ValueVTable, value_vtable,
 };
 
-unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::boxed::Box<T> {
+unsafe impl<'a, T: Facet<'a>> Facet<'a> for Box<T> {
     const VTABLE: &'static ValueVTable = &const {
         // Define the functions for transparent conversion between Box<T> and T
         unsafe fn try_from<'a, 'shape, 'src, 'dst, T: Facet<'a>>(
@@ -19,7 +21,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::boxed::Box<T> {
                 });
             }
             let t = unsafe { src_ptr.read::<T>() };
-            let boxed = alloc::boxed::Box::new(t);
+            let boxed = Box::new(t);
             Ok(unsafe { dst.put(boxed) })
         }
 
@@ -27,14 +29,14 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::boxed::Box<T> {
             src_ptr: PtrMut<'src>,
             dst: PtrUninit<'dst>,
         ) -> Result<PtrMut<'dst>, TryIntoInnerError> {
-            let boxed = unsafe { src_ptr.read::<alloc::boxed::Box<T>>() };
+            let boxed = unsafe { src_ptr.read::<Box<T>>() };
             Ok(unsafe { dst.put(*boxed) })
         }
 
         unsafe fn try_borrow_inner<'a, 'src, T: Facet<'a>>(
             src_ptr: PtrConst<'src>,
         ) -> Result<PtrConst<'src>, TryBorrowInnerError> {
-            let boxed = unsafe { src_ptr.get::<alloc::boxed::Box<T>>() };
+            let boxed = unsafe { src_ptr.get::<Box<T>>() };
             Ok(PtrConst::new(&**boxed))
         }
 
@@ -79,15 +81,14 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::boxed::Box<T> {
                     .vtable(
                         &const {
                             SmartPointerVTable::builder()
-                                .borrow_fn(|this| {
-                                    let ptr = unsafe {
-                                        &raw const **this.as_ptr::<alloc::boxed::Box<T>>()
-                                    };
-                                    PtrConst::new(ptr)
+                                .borrow_fn(|this| unsafe {
+                                    let concrete = this.get::<Box<T>>();
+                                    let t: &T = concrete.as_ref();
+                                    PtrConst::new(t as *const T).into()
                                 })
                                 .new_into_fn(|this, ptr| {
                                     let t = unsafe { ptr.read::<T>() };
-                                    let boxed = alloc::boxed::Box::new(t);
+                                    let boxed = Box::new(t);
                                     unsafe { this.put(boxed) }
                                 })
                                 .build()
@@ -96,6 +97,57 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for alloc::boxed::Box<T> {
                     .build(),
             ))
             .inner(inner_shape::<T>)
+            .build()
+    };
+}
+
+unsafe impl<'a> Facet<'a> for Box<str> {
+    const VTABLE: &'static ValueVTable = &const {
+        value_vtable!(alloc::boxed::Box<str>, |f, opts| {
+            write!(f, "{}", Self::SHAPE.type_identifier)?;
+            if let Some(opts) = opts.for_children() {
+                write!(f, "<")?;
+                (str::SHAPE.vtable.type_name())(f, opts)?;
+                write!(f, ">")?;
+            } else {
+                write!(f, "<…>")?;
+            }
+            Ok(())
+        })
+    };
+
+    const SHAPE: &'static crate::Shape<'static> = &const {
+        fn inner_shape() -> &'static Shape<'static> {
+            str::SHAPE
+        }
+
+        crate::Shape::builder_for_sized::<Self>()
+            .type_identifier("Box")
+            .type_params(&[crate::TypeParam {
+                name: "T",
+                shape: || str::SHAPE,
+            }])
+            .ty(Type::User(UserType::Opaque))
+            .def(Def::SmartPointer(
+                SmartPointerDef::builder()
+                    .pointee(|| str::SHAPE)
+                    .flags(SmartPointerFlags::EMPTY)
+                    .known(KnownSmartPointer::Box)
+                    .vtable(
+                        &const {
+                            SmartPointerVTable::builder()
+                                .borrow_fn(|this| unsafe {
+                                    let concrete = this.get::<Box<str>>();
+                                    let s: &str = concrete;
+                                    PtrConstWide::new(&raw const *s).into()
+                                })
+                                .new_into_fn(|_this, _ptr| todo!())
+                                .build()
+                        },
+                    )
+                    .build(),
+            ))
+            .inner(inner_shape)
             .build()
     };
 }

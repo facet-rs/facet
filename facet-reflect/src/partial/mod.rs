@@ -2439,6 +2439,56 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     {
         self.begin_list_item()?.set(value)?.end()
     }
+
+    /// Sets a smart pointer to str (`Arc<str>`, `Box<str>`, `Rc<str>`) from a string value
+    pub fn set_smart_pointer_str(
+        &mut self,
+        string_value: &str,
+    ) -> Result<&mut Self, ReflectError<'shape>> {
+        use alloc::{rc::Rc, sync::Arc};
+
+        // Capture shape information before the mutable borrow
+        let shape = self.shape();
+        let smart_ptr_def = match shape.def {
+            Def::SmartPointer(smart_ptr_def) => smart_ptr_def,
+            _ => {
+                return Err(ReflectError::OperationFailed {
+                    shape,
+                    operation: "expected smart pointer shape",
+                });
+            }
+        };
+
+        self.set_from_function(|ptr| {
+            match smart_ptr_def.known {
+                Some(KnownSmartPointer::Arc) => {
+                    let arc_str: Arc<str> = Arc::from(string_value);
+                    unsafe {
+                        core::ptr::write(ptr.as_mut_byte_ptr() as *mut Arc<str>, arc_str);
+                    }
+                }
+                Some(KnownSmartPointer::Box) => {
+                    let box_str: Box<str> = Box::from(string_value);
+                    unsafe {
+                        core::ptr::write(ptr.as_mut_byte_ptr() as *mut Box<str>, box_str);
+                    }
+                }
+                Some(KnownSmartPointer::Rc) => {
+                    let rc_str: Rc<str> = Rc::from(string_value);
+                    unsafe {
+                        core::ptr::write(ptr.as_mut_byte_ptr() as *mut Rc<str>, rc_str);
+                    }
+                }
+                _ => {
+                    return Err(ReflectError::OperationFailed {
+                        shape,
+                        operation: "unsupported smart pointer type for str",
+                    });
+                }
+            }
+            Ok(())
+        })
+    }
 }
 
 /// A typed wrapper around `Partial`, for when you want to statically
