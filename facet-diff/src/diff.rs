@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
-use facet::{Def, Shape, Type, UserType};
+use facet::{Def, Shape, StructKind, Type, UserType};
 use facet_core::Facet;
 use facet_reflect::{HasFields, Peek};
 
-use crate::sequences::{self, Update};
+use crate::sequences::{self, Updates};
 
 /// The difference between two values.
 ///
@@ -32,14 +32,7 @@ pub enum Diff<'mem, 'facet> {
         /// The name of the variant, this is [`None`] if the values are structs
         variant: Option<&'static str>,
 
-        /// The fields that are updated between the structs
-        updates: HashMap<&'static str, Diff<'mem, 'facet>>,
-
-        /// The fields that are in `from` but not in `to`.
-        deletions: HashMap<&'static str, Peek<'mem, 'facet, 'static>>,
-
-        /// The fields that are in `to` but not in `from`.
-        insertions: HashMap<&'static str, Peek<'mem, 'facet, 'static>>,
+        value: Value<'mem, 'facet>,
     },
 
     /// A diff between two sequences
@@ -51,7 +44,25 @@ pub enum Diff<'mem, 'facet> {
         to: &'static Shape<'static>,
 
         /// The updates on the sequence
-        updates: Vec<Update<'mem, 'facet>>,
+        updates: Updates<'mem, 'facet>,
+    },
+}
+
+pub enum Value<'mem, 'facet> {
+    Tuple {
+        /// The updates on the sequence
+        updates: Updates<'mem, 'facet>,
+    },
+
+    Struct {
+        /// The fields that are updated between the structs
+        updates: HashMap<&'static str, Diff<'mem, 'facet>>,
+
+        /// The fields that are in `from` but not in `to`.
+        deletions: HashMap<&'static str, Peek<'mem, 'facet, 'static>>,
+
+        /// The fields that are in `to` but not in `from`.
+        insertions: HashMap<&'static str, Peek<'mem, 'facet, 'static>>,
     },
 }
 
@@ -61,7 +72,7 @@ pub trait FacetDiff<'f>: Facet<'f> {
 
 impl<'f, T: Facet<'f>> FacetDiff<'f> for T {
     fn diff<'a, U: Facet<'f>>(&'a self, other: &'a U) -> Diff<'a, 'f> {
-        Diff::new(Peek::new(self), Peek::new(other))
+        Diff::new(self, other)
     }
 }
 
@@ -70,7 +81,14 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
         matches!(self, Self::Equal)
     }
 
-    fn new(from: Peek<'mem, 'facet, 'static>, to: Peek<'mem, 'facet, 'static>) -> Self {
+    pub fn new<T: Facet<'facet>, U: Facet<'facet>>(from: &'mem T, to: &'mem U) -> Self {
+        Self::new_peek(Peek::new(from), Peek::new(to))
+    }
+
+    pub(crate) fn new_peek(
+        from: Peek<'mem, 'facet, 'static>,
+        to: Peek<'mem, 'facet, 'static>,
+    ) -> Self {
         if from.shape().id == to.shape().id && from.shape().is_partial_eq() && from == to {
             return Diff::Equal;
         }
@@ -86,34 +104,47 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                 let from_ty = from.into_struct().unwrap();
                 let to_ty = to.into_struct().unwrap();
 
-                let mut updates = HashMap::new();
-                let mut deletions = HashMap::new();
-                let mut insertions = HashMap::new();
+                let value =
+                    if [StructKind::Tuple, StructKind::TupleStruct].contains(&from_ty.ty().kind) {
+                        let from = from_ty.fields().map(|x| x.1).collect();
+                        let to = to_ty.fields().map(|x| x.1).collect();
 
-                for (field, from) in from_ty.fields() {
-                    if let Ok(to) = to_ty.field_by_name(field.name) {
-                        let diff = Diff::new(from, to);
-                        if !diff.is_equal() {
-                            updates.insert(field.name, diff);
-                        }
+                        let updates = sequences::diff(from, to);
+
+                        Value::Tuple { updates }
                     } else {
-                        deletions.insert(field.name, from);
-                    }
-                }
+                        let mut updates = HashMap::new();
+                        let mut deletions = HashMap::new();
+                        let mut insertions = HashMap::new();
 
-                for (field, to) in to_ty.fields() {
-                    if from_ty.field_by_name(field.name).is_err() {
-                        insertions.insert(field.name, to);
-                    }
-                }
+                        for (field, from) in from_ty.fields() {
+                            if let Ok(to) = to_ty.field_by_name(field.name) {
+                                let diff = Diff::new_peek(from, to);
+                                if !diff.is_equal() {
+                                    updates.insert(field.name, diff);
+                                }
+                            } else {
+                                deletions.insert(field.name, from);
+                            }
+                        }
+
+                        for (field, to) in to_ty.fields() {
+                            if from_ty.field_by_name(field.name).is_err() {
+                                insertions.insert(field.name, to);
+                            }
+                        }
+                        Value::Struct {
+                            updates,
+                            deletions,
+                            insertions,
+                        }
+                    };
 
                 Diff::User {
                     from: from.shape(),
                     to: to.shape(),
                     variant: None,
-                    updates,
-                    deletions,
-                    insertions,
+                    value,
                 }
             }
             ((_, Type::User(UserType::Enum(_))), (_, Type::User(UserType::Enum(_)))) => {
@@ -129,37 +160,52 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                     return Diff::Replace { from, to };
                 }
 
-                let mut updates = HashMap::new();
-                let mut deletions = HashMap::new();
-                let mut insertions = HashMap::new();
+                let value = if [StructKind::Tuple, StructKind::TupleStruct]
+                    .contains(&from_variant.data.kind)
+                {
+                    let from = from_enum.fields().map(|x| x.1).collect();
+                    let to = to_enum.fields().map(|x| x.1).collect();
 
-                for (field, from) in from_enum.fields() {
-                    if let Ok(Some(to)) = to_enum.field_by_name(field.name) {
-                        let diff = Diff::new(from, to);
-                        if !diff.is_equal() {
-                            updates.insert(field.name, diff);
+                    let updates = sequences::diff(from, to);
+
+                    Value::Tuple { updates }
+                } else {
+                    let mut updates = HashMap::new();
+                    let mut deletions = HashMap::new();
+                    let mut insertions = HashMap::new();
+
+                    for (field, from) in from_enum.fields() {
+                        if let Ok(Some(to)) = to_enum.field_by_name(field.name) {
+                            let diff = Diff::new_peek(from, to);
+                            if !diff.is_equal() {
+                                updates.insert(field.name, diff);
+                            }
+                        } else {
+                            deletions.insert(field.name, from);
                         }
-                    } else {
-                        deletions.insert(field.name, from);
                     }
-                }
 
-                for (field, to) in to_enum.fields() {
-                    if !from_enum
-                        .field_by_name(field.name)
-                        .is_ok_and(|x| x.is_some())
-                    {
-                        insertions.insert(field.name, to);
+                    for (field, to) in to_enum.fields() {
+                        if !from_enum
+                            .field_by_name(field.name)
+                            .is_ok_and(|x| x.is_some())
+                        {
+                            insertions.insert(field.name, to);
+                        }
                     }
-                }
+
+                    Value::Struct {
+                        updates,
+                        deletions,
+                        insertions,
+                    }
+                };
 
                 Diff::User {
                     from: from_enum.shape(),
                     to: to_enum.shape(),
                     variant: Some(from_variant.name),
-                    updates,
-                    deletions,
-                    insertions,
+                    value,
                 }
             }
             ((Def::Option(_), _), (Def::Option(_), _)) => {
@@ -171,20 +217,19 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                     return Diff::Replace { from, to };
                 };
 
-                let mut updates = HashMap::default();
+                let mut updates = Updates::default();
 
-                let diff = Self::new(from_value, to_value);
+                let diff = Self::new_peek(from_value, to_value);
                 if !diff.is_equal() {
-                    updates.insert("0", diff);
+                    updates.push_add(to_value);
+                    updates.push_remove(from_value);
                 }
 
                 Diff::User {
                     from: from.shape(),
                     to: to.shape(),
                     variant: Some("Some"),
-                    updates,
-                    deletions: Default::default(),
-                    insertions: Default::default(),
+                    value: Value::Tuple { updates },
                 }
             }
             (
@@ -193,11 +238,6 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
             ) => {
                 let from_list = from.into_list_like().unwrap();
                 let to_list = to.into_list_like().unwrap();
-
-                let f_shape = from_list.def().t();
-                if f_shape.id != to_list.def().t().id || !f_shape.is_partial_eq() {
-                    return Diff::Replace { from, to };
-                }
 
                 let updates = sequences::diff(
                     from_list.iter().collect::<Vec<_>>(),
