@@ -53,6 +53,11 @@ impl<'mem, 'facet, 'shape> PeekSet<'mem, 'facet, 'shape> {
         Self { value, def }
     }
 
+    /// Returns true if the set is empty
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     /// Get the number of entries in the set
     pub fn len(&self) -> usize {
         unsafe { (self.def.vtable.len_fn)(self.value.data().thin().unwrap()) }
