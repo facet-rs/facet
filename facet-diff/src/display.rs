@@ -3,7 +3,10 @@ use std::fmt::{Display, Write};
 use facet::TypeNameOpts;
 use facet_pretty::PrettyPrinter;
 
-use crate::{diff::Diff, sequences::Update};
+use crate::{
+    diff::{Diff, Value},
+    sequences::{Updates, UpdatesGroup},
+};
 
 struct PadAdapter<'a, 'b: 'a> {
     fmt: &'a mut std::fmt::Formatter<'b>,
@@ -65,9 +68,7 @@ impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
                 from,
                 to,
                 variant,
-                updates,
-                deletions,
-                insertions,
+                value,
             } => {
                 let printer = PrettyPrinter::default().with_colors(false);
                 let mut indent = PadAdapter {
@@ -91,28 +92,41 @@ impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
                     }
                 }
 
-                writeln!(indent, "\x1b[m {{")?;
-                for (field, update) in updates {
-                    writeln!(indent, "{field}: {update}")?;
-                }
+                match value {
+                    Value::Struct {
+                        updates,
+                        deletions,
+                        insertions,
+                    } => {
+                        writeln!(indent, "\x1b[m {{")?;
+                        for (field, update) in updates {
+                            writeln!(indent, "{field}: {update}")?;
+                        }
 
-                for (field, value) in deletions {
-                    writeln!(
-                        indent,
-                        "\x1b[31m{field}: {}\x1b[m",
-                        printer.format_peek(*value)
-                    )?;
-                }
+                        for (field, value) in deletions {
+                            writeln!(
+                                indent,
+                                "\x1b[31m{field}: {}\x1b[m",
+                                printer.format_peek(*value)
+                            )?;
+                        }
 
-                for (field, value) in insertions {
-                    writeln!(
-                        indent,
-                        "\x1b[32m{field}: {}\x1b[m",
-                        printer.format_peek(*value)
-                    )?;
-                }
+                        for (field, value) in insertions {
+                            writeln!(
+                                indent,
+                                "\x1b[32m{field}: {}\x1b[m",
+                                printer.format_peek(*value)
+                            )?;
+                        }
 
-                f.write_str("}")
+                        f.write_str("}")
+                    }
+                    Value::Tuple { updates } => {
+                        writeln!(indent, "\x1b[m (")?;
+                        write!(indent, "{}", updates)?;
+                        f.write_str(")")
+                    }
+                }
             }
             Diff::Sequence { from, to, updates } => {
                 write!(f, "\x1b[1m")?;
@@ -131,25 +145,54 @@ impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
                 };
 
                 writeln!(indent, " [")?;
-
-                let printer = PrettyPrinter::default().with_colors(false);
-
-                for update in updates {
-                    match update {
-                        Update::Add(value) => {
-                            writeln!(indent, "\x1b[32m+ {}\x1b[m", printer.format_peek(*value))?;
-                        }
-                        Update::Remove(value) => {
-                            writeln!(indent, "\x1b[31m- {}\x1b[m", printer.format_peek(*value))?;
-                        }
-                        Update::Keep(value) => {
-                            writeln!(indent, "  {}", printer.format_peek(*value))?;
-                        }
-                    }
-                }
-
+                write!(indent, "{}", updates)?;
                 write!(f, "]")
             }
         }
+    }
+}
+
+impl<'mem, 'facet> Display for Updates<'mem, 'facet> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(update) = &self.first {
+            update.fmt(f)?;
+        }
+
+        let printer = PrettyPrinter::default().with_colors(false);
+
+        for (values, update) in &self.values {
+            for value in values {
+                writeln!(f, "{}", printer.format_peek(*value))?;
+            }
+            update.fmt(f)?;
+        }
+
+        if let Some(values) = &self.last {
+            for value in values {
+                writeln!(f, "{}", printer.format_peek(*value))?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl<'mem, 'facet> Display for UpdatesGroup<'mem, 'facet> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let printer = PrettyPrinter::default().with_colors(false);
+
+        for remove in &self.removals {
+            writeln!(f, "\x1b[31m{}\x1b[m", printer.format_peek(*remove))?;
+        }
+
+        for add in &self.additions {
+            writeln!(f, "\x1b[32m{}\x1b[m", printer.format_peek(*add))?;
+        }
+
+        if let Some(update) = &self.updates {
+            writeln!(f, "{update}")?;
+        }
+
+        Ok(())
     }
 }
