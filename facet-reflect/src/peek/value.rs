@@ -4,7 +4,7 @@ use facet_core::{
     UserType, ValueVTable,
 };
 
-use crate::{ReflectError, ScalarType};
+use crate::{PeekSet, ReflectError, ScalarType};
 
 use super::{
     ListLikeDef, PeekEnum, PeekList, PeekListLike, PeekMap, PeekSmartPointer, PeekStruct,
@@ -364,6 +364,18 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     pub fn into_map(self) -> Result<PeekMap<'mem, 'facet, 'shape>, ReflectError<'shape>> {
         if let Def::Map(def) = self.shape.def {
             Ok(PeekMap { value: self, def })
+        } else {
+            Err(ReflectError::WasNotA {
+                expected: "map",
+                actual: self.shape,
+            })
+        }
+    }
+
+    /// Tries to identify this value as a set
+    pub fn into_set(self) -> Result<PeekSet<'mem, 'facet, 'shape>, ReflectError<'shape>> {
+        if let Def::Set(def) = self.shape.def {
+            Ok(PeekSet { value: self, def })
         } else {
             Err(ReflectError::WasNotA {
                 expected: "map",
