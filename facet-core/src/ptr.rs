@@ -484,3 +484,104 @@ impl<'mem> PtrMutWide<'mem> {
         }
     }
 }
+
+/// A generic wrapper for either a thin or wide constant pointer.
+/// This enables working with both sized and unsized types using a single enum.
+#[derive(Clone, Copy)]
+pub enum GenericPtr<'mem> {
+    /// A thin pointer, used for sized types.
+    Thin(PtrConst<'mem>),
+    /// A wide pointer, used for unsized types such as slices and trait objects.
+    Wide(PtrConstWide<'mem>),
+}
+
+impl<'a> From<PtrConst<'a>> for GenericPtr<'a> {
+    fn from(value: PtrConst<'a>) -> Self {
+        GenericPtr::Thin(value)
+    }
+}
+
+impl<'a> From<PtrConstWide<'a>> for GenericPtr<'a> {
+    fn from(value: PtrConstWide<'a>) -> Self {
+        GenericPtr::Wide(value)
+    }
+}
+
+impl<'mem> GenericPtr<'mem> {
+    /// Returns the size of the pointer, which may be thin or wide.
+    #[inline(always)]
+    pub fn new<T: ?Sized>(ptr: *const T) -> Self {
+        if size_of_val(&ptr) == size_of::<PtrConst>() {
+            GenericPtr::Thin(PtrConst::new(ptr.cast::<()>()))
+        } else if size_of_val(&ptr) == size_of::<PtrConstWide>() {
+            GenericPtr::Wide(PtrConstWide::new(ptr))
+        } else {
+            panic!("Couldn't determine if pointer to T is thin or wide");
+        }
+    }
+
+    /// Returns the inner [`PtrConst`] if this is a thin pointer, or `None` if this is a wide pointer.
+    #[inline(always)]
+    pub fn thin(self) -> Option<PtrConst<'mem>> {
+        match self {
+            GenericPtr::Thin(ptr) => Some(ptr),
+            GenericPtr::Wide(_ptr) => None,
+        }
+    }
+
+    /// Returns the inner [`PtrConstWide`] if this is a wide pointer, or `None` if this is a thin pointer.
+    #[inline(always)]
+    pub fn wide(self) -> Option<PtrConstWide<'mem>> {
+        match self {
+            GenericPtr::Wide(ptr) => Some(ptr),
+            GenericPtr::Thin(_ptr) => None,
+        }
+    }
+
+    /// Downcasts this pointer into a reference — wide or not
+    ///
+    /// # Safety
+    ///
+    /// The pointer must be valid for reads for the given type `T`.
+    #[inline(always)]
+    pub unsafe fn get<T: ?Sized>(self) -> &'mem T {
+        match self {
+            GenericPtr::Thin(ptr) => {
+                let ptr = ptr.as_byte_ptr();
+                let ptr_ref = &ptr;
+
+                (unsafe { transmute::<&*const u8, &&T>(ptr_ref) }) as _
+            }
+            GenericPtr::Wide(ptr) => unsafe { ptr.get() },
+        }
+    }
+
+    /// Returns the inner pointer as a raw (possibly wide) `*const ()`.
+    ///
+    /// If this is a thin pointer, the returned value is
+    #[inline(always)]
+    pub fn as_byte_ptr(self) -> *const u8 {
+        match self {
+            GenericPtr::Thin(ptr) => ptr.as_byte_ptr(),
+            GenericPtr::Wide(ptr) => ptr.as_byte_ptr(),
+        }
+    }
+
+    /// Returns a pointer with the given offset added
+    ///
+    /// # Safety
+    ///
+    /// Offset must be within the bounds of the allocated memory,
+    /// and the resulting pointer must be properly aligned.
+    #[inline(always)]
+    pub unsafe fn field(self, offset: usize) -> GenericPtr<'mem> {
+        match self {
+            GenericPtr::Thin(ptr) => GenericPtr::Thin(unsafe { ptr.field(offset) }),
+            GenericPtr::Wide(_ptr) => {
+                // For wide pointers, we can't do field access safely without more context
+                // This is a limitation of the current design
+                panic!("Field access on wide pointers is not supported")
+            }
+        }
+    }
+}

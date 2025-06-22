@@ -1,7 +1,7 @@
-use core::{cmp::Ordering, marker::PhantomData, mem::transmute};
+use core::{cmp::Ordering, marker::PhantomData};
 use facet_core::{
-    Def, Facet, PointerType, PtrConst, PtrConstWide, PtrMut, Shape, StructKind, Type, TypeNameOpts,
-    UserType, ValueVTable,
+    Def, Facet, GenericPtr, PointerType, PtrMut, Shape, StructKind, Type, TypeNameOpts, UserType,
+    ValueVTable,
 };
 
 use crate::{PeekSet, ReflectError, ScalarType};
@@ -33,89 +33,6 @@ impl core::fmt::Display for ValueId<'_> {
 impl core::fmt::Debug for ValueId<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         core::fmt::Display::fmt(self, f)
-    }
-}
-
-/// A generic wrapper for either a thin or wide constant pointer.
-/// This enables working with both sized and unsized types using a single enum.
-#[derive(Clone, Copy)]
-pub enum GenericPtr<'mem> {
-    /// A thin pointer, used for sized types.
-    Thin(PtrConst<'mem>),
-    /// A wide pointer, used for unsized types such as slices and trait objects.
-    Wide(PtrConstWide<'mem>),
-}
-
-impl<'a> From<PtrConst<'a>> for GenericPtr<'a> {
-    fn from(value: PtrConst<'a>) -> Self {
-        GenericPtr::Thin(value)
-    }
-}
-
-impl<'a> From<PtrConstWide<'a>> for GenericPtr<'a> {
-    fn from(value: PtrConstWide<'a>) -> Self {
-        GenericPtr::Wide(value)
-    }
-}
-
-impl<'mem> GenericPtr<'mem> {
-    #[inline(always)]
-    fn new<T: ?Sized>(ptr: *const T) -> Self {
-        if size_of_val(&ptr) == size_of::<PtrConst>() {
-            GenericPtr::Thin(PtrConst::new(ptr.cast::<()>()))
-        } else if size_of_val(&ptr) == size_of::<PtrConstWide>() {
-            GenericPtr::Wide(PtrConstWide::new(ptr))
-        } else {
-            panic!("Couldn't determine if pointer to T is thin or wide");
-        }
-    }
-
-    /// Returns the inner [`PtrConst`] if this is a thin pointer, or `None` if this is a wide pointer.
-    #[inline(always)]
-    pub fn thin(self) -> Option<PtrConst<'mem>> {
-        match self {
-            GenericPtr::Thin(ptr) => Some(ptr),
-            GenericPtr::Wide(_ptr) => None,
-        }
-    }
-
-    #[inline(always)]
-    unsafe fn get<T: ?Sized>(self) -> &'mem T {
-        match self {
-            GenericPtr::Thin(ptr) => {
-                let ptr = ptr.as_byte_ptr();
-                let ptr_ref = &ptr;
-
-                (unsafe { transmute::<&*const u8, &&T>(ptr_ref) }) as _
-            }
-            GenericPtr::Wide(ptr) => unsafe { ptr.get() },
-        }
-    }
-
-    #[inline(always)]
-    fn as_byte_ptr(self) -> *const u8 {
-        match self {
-            GenericPtr::Thin(ptr) => ptr.as_byte_ptr(),
-            GenericPtr::Wide(ptr) => ptr.as_byte_ptr(),
-        }
-    }
-
-    /// Returns a pointer with the given offset added
-    ///
-    /// # Safety
-    ///
-    /// Offset must be within the bounds of the allocated memory,
-    /// and the resulting pointer must be properly aligned.
-    #[inline(always)]
-    pub unsafe fn field(self, offset: usize) -> GenericPtr<'mem> {
-        match self {
-            GenericPtr::Thin(ptr) => GenericPtr::Thin(unsafe { ptr.field(offset) }),
-            GenericPtr::Wide(_ptr) => {
-                // For wide pointers, we can't do field access safely without more context
-                // This is a limitation of the current design
-                panic!("Field access on wide pointers is not supported")
-            }
-        }
     }
 }
 
@@ -290,7 +207,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     ///
     /// Panics if the shape doesn't match the type `T`.
     #[inline]
-    pub fn get<T: Facet<'facet>>(&self) -> Result<&T, ReflectError<'shape>> {
+    pub fn get<T: Facet<'facet> + ?Sized>(&self) -> Result<&T, ReflectError<'shape>> {
         if self.shape != T::SHAPE {
             Err(ReflectError::WrongShape {
                 expected: self.shape,

@@ -1517,6 +1517,18 @@ where
                         wip.shape().blue(),
                         pointee.yellow(),
                     );
+
+                    // Special case: smart pointer to unsized str type
+                    if pointee == str::SHAPE
+                        && matches!(outcome.node, Outcome::Scalar(Scalar::String(_)))
+                    {
+                        trace!("  Handling smart pointer to str as special case");
+                        if let Outcome::Scalar(Scalar::String(s)) = &outcome.node {
+                            wip.set_smart_pointer_str(s)
+                                .map_err(|e| self.reflect_err(e))?;
+                            return Ok(wip);
+                        }
+                    }
                 } else {
                     trace!(
                         "  Starting smart pointer for {} (no pointee)",

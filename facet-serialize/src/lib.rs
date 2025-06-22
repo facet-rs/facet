@@ -320,7 +320,7 @@ where
 
                             // String types
                             Some(ScalarType::Str) => {
-                                serializer.serialize_str(cpeek.get::<&str>().unwrap())?
+                                serializer.serialize_str(cpeek.get::<str>().unwrap())?
                             }
                             Some(ScalarType::String) => {
                                 serializer.serialize_str(cpeek.get::<String>().unwrap())?
