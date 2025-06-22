@@ -1,3 +1,4 @@
+mod common;
 use facet::Facet;
 use facet_deserialize::DeserErrorKind;
 use facet_json::{from_slice, from_str};

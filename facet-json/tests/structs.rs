@@ -1,3 +1,4 @@
+mod common;
 use facet_testhelpers::test;
 
 #[test]

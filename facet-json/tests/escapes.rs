@@ -14,6 +14,8 @@
 //! The original code incorrectly used raw bytes from `to_be_bytes()` instead of
 //! extracting individual hex digits (nibbles) from the Unicode code point.
 
+mod common;
+
 // Removed facet_testhelpers::test to avoid conflicts
 
 /// Something `facet-json` has no trouble parsing.

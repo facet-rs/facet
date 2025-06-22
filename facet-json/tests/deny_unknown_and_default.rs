@@ -1,3 +1,4 @@
+mod common;
 use eyre::Result;
 use facet::Facet;
 use facet_json::from_str;

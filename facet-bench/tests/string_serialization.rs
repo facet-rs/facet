@@ -1,3 +1,5 @@
+mod common;
+
 use facet::Facet;
 use serde::{Deserialize, Serialize};
 

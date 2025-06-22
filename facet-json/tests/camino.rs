@@ -1,3 +1,4 @@
+mod common;
 use camino::Utf8PathBuf;
 use facet::Facet;
 use facet_json::from_str;
