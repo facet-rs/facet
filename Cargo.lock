@@ -491,6 +491,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-inspect"
+version = "0.1.0"
+dependencies = [
+ "facet",
+ "facet-reflect",
+]
+
+[[package]]
 name = "facet-json"
 version = "0.24.15"
 dependencies = [
