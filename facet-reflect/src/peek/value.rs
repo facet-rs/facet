@@ -378,7 +378,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
             Ok(PeekSet { value: self, def })
         } else {
             Err(ReflectError::WasNotA {
-                expected: "map",
+                expected: "set",
                 actual: self.shape,
             })
         }
