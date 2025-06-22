@@ -12,7 +12,8 @@ use alloc::vec::Vec;
 
 use facet_core::{Def, Facet, Field, PointerType, ShapeAttribute, StructKind, Type, UserType};
 use facet_reflect::{
-    FieldIter, FieldsForSerializeIter, HasFields, Peek, PeekListLikeIter, PeekMapIter, ScalarType,
+    FieldIter, FieldsForSerializeIter, HasFields, Peek, PeekListLikeIter, PeekMapIter, PeekSetIter,
+    ScalarType,
 };
 use log::{debug, trace};
 
@@ -231,6 +232,11 @@ enum SerializeTask<'mem, 'facet, 'shape> {
         items: PeekListLikeIter<'mem, 'facet, 'shape>,
         first: bool,
     },
+    Set {
+        items: PeekSetIter<'mem, 'facet, 'shape>,
+        first: bool,
+        len: usize,
+    },
     Map {
         entries: PeekMapIter<'mem, 'facet, 'shape>,
         first: bool,
@@ -442,6 +448,14 @@ where
                             entries: peek_map.iter(),
                             first: true,
                             len,
+                        });
+                    }
+                    (Def::Set(_), _) => {
+                        let peek_set = cpeek.into_set().unwrap();
+                        stack.push(SerializeTask::Set {
+                            items: peek_set.iter(),
+                            first: true,
+                            len: peek_set.len(),
                         });
                     }
                     (Def::Option(_), _) => {
@@ -665,6 +679,27 @@ where
                 stack.push(SerializeTask::Array {
                     items,
                     first: false,
+                });
+                stack.push(SerializeTask::Value(value, None));
+            }
+            SerializeTask::Set {
+                mut items,
+                first,
+                len,
+            } => {
+                if first {
+                    serializer.start_array(Some(len))?;
+                }
+
+                let Some(value) = items.next() else {
+                    serializer.end_array()?;
+                    continue;
+                };
+
+                stack.push(SerializeTask::Set {
+                    items,
+                    first: false,
+                    len,
                 });
                 stack.push(SerializeTask::Value(value, None));
             }

@@ -21,6 +21,9 @@ pub use list_like::*;
 mod map;
 pub use map::*;
 
+mod set;
+pub use set::*;
+
 mod option;
 pub use option::*;
 
