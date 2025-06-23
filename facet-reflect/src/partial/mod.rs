@@ -249,7 +249,7 @@ enum Tracker<'shape> {
 
     /// Partially initialized enum (but we picked a variant)
     Enum {
-        variant: Variant<'shape>,
+        variant: &'shape Variant<'shape>,
         data: ISet,
         /// If we're pushing another frame, this is set to the field index
         current_child: Option<usize>,
@@ -814,7 +814,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
 
         // Update tracker to track the variant
         fr.tracker = Tracker::Enum {
-            variant: *variant,
+            variant,
             data: ISet::new(variant.data.fields.len()),
             current_child: None,
         };
@@ -2136,7 +2136,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         let frame = self.frames.last()?;
 
         match &frame.tracker {
-            Tracker::Enum { variant, .. } => Some(*variant),
+            Tracker::Enum { variant, .. } => Some(**variant),
             _ => None,
         }
     }
