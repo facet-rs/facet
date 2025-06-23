@@ -1,3 +1,4 @@
+mod common;
 use facet::Facet;
 use facet_testhelpers::test;
 use ordered_float::OrderedFloat;

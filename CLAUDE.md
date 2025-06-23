@@ -5,11 +5,11 @@ The main GitHub repository for Facet is at https://github.com/facet-rs/facet
 ### READMEs
 
 Don't edit any `README.md` files directly — edit `README.md.in` and run `just
-codegen` to regenerate the READMEs.
+gen` to regenerate the READMEs.
 
 Run `just` to make sure that tests pass.
 
-For doc tests, you need to do `just codegen && just doc-tests`. Remember to fix
+For doc tests, you need to do `just gen && just doc-tests`. Remember to fix
 them by editing the corresponding `README.md.in`, not `README.md`.
 
 All crates have their own readme template, except for the `facet/` crate, which
@@ -111,7 +111,7 @@ if matches!(scalar_def.affinity, ScalarAffinity::Time(_)) {
 
 Other common scalar affinities to handle:
 - `ScalarAffinity::Path(_)` - for Path types
-- `ScalarAffinity::UUID(_)` - for UUID types 
+- `ScalarAffinity::UUID(_)` - for UUID types
 - `ScalarAffinity::ULID(_)` - for ULID types
 
 ### Code Comments

@@ -1,3 +1,4 @@
+mod common;
 use facet::Facet;
 use facet_json::to_string;
 use facet_testhelpers::test;

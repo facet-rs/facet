@@ -1,3 +1,4 @@
+mod common;
 // Tests for Box<T> serialization and deserialization in facet-json
 
 use facet::Facet;

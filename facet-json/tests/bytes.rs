@@ -1,3 +1,4 @@
+mod common;
 use bytes::Bytes;
 use bytes::BytesMut;
 use facet::Facet;

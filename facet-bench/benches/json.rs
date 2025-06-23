@@ -1,5 +1,7 @@
 #![allow(clippy::approx_constant)]
 
+mod common;
+
 use divan::{Bencher, black_box};
 use facet::Facet;
 use serde::{Deserialize, Serialize};
