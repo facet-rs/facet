@@ -409,8 +409,14 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
             .allocate()
             .map_err(|_| ReflectError::Unsized { shape })?;
 
+        // Preallocate a couple of frames. The cost of allocating 4 frames is
+        // basically identical to allocating 1 frame, so for every type that
+        // has at least 1 level of nesting, this saves at least one guaranteed reallocation.
+        let mut frames = Vec::with_capacity(4);
+        frames.push(Frame::new(data, shape, FrameOwnership::Owned));
+
         Ok(Self {
-            frames: vec![Frame::new(data, shape, FrameOwnership::Owned)],
+            frames,
             state: PartialState::Active,
             invariant: PhantomData,
         })
