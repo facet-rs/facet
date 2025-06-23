@@ -1,0 +1,5 @@
+---
+source: facet-reflect/tests/partial/smartptr.rs
+expression: err
+---
+Value '[34mArc<str>[39m' was not initialized

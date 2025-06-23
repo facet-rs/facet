@@ -320,6 +320,18 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
         match self.shape.def {
             Def::List(def) => Ok(PeekListLike::new(self, ListLikeDef::List(def))),
             Def::Array(def) => Ok(PeekListLike::new(self, ListLikeDef::Array(def))),
+            Def::Slice(def) => {
+                // When we have a bare slice shape with a wide pointer,
+                // it means we have a reference to a slice (e.g., from Arc<[T]>::borrow_inner)
+                if matches!(self.data, GenericPtr::Wide(_)) {
+                    Ok(PeekListLike::new(self, ListLikeDef::Slice(def)))
+                } else {
+                    Err(ReflectError::WasNotA {
+                        expected: "slice with wide pointer",
+                        actual: self.shape,
+                    })
+                }
+            }
             _ => {
                 // &[i32] is actually a _pointer_ to a slice.
                 match self.shape.ty {

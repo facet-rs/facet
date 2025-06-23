@@ -1,0 +1,5 @@
+---
+source: facet-reflect/tests/partial/smartptr.rs
+expression: err
+---
+Invariant violation: [31mPartial::build() expects a single frame — pop until that's the case[39m

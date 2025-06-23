@@ -11,7 +11,8 @@ use alloc::{
 };
 use error::AnyErr;
 use facet_core::{
-    Characteristic, Def, Facet, FieldFlags, NumericType, PrimitiveType, Type, UserType,
+    Characteristic, Def, Facet, FieldFlags, NumericType, PrimitiveType, SequenceType, Type,
+    UserType,
 };
 use facet_reflect::Partial;
 use yaml_rust2::{Yaml, YamlLoader};
@@ -382,6 +383,49 @@ fn deserialize_value<'facet, 'shape>(
                 deserialize_value(wip, value)?;
                 wip.end().map_err(|e| AnyErr(e.to_string()))?;
             }
+        }
+
+        Def::SmartPointer(smart_ptr_def) => {
+            #[cfg(feature = "log")]
+            log::debug!("Processing smart pointer type");
+
+            // Check the pointee type before calling begin_smart_ptr
+            let pointee_shape = smart_ptr_def
+                .pointee()
+                .ok_or_else(|| AnyErr("SmartPointer must have a pointee shape".to_string()))?;
+
+            #[cfg(feature = "log")]
+            log::debug!("Smart pointer pointee shape: {}", pointee_shape);
+
+            // Begin smart pointer
+            wip.begin_smart_ptr().map_err(|e| AnyErr(e.to_string()))?;
+
+            // For smart pointers to slices, the shape doesn't change after begin_smart_ptr
+            // but the internal state changes to use a slice builder
+            match pointee_shape.ty {
+                Type::Sequence(SequenceType::Slice(_)) => {
+                    #[cfg(feature = "log")]
+                    log::debug!("Smart pointer pointee is a slice, deserializing as list");
+                    // Slices are handled like lists
+                    deserialize_as_list(wip, value)?;
+                }
+                _ => {
+                    #[cfg(feature = "log")]
+                    log::debug!("Smart pointer pointee is not a slice, deserializing normally");
+                    // For other types, deserialize normally
+                    deserialize_value(wip, value)?;
+                }
+            }
+
+            // End smart pointer
+            wip.end().map_err(|e| AnyErr(e.to_string()))?;
+        }
+        Def::Slice(_) => {
+            #[cfg(feature = "log")]
+            log::debug!("Processing slice type");
+
+            // Slices are deserialized like lists
+            deserialize_as_list(wip, value)?;
         }
         // Enum has been moved to Type system
         _ => return Err(AnyErr(format!("Unsupported type: {shape:?}"))),

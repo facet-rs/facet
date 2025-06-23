@@ -11,21 +11,6 @@
 //! - Handle complex nested structures including structs, enums, collections, and smart pointers
 //! - Build the final value once all required fields are initialized
 //!
-//! # API Changes
-//!
-//! Recent API improvements include:
-//! - **Renamed from `Wip` to `Partial`** for better clarity about its purpose
-//! - **Method naming changes**:
-//!   - `push()` → `begin()` - Start working on a nested value
-//!   - `pop()` → `end()` - Finish working on a nested value
-//!   - camelCase methods → snake_case (Rust convention)
-//! - **New convenience methods**:
-//!   - `set_nth_field()` - Set a field by index
-//!   - `set_field()` - Set a field by name
-//!   - `set_variant()` - Set enum variant
-//!   - `begin_nth_field()` - Begin working on a field by index
-//!   - `begin_field()` - Begin working on a field by name
-//!
 //! # Basic Usage
 //!
 //! ```no_run
@@ -132,7 +117,7 @@ use alloc::vec;
 mod iset;
 
 use crate::{Peek, ReflectError, trace};
-use facet_core::DefaultInPlaceFn;
+use facet_core::{DefaultInPlaceFn, SequenceType};
 
 use core::marker::PhantomData;
 
@@ -141,8 +126,8 @@ use alloc::vec::Vec;
 pub use heap_value::*;
 
 use facet_core::{
-    Def, EnumRepr, Facet, KnownSmartPointer, PtrConst, PtrMut, PtrUninit, Shape, Type, UserType,
-    Variant,
+    Def, EnumRepr, Facet, KnownSmartPointer, PtrConst, PtrMut, PtrUninit, Shape,
+    SliceBuilderVTable, Type, UserType, Variant,
 };
 use iset::ISet;
 
@@ -215,6 +200,7 @@ struct Frame<'shape> {
     ownership: FrameOwnership,
 }
 
+#[derive(Debug)]
 enum Tracker<'shape> {
     /// Wholly uninitialized
     Uninit,
@@ -245,6 +231,21 @@ enum Tracker<'shape> {
     SmartPointer {
         /// Whether the inner value has been initialized
         is_initialized: bool,
+    },
+
+    /// We're initializing an `Arc<str>`, `Box<str>`, `Rc<str>`, etc.
+    ///
+    /// We expect `set` with a `String`
+    SmartPointerStr,
+
+    /// We're initializing an `Arc<[T]>`, `Box<[T]>`, `Rc<[T]>`, etc.
+    ///
+    /// We're using the slice builder API to construct the slice
+    SmartPointerSlice {
+        /// The slice builder vtable
+        vtable: &'shape SliceBuilderVTable,
+        /// Whether we're currently building an item to push
+        building_item: bool,
     },
 
     /// Partially initialized enum (but we picked a variant)
@@ -374,6 +375,16 @@ impl<'shape> Frame<'shape> {
                     Err(ReflectError::UninitializedValue { shape: self.shape })
                 }
             }
+            Tracker::SmartPointerStr { .. } => {
+                todo!()
+            }
+            Tracker::SmartPointerSlice { building_item, .. } => {
+                if building_item {
+                    Err(ReflectError::UninitializedValue { shape: self.shape })
+                } else {
+                    Ok(())
+                }
+            }
             Tracker::List { is_initialized, .. } => {
                 if is_initialized {
                     Ok(())
@@ -405,9 +416,16 @@ impl<'shape> Frame<'shape> {
 impl<'facet, 'shape> Partial<'facet, 'shape> {
     /// Allocates a new Partial instance with the given shape
     pub fn alloc_shape(shape: &'shape Shape<'shape>) -> Result<Self, ReflectError<'shape>> {
-        let data = shape
-            .allocate()
-            .map_err(|_| ReflectError::Unsized { shape })?;
+        crate::trace!(
+            "alloc_shape({:?}), with layout {:?}",
+            shape,
+            shape.layout.sized_layout()
+        );
+
+        let data = shape.allocate().map_err(|_| ReflectError::Unsized {
+            shape,
+            operation: "alloc_shape",
+        })?;
 
         Ok(Self {
             frames: vec![Frame::new(data, shape, FrameOwnership::Owned)],
@@ -498,6 +516,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         self.require_active()?;
 
         let fr = self.frames.last_mut().unwrap();
+        crate::trace!("set_shape({:?})", src_shape);
         if !fr.shape.is_shape(src_shape) {
             let err = ReflectError::WrongShape {
                 expected: fr.shape,
@@ -507,7 +526,10 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         }
 
         if fr.shape.layout.sized_layout().is_err() {
-            return Err(ReflectError::Unsized { shape: fr.shape });
+            return Err(ReflectError::Unsized {
+                shape: fr.shape,
+                operation: "set_shape",
+            });
         }
 
         unsafe {
@@ -1048,7 +1070,10 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                             let element_layout = match array_def.t.layout.sized_layout() {
                                 Ok(layout) => layout,
                                 Err(_) => {
-                                    return Err(ReflectError::Unsized { shape: array_def.t });
+                                    return Err(ReflectError::Unsized {
+                                        shape: array_def.t,
+                                        operation: "begin_nth_element, calculating array element offset",
+                                    });
                                 }
                             };
                             let offset = element_layout.size() * idx;
@@ -1181,6 +1206,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
 
     /// Pushes a frame to initialize the inner value of a smart pointer (`Box<T>`, `Arc<T>`, etc.)
     pub fn begin_smart_ptr(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+        crate::trace!("begin_smart_ptr()");
         self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
 
@@ -1189,7 +1215,9 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
             Def::SmartPointer(smart_ptr_def) => {
                 // Check for supported smart pointer types
                 match smart_ptr_def.known {
-                    Some(KnownSmartPointer::Box) | Some(KnownSmartPointer::Arc) => {
+                    Some(KnownSmartPointer::Box)
+                    | Some(KnownSmartPointer::Rc)
+                    | Some(KnownSmartPointer::Arc) => {
                         // Supported types, continue
                     }
                     _ => {
@@ -1211,37 +1239,97 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                     }
                 };
 
-                // Update tracker to SmartPointer state
-                if matches!(frame.tracker, Tracker::Uninit) {
-                    frame.tracker = Tracker::SmartPointer {
-                        is_initialized: false,
-                    };
-                }
+                if pointee_shape.layout.sized_layout().is_ok() {
+                    // pointee is sized, we can allocate it — for `Arc<T>` we'll be allocating a `T` and
+                    // holding onto it. We'll build a new Arc with it when ending the smart pointer frame.
 
-                // Allocate space for the inner value
-                let inner_layout = match pointee_shape.layout.sized_layout() {
-                    Ok(layout) => layout,
-                    Err(_) => {
-                        return Err(ReflectError::Unsized {
-                            shape: pointee_shape,
+                    if matches!(frame.tracker, Tracker::Uninit) {
+                        frame.tracker = Tracker::SmartPointer {
+                            is_initialized: false,
+                        };
+                    }
+
+                    let inner_layout = match pointee_shape.layout.sized_layout() {
+                        Ok(layout) => layout,
+                        Err(_) => {
+                            return Err(ReflectError::Unsized {
+                                shape: pointee_shape,
+                                operation: "begin_smart_ptr, calculating inner value layout",
+                            });
+                        }
+                    };
+                    let inner_ptr: *mut u8 = unsafe { alloc::alloc::alloc(inner_layout) };
+                    if inner_ptr.is_null() {
+                        return Err(ReflectError::OperationFailed {
+                            shape: frame.shape,
+                            operation: "failed to allocate memory for smart pointer inner value",
                         });
                     }
-                };
-                let inner_ptr: *mut u8 = unsafe { alloc::alloc::alloc(inner_layout) };
 
-                if inner_ptr.is_null() {
-                    return Err(ReflectError::OperationFailed {
-                        shape: frame.shape,
-                        operation: "failed to allocate memory for Box inner value",
-                    });
+                    // Push a new frame for the inner value
+                    self.frames.push(Frame::new(
+                        PtrUninit::new(inner_ptr),
+                        pointee_shape,
+                        FrameOwnership::Owned,
+                    ));
+                } else {
+                    // pointee is unsized, we only support a handful of cases there
+                    if pointee_shape == str::SHAPE {
+                        crate::trace!("Pointee is str");
+                        // Allocate space for a String
+                        let string_layout = String::SHAPE
+                            .layout
+                            .sized_layout()
+                            .expect("String must have a sized layout");
+                        let string_ptr: *mut u8 = unsafe { alloc::alloc::alloc(string_layout) };
+                        if string_ptr.is_null() {
+                            alloc::alloc::handle_alloc_error(string_layout);
+                        }
+                        let mut frame = Frame::new(
+                            PtrUninit::new(string_ptr),
+                            String::SHAPE,
+                            FrameOwnership::Owned,
+                        );
+                        frame.tracker = Tracker::SmartPointerStr;
+                        self.frames.push(frame);
+                    } else if let Type::Sequence(SequenceType::Slice(_st)) = pointee_shape.ty {
+                        crate::trace!("Pointee is [{}]", _st.t);
+
+                        // Get the slice builder vtable
+                        let slice_builder_vtable = smart_ptr_def
+                            .vtable
+                            .slice_builder_vtable
+                            .ok_or(ReflectError::OperationFailed {
+                                shape: frame.shape,
+                                operation: "smart pointer does not support slice building",
+                            })?;
+
+                        // Create a new builder
+                        let builder_ptr = (slice_builder_vtable.new_fn)();
+
+                        // Deallocate the original Arc allocation before replacing with slice builder
+                        if let FrameOwnership::Owned = frame.ownership {
+                            if let Ok(layout) = frame.shape.layout.sized_layout() {
+                                if layout.size() > 0 {
+                                    unsafe {
+                                        alloc::alloc::dealloc(frame.data.as_mut_byte_ptr(), layout)
+                                    };
+                                }
+                            }
+                        }
+
+                        // Update the current frame to use the slice builder
+                        frame.data = PtrUninit::new(builder_ptr.as_mut_byte_ptr());
+                        frame.tracker = Tracker::SmartPointerSlice {
+                            vtable: slice_builder_vtable,
+                            building_item: false,
+                        };
+                        // The slice builder memory is managed by the vtable, not by us
+                        frame.ownership = FrameOwnership::ManagedElsewhere;
+                    } else {
+                        todo!("unsupported unsize pointee shape: {}", pointee_shape)
+                    }
                 }
-
-                // Push a new frame for the inner value
-                self.frames.push(Frame::new(
-                    PtrUninit::new(inner_ptr),
-                    pointee_shape,
-                    FrameOwnership::Owned,
-                ));
 
                 Ok(self)
             }
@@ -1255,8 +1343,17 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     /// Begins a pushback operation for a list (Vec, etc.)
     /// This initializes the list with default capacity and allows pushing elements
     pub fn begin_list(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+        crate::trace!("begin_list()");
         self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
+
+        // Check if we're in a SmartPointerSlice state - if so, the list is already initialized
+        if matches!(frame.tracker, Tracker::SmartPointerSlice { .. }) {
+            crate::trace!(
+                "begin_list is kinda superfluous when we're in a SmartPointerSlice state"
+            );
+            return Ok(self);
+        }
 
         // Check that we have a List
         let list_def = match &frame.shape.def {
@@ -1380,7 +1477,10 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         let key_layout = match key_shape.layout.sized_layout() {
             Ok(layout) => layout,
             Err(_) => {
-                return Err(ReflectError::Unsized { shape: key_shape });
+                return Err(ReflectError::Unsized {
+                    shape: key_shape,
+                    operation: "begin_key allocating key",
+                });
             }
         };
         let key_ptr_raw: *mut u8 = unsafe { alloc::alloc::alloc(key_layout) };
@@ -1451,7 +1551,10 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         let value_layout = match value_shape.layout.sized_layout() {
             Ok(layout) => layout,
             Err(_) => {
-                return Err(ReflectError::Unsized { shape: value_shape });
+                return Err(ReflectError::Unsized {
+                    shape: value_shape,
+                    operation: "begin_value allocating value",
+                });
             }
         };
         let value_ptr_raw: *mut u8 = unsafe { alloc::alloc::alloc(value_layout) };
@@ -1487,8 +1590,88 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     /// Pushes an element to the list
     /// The element should be set using `set()` or similar methods, then `pop()` to complete
     pub fn begin_list_item(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+        crate::trace!("begin_list_item()");
         self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
+
+        // Check if we're building a smart pointer slice
+        if let Tracker::SmartPointerSlice {
+            building_item,
+            vtable: _,
+        } = &frame.tracker
+        {
+            if *building_item {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "already building an item, call end() first",
+                });
+            }
+
+            // Get the element type from the smart pointer's pointee
+            let element_shape = match &frame.shape.def {
+                Def::SmartPointer(smart_ptr_def) => match smart_ptr_def.pointee() {
+                    Some(pointee_shape) => match &pointee_shape.ty {
+                        Type::Sequence(SequenceType::Slice(slice_type)) => slice_type.t,
+                        _ => {
+                            return Err(ReflectError::OperationFailed {
+                                shape: frame.shape,
+                                operation: "smart pointer pointee is not a slice",
+                            });
+                        }
+                    },
+                    None => {
+                        return Err(ReflectError::OperationFailed {
+                            shape: frame.shape,
+                            operation: "smart pointer has no pointee",
+                        });
+                    }
+                },
+                _ => {
+                    return Err(ReflectError::OperationFailed {
+                        shape: frame.shape,
+                        operation: "expected smart pointer definition",
+                    });
+                }
+            };
+
+            // Allocate space for the element
+            crate::trace!("Pointee is a slice of {}", element_shape);
+            let element_layout = match element_shape.layout.sized_layout() {
+                Ok(layout) => layout,
+                Err(_) => {
+                    return Err(ReflectError::OperationFailed {
+                        shape: element_shape,
+                        operation: "cannot allocate unsized element",
+                    });
+                }
+            };
+
+            let element_ptr: *mut u8 = unsafe { alloc::alloc::alloc(element_layout) };
+            if element_ptr.is_null() {
+                alloc::alloc::handle_alloc_error(element_layout);
+            }
+
+            // Create and push the element frame
+            crate::trace!("Pushing element frame, which we just allocated");
+            let element_frame = Frame::new(
+                PtrUninit::new(element_ptr),
+                element_shape,
+                FrameOwnership::Owned,
+            );
+            self.frames.push(element_frame);
+
+            // Mark that we're building an item
+            // We need to update the tracker after pushing the frame
+            let parent_idx = self.frames.len() - 2;
+            if let Tracker::SmartPointerSlice { building_item, .. } =
+                &mut self.frames[parent_idx].tracker
+            {
+                crate::trace!("Marking element frame as building item");
+                *building_item = true;
+            }
+
+            return Ok(self);
+        }
 
         // Check that we have a List that's been initialized
         let list_def = match &frame.shape.def {
@@ -1532,6 +1715,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
             Err(_) => {
                 return Err(ReflectError::Unsized {
                     shape: element_shape,
+                    operation: "begin_list_item: calculating element layout",
                 });
             }
         };
@@ -1556,7 +1740,37 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
 
     /// Pops the current frame off the stack, indicating we're done initializing the current field.
     pub fn end(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+        crate::trace!("end() called");
         self.require_active()?;
+
+        // Special handling for SmartPointerSlice - convert builder to Arc
+        if self.frames.len() == 1 {
+            if let Tracker::SmartPointerSlice {
+                vtable,
+                building_item,
+            } = &self.frames[0].tracker
+            {
+                if *building_item {
+                    return Err(ReflectError::OperationFailed {
+                        shape: self.frames[0].shape,
+                        operation: "still building an item, finish it first",
+                    });
+                }
+
+                // Convert the builder to Arc<[T]>
+                let builder_ptr = unsafe { self.frames[0].data.assume_init() };
+                let arc_ptr = unsafe { (vtable.convert_fn)(builder_ptr) };
+
+                // Update the frame to store the Arc
+                self.frames[0].data = PtrUninit::new(arc_ptr.as_byte_ptr() as *mut u8);
+                self.frames[0].tracker = Tracker::Init;
+                // The builder memory has been consumed by convert_fn, so we no longer own it
+                self.frames[0].ownership = FrameOwnership::ManagedElsewhere;
+
+                return Ok(self);
+            }
+        }
+
         if self.frames.len() <= 1 {
             // Never pop the last/root frame.
             return Err(ReflectError::InvariantViolation {
@@ -1576,14 +1790,18 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
 
         // Pop the frame and save its data pointer for SmartPointer handling
         let popped_frame = self.frames.pop().unwrap();
-        let _is_conversion = false;
         trace!(
-            "end(): Popped frame with shape {}, is_conversion={}",
-            popped_frame.shape, _is_conversion
+            "end(): Popped frame with shape {}, tracker {:?}",
+            popped_frame.shape, popped_frame.tracker
         );
 
         // Update parent frame's tracking when popping from a child
         let parent_frame = self.frames.last_mut().unwrap();
+
+        trace!(
+            "end(): Parent frame shape: {}, tracker: {:?}",
+            parent_frame.shape, parent_frame.tracker
+        );
 
         // Check if we need to do a conversion - this happens when:
         // 1. The parent frame has an inner type that matches the popped frame's shape
@@ -1689,7 +1907,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                 }
             }
             Tracker::SmartPointer { is_initialized } => {
-                // We just popped the inner value frame, so now we need to create the Box
+                // We just popped the inner value frame, so now we need to create the smart pointer
                 if let Def::SmartPointer(smart_ptr_def) = parent_frame.shape.def {
                     if let Some(new_into_fn) = smart_ptr_def.vtable.new_into_fn {
                         // The child frame contained the inner value
@@ -1878,6 +2096,108 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                     }
                 }
             }
+            Tracker::Uninit => {
+                // if the just-popped frame was a SmartPointerStr, we have some conversion to do:
+                // Special-case: SmartPointer<str> (Box<str>, Arc<str>, Rc<str>) via SmartPointerStr tracker
+                // Here, popped_frame actually contains a value for String that should be moved into the smart pointer.
+                // We convert the String into Box<str>, Arc<str>, or Rc<str> as appropriate and write it to the parent frame.
+                use alloc::{rc::Rc, string::String, sync::Arc};
+                let parent_shape = parent_frame.shape;
+                if let Def::SmartPointer(smart_ptr_def) = parent_shape.def {
+                    if let Some(known) = smart_ptr_def.known {
+                        // The popped_frame (child) must be a Tracker::SmartPointerStr (checked above)
+                        // Interpret the memory as a String, then convert and write.
+                        let string_ptr = popped_frame.data.as_mut_byte_ptr() as *mut String;
+                        let string_value = unsafe { core::ptr::read(string_ptr) };
+                        match known {
+                            KnownSmartPointer::Box => {
+                                let boxed: Box<str> = string_value.into_boxed_str();
+                                unsafe {
+                                    core::ptr::write(
+                                        parent_frame.data.as_mut_byte_ptr() as *mut Box<str>,
+                                        boxed,
+                                    );
+                                }
+                            }
+                            KnownSmartPointer::Arc => {
+                                let arc: Arc<str> = Arc::from(string_value.into_boxed_str());
+                                unsafe {
+                                    core::ptr::write(
+                                        parent_frame.data.as_mut_byte_ptr() as *mut Arc<str>,
+                                        arc,
+                                    );
+                                }
+                            }
+                            KnownSmartPointer::Rc => {
+                                let rc: Rc<str> = Rc::from(string_value.into_boxed_str());
+                                unsafe {
+                                    core::ptr::write(
+                                        parent_frame.data.as_mut_byte_ptr() as *mut Rc<str>,
+                                        rc,
+                                    );
+                                }
+                            }
+                            _ => {}
+                        }
+                        parent_frame.tracker = Tracker::Init;
+                        // Now, deallocate temporary String allocation if necessary
+                        if let FrameOwnership::Owned = popped_frame.ownership {
+                            if let Ok(layout) = String::SHAPE.layout.sized_layout() {
+                                if layout.size() > 0 {
+                                    unsafe {
+                                        alloc::alloc::dealloc(
+                                            popped_frame.data.as_mut_byte_ptr(),
+                                            layout,
+                                        )
+                                    };
+                                }
+                            }
+                        }
+                    } else {
+                        return Err(ReflectError::OperationFailed {
+                            shape: parent_shape,
+                            operation: "SmartPointerStr for unknown smart pointer kind",
+                        });
+                    }
+                }
+            }
+            Tracker::SmartPointerSlice {
+                vtable,
+                building_item,
+            } => {
+                if *building_item {
+                    // We just popped an element frame, now push it to the slice builder
+                    let element_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
+
+                    // Use the slice builder's push_fn to add the element
+                    crate::trace!("Pushing element to slice builder");
+                    unsafe {
+                        let parent_ptr = parent_frame.data.assume_init();
+                        (vtable.push_fn)(parent_ptr, element_ptr);
+                    }
+
+                    // Deallocate the element's memory since push_fn moved it
+                    if let FrameOwnership::Owned = popped_frame.ownership {
+                        if let Ok(layout) = popped_frame.shape.layout.sized_layout() {
+                            if layout.size() > 0 {
+                                unsafe {
+                                    alloc::alloc::dealloc(
+                                        popped_frame.data.as_mut_byte_ptr(),
+                                        layout,
+                                    );
+                                }
+                            }
+                        }
+                    }
+
+                    if let Tracker::SmartPointerSlice {
+                        building_item: bi, ..
+                    } = &mut parent_frame.tracker
+                    {
+                        *bi = false;
+                    }
+                }
+            }
             _ => {}
         }
 
@@ -1927,8 +2247,10 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
             .shape
             .layout
             .sized_layout()
-            .map_err(|_| ReflectError::Unsized { shape: frame.shape })
-        {
+            .map_err(|_layout_err| ReflectError::Unsized {
+                shape: frame.shape,
+                operation: "build (final check for sized layout)",
+            }) {
             Ok(layout) => Ok(HeapValue {
                 guard: Some(Guard {
                     ptr: frame.data.as_mut_byte_ptr(),
@@ -2174,10 +2496,14 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         let inner_shape = option_def.t;
 
         // Allocate memory for the inner value
-        let inner_layout = inner_shape
-            .layout
-            .sized_layout()
-            .map_err(|_| ReflectError::Unsized { shape: inner_shape })?;
+        let inner_layout =
+            inner_shape
+                .layout
+                .sized_layout()
+                .map_err(|_| ReflectError::Unsized {
+                    shape: inner_shape,
+                    operation: "begin_some, allocating Option inner value",
+                })?;
 
         let inner_data = if inner_layout.size() == 0 {
             // For ZST, use a non-null but unallocated pointer
@@ -2227,10 +2553,14 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                 // This allows automatic conversion detection to work properly
 
                 // Allocate memory for the inner value (conversion source)
-                let inner_layout = inner_shape
-                    .layout
-                    .sized_layout()
-                    .map_err(|_| ReflectError::Unsized { shape: inner_shape })?;
+                let inner_layout =
+                    inner_shape
+                        .layout
+                        .sized_layout()
+                        .map_err(|_| ReflectError::Unsized {
+                            shape: inner_shape,
+                            operation: "begin_inner, getting inner layout",
+                        })?;
 
                 let inner_data = if inner_layout.size() == 0 {
                     // For ZST, use a non-null but unallocated pointer
@@ -2439,56 +2769,6 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     {
         self.begin_list_item()?.set(value)?.end()
     }
-
-    /// Sets a smart pointer to str (`Arc<str>`, `Box<str>`, `Rc<str>`) from a string value
-    pub fn set_smart_pointer_str(
-        &mut self,
-        string_value: &str,
-    ) -> Result<&mut Self, ReflectError<'shape>> {
-        use alloc::{rc::Rc, sync::Arc};
-
-        // Capture shape information before the mutable borrow
-        let shape = self.shape();
-        let smart_ptr_def = match shape.def {
-            Def::SmartPointer(smart_ptr_def) => smart_ptr_def,
-            _ => {
-                return Err(ReflectError::OperationFailed {
-                    shape,
-                    operation: "expected smart pointer shape",
-                });
-            }
-        };
-
-        self.set_from_function(|ptr| {
-            match smart_ptr_def.known {
-                Some(KnownSmartPointer::Arc) => {
-                    let arc_str: Arc<str> = Arc::from(string_value);
-                    unsafe {
-                        core::ptr::write(ptr.as_mut_byte_ptr() as *mut Arc<str>, arc_str);
-                    }
-                }
-                Some(KnownSmartPointer::Box) => {
-                    let box_str: Box<str> = Box::from(string_value);
-                    unsafe {
-                        core::ptr::write(ptr.as_mut_byte_ptr() as *mut Box<str>, box_str);
-                    }
-                }
-                Some(KnownSmartPointer::Rc) => {
-                    let rc_str: Rc<str> = Rc::from(string_value);
-                    unsafe {
-                        core::ptr::write(ptr.as_mut_byte_ptr() as *mut Rc<str>, rc_str);
-                    }
-                }
-                _ => {
-                    return Err(ReflectError::OperationFailed {
-                        shape,
-                        operation: "unsupported smart pointer type for str",
-                    });
-                }
-            }
-            Ok(())
-        })
-    }
 }
 
 /// A typed wrapper around `Partial`, for when you want to statically
@@ -2511,7 +2791,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
         'facet: 'shape,
     {
         trace!(
-            "TypedPartial::build: Building value for type {}, inner shape: {}",
+            "TypedPartial::build: Building value for type {} which should == {}",
             T::SHAPE,
             self.inner.shape()
         );
@@ -2545,43 +2825,43 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
         Ok(self)
     }
 
-    /// Forwards begin_field to the inner wip instance.
+    /// Forwards begin_field to the inner partial instance.
     pub fn begin_field(&mut self, field_name: &str) -> Result<&mut Self, ReflectError<'shape>> {
         self.inner.begin_field(field_name)?;
         Ok(self)
     }
 
-    /// Forwards begin_nth_field to the inner wip instance.
+    /// Forwards begin_nth_field to the inner partial instance.
     pub fn begin_nth_field(&mut self, idx: usize) -> Result<&mut Self, ReflectError<'shape>> {
         self.inner.begin_nth_field(idx)?;
         Ok(self)
     }
 
-    /// Forwards begin_nth_element to the inner wip instance.
+    /// Forwards begin_nth_element to the inner partial instance.
     pub fn begin_nth_element(&mut self, idx: usize) -> Result<&mut Self, ReflectError<'shape>> {
         self.inner.begin_nth_element(idx)?;
         Ok(self)
     }
 
-    /// Forwards begin_smart_ptr to the inner wip instance.
+    /// Forwards begin_smart_ptr to the inner partial instance.
     pub fn begin_smart_ptr(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
         self.inner.begin_smart_ptr()?;
         Ok(self)
     }
 
-    /// Forwards end to the inner wip instance.
+    /// Forwards end to the inner partial instance.
     pub fn end(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
         self.inner.end()?;
         Ok(self)
     }
 
-    /// Forwards set_default to the inner wip instance.
+    /// Forwards set_default to the inner partial instance.
     pub fn set_default(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
         self.inner.set_default()?;
         Ok(self)
     }
 
-    /// Forwards set_from_function to the inner wip instance.
+    /// Forwards set_from_function to the inner partial instance.
     pub fn set_from_function<F>(&mut self, f: F) -> Result<&mut Self, ReflectError<'shape>>
     where
         F: FnOnce(PtrUninit<'_>) -> Result<(), ReflectError<'shape>>,
@@ -2590,19 +2870,19 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
         Ok(self)
     }
 
-    /// Forwards parse_from_str to the inner wip instance.
+    /// Forwards parse_from_str to the inner partial instance.
     pub fn parse_from_str(&mut self, s: &str) -> Result<&mut Self, ReflectError<'shape>> {
         self.inner.parse_from_str(s)?;
         Ok(self)
     }
 
-    /// Forwards begin_variant to the inner wip instance.
+    /// Forwards begin_variant to the inner partial instance.
     pub fn select_variant(&mut self, discriminant: i64) -> Result<&mut Self, ReflectError<'shape>> {
         self.inner.select_variant(discriminant)?;
         Ok(self)
     }
 
-    /// Forwards begin_variant_named to the inner wip instance.
+    /// Forwards begin_variant_named to the inner partial instance.
     pub fn select_variant_named(
         &mut self,
         variant_name: &str,
@@ -2611,43 +2891,43 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
         Ok(self)
     }
 
-    /// Forwards select_nth_variant to the inner wip instance.
+    /// Forwards select_nth_variant to the inner partial instance.
     pub fn select_nth_variant(&mut self, index: usize) -> Result<&mut Self, ReflectError<'shape>> {
         self.inner.select_nth_variant(index)?;
         Ok(self)
     }
 
-    /// Forwards begin_nth_enum_field to the inner wip instance.
+    /// Forwards begin_nth_enum_field to the inner partial instance.
     pub fn begin_nth_enum_field(&mut self, idx: usize) -> Result<&mut Self, ReflectError<'shape>> {
         self.inner.begin_nth_enum_field(idx)?;
         Ok(self)
     }
 
-    /// Forwards begin_pushback to the inner wip instance.
+    /// Forwards begin_list to the inner partial instance.
     pub fn begin_list(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
         self.inner.begin_list()?;
         Ok(self)
     }
 
-    /// Forwards begin_list_item to the inner wip instance.
+    /// Forwards begin_list_item to the inner partial instance.
     pub fn begin_list_item(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
         self.inner.begin_list_item()?;
         Ok(self)
     }
 
-    /// Forwards begin_map to the inner wip instance.
+    /// Forwards begin_map to the inner partial instance.
     pub fn begin_map(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
         self.inner.begin_map()?;
         Ok(self)
     }
 
-    /// Forwards begin_key to the inner wip instance.
+    /// Forwards begin_key to the inner partial instance.
     pub fn begin_key(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
         self.inner.begin_key()?;
         Ok(self)
     }
 
-    /// Forwards begin_value to the inner wip instance.
+    /// Forwards begin_value to the inner partial instance.
     pub fn begin_value(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
         self.inner.begin_value()?;
         Ok(self)
@@ -2734,7 +3014,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
         Ok(self)
     }
 
-    /// Forwards push to the inner wip instance.
+    /// Shorthand for: begin_list_item(), set, end
     pub fn push<U>(&mut self, value: U) -> Result<&mut Self, ReflectError<'shape>>
     where
         U: Facet<'facet>,
@@ -2743,13 +3023,13 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
         Ok(self)
     }
 
-    /// Forwards begin_some to the inner wip instance.
+    /// Begin building the Some variant of an Option
     pub fn begin_some(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
         self.inner.begin_some()?;
         Ok(self)
     }
 
-    /// Forwards begin_inner to the inner wip instance.
+    /// Begin building the inner value of a wrapper type
     pub fn begin_inner(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
         self.inner.begin_inner()?;
         Ok(self)
@@ -2845,6 +3125,16 @@ impl<'facet, 'shape> Drop for Partial<'facet, 'shape> {
                     }
                     // Note: we don't deallocate the inner value here because
                     // the Box's drop will handle that
+                }
+                Tracker::SmartPointerStr { .. } => {
+                    // nothing to do for now
+                }
+                Tracker::SmartPointerSlice { vtable, .. } => {
+                    // Free the slice builder
+                    let builder_ptr = unsafe { frame.data.assume_init() };
+                    unsafe {
+                        (vtable.free_fn)(builder_ptr);
+                    }
                 }
                 Tracker::List { is_initialized, .. } => {
                     // Drop the initialized List
