@@ -332,6 +332,7 @@ impl<'shape> ShapeBuilder<'shape> {
 }
 
 impl PartialEq for Shape<'_> {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
@@ -348,6 +349,7 @@ impl core::hash::Hash for Shape<'_> {
 
 impl Shape<'_> {
     /// Check if this shape is of the given type
+    #[inline]
     pub fn is_shape(&self, other: &Shape<'_>) -> bool {
         self == other
     }

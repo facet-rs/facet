@@ -490,6 +490,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     /// into the Partial (i.e., the destination), and the original value should not be used
     /// or dropped by the caller; consider using `core::mem::forget` on the passed value.
     /// If an error is returned, the destination remains unmodified and safe for future operations.
+    #[inline]
     pub unsafe fn set_shape(
         &mut self,
         src_value: PtrConst<'_>,
@@ -816,6 +817,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Selects a field of a struct with a given name
+    #[inline]
     pub fn begin_field(&mut self, field_name: &str) -> Result<&mut Self, ReflectError<'shape>> {
         self.require_active()?;
 
@@ -1554,7 +1556,8 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         Ok(self)
     }
 
-    /// Pops the current frame off the stack, indicating we're done initializing the current field.
+    /// Pops the current frame off the stack, indicating we're done initializing the current field
+    #[inline]
     pub fn end(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
         self.require_active()?;
         if self.frames.len() <= 1 {
@@ -2393,6 +2396,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Convenience shortcut: sets the named field to value, popping after.
+    #[inline]
     pub fn set_field<U>(
         &mut self,
         field_name: &str,
