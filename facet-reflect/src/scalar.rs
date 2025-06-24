@@ -1,5 +1,4 @@
 use core::any::TypeId;
-#[cfg(feature = "alloc")]
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use facet_core::{ConstTypeId, Shape};
