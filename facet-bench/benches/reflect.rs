@@ -1,3 +1,5 @@
+#![expect(clippy::approx_constant)]
+
 use divan::{Bencher, black_box};
 use facet::Facet;
 use facet_reflect::{Partial, ReflectError};
