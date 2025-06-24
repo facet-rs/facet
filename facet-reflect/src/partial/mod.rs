@@ -457,6 +457,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Returns the current frame count (depth of nesting)
+    #[inline]
     pub fn frame_count(&self) -> usize {
         self.frames.len()
     }
@@ -525,6 +526,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Sets the current frame to its default value
+    #[inline]
     pub fn set_default(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
         let frame = self.frames.last().unwrap(); // Get frame to access vtable
 
@@ -554,6 +556,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Sets the current frame using a field-level default function
+    #[inline]
     pub fn set_field_default(
         &mut self,
         field_default_fn: DefaultInPlaceFn,
@@ -823,7 +826,6 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Selects a field of a struct with a given name
-    #[inline]
     pub fn begin_field(&mut self, field_name: &str) -> Result<&mut Self, ReflectError<'shape>> {
         self.require_active()?;
 
@@ -1563,7 +1565,6 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Pops the current frame off the stack, indicating we're done initializing the current field
-    #[inline]
     pub fn end(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
         self.require_active()?;
         if self.frames.len() <= 1 {
@@ -2050,6 +2051,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Returns the shape of the current frame.
+    #[inline]
     pub fn shape(&self) -> &'shape Shape<'shape> {
         self.frames
             .last()
@@ -2058,6 +2060,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Returns the innermost shape (alias for shape(), for compatibility)
+    #[inline]
     pub fn innermost_shape(&self) -> &'shape Shape<'shape> {
         self.shape()
     }
@@ -2402,7 +2405,6 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Convenience shortcut: sets the named field to value, popping after.
-    #[inline]
     pub fn set_field<U>(
         &mut self,
         field_name: &str,

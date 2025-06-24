@@ -14,6 +14,7 @@ pub struct PeekListIter<'mem, 'facet, 'shape> {
 impl<'mem, 'facet, 'shape> Iterator for PeekListIter<'mem, 'facet, 'shape> {
     type Item = Peek<'mem, 'facet, 'shape>;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         let item_ptr = match self.state {
             PeekListIterState::Ptr { data, stride } => {
@@ -35,6 +36,7 @@ impl<'mem, 'facet, 'shape> Iterator for PeekListIter<'mem, 'facet, 'shape> {
         Some(unsafe { Peek::unchecked_new(item_ptr, self.def.t()) })
     }
 
+    #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         let remaining = self.len.saturating_sub(self.index);
         (remaining, Some(remaining))
@@ -44,6 +46,7 @@ impl<'mem, 'facet, 'shape> Iterator for PeekListIter<'mem, 'facet, 'shape> {
 impl ExactSizeIterator for PeekListIter<'_, '_, '_> {}
 
 impl Drop for PeekListIter<'_, '_, '_> {
+    #[inline]
     fn drop(&mut self) {
         match self.state {
             PeekListIterState::Iter { iter } => unsafe {
@@ -60,6 +63,7 @@ impl<'mem, 'facet, 'shape> IntoIterator for &'mem PeekList<'mem, 'facet, 'shape>
     type Item = Peek<'mem, 'facet, 'shape>;
     type IntoIter = PeekListIter<'mem, 'facet, 'shape>;
 
+    #[inline]
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
     }
@@ -85,21 +89,25 @@ impl Debug for PeekList<'_, '_, '_> {
 
 impl<'mem, 'facet, 'shape> PeekList<'mem, 'facet, 'shape> {
     /// Creates a new peek list
+    #[inline]
     pub fn new(value: Peek<'mem, 'facet, 'shape>, def: ListDef<'shape>) -> Self {
         Self { value, def }
     }
 
     /// Get the length of the list
+    #[inline]
     pub fn len(&self) -> usize {
         unsafe { (self.def.vtable.len)(self.value.data().thin().unwrap()) }
     }
 
     /// Returns true if the list is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
     /// Get an item from the list at the specified index
+    #[inline]
     pub fn get(&self, index: usize) -> Option<Peek<'mem, 'facet, 'shape>> {
         let item = unsafe { (self.def.vtable.get)(self.value.data().thin().unwrap(), index)? };
 
@@ -138,6 +146,7 @@ impl<'mem, 'facet, 'shape> PeekList<'mem, 'facet, 'shape> {
     }
 
     /// Def getter
+    #[inline]
     pub fn def(&self) -> ListDef<'shape> {
         self.def
     }

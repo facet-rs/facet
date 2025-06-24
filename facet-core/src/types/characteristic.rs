@@ -53,6 +53,7 @@ pub enum Characteristic {
 
 impl Characteristic {
     /// Checks if all shapes have the given characteristic.
+    #[inline]
     pub fn all(self, shapes: &[&Shape]) -> bool {
         let mut i = 0;
         while i < shapes.len() {
@@ -65,6 +66,7 @@ impl Characteristic {
     }
 
     /// Checks if any shape has the given characteristic.
+    #[inline]
     pub fn any(self, shapes: &[&Shape]) -> bool {
         let mut i = 0;
         while i < shapes.len() {
@@ -77,6 +79,7 @@ impl Characteristic {
     }
 
     /// Checks if none of the shapes have the given characteristic.
+    #[inline]
     pub fn none(self, shapes: &[&Shape]) -> bool {
         let mut i = 0;
         while i < shapes.len() {
@@ -89,6 +92,7 @@ impl Characteristic {
     }
 
     /// Checks if all shapes have the `Default` characteristic
+    #[inline]
     pub fn all_default(shapes: &[&Shape]) -> bool {
         let mut i = 0;
         while i < shapes.len() {
@@ -101,6 +105,7 @@ impl Characteristic {
     }
 
     /// Checks if all shapes have the `PartialEq` characteristic
+    #[inline]
     pub fn all_partial_eq(shapes: &[&Shape]) -> bool {
         let mut i = 0;
         while i < shapes.len() {
@@ -113,6 +118,7 @@ impl Characteristic {
     }
 
     /// Checks if all shapes have the `PartialOrd` characteristic
+    #[inline]
     pub fn all_partial_ord(shapes: &[&Shape]) -> bool {
         let mut i = 0;
         while i < shapes.len() {
@@ -125,6 +131,7 @@ impl Characteristic {
     }
 
     /// Checks if all shapes have the `Ord` characteristic
+    #[inline]
     pub fn all_ord(shapes: &[&Shape]) -> bool {
         let mut i = 0;
         while i < shapes.len() {
@@ -137,6 +144,7 @@ impl Characteristic {
     }
 
     /// Checks if all shapes have the `Hash` characteristic
+    #[inline]
     pub fn all_hash(shapes: &[&Shape]) -> bool {
         let mut i = 0;
         while i < shapes.len() {
@@ -151,6 +159,7 @@ impl Characteristic {
 
 impl<'shape> Shape<'shape> {
     /// Checks if a shape has the given characteristic.
+    #[inline]
     pub fn is(&self, characteristic: Characteristic) -> bool {
         match characteristic {
             // Marker traits
@@ -174,71 +183,85 @@ impl<'shape> Shape<'shape> {
     }
 
     /// Check if this shape implements the Send trait
+    #[inline]
     pub fn is_send(&self) -> bool {
         self.is(Characteristic::Send)
     }
 
     /// Check if this shape implements the Sync trait
+    #[inline]
     pub fn is_sync(&self) -> bool {
         self.is(Characteristic::Sync)
     }
 
     /// Check if this shape implements the Copy trait
+    #[inline]
     pub fn is_copy(&self) -> bool {
         self.is(Characteristic::Copy)
     }
 
     /// Check if this shape implements the Eq trait
+    #[inline]
     pub fn is_eq(&self) -> bool {
         self.is(Characteristic::Eq)
     }
 
     /// Check if this shape implements the Clone trait
+    #[inline]
     pub fn is_clone(&self) -> bool {
         self.is(Characteristic::Clone)
     }
 
     /// Check if this shape implements the Display trait
+    #[inline]
     pub fn is_display(&self) -> bool {
         self.is(Characteristic::Display)
     }
 
     /// Check if this shape implements the Debug trait
+    #[inline]
     pub fn is_debug(&self) -> bool {
         self.is(Characteristic::Debug)
     }
 
     /// Check if this shape implements the PartialEq trait
+    #[inline]
     pub fn is_partial_eq(&self) -> bool {
         self.is(Characteristic::PartialEq)
     }
 
     /// Check if this shape implements the PartialOrd trait
+    #[inline]
     pub fn is_partial_ord(&self) -> bool {
         self.is(Characteristic::PartialOrd)
     }
 
     /// Check if this shape implements the Ord trait
+    #[inline]
     pub fn is_ord(&self) -> bool {
         self.is(Characteristic::Ord)
     }
 
     /// Check if this shape implements the Hash trait
+    #[inline]
     pub fn is_hash(&self) -> bool {
         self.is(Characteristic::Hash)
     }
 
     /// Check if this shape implements the Default trait
+    #[inline]
     pub fn is_default(&self) -> bool {
         self.is(Characteristic::Default)
     }
 
     /// Check if this shape implements the FromStr trait
+    #[inline]
     pub fn is_from_str(&self) -> bool {
         self.is(Characteristic::FromStr)
     }
 
     /// Writes the name of this type to the given formatter
+    #[inline]
     pub fn write_type_name(&self, f: &mut fmt::Formatter<'_>, opts: TypeNameOpts) -> fmt::Result {
         (self.vtable.type_name())(f, opts)
     }

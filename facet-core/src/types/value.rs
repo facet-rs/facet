@@ -26,6 +26,7 @@ pub struct TypeNameOpts {
 }
 
 impl Default for TypeNameOpts {
+    #[inline]
     fn default() -> Self {
         Self { recurse_ttl: -1 }
     }
@@ -33,16 +34,19 @@ impl Default for TypeNameOpts {
 
 impl TypeNameOpts {
     /// Create a new `NameOpts` for which none of the type parameters are formatted
+    #[inline]
     pub fn none() -> Self {
         Self { recurse_ttl: 0 }
     }
 
     /// Create a new `NameOpts` for which only the direct children are formatted
+    #[inline]
     pub fn one() -> Self {
         Self { recurse_ttl: 1 }
     }
 
     /// Create a new `NameOpts` for which all type parameters are formatted
+    #[inline]
     pub fn infinite() -> Self {
         Self { recurse_ttl: -1 }
     }
@@ -54,6 +58,7 @@ impl TypeNameOpts {
     /// `…` (unicode ellipsis) character instead of your list of types.
     ///
     /// See the implementation for `Vec` for examples.
+    #[inline]
     pub fn for_children(&self) -> Option<Self> {
         match self.recurse_ttl.cmp(&0) {
             Ordering::Greater => Some(Self {
@@ -240,6 +245,7 @@ impl<'shape> core::fmt::Display for TryFromError<'shape> {
 impl<'shape> core::error::Error for TryFromError<'shape> {}
 
 impl<'shape> From<UnsizedError> for TryFromError<'shape> {
+    #[inline]
     fn from(_value: UnsizedError) -> Self {
         Self::Unsized
     }
@@ -459,6 +465,7 @@ impl<'a> HasherProxy<'a> {
     ///
     /// The `hasher_this` parameter must be a valid pointer to a Hasher trait object.
     /// The `hasher_write_fn` parameter must be a valid function pointer.
+    #[inline]
     pub unsafe fn new(hasher_this: PtrMut<'a>, hasher_write_fn: HasherWriteFn) -> Self {
         Self {
             hasher_this,
@@ -471,6 +478,7 @@ impl core::hash::Hasher for HasherProxy<'_> {
     fn finish(&self) -> u64 {
         unimplemented!("finish is not needed for this implementation")
     }
+    #[inline]
     fn write(&mut self, bytes: &[u8]) {
         unsafe { (self.hasher_write_fn)(self.hasher_this, bytes) }
     }
@@ -728,6 +736,7 @@ impl ValueVTable {
     }
 
     /// Get the marker traits implemented for the type
+    #[inline]
     pub fn marker_traits(&self) -> MarkerTraits {
         match self {
             ValueVTable::Sized(inner) => (inner.marker_traits)(),
@@ -736,6 +745,7 @@ impl ValueVTable {
     }
 
     /// Get the type name fn of the type
+    #[inline]
     pub const fn type_name(&self) -> TypeNameFn {
         match self {
             ValueVTable::Sized(inner) => inner.type_name,
@@ -744,81 +754,97 @@ impl ValueVTable {
     }
 
     /// Check if the type implements the [`Eq`] marker trait
+    #[inline]
     pub fn is_eq(&self) -> bool {
         self.marker_traits().contains(MarkerTraits::EQ)
     }
 
     /// Check if the type implements the [`Send`] marker trait
+    #[inline]
     pub fn is_send(&self) -> bool {
         self.marker_traits().contains(MarkerTraits::SEND)
     }
 
     /// Check if the type implements the [`Sync`] marker trait
+    #[inline]
     pub fn is_sync(&self) -> bool {
         self.marker_traits().contains(MarkerTraits::SYNC)
     }
 
     /// Check if the type implements the [`Copy`] marker trait
+    #[inline]
     pub fn is_copy(&self) -> bool {
         self.marker_traits().contains(MarkerTraits::COPY)
     }
 
     /// Check if the type implements the [`Unpin`] marker trait
+    #[inline]
     pub fn is_unpin(&self) -> bool {
         self.marker_traits().contains(MarkerTraits::UNPIN)
     }
 
     /// Check if the type implements the [`UnwindSafe`](core::panic::UnwindSafe) marker trait
+    #[inline]
     pub fn is_unwind_safe(&self) -> bool {
         self.marker_traits().contains(MarkerTraits::UNWIND_SAFE)
     }
 
     /// Check if the type implements the [`RefUnwindSafe`](core::panic::RefUnwindSafe) marker trait
+    #[inline]
     pub fn is_ref_unwind_safe(&self) -> bool {
         self.marker_traits().contains(MarkerTraits::REF_UNWIND_SAFE)
     }
 
     /// Returns `true` if the type implements the [`Display`](core::fmt::Display) trait and the `display` function is available in the vtable.
+    #[inline]
     pub fn has_display(&self) -> bool {
         has_fn!(self, display)
     }
 
     /// Returns `true` if the type implements the [`Debug`] trait and the `debug` function is available in the vtable.
+    #[inline]
     pub fn has_debug(&self) -> bool {
         has_fn!(self, debug)
     }
 
     /// Returns `true` if the type implements the [`PartialEq`] trait and the `partial_eq` function is available in the vtable.
+    #[inline]
     pub fn has_partial_eq(&self) -> bool {
         has_fn!(self, partial_eq)
     }
 
     /// Returns `true` if the type implements the [`PartialOrd`] trait and the `partial_ord` function is available in the vtable.
+    #[inline]
     pub fn has_partial_ord(&self) -> bool {
         has_fn!(self, partial_ord)
     }
 
     /// Returns `true` if the type implements the [`Ord`] trait and the `ord` function is available in the vtable.
+    #[inline]
     pub fn has_ord(&self) -> bool {
         has_fn!(self, ord)
     }
 
     /// Returns `true` if the type implements the [`Hash`] trait and the `hash` function is available in the vtable.
+    #[inline]
     pub fn has_hash(&self) -> bool {
         has_fn!(self, hash)
     }
 
     /// Returns `true` if the type supports default-in-place construction via the vtable.
+    #[inline]
     pub fn has_default_in_place(&self) -> bool {
         has_fn_sized!(self, default_in_place)
     }
 
     /// Returns `true` if the type supports in-place cloning via the vtable.
+    #[inline]
     pub fn has_clone_into(&self) -> bool {
         has_fn_sized!(self, clone_into)
     }
 
     /// Returns `true` if the type supports parsing from a string via the vtable.
+    #[inline]
     pub fn has_parse(&self) -> bool {
         has_fn_sized!(self, parse)
     }

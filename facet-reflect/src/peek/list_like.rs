@@ -24,6 +24,7 @@ pub enum ListLikeDef<'shape> {
 
 impl<'shape> ListLikeDef<'shape> {
     /// Returns the shape of the items in the list
+    #[inline]
     pub fn t(&self) -> &'shape Shape<'shape> {
         match self {
             ListLikeDef::List(v) => v.t(),
@@ -45,6 +46,7 @@ pub struct PeekListLikeIter<'mem, 'facet, 'shape> {
 impl<'mem, 'facet, 'shape> Iterator for PeekListLikeIter<'mem, 'facet, 'shape> {
     type Item = Peek<'mem, 'facet, 'shape>;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         let item_ptr = match self.state {
             PeekListLikeIterState::Ptr { data, stride } => {
@@ -64,6 +66,7 @@ impl<'mem, 'facet, 'shape> Iterator for PeekListLikeIter<'mem, 'facet, 'shape> {
         Some(unsafe { Peek::unchecked_new(item_ptr, self.def.t()) })
     }
 
+    #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         let remaining = self.len.saturating_sub(self.index);
         (remaining, Some(remaining))
@@ -76,6 +79,7 @@ impl<'mem, 'facet, 'shape> IntoIterator for &'mem PeekListLike<'mem, 'facet, 'sh
     type Item = Peek<'mem, 'facet, 'shape>;
     type IntoIter = PeekListLikeIter<'mem, 'facet, 'shape>;
 
+    #[inline]
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
     }
@@ -93,6 +97,7 @@ enum PeekListLikeIterState<'mem> {
 }
 
 impl Drop for PeekListLikeIterState<'_> {
+    #[inline]
     fn drop(&mut self) {
         match self {
             Self::Iter { iter, vtable } => unsafe { (vtable.dealloc)(*iter) },
@@ -119,6 +124,7 @@ impl<'mem, 'facet, 'shape> Debug for PeekListLike<'mem, 'facet, 'shape> {
 
 impl<'mem, 'facet, 'shape> PeekListLike<'mem, 'facet, 'shape> {
     /// Creates a new peek list
+    #[inline]
     pub fn new(value: Peek<'mem, 'facet, 'shape>, def: ListLikeDef<'shape>) -> Self {
         let len = match def {
             ListLikeDef::List(v) => unsafe { (v.vtable.len)(value.data().thin().unwrap()) },
@@ -129,11 +135,13 @@ impl<'mem, 'facet, 'shape> PeekListLike<'mem, 'facet, 'shape> {
     }
 
     /// Get the length of the list
+    #[inline]
     pub fn len(&self) -> usize {
         self.len
     }
 
     /// Returns true if the list is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -213,6 +221,7 @@ impl<'mem, 'facet, 'shape> PeekListLike<'mem, 'facet, 'shape> {
     }
 
     /// Def getter
+    #[inline]
     pub fn def(&self) -> ListLikeDef<'shape> {
         self.def
     }

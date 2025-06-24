@@ -97,6 +97,7 @@ impl<'shape> Variant<'shape> {
 
     /// Checks whether the `Variant` has an attribute of form `VariantAttribute::Arbitrary` with the
     /// given content.
+    #[inline]
     pub fn has_arbitrary_attr(&self, content: &'static str) -> bool {
         self.attributes
             .contains(&VariantAttribute::Arbitrary(content))

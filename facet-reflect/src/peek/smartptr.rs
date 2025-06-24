@@ -16,6 +16,7 @@ pub struct PeekSmartPointer<'mem, 'facet, 'shape> {
 impl<'mem, 'facet, 'shape> PeekSmartPointer<'mem, 'facet, 'shape> {
     /// Returns a reference to the smart pointer definition.
     #[must_use]
+    #[inline]
     pub fn def(&self) -> &SmartPointerDef<'shape> {
         &self.def
     }
@@ -23,6 +24,7 @@ impl<'mem, 'facet, 'shape> PeekSmartPointer<'mem, 'facet, 'shape> {
     /// Borrows the inner value of the smart pointer.
     ///
     /// Returns `None` if the smart pointer doesn't have a borrow function or pointee shape.
+    #[inline]
     pub fn borrow_inner(&self) -> Option<Peek<'mem, 'facet, 'shape>> {
         let borrow_fn = self.def.vtable.borrow_fn?;
         let pointee_shape = self.def.pointee()?;

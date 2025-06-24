@@ -38,6 +38,7 @@ impl ConstTypeId {
 }
 
 impl Debug for ConstTypeId {
+    #[inline]
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         Debug::fmt(&self.get(), formatter)
     }

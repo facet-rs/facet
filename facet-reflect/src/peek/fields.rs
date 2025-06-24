@@ -43,6 +43,7 @@ enum FieldIterState<'mem, 'facet, 'shape> {
 }
 
 impl<'mem, 'facet, 'shape> FieldIter<'mem, 'facet, 'shape> {
+    #[inline]
     pub(crate) fn new_struct(struct_: PeekStruct<'mem, 'facet, 'shape>) -> Self {
         Self {
             range: 0..struct_.ty.fields.len(),
@@ -50,6 +51,7 @@ impl<'mem, 'facet, 'shape> FieldIter<'mem, 'facet, 'shape> {
         }
     }
 
+    #[inline]
     pub(crate) fn new_enum(enum_: PeekEnum<'mem, 'facet, 'shape>) -> Self {
         // Get the fields of the active variant
         let variant = match enum_.active_variant() {
@@ -67,6 +69,7 @@ impl<'mem, 'facet, 'shape> FieldIter<'mem, 'facet, 'shape> {
         }
     }
 
+    #[inline]
     pub(crate) fn new_tuple(tuple: PeekTuple<'mem, 'facet, 'shape>) -> Self {
         Self {
             range: 0..tuple.len(),
@@ -115,6 +118,7 @@ impl<'mem, 'facet, 'shape> FieldIter<'mem, 'facet, 'shape> {
 impl<'mem, 'facet, 'shape> Iterator for FieldIter<'mem, 'facet, 'shape> {
     type Item = (Field<'shape>, Peek<'mem, 'facet, 'shape>);
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             let index = self.range.next()?;
@@ -127,12 +131,14 @@ impl<'mem, 'facet, 'shape> Iterator for FieldIter<'mem, 'facet, 'shape> {
         }
     }
 
+    #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.range.size_hint()
     }
 }
 
 impl DoubleEndedIterator for FieldIter<'_, '_, '_> {
+    #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
         loop {
             let index = self.range.next_back()?;

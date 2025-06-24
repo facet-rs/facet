@@ -11,6 +11,7 @@ pub struct PeekMapIter<'mem, 'facet, 'shape> {
 impl<'mem, 'facet, 'shape> Iterator for PeekMapIter<'mem, 'facet, 'shape> {
     type Item = (Peek<'mem, 'facet, 'shape>, Peek<'mem, 'facet, 'shape>);
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         unsafe {
             let next = (self.map.def.vtable.iter_vtable.next)(self.iter);
@@ -25,6 +26,7 @@ impl<'mem, 'facet, 'shape> Iterator for PeekMapIter<'mem, 'facet, 'shape> {
 }
 
 impl<'mem, 'facet, 'shape> Drop for PeekMapIter<'mem, 'facet, 'shape> {
+    #[inline]
     fn drop(&mut self) {
         unsafe { (self.map.def.vtable.iter_vtable.dealloc)(self.iter) }
     }
@@ -34,6 +36,7 @@ impl<'mem, 'facet, 'shape> IntoIterator for &'mem PeekMap<'mem, 'facet, 'shape> 
     type Item = (Peek<'mem, 'facet, 'shape>, Peek<'mem, 'facet, 'shape>);
     type IntoIter = PeekMapIter<'mem, 'facet, 'shape>;
 
+    #[inline]
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
     }
@@ -55,21 +58,25 @@ impl<'mem, 'facet, 'shape> core::fmt::Debug for PeekMap<'mem, 'facet, 'shape> {
 
 impl<'mem, 'facet, 'shape> PeekMap<'mem, 'facet, 'shape> {
     /// Constructor
+    #[inline]
     pub fn new(value: Peek<'mem, 'facet, 'shape>, def: MapDef<'shape>) -> Self {
         Self { value, def }
     }
 
     /// Get the number of entries in the map
+    #[inline]
     pub fn len(&self) -> usize {
         unsafe { (self.def.vtable.len_fn)(self.value.data().thin().unwrap()) }
     }
 
     /// Returns true if the map is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
     /// Check if the map contains a key
+    #[inline]
     pub fn contains_key(&self, key: &impl facet_core::Facet<'facet>) -> bool {
         unsafe {
             let key_ptr = PtrConst::new(key);
@@ -78,6 +85,7 @@ impl<'mem, 'facet, 'shape> PeekMap<'mem, 'facet, 'shape> {
     }
 
     /// Get a value from the map for the given key
+    #[inline]
     pub fn get<'k>(
         &self,
         key: &'k impl facet_core::Facet<'facet>,
@@ -91,6 +99,7 @@ impl<'mem, 'facet, 'shape> PeekMap<'mem, 'facet, 'shape> {
     }
 
     /// Returns an iterator over the key-value pairs in the map
+    #[inline]
     pub fn iter(self) -> PeekMapIter<'mem, 'facet, 'shape> {
         let iter_init_with_value_fn = self.def.vtable.iter_vtable.init_with_value.unwrap();
         let iter = unsafe { iter_init_with_value_fn(self.value.data().thin().unwrap()) };
@@ -98,6 +107,7 @@ impl<'mem, 'facet, 'shape> PeekMap<'mem, 'facet, 'shape> {
     }
 
     /// Def getter
+    #[inline]
     pub fn def(&self) -> MapDef<'shape> {
         self.def
     }
