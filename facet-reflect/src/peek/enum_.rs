@@ -24,6 +24,7 @@ impl core::fmt::Debug for PeekEnum<'_, '_, '_> {
 }
 
 /// Returns the enum definition if the shape represents an enum, None otherwise
+#[inline]
 pub fn peek_enum<'shape>(shape: &'shape Shape) -> Option<EnumType<'shape>> {
     match shape.ty {
         facet_core::Type::User(UserType::Enum(enum_ty)) => Some(enum_ty),
@@ -32,11 +33,13 @@ pub fn peek_enum<'shape>(shape: &'shape Shape) -> Option<EnumType<'shape>> {
 }
 
 /// Returns the enum representation if the shape represents an enum, None otherwise
+#[inline]
 pub fn peek_enum_repr(shape: &Shape) -> Option<EnumRepr> {
     peek_enum(shape).map(|enum_def| enum_def.enum_repr)
 }
 
 /// Returns the enum variants if the shape represents an enum, None otherwise
+#[inline]
 pub fn peek_enum_variants<'shape>(shape: &'shape Shape) -> Option<&'shape [Variant<'shape>]> {
     peek_enum(shape).map(|enum_def| enum_def.variants)
 }
@@ -249,6 +252,7 @@ impl<'mem, 'facet, 'shape> PeekEnum<'mem, 'facet, 'shape> {
 }
 
 impl<'mem, 'facet, 'shape> HasFields<'mem, 'facet, 'shape> for PeekEnum<'mem, 'facet, 'shape> {
+    #[inline]
     fn fields(&self) -> FieldIter<'mem, 'facet, 'shape> {
         FieldIter::new_enum(*self)
     }

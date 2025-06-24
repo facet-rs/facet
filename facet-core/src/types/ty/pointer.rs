@@ -42,6 +42,7 @@ pub struct ValuePointerType<'shape> {
 
 impl<'shape> ValuePointerType<'shape> {
     /// Returns the shape of the pointer's pointee.
+    #[inline]
     pub fn target(&self) -> &'shape Shape<'shape> {
         (self.target)()
     }

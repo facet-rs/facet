@@ -16,6 +16,7 @@ pub enum UserType<'shape> {
 
 impl<'shape> UserType<'shape> {
     /// Retrieves underlying representation of the type
+    #[inline]
     pub const fn repr(&self) -> Option<Repr> {
         match self {
             Self::Struct(s) => Some(s.repr),
@@ -46,6 +47,7 @@ impl Repr {
     /// Create default representation for a user type
     ///
     /// This will be Rust representation with no packing
+    #[inline]
     pub const fn default() -> Self {
         Self {
             base: BaseRepr::Rust,
@@ -54,6 +56,7 @@ impl Repr {
     }
 
     /// Build unpacked C representation
+    #[inline]
     pub const fn c() -> Self {
         Self {
             base: BaseRepr::C,
@@ -62,6 +65,7 @@ impl Repr {
     }
 
     /// Builds transparent representation
+    #[inline]
     pub const fn transparent() -> Self {
         Self {
             base: BaseRepr::Transparent,
