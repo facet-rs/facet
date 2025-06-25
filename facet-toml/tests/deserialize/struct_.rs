@@ -281,3 +281,29 @@ fn test_default_struct_fields() {
         },
     );
 }
+
+#[test]
+fn test_root_struct_deserialize_defaults() {
+    fn default_string() -> String {
+        "hi".to_string()
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Root {
+        #[facet(default = 42)]
+        a: i32,
+        #[facet(default = Some(true))]
+        b: Option<bool>,
+        #[facet(default = default_string())]
+        c: String,
+    }
+
+    assert_eq!(
+        facet_toml::from_str::<Root>("")?,
+        Root {
+            a: 42,
+            b: Some(true),
+            c: "hi".to_string()
+        },
+    );
+}
