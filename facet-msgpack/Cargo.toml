@@ -1,6 +1,6 @@
 [package]
 name = "facet-msgpack"
-version = "0.25.15"
+version = "0.25.16"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -16,10 +16,10 @@ keywords = [
 categories = ["encoding", "parsing", "data-structures"]
 
 [dependencies]
-facet-core = { version = "0.27.14", path = "../facet-core" }
-facet-reflect = { version = "0.27.14", path = "../facet-reflect" }
+facet-core = { version = "0.27.15", path = "../facet-core" }
+facet-reflect = { version = "0.27.15", path = "../facet-reflect" }
 log = "0.4.27"
-facet-serialize = { version = "0.24.15", path = "../facet-serialize" }
+facet-serialize = { version = "0.24.16", path = "../facet-serialize" }
 
 [dev-dependencies]
 eyre = "0.6.12"

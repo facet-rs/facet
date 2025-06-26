@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.17](https://github.com/facet-rs/facet/compare/facet-xdr-v0.1.16...facet-xdr-v0.1.17) - 2025-06-26
+
+### Other
+
+- Remove ScalarDef
+- Apply modern clippy fixes (mostly format strings)
+
 ## [0.1.16](https://github.com/facet-rs/facet/compare/facet-xdr-v0.1.15...facet-xdr-v0.1.16) - 2025-06-17
 
 ### Other

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.14](https://github.com/facet-rs/facet/compare/facet-yaml-v0.25.13...facet-yaml-v0.25.14) - 2025-06-26
+
+### Other
+
+- Add support for `Arc<[U]>` in facet-core and facet-reflect
+- Remove ScalarDef
+- Apply modern clippy fixes (mostly format strings)
+
 ## [0.25.13](https://github.com/facet-rs/facet/compare/facet-yaml-v0.25.12...facet-yaml-v0.25.13) - 2025-06-17
 
 ### Other

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.15](https://github.com/facet-rs/facet/compare/facet-macros-emit-v0.27.14...facet-macros-emit-v0.27.15) - 2025-06-26
+
+### Other
+
+- Apply modern clippy fixes (mostly format strings)
+
 ## [0.27.13](https://github.com/facet-rs/facet/compare/facet-macros-emit-v0.27.12...facet-macros-emit-v0.27.13) - 2025-06-15
 
 ### Added

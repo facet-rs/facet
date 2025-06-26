@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.16](https://github.com/facet-rs/facet/compare/facet-csv-v0.24.15...facet-csv-v0.24.16) - 2025-06-26
+
+### Other
+
+- Apply modern clippy fixes (mostly format strings)
+
 ## [0.24.15](https://github.com/facet-rs/facet/compare/facet-csv-v0.24.14...facet-csv-v0.24.15) - 2025-06-17
 
 ### Other

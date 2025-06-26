@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.21](https://github.com/facet-rs/facet/compare/facet-deserialize-v0.24.20...facet-deserialize-v0.24.21) - 2025-06-26
+
+### Other
+
+- Add support for `Arc<[U]>` in facet-core and facet-reflect
+- impl Facet for Arc<str>, Rc<str>, and Box<str>
+- Remove ScalarDef
+- Remove PartialEq implementations
+- Apply modern clippy fixes (mostly format strings)
+
 ## [0.24.20](https://github.com/facet-rs/facet/compare/facet-deserialize-v0.24.19...facet-deserialize-v0.24.20) - 2025-06-17
 
 ### Other

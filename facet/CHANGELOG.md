@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.15](https://github.com/facet-rs/facet/compare/facet-v0.27.14...facet-v0.27.15) - 2025-06-26
+
+### Other
+
+- Remove tests
+- Remove most composite impls for array
+- Remove move composite impls for vec
+- Remove Vec's clone_into composite impl
+- Remove ScalarDef
+- Apply modern clippy fixes (mostly format strings)
+
 ## [0.27.13](https://github.com/facet-rs/facet/compare/facet-v0.27.12...facet-v0.27.13) - 2025-06-15
 
 ### Added
