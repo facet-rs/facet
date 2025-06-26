@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.16](https://github.com/facet-rs/facet/compare/facet-toml-v0.25.15...facet-toml-v0.25.16) - 2025-06-26
+
+### Other
+
+- Fix `#[facet(default = ...)]` in facet-toml
+- Remove ScalarDef
+- Remove PartialEq implementations
+- Apply modern clippy fixes (mostly format strings)
+
 ## [0.25.15](https://github.com/facet-rs/facet/compare/facet-toml-v0.25.14...facet-toml-v0.25.15) - 2025-06-17
 
 ### Other

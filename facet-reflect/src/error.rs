@@ -114,6 +114,8 @@ pub enum ReflectError<'shape> {
     Unsized {
         /// The shape for the type that is unsized
         shape: &'shape Shape<'shape>,
+        /// The operation we were trying to perform
+        operation: &'static str,
     },
 
     /// Array not fully initialized during build
@@ -242,7 +244,12 @@ impl core::fmt::Display for ReflectError<'_> {
                 "Shape '{}' has a `default` attribute but no default implementation",
                 shape.red()
             ),
-            ReflectError::Unsized { shape } => write!(f, "Shape '{}' is unsized", shape.red()),
+            ReflectError::Unsized { shape, operation } => write!(
+                f,
+                "Shape '{}' is unsized, can't perform operation {}",
+                shape.red(),
+                operation
+            ),
             ReflectError::ArrayNotFullyInitialized {
                 shape,
                 pushed_count,

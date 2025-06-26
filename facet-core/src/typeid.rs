@@ -30,13 +30,15 @@ impl ConstTypeId {
         }
     }
 
+    /// Get the underlying [`TypeId`] for this `ConstTypeId`.
     #[inline]
-    fn get(self) -> TypeId {
+    pub fn get(self) -> TypeId {
         (self.type_id_fn)()
     }
 }
 
 impl Debug for ConstTypeId {
+    #[inline]
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         Debug::fmt(&self.get(), formatter)
     }
@@ -50,6 +52,7 @@ impl PartialEq for ConstTypeId {
 }
 
 impl PartialEq<TypeId> for ConstTypeId {
+    #[inline]
     fn eq(&self, other: &TypeId) -> bool {
         self.get() == *other
     }

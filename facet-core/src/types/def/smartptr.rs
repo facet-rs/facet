@@ -10,7 +10,7 @@ use super::Shape;
 #[repr(C)]
 pub struct SmartPointerDef<'shape> {
     /// vtable for interacting with the smart pointer
-    pub vtable: &'shape SmartPointerVTable,
+    pub vtable: &'shape SmartPointerVTable<'shape>,
 
     /// shape of the inner type of the smart pointer, if not opaque
     pub pointee: Option<fn() -> &'shape Shape<'shape>>,
@@ -61,7 +61,7 @@ impl<'shape> SmartPointerDef<'shape> {
 /// Builder for creating a `SmartPointerDef`.
 #[derive(Debug)]
 pub struct SmartPointerDefBuilder<'shape> {
-    vtable: Option<&'shape SmartPointerVTable>,
+    vtable: Option<&'shape SmartPointerVTable<'shape>>,
     pointee: Option<fn() -> &'shape Shape<'shape>>,
     flags: Option<SmartPointerFlags>,
     known: Option<KnownSmartPointer>,
@@ -264,9 +264,129 @@ pub type ReadFn = for<'ptr> unsafe fn(opaque: PtrConst<'ptr>) -> Result<LockResu
 /// Acquires a write lock on a reader-writer lock-like smart pointer
 pub type WriteFn = for<'ptr> unsafe fn(opaque: PtrConst<'ptr>) -> Result<LockResult<'ptr>, ()>;
 
+/// Creates a new slice builder for a smart pointer: ie. for `Arc<[u8]>`, it builds a
+/// `Vec<u8>` internally, to which you can push, and then turn into an `Arc<[u8]>` at
+/// the last stage.
+///
+/// This works for any `U` in `Arc<[U]>` because those have separate concrete implementations, and
+/// thus, separate concrete vtables.
+pub type SliceBuilderNewFn = fn() -> PtrMut<'static>;
+
+/// Pushes a value into a slice builder.
+///
+/// # Safety
+///
+/// Item must point to a valid value of type `U` and must be initialized.
+/// Function is infallible as it uses the global allocator.
+pub type SliceBuilderPushFn = unsafe fn(builder: PtrMut, item: PtrMut);
+
+/// Converts a slice builder into a smart pointer. This takes ownership of the builder
+/// and frees the backing storage.
+///
+/// # Safety
+///
+/// The builder must be valid and must not be used after this function is called.
+/// Function is infallible as it uses the global allocator.
+pub type SliceBuilderConvertFn = unsafe fn(builder: PtrMut<'static>) -> PtrConst<'static>;
+
+/// Frees a slice builder without converting it into a smart pointer
+///
+/// # Safety
+///
+/// The builder must be valid and must not be used after this function is called.
+pub type SliceBuilderFreeFn = unsafe fn(builder: PtrMut<'static>);
+
+/// Functions for creating and manipulating slice builders.
+#[derive(Debug, Clone, Copy)]
+pub struct SliceBuilderVTable {
+    /// See [`SliceBuilderNewFn`]
+    pub new_fn: SliceBuilderNewFn,
+    /// See [`SliceBuilderPushFn`]
+    pub push_fn: SliceBuilderPushFn,
+    /// See [`SliceBuilderConvertFn`]
+    pub convert_fn: SliceBuilderConvertFn,
+    /// See [`SliceBuilderFreeFn`]
+    pub free_fn: SliceBuilderFreeFn,
+}
+
+impl SliceBuilderVTable {
+    /// Creates a new `SliceBuilderVTableBuilder` with all fields set to `None`.
+    #[must_use]
+    pub const fn builder() -> SliceBuilderVTableBuilder {
+        SliceBuilderVTableBuilder {
+            new_fn: None,
+            push_fn: None,
+            convert_fn: None,
+            free_fn: None,
+        }
+    }
+}
+
+/// Builder for creating a `SliceBuilderVTable`.
+#[derive(Debug)]
+pub struct SliceBuilderVTableBuilder {
+    new_fn: Option<SliceBuilderNewFn>,
+    push_fn: Option<SliceBuilderPushFn>,
+    convert_fn: Option<SliceBuilderConvertFn>,
+    free_fn: Option<SliceBuilderFreeFn>,
+}
+
+impl SliceBuilderVTableBuilder {
+    /// Creates a new `SliceBuilderVTableBuilder` with all fields set to `None`.
+    #[must_use]
+    #[expect(clippy::new_without_default)]
+    pub const fn new() -> Self {
+        Self {
+            new_fn: None,
+            push_fn: None,
+            convert_fn: None,
+            free_fn: None,
+        }
+    }
+
+    /// Sets the `new` function for the slice builder.
+    #[must_use]
+    pub const fn new_fn(mut self, new_fn: SliceBuilderNewFn) -> Self {
+        self.new_fn = Some(new_fn);
+        self
+    }
+
+    /// Sets the `push` function for the slice builder.
+    #[must_use]
+    pub const fn push_fn(mut self, push_fn: SliceBuilderPushFn) -> Self {
+        self.push_fn = Some(push_fn);
+        self
+    }
+
+    /// Sets the `convert` function for the slice builder.
+    #[must_use]
+    pub const fn convert_fn(mut self, convert_fn: SliceBuilderConvertFn) -> Self {
+        self.convert_fn = Some(convert_fn);
+        self
+    }
+
+    /// Sets the `free` function for the slice builder.
+    #[must_use]
+    pub const fn free_fn(mut self, free_fn: SliceBuilderFreeFn) -> Self {
+        self.free_fn = Some(free_fn);
+        self
+    }
+
+    /// Builds a `SliceBuilderVTable` from the provided configuration.
+    #[must_use]
+    pub const fn build(self) -> SliceBuilderVTable {
+        SliceBuilderVTable {
+            new_fn: self.new_fn.expect("new_fn must be set"),
+            push_fn: self.push_fn.expect("push_fn must be set"),
+            convert_fn: self.convert_fn.expect("convert_fn must be set"),
+            free_fn: self.free_fn.expect("free_fn must be set"),
+        }
+    }
+}
+
 /// Functions for interacting with a smart pointer
 #[derive(Debug, Clone, Copy)]
-pub struct SmartPointerVTable {
+pub struct SmartPointerVTable<'shape> {
     /// See [`UpgradeIntoFn`]
     pub upgrade_into_fn: Option<UpgradeIntoFn>,
 
@@ -287,12 +407,15 @@ pub struct SmartPointerVTable {
 
     /// See [`WriteFn`]
     pub write_fn: Option<WriteFn>,
+
+    /// See [`SliceBuilderVTable`]
+    pub slice_builder_vtable: Option<&'shape SliceBuilderVTable>,
 }
 
-impl SmartPointerVTable {
+impl<'shape> SmartPointerVTable<'shape> {
     /// Creates a new `SmartPointerVTableBuilder` with all fields set to `None`.
     #[must_use]
-    pub const fn builder() -> SmartPointerVTableBuilder {
+    pub const fn builder() -> SmartPointerVTableBuilder<'shape> {
         SmartPointerVTableBuilder {
             upgrade_into_fn: None,
             downgrade_into_fn: None,
@@ -301,13 +424,14 @@ impl SmartPointerVTable {
             lock_fn: None,
             read_fn: None,
             write_fn: None,
+            slice_builder_vtable: None,
         }
     }
 }
 
 /// Builder for creating a `SmartPointerVTable`.
 #[derive(Debug)]
-pub struct SmartPointerVTableBuilder {
+pub struct SmartPointerVTableBuilder<'shape> {
     upgrade_into_fn: Option<UpgradeIntoFn>,
     downgrade_into_fn: Option<DowngradeIntoFn>,
     borrow_fn: Option<BorrowFn>,
@@ -315,9 +439,10 @@ pub struct SmartPointerVTableBuilder {
     lock_fn: Option<LockFn>,
     read_fn: Option<ReadFn>,
     write_fn: Option<WriteFn>,
+    slice_builder_vtable: Option<&'shape SliceBuilderVTable>,
 }
 
-impl SmartPointerVTableBuilder {
+impl<'shape> SmartPointerVTableBuilder<'shape> {
     /// Creates a new `SmartPointerVTableBuilder` with all fields set to `None`.
     #[must_use]
     #[expect(clippy::new_without_default)]
@@ -330,6 +455,7 @@ impl SmartPointerVTableBuilder {
             lock_fn: None,
             read_fn: None,
             write_fn: None,
+            slice_builder_vtable: None,
         }
     }
 
@@ -356,8 +482,8 @@ impl SmartPointerVTableBuilder {
 
     /// Sets the `new_into` function.
     #[must_use]
-    pub const fn new_into_fn(mut self, new_fn: NewIntoFn) -> Self {
-        self.new_into_fn = Some(new_fn);
+    pub const fn new_into_fn(mut self, new_into_fn: NewIntoFn) -> Self {
+        self.new_into_fn = Some(new_into_fn);
         self
     }
 
@@ -382,9 +508,19 @@ impl SmartPointerVTableBuilder {
         self
     }
 
+    /// Sets the `slice_builder_vtable` function.
+    #[must_use]
+    pub const fn slice_builder_vtable(
+        mut self,
+        slice_builder_vtable: &'shape SliceBuilderVTable,
+    ) -> Self {
+        self.slice_builder_vtable = Some(slice_builder_vtable);
+        self
+    }
+
     /// Builds a `SmartPointerVTable` from the provided configuration.
     #[must_use]
-    pub const fn build(self) -> SmartPointerVTable {
+    pub const fn build(self) -> SmartPointerVTable<'shape> {
         SmartPointerVTable {
             upgrade_into_fn: self.upgrade_into_fn,
             downgrade_into_fn: self.downgrade_into_fn,
@@ -393,6 +529,7 @@ impl SmartPointerVTableBuilder {
             lock_fn: self.lock_fn,
             read_fn: self.read_fn,
             write_fn: self.write_fn,
+            slice_builder_vtable: self.slice_builder_vtable,
         }
     }
 }

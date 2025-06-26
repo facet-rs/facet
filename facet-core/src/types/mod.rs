@@ -99,6 +99,7 @@ pub enum ShapeLayout {
 
 impl ShapeLayout {
     /// `Layout` if this type is `Sized`
+    #[inline]
     pub fn sized_layout(self) -> Result<Layout, UnsizedError> {
         match self {
             ShapeLayout::Sized(layout) => Ok(layout),
@@ -170,16 +171,19 @@ impl<'shape> Shape<'shape> {
     }
 
     /// See [`ShapeAttribute::DenyUnknownFields`]
+    #[inline]
     pub fn has_deny_unknown_fields_attr(&self) -> bool {
         self.attributes.contains(&ShapeAttribute::DenyUnknownFields)
     }
 
     /// See [`ShapeAttribute::Default`]
+    #[inline]
     pub fn has_default_attr(&self) -> bool {
         self.attributes.contains(&ShapeAttribute::Default)
     }
 
     /// See [`ShapeAttribute::RenameAll`]
+    #[inline]
     pub fn get_rename_all_attr(&self) -> Option<&str> {
         self.attributes.iter().find_map(|attr| {
             if let ShapeAttribute::RenameAll(rule) = attr {
@@ -332,6 +336,7 @@ impl<'shape> ShapeBuilder<'shape> {
 }
 
 impl PartialEq for Shape<'_> {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
@@ -348,6 +353,7 @@ impl core::hash::Hash for Shape<'_> {
 
 impl Shape<'_> {
     /// Check if this shape is of the given type
+    #[inline]
     pub fn is_shape(&self, other: &Shape<'_>) -> bool {
         self == other
     }
@@ -504,6 +510,7 @@ impl Shape<'_> {
     /// - `ptr` must have been allocated using [`Self::allocate`] and be aligned for this shape.
     /// - `ptr` must point to a region that is not already deallocated.
     #[cfg(feature = "alloc")]
+    #[inline]
     pub unsafe fn deallocate_mut(&self, ptr: PtrMut) -> Result<(), UnsizedError> {
         use alloc::alloc::dealloc;
 
@@ -527,6 +534,7 @@ impl Shape<'_> {
     /// - `ptr` must not have been already deallocated.
     /// - `ptr` must be properly aligned for this shape.
     #[cfg(feature = "alloc")]
+    #[inline]
     pub unsafe fn deallocate_uninit(
         &self,
         ptr: crate::ptr::PtrUninit<'static>,
@@ -560,6 +568,7 @@ pub struct TypeParam<'shape> {
 
 impl<'shape> TypeParam<'shape> {
     /// Returns the shape of the type parameter.
+    #[inline]
     pub fn shape(&self) -> &'shape Shape<'shape> {
         (self.shape)()
     }

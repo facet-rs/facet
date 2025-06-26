@@ -1,6 +1,6 @@
 [package]
 name = "facet-csv"
-version = "0.24.15"
+version = "0.24.16"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -20,10 +20,10 @@ rich-diagnostics = ["facet-deserialize/rich-diagnostics"]
 default = ["std", "rich-diagnostics"]
 
 [dependencies]
-facet-core = { version = "0.27.14", path = "../facet-core", default-features = false }
-facet-deserialize = { version = "0.24.20", path = "../facet-deserialize", default-features = false }
-facet-reflect = { version = "0.27.14", path = "../facet-reflect", default-features = false }
-facet-serialize = { version = "0.24.15", path = "../facet-serialize", default-features = false }
+facet-core = { version = "0.27.15", path = "../facet-core", default-features = false }
+facet-deserialize = { version = "0.24.21", path = "../facet-deserialize", default-features = false }
+facet-reflect = { version = "0.27.15", path = "../facet-reflect", default-features = false }
+facet-serialize = { version = "0.24.16", path = "../facet-serialize", default-features = false }
 log = "0.4.27"
 
 [dev-dependencies]

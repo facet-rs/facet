@@ -1505,38 +1505,39 @@ where
         }
 
         // Resolve the innermost value to deserialize
+        let mut smart_pointer_begun = false;
         loop {
+            trace!("  Loop iteration: current shape is {}", wip.shape().blue());
             if matches!(wip.shape().def, Def::Option(_)) {
                 trace!("  Starting Some(_) option for {}", wip.shape().blue());
                 wip.begin_some().map_err(|e| self.reflect_err(e))?;
                 self.stack.push(Instruction::Pop(PopReason::Some));
             } else if let Def::SmartPointer(inner) = wip.shape().def {
+                // Check if we've already begun this smart pointer
+                // (this can happen with slice pointees where the shape doesn't change)
+                if smart_pointer_begun {
+                    break;
+                }
                 if let Some(pointee) = inner.pointee() {
                     trace!(
                         "  Starting smart pointer for {} (pointee is {})",
                         wip.shape().blue(),
                         pointee.yellow(),
                     );
-
-                    // Special case: smart pointer to unsized str type
-                    if pointee == str::SHAPE
-                        && matches!(outcome.node, Outcome::Scalar(Scalar::String(_)))
-                    {
-                        trace!("  Handling smart pointer to str as special case");
-                        if let Outcome::Scalar(Scalar::String(s)) = &outcome.node {
-                            wip.set_smart_pointer_str(s)
-                                .map_err(|e| self.reflect_err(e))?;
-                            return Ok(wip);
-                        }
-                    }
                 } else {
                     trace!(
                         "  Starting smart pointer for {} (no pointee)",
                         wip.shape().blue()
                     );
                 }
+                trace!("  About to call begin_smart_ptr()");
                 wip.begin_smart_ptr().map_err(|e| self.reflect_err(e))?;
+                trace!(
+                    "  After begin_smart_ptr(), shape is now {}",
+                    wip.shape().blue()
+                );
                 self.stack.push(Instruction::Pop(PopReason::SmartPointer));
+                smart_pointer_begun = true;
             } else if let Some(inner_fn) = wip.shape().inner {
                 let inner = inner_fn();
                 trace!(
@@ -1597,8 +1598,12 @@ where
                         wip.set_default().map_err(|e| self.reflect_err(e))?;
                     }
                     _ => {
-                        // For non-collection types, check the Type enum
-                        if let Type::User(user_ty) = shape.ty {
+                        // Check if we're building a smart pointer slice
+                        if matches!(shape.def, Def::SmartPointer(_)) && smart_pointer_begun {
+                            trace!("Array starting for smart pointer slice ({})!", shape.blue());
+                            wip.begin_list().map_err(|e| self.reflect_err(e))?;
+                        } else if let Type::User(user_ty) = shape.ty {
+                            // For non-collection types, check the Type enum
                             match user_ty {
                                 UserType::Enum(_) => {
                                     trace!("Array starting for enum ({})!", shape.blue());
@@ -2048,8 +2053,13 @@ where
                         wip.begin_list_item().map_err(|e| self.reflect_err(e))?;
                     }
                     _ => {
+                        // Check if this is a smart pointer with slice pointee
+                        if matches!(shape.def, Def::SmartPointer(_)) {
+                            trace!("List item for smart pointer slice");
+                            wip.begin_list_item().map_err(|e| self.reflect_err(e))?;
+                        }
                         // Check if this is an enum tuple variant
-                        if let Type::User(UserType::Enum(_)) = shape.ty {
+                        else if let Type::User(UserType::Enum(_)) = shape.ty {
                             if let (Some(field_count), Some(current_field)) =
                                 (self.enum_tuple_field_count, self.enum_tuple_current_field)
                             {

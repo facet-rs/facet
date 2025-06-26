@@ -1,4 +1,4 @@
-use facet_core::{IterVTable, PtrConst, PtrMut, Shape, ShapeLayout};
+use facet_core::{GenericPtr, IterVTable, PtrConst, PtrMut, Shape, ShapeLayout};
 
 use super::Peek;
 use core::{fmt::Debug, marker::PhantomData};
@@ -24,6 +24,7 @@ pub enum ListLikeDef<'shape> {
 
 impl<'shape> ListLikeDef<'shape> {
     /// Returns the shape of the items in the list
+    #[inline]
     pub fn t(&self) -> &'shape Shape<'shape> {
         match self {
             ListLikeDef::List(v) => v.t(),
@@ -45,6 +46,7 @@ pub struct PeekListLikeIter<'mem, 'facet, 'shape> {
 impl<'mem, 'facet, 'shape> Iterator for PeekListLikeIter<'mem, 'facet, 'shape> {
     type Item = Peek<'mem, 'facet, 'shape>;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         let item_ptr = match self.state {
             PeekListLikeIterState::Ptr { data, stride } => {
@@ -64,6 +66,7 @@ impl<'mem, 'facet, 'shape> Iterator for PeekListLikeIter<'mem, 'facet, 'shape> {
         Some(unsafe { Peek::unchecked_new(item_ptr, self.def.t()) })
     }
 
+    #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         let remaining = self.len.saturating_sub(self.index);
         (remaining, Some(remaining))
@@ -76,6 +79,7 @@ impl<'mem, 'facet, 'shape> IntoIterator for &'mem PeekListLike<'mem, 'facet, 'sh
     type Item = Peek<'mem, 'facet, 'shape>;
     type IntoIter = PeekListLikeIter<'mem, 'facet, 'shape>;
 
+    #[inline]
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
     }
@@ -93,6 +97,7 @@ enum PeekListLikeIterState<'mem> {
 }
 
 impl Drop for PeekListLikeIterState<'_> {
+    #[inline]
     fn drop(&mut self) {
         match self {
             Self::Iter { iter, vtable } => unsafe { (vtable.dealloc)(*iter) },
@@ -119,21 +124,39 @@ impl<'mem, 'facet, 'shape> Debug for PeekListLike<'mem, 'facet, 'shape> {
 
 impl<'mem, 'facet, 'shape> PeekListLike<'mem, 'facet, 'shape> {
     /// Creates a new peek list
+    #[inline]
     pub fn new(value: Peek<'mem, 'facet, 'shape>, def: ListLikeDef<'shape>) -> Self {
         let len = match def {
             ListLikeDef::List(v) => unsafe { (v.vtable.len)(value.data().thin().unwrap()) },
-            ListLikeDef::Slice(v) => unsafe { (v.vtable.len)(value.data().thin().unwrap()) },
+            ListLikeDef::Slice(v) => {
+                // Check if we have a bare slice with wide pointer (e.g., from Arc<[T]>::borrow_inner)
+                // or a reference to a slice with thin pointer
+                match value.data() {
+                    GenericPtr::Wide(wide_ptr) => {
+                        // For bare slices, we need to extract the length from the wide pointer
+                        // We can safely cast to any slice type to get the length since it's metadata
+                        let slice_as_units = unsafe { wide_ptr.get::<[()]>() };
+                        slice_as_units.len()
+                    }
+                    GenericPtr::Thin(thin_ptr) => {
+                        // For references to slices, use the vtable
+                        unsafe { (v.vtable.len)(thin_ptr) }
+                    }
+                }
+            }
             ListLikeDef::Array(v) => v.n,
         };
         Self { value, def, len }
     }
 
     /// Get the length of the list
+    #[inline]
     pub fn len(&self) -> usize {
         self.len
     }
 
     /// Returns true if the list is empty
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -142,6 +165,31 @@ impl<'mem, 'facet, 'shape> PeekListLike<'mem, 'facet, 'shape> {
     ///
     /// Return `None` if the index is out of bounds
     pub fn get(&self, index: usize) -> Option<Peek<'mem, 'facet, 'shape>> {
+        // Special handling for bare slices with wide pointers
+        if let (ListLikeDef::Slice(_), GenericPtr::Wide(wide_ptr)) = (&self.def, self.value.data())
+        {
+            if index >= self.len() {
+                return None;
+            }
+
+            // Get the element type layout
+            let elem_layout = match self.def.t().layout {
+                ShapeLayout::Sized(layout) => layout,
+                ShapeLayout::Unsized => return None,
+            };
+
+            // Get the data pointer directly from the wide pointer
+            let data_ptr = wide_ptr.as_byte_ptr();
+
+            // Calculate the element pointer
+            let elem_ptr = unsafe { data_ptr.add(index * elem_layout.size()) };
+
+            // Create a Peek for the element
+            return Some(unsafe {
+                Peek::unchecked_new(GenericPtr::Thin(PtrConst::new(elem_ptr)), self.def.t())
+            });
+        }
+
         let as_ptr = match self.def {
             ListLikeDef::List(def) => {
                 // Call get from the list's vtable directly if available
@@ -184,7 +232,16 @@ impl<'mem, 'facet, 'shape> PeekListLike<'mem, 'facet, 'shape> {
 
         let state = match (as_ptr_fn, iter_vtable) {
             (Some(as_ptr_fn), _) => {
-                let data = unsafe { as_ptr_fn(self.value.data().thin().unwrap()) };
+                // Special handling for bare slices with wide pointers
+                let data = if let (ListLikeDef::Slice(_), GenericPtr::Wide(wide_ptr)) =
+                    (&self.def, self.value.data())
+                {
+                    // Get the data pointer directly from the wide pointer
+                    PtrConst::new(wide_ptr.as_byte_ptr())
+                } else {
+                    unsafe { as_ptr_fn(self.value.data().thin().unwrap()) }
+                };
+
                 let layout = self
                     .def
                     .t()
@@ -213,6 +270,7 @@ impl<'mem, 'facet, 'shape> PeekListLike<'mem, 'facet, 'shape> {
     }
 
     /// Def getter
+    #[inline]
     pub fn def(&self) -> ListLikeDef<'shape> {
         self.def
     }

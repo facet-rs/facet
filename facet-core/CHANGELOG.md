@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.15](https://github.com/facet-rs/facet/compare/facet-core-v0.27.14...facet-core-v0.27.15) - 2025-06-26
+
+### Other
+
+- Add support for `Arc<[U]>` in facet-core and facet-reflect
+- Inline obvious candidates (small functions)
+- Evaluate the ConstTypeId once in ScalarType::try_from_shape()
+- Inline selected functions in the critical path
+- impl Facet for Arc<str>, Rc<str>, and Box<str>
+- Remove most composite implementations for hashsets
+- Remove most composite implementations for hashmaps
+- Remove most composite implementations for tuples
+- Remove most composite impls for array
+- Remove most composite impls for btreeset
+- Remove move composite impls for vec
+- Remove Vec's clone_into composite impl
+- Remove ScalarDef
+- Remove PartialEq implementations
+- Apply modern clippy fixes (mostly format strings)
+
 ## [0.27.14](https://github.com/facet-rs/facet/compare/facet-core-v0.27.13...facet-core-v0.27.14) - 2025-06-17
 
 ### Other

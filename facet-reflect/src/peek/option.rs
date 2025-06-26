@@ -36,6 +36,7 @@ impl<'mem, 'facet, 'shape> PeekOption<'mem, 'facet, 'shape> {
     }
 
     /// Returns the inner value as a Peek if the option is Some, None otherwise
+    #[inline]
     pub fn value(self) -> Option<crate::Peek<'mem, 'facet, 'shape>> {
         unsafe {
             (self.vtable().get_value_fn)(self.value.data().thin().unwrap())

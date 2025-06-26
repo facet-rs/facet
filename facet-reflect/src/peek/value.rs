@@ -19,6 +19,7 @@ pub struct ValueId<'shape> {
 }
 
 impl<'shape> ValueId<'shape> {
+    #[inline]
     pub(crate) fn new(shape: &'shape Shape<'shape>, ptr: *const u8) -> Self {
         Self { shape, ptr }
     }
@@ -83,6 +84,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     }
 
     /// Returns a unique identifier for this value, usable for cycle detection
+    #[inline]
     pub fn id(&self) -> ValueId<'shape> {
         ValueId::new(self.shape, self.data.as_byte_ptr())
     }
@@ -197,6 +199,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     }
 
     /// Get the scalar type if set.
+    #[inline]
     pub fn scalar_type(&self) -> Option<ScalarType> {
         ScalarType::try_from_shape(self.shape)
     }
@@ -240,6 +243,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
 
     /// Try to get the value as a byte slice if it's a &[u8] type
     /// Returns None if the value is not a byte slice or couldn't be extracted
+    #[inline]
     pub fn as_bytes(&self) -> Option<&'mem [u8]> {
         // Check if it's a direct &[u8]
         if let Type::Pointer(PointerType::Reference(vpt)) = self.shape.ty {
@@ -254,6 +258,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     }
 
     /// Tries to identify this value as a struct
+    #[inline]
     pub fn into_struct(self) -> Result<PeekStruct<'mem, 'facet, 'shape>, ReflectError<'shape>> {
         if let Type::User(UserType::Struct(ty)) = self.shape.ty {
             Ok(PeekStruct { value: self, ty })
@@ -266,6 +271,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     }
 
     /// Tries to identify this value as an enum
+    #[inline]
     pub fn into_enum(self) -> Result<PeekEnum<'mem, 'facet, 'shape>, ReflectError<'shape>> {
         if let Type::User(UserType::Enum(ty)) = self.shape.ty {
             Ok(PeekEnum { value: self, ty })
@@ -278,6 +284,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     }
 
     /// Tries to identify this value as a map
+    #[inline]
     pub fn into_map(self) -> Result<PeekMap<'mem, 'facet, 'shape>, ReflectError<'shape>> {
         if let Def::Map(def) = self.shape.def {
             Ok(PeekMap { value: self, def })
@@ -290,6 +297,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     }
 
     /// Tries to identify this value as a set
+    #[inline]
     pub fn into_set(self) -> Result<PeekSet<'mem, 'facet, 'shape>, ReflectError<'shape>> {
         if let Def::Set(def) = self.shape.def {
             Ok(PeekSet { value: self, def })
@@ -302,6 +310,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     }
 
     /// Tries to identify this value as a list
+    #[inline]
     pub fn into_list(self) -> Result<PeekList<'mem, 'facet, 'shape>, ReflectError<'shape>> {
         if let Def::List(def) = self.shape.def {
             return Ok(PeekList { value: self, def });
@@ -314,12 +323,25 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     }
 
     /// Tries to identify this value as a list, array or slice
+    #[inline]
     pub fn into_list_like(
         self,
     ) -> Result<PeekListLike<'mem, 'facet, 'shape>, ReflectError<'shape>> {
         match self.shape.def {
             Def::List(def) => Ok(PeekListLike::new(self, ListLikeDef::List(def))),
             Def::Array(def) => Ok(PeekListLike::new(self, ListLikeDef::Array(def))),
+            Def::Slice(def) => {
+                // When we have a bare slice shape with a wide pointer,
+                // it means we have a reference to a slice (e.g., from Arc<[T]>::borrow_inner)
+                if matches!(self.data, GenericPtr::Wide(_)) {
+                    Ok(PeekListLike::new(self, ListLikeDef::Slice(def)))
+                } else {
+                    Err(ReflectError::WasNotA {
+                        expected: "slice with wide pointer",
+                        actual: self.shape,
+                    })
+                }
+            }
             _ => {
                 // &[i32] is actually a _pointer_ to a slice.
                 match self.shape.ty {
@@ -353,6 +375,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     }
 
     /// Tries to identify this value as a smart pointer
+    #[inline]
     pub fn into_smart_pointer(
         self,
     ) -> Result<PeekSmartPointer<'mem, 'facet, 'shape>, ReflectError<'shape>> {
@@ -367,6 +390,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     }
 
     /// Tries to identify this value as an option
+    #[inline]
     pub fn into_option(
         self,
     ) -> Result<super::PeekOption<'mem, 'facet, 'shape>, ReflectError<'shape>> {
@@ -381,6 +405,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     }
 
     /// Tries to identify this value as a tuple
+    #[inline]
     pub fn into_tuple(self) -> Result<PeekTuple<'mem, 'facet, 'shape>, ReflectError<'shape>> {
         if let Type::User(UserType::Struct(struct_type)) = self.shape.ty {
             if struct_type.kind == StructKind::Tuple {
@@ -473,12 +498,14 @@ impl<'mem, 'facet, 'shape> core::fmt::Debug for Peek<'mem, 'facet, 'shape> {
 }
 
 impl<'mem, 'facet, 'shape> core::cmp::PartialEq for Peek<'mem, 'facet, 'shape> {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.partial_eq(other).unwrap_or(false)
     }
 }
 
 impl<'mem, 'facet, 'shape> core::cmp::PartialOrd for Peek<'mem, 'facet, 'shape> {
+    #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         self.partial_cmp(other).unwrap_or(None)
     }
