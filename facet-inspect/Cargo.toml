@@ -5,6 +5,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Allows inxpecting types that implement Facet"
+keywords = ["reflection", "introspection", "facet", "peek", "poke"]
+categories = ["development-tools", "rust-patterns"]
 
 [dependencies]
 facet = { path = "../facet", version = "0.27.15" }
