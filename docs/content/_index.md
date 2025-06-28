@@ -45,7 +45,7 @@ But also:
 
   * Which traits are implemented for this shape
     * via [Characteristic](https://docs.rs/facet-core/latest/facet_core/enum.Characteristic.html)
-    * and [ValueVTable](https://docs.rs/facet-core/latest/facet_core/struct.ValueVTable.html)
+    * and [ValueVTable](https://docs.rs/facet-core/latest/facet_core/enum.ValueVTable.html)
 
 This takes into account type parameters (which you can also inspect at runtime), so:
 
