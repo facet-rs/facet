@@ -3,6 +3,7 @@ use alloc::vec::Vec;
 use facet_core::Facet;
 use facet_reflect::Peek;
 use facet_serialize::{Serializer, serialize_iterative};
+use itoa::Integer;
 use log::debug;
 
 /// Serializes a value implementing `Facet` to a JSON string.
@@ -106,68 +107,9 @@ impl<W: crate::JsonWrite> JsonSerializer<W> {
     }
 }
 
-impl<'shape, W: crate::JsonWrite> Serializer<'shape> for JsonSerializer<W> {
-    type Error = SerializeError;
-
-    fn serialize_u8(&mut self, value: u8) -> Result<(), Self::Error> {
+impl<W: crate::JsonWrite> JsonSerializer<W> {
+    fn serialize_number<T: Integer + ToString>(&mut self, value: T) -> Result<(), SerializeError> {
         self.start_value()?;
-        self.writer
-            .write(itoa::Buffer::new().format(value).as_bytes());
-        self.end_value()
-    }
-
-    fn serialize_u16(&mut self, value: u16) -> Result<(), Self::Error> {
-        self.start_value()?;
-        self.writer
-            .write(itoa::Buffer::new().format(value).as_bytes());
-        self.end_value()
-    }
-
-    fn serialize_u32(&mut self, value: u32) -> Result<(), Self::Error> {
-        self.start_value()?;
-        self.writer
-            .write(itoa::Buffer::new().format(value).as_bytes());
-        self.end_value()
-    }
-
-    fn serialize_u64(&mut self, value: u64) -> Result<(), Self::Error> {
-        self.start_value()?;
-        self.writer
-            .write(itoa::Buffer::new().format(value).as_bytes());
-        self.end_value()
-    }
-
-    fn serialize_u128(&mut self, value: u128) -> Result<(), Self::Error> {
-        self.start_value()?;
-        self.writer
-            .write(itoa::Buffer::new().format(value).as_bytes());
-        self.end_value()
-    }
-
-    fn serialize_usize(&mut self, value: usize) -> Result<(), Self::Error> {
-        self.start_value()?;
-        self.writer
-            .write(itoa::Buffer::new().format(value).as_bytes());
-        self.end_value()
-    }
-
-    fn serialize_i8(&mut self, value: i8) -> Result<(), Self::Error> {
-        self.start_value()?;
-        self.writer
-            .write(itoa::Buffer::new().format(value).as_bytes());
-        self.end_value()
-    }
-
-    fn serialize_i16(&mut self, value: i16) -> Result<(), Self::Error> {
-        self.start_value()?;
-        self.writer
-            .write(itoa::Buffer::new().format(value).as_bytes());
-        self.end_value()
-    }
-
-    fn serialize_i32(&mut self, value: i32) -> Result<(), Self::Error> {
-        self.start_value()?;
-
         match self.stack.last() {
             Some(StackItem::ObjectItem {
                 object_state: ObjectItemState::Value,
@@ -184,26 +126,57 @@ impl<'shape, W: crate::JsonWrite> Serializer<'shape> for JsonSerializer<W> {
         };
         self.end_value()
     }
+}
+
+impl<'shape, W: crate::JsonWrite> Serializer<'shape> for JsonSerializer<W> {
+    type Error = SerializeError;
+
+    fn serialize_u8(&mut self, value: u8) -> Result<(), Self::Error> {
+        self.serialize_number(value)
+    }
+
+    fn serialize_u16(&mut self, value: u16) -> Result<(), Self::Error> {
+        self.serialize_number(value)
+    }
+
+    fn serialize_u32(&mut self, value: u32) -> Result<(), Self::Error> {
+        self.serialize_number(value)
+    }
+
+    fn serialize_u64(&mut self, value: u64) -> Result<(), Self::Error> {
+        self.serialize_number(value)
+    }
+
+    fn serialize_u128(&mut self, value: u128) -> Result<(), Self::Error> {
+        self.serialize_number(value)
+    }
+
+    fn serialize_usize(&mut self, value: usize) -> Result<(), Self::Error> {
+        self.serialize_number(value)
+    }
+
+    fn serialize_i8(&mut self, value: i8) -> Result<(), Self::Error> {
+        self.serialize_number(value)
+    }
+
+    fn serialize_i16(&mut self, value: i16) -> Result<(), Self::Error> {
+        self.serialize_number(value)
+    }
+
+    fn serialize_i32(&mut self, value: i32) -> Result<(), Self::Error> {
+        self.serialize_number(value)
+    }
 
     fn serialize_i64(&mut self, value: i64) -> Result<(), Self::Error> {
-        self.start_value()?;
-        self.writer
-            .write(itoa::Buffer::new().format(value).as_bytes());
-        self.end_value()
+        self.serialize_number(value)
     }
 
     fn serialize_i128(&mut self, value: i128) -> Result<(), Self::Error> {
-        self.start_value()?;
-        self.writer
-            .write(itoa::Buffer::new().format(value).as_bytes());
-        self.end_value()
+        self.serialize_number(value)
     }
 
     fn serialize_isize(&mut self, value: isize) -> Result<(), Self::Error> {
-        self.start_value()?;
-        self.writer
-            .write(itoa::Buffer::new().format(value).as_bytes());
-        self.end_value()
+        self.serialize_number(value)
     }
 
     fn serialize_f32(&mut self, value: f32) -> Result<(), Self::Error> {
