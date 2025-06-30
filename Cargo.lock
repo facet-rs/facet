@@ -217,19 +217,6 @@ checksum = "b94f61472cee1439c0b966b47e3aca9ae07e45d070759512cd390ea2bebc6675"
 
 [[package]]
 name = "codspeed"
-version = "2.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93f4cce9c27c49c4f101fffeebb1826f41a9df2e7498b7cd4d95c0658b796c6c"
-dependencies = [
- "colored",
- "libc",
- "serde",
- "serde_json",
- "uuid",
-]
-
-[[package]]
-name = "codspeed"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "110833f02643ff4a8360b1f839d005bf830f398f7f2290d614a805d7e668a67f"
@@ -248,38 +235,13 @@ dependencies = [
 
 [[package]]
 name = "codspeed-divan-compat"
-version = "2.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8620a09dfaf37b3c45f982c4b65bd8f9b0203944da3ffa705c0fcae6b84655ff"
-dependencies = [
- "codspeed 2.10.1",
- "codspeed-divan-compat-macros 2.10.1",
- "codspeed-divan-compat-walltime 2.10.1",
-]
-
-[[package]]
-name = "codspeed-divan-compat"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f3bcb5bfb0326bc088bd630ce779338669414a735c5bb45d4c5323db42b04c5"
 dependencies = [
- "codspeed 3.0.0",
- "codspeed-divan-compat-macros 3.0.0",
- "codspeed-divan-compat-walltime 3.0.0",
-]
-
-[[package]]
-name = "codspeed-divan-compat-macros"
-version = "2.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30fe872bc4214626b35d3a1706a905d0243503bb6ba3bb7be2fc59083d5d680c"
-dependencies = [
- "divan-macros",
- "itertools",
- "proc-macro-crate",
- "proc-macro2",
- "quote",
- "syn",
+ "codspeed",
+ "codspeed-divan-compat-macros",
+ "codspeed-divan-compat-walltime",
 ]
 
 [[package]]
@@ -298,28 +260,13 @@ dependencies = [
 
 [[package]]
 name = "codspeed-divan-compat-walltime"
-version = "2.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "104caa97b36d4092d89e24e4b103b40ede1edab03c0372d19e14a33f9393132b"
-dependencies = [
- "cfg-if",
- "clap",
- "codspeed 2.10.1",
- "condtype",
- "divan-macros",
- "libc",
- "regex-lite",
-]
-
-[[package]]
-name = "codspeed-divan-compat-walltime"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "438e78b25be0f3cebaf8089c7c91b31ea3bfedc31275128380fc7694436612e0"
 dependencies = [
  "cfg-if",
  "clap",
- "codspeed 3.0.0",
+ "codspeed",
  "condtype",
  "divan-macros",
  "libc",
@@ -506,7 +453,7 @@ dependencies = [
 name = "facet-bench"
 version = "0.23.0"
 dependencies = [
- "codspeed-divan-compat 3.0.0",
+ "codspeed-divan-compat",
  "facet",
  "facet-json",
  "facet-reflect",
@@ -684,7 +631,7 @@ name = "facet-pretty"
 version = "0.23.22"
 dependencies = [
  "camino",
- "codspeed-divan-compat 2.10.1",
+ "codspeed-divan-compat",
  "facet",
  "facet-core",
  "facet-reflect",
@@ -774,7 +721,7 @@ name = "facet-toml"
 version = "0.25.16"
 dependencies = [
  "ariadne",
- "codspeed-divan-compat 2.10.1",
+ "codspeed-divan-compat",
  "eyre",
  "facet",
  "facet-core",
