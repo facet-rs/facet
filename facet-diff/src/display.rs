@@ -124,7 +124,7 @@ impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
                     }
                     Value::Tuple { updates } => {
                         writeln!(indent, "\x1b[m (")?;
-                        write!(indent, "{}", updates)?;
+                        write!(indent, "{updates}")?;
                         f.write_str(")")
                     }
                 }
@@ -146,7 +146,7 @@ impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
                 };
 
                 writeln!(indent, " [")?;
-                write!(indent, "{}", updates)?;
+                write!(indent, "{updates}")?;
                 write!(f, "]")
             }
         }
@@ -186,14 +186,14 @@ impl<'mem, 'facet> Display for UpdatesGroup<'mem, 'facet> {
 
         for (values, update) in &self.0.values {
             for value in values {
-                writeln!(f, "{}", value)?;
+                writeln!(f, "{value}")?;
             }
             update.fmt(f)?;
         }
 
         if let Some(values) = &self.0.last {
             for value in values {
-                writeln!(f, "{}", value)?;
+                writeln!(f, "{value}")?;
             }
         }
 
