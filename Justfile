@@ -88,10 +88,10 @@ code-quality-ci:
     cmd_group "just absolve"
 
 miri *args:
-    export RUSTUP_TOOLCHAIN=nightly-2025-05-11
-    rustup toolchain install nightly-2025-05-11
-    rustup +nightly-2025-05-11 component add miri rust-src
-    cargo +nightly-2025-05-11 miri nextest run --target-dir target/miri -p facet-reflect -p facet-core {{args}}
+    export RUSTUP_TOOLCHAIN=nightly-2025-06-29
+    rustup toolchain install nightly-2025-06-29
+    rustup +nightly-2025-06-29 component add miri rust-src
+    cargo +nightly-2025-06-29 miri nextest run --target-dir target/miri -p facet-reflect -p facet-core {{args}}
 
 miri-ci *args:
     #!/usr/bin/env -S bash -euxo pipefail
