@@ -384,7 +384,7 @@ where
                                     cpeek.shape().vtable.sized().and_then(|v| (v.display)())
                                 {
                                     // Use display formatting if available
-                                    serializer.serialize_str(&alloc::format!("{}", cpeek))?
+                                    serializer.serialize_str(&alloc::format!("{cpeek}"))?
                                 } else {
                                     panic!("Unsupported shape (no display): {}", cpeek.shape())
                                 }

@@ -191,19 +191,19 @@ fn deserialize_value<'facet, 'shape>(
                         match size {
                             1 => {
                                 let val = u8::try_from(u).map_err(|_| {
-                                    AnyErr(format!("Value {} out of range for u8", u))
+                                    AnyErr(format!("Value {u} out of range for u8"))
                                 })?;
                                 wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
                             }
                             2 => {
                                 let val = u16::try_from(u).map_err(|_| {
-                                    AnyErr(format!("Value {} out of range for u16", u))
+                                    AnyErr(format!("Value {u} out of range for u16"))
                                 })?;
                                 wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
                             }
                             4 => {
                                 let val = u32::try_from(u).map_err(|_| {
-                                    AnyErr(format!("Value {} out of range for u32", u))
+                                    AnyErr(format!("Value {u} out of range for u32"))
                                 })?;
                                 wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
                             }
@@ -211,7 +211,7 @@ fn deserialize_value<'facet, 'shape>(
                                 // Check if it's usize or u64
                                 if innermost_shape.is_type::<usize>() {
                                     let val = usize::try_from(u).map_err(|_| {
-                                        AnyErr(format!("Value {} out of range for usize", u))
+                                        AnyErr(format!("Value {u} out of range for usize"))
                                     })?;
                                     wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
                                 } else {
@@ -225,7 +225,7 @@ fn deserialize_value<'facet, 'shape>(
                             _ => {
                                 // Handle usize
                                 let val = usize::try_from(u).map_err(|_| {
-                                    AnyErr(format!("Value {} out of range for usize", u))
+                                    AnyErr(format!("Value {u} out of range for usize"))
                                 })?;
                                 wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
                             }
@@ -257,19 +257,19 @@ fn deserialize_value<'facet, 'shape>(
                         match size {
                             1 => {
                                 let val = i8::try_from(i).map_err(|_| {
-                                    AnyErr(format!("Value {} out of range for i8", i))
+                                    AnyErr(format!("Value {i} out of range for i8"))
                                 })?;
                                 wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
                             }
                             2 => {
                                 let val = i16::try_from(i).map_err(|_| {
-                                    AnyErr(format!("Value {} out of range for i16", i))
+                                    AnyErr(format!("Value {i} out of range for i16"))
                                 })?;
                                 wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
                             }
                             4 => {
                                 let val = i32::try_from(i).map_err(|_| {
-                                    AnyErr(format!("Value {} out of range for i32", i))
+                                    AnyErr(format!("Value {i} out of range for i32"))
                                 })?;
                                 wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
                             }
@@ -277,7 +277,7 @@ fn deserialize_value<'facet, 'shape>(
                                 // Check if it's isize or i64
                                 if innermost_shape.is_type::<isize>() {
                                     let val = isize::try_from(i).map_err(|_| {
-                                        AnyErr(format!("Value {} out of range for isize", i))
+                                        AnyErr(format!("Value {i} out of range for isize"))
                                     })?;
                                     wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
                                 } else {
@@ -291,7 +291,7 @@ fn deserialize_value<'facet, 'shape>(
                             _ => {
                                 // Handle isize
                                 let val = isize::try_from(i).map_err(|_| {
-                                    AnyErr(format!("Value {} out of range for isize", i))
+                                    AnyErr(format!("Value {i} out of range for isize"))
                                 })?;
                                 wip.set(val).map_err(|e| AnyErr(e.to_string()))?;
                             }
