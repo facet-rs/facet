@@ -217,9 +217,9 @@ checksum = "b94f61472cee1439c0b966b47e3aca9ae07e45d070759512cd390ea2bebc6675"
 
 [[package]]
 name = "codspeed"
-version = "3.0.0"
+version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "110833f02643ff4a8360b1f839d005bf830f398f7f2290d614a805d7e668a67f"
+checksum = "38b41c7ae78309311a5ce5f31dbdae2d7d6ad68b057163eaa23e05b68c9ffac8"
 dependencies = [
  "anyhow",
  "bincode",
@@ -235,9 +235,9 @@ dependencies = [
 
 [[package]]
 name = "codspeed-divan-compat"
-version = "3.0.0"
+version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f3bcb5bfb0326bc088bd630ce779338669414a735c5bb45d4c5323db42b04c5"
+checksum = "bacc5b31ae6b72f635e734e84bbe67344670cc90f722ee8072c291fd0c6519dd"
 dependencies = [
  "codspeed",
  "codspeed-divan-compat-macros",
@@ -246,9 +246,9 @@ dependencies = [
 
 [[package]]
 name = "codspeed-divan-compat-macros"
-version = "3.0.0"
+version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "459270f1a7cf7d1e286b5802a3a6fedf5cc1ebc2f2575879b369e8b0e4135966"
+checksum = "43ae5682b0a0364f91cf43b1a15fce853d98e42e80ca28b5ed76d1c1aea3e3f3"
 dependencies = [
  "divan-macros",
  "itertools",
@@ -260,9 +260,9 @@ dependencies = [
 
 [[package]]
 name = "codspeed-divan-compat-walltime"
-version = "3.0.0"
+version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "438e78b25be0f3cebaf8089c7c91b31ea3bfedc31275128380fc7694436612e0"
+checksum = "c76f05209b9bd37cf511ae46e9ce75e812e9e708f8f4df5e3b470883c889efdc"
 dependencies = [
  "cfg-if",
  "clap",
