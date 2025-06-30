@@ -5,7 +5,7 @@ use facet_pretty::PrettyPrinter;
 
 use crate::{
     diff::{Diff, Value},
-    sequences::{Updates, UpdatesGroup},
+    sequences::{ReplaceGroup, Updates, UpdatesGroup},
 };
 
 struct PadAdapter<'a, 'b: 'a> {
@@ -97,6 +97,7 @@ impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
                         updates,
                         deletions,
                         insertions,
+                        unchanged: _,
                     } => {
                         writeln!(indent, "\x1b[m {{")?;
                         for (field, update) in updates {
@@ -154,20 +155,20 @@ impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
 
 impl<'mem, 'facet> Display for Updates<'mem, 'facet> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(update) = &self.first {
+        if let Some(update) = &self.0.first {
             update.fmt(f)?;
         }
 
         let printer = PrettyPrinter::default().with_colors(false);
 
-        for (values, update) in &self.values {
+        for (values, update) in &self.0.values {
             for value in values {
                 writeln!(f, "{}", printer.format_peek(*value))?;
             }
             update.fmt(f)?;
         }
 
-        if let Some(values) = &self.last {
+        if let Some(values) = &self.0.last {
             for value in values {
                 writeln!(f, "{}", printer.format_peek(*value))?;
             }
@@ -179,6 +180,29 @@ impl<'mem, 'facet> Display for Updates<'mem, 'facet> {
 
 impl<'mem, 'facet> Display for UpdatesGroup<'mem, 'facet> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(update) = &self.0.first {
+            update.fmt(f)?;
+        }
+
+        for (values, update) in &self.0.values {
+            for value in values {
+                writeln!(f, "{}", value)?;
+            }
+            update.fmt(f)?;
+        }
+
+        if let Some(values) = &self.0.last {
+            for value in values {
+                writeln!(f, "{}", value)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl<'mem, 'facet> Display for ReplaceGroup<'mem, 'facet> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let printer = PrettyPrinter::default().with_colors(false);
 
         for remove in &self.removals {
@@ -187,10 +211,6 @@ impl<'mem, 'facet> Display for UpdatesGroup<'mem, 'facet> {
 
         for add in &self.additions {
             writeln!(f, "\x1b[32m{}\x1b[m", printer.format_peek(*add))?;
-        }
-
-        if let Some(update) = &self.updates {
-            writeln!(f, "{update}")?;
         }
 
         Ok(())

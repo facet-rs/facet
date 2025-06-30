@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use facet::{Def, Shape, StructKind, Type, UserType};
 use facet_core::Facet;
@@ -63,7 +63,19 @@ pub enum Value<'mem, 'facet> {
 
         /// The fields that are in `to` but not in `from`.
         insertions: HashMap<&'static str, Peek<'mem, 'facet, 'static>>,
+
+        /// The fields that are unchanged
+        unchanged: HashSet<&'static str>,
     },
+}
+
+impl<'mem, 'facet> Value<'mem, 'facet> {
+    fn closeness(&self) -> usize {
+        match self {
+            Self::Tuple { updates } => updates.closeness(),
+            Self::Struct { unchanged, .. } => unchanged.len(),
+        }
+    }
 }
 
 pub trait FacetDiff<'f>: Facet<'f> {
@@ -116,11 +128,14 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                         let mut updates = HashMap::new();
                         let mut deletions = HashMap::new();
                         let mut insertions = HashMap::new();
+                        let mut unchanged = HashSet::new();
 
                         for (field, from) in from_ty.fields() {
                             if let Ok(to) = to_ty.field_by_name(field.name) {
                                 let diff = Diff::new_peek(from, to);
-                                if !diff.is_equal() {
+                                if diff.is_equal() {
+                                    unchanged.insert(field.name);
+                                } else {
                                     updates.insert(field.name, diff);
                                 }
                             } else {
@@ -137,6 +152,7 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                             updates,
                             deletions,
                             insertions,
+                            unchanged,
                         }
                     };
 
@@ -173,11 +189,14 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                     let mut updates = HashMap::new();
                     let mut deletions = HashMap::new();
                     let mut insertions = HashMap::new();
+                    let mut unchanged = HashSet::new();
 
                     for (field, from) in from_enum.fields() {
                         if let Ok(Some(to)) = to_enum.field_by_name(field.name) {
                             let diff = Diff::new_peek(from, to);
-                            if !diff.is_equal() {
+                            if diff.is_equal() {
+                                unchanged.insert(field.name);
+                            } else {
                                 updates.insert(field.name, diff);
                             }
                         } else {
@@ -198,6 +217,7 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                         updates,
                         deletions,
                         insertions,
+                        unchanged,
                     }
                 };
 
@@ -251,6 +271,17 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                 }
             }
             _ => Diff::Replace { from, to },
+        }
+    }
+
+    pub(crate) fn closeness(&self) -> usize {
+        match self {
+            Self::Equal => 1, // This does not actually matter for flattening sequence diffs, because all diffs there are non-equal
+            Self::Replace { .. } => 0,
+            Self::Sequence { updates, .. } => updates.closeness(),
+            Self::User {
+                from, to, value, ..
+            } => value.closeness() + (from == to) as usize,
         }
     }
 }
