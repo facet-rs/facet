@@ -1,5 +1,6 @@
 use facet_json::{from_str, to_string};
 use facet_testhelpers::test;
+use std::collections::HashMap;
 
 #[test]
 fn json_read_hashmap() {
@@ -12,8 +13,20 @@ fn json_read_hashmap() {
 }
 
 #[test]
-fn serialize_hashmap_number_keys() {
+fn serialize_hashmap_i32_number_keys() {
     let mut map = std::collections::HashMap::new();
+    map.insert(1, 2);
+    map.insert(3, 4);
+
+    let output = to_string(&map);
+
+    assert!(output.contains("\"1\":2"));
+    assert!(output.contains("\"3\":4"));
+}
+
+#[test]
+fn serialize_hashmap_u8_number_keys() {
+    let mut map: HashMap<u8, u8> = std::collections::HashMap::new();
     map.insert(1, 2);
     map.insert(3, 4);
 
