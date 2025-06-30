@@ -218,7 +218,9 @@ jobs:
       - name: ✨ Run nextest tests (Windows)
         shell: bash
         run: |
-          cargo nextest run --all-features
+          cargo nextest run --all-features -p facet-core
+          cargo nextest run --all-features -p facet-reflect
+          cargo nextest run --all-features -p facet-json
 
   coverage:
     runs-on: depot-ubuntu-24.04-32
