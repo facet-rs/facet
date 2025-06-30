@@ -25,4 +25,9 @@ fn main() {
     let b = (2, 3, 1, 4);
     let diff = a.diff(&b);
     println!("{diff}");
+
+    let a = ((1, 2), (3, 4));
+    let b = ((1, 2, 3), (4, 5));
+    let diff = a.diff(&b);
+    println!("{diff}");
 }
