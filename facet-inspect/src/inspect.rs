@@ -135,7 +135,7 @@ impl<'mem, 'facet, 'shape> FacetIterator<'mem, 'facet, 'shape> {
         map: impl Iterator<Item = (Peek<'mem, 'facet, 'shape>, Peek<'mem, 'facet, 'shape>)>,
     ) {
         for (key, value_peek) in map {
-            let new_path = parent_path.join(&FacetPath::from(format!("{}", key).as_str()));
+            let new_path = parent_path.join(&FacetPath::from(format!("{key}").as_str()));
             self.stack.push((new_path, value_peek));
         }
     }
