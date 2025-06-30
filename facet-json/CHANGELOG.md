@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.17](https://github.com/facet-rs/facet/compare/facet-json-v0.24.16...facet-json-v0.24.17) - 2025-06-30
+
+### Other
+
+- Generate string keys for all numbers (except floats, which can't work as map keys)
+- write json key as string for i32 numbers
+
 ## [0.24.16](https://github.com/facet-rs/facet/compare/facet-json-v0.24.15...facet-json-v0.24.16) - 2025-06-26
 
 ### Other

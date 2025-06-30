@@ -1,6 +1,6 @@
 [package]
 name = "facet-yaml"
-version = "0.25.14"
+version = "0.25.15"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -23,7 +23,7 @@ log = ["dep:log"]
 yaml-rust2 = "0.10.1"
 facet-core = { version = "0.27.15", path = "../facet-core", default-features = false }
 facet-reflect = { version = "0.27.15", path = "../facet-reflect", default-features = false }
-facet-serialize = { version = "0.24.16", path = "../facet-serialize", default-features = false, optional = true }
+facet-serialize = { version = "0.24.17", path = "../facet-serialize", default-features = false, optional = true }
 log = { version = "0.4.27", optional = true }
 
 [dev-dependencies]

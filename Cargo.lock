@@ -321,8 +321,20 @@ dependencies = [
  "encode_unicode",
  "libc",
  "once_cell",
- "unicode-width 0.2.1",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "console"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e09ced7ebbccb63b4c65413d821f2e00ce54c5ca4514ddc6b3c892fdbcbc69d"
+dependencies = [
+ "encode_unicode",
+ "libc",
+ "once_cell",
+ "unicode-width 0.2.1",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -484,7 +496,7 @@ dependencies = [
 
 [[package]]
 name = "facet-csv"
-version = "0.24.16"
+version = "0.24.17"
 dependencies = [
  "eyre",
  "facet",
@@ -545,7 +557,7 @@ dependencies = [
 
 [[package]]
 name = "facet-json"
-version = "0.24.16"
+version = "0.24.17"
 dependencies = [
  "bytes",
  "camino",
@@ -622,7 +634,7 @@ dependencies = [
 
 [[package]]
 name = "facet-msgpack"
-version = "0.25.16"
+version = "0.25.17"
 dependencies = [
  "eyre",
  "facet",
@@ -638,7 +650,7 @@ dependencies = [
 
 [[package]]
 name = "facet-pretty"
-version = "0.23.22"
+version = "0.23.23"
 dependencies = [
  "camino",
  "codspeed-divan-compat",
@@ -669,7 +681,7 @@ dependencies = [
 
 [[package]]
 name = "facet-serialize"
-version = "0.24.16"
+version = "0.24.17"
 dependencies = [
  "eyre",
  "facet",
@@ -728,7 +740,7 @@ dependencies = [
 
 [[package]]
 name = "facet-toml"
-version = "0.25.16"
+version = "0.25.17"
 dependencies = [
  "ariadne",
  "codspeed-divan-compat",
@@ -761,7 +773,7 @@ dependencies = [
 
 [[package]]
 name = "facet-xdr"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "facet",
  "facet-core",
@@ -772,7 +784,7 @@ dependencies = [
 
 [[package]]
 name = "facet-yaml"
-version = "0.25.14"
+version = "0.25.15"
 dependencies = [
  "eyre",
  "facet",
@@ -1023,9 +1035,9 @@ checksum = "ce23b50ad8242c51a442f3ff322d56b02f08852c77e4c0b4d3fd684abc89c683"
 
 [[package]]
 name = "indexmap"
-version = "2.9.0"
+version = "2.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cea70ddb795996207ad57735b50c5982d8844f38ba9ee5f1aedcfb708a2aa11e"
+checksum = "fe4cd85333e22411419a0bcae1297d25e58c9443848b11dc6a86fefe8c78a661"
 dependencies = [
  "equivalent",
  "hashbrown",
@@ -1033,14 +1045,14 @@ dependencies = [
 
 [[package]]
 name = "indicatif"
-version = "0.17.11"
+version = "0.17.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "183b3088984b400f4cfac3620d5e076c84da5364016b4f49473de574b2586235"
+checksum = "4adb2ee6ad319a912210a36e56e3623555817bcc877a7e6e8802d1d69c4d8056"
 dependencies = [
- "console",
- "number_prefix",
+ "console 0.16.0",
  "portable-atomic",
  "unicode-width 0.2.1",
+ "unit-prefix",
  "web-time",
 ]
 
@@ -1056,7 +1068,7 @@ version = "1.43.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "154934ea70c58054b556dd430b99a98c2a7ff5309ac9891597e339b5c28f4371"
 dependencies = [
- "console",
+ "console 0.15.11",
  "once_cell",
  "similar",
 ]
@@ -1356,12 +1368,6 @@ dependencies = [
  "autocfg",
  "libm",
 ]
-
-[[package]]
-name = "number_prefix"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "830b246a0e5f20af87141b25c173cd1b609bd7779a4617d6ec582abaf90870f3"
 
 [[package]]
 name = "numtoa"
@@ -1968,6 +1974,12 @@ name = "unicode-width"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4a1a07cc7db3810833284e8d372ccdc6da29741639ecc70c9ec107df0fa6154c"
+
+[[package]]
+name = "unit-prefix"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "323402cff2dd658f39ca17c789b502021b3f18707c91cdf22e3838e1b4023817"
 
 [[package]]
 name = "unsynn"

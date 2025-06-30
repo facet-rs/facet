@@ -1,6 +1,6 @@
 [package]
 name = "facet-xdr"
-version = "0.1.17"
+version = "0.1.18"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -17,7 +17,7 @@ default = ["std"]
 [dependencies]
 facet-core = { version = "0.27.15", path = "../facet-core", default-features = false }
 facet-reflect = { version = "0.27.15", path = "../facet-reflect", default-features = false }
-facet-serialize = { version = "0.24.16", path = "../facet-serialize", default-features = false }
+facet-serialize = { version = "0.24.17", path = "../facet-serialize", default-features = false }
 
 [dev-dependencies]
 facet = { path = "../facet" }

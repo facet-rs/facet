@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.17](https://github.com/facet-rs/facet/compare/facet-toml-v0.25.16...facet-toml-v0.25.17) - 2025-06-30
+
+### Other
+
+- Bump to codspeed-divan-compat 3.0.1 (for windows build)
+- No rust-cache for limpid run + upgrade codspeed
+
 ## [0.25.16](https://github.com/facet-rs/facet/compare/facet-toml-v0.25.15...facet-toml-v0.25.16) - 2025-06-26
 
 ### Other

@@ -1,6 +1,6 @@
 [package]
 name = "facet-toml"
-version = "0.25.16"
+version = "0.25.17"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -32,7 +32,7 @@ toml_edit = { version = "0.22.26", default-features = false, features = [
 ], optional = true }
 facet-core = { version = "0.27.15", path = "../facet-core", default-features = false }
 facet-reflect = { version = "0.27.15", path = "../facet-reflect", default-features = false }
-facet-serialize = { version = "0.24.16", path = "../facet-serialize", default-features = false, optional = true }
+facet-serialize = { version = "0.24.17", path = "../facet-serialize", default-features = false, optional = true }
 owo-colors = "4.2.1"
 
 [dev-dependencies]

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.23](https://github.com/facet-rs/facet/compare/facet-pretty-v0.23.22...facet-pretty-v0.23.23) - 2025-06-30
+
+### Other
+
+- Bump to codspeed-divan-compat 3.0.1 (for windows build)
+- No rust-cache for limpid run + upgrade codspeed
+
 ## [0.23.22](https://github.com/facet-rs/facet/compare/facet-pretty-v0.23.21...facet-pretty-v0.23.22) - 2025-06-26
 
 ### Other
