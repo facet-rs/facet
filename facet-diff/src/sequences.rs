@@ -2,16 +2,53 @@ use facet_reflect::Peek;
 
 use crate::Diff;
 
-#[derive(Default)]
-pub struct UpdatesGroup<'mem, 'facet> {
-    pub(crate) removals: Vec<Peek<'mem, 'facet, 'static>>,
-    pub(crate) additions: Vec<Peek<'mem, 'facet, 'static>>,
-
-    /// For now, this is only used when there is a single removal and addition
-    pub(crate) updates: Option<Box<Diff<'mem, 'facet>>>,
+pub(crate) struct Interspersed<A, B> {
+    pub(crate) first: Option<A>,
+    pub(crate) values: Vec<(B, A)>,
+    pub(crate) last: Option<B>,
 }
 
-impl<'mem, 'facet> UpdatesGroup<'mem, 'facet> {
+impl<A, B> Interspersed<A, B> {
+    fn front_a(&mut self) -> &mut A
+    where
+        A: Default,
+    {
+        self.first.get_or_insert_default()
+    }
+
+    fn front_b(&mut self) -> &mut B
+    where
+        B: Default,
+    {
+        if let Some(a) = self.first.take() {
+            self.values.insert(0, (B::default(), a));
+        }
+
+        if let Some((b, _)) = self.values.first_mut() {
+            b
+        } else {
+            self.last.get_or_insert_default()
+        }
+    }
+}
+
+impl<A, B> Default for Interspersed<A, B> {
+    fn default() -> Self {
+        Self {
+            first: Default::default(),
+            values: Default::default(),
+            last: Default::default(),
+        }
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct ReplaceGroup<'mem, 'facet> {
+    pub(crate) removals: Vec<Peek<'mem, 'facet, 'static>>,
+    pub(crate) additions: Vec<Peek<'mem, 'facet, 'static>>,
+}
+
+impl<'mem, 'facet> ReplaceGroup<'mem, 'facet> {
     fn push_add(&mut self, addition: Peek<'mem, 'facet, 'static>) {
         assert!(
             self.removals.is_empty(),
@@ -23,54 +60,98 @@ impl<'mem, 'facet> UpdatesGroup<'mem, 'facet> {
     fn push_remove(&mut self, removal: Peek<'mem, 'facet, 'static>) {
         self.removals.insert(0, removal);
     }
+}
+
+#[derive(Default)]
+pub(crate) struct UpdatesGroup<'mem, 'facet>(
+    pub(crate) Interspersed<ReplaceGroup<'mem, 'facet>, Vec<Diff<'mem, 'facet>>>,
+);
+
+impl<'mem, 'facet> UpdatesGroup<'mem, 'facet> {
+    fn push_add(&mut self, addition: Peek<'mem, 'facet, 'static>) {
+        self.0.front_a().push_add(addition);
+    }
+
+    fn push_remove(&mut self, removal: Peek<'mem, 'facet, 'static>) {
+        self.0.front_a().push_remove(removal);
+    }
 
     fn flatten(&mut self) {
-        if self.removals.len() == 1 && self.additions.len() == 1 {
-            let from = self.removals.pop().unwrap();
-            let to = self.additions.pop().unwrap();
+        let Some(updates) = self.0.first.take() else {
+            return;
+        };
 
-            let diff = Diff::new_peek(from, to);
+        let mut mem = vec![vec![0; updates.removals.len() + 1]];
 
-            self.updates = Some(Box::new(diff));
+        for x in 0..updates.removals.len() {
+            let mut row = vec![0];
+
+            for y in 0..updates.additions.len() {
+                row.push(row.last().copied().unwrap().max(
+                    mem[x][y]
+                        + Diff::new_peek(updates.removals[x], updates.additions[y]).closeness(),
+                ));
+            }
+
+            mem.push(row);
+        }
+
+        let mut x = updates.removals.len();
+        let mut y = updates.additions.len();
+
+        while x > 0 || y > 0 {
+            if x == 0 {
+                self.push_add(updates.additions[y - 1]);
+                y -= 1;
+            } else if y == 0 {
+                self.push_remove(updates.removals[x - 1]);
+                x -= 1;
+            } else if mem[x][y - 1] == mem[x][y] {
+                self.push_add(updates.additions[y - 1]);
+                y -= 1;
+            } else {
+                let diff = Diff::new_peek(updates.removals[x - 1], updates.additions[y - 1]);
+                self.0.front_b().insert(0, diff);
+
+                x -= 1;
+                y -= 1;
+            }
         }
     }
 }
 
 #[derive(Default)]
-pub struct Updates<'mem, 'facet> {
-    pub(crate) first: Option<UpdatesGroup<'mem, 'facet>>,
-    pub(crate) values: Vec<(Vec<Peek<'mem, 'facet, 'static>>, UpdatesGroup<'mem, 'facet>)>,
-    pub(crate) last: Option<Vec<Peek<'mem, 'facet, 'static>>>,
-}
+pub struct Updates<'mem, 'facet>(
+    pub(crate) Interspersed<UpdatesGroup<'mem, 'facet>, Vec<Peek<'mem, 'facet, 'static>>>,
+);
 
 impl<'mem, 'facet> Updates<'mem, 'facet> {
     /// All `push_*` methods on [`Updates`] push from the front, because the myers' algorithm finds updates back to front.
     pub(crate) fn push_add(&mut self, addition: Peek<'mem, 'facet, 'static>) {
-        self.first.get_or_insert_default().push_add(addition);
+        self.0.front_a().push_add(addition);
     }
 
     /// All `push_*` methods on [`Updates`] push from the front, because the myers' algorithm finds updates back to front.
     pub(crate) fn push_remove(&mut self, removal: Peek<'mem, 'facet, 'static>) {
-        self.first.get_or_insert_default().push_remove(removal);
+        self.0.front_a().push_remove(removal);
+    }
+
+    pub(crate) fn closeness(&self) -> usize {
+        self.0.values.iter().map(|(x, _)| x.len()).sum::<usize>()
+            + self.0.last.as_ref().map(|x| x.len()).unwrap_or_default()
     }
 
     /// All `push_*` methods on [`Updates`] push from the front, because the myers' algorithm finds updates back to front.
     fn push_keep(&mut self, value: Peek<'mem, 'facet, 'static>) {
-        if let Some(update) = self.first.take() {
-            self.values.insert(0, (vec![value], update));
-        } else if let Some((values, _)) = self.values.first_mut() {
-            values.insert(0, value);
-        } else {
-            self.last.get_or_insert_default().insert(0, value);
-        }
+        self.0.front_b().insert(0, value);
     }
 
     fn flatten(&mut self) {
-        if let Some(update) = &mut self.first {
+        if let Some(update) = &mut self.0.first {
             update.flatten()
         }
 
-        for (_, update) in &mut self.values {
+        for (_, update) in &mut self.0.values {
             update.flatten()
         }
     }
@@ -111,7 +192,7 @@ pub fn diff<'mem, 'facet>(
         if y == 0 {
             updates.push_remove(a[x - 1]);
             x -= 1;
-        } else if x == 1 {
+        } else if x == 0 {
             updates.push_add(b[y - 1]);
             y -= 1;
         } else if Diff::new_peek(a[x - 1], b[y - 1]).is_equal()
