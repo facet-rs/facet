@@ -29,7 +29,6 @@ pub use pointer::*;
 /// See <https://doc.rust-lang.org/reference/types.html>
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-#[non_exhaustive]
 pub enum Type<'shape> {
     /// Built-in primitive.
     Primitive(PrimitiveType),
@@ -53,7 +52,7 @@ impl core::fmt::Display for Type<'_> {
                 write!(f, "{self:?}")?;
             }
             Type::Sequence(SequenceType::Array(ArrayType { t, n })) => {
-                write!(f, "Sequence(Array(«[{t}, {n}]»))")?;
+                write!(f, "Sequence(Array(«[{t}; {n}]»))")?;
             }
             Type::Sequence(SequenceType::Slice(SliceType { t })) => {
                 write!(f, "Sequence(Slice(«&[{t}]»))")?;

@@ -22,7 +22,6 @@ use crate::{ConstTypeId, Facet};
 /// Schema for reflection of a type
 #[derive(Clone, Copy)]
 #[repr(C)]
-#[non_exhaustive]
 pub struct Shape<'shape> {
     /// Unique type identifier, provided by the compiler.
     pub id: ConstTypeId,
@@ -100,6 +99,7 @@ pub enum ShapeLayout {
 
 impl ShapeLayout {
     /// `Layout` if this type is `Sized`
+    #[inline]
     pub fn sized_layout(self) -> Result<Layout, UnsizedError> {
         match self {
             ShapeLayout::Sized(layout) => Ok(layout),
@@ -171,16 +171,19 @@ impl<'shape> Shape<'shape> {
     }
 
     /// See [`ShapeAttribute::DenyUnknownFields`]
+    #[inline]
     pub fn has_deny_unknown_fields_attr(&self) -> bool {
         self.attributes.contains(&ShapeAttribute::DenyUnknownFields)
     }
 
     /// See [`ShapeAttribute::Default`]
+    #[inline]
     pub fn has_default_attr(&self) -> bool {
         self.attributes.contains(&ShapeAttribute::Default)
     }
 
     /// See [`ShapeAttribute::RenameAll`]
+    #[inline]
     pub fn get_rename_all_attr(&self) -> Option<&str> {
         self.attributes.iter().find_map(|attr| {
             if let ShapeAttribute::RenameAll(rule) = attr {
@@ -333,6 +336,7 @@ impl<'shape> ShapeBuilder<'shape> {
 }
 
 impl PartialEq for Shape<'_> {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
@@ -349,6 +353,7 @@ impl core::hash::Hash for Shape<'_> {
 
 impl Shape<'_> {
     /// Check if this shape is of the given type
+    #[inline]
     pub fn is_shape(&self, other: &Shape<'_>) -> bool {
         self == other
     }
@@ -376,9 +381,9 @@ impl core::fmt::Debug for Shape<'_> {
         // developers will get a compiler error in this function, reminding them
         // to carefully consider whether it should be shown when debug formatting.
         let Self {
-            id: _,
+            id: _, // omit by default
             layout: _,
-            vtable: _,
+            vtable: _, // omit by default
             ty: _,
             def: _,
             type_identifier: _,
@@ -392,8 +397,8 @@ impl core::fmt::Debug for Shape<'_> {
         if f.alternate() {
             f.debug_struct("Shape")
                 .field("id", &self.id)
-                .field("layout", &self.layout)
-                .field("vtable", &self.vtable)
+                .field("layout", &format_args!("{:?}", self.layout))
+                .field("vtable", &format_args!("ValueVTable {{ .. }}"))
                 .field("ty", &self.ty)
                 .field("def", &self.def)
                 .field("type_identifier", &self.type_identifier)
@@ -406,20 +411,79 @@ impl core::fmt::Debug for Shape<'_> {
         } else {
             let mut debug_struct = f.debug_struct("Shape");
 
-            // Always show the type name
-            debug_struct.field("type", &format_args!("{}", self));
+            macro_rules! field {
+                ( $field:literal, $( $fmt_args:tt )* ) => {{
+                    debug_struct.field($field, &format_args!($($fmt_args)*));
+                }};
+            }
 
-            // Show def if it's not Undefined
+            field!("type_identifier", "{:?}", self.type_identifier);
+
+            if !self.type_params.is_empty() {
+                // Use `[]` to indicate empty `type_params` (a real empty slice),
+                // and `«(...)»` to show custom-formatted parameter sets when present.
+                // Avoids visual conflict with array types like `[T; N]` in other fields.
+                field!("type_params", "{}", {
+                    struct TypeParams<'shape>(&'shape [TypeParam<'shape>]);
+                    impl core::fmt::Display for TypeParams<'_> {
+                        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                            let mut iter = self.0.iter();
+                            if let Some(first) = iter.next() {
+                                write!(f, "«({}: {}", first.name, (first.shape)())?;
+                                for next in iter {
+                                    write!(f, ", {}: {}", next.name, (next.shape)())?;
+                                }
+                                write!(f, ")»")?;
+                            } else {
+                                write!(f, "[]")?;
+                            }
+                            Ok(())
+                        }
+                    }
+                    TypeParams(self.type_params)
+                });
+            }
+
+            if let Some(type_tag) = self.type_tag {
+                field!("type_tag", "{:?}", type_tag);
+            }
+
+            if !self.attributes.is_empty() {
+                field!("attributes", "{:?}", self.attributes);
+            }
+
+            // Omit the `inner` field if this shape is not a transparent wrapper.
+            if let Some(inner) = self.inner {
+                field!("inner", "{:?}", (inner)());
+            }
+
+            // Uses `Display` to potentially format with shorthand syntax.
+            field!("ty", "{}", self.ty);
+
+            // For sized layouts, display size and alignment in shorthand.
+            // NOTE: If you wish to display the bitshift for alignment, please open an issue.
+            if let ShapeLayout::Sized(layout) = self.layout {
+                field!(
+                    "layout",
+                    "Sized(«{} align {}»)",
+                    layout.size(),
+                    layout.align()
+                );
+            } else {
+                field!("layout", "{:?}", self.layout);
+            }
+
+            // If `def` is `Undefined`, the information in `ty` would be more useful.
             if !matches!(self.def, Def::Undefined) {
-                debug_struct.field("def", &format_args!("{:?}", self.def));
+                field!("def", "{:?}", self.def);
             }
 
-            // Show inner if present
-            if self.inner.is_some() {
-                debug_struct.field("inner", &format_args!("Some(..)"));
+            if !self.doc.is_empty() {
+                // TODO: Should these be called "strings"? Because `#[doc]` can contain newlines.
+                field!("doc", "«{} lines»", self.doc.len());
             }
 
-            debug_struct.finish()
+            debug_struct.finish_non_exhaustive()
         }
     }
 }
@@ -446,6 +510,7 @@ impl Shape<'_> {
     /// - `ptr` must have been allocated using [`Self::allocate`] and be aligned for this shape.
     /// - `ptr` must point to a region that is not already deallocated.
     #[cfg(feature = "alloc")]
+    #[inline]
     pub unsafe fn deallocate_mut(&self, ptr: PtrMut) -> Result<(), UnsizedError> {
         use alloc::alloc::dealloc;
 
@@ -469,6 +534,7 @@ impl Shape<'_> {
     /// - `ptr` must not have been already deallocated.
     /// - `ptr` must be properly aligned for this shape.
     #[cfg(feature = "alloc")]
+    #[inline]
     pub unsafe fn deallocate_uninit(
         &self,
         ptr: crate::ptr::PtrUninit<'static>,
@@ -502,7 +568,8 @@ pub struct TypeParam<'shape> {
 
 impl<'shape> TypeParam<'shape> {
     /// Returns the shape of the type parameter.
-    pub fn shape(&self) -> &'shape Shape {
+    #[inline]
+    pub fn shape(&self) -> &'shape Shape<'shape> {
         (self.shape)()
     }
 }

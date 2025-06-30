@@ -1,5 +1,4 @@
 use crate::*;
-use core::{cmp::Ordering, iter::zip};
 
 unsafe impl<'a, T, const L: usize> Facet<'a> for [T; L]
 where
@@ -15,49 +14,6 @@ where
                     write!(f, "; {L}]")
                 } else {
                     write!(f, "[⋯; {L}]")
-                }
-            })
-            .display(|| {
-                if T::SHAPE.vtable.has_display() {
-                    Some(|value, f| {
-                        write!(f, "[")?;
-
-                        for (idx, value) in value.iter().enumerate() {
-                            (<VTableView<T>>::of().display().unwrap())(value, f)?;
-                            if idx != L - 1 {
-                                write!(f, ", ")?;
-                            }
-                        }
-                        write!(f, "]")
-                    })
-                } else {
-                    None
-                }
-            })
-            .debug(|| {
-                if T::SHAPE.vtable.has_debug() {
-                    Some(|value, f| {
-                        write!(f, "[")?;
-
-                        for (idx, value) in value.iter().enumerate() {
-                            (<VTableView<T>>::of().debug().unwrap())(value, f)?;
-                            if idx != L - 1 {
-                                write!(f, ", ")?;
-                            }
-                        }
-                        write!(f, "]")
-                    })
-                } else {
-                    None
-                }
-            })
-            .partial_eq(|| {
-                if T::SHAPE.vtable.has_partial_eq() {
-                    Some(|a, b| {
-                        zip(a, b).all(|(a, b)| (<VTableView<T>>::of().partial_eq().unwrap())(a, b))
-                    })
-                } else {
-                    None
                 }
             })
             .default_in_place(|| {
@@ -100,55 +56,6 @@ where
                         dst.assume_init()
                     })
                 } else {
-                    None
-                }
-            })
-            .partial_ord(|| {
-                if T::SHAPE.vtable.has_partial_ord() {
-                    Some(|a, b| {
-                        zip(a, b)
-                            .find_map(|(a, b)| {
-                                match (<VTableView<T>>::of().partial_ord().unwrap())(a, b) {
-                                    Some(Ordering::Equal) => None,
-                                    c => Some(c),
-                                }
-                            })
-                            .unwrap_or(Some(Ordering::Equal))
-                    })
-                } else {
-                    // arrays do not yet implement `Default` for > 32 elements due
-                    // to specializing the `0` len case
-                    None
-                }
-            })
-            .ord(|| {
-                if T::SHAPE.vtable.has_ord() {
-                    Some(|a, b| {
-                        zip(a, b)
-                            .find_map(
-                                |(a, b)| match (<VTableView<T>>::of().ord().unwrap())(a, b) {
-                                    Ordering::Equal => None,
-                                    c => Some(c),
-                                },
-                            )
-                            .unwrap_or(Ordering::Equal)
-                    })
-                } else {
-                    // arrays do not yet implement `Default` for > 32 elements due
-                    // to specializing the `0` len case
-                    None
-                }
-            })
-            .hash(|| {
-                if T::SHAPE.vtable.has_hash() {
-                    Some(|value, state, hasher| {
-                        for value in value {
-                            (<VTableView<T>>::of().hash().unwrap())(value, state, hasher)
-                        }
-                    })
-                } else {
-                    // arrays do not yet implement `Default` for > 32 elements due
-                    // to specializing the `0` len case
                     None
                 }
             })

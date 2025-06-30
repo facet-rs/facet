@@ -18,7 +18,7 @@ fn test_serialize_u64_array() {
             assert_eq!(data.values, [1, 2, 3]);
         }
         Err(e) => {
-            panic!("Failed to parse u64 array: {}", e);
+            panic!("Failed to parse u64 array: {e}");
         }
     }
 }
@@ -40,7 +40,7 @@ fn test_serialize_nested_u64_array() {
             assert_eq!(data.matrix, [[1, 2], [3, 4]]);
         }
         Err(e) => {
-            panic!("Failed to parse nested u64 array: {}", e);
+            panic!("Failed to parse nested u64 array: {e}");
         }
     }
 }
@@ -54,7 +54,7 @@ fn test_serialize_u64_array_overflow() {
     let result = from_str::<U64Array>(json);
     assert!(result.is_err());
     if let Err(e) = result {
-        let error_msg = format!("{}", e);
+        let error_msg = format!("{e}");
         assert!(
             error_msg.contains("Too many elements") || error_msg.contains("maximum 3 elements")
         );

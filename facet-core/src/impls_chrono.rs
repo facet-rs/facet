@@ -2,8 +2,7 @@ use alloc::string::{String, ToString};
 use chrono::{DateTime, FixedOffset, Local, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 
 use crate::{
-    Def, Facet, ParseError, PtrConst, PtrUninit, ScalarAffinity, ScalarDef, Shape, Type, UserType,
-    ValueVTable, value_vtable,
+    Def, Facet, ParseError, PtrConst, PtrUninit, Shape, Type, UserType, ValueVTable, value_vtable,
 };
 
 unsafe impl Facet<'_> for DateTime<Utc> {
@@ -51,7 +50,7 @@ unsafe impl Facet<'_> for DateTime<Utc> {
                     let dt = value.get::<DateTime<Utc>>();
                     use chrono::SecondsFormat;
                     let s = dt.to_rfc3339_opts(SecondsFormat::Secs, true);
-                    write!(f, "{}", s)
+                    write!(f, "{s}")
                 })
             };
         }
@@ -62,11 +61,7 @@ unsafe impl Facet<'_> for DateTime<Utc> {
         Shape::builder_for_sized::<Self>()
             .type_identifier("DateTime<Utc>")
             .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar(
-                ScalarDef::builder()
-                    .affinity(&const { ScalarAffinity::time().build() })
-                    .build(),
-            ))
+            .def(Def::Scalar)
             .build()
     };
 }
@@ -124,11 +119,7 @@ unsafe impl Facet<'_> for DateTime<FixedOffset> {
         Shape::builder_for_sized::<Self>()
             .type_identifier("DateTime<FixedOffset>")
             .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar(
-                ScalarDef::builder()
-                    .affinity(&const { ScalarAffinity::time().build() })
-                    .build(),
-            ))
+            .def(Def::Scalar)
             .build()
     };
 }
@@ -188,11 +179,7 @@ unsafe impl Facet<'_> for DateTime<Local> {
         Shape::builder_for_sized::<Self>()
             .type_identifier("DateTime<Local>")
             .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar(
-                ScalarDef::builder()
-                    .affinity(&const { ScalarAffinity::time().build() })
-                    .build(),
-            ))
+            .def(Def::Scalar)
             .build()
     };
 }
@@ -244,7 +231,7 @@ unsafe impl Facet<'_> for NaiveDateTime {
                 Some(|value, f| unsafe {
                     let dt = value.get::<NaiveDateTime>();
                     let formatted = dt.format("%Y-%m-%dT%H:%M:%S").to_string();
-                    write!(f, "{}", formatted)
+                    write!(f, "{formatted}")
                 })
             };
         }
@@ -255,11 +242,7 @@ unsafe impl Facet<'_> for NaiveDateTime {
         Shape::builder_for_sized::<Self>()
             .type_identifier("NaiveDateTime")
             .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar(
-                ScalarDef::builder()
-                    .affinity(&const { ScalarAffinity::time().build() })
-                    .build(),
-            ))
+            .def(Def::Scalar)
             .build()
     };
 }
@@ -306,7 +289,7 @@ unsafe impl Facet<'_> for NaiveDate {
                 Some(|value, f| unsafe {
                     let dt = value.get::<NaiveDate>();
                     let formatted = dt.format("%Y-%m-%d").to_string();
-                    write!(f, "{}", formatted)
+                    write!(f, "{formatted}")
                 })
             };
         }
@@ -317,11 +300,7 @@ unsafe impl Facet<'_> for NaiveDate {
         Shape::builder_for_sized::<Self>()
             .type_identifier("NaiveDate")
             .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar(
-                ScalarDef::builder()
-                    .affinity(&const { ScalarAffinity::time().build() })
-                    .build(),
-            ))
+            .def(Def::Scalar)
             .build()
     };
 }
@@ -370,7 +349,7 @@ unsafe impl Facet<'_> for NaiveTime {
                 Some(|value, f| unsafe {
                     let dt = value.get::<NaiveTime>();
                     let formatted = dt.format("%H:%M:%S").to_string();
-                    write!(f, "{}", formatted)
+                    write!(f, "{formatted}")
                 })
             };
         }
@@ -381,11 +360,7 @@ unsafe impl Facet<'_> for NaiveTime {
         Shape::builder_for_sized::<Self>()
             .type_identifier("NaiveTime")
             .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar(
-                ScalarDef::builder()
-                    .affinity(&const { ScalarAffinity::time().build() })
-                    .build(),
-            ))
+            .def(Def::Scalar)
             .build()
     };
 }

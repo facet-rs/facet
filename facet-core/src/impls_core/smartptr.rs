@@ -42,7 +42,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for core::ptr::NonNull<T> {
                             SmartPointerVTable::builder()
                                 .borrow_fn(|this| {
                                     let ptr = unsafe { this.get::<Self>().as_ptr() };
-                                    PtrConst::new(ptr)
+                                    PtrConst::new(ptr).into()
                                 })
                                 .new_into_fn(|this, ptr| {
                                     let ptr = unsafe { ptr.read::<*mut T>() };

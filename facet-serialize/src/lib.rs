@@ -10,15 +10,12 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use facet_core::{
-    Def, Facet, Field, PointerType, ScalarAffinity, ShapeAttribute, StructKind, Type, UserType,
-};
+use facet_core::{Def, Facet, Field, PointerType, ShapeAttribute, StructKind, Type, UserType};
 use facet_reflect::{
-    FieldIter, FieldsForSerializeIter, HasFields, Peek, PeekListLikeIter, PeekMapIter, ScalarType,
+    FieldIter, FieldsForSerializeIter, HasFields, Peek, PeekListLikeIter, PeekMapIter, PeekSetIter,
+    ScalarType,
 };
 use log::{debug, trace};
-
-mod debug_serializer;
 
 fn variant_is_newtype_like(variant: &facet_core::Variant) -> bool {
     variant.data.kind == facet_core::StructKind::Tuple && variant.data.fields.len() == 1
@@ -235,6 +232,11 @@ enum SerializeTask<'mem, 'facet, 'shape> {
         items: PeekListLikeIter<'mem, 'facet, 'shape>,
         first: bool,
     },
+    Set {
+        items: PeekSetIter<'mem, 'facet, 'shape>,
+        first: bool,
+        len: usize,
+    },
     Map {
         entries: PeekMapIter<'mem, 'facet, 'shape>,
         first: bool,
@@ -303,7 +305,7 @@ where
                     cpeek.shape()
                 );
                 match (cpeek.shape().def, cpeek.shape().ty) {
-                    (Def::Scalar(sd), _) => {
+                    (Def::Scalar, _) => {
                         let cpeek = cpeek.innermost_peek();
 
                         // Dispatch to appropriate scalar serialization method based on type
@@ -318,7 +320,7 @@ where
 
                             // String types
                             Some(ScalarType::Str) => {
-                                serializer.serialize_str(cpeek.get::<&str>().unwrap())?
+                                serializer.serialize_str(cpeek.get::<str>().unwrap())?
                             }
                             Some(ScalarType::String) => {
                                 serializer.serialize_str(cpeek.get::<String>().unwrap())?
@@ -376,30 +378,15 @@ where
                                 panic!("facet-serialize: unsupported scalar type: {unsupported:?}")
                             }
                             None => {
-                                match sd.affinity {
-                                    ScalarAffinity::Time(_)
-                                    | ScalarAffinity::Path(_)
-                                    | ScalarAffinity::ULID(_)
-                                    | ScalarAffinity::UUID(_) => {
-                                        if let Some(_display) =
-                                            cpeek.shape().vtable.sized().and_then(|v| (v.display)())
-                                        {
-                                            // Use display formatting if available
-                                            serializer
-                                                .serialize_str(&alloc::format!("{}", cpeek))?
-                                        } else {
-                                            panic!(
-                                                "Unsupported shape (no display): {}",
-                                                cpeek.shape()
-                                            )
-                                        }
-                                    }
-                                    _ => {
-                                        panic!(
-                                            "Unsupported shape (unsupported affinity): {}",
-                                            cpeek.shape()
-                                        )
-                                    }
+                                // For other scalar types that don't have a specific ScalarType variant,
+                                // try to use Display formatting if available
+                                if let Some(_display) =
+                                    cpeek.shape().vtable.sized().and_then(|v| (v.display)())
+                                {
+                                    // Use display formatting if available
+                                    serializer.serialize_str(&alloc::format!("{}", cpeek))?
+                                } else {
+                                    panic!("Unsupported shape (no display): {}", cpeek.shape())
                                 }
                             }
                         }
@@ -463,6 +450,14 @@ where
                             len,
                         });
                     }
+                    (Def::Set(_), _) => {
+                        let peek_set = cpeek.into_set().unwrap();
+                        stack.push(SerializeTask::Set {
+                            items: peek_set.iter(),
+                            first: true,
+                            len: peek_set.len(),
+                        });
+                    }
                     (Def::Option(_), _) => {
                         let opt = cpeek.into_option().unwrap();
                         if let Some(inner_peek) = opt.value() {
@@ -520,7 +515,7 @@ where
                                 debug!("  Handling tuple struct");
                                 let peek_struct = cpeek.into_struct().unwrap();
                                 let fields = peek_struct.fields_for_serialize().count();
-                                debug!("  Serializing {} fields as array", fields);
+                                debug!("  Serializing {fields} fields as array");
 
                                 stack.push(SerializeTask::TupleStruct {
                                     items: peek_struct.fields_for_serialize(),
@@ -528,15 +523,14 @@ where
                                     len: fields,
                                 });
                                 trace!(
-                                    "  Pushed TupleStructFields to stack, will handle {} fields",
-                                    fields
+                                    "  Pushed TupleStructFields to stack, will handle {fields} fields"
                                 );
                             }
                             StructKind::Struct => {
                                 debug!("  Handling record struct");
                                 let peek_struct = cpeek.into_struct().unwrap();
                                 let fields = peek_struct.fields_for_serialize().count();
-                                debug!("  Serializing {} fields as object", fields);
+                                debug!("  Serializing {fields} fields as object");
 
                                 stack.push(SerializeTask::Object {
                                     entries: peek_struct.fields_for_serialize(),
@@ -544,12 +538,8 @@ where
                                     len: fields,
                                 });
                                 trace!(
-                                    "  Pushed ObjectFields to stack, will handle {} fields",
-                                    fields
+                                    "  Pushed ObjectFields to stack, will handle {fields} fields"
                                 );
-                            }
-                            _ => {
-                                unreachable!()
                             }
                         }
                     }
@@ -561,10 +551,7 @@ where
                         let variant_index = peek_enum
                             .variant_index()
                             .expect("Failed to get variant index");
-                        trace!(
-                            "Active variant index is {}, variant is {:?}",
-                            variant_index, variant
-                        );
+                        trace!("Active variant index is {variant_index}, variant is {variant:?}");
                         let discriminant = variant
                             .discriminant
                             .map(|d| d as u64)
@@ -692,6 +679,27 @@ where
                 stack.push(SerializeTask::Array {
                     items,
                     first: false,
+                });
+                stack.push(SerializeTask::Value(value, None));
+            }
+            SerializeTask::Set {
+                mut items,
+                first,
+                len,
+            } => {
+                if first {
+                    serializer.start_array(Some(len))?;
+                }
+
+                let Some(value) = items.next() else {
+                    serializer.end_array()?;
+                    continue;
+                };
+
+                stack.push(SerializeTask::Set {
+                    items,
+                    first: false,
+                    len,
                 });
                 stack.push(SerializeTask::Value(value, None));
             }

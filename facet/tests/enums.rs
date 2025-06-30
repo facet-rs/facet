@@ -28,7 +28,7 @@ fn enum_with_unit_variants_u8() {
 
     let shape = UnitVariantEnum::SHAPE;
 
-    assert_eq!(format!("{}", shape), "UnitVariantEnum");
+    assert_eq!(format!("{shape}"), "UnitVariantEnum");
 
     if let Type::User(UserType::Enum(enum_def)) = shape.ty {
         assert_eq!(enum_def.variants.len(), 3);
@@ -58,7 +58,7 @@ fn enum_with_unit_variants_c() {
 
     let shape = UnitVariantEnum::SHAPE;
 
-    assert_eq!(format!("{}", shape), "UnitVariantEnum");
+    assert_eq!(format!("{shape}"), "UnitVariantEnum");
 
     if let Type::User(UserType::Enum(enum_def)) = shape.ty {
         assert_eq!(enum_def.variants.len(), 3);

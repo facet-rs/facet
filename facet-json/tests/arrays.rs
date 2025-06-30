@@ -40,7 +40,7 @@ fn test_array_field_parsing() {
         }
         Err(e) => {
             // This will fail and show the error
-            panic!("Failed to parse JSON: {}", e);
+            panic!("Failed to parse JSON: {e}");
         }
     }
 }
@@ -74,7 +74,7 @@ fn test_nested_array_parsing() {
             );
         }
         Err(e) => {
-            panic!("Failed to parse nested arrays: {}", e);
+            panic!("Failed to parse nested arrays: {e}");
         }
     }
 }
@@ -107,7 +107,7 @@ fn test_mixed_array_types() {
             );
         }
         Err(e) => {
-            panic!("Failed to parse mixed array types: {}", e);
+            panic!("Failed to parse mixed array types: {e}");
         }
     }
 }

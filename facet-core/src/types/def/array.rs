@@ -3,9 +3,8 @@ use crate::{PtrMut, ptr::PtrConst};
 use super::Shape;
 
 /// Fields for array types
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
-#[non_exhaustive]
 pub struct ArrayDef<'shape> {
     /// vtable for interacting with the array
     pub vtable: &'shape ArrayVTable,
@@ -90,9 +89,8 @@ pub type ArrayAsPtrFn = unsafe fn(array: PtrConst) -> PtrConst;
 pub type ArrayAsMutPtrFn = unsafe fn(array: PtrMut) -> PtrMut;
 
 /// Virtual table for an array
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
-#[non_exhaustive]
 pub struct ArrayVTable {
     /// cf. [`ArrayAsPtrFn`]
     pub as_ptr: ArrayAsPtrFn,

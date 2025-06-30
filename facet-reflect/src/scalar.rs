@@ -1,10 +1,10 @@
+use core::any::TypeId;
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use facet_core::{ConstTypeId, Shape};
 
 /// All scalar types supported out of the box by peek and poke.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-#[non_exhaustive]
 pub enum ScalarType {
     /// Unit tuple `()`.
     Unit,
@@ -60,59 +60,64 @@ pub enum ScalarType {
 
 impl ScalarType {
     /// Infer the type from a shape definition.
+    #[inline]
     pub fn try_from_shape(shape: &Shape<'_>) -> Option<Self> {
+        let type_id = shape.id.get();
+
         #[cfg(feature = "alloc")]
-        if shape.id == ConstTypeId::of::<alloc::string::String>() {
+        if type_id == TypeId::of::<alloc::string::String>() {
             return Some(ScalarType::String);
-        } else if shape.id == ConstTypeId::of::<alloc::borrow::Cow<'_, str>>() {
+        } else if type_id == TypeId::of::<alloc::borrow::Cow<'_, str>>() {
             return Some(ScalarType::CowStr);
-        } else if shape.id == ConstTypeId::of::<core::net::SocketAddr>() {
+        } else if type_id == TypeId::of::<str>() {
+            return Some(ScalarType::Str);
+        } else if type_id == TypeId::of::<core::net::SocketAddr>() {
             return Some(ScalarType::SocketAddr);
         }
 
-        if shape.id == ConstTypeId::of::<()>() {
+        if type_id == TypeId::of::<()>() {
             Some(Self::Unit)
-        } else if shape.id == ConstTypeId::of::<bool>() {
+        } else if type_id == TypeId::of::<bool>() {
             Some(ScalarType::Bool)
-        } else if shape.id == ConstTypeId::of::<char>() {
+        } else if type_id == TypeId::of::<char>() {
             Some(ScalarType::Char)
-        } else if shape.id == ConstTypeId::of::<&str>() {
+        } else if type_id == TypeId::of::<&str>() {
             Some(ScalarType::Str)
-        } else if shape.id == ConstTypeId::of::<f32>() {
+        } else if type_id == TypeId::of::<f32>() {
             Some(ScalarType::F32)
-        } else if shape.id == ConstTypeId::of::<f64>() {
+        } else if type_id == TypeId::of::<f64>() {
             Some(ScalarType::F64)
-        } else if shape.id == ConstTypeId::of::<u8>() {
+        } else if type_id == TypeId::of::<u8>() {
             Some(ScalarType::U8)
-        } else if shape.id == ConstTypeId::of::<u16>() {
+        } else if type_id == TypeId::of::<u16>() {
             Some(ScalarType::U16)
-        } else if shape.id == ConstTypeId::of::<u32>() {
+        } else if type_id == TypeId::of::<u32>() {
             Some(ScalarType::U32)
-        } else if shape.id == ConstTypeId::of::<u64>() {
+        } else if type_id == TypeId::of::<u64>() {
             Some(ScalarType::U64)
-        } else if shape.id == ConstTypeId::of::<u128>() {
+        } else if type_id == TypeId::of::<u128>() {
             Some(ScalarType::U128)
-        } else if shape.id == ConstTypeId::of::<usize>() {
+        } else if type_id == TypeId::of::<usize>() {
             Some(ScalarType::USize)
-        } else if shape.id == ConstTypeId::of::<i8>() {
+        } else if type_id == TypeId::of::<i8>() {
             Some(ScalarType::I8)
-        } else if shape.id == ConstTypeId::of::<i16>() {
+        } else if type_id == TypeId::of::<i16>() {
             Some(ScalarType::I16)
-        } else if shape.id == ConstTypeId::of::<i32>() {
+        } else if type_id == TypeId::of::<i32>() {
             Some(ScalarType::I32)
-        } else if shape.id == ConstTypeId::of::<i64>() {
+        } else if type_id == TypeId::of::<i64>() {
             Some(ScalarType::I64)
-        } else if shape.id == ConstTypeId::of::<i128>() {
+        } else if type_id == TypeId::of::<i128>() {
             Some(ScalarType::I128)
-        } else if shape.id == ConstTypeId::of::<isize>() {
+        } else if type_id == TypeId::of::<isize>() {
             Some(ScalarType::ISize)
-        } else if shape.id == ConstTypeId::of::<IpAddr>() {
+        } else if type_id == TypeId::of::<IpAddr>() {
             Some(ScalarType::IpAddr)
-        } else if shape.id == ConstTypeId::of::<Ipv4Addr>() {
+        } else if type_id == TypeId::of::<Ipv4Addr>() {
             Some(ScalarType::Ipv4Addr)
-        } else if shape.id == ConstTypeId::of::<Ipv6Addr>() {
+        } else if type_id == TypeId::of::<Ipv6Addr>() {
             Some(ScalarType::Ipv6Addr)
-        } else if shape.id == ConstTypeId::of::<ConstTypeId>() {
+        } else if type_id == TypeId::of::<ConstTypeId>() {
             Some(ScalarType::ConstTypeId)
         } else {
             None

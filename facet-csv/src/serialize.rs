@@ -141,85 +141,85 @@ where
 
     fn serialize_u8(&mut self, value: u8) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.end_value()
     }
 
     fn serialize_u16(&mut self, value: u16) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.end_value()
     }
 
     fn serialize_u32(&mut self, value: u32) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.end_value()
     }
 
     fn serialize_u64(&mut self, value: u64) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.end_value()
     }
 
     fn serialize_u128(&mut self, value: u128) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.end_value()
     }
 
     fn serialize_usize(&mut self, value: usize) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.end_value()
     }
 
     fn serialize_i8(&mut self, value: i8) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.end_value()
     }
 
     fn serialize_i16(&mut self, value: i16) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.end_value()
     }
 
     fn serialize_i32(&mut self, value: i32) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.end_value()
     }
 
     fn serialize_i64(&mut self, value: i64) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.end_value()
     }
 
     fn serialize_i128(&mut self, value: i128) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.end_value()
     }
 
     fn serialize_isize(&mut self, value: isize) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.end_value()
     }
 
     fn serialize_f32(&mut self, value: f32) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.end_value()
     }
 
     fn serialize_f64(&mut self, value: f64) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.end_value()
     }
 
@@ -231,13 +231,13 @@ where
 
     fn serialize_char(&mut self, value: char) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.end_value()
     }
 
     fn serialize_str(&mut self, value: &str) -> Result<(), Self::Error> {
         self.start_value()?;
-        write!(self.writer, "{}", value)?;
+        write!(self.writer, "{value}")?;
         self.end_value()
     }
 

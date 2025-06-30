@@ -556,7 +556,7 @@ fn wip_parse_option() {
 #[test]
 #[cfg(feature = "fn-ptr")]
 fn wip_fn_ptr() {
-    #[derive(Facet, Debug, PartialEq, Eq)]
+    #[derive(Facet, Debug)]
     struct Foo {
         foo: fn() -> i32,
     }
@@ -649,73 +649,6 @@ fn clone_into() {
         clone_into(PtrConst::new(&f), PtrUninit::from_maybe_uninit(&mut f3));
     }
     assert_eq!(CLONES.load(Ordering::SeqCst), 2);
-}
-
-#[test]
-fn clone_into_vec() {
-    type Type = Vec<String>;
-    let mut vec: Type = vec!["hello".to_owned()];
-    let mut vec_clone: MaybeUninit<Type> = MaybeUninit::uninit();
-    let clone_into = (<Type as Facet>::SHAPE.vtable.sized().unwrap().clone_into)().unwrap();
-    let clone_vec = unsafe {
-        clone_into(
-            PtrConst::new(&vec),
-            PtrUninit::from_maybe_uninit(&mut vec_clone),
-        );
-        vec_clone.assume_init()
-    };
-    vec[0].push_str(" world");
-    assert_eq!(clone_vec[0], "hello");
-}
-
-#[test]
-fn clone_into_hash_map() {
-    use std::collections::HashMap;
-
-    type Type = HashMap<String, i32>;
-    let mut map: Type = HashMap::new();
-    map.insert("key".to_owned(), 42);
-
-    let mut map_clone: MaybeUninit<Type> = MaybeUninit::uninit();
-    let clone_into = (<Type as Facet>::SHAPE.vtable.sized().unwrap().clone_into)().unwrap();
-    let clone_map = unsafe {
-        clone_into(
-            PtrConst::new(&map),
-            PtrUninit::from_maybe_uninit(&mut map_clone),
-        );
-        map_clone.assume_init()
-    };
-
-    map.insert("key".to_owned(), 99);
-    map.insert("new_key".to_owned(), 100);
-
-    assert_eq!(clone_map.get("key"), Some(&42));
-    assert_eq!(clone_map.get("new_key"), None);
-}
-
-#[test]
-fn clone_into_btree_map() {
-    use std::collections::BTreeMap;
-
-    type Type = BTreeMap<String, i32>;
-    let mut map: Type = BTreeMap::new();
-    map.insert("key".to_owned(), 42);
-
-    let mut map_clone: MaybeUninit<Type> = MaybeUninit::uninit();
-    let clone_into = (<Type as Facet>::SHAPE.vtable.sized().unwrap().clone_into)().unwrap();
-    let clone_map = unsafe {
-        clone_into(
-            PtrConst::new(&map),
-            PtrUninit::from_maybe_uninit(&mut map_clone),
-        );
-        map_clone.assume_init()
-    };
-
-    map.insert("key".to_owned(), 99);
-    map.insert("new_key".to_owned(), 100);
-
-    assert_eq!(clone_map.get("key"), Some(&42));
-    assert_eq!(clone_map.get("new_key"), None);
 }
 
 #[test]

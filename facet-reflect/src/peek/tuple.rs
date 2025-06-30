@@ -32,16 +32,19 @@ impl Debug for PeekTuple<'_, '_, '_> {
 
 impl<'mem, 'facet, 'shape> PeekTuple<'mem, 'facet, 'shape> {
     /// Get the number of fields in this tuple
+    #[inline]
     pub fn len(&self) -> usize {
         self.ty.fields.len()
     }
 
     /// Returns true if this tuple has no fields
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
     /// Access a field by index
+    #[inline]
     pub fn field(&self, index: usize) -> Option<Peek<'mem, 'facet, 'shape>> {
         if index >= self.len() {
             return None;
@@ -57,16 +60,19 @@ impl<'mem, 'facet, 'shape> PeekTuple<'mem, 'facet, 'shape> {
     }
 
     /// Iterate over all fields
+    #[inline]
     pub fn fields(&self) -> FieldIter<'mem, 'facet, 'shape> {
         FieldIter::new_tuple(*self)
     }
 
     /// Type information
+    #[inline]
     pub fn ty(&self) -> TupleType<'shape> {
         self.ty
     }
 
     /// Internal peek value
+    #[inline]
     pub fn value(&self) -> Peek<'mem, 'facet, 'shape> {
         self.value
     }

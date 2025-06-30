@@ -4,9 +4,7 @@
 
 use std::io::Write;
 
-use facet_core::{
-    Def, Facet, IntegerSize, NumberBits, ScalarAffinity, Signedness, StructKind, Type, UserType,
-};
+use facet_core::{Def, Facet, NumericType, PrimitiveType, StructKind, TextualType, Type, UserType};
 use facet_reflect::{HeapValue, Partial, Peek};
 use facet_serialize::{Serializer, serialize_iterative};
 
@@ -26,7 +24,7 @@ pub enum XdrSerError {
 impl core::fmt::Display for XdrSerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            XdrSerError::Io(error) => write!(f, "IO error: {}", error),
+            XdrSerError::Io(error) => write!(f, "IO error: {error}"),
             XdrSerError::TooManyBytes => write!(f, "Too many bytes for field"),
             XdrSerError::TooManyVariants => write!(f, "Enum variant discriminant too large"),
             XdrSerError::UnsupportedType => write!(f, "Unsupported type"),
@@ -233,16 +231,16 @@ impl core::fmt::Display for XdrDeserError {
                 write!(f, "Unexpected end of input")
             }
             XdrDeserError::InvalidBoolean { position } => {
-                write!(f, "Invalid boolean at byte {}", position)
+                write!(f, "Invalid boolean at byte {position}")
             }
             XdrDeserError::InvalidOptional { position } => {
-                write!(f, "Invalid discriminant for optional at byte {}", position)
+                write!(f, "Invalid discriminant for optional at byte {position}")
             }
             XdrDeserError::InvalidVariant { position } => {
-                write!(f, "Invalid enum discriminant at byte {}", position)
+                write!(f, "Invalid enum discriminant at byte {position}")
             }
             XdrDeserError::InvalidString { position, .. } => {
-                write!(f, "Invalid string at byte {}", position)
+                write!(f, "Invalid string at byte {position}")
             }
         }
     }
@@ -318,116 +316,121 @@ impl<'shape, 'input> XdrDeserializerStack<'input> {
         mut wip: Partial<'f, 'shape>,
     ) -> Result<Partial<'f, 'shape>, XdrDeserError> {
         match (wip.shape().def, wip.shape().ty) {
-            (Def::Scalar(sd), _) => match sd.affinity {
-                ScalarAffinity::Number(na) => match na.bits {
-                    NumberBits::Integer { size, sign } => match (size, sign) {
-                        (IntegerSize::Fixed(8), Signedness::Unsigned) => {
+            (Def::Scalar, Type::Primitive(PrimitiveType::Numeric(numeric_type))) => {
+                let size = wip.shape().layout.sized_layout().unwrap().size();
+                match numeric_type {
+                    NumericType::Integer { signed: false } => match size {
+                        1 => {
                             let value = self.next_u32()? as u8;
                             wip.set(value).unwrap();
                             Ok(wip)
                         }
-                        (IntegerSize::Fixed(16), Signedness::Unsigned) => {
+                        2 => {
                             let value = self.next_u32()? as u16;
                             wip.set(value).unwrap();
                             Ok(wip)
                         }
-                        (IntegerSize::Fixed(32), Signedness::Unsigned) => {
+                        4 => {
                             let value = self.next_u32()?;
                             wip.set(value).unwrap();
                             Ok(wip)
                         }
-                        (IntegerSize::Fixed(64), Signedness::Unsigned) => {
+                        8 => {
                             let value = self.next_u64()?;
                             wip.set(value).unwrap();
                             Ok(wip)
                         }
-                        (IntegerSize::Fixed(8), Signedness::Signed) => {
-                            let value = self.next_u32()? as i8;
-                            wip.set(value).unwrap();
-                            Ok(wip)
-                        }
-                        (IntegerSize::Fixed(16), Signedness::Signed) => {
-                            let value = self.next_u32()? as i16;
-                            wip.set(value).unwrap();
-                            Ok(wip)
-                        }
-                        (IntegerSize::Fixed(32), Signedness::Signed) => {
-                            let value = self.next_u32()? as i32;
-                            wip.set(value).unwrap();
-                            Ok(wip)
-                        }
-                        (IntegerSize::Fixed(64), Signedness::Signed) => {
-                            let value = self.next_u64()? as i64;
-                            wip.set(value).unwrap();
-                            Ok(wip)
-                        }
-                        (IntegerSize::PointerSized, Signedness::Unsigned) => {
+                        _ => {
                             // Handle usize - use 64-bit on most platforms
                             let value = self.next_u64()? as usize;
                             wip.set(value).unwrap();
                             Ok(wip)
                         }
-                        (IntegerSize::PointerSized, Signedness::Signed) => {
+                    },
+                    NumericType::Integer { signed: true } => match size {
+                        1 => {
+                            let value = self.next_u32()? as i8;
+                            wip.set(value).unwrap();
+                            Ok(wip)
+                        }
+                        2 => {
+                            let value = self.next_u32()? as i16;
+                            wip.set(value).unwrap();
+                            Ok(wip)
+                        }
+                        4 => {
+                            let value = self.next_u32()? as i32;
+                            wip.set(value).unwrap();
+                            Ok(wip)
+                        }
+                        8 => {
+                            let value = self.next_u64()? as i64;
+                            wip.set(value).unwrap();
+                            Ok(wip)
+                        }
+                        _ => {
                             // Handle isize - use 64-bit on most platforms
                             let value = self.next_u64()? as isize;
                             wip.set(value).unwrap();
                             Ok(wip)
                         }
-                        _ => Err(XdrDeserError::UnsupportedNumericType),
                     },
-                    NumberBits::Float {
-                        sign_bits,
-                        exponent_bits,
-                        mantissa_bits,
-                        ..
-                    } => {
-                        let bits = sign_bits + exponent_bits + mantissa_bits;
-                        if bits == 32 {
+                    NumericType::Float => match size {
+                        4 => {
                             let bits = self.next_u32()?;
                             let float = f32::from_bits(bits);
                             wip.set(float).unwrap();
                             Ok(wip)
-                        } else if bits == 64 {
+                        }
+                        8 => {
                             let bits = self.next_u64()?;
                             let float = f64::from_bits(bits);
                             wip.set(float).unwrap();
                             Ok(wip)
-                        } else {
-                            Err(XdrDeserError::UnsupportedNumericType)
                         }
+                        _ => Err(XdrDeserError::UnsupportedNumericType),
+                    },
+                }
+            }
+            (Def::Scalar, Type::Primitive(PrimitiveType::Textual(TextualType::Str))) => {
+                let string = core::str::from_utf8(self.next_data(None)?).map_err(|e| {
+                    XdrDeserError::InvalidString {
+                        position: self.pos - 1,
+                        source: e,
                     }
-                    _ => Err(XdrDeserError::UnsupportedNumericType),
-                },
-                ScalarAffinity::String(_) => {
-                    let string = core::str::from_utf8(self.next_data(None)?).map_err(|e| {
-                        XdrDeserError::InvalidString {
-                            position: self.pos - 1,
-                            source: e,
-                        }
-                    })?;
-                    wip.set(string.to_owned()).unwrap();
+                })?;
+                wip.set(string.to_owned()).unwrap();
+                Ok(wip)
+            }
+            (Def::Scalar, Type::Primitive(PrimitiveType::Boolean)) => match self.next_u32()? {
+                0 => {
+                    wip.set(false).unwrap();
                     Ok(wip)
                 }
-                ScalarAffinity::Boolean(_) => match self.next_u32()? {
-                    0 => {
-                        wip.set(false).unwrap();
-                        Ok(wip)
-                    }
-                    1 => {
-                        wip.set(true).unwrap();
-                        Ok(wip)
-                    }
-                    _ => Err(XdrDeserError::InvalidBoolean {
-                        position: self.pos - 4,
-                    }),
-                },
-                ScalarAffinity::Char(_) => {
-                    let value = self.next_u32()?;
-                    wip.set(char::from_u32(value).unwrap()).unwrap();
+                1 => {
+                    wip.set(true).unwrap();
                     Ok(wip)
                 }
-                _ => Err(XdrDeserError::UnsupportedType),
+                _ => Err(XdrDeserError::InvalidBoolean {
+                    position: self.pos - 4,
+                }),
             },
+            (Def::Scalar, Type::Primitive(PrimitiveType::Textual(TextualType::Char))) => {
+                let value = self.next_u32()?;
+                wip.set(char::from_u32(value).unwrap()).unwrap();
+                Ok(wip)
+            }
+            (Def::Scalar, _) => {
+                // For other scalar types (like Path, UUID, etc.), try string deserialization
+                let string = core::str::from_utf8(self.next_data(None)?).map_err(|e| {
+                    XdrDeserError::InvalidString {
+                        position: self.pos - 1,
+                        source: e,
+                    }
+                })?;
+                wip.set(string.to_owned()).unwrap();
+                Ok(wip)
+            }
             (Def::List(ld), _) => {
                 if ld.t().is_type::<u8>() {
                     let data = self.next_data(None)?;

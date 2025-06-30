@@ -32,7 +32,7 @@ fn test_table_to_struct() {
         },
     );
 
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>(
             r#"
             value = 1
@@ -45,7 +45,7 @@ fn test_table_to_struct() {
             expected: "value",
             got: "table"
         }
-    );
+    ));
 }
 
 #[test]
@@ -72,7 +72,7 @@ fn test_unit_struct() {
         },
     );
 
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>(
             r#"
             value = 1
@@ -85,7 +85,7 @@ fn test_unit_struct() {
             expected: "number",
             got: "boolean"
         }
-    );
+    ));
 }
 
 #[test]
@@ -140,7 +140,7 @@ fn test_root_struct_multiple_fields() {
         },
     );
 
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>(
             r#"
             b = true
@@ -150,7 +150,7 @@ fn test_root_struct_multiple_fields() {
         .unwrap_err()
         .kind,
         TomlDeErrorKind::ExpectedFieldWithName("a")
-    );
+    ));
 }
 
 #[test]
@@ -185,16 +185,16 @@ fn test_nested_struct_multiple_fields() {
         },
     );
 
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>("a = 1").unwrap_err().kind,
         TomlDeErrorKind::ExpectedFieldWithName("nested")
-    );
-    assert_eq!(
+    ));
+    assert!(matches!(
         facet_toml::from_str::<Root>("nested = true")
             .unwrap_err()
             .kind,
         TomlDeErrorKind::ParseSingleValueAsMultipleFieldStruct
-    );
+    ));
 }
 
 #[test]
@@ -278,6 +278,32 @@ fn test_default_struct_fields() {
             a: i32::default(),
             b: bool::default(),
             c: "hi".to_owned()
+        },
+    );
+}
+
+#[test]
+fn test_root_struct_deserialize_defaults() {
+    fn default_string() -> String {
+        "hi".to_string()
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Root {
+        #[facet(default = 42)]
+        a: i32,
+        #[facet(default = Some(true))]
+        b: Option<bool>,
+        #[facet(default = default_string())]
+        c: String,
+    }
+
+    assert_eq!(
+        facet_toml::from_str::<Root>("")?,
+        Root {
+            a: 42,
+            b: Some(true),
+            c: "hi".to_string()
         },
     );
 }

@@ -3,9 +3,8 @@ use crate::ptr::{PtrConst, PtrMut, PtrUninit};
 
 /// Describes an Option — including a vtable to query and alter its state,
 /// and the inner shape (the `T` in `Option<T>`).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
-#[non_exhaustive]
 pub struct OptionDef<'shape> {
     /// vtable for interacting with the option
     pub vtable: &'shape OptionVTable,
@@ -109,8 +108,7 @@ pub type OptionReplaceWithFn =
     for<'option> unsafe fn(option: PtrMut<'option>, value: Option<PtrConst<'_>>);
 
 /// Virtual table for `Option<T>`
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
-#[non_exhaustive]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct OptionVTable {
     /// cf. [`OptionIsSomeFn`]

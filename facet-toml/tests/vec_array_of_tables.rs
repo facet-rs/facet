@@ -40,7 +40,7 @@ fn test_nested_unit_struct_vec() {
     };
 
     let serialized = facet_toml::to_string(&root).unwrap();
-    println!("Serialized nested unit struct vec:\n{}", serialized);
+    println!("Serialized nested unit struct vec:\n{serialized}");
 
     // This will panic because the 'unit' field is not present in the serialized TOML
     let _deserialized: Root = facet_toml::from_str(&serialized).unwrap();
@@ -62,7 +62,7 @@ fn test_nested_struct_multiple_fields_vec() {
     };
 
     let serialized = facet_toml::to_string(&root).unwrap();
-    println!("Serialized nested struct vec:\n{}", serialized);
+    println!("Serialized nested struct vec:\n{serialized}");
 
     // Test if it properly uses [[nested]] syntax
     assert!(

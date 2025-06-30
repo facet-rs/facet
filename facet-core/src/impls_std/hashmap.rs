@@ -1,12 +1,12 @@
-use core::hash::{BuildHasher, Hash};
+use core::hash::BuildHasher;
 use std::collections::HashMap;
 use std::hash::RandomState;
 
 use crate::ptr::{PtrConst, PtrMut};
 
 use crate::{
-    Def, Facet, IterVTable, MapDef, MapVTable, MarkerTraits, ScalarAffinity, ScalarDef, Shape,
-    Type, TypeParam, UserType, VTableView, ValueVTable, value_vtable,
+    Def, Facet, IterVTable, MapDef, MapVTable, MarkerTraits, Shape, Type, TypeParam, UserType,
+    ValueVTable, value_vtable,
 };
 
 type HashMapIterator<'mem, K, V> = std::collections::hash_map::Iter<'mem, K, V>;
@@ -41,88 +41,7 @@ where
                     write!(f, "{}<⋯>", Self::SHAPE.type_identifier)
                 }
             })
-            .debug(|| {
-                if K::SHAPE.vtable.has_debug() && V::SHAPE.vtable.has_debug() {
-                    Some(|value, f| {
-                        let k_debug = <VTableView<K>>::of().debug().unwrap();
-                        let v_debug = <VTableView<V>>::of().debug().unwrap();
-                        write!(f, "{{")?;
-                        for (i, (key, val)) in value.iter().enumerate() {
-                            if i > 0 {
-                                write!(f, ", ")?;
-                            }
-                            (k_debug)(key, f)?;
-                            write!(f, ": ")?;
-                            (v_debug)(val, f)?;
-                        }
-                        write!(f, "}}")
-                    })
-                } else {
-                    None
-                }
-            })
             .default_in_place(|| Some(|target| unsafe { target.put(Self::default()) }))
-            .clone_into(|| {
-                if K::SHAPE.vtable.has_clone_into() && V::SHAPE.vtable.has_clone_into() {
-                    Some(|src, dst| unsafe {
-                        let map = src;
-                        let mut new_map =
-                            HashMap::with_capacity_and_hasher(map.len(), S::default());
-
-                        let k_clone_into = <VTableView<K>>::of().clone_into().unwrap();
-                        let v_clone_into = <VTableView<V>>::of().clone_into().unwrap();
-
-                        for (k, v) in map {
-                            use crate::TypedPtrUninit;
-                            use core::mem::MaybeUninit;
-
-                            let mut new_k = MaybeUninit::<K>::uninit();
-                            let mut new_v = MaybeUninit::<V>::uninit();
-
-                            let uninit_k = TypedPtrUninit::new(new_k.as_mut_ptr());
-                            let uninit_v = TypedPtrUninit::new(new_v.as_mut_ptr());
-
-                            (k_clone_into)(k, uninit_k);
-                            (v_clone_into)(v, uninit_v);
-
-                            new_map.insert(new_k.assume_init(), new_v.assume_init());
-                        }
-
-                        dst.put(new_map)
-                    })
-                } else {
-                    None
-                }
-            })
-            .partial_eq(|| {
-                if V::SHAPE.vtable.has_partial_eq() {
-                    Some(|a, b| {
-                        let v_eq = <VTableView<V>>::of().partial_eq().unwrap();
-                        a.len() == b.len()
-                            && a.iter().all(|(key_a, val_a)| {
-                                b.get(key_a).is_some_and(|val_b| (v_eq)(val_a, val_b))
-                            })
-                    })
-                } else {
-                    None
-                }
-            })
-            .hash(|| {
-                if V::SHAPE.vtable.has_hash() {
-                    Some(|map, hasher_this, hasher_write_fn| unsafe {
-                        use crate::HasherProxy;
-                        let v_hash = <VTableView<V>>::of().hash().unwrap();
-                        let mut hasher = HasherProxy::new(hasher_this, hasher_write_fn);
-                        map.len().hash(&mut hasher);
-                        for (k, v) in map {
-                            k.hash(&mut hasher);
-                            (v_hash)(v, hasher_this, hasher_write_fn);
-                        }
-                    })
-                } else {
-                    None
-                }
-            })
             .build()
     };
 
@@ -216,11 +135,7 @@ unsafe impl Facet<'_> for RandomState {
         Shape::builder_for_sized::<Self>()
             .type_identifier("RandomState")
             .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar(
-                ScalarDef::builder()
-                    .affinity(&const { ScalarAffinity::opaque().build() })
-                    .build(),
-            ))
+            .def(Def::Scalar)
             .build()
     };
 }

@@ -15,5 +15,5 @@ pub fn generate(opts: GenerateReadmeOpts) -> String {
     let footer = include_str!("footer.md").to_string();
 
     // Combine header, template, and footer with newlines
-    format!("{}\n{}\n{}", header, template_content, footer)
+    format!("{header}\n{template_content}\n{footer}")
 }

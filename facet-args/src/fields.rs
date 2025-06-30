@@ -30,13 +30,12 @@ pub(crate) fn find_positional_field<'facet, 'shape>(
     if let Type::User(UserType::Struct(st)) = &shape.ty {
         for (idx, field) in st.fields.iter().enumerate() {
             for attr in field.attributes.iter() {
-                if let FieldAttribute::Arbitrary(a) = attr {
-                    if a.contains("positional") {
-                        // Check if this field is already set
-                        let is_set = wip.is_field_set(idx).unwrap_or(false);
-                        if !is_set {
-                            return Ok(field.name);
-                        }
+                let FieldAttribute::Arbitrary(a) = attr;
+                if a.contains("positional") {
+                    // Check if this field is already set
+                    let is_set = wip.is_field_set(idx).unwrap_or(false);
+                    if !is_set {
+                        return Ok(field.name);
                     }
                 }
             }

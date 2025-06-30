@@ -89,31 +89,6 @@ When working with type information:
 
 This design lets facet handle both generic data structures (`Def`) and Rust's specific type system (`Type`).
 
-### Type Conversion in Deserialization
-
-When implementing deserialization in format-specific modules (YAML, JSON, etc.):
-
-- The `facet_deserialize` infrastructure handles automatic conversions for certain scalar types
-- For types with specific `ScalarAffinity` (Time, UUID, Path, etc.), string values are automatically converted
-- Use `partial.set(string_value)` and the system will handle parsing if the target type supports it
-- This keeps format-specific code simple and avoids duplication of parsing logic
-
-Use `ScalarAffinity` patterns to detect and handle related types:
-
-```rust
-// For scalar_def with time affinity (like OffsetDateTime)
-if matches!(scalar_def.affinity, ScalarAffinity::Time(_)) {
-    // Simply set the string value, the automatic conversion will handle parsing
-    let s = value.as_str().unwrap_or_default().to_string();
-    wip.set(s).map_err(|e| AnyErr(e.to_string()))?;
-}
-```
-
-Other common scalar affinities to handle:
-- `ScalarAffinity::Path(_)` - for Path types
-- `ScalarAffinity::UUID(_)` - for UUID types 
-- `ScalarAffinity::ULID(_)` - for ULID types
-
 ### Code Comments
 
 Avoid adding comments that merely restate what the code is doing or that reference the development process (e.g., "BUG:", "TODO:" unless they're meant to stay). Comments should add value by explaining complex logic or design decisions, not narrate the obvious or temporary state of the code.

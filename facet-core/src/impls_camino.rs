@@ -4,8 +4,8 @@ use alloc::string::String;
 use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::{
-    Def, Facet, PtrConst, PtrMut, PtrUninit, ScalarAffinity, ScalarDef, Shape, TryFromError,
-    TryIntoInnerError, Type, UserType, ValueVTable, value_vtable, value_vtable_unsized,
+    Def, Facet, PtrConst, PtrMut, PtrUninit, Shape, TryFromError, TryIntoInnerError, Type,
+    UserType, ValueVTable, value_vtable, value_vtable_unsized,
 };
 
 unsafe impl Facet<'_> for Utf8PathBuf {
@@ -59,11 +59,7 @@ unsafe impl Facet<'_> for Utf8PathBuf {
         Shape::builder_for_sized::<Self>()
             .type_identifier("Utf8PathBuf")
             .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar(
-                ScalarDef::builder()
-                    .affinity(&const { ScalarAffinity::path().build() })
-                    .build(),
-            ))
+            .def(Def::Scalar)
             .inner(inner_shape)
             .build()
     };
@@ -82,11 +78,7 @@ unsafe impl Facet<'_> for Utf8Path {
         Shape::builder_for_unsized::<Self>()
             .type_identifier("Utf8Path")
             .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar(
-                ScalarDef::builder()
-                    .affinity(&const { ScalarAffinity::path().build() })
-                    .build(),
-            ))
+            .def(Def::Scalar)
             .build()
     };
 }

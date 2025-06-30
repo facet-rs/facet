@@ -124,7 +124,7 @@ impl<'shape> core::fmt::Display for TomlDeError<'_, 'shape> {
         }
 
         if let Ok(output) = String::from_utf8(writer) {
-            write!(f, "{}", output)
+            write!(f, "{output}")
         } else {
             write!(f, "Error converting ariadne output to string")
         }
@@ -140,7 +140,7 @@ impl<'shape> core::fmt::Debug for TomlDeError<'_, 'shape> {
 }
 
 /// Type of error.
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub enum TomlDeErrorKind<'shape> {
     /// Any error from facet.
     GenericReflect(ReflectError<'shape>),

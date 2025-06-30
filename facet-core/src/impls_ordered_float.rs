@@ -1,7 +1,6 @@
 use crate::{
-    Def, Facet, PtrConst, PtrMut, PtrUninit, Repr, ScalarAffinity, ScalarDef, Shape, StructType,
-    TryBorrowInnerError, TryFromError, TryIntoInnerError, Type, UserType, ValueVTable,
-    field_in_type, value_vtable,
+    Def, Facet, PtrConst, PtrMut, PtrUninit, Repr, Shape, StructType, TryBorrowInnerError,
+    TryFromError, TryIntoInnerError, Type, UserType, ValueVTable, field_in_type, value_vtable,
 };
 use ordered_float::{NotNan, OrderedFloat};
 
@@ -90,12 +89,7 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                             .kind(crate::StructKind::Tuple)
                             .build(),
                     )))
-                    .def(Def::Scalar(
-                        ScalarDef::builder()
-                            // Affinity: use number affinity as inner's
-                            .affinity(&const { ScalarAffinity::opaque().build() })
-                            .build(),
-                    ))
+                    .def(Def::Scalar)
                     .inner(inner_shape)
                     .build()
             };
@@ -193,11 +187,7 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                 Shape::builder_for_sized::<Self>()
                     .type_identifier("NotNan")
                     .ty(Type::User(UserType::Opaque))
-                    .def(Def::Scalar(
-                        ScalarDef::builder()
-                            .affinity(&const { ScalarAffinity::opaque().build() })
-                            .build(),
-                    ))
+                    .def(Def::Scalar)
                     .inner(inner_shape)
                     .build()
             };

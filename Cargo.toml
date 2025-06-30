@@ -33,7 +33,9 @@ members = [
     "facet-jsonschema",
     "facet-deserialize",
     "facet-bench",
-    "facet-testhelpers-macros", "facet-diff",
+    "facet-testhelpers-macros",
+    "facet-diff",
+    "facet-inspect",
 ]
 exclude = ["outside-workspace"]
 resolver = "3"

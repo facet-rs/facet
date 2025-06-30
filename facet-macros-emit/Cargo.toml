@@ -1,6 +1,6 @@
 [package]
 name = "facet-macros-emit"
-version = "0.27.13"
+version = "0.27.15"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -20,7 +20,7 @@ slow-tests = [] # Enable slow tests (compile tests)
 function = ["facet-macros-parse/function"]
 
 [dependencies]
-facet-macros-parse = { version = "0.27.13", path = "../facet-macros-parse" }
+facet-macros-parse = { version = "0.27.15", path = "../facet-macros-parse" }
 quote = "1.0.40"
 
 [dev-dependencies]

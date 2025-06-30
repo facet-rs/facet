@@ -103,7 +103,7 @@ fn deserialize_item<'input, 'facet, 'shape>(
 
     // Fall back to the def system for other types
     match wip.shape().def {
-        Def::Scalar(_) => deserialize_as_scalar(toml, wip, item)?,
+        Def::Scalar => deserialize_as_scalar(toml, wip, item)?,
         Def::List(_) => deserialize_as_list(toml, wip, item)?,
         Def::Map(_) => deserialize_as_map(toml, wip, item)?,
         Def::SmartPointer(_) => deserialize_as_smartpointer(toml, wip, item)?,
@@ -169,15 +169,16 @@ fn deserialize_as_struct<'input, 'a, 'shape>(
         match field_item {
             Some(field_item) => deserialize_item(toml, wip, field_item)?,
             None => {
-                if let Def::Option(..) = field.shape().def {
-                    // Default of `Option<T>` is `None`
-                    reflect!(wip, toml, item.span(), set_default());
-                } else if field.flags.contains(FieldFlags::DEFAULT) {
+                if field.flags.contains(FieldFlags::DEFAULT) {
                     // Handle the default - set_default internally handles custom default functions safely
                     if field.shape().is(Characteristic::Default)
                         || field.vtable.default_fn.is_some()
                     {
-                        reflect!(wip, toml, item.span(), set_default());
+                        if let Some(field_default_fn) = field.vtable.default_fn {
+                            reflect!(wip, toml, item.span(), set_field_default(field_default_fn));
+                        } else {
+                            reflect!(wip, toml, item.span(), set_default());
+                        }
                     } else {
                         // Throw an error when there's a "default" attribute but no implementation for the type
                         return Err(TomlDeError::new(
@@ -191,6 +192,9 @@ fn deserialize_as_struct<'input, 'a, 'shape>(
                             wip.path(),
                         ));
                     }
+                } else if let Def::Option(..) = field.shape().def {
+                    // Default of `Option<T>` is `None`
+                    reflect!(wip, toml, item.span(), set_default());
                 } else if field.shape().is_type::<()>() {
                     // Default of `()` is `()`
                     reflect!(wip, toml, item.span(), set_default());

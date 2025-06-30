@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.22](https://github.com/facet-rs/facet/compare/facet-pretty-v0.23.21...facet-pretty-v0.23.22) - 2025-06-26
+
+### Other
+
+- Remove ScalarDef
+- Apply modern clippy fixes (mostly format strings)
+
+## [0.23.21](https://github.com/facet-rs/facet/compare/facet-pretty-v0.23.20...facet-pretty-v0.23.21) - 2025-06-17
+
+### Other
+
+- updated the following local packages: facet-core, facet-reflect
+
 ## [0.23.20](https://github.com/facet-rs/facet/compare/facet-pretty-v0.23.19...facet-pretty-v0.23.20) - 2025-06-15
 
 ### Other

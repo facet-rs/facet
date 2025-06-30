@@ -3,9 +3,8 @@ use crate::ptr::{PtrConst, PtrMut, PtrUninit};
 use super::{IterVTable, Shape};
 
 /// Fields for list types
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
-#[non_exhaustive]
 pub struct ListDef<'shape> {
     /// vtable for interacting with the list
     pub vtable: &'shape ListVTable,
@@ -119,9 +118,8 @@ pub type ListAsPtrFn = unsafe fn(list: PtrConst) -> PtrConst;
 pub type ListAsMutPtrFn = unsafe fn(list: PtrMut) -> PtrMut;
 
 /// Virtual table for a list-like type (like `Vec<T>`)
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
-#[non_exhaustive]
 pub struct ListVTable {
     /// cf. [`ListInitInPlaceWithCapacityFn`].
     /// Unbuildable lists exist, like arrays.

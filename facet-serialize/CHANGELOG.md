@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.16](https://github.com/facet-rs/facet/compare/facet-serialize-v0.24.15...facet-serialize-v0.24.16) - 2025-06-26
+
+### Other
+
+- impl Facet for Arc<str>, Rc<str>, and Box<str>
+- Fix HashSet serializing to null due to Set being an unhandled type
+- Remove ScalarDef
+- Remove PartialEq implementations
+- Apply modern clippy fixes (mostly format strings)
+
+## [0.24.15](https://github.com/facet-rs/facet/compare/facet-serialize-v0.24.14...facet-serialize-v0.24.15) - 2025-06-17
+
+### Other
+
+- updated the following local packages: facet-core, facet-reflect
+
 ## [0.24.14](https://github.com/facet-rs/facet/compare/facet-serialize-v0.24.13...facet-serialize-v0.24.14) - 2025-06-15
 
 ### Other

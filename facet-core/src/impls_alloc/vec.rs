@@ -1,5 +1,4 @@
 use crate::*;
-use core::hash::Hash as _;
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
@@ -22,79 +21,6 @@ where
                 }
             })
             .default_in_place(|| Some(|target| unsafe { target.put(Self::default()) }))
-            .clone_into(|| {
-                if T::SHAPE.vtable.has_clone_into() {
-                    Some(|src, dst| unsafe {
-                        let mut new_vec = Vec::with_capacity(src.len());
-
-                        let t_clone_into = <VTableView<T>>::of().clone_into().unwrap();
-
-                        for item in src {
-                            use crate::TypedPtrUninit;
-                            use core::mem::MaybeUninit;
-
-                            let mut new_item = MaybeUninit::<T>::uninit();
-                            let uninit_item = TypedPtrUninit::new(new_item.as_mut_ptr());
-
-                            (t_clone_into)(item, uninit_item);
-
-                            new_vec.push(new_item.assume_init());
-                        }
-
-                        dst.put(new_vec)
-                    })
-                } else {
-                    None
-                }
-            })
-            .debug(|| {
-                if T::SHAPE.vtable.has_debug() {
-                    Some(|value, f| {
-                        write!(f, "[")?;
-                        for (i, item) in value.iter().enumerate() {
-                            if i > 0 {
-                                write!(f, ", ")?;
-                            }
-                            (<VTableView<T>>::of().debug().unwrap())(item, f)?;
-                        }
-                        write!(f, "]")
-                    })
-                } else {
-                    None
-                }
-            })
-            .partial_eq(|| {
-                if T::SHAPE.vtable.has_partial_eq() {
-                    Some(|a, b| {
-                        if a.len() != b.len() {
-                            return false;
-                        }
-                        for (item_a, item_b) in a.iter().zip(b.iter()) {
-                            if !(<VTableView<T>>::of().partial_eq().unwrap())(item_a, item_b) {
-                                return false;
-                            }
-                        }
-                        true
-                    })
-                } else {
-                    None
-                }
-            })
-            .hash(|| {
-                if T::SHAPE.vtable.has_hash() {
-                    Some(|vec, hasher_this, hasher_write_fn| unsafe {
-                        use crate::HasherProxy;
-                        let t_hash = <VTableView<T>>::of().hash().unwrap_unchecked();
-                        let mut hasher = HasherProxy::new(hasher_this, hasher_write_fn);
-                        vec.len().hash(&mut hasher);
-                        for item in vec {
-                            (t_hash)(item, hasher_this, hasher_write_fn);
-                        }
-                    })
-                } else {
-                    None
-                }
-            })
             .marker_traits(|| {
                 MarkerTraits::SEND
                     .union(MarkerTraits::SYNC)

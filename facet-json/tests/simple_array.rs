@@ -16,7 +16,7 @@ fn test_simple_array() {
             assert_eq!(data.values, [1u64, 2u64, 3u64]);
         }
         Err(e) => {
-            panic!("Failed to parse simple array: {}", e);
+            panic!("Failed to parse simple array: {e}");
         }
     }
 }
@@ -28,7 +28,7 @@ fn test_array_overflow() {
     let result = from_str::<SimpleArray>(json);
     assert!(result.is_err());
     if let Err(e) = result {
-        let error_msg = format!("{}", e);
+        let error_msg = format!("{e}");
         assert!(
             error_msg.contains("Too many elements") || error_msg.contains("maximum 3 elements")
         );
@@ -50,7 +50,7 @@ fn test_nested_array_simple() {
             assert_eq!(data.matrix, [[1, 2], [3, 4]]);
         }
         Err(e) => {
-            panic!("Failed to parse nested array: {}", e);
+            panic!("Failed to parse nested array: {e}");
         }
     }
 }

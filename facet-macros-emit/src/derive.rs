@@ -13,10 +13,7 @@ pub fn facet_macros(input: TokenStream) -> TokenStream {
             AdtDecl::Enum(parsed) => process_enum::process_enum(parsed),
         },
         Err(err) => {
-            panic!(
-                "Could not parse type declaration: {}\nError: {}",
-                input, err
-            );
+            panic!("Could not parse type declaration: {input}\nError: {err}");
         }
     }
 }

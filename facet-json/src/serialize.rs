@@ -1,4 +1,4 @@
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use facet_core::Facet;
 use facet_reflect::Peek;
@@ -78,7 +78,7 @@ impl<W: crate::JsonWrite> JsonSerializer<W> {
                 }
             }
             Some(StackItem::ObjectItem { object_state }) => {
-                debug!("ObjectItem: object_state = {:?}", object_state);
+                debug!("ObjectItem: object_state = {object_state:?}");
                 match object_state {
                     ObjectItemState::FirstKey => {
                         *object_state = ObjectItemState::Value;
@@ -167,8 +167,21 @@ impl<'shape, W: crate::JsonWrite> Serializer<'shape> for JsonSerializer<W> {
 
     fn serialize_i32(&mut self, value: i32) -> Result<(), Self::Error> {
         self.start_value()?;
-        self.writer
-            .write(itoa::Buffer::new().format(value).as_bytes());
+
+        match self.stack.last() {
+            Some(StackItem::ObjectItem {
+                object_state: ObjectItemState::Value,
+                ..
+            }) => {
+                self.writer.write(b"\"");
+                self.writer.write(value.to_string().as_bytes());
+                self.writer.write(b"\"");
+            }
+            _ => {
+                self.writer
+                    .write(itoa::Buffer::new().format(value).as_bytes());
+            }
+        };
         self.end_value()
     }
 

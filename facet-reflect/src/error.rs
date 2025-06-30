@@ -2,8 +2,7 @@ use facet_core::{Characteristic, EnumType, FieldError, Shape, TryFromError};
 use owo_colors::OwoColorize;
 
 /// Errors that can occur when reflecting on types.
-#[derive(PartialEq, Clone)]
-#[non_exhaustive]
+#[derive(Clone)]
 pub enum ReflectError<'shape> {
     /// Tried to set an enum to a variant that does not exist
     NoSuchVariant {
@@ -115,6 +114,8 @@ pub enum ReflectError<'shape> {
     Unsized {
         /// The shape for the type that is unsized
         shape: &'shape Shape<'shape>,
+        /// The operation we were trying to perform
+        operation: &'static str,
     },
 
     /// Array not fully initialized during build
@@ -176,7 +177,7 @@ impl core::fmt::Display for ReflectError<'_> {
                 )
             }
             ReflectError::UninitializedField { shape, field_name } => {
-                write!(f, "Field '{}::{}' was not initialized", shape, field_name)
+                write!(f, "Field '{shape}::{field_name}' was not initialized")
             }
             ReflectError::UninitializedEnumField {
                 shape,
@@ -243,7 +244,12 @@ impl core::fmt::Display for ReflectError<'_> {
                 "Shape '{}' has a `default` attribute but no default implementation",
                 shape.red()
             ),
-            ReflectError::Unsized { shape } => write!(f, "Shape '{}' is unsized", shape.red()),
+            ReflectError::Unsized { shape, operation } => write!(
+                f,
+                "Shape '{}' is unsized, can't perform operation {}",
+                shape.red(),
+                operation
+            ),
             ReflectError::ArrayNotFullyInitialized {
                 shape,
                 pushed_count,
@@ -279,7 +285,7 @@ impl core::fmt::Display for ReflectError<'_> {
 impl core::fmt::Debug for ReflectError<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // Use Display implementation for more readable output
-        write!(f, "ReflectError({})", self)
+        write!(f, "ReflectError({self})")
     }
 }
 

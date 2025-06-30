@@ -20,13 +20,13 @@ fn test_string() {
             value: "string".to_string()
         },
     );
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>("value = 1").unwrap_err().kind,
         TomlDeErrorKind::ExpectedType {
             expected: "string",
             got: "integer"
         }
-    );
+    ));
 }
 
 #[cfg(feature = "std")]
@@ -43,13 +43,13 @@ fn test_cow_string() {
             value: std::borrow::Cow::Borrowed("string")
         },
     );
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>("value = 1").unwrap_err().kind,
         TomlDeErrorKind::ExpectedType {
             expected: "string",
             got: "integer"
         }
-    );
+    ));
 }
 
 #[test]
@@ -67,14 +67,14 @@ fn test_bool() {
         facet_toml::from_str::<Root>("value = false")?,
         Root { value: false },
     );
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>("value = 1").unwrap_err().kind,
         TomlDeErrorKind::ExpectedType {
             expected: "boolean",
             got: "integer"
         }
-    );
-    assert_eq!(
+    ));
+    assert!(matches!(
         facet_toml::from_str::<Root>("value = {a = 1}")
             .unwrap_err()
             .kind,
@@ -82,14 +82,14 @@ fn test_bool() {
             expected: "boolean",
             got: "inline table"
         }
-    );
-    assert_eq!(
+    ));
+    assert!(matches!(
         facet_toml::from_str::<Root>("[value]").unwrap_err().kind,
         TomlDeErrorKind::ExpectedType {
             expected: "value",
             got: "table"
         }
-    );
+    ));
 }
 
 #[test]
@@ -103,7 +103,7 @@ fn test_char() {
         facet_toml::from_str::<Root>("value = 'c'")?,
         Root { value: 'c' },
     );
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>("value = 'long'")
             .unwrap_err()
             .kind,
@@ -111,7 +111,7 @@ fn test_char() {
             expected: "char",
             got: "string"
         }
-    );
+    ));
 }
 
 #[cfg(feature = "std")]
@@ -149,15 +149,16 @@ fn test_ip_addr() {
             value: "::1".parse().unwrap()
         },
     );
-    assert_eq!(
-        dbg!(facet_toml::from_str::<Root>("value = '127.0.0.1:8000'").unwrap_err()).kind,
+    let err = dbg!(facet_toml::from_str::<Root>("value = '127.0.0.1:8000'").unwrap_err());
+    assert!(matches!(
+        &err.kind,
         TomlDeErrorKind::FailedTypeConversion {
             toml_type_name: "string",
-            rust_type: core::net::IpAddr::SHAPE,
+            rust_type,
             reason: None
-        }
-    );
-    assert_eq!(
+        } if *rust_type == core::net::IpAddr::SHAPE
+    ));
+    assert!(matches!(
         facet_toml::from_str::<Root>("value = true")
             .unwrap_err()
             .kind,
@@ -165,7 +166,7 @@ fn test_ip_addr() {
             expected: "string",
             got: "boolean"
         }
-    );
+    ));
 }
 
 #[test]
@@ -209,7 +210,7 @@ fn test_f64() {
         facet_toml::from_str::<Root>("value = 1")?,
         Root { value: 1.0 },
     );
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>("value = true")
             .unwrap_err()
             .kind,
@@ -217,7 +218,7 @@ fn test_f64() {
             expected: "number",
             got: "boolean"
         }
-    );
+    ));
 }
 
 #[test]
@@ -231,7 +232,7 @@ fn test_f32() {
         facet_toml::from_str::<Root>("value = 1")?,
         Root { value: 1.0 },
     );
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>("value = true")
             .unwrap_err()
             .kind,
@@ -239,7 +240,7 @@ fn test_f32() {
             expected: "number",
             got: "boolean"
         }
-    );
+    ));
 }
 
 #[test]
@@ -254,7 +255,7 @@ fn test_usize() {
         Root { value: 1 },
     );
     assert!(facet_toml::from_str::<Root>("value = -1").is_err());
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>("value = true")
             .unwrap_err()
             .kind,
@@ -262,7 +263,7 @@ fn test_usize() {
             expected: "number",
             got: "boolean"
         }
-    );
+    ));
 }
 
 #[test]
@@ -277,7 +278,7 @@ fn test_u128() {
         Root { value: 1 },
     );
     assert!(facet_toml::from_str::<Root>("value = -1").is_err());
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>("value = true")
             .unwrap_err()
             .kind,
@@ -285,7 +286,7 @@ fn test_u128() {
             expected: "number",
             got: "boolean"
         }
-    );
+    ));
 }
 
 #[test]
@@ -300,7 +301,7 @@ fn test_u64() {
         Root { value: 1 },
     );
     assert!(facet_toml::from_str::<Root>("value = -1").is_err());
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>("value = true")
             .unwrap_err()
             .kind,
@@ -308,7 +309,7 @@ fn test_u64() {
             expected: "number",
             got: "boolean"
         }
-    );
+    ));
 }
 
 #[test]
@@ -323,7 +324,7 @@ fn test_u32() {
         Root { value: 1 },
     );
     assert!(facet_toml::from_str::<Root>("value = -1").is_err());
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>("value = true")
             .unwrap_err()
             .kind,
@@ -331,7 +332,7 @@ fn test_u32() {
             expected: "number",
             got: "boolean"
         }
-    );
+    ));
 }
 
 #[test]
@@ -346,7 +347,7 @@ fn test_u16() {
         Root { value: 1 },
     );
     assert!(facet_toml::from_str::<Root>("value = -1").is_err());
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>("value = true")
             .unwrap_err()
             .kind,
@@ -354,7 +355,7 @@ fn test_u16() {
             expected: "number",
             got: "boolean"
         }
-    );
+    ));
 }
 
 #[test]
@@ -369,7 +370,7 @@ fn test_u8() {
         Root { value: 1 },
     );
     assert!(facet_toml::from_str::<Root>("value = -1").is_err());
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>("value = true")
             .unwrap_err()
             .kind,
@@ -377,7 +378,7 @@ fn test_u8() {
             expected: "number",
             got: "boolean"
         }
-    );
+    ));
 }
 
 #[test]
@@ -391,7 +392,7 @@ fn test_isize() {
         facet_toml::from_str::<Root>("value = 1")?,
         Root { value: 1 },
     );
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>("value = true")
             .unwrap_err()
             .kind,
@@ -399,7 +400,7 @@ fn test_isize() {
             expected: "number",
             got: "boolean"
         }
-    );
+    ));
 }
 
 #[test]
@@ -413,7 +414,7 @@ fn test_i128() {
         facet_toml::from_str::<Root>("value = 1")?,
         Root { value: 1 },
     );
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>("value = true")
             .unwrap_err()
             .kind,
@@ -421,7 +422,7 @@ fn test_i128() {
             expected: "number",
             got: "boolean"
         }
-    );
+    ));
 }
 
 #[test]
@@ -435,7 +436,7 @@ fn test_i64() {
         facet_toml::from_str::<Root>("value = 1")?,
         Root { value: 1 },
     );
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>("value = true")
             .unwrap_err()
             .kind,
@@ -443,7 +444,7 @@ fn test_i64() {
             expected: "number",
             got: "boolean"
         }
-    );
+    ));
 }
 
 #[test]
@@ -457,7 +458,7 @@ fn test_i32() {
         facet_toml::from_str::<Root>("value = 1")?,
         Root { value: 1 },
     );
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>("value = true")
             .unwrap_err()
             .kind,
@@ -465,7 +466,7 @@ fn test_i32() {
             expected: "number",
             got: "boolean"
         }
-    );
+    ));
 }
 
 #[test]
@@ -479,7 +480,7 @@ fn test_i16() {
         facet_toml::from_str::<Root>("value = 1")?,
         Root { value: 1 },
     );
-    assert_eq!(
+    assert!(matches!(
         facet_toml::from_str::<Root>("value = true")
             .unwrap_err()
             .kind,
@@ -487,7 +488,7 @@ fn test_i16() {
             expected: "number",
             got: "boolean"
         }
-    );
+    ));
 }
 
 #[test]
@@ -501,17 +502,16 @@ fn test_i8() {
         facet_toml::from_str::<Root>("value = 1")?,
         Root { value: 1 },
     );
-    assert_eq!(
-        facet_toml::from_str::<Root>("value = 300.0")
-            .unwrap_err()
-            .kind,
+    let err = facet_toml::from_str::<Root>("value = 300.0").unwrap_err();
+    assert!(matches!(
+        &err.kind,
         TomlDeErrorKind::FailedTypeConversion {
             toml_type_name: "float",
-            rust_type: i8::SHAPE,
+            rust_type,
             reason: None
-        }
-    );
-    assert_eq!(
+        } if *rust_type == i8::SHAPE
+    ));
+    assert!(matches!(
         facet_toml::from_str::<Root>("value = true")
             .unwrap_err()
             .kind,
@@ -519,7 +519,7 @@ fn test_i8() {
             expected: "number",
             got: "boolean"
         }
-    );
+    ));
 }
 
 #[test]

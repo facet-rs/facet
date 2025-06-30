@@ -1,9 +1,8 @@
 use super::{Field, Repr};
 
 /// Common fields for struct-like types
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, Debug)]
 #[repr(C)]
-#[non_exhaustive]
 pub struct StructType<'shape> {
     /// Representation of the struct's data
     pub repr: Repr,
@@ -88,7 +87,6 @@ impl<'shape> StructBuilder<'shape> {
 /// Describes the kind of struct (useful for deserializing)
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
-#[non_exhaustive]
 pub enum StructKind {
     /// struct UnitStruct;
     Unit,

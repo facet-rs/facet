@@ -1,6 +1,5 @@
 #![cfg(feature = "std")]
 
-mod arc;
 mod array_building;
 mod empty_tuples;
 mod invariant;
@@ -12,6 +11,8 @@ mod no_uninit;
 mod option_building;
 mod option_leak;
 mod put_vec_leak;
+mod smartptr;
+mod smartptr_complex;
 mod struct_leak;
 mod tuples;
 mod variance;

@@ -177,7 +177,7 @@ impl PrettyPrinter {
                     // Process based on the peek variant and type
                     match (item.value.shape().def, item.value.shape().ty) {
                         // Handle scalar values
-                        (Def::Scalar(_def), _) => {
+                        (Def::Scalar, _) => {
                             self.format_scalar(item.value, f)?;
                         }
                         // Handle option types
@@ -241,7 +241,7 @@ impl PrettyPrinter {
                             let doc_comments = item.value.shape().doc;
                             if !doc_comments.is_empty() {
                                 for line in doc_comments {
-                                    self.write_comment(f, &format!("///{}", line))?;
+                                    self.write_comment(f, &format!("///{line}"))?;
                                     writeln!(f)?;
                                 }
                             }
@@ -338,13 +338,13 @@ impl PrettyPrinter {
 
                             // Display doc comments before the type name
                             for line in doc_comments {
-                                self.write_comment(f, &format!("///{}", line))?;
+                                self.write_comment(f, &format!("///{line}"))?;
                                 writeln!(f)?;
                             }
 
                             // Show variant docs
                             for line in variant.doc {
-                                self.write_comment(f, &format!("///{}", line))?;
+                                self.write_comment(f, &format!("///{line}"))?;
                                 writeln!(f)?;
                             }
 
@@ -459,7 +459,7 @@ impl PrettyPrinter {
                                     "",
                                     width = item.format_depth * self.indent_size
                                 )?;
-                                self.write_comment(f, &format!("///{}", line))?;
+                                self.write_comment(f, &format!("///{line}"))?;
                                 writeln!(f)?;
                             }
                         }
@@ -574,7 +574,7 @@ impl PrettyPrinter {
 
                         if !field.doc.is_empty() {
                             for line in field.doc {
-                                self.write_comment(f, &format!("///{}", line))?;
+                                self.write_comment(f, &format!("///{line}"))?;
                                 write!(
                                     f,
                                     "\n{:width$}",
@@ -872,9 +872,9 @@ impl PrettyPrinter {
         let type_name = TypeNameWriter(peek);
 
         if self.use_colors {
-            write!(f, "\x1b[1m{}\x1b[0m", type_name) // bold
+            write!(f, "\x1b[1m{type_name}\x1b[0m") // bold
         } else {
-            write!(f, "{}", type_name)
+            write!(f, "{type_name}")
         }
     }
 
@@ -890,18 +890,18 @@ impl PrettyPrinter {
     fn write_field_name<W: fmt::Write>(&self, f: &mut W, name: &str) -> fmt::Result {
         if self.use_colors {
             // Use cyan color for field names (approximating original RGB color)
-            write!(f, "\x1b[36m{}\x1b[0m", name) // cyan
+            write!(f, "\x1b[36m{name}\x1b[0m") // cyan
         } else {
-            write!(f, "{}", name)
+            write!(f, "{name}")
         }
     }
 
     /// Write styled punctuation to formatter
     fn write_punctuation<W: fmt::Write>(&self, f: &mut W, text: &str) -> fmt::Result {
         if self.use_colors {
-            write!(f, "\x1b[2m{}\x1b[0m", text) // dim
+            write!(f, "\x1b[2m{text}\x1b[0m") // dim
         } else {
-            write!(f, "{}", text)
+            write!(f, "{text}")
         }
     }
 
@@ -915,9 +915,9 @@ impl PrettyPrinter {
     /// Write styled comment to formatter
     fn write_comment<W: fmt::Write>(&self, f: &mut W, text: &str) -> fmt::Result {
         if self.use_colors {
-            write!(f, "\x1b[2m{}\x1b[0m", text) // dim
+            write!(f, "\x1b[2m{text}\x1b[0m") // dim
         } else {
-            write!(f, "{}", text)
+            write!(f, "{text}")
         }
     }
 
@@ -933,12 +933,12 @@ impl PrettyPrinter {
         if self.use_colors {
             // Use bright red and bold for redacted values
             if self.use_colors {
-                write!(f, "\x1b[91;1m{}\x1b[0m", text) // bright red + bold
+                write!(f, "\x1b[91;1m{text}\x1b[0m") // bright red + bold
             } else {
-                write!(f, "{}", text)
+                write!(f, "{text}")
             }
         } else {
-            write!(f, "{}", text)
+            write!(f, "{text}")
         }
     }
 

@@ -221,7 +221,7 @@ where
             if eq_result { "==" } else { "!=" }.yellow(),
             r.style(REMARKABLE),
         );
-        eprintln!("Equality:   {}", eq_str);
+        eprintln!("Equality:   {eq_str}");
     }
 
     // Test ordering
@@ -236,7 +236,7 @@ where
             ord_str(Some(cmp_result)).yellow(),
             r.style(REMARKABLE),
         );
-        eprintln!("PartialOrd: {}", cmp_str);
+        eprintln!("PartialOrd: {cmp_str}");
     }
 
     if let Some(cmp_fn) = vtable.partial_ord() {
@@ -250,7 +250,7 @@ where
             ord_str(cmp_result).yellow(),
             r.style(REMARKABLE),
         );
-        eprintln!("Ord:        {}", cmp_str);
+        eprintln!("Ord:        {cmp_str}");
     }
 
     // Test default_in_place
@@ -264,7 +264,7 @@ where
         let debug = unsafe { debug(T::VTABLE, ptr.ptr.as_const()) };
         eprintln!(
             "Default:    {}",
-            format_args!("{:?}", debug).style(REMARKABLE)
+            format_args!("{debug:?}").style(REMARKABLE)
         );
     }
 
@@ -280,7 +280,7 @@ where
         let debug = unsafe { debug(T::VTABLE, ptr.ptr.as_const()) };
         eprintln!(
             "Clone:      {}",
-            format_args!("{:?}", debug).style(REMARKABLE)
+            format_args!("{debug:?}").style(REMARKABLE)
         );
     }
 
@@ -315,13 +315,13 @@ fn report_maybe_mismatch<'a, T>(
         r.blue(),
         expected_minus_actual
             .iter()
-            .map(|f| format!("- {}", f))
+            .map(|f| format!("- {f}"))
             .collect::<Vec<_>>()
             .join("\n")
             .yellow(),
         actual_minus_expected
             .iter()
-            .map(|f| format!("+ {}", f))
+            .map(|f| format!("+ {f}"))
             .collect::<Vec<_>>()
             .join("\n")
             .yellow(),
@@ -563,7 +563,7 @@ impl Display for Fact {
                     Ordering::Equal => "==",
                     Ordering::Greater => ">",
                 };
-                write!(f, "impl Ord and l {} r", ord_str)
+                write!(f, "impl Ord and l {ord_str} r")
             }
             Fact::PartialOrdAnd { l_ord_r } => {
                 let ord_str = match l_ord_r {
@@ -572,7 +572,7 @@ impl Display for Fact {
                     Some(Ordering::Greater) => ">",
                     None => "??",
                 };
-                write!(f, "impl PartialOrd and l {} r", ord_str)
+                write!(f, "impl PartialOrd and l {ord_str} r")
             }
             Fact::Default => write!(f, "impl Default"),
             Fact::Clone => write!(f, "impl Clone"),
@@ -1048,101 +1048,11 @@ fn test_slice_ref_traits() {
 
 #[test]
 fn test_array_traits() {
-    // [i32; 0] implements Debug, PartialEq, Ord, Default, and Clone
-    check_facts::<[i32; 0]>(
-        &[],
-        &[],
-        FactBuilder::new()
-            .debug()
-            .display()
-            .partial_eq_and(true)
-            .correct_ord_and(Ordering::Equal)
-            .default()
-            .clone()
-            .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .copy()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
-    );
     // [i32; 1] implements Debug, PartialEq, Ord, Default, and Clone
     check_facts(
         &[42],
         &[24],
-        FactBuilder::new()
-            .debug()
-            .display()
-            .partial_eq_and(false)
-            .correct_ord_and(Ordering::Greater)
-            .default()
-            .clone()
-            .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .copy()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
-    );
-    // [i32; 2] implements Debug, PartialEq, Ord, Default, and Clone
-    check_facts(
-        &[1, 2],
-        &[1, 3],
-        FactBuilder::new()
-            .debug()
-            .display()
-            .partial_eq_and(false)
-            .correct_ord_and(Ordering::Less)
-            .default()
-            .clone()
-            .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .copy()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
-    );
-    // [i32; 33] implements Debug, PartialEq, Ord and Clone but not yet `Default`
-    check_facts(
-        &[0; 33],
-        &[0; 33],
-        FactBuilder::new()
-            .debug()
-            .display()
-            .partial_eq_and(true)
-            .correct_ord_and(Ordering::Equal)
-            .clone()
-            .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .copy()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
-    );
-
-    // [&str; 1] implements Debug, PartialEq, Ord, Default, and Clone
-    check_facts(
-        &["hello"],
-        &["world"],
-        FactBuilder::new()
-            .display()
-            .debug()
-            .partial_eq_and(false)
-            .correct_ord_and(Ordering::Less)
-            .clone()
-            .build(),
+        FactBuilder::new().default().clone().build(),
         TypedMarkerTraits::new()
             .eq()
             .send()
@@ -1156,135 +1066,10 @@ fn test_array_traits() {
 
 #[test]
 fn test_vecs() {
-    // Vec<i32> implements Debug, PartialEq, but not Ord
     check_facts(
         &vec![1, 2, 3],
         &vec![4, 5, 6],
-        FactBuilder::new()
-            .debug()
-            .partial_eq_and(false)
-            .default()
-            .clone()
-            .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
-    );
-
-    // Vec<String> implements Debug, PartialEq, but not Ord
-    check_facts(
-        &vec!["hello".to_string(), "world".to_string()],
-        &vec!["foo".to_string(), "bar".to_string()],
-        FactBuilder::new()
-            .debug()
-            .partial_eq_and(false)
-            .default()
-            .clone()
-            .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
-    );
-
-    // Two pairs of equal Vecs
-    let vec1 = vec![1, 2, 3];
-    let vec2 = vec![1, 2, 3];
-    check_facts(
-        &vec1.clone(),
-        &vec2.clone(),
-        FactBuilder::new()
-            .debug()
-            .partial_eq_and(true)
-            .default()
-            .clone()
-            .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
-    );
-
-    let vec3 = vec!["hello".to_string(), "world".to_string()];
-    let vec4 = vec!["hello".to_string(), "world".to_string()];
-    check_facts(
-        &vec3.clone(),
-        &vec4.clone(),
-        FactBuilder::new()
-            .debug()
-            .partial_eq_and(true)
-            .default()
-            .clone()
-            .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
-    );
-}
-
-#[test]
-fn test_hashmaps() {
-    use std::collections::HashMap;
-
-    // HashMap<String, i32> implements Debug, PartialEq, but not Ord
-    let mut map1 = HashMap::new();
-    map1.insert("key1".to_string(), 42);
-    map1.insert("key2".to_string(), 24);
-
-    let mut map2 = HashMap::new();
-    map2.insert("key3".to_string(), 100);
-    map2.insert("key4".to_string(), 200);
-
-    check_facts(
-        &map1.clone(),
-        &map2.clone(),
-        FactBuilder::new()
-            .debug()
-            .partial_eq_and(false)
-            .default()
-            .clone()
-            .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
-    );
-
-    // Two pairs of equal HashMaps
-    let mut map3 = HashMap::new();
-    map3.insert("key1".to_string(), 10);
-    map3.insert("key2".to_string(), 20);
-
-    let mut map4 = HashMap::new();
-    map4.insert("key1".to_string(), 10);
-    map4.insert("key2".to_string(), 20);
-
-    check_facts(
-        &map3.clone(),
-        &map4.clone(),
-        FactBuilder::new()
-            .debug()
-            .partial_eq_and(true)
-            .default()
-            .clone()
-            .build(),
+        FactBuilder::new().default().build(),
         TypedMarkerTraits::new()
             .eq()
             .send()

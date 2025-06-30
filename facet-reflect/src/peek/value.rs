@@ -1,10 +1,10 @@
-use core::{cmp::Ordering, marker::PhantomData, mem::transmute};
+use core::{cmp::Ordering, marker::PhantomData};
 use facet_core::{
-    Def, Facet, PointerType, PtrConst, PtrConstWide, PtrMut, Shape, StructKind, Type, TypeNameOpts,
-    UserType, ValueVTable,
+    Def, Facet, GenericPtr, PointerType, PtrMut, Shape, StructKind, Type, TypeNameOpts, UserType,
+    ValueVTable,
 };
 
-use crate::{ReflectError, ScalarType};
+use crate::{PeekSet, ReflectError, ScalarType};
 
 use super::{
     ListLikeDef, PeekEnum, PeekList, PeekListLike, PeekMap, PeekSmartPointer, PeekStruct,
@@ -19,6 +19,7 @@ pub struct ValueId<'shape> {
 }
 
 impl<'shape> ValueId<'shape> {
+    #[inline]
     pub(crate) fn new(shape: &'shape Shape<'shape>, ptr: *const u8) -> Self {
         Self { shape, ptr }
     }
@@ -33,89 +34,6 @@ impl core::fmt::Display for ValueId<'_> {
 impl core::fmt::Debug for ValueId<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         core::fmt::Display::fmt(self, f)
-    }
-}
-
-/// A generic wrapper for either a thin or wide constant pointer.
-/// This enables working with both sized and unsized types using a single enum.
-#[derive(Clone, Copy)]
-pub enum GenericPtr<'mem> {
-    /// A thin pointer, used for sized types.
-    Thin(PtrConst<'mem>),
-    /// A wide pointer, used for unsized types such as slices and trait objects.
-    Wide(PtrConstWide<'mem>),
-}
-
-impl<'a> From<PtrConst<'a>> for GenericPtr<'a> {
-    fn from(value: PtrConst<'a>) -> Self {
-        GenericPtr::Thin(value)
-    }
-}
-
-impl<'a> From<PtrConstWide<'a>> for GenericPtr<'a> {
-    fn from(value: PtrConstWide<'a>) -> Self {
-        GenericPtr::Wide(value)
-    }
-}
-
-impl<'mem> GenericPtr<'mem> {
-    #[inline(always)]
-    fn new<T: ?Sized>(ptr: *const T) -> Self {
-        if size_of_val(&ptr) == size_of::<PtrConst>() {
-            GenericPtr::Thin(PtrConst::new(ptr.cast::<()>()))
-        } else if size_of_val(&ptr) == size_of::<PtrConstWide>() {
-            GenericPtr::Wide(PtrConstWide::new(ptr))
-        } else {
-            panic!("Couldn't determine if pointer to T is thin or wide");
-        }
-    }
-
-    /// Returns the inner [`PtrConst`] if this is a thin pointer, or `None` if this is a wide pointer.
-    #[inline(always)]
-    pub fn thin(self) -> Option<PtrConst<'mem>> {
-        match self {
-            GenericPtr::Thin(ptr) => Some(ptr),
-            GenericPtr::Wide(_ptr) => None,
-        }
-    }
-
-    #[inline(always)]
-    unsafe fn get<T: ?Sized>(self) -> &'mem T {
-        match self {
-            GenericPtr::Thin(ptr) => {
-                let ptr = ptr.as_byte_ptr();
-                let ptr_ref = &ptr;
-
-                (unsafe { transmute::<&*const u8, &&T>(ptr_ref) }) as _
-            }
-            GenericPtr::Wide(ptr) => unsafe { ptr.get() },
-        }
-    }
-
-    #[inline(always)]
-    fn as_byte_ptr(self) -> *const u8 {
-        match self {
-            GenericPtr::Thin(ptr) => ptr.as_byte_ptr(),
-            GenericPtr::Wide(ptr) => ptr.as_byte_ptr(),
-        }
-    }
-
-    /// Returns a pointer with the given offset added
-    ///
-    /// # Safety
-    ///
-    /// Offset must be within the bounds of the allocated memory,
-    /// and the resulting pointer must be properly aligned.
-    #[inline(always)]
-    pub unsafe fn field(self, offset: usize) -> GenericPtr<'mem> {
-        match self {
-            GenericPtr::Thin(ptr) => GenericPtr::Thin(unsafe { ptr.field(offset) }),
-            GenericPtr::Wide(_ptr) => {
-                // For wide pointers, we can't do field access safely without more context
-                // This is a limitation of the current design
-                panic!("Field access on wide pointers is not supported")
-            }
-        }
     }
 }
 
@@ -166,6 +84,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     }
 
     /// Returns a unique identifier for this value, usable for cycle detection
+    #[inline]
     pub fn id(&self) -> ValueId<'shape> {
         ValueId::new(self.shape, self.data.as_byte_ptr())
     }
@@ -280,6 +199,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     }
 
     /// Get the scalar type if set.
+    #[inline]
     pub fn scalar_type(&self) -> Option<ScalarType> {
         ScalarType::try_from_shape(self.shape)
     }
@@ -290,7 +210,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     ///
     /// Panics if the shape doesn't match the type `T`.
     #[inline]
-    pub fn get<T: Facet<'facet>>(&self) -> Result<&T, ReflectError<'shape>> {
+    pub fn get<T: Facet<'facet> + ?Sized>(&self) -> Result<&T, ReflectError<'shape>> {
         if self.shape != T::SHAPE {
             Err(ReflectError::WrongShape {
                 expected: self.shape,
@@ -323,6 +243,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
 
     /// Try to get the value as a byte slice if it's a &[u8] type
     /// Returns None if the value is not a byte slice or couldn't be extracted
+    #[inline]
     pub fn as_bytes(&self) -> Option<&'mem [u8]> {
         // Check if it's a direct &[u8]
         if let Type::Pointer(PointerType::Reference(vpt)) = self.shape.ty {
@@ -337,6 +258,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     }
 
     /// Tries to identify this value as a struct
+    #[inline]
     pub fn into_struct(self) -> Result<PeekStruct<'mem, 'facet, 'shape>, ReflectError<'shape>> {
         if let Type::User(UserType::Struct(ty)) = self.shape.ty {
             Ok(PeekStruct { value: self, ty })
@@ -349,6 +271,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     }
 
     /// Tries to identify this value as an enum
+    #[inline]
     pub fn into_enum(self) -> Result<PeekEnum<'mem, 'facet, 'shape>, ReflectError<'shape>> {
         if let Type::User(UserType::Enum(ty)) = self.shape.ty {
             Ok(PeekEnum { value: self, ty })
@@ -361,6 +284,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     }
 
     /// Tries to identify this value as a map
+    #[inline]
     pub fn into_map(self) -> Result<PeekMap<'mem, 'facet, 'shape>, ReflectError<'shape>> {
         if let Def::Map(def) = self.shape.def {
             Ok(PeekMap { value: self, def })
@@ -372,7 +296,21 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
         }
     }
 
+    /// Tries to identify this value as a set
+    #[inline]
+    pub fn into_set(self) -> Result<PeekSet<'mem, 'facet, 'shape>, ReflectError<'shape>> {
+        if let Def::Set(def) = self.shape.def {
+            Ok(PeekSet { value: self, def })
+        } else {
+            Err(ReflectError::WasNotA {
+                expected: "set",
+                actual: self.shape,
+            })
+        }
+    }
+
     /// Tries to identify this value as a list
+    #[inline]
     pub fn into_list(self) -> Result<PeekList<'mem, 'facet, 'shape>, ReflectError<'shape>> {
         if let Def::List(def) = self.shape.def {
             return Ok(PeekList { value: self, def });
@@ -385,12 +323,25 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     }
 
     /// Tries to identify this value as a list, array or slice
+    #[inline]
     pub fn into_list_like(
         self,
     ) -> Result<PeekListLike<'mem, 'facet, 'shape>, ReflectError<'shape>> {
         match self.shape.def {
             Def::List(def) => Ok(PeekListLike::new(self, ListLikeDef::List(def))),
             Def::Array(def) => Ok(PeekListLike::new(self, ListLikeDef::Array(def))),
+            Def::Slice(def) => {
+                // When we have a bare slice shape with a wide pointer,
+                // it means we have a reference to a slice (e.g., from Arc<[T]>::borrow_inner)
+                if matches!(self.data, GenericPtr::Wide(_)) {
+                    Ok(PeekListLike::new(self, ListLikeDef::Slice(def)))
+                } else {
+                    Err(ReflectError::WasNotA {
+                        expected: "slice with wide pointer",
+                        actual: self.shape,
+                    })
+                }
+            }
             _ => {
                 // &[i32] is actually a _pointer_ to a slice.
                 match self.shape.ty {
@@ -424,6 +375,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     }
 
     /// Tries to identify this value as a smart pointer
+    #[inline]
     pub fn into_smart_pointer(
         self,
     ) -> Result<PeekSmartPointer<'mem, 'facet, 'shape>, ReflectError<'shape>> {
@@ -438,6 +390,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     }
 
     /// Tries to identify this value as an option
+    #[inline]
     pub fn into_option(
         self,
     ) -> Result<super::PeekOption<'mem, 'facet, 'shape>, ReflectError<'shape>> {
@@ -452,6 +405,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     }
 
     /// Tries to identify this value as a tuple
+    #[inline]
     pub fn into_tuple(self) -> Result<PeekTuple<'mem, 'facet, 'shape>, ReflectError<'shape>> {
         if let Type::User(UserType::Struct(struct_type)) = self.shape.ty {
             if struct_type.kind == StructKind::Tuple {
@@ -544,12 +498,14 @@ impl<'mem, 'facet, 'shape> core::fmt::Debug for Peek<'mem, 'facet, 'shape> {
 }
 
 impl<'mem, 'facet, 'shape> core::cmp::PartialEq for Peek<'mem, 'facet, 'shape> {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.partial_eq(other).unwrap_or(false)
     }
 }
 
 impl<'mem, 'facet, 'shape> core::cmp::PartialOrd for Peek<'mem, 'facet, 'shape> {
+    #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         self.partial_cmp(other).unwrap_or(None)
     }

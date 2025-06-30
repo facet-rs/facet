@@ -90,7 +90,7 @@ pub fn from_slice_value<'facet, 'shape>(
     let result = decoder.deserialize_value(wip);
     match &result {
         Ok(_) => trace!("from_slice_value: Deserialization successful"),
-        Err(e) => trace!("from_slice_value: Deserialization failed: {:?}", e),
+        Err(e) => trace!("from_slice_value: Deserialization failed: {e:?}"),
     }
     result
 }
@@ -421,7 +421,7 @@ impl<'input, 'shape> Decoder<'input> {
         wip: &mut Partial<'facet, 'shape>,
     ) -> Result<(), DecodeError<'shape>> {
         let shape = wip.shape();
-        trace!("Deserializing {:?}", shape);
+        trace!("Deserializing {shape:?}");
 
         // First check the type system (Type)
         match &shape.ty {
@@ -445,7 +445,7 @@ impl<'input, 'shape> Decoder<'input> {
                         None => {
                             // Skip unknown field value
                             self.skip_value()?;
-                            trace!("Skipping unknown field: {}", key);
+                            trace!("Skipping unknown field: {key}");
                         }
                     }
                 }
@@ -487,7 +487,7 @@ impl<'input, 'shape> Decoder<'input> {
 
                 // For tuples, deserialize fields in order
                 for idx in 0..field_count {
-                    trace!("Deserializing tuple field {}", idx);
+                    trace!("Deserializing tuple field {idx}");
                     wip.begin_nth_field(idx)?;
                     self.deserialize_value(wip)?;
                     wip.end().map_err(DecodeError::ReflectError)?;
@@ -508,8 +508,7 @@ impl<'input, 'shape> Decoder<'input> {
                         }
                     }
                     return Err(DecodeError::InvalidEnum(format!(
-                        "Unknown variant: {}",
-                        variant_name
+                        "Unknown variant: {variant_name}"
                     )));
                 }
 
@@ -567,10 +566,7 @@ impl<'input, 'shape> Decoder<'input> {
                                         None => {
                                             // Skip unknown field
                                             self.skip_value()?;
-                                            trace!(
-                                                "Skipping unknown field in enum: {}",
-                                                field_name
-                                            );
+                                            trace!("Skipping unknown field in enum: {field_name}");
                                         }
                                     }
                                 }
@@ -590,15 +586,14 @@ impl<'input, 'shape> Decoder<'input> {
                 }
 
                 return Err(DecodeError::InvalidEnum(format!(
-                    "Unknown variant: {}",
-                    variant_name
+                    "Unknown variant: {variant_name}"
                 )));
             }
             _ => {}
         }
 
         // Then check the def system (Def)
-        if let Def::Scalar(_) = shape.def {
+        if let Def::Scalar = shape.def {
             trace!("Deserializing scalar");
             if shape.is_type::<String>() {
                 let s = self.decode_string()?;
@@ -663,7 +658,7 @@ impl<'input, 'shape> Decoder<'input> {
                 let b = self.decode_bool()?;
                 wip.set(b)?;
             } else {
-                return Err(DecodeError::UnsupportedType(format!("{}", shape)));
+                return Err(DecodeError::UnsupportedType(format!("{shape}")));
             }
         } else if let Def::Map(_map_def) = shape.def {
             trace!("Deserializing map");
@@ -691,7 +686,7 @@ impl<'input, 'shape> Decoder<'input> {
                 wip.end()?;
             }
         } else if let Def::Option(_option_def) = shape.def {
-            trace!("Deserializing option with shape: {}", shape);
+            trace!("Deserializing option with shape: {shape}");
             if self.peek_nil()? {
                 trace!("Option value is nil, setting to None");
                 // Consume the nil value
@@ -709,7 +704,7 @@ impl<'input, 'shape> Decoder<'input> {
                 trace!("After end, wip shape: {}", wip.shape());
             }
         } else {
-            return Err(DecodeError::UnsupportedShape(format!("{:?}", shape)));
+            return Err(DecodeError::UnsupportedShape(format!("{shape:?}")));
         }
 
         Ok(())
