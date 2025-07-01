@@ -1,7 +1,8 @@
 use alloc::borrow::Cow;
 use alloc::string::ToString;
 use facet_core::{FieldAttribute, Shape, Type, UserType};
-use facet_deserialize::{
+
+use crate::deserialize::{
     DeserErrorKind, Outcome, Raw, Scalar, Span, Spanned, Subspan, SubspanMeta,
 };
 use facet_reflect::Partial;

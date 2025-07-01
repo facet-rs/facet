@@ -1,14 +1,14 @@
 use crate::arg::{ArgType, extract_subspan};
+use crate::deserialize::{
+    DeserError, DeserErrorKind, Expectation, Format, NextData, NextResult, Outcome, Raw, Scalar,
+    Span, Spanned,
+};
 use crate::fields::*;
 use crate::parse::parse_scalar;
 use crate::results::*;
 use alloc::borrow::Cow;
 use core::fmt;
 use facet_core::Facet;
-use facet_deserialize::{
-    DeserError, DeserErrorKind, Expectation, Format, NextData, NextResult, Outcome, Raw, Scalar,
-    Span, Spanned,
-};
 
 /// Command-line argument format for Facet deserialization
 pub struct Cli;
@@ -26,7 +26,7 @@ pub fn from_slice<'input, 'facet, 'shape, T: Facet<'facet>>(
 where
     'input: 'facet + 'shape,
 {
-    facet_deserialize::deserialize(args, Cli)
+    crate::deserialize::deserialize(args, Cli)
 }
 
 /// Parse command line arguments provided by std::env::args() into a Facet-compatible type

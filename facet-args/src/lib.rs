@@ -10,6 +10,7 @@ extern crate alloc;
 pub mod format;
 
 pub(crate) mod arg;
+pub(crate) mod deserialize;
 pub(crate) mod fields;
 pub(crate) mod parse;
 pub(crate) mod results;

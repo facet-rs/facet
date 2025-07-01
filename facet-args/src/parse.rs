@@ -1,5 +1,5 @@
+use crate::deserialize::{Outcome, Raw, Scalar, Span, Spanned};
 use alloc::borrow::Cow;
-use facet_deserialize::{Outcome, Raw, Scalar, Span, Spanned};
 
 pub(crate) fn parse_scalar<'a>(arg: &'a str, span: Span<Raw>) -> Spanned<Outcome<'a>, Raw> {
     // Try to parse numbers in order of specificity

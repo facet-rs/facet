@@ -13,8 +13,9 @@ categories = ["command-line-interface"]
 [dependencies]
 facet-reflect = { path = "../facet-reflect", version = "0.27.15" }
 facet-core = { path = "../facet-core", version = "0.27.15" }
-facet-deserialize = { path = "../facet-deserialize", version = "0.24.21" }
 log = "0.4.27"
+owo-colors = "4.2.2"
+ariadne = { version = "0.5.1", optional = true }
 
 [dev-dependencies]
 eyre = "0.6.12"
@@ -22,3 +23,7 @@ facet = { path = "../facet" }
 facet-pretty = { path = "../facet-pretty" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 insta = "1.43.1"
+
+[features]
+default = ["rich-diagnostics"]
+rich-diagnostics = ["dep:ariadne"]
