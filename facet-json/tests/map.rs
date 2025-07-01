@@ -47,3 +47,30 @@ fn test_hashmap_to_json() {
     let json = String::from_utf8(buffer).unwrap();
     assert_eq!(json, expected_json);
 }
+
+#[test]
+fn test_hashmap_u32_u32_roundtrip() {
+    let mut map = std::collections::HashMap::new();
+    map.insert(1, 10);
+    map.insert(2, 20);
+    map.insert(3, 30);
+
+    let peek = Peek::new(&map);
+    let json = peek_to_string(peek);
+
+    // We don't know the order, so check for presence of key-value pairs
+    assert!(json.contains(r#""1":10"#));
+    assert!(json.contains(r#""2":20"#));
+    assert!(json.contains(r#""3":30"#));
+
+    // Also test roundtrip via writer
+    let mut buffer = Vec::new();
+    // We need a fresh peek as the previous one was consumed
+    let peek = Peek::new(&map);
+    peek_to_writer(peek, &mut buffer).unwrap();
+    let roundtrip_json = String::from_utf8(buffer).unwrap();
+
+    assert!(roundtrip_json.contains(r#""1":10"#));
+    assert!(roundtrip_json.contains(r#""2":20"#));
+    assert!(roundtrip_json.contains(r#""3":30"#));
+}
