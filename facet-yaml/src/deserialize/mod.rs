@@ -78,14 +78,10 @@ fn deserialize_value<'facet, 'shape>(
 
     #[cfg(feature = "log")]
     {
-        log::debug!(
-            "deserialize_value: shape={}, innermost_shape={}",
-            shape,
-            innermost_shape
-        );
+        log::debug!("deserialize_value: shape={shape}, innermost_shape={innermost_shape}");
         log::debug!("Shape type: {:?}", shape.ty);
         log::debug!("Shape attributes: {:?}", shape.attributes);
-        log::debug!("YAML value: {:?}", value);
+        log::debug!("YAML value: {value:?}");
     }
 
     // Handle transparent types - check if shape has the transparent attribute
@@ -116,7 +112,7 @@ fn deserialize_value<'facet, 'shape>(
                     .ok_or_else(|| AnyErr(format!("Field '{k}' not found")))?;
 
                 #[cfg(feature = "log")]
-                log::debug!("Processing struct field '{}' (index: {})", k, field_index);
+                log::debug!("Processing struct field '{k}' (index: {field_index})");
 
                 wip.begin_nth_field(field_index)
                     .map_err(|e| AnyErr(format!("Field '{k}' error: {e}")))?;
@@ -176,8 +172,8 @@ fn deserialize_value<'facet, 'shape>(
             #[cfg(feature = "log")]
             {
                 log::debug!("Processing scalar type");
-                log::debug!("  shape: {}", shape);
-                log::debug!("  innermost_shape: {}", innermost_shape);
+                log::debug!("  shape: {shape}");
+                log::debug!("  innermost_shape: {innermost_shape}");
                 log::debug!("  shape.ty: {:?}", shape.ty);
                 log::debug!("  innermost_shape.ty: {:?}", innermost_shape.ty);
             }
@@ -395,7 +391,7 @@ fn deserialize_value<'facet, 'shape>(
                 .ok_or_else(|| AnyErr("SmartPointer must have a pointee shape".to_string()))?;
 
             #[cfg(feature = "log")]
-            log::debug!("Smart pointer pointee shape: {}", pointee_shape);
+            log::debug!("Smart pointer pointee shape: {pointee_shape}");
 
             // Begin smart pointer
             wip.begin_smart_ptr().map_err(|e| AnyErr(e.to_string()))?;
@@ -452,7 +448,7 @@ fn deserialize_as_list<'facet, 'shape>(
         // Process each element
         for element in array.iter() {
             #[cfg(feature = "log")]
-            log::debug!("Processing list element: {:?}", element);
+            log::debug!("Processing list element: {element:?}");
 
             // Push element
             wip.begin_list_item().map_err(|e| AnyErr(e.to_string()))?;
