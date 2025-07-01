@@ -574,6 +574,7 @@ dependencies = [
  "itoa",
  "jiff",
  "lexical-parse-float",
+ "lexical-parse-integer",
  "log",
  "ordered-float",
  "ryu",

@@ -420,8 +420,10 @@ impl<'input> Tokenizer<'input> {
         let slice = &self.input[start..end];
         let span = Span::new(start, end - start);
 
+        use lexical_parse_float::FromLexical as _;
+        use lexical_parse_integer::FromLexical as _;
+
         let token = if is_float {
-            use lexical_parse_float::FromLexical;
             match f64::from_lexical(slice) {
                 Ok(n) => Token::F64(n),
                 Err(_) => {
@@ -432,26 +434,16 @@ impl<'input> Tokenizer<'input> {
                 }
             }
         } else if is_negative {
-            let text = match str::from_utf8(slice) {
-                Ok(t) => t,
-                Err(e) => {
-                    return Err(TokenError {
-                        kind: TokenErrorKind::InvalidUtf8(e.to_string()),
-                        span,
-                    });
-                }
-            };
-
             // If the number starts with a negative sign, parse as i64
-            match text.parse::<i64>() {
+            match i64::from_lexical(slice) {
                 Ok(n) => Token::I64(n),
                 Err(_) => {
                     // If i64 parsing fails, try to parse as i128
-                    match text.parse::<i128>() {
+                    match i128::from_lexical(slice) {
                         Ok(n) => Token::I128(n),
                         Err(_) => {
                             // If i128 parsing fails, try to parse as f64 for error reporting
-                            let num = text.parse::<f64>().unwrap_or(0.0);
+                            let num = f64::from_lexical(slice).unwrap_or(0.0);
                             return Err(TokenError {
                                 kind: TokenErrorKind::NumberOutOfRange(num),
                                 span,
@@ -461,26 +453,16 @@ impl<'input> Tokenizer<'input> {
                 }
             }
         } else {
-            let text = match str::from_utf8(slice) {
-                Ok(t) => t,
-                Err(e) => {
-                    return Err(TokenError {
-                        kind: TokenErrorKind::InvalidUtf8(e.to_string()),
-                        span,
-                    });
-                }
-            };
-
             // Otherwise, parse as u64
-            match text.parse::<u64>() {
+            match u64::from_lexical(slice) {
                 Ok(n) => Token::U64(n),
                 Err(_) => {
                     // If u64 parsing fails, try to parse as u128
-                    match text.parse::<u128>() {
+                    match u128::from_lexical(slice) {
                         Ok(n) => Token::U128(n),
                         Err(_) => {
                             // If u128 parsing fails, try to parse as f64 for error reporting
-                            let num = text.parse::<f64>().unwrap_or(0.0);
+                            let num = f64::from_lexical(slice).unwrap_or(0.0);
                             return Err(TokenError {
                                 kind: TokenErrorKind::NumberOutOfRange(num),
                                 span,
