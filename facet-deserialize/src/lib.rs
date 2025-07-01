@@ -12,10 +12,8 @@ use alloc::{vec, vec::Vec};
 use core::fmt::Debug;
 use facet_core::{NumericType, PrimitiveType};
 
-mod debug;
 mod error;
 use alloc::borrow::Cow;
-pub use debug::InputDebug;
 
 pub use error::*;
 
@@ -77,8 +75,6 @@ pub enum Outcome<'input> {
     ObjectStarted,
     /// Ending an object/map.
     ObjectEnded,
-    /// Resegmenting input into subspans.
-    Resegmented(Vec<Subspan>),
 }
 
 impl<'input> From<Scalar<'input>> for Outcome<'input> {
@@ -98,7 +94,6 @@ impl fmt::Display for Outcome<'_> {
             Outcome::ListEnded => write!(f, "list end"),
             Outcome::ObjectStarted => write!(f, "object start"),
             Outcome::ObjectEnded => write!(f, "object end"),
-            Outcome::Resegmented(_) => write!(f, "resegment"),
         }
     }
 }
@@ -139,45 +134,32 @@ impl Outcome<'_> {
             Outcome::ListEnded => Outcome::ListEnded,
             Outcome::ObjectStarted => Outcome::ObjectStarted,
             Outcome::ObjectEnded => Outcome::ObjectEnded,
-            Outcome::Resegmented(subspans) => {
-                let owned_subspans = subspans
-                    .into_iter()
-                    .map(|s| Subspan {
-                        offset: s.offset,
-                        len: s.len,
-                        meta: s.meta,
-                    })
-                    .collect();
-                Outcome::Resegmented(owned_subspans)
-            }
         }
     }
 }
 
 /// Carries the current parsing state and the in-progress value during deserialization.
 /// This bundles the mutable context that must be threaded through parsing steps.
-pub struct NextData<'input, 'facet, 'shape, C = Cooked, I = [u8]>
+pub struct NextData<'input, 'facet, 'shape>
 where
     'input: 'facet,
-    I: ?Sized + 'input,
 {
     /// The offset we're supposed to start parsing from
     start: usize,
 
     /// Controls the parsing flow and stack state.
-    runner: StackRunner<'input, C, I>,
+    runner: StackRunner<'input>,
 
     /// Holds the intermediate representation of the value being built.
     pub wip: Partial<'facet, 'shape>,
 }
 
-impl<'input, 'facet, 'shape, C, I> NextData<'input, 'facet, 'shape, C, I>
+impl<'input, 'facet, 'shape> NextData<'input, 'facet, 'shape>
 where
     'input: 'facet,
-    I: ?Sized + 'input,
 {
     /// Returns the input (from the start! not from the current position)
-    pub fn input(&self) -> &'input I {
+    pub fn input(&self) -> &'input [u8] {
         self.runner.input
     }
 
@@ -185,29 +167,15 @@ where
     pub fn start(&self) -> usize {
         self.start
     }
-
-    /// Access the substack
-    pub fn substack(&self) -> &Substack<C> {
-        &self.runner.substack
-    }
 }
 
 /// The result of advancing the parser: updated state and parse outcome or error.
-pub type NextResult<'input, 'facet, 'shape, T, E, C, I = [u8]> =
-    (NextData<'input, 'facet, 'shape, C, I>, Result<T, E>);
+pub type NextResult<'input, 'facet, 'shape, T, E> =
+    (NextData<'input, 'facet, 'shape>, Result<T, E>);
 
 /// Trait defining a deserialization format.
 /// Provides the next parsing step based on current state and expected input.
 pub trait Format {
-    /// The kind of input this format consumes, parameterized by input lifetime.
-    ///
-    /// * `JsonFmt` => `Input<'input> = [u8]`
-    /// * `CliFmt`  => `Input<'input> = [&'input str]`
-    type Input<'input>: ?Sized;
-
-    /// The type of span used by this format (Raw or Cooked)
-    type SpanType: Debug + SubstackBehavior + 'static;
-
     /// The lowercase source ID of the format, used for error reporting.
     fn source(&self) -> &'static str;
 
@@ -215,17 +183,9 @@ pub trait Format {
     #[allow(clippy::type_complexity)]
     fn next<'input, 'facet, 'shape>(
         &mut self,
-        nd: NextData<'input, 'facet, 'shape, Self::SpanType, Self::Input<'input>>,
+        nd: NextData<'input, 'facet, 'shape>,
         expectation: Expectation,
-    ) -> NextResult<
-        'input,
-        'facet,
-        'shape,
-        Spanned<Outcome<'input>, Self::SpanType>,
-        Spanned<DeserErrorKind<'shape>, Self::SpanType>,
-        Self::SpanType,
-        Self::Input<'input>,
-    >
+    ) -> NextResult<'input, 'facet, 'shape, Spanned<Outcome<'input>>, Spanned<DeserErrorKind<'shape>>>
     where
         'shape: 'input;
 
@@ -233,62 +193,10 @@ pub trait Format {
     #[allow(clippy::type_complexity)]
     fn skip<'input, 'facet, 'shape>(
         &mut self,
-        nd: NextData<'input, 'facet, 'shape, Self::SpanType, Self::Input<'input>>,
-    ) -> NextResult<
-        'input,
-        'facet,
-        'shape,
-        Span<Self::SpanType>,
-        Spanned<DeserErrorKind<'shape>, Self::SpanType>,
-        Self::SpanType,
-        Self::Input<'input>,
-    >
+        nd: NextData<'input, 'facet, 'shape>,
+    ) -> NextResult<'input, 'facet, 'shape, Span, Spanned<DeserErrorKind<'shape>>>
     where
         'shape: 'input;
-}
-
-/// Trait handling conversion regardless of `Format::SpanType` to `Span<Cooked>`
-pub trait ToCooked<'input, F: Format> {
-    /// Convert a span to a Cooked span (with byte index over the input, not format-specific index)
-    fn to_cooked(self, format: &F, input: &'input F::Input<'input>) -> Span<Cooked>;
-}
-
-impl<'input, F: Format> ToCooked<'input, F> for Span<Cooked> {
-    #[inline]
-    fn to_cooked(self, _format: &F, _input: &'input F::Input<'input>) -> Span<Cooked> {
-        self
-    }
-}
-
-impl<'input, F: Format<SpanType = Raw, Input<'input> = [&'input str]>> ToCooked<'input, F>
-    for Span<Raw>
-{
-    #[inline]
-    fn to_cooked(self, _format: &F, input: &'input [&'input str]) -> Span<Cooked> {
-        if self.start >= input.len() {
-            // start points past the end of the args;
-            // use byte offset = total length of whole input minus 1, len = 1
-            let mut total_len = 0;
-            for (i, arg) in input.iter().enumerate() {
-                total_len += arg.len();
-                if i < input.len() - 1 {
-                    total_len += 1; // space after each arg except last
-                }
-            }
-            return Span::<Cooked>::new(total_len.saturating_sub(1), 1);
-        }
-
-        // Calculate start position by summing lengths of preceding args plus spaces
-        let mut start = 0;
-        for arg in input.iter().take(self.start) {
-            start += arg.len() + 1; // +1 for space between args
-        }
-
-        // Length is the length of the current arg
-        let len = input[self.start].len();
-
-        Span::<Cooked>::new(start, len)
-    }
 }
 
 /// Instructions guiding the parsing flow, indicating the next expected action or token.
@@ -304,8 +212,6 @@ pub enum Instruction {
     ObjectKeyOrObjectClose,
     /// Expect a list item or the end of a list.
     ListItemOrListClose,
-    /// Triggers clearing a substack.
-    SubstackClose,
 }
 
 /// Reasons for expecting a value, reflecting the current parse context.
@@ -342,30 +248,25 @@ mod deser_impl {
     /// This function sets up the initial working state and drives the deserialization process,
     /// ensuring that the resulting value is fully materialized and valid.
     pub fn deserialize<'input, 'facet, 'shape, T, F>(
-        input: &'input F::Input<'input>,
+        input: &'input [u8],
         format: &mut F,
-    ) -> Result<T, DeserError<'input, 'shape, Cooked>>
+    ) -> Result<T, DeserError<'input, 'shape>>
     where
         T: Facet<'facet>,
         F: Format + 'shape,
-        F::Input<'input>: InputDebug,
-        F::SpanType: core::fmt::Debug,
-        Span<F::SpanType>: ToCooked<'input, F>,
         'input: 'facet,
         'shape: 'input,
     {
         // Run the entire deserialization process and capture any errors
-        let result: Result<T, DeserError<'input, 'shape, Cooked>> = {
+        let result: Result<T, DeserError<'input, 'shape>> = {
             let source = format.source();
 
             // Step 1: Allocate shape
             let wip = match Partial::alloc_shape(T::SHAPE) {
                 Ok(wip) => wip,
                 Err(e) => {
-                    let default_span = Span::<F::SpanType>::default();
-                    // let cooked_span = cook_span_dispatch!(format, default_span, input);
-                    let cooked_span = default_span.to_cooked(format, input);
-                    return Err(DeserError::new_reflect(e, input, cooked_span, source));
+                    let default_span = Span::default();
+                    return Err(DeserError::new_reflect(e, input, default_span, source));
                 }
             };
 
@@ -373,17 +274,7 @@ mod deser_impl {
             let heap_value = match deserialize_wip(wip, input, format) {
                 Ok(val) => val,
                 Err(e) => {
-                    let cooked_span = e.span.to_cooked(format, input);
-
-                    // Create a completely new error variable with the Cooked type
-                    let cooked_error = DeserError {
-                        input: e.input,
-                        span: cooked_span,
-                        kind: e.kind,
-                        source_id: e.source_id,
-                    };
-
-                    return Err(cooked_error);
+                    return Err(e);
                 }
             };
 
@@ -391,31 +282,13 @@ mod deser_impl {
             match heap_value.materialize() {
                 Ok(val) => Ok(val),
                 Err(e) => {
-                    let default_span = Span::<F::SpanType>::default();
-                    let cooked_span = default_span.to_cooked(format, input);
-                    return Err(DeserError::new_reflect(e, input, cooked_span, source));
+                    let default_span = Span::default();
+                    return Err(DeserError::new_reflect(e, input, default_span, source));
                 }
             }
         };
 
-        // Apply span conversion for errors from materialization
-        match result {
-            Ok(value) => Ok(value),
-            Err(mut error) => {
-                let new_span = error.span.to_cooked(format, input);
-
-                if new_span != error.span {
-                    error = DeserError {
-                        input: error.input,
-                        span: new_span,
-                        kind: error.kind,
-                        source_id: error.source_id,
-                    };
-                }
-
-                Err(error)
-            }
-        }
+        result
     }
 }
 
@@ -424,15 +297,12 @@ mod deser_impl {
 /// This function sets up the initial working state and drives the deserialization process,
 /// ensuring that the resulting value is fully materialized and valid.
 pub fn deserialize<'input, 'facet, 'shape, T, F>(
-    input: &'input F::Input<'input>,
+    input: &'input [u8],
     format: F,
-) -> Result<T, DeserError<'input, 'shape, Cooked>>
+) -> Result<T, DeserError<'input, 'shape>>
 where
     T: Facet<'facet>,
     F: Format + 'shape,
-    F::Input<'input>: InputDebug,
-    F::SpanType: core::fmt::Debug,
-    Span<F::SpanType>: ToCooked<'input, F>,
     'input: 'facet,
     'shape: 'input,
 {
@@ -444,14 +314,11 @@ where
 /// This function drives the parsing loop until the entire input is consumed and the value is complete.
 pub fn deserialize_wip<'input, 'facet, 'shape, F>(
     mut wip: Partial<'facet, 'shape>,
-    input: &'input F::Input<'input>,
+    input: &'input [u8],
     format: &mut F,
-) -> Result<HeapValue<'facet, 'shape>, DeserError<'input, 'shape, Cooked>>
+) -> Result<HeapValue<'facet, 'shape>, DeserError<'input, 'shape>>
 where
     F: Format + 'shape,
-    F::SpanType: SubstackBehavior,
-    F::Input<'input>: InputDebug,
-    Span<F::SpanType>: ToCooked<'input, F>,
     'input: 'facet,
     'shape: 'input,
 {
@@ -463,7 +330,6 @@ where
             Instruction::Pop(PopReason::TopLevel),
             Instruction::Value(ValueReason::TopLevel),
         ],
-        substack: Substack::new(),
         last_span: Span::new(0, 0),
         format_source: format.source(),
         array_indices: Vec::new(),
@@ -483,36 +349,10 @@ where
             $wip = nd.wip;
             let outcome = res.map_err(|span_kind| {
                 $runner.last_span = span_kind.span;
-                let error = $runner.err(span_kind.node);
-                // Convert the error's span to Cooked
-                DeserError {
-                    input: error.input,
-                    span: error.span.to_cooked(format, input),
-                    kind: error.kind,
-                    source_id: error.source_id,
-                }
+                $runner.err(span_kind.node)
             })?;
-            if F::SpanType::USES_SUBSTACK {
-                if !$runner.substack.get().is_empty() {
-                    trace!("Substack: {}", "carried".cyan());
-                } else {
-                    trace!("Substack: {}", "-".red());
-                }
-            }
             $runner.last_span = outcome.span;
-            if F::SpanType::USES_SUBSTACK {
-                if let Outcome::Resegmented(subspans) = &outcome.node {
-                    $runner.substack = subspans.clone().into();
-                }
-            }
-            $wip = $runner.$method($wip, outcome).map_err(|error| {
-                DeserError {
-                    input:  error.input,
-                    span:   error.span.to_cooked(format, input),
-                    kind:   error.kind,
-                    source_id: error.source_id,
-                }
-            })?;
+            $wip = $runner.$method($wip, outcome)?;
         }};
     }
 
@@ -529,51 +369,16 @@ where
 
         match insn {
             Instruction::Pop(reason) => {
-                wip = runner.pop(wip, reason).map_err(|error| {
-                    // Convert the error's span to Cooked
-                    DeserError {
-                        input: error.input,
-                        span: error.span.to_cooked(format, input),
-                        kind: error.kind,
-                        source_id: error.source_id,
-                    }
-                })?;
+                wip = runner.pop(wip, reason)?;
 
                 if reason == PopReason::TopLevel {
                     // Exit all nested frames (e.g., from flattened fields) before building
                     while wip.frame_count() > 1 {
-                        wip.end().map_err(|e| {
-                            let reflect_error = runner.reflect_err(e);
-                            DeserError {
-                                input: reflect_error.input,
-                                span: reflect_error.span.to_cooked(format, input),
-                                kind: reflect_error.kind,
-                                source_id: reflect_error.source_id,
-                            }
-                        })?;
+                        wip.end().map_err(|e| runner.reflect_err(e))?;
                     }
-
-                    return wip.build().map_err(|e| {
-                        let reflect_error = runner.reflect_err(e);
-                        // Convert the reflection error's span to Cooked
-                        DeserError {
-                            input: reflect_error.input,
-                            span: reflect_error.span.to_cooked(format, input),
-                            kind: reflect_error.kind,
-                            source_id: reflect_error.source_id,
-                        }
-                    });
+                    return wip.build().map_err(|e| runner.reflect_err(e));
                 } else {
-                    wip.end().map_err(|e| {
-                        let reflect_error = runner.reflect_err(e);
-                        // Convert the reflection error's span to Cooked
-                        DeserError {
-                            input: reflect_error.input,
-                            span: reflect_error.span.to_cooked(format, input),
-                            kind: reflect_error.kind,
-                            source_id: reflect_error.source_id,
-                        }
-                    })?;
+                    wip.end().map_err(|e| runner.reflect_err(e))?;
                 }
             }
             Instruction::Value(_why) => {
@@ -599,9 +404,6 @@ where
                     list_item_or_list_close
                 );
             }
-            Instruction::SubstackClose => {
-                runner.substack.clear();
-            }
             Instruction::SkipValue => {
                 // Call F::skip to skip over the next value in the input
                 let nd = NextData {
@@ -615,14 +417,7 @@ where
                 // Only propagate error, don't modify wip, since skip just advances input
                 let span = res.map_err(|span_kind| {
                     runner.last_span = span_kind.span;
-                    let error = runner.err(span_kind.node);
-                    // Convert the error's span to Cooked
-                    DeserError {
-                        input: error.input,
-                        span: error.span.to_cooked(format, input),
-                        kind: error.kind,
-                        source_id: error.source_id,
-                    }
+                    runner.err(span_kind.node)
                 })?;
                 // do the actual skip
                 runner.last_span = span;
@@ -947,21 +742,18 @@ impl NumericConvert for i128 {
 ///
 /// This struct tracks what the parser expects next, manages input position,
 /// and remembers the span of the last processed token to provide accurate error reporting.
-pub struct StackRunner<'input, C = Cooked, I: ?Sized + 'input = [u8]> {
+pub struct StackRunner<'input> {
     /// A version of the input that doesn't advance as we parse.
-    pub original_input: &'input I,
+    pub original_input: &'input [u8],
 
     /// The raw input data being deserialized.
-    pub input: &'input I,
+    pub input: &'input [u8],
 
     /// Stack of parsing instructions guiding the control flow.
     pub stack: Vec<Instruction>,
 
-    /// Subspan storage, if the format uses them.
-    pub substack: Substack<C>,
-
     /// Span of the last processed token, for accurate error reporting.
-    pub last_span: Span<C>,
+    pub last_span: Span,
 
     /// Format source identifier for error reporting
     pub format_source: &'static str,
@@ -976,12 +768,9 @@ pub struct StackRunner<'input, C = Cooked, I: ?Sized + 'input = [u8]> {
     pub enum_tuple_current_field: Option<usize>,
 }
 
-impl<'input, 'shape, C, I: ?Sized + 'input> StackRunner<'input, C, I>
-where
-    I: InputDebug,
-{
+impl<'input, 'shape> StackRunner<'input> {
     /// Convenience function to create a DeserError using the original input and last_span.
-    fn err(&self, kind: DeserErrorKind<'shape>) -> DeserError<'input, 'shape, C> {
+    fn err(&self, kind: DeserErrorKind<'shape>) -> DeserError<'input, 'shape> {
         DeserError::new(
             kind,
             self.original_input,
@@ -992,7 +781,7 @@ where
 
     /// Convenience function to create a DeserError from a ReflectError,
     /// using the original input and last_span for context.
-    fn reflect_err(&self, err: ReflectError<'shape>) -> DeserError<'input, 'shape, C> {
+    fn reflect_err(&self, err: ReflectError<'shape>) -> DeserError<'input, 'shape> {
         DeserError::new_reflect(err, self.original_input, self.last_span, self.format_source)
     }
 
@@ -1000,7 +789,7 @@ where
         &mut self,
         mut wip: Partial<'facet, 'shape>,
         reason: PopReason,
-    ) -> Result<Partial<'facet, 'shape>, DeserError<'input, 'shape, C>> {
+    ) -> Result<Partial<'facet, 'shape>, DeserError<'input, 'shape>> {
         trace!(
             "--- STACK has {:?} {}",
             self.stack.green(),
@@ -1279,7 +1068,7 @@ where
         &self,
         wip: &mut Partial<'facet, 'shape>,
         value: &dyn NumericConvert,
-    ) -> Result<(), DeserError<'input, 'shape, C>>
+    ) -> Result<(), DeserError<'input, 'shape>>
     where
         'input: 'facet,
     {
@@ -1377,7 +1166,7 @@ where
         &self,
         wip: &mut Partial<'facet, 'shape>,
         scalar: Scalar<'input>,
-    ) -> Result<(), DeserError<'input, 'shape, C>>
+    ) -> Result<(), DeserError<'input, 'shape>>
     where
         'input: 'facet, // 'input outlives 'facet
     {
@@ -1484,8 +1273,8 @@ where
     fn value<'facet>(
         &mut self,
         mut wip: Partial<'facet, 'shape>,
-        outcome: Spanned<Outcome<'input>, C>,
-    ) -> Result<Partial<'facet, 'shape>, DeserError<'input, 'shape, C>>
+        outcome: Spanned<Outcome<'input>>,
+    ) -> Result<Partial<'facet, 'shape>, DeserError<'input, 'shape>>
     where
         'input: 'facet, // 'input must outlive 'facet
     {
@@ -1731,15 +1520,6 @@ where
 
                 self.stack.push(Instruction::ObjectKeyOrObjectClose);
             }
-            Outcome::Resegmented(subspans) => {
-                trace!("Resegmented with {} subspans (value)", subspans.len());
-                // Push an instruction to process the current argument again
-                // (but this time it will use the subspan from the substack)
-                // self.stack.push(Instruction::ObjectKeyOrObjectClose);
-                // 1) Go back to expecting another value
-                // self.stack.push(Instruction::Pop(PopReason::ObjectVal));
-                // self.stack.push(Instruction::Value(ValueReason::ObjectVal));
-            }
             Outcome::ObjectEnded => todo!(),
         }
         Ok(wip)
@@ -1748,8 +1528,8 @@ where
     fn object_key_or_object_close<'facet>(
         &mut self,
         mut wip: Partial<'facet, 'shape>,
-        outcome: Spanned<Outcome<'input>, C>,
-    ) -> Result<Partial<'facet, 'shape>, DeserError<'input, 'shape, C>>
+        outcome: Spanned<Outcome<'input>>,
+    ) -> Result<Partial<'facet, 'shape>, DeserError<'input, 'shape>>
     where
         'input: 'facet,
     {
@@ -1758,7 +1538,6 @@ where
             self.stack.green(),
             "(OK/OC)".bright_yellow()
         );
-        trace!("SUBSTACK: {:?}", self.substack.get().bright_green());
         match outcome.node {
             Outcome::Scalar(Scalar::String(key)) => {
                 trace!("Parsed object key: {}", key.cyan());
@@ -1766,7 +1545,6 @@ where
                 let mut ignore = false;
                 let mut needs_pop = true;
                 let mut handled_by_flatten = false;
-                let has_substack = !self.substack.get().is_empty();
 
                 let shape = wip.innermost_shape();
                 match shape.ty {
@@ -1929,19 +1707,11 @@ where
                     if needs_pop && !handled_by_flatten {
                         trace!("Pushing Pop insn to stack (ObjectVal)");
                         self.stack.push(Instruction::Pop(PopReason::ObjectVal));
-                        if has_substack {
-                            trace!("Pushing SubstackClose insn to stack");
-                            self.stack.push(Instruction::SubstackClose);
-                        }
                     } else if handled_by_flatten {
                         // For flattened fields, we only need one pop for the field itself.
                         // The flattened struct should remain active until the outer object is finished.
                         trace!("Pushing Pop insn to stack (ObjectVal) for flattened field");
                         self.stack.push(Instruction::Pop(PopReason::ObjectVal));
-                        if has_substack {
-                            trace!("Pushing SubstackClose insn to stack");
-                            self.stack.push(Instruction::SubstackClose);
-                        }
                     }
                     self.stack.push(Instruction::Value(ValueReason::ObjectVal));
                 }
@@ -1949,16 +1719,6 @@ where
             }
             Outcome::ObjectEnded => {
                 trace!("Object closing");
-                Ok(wip)
-            }
-            Outcome::Resegmented(subspans) => {
-                trace!(
-                    "Resegmented into {} subspans ({:?}) - obj. key/close",
-                    subspans.len(),
-                    subspans
-                );
-                // stay in the same state: parse another 'object key'
-                self.stack.push(Instruction::ObjectKeyOrObjectClose);
                 Ok(wip)
             }
             _ => Err(self.err(DeserErrorKind::UnexpectedOutcome {
@@ -1971,8 +1731,8 @@ where
     fn list_item_or_list_close<'facet>(
         &mut self,
         mut wip: Partial<'facet, 'shape>,
-        outcome: Spanned<Outcome<'input>, C>,
-    ) -> Result<Partial<'facet, 'shape>, DeserError<'input, 'shape, C>>
+        outcome: Spanned<Outcome<'input>>,
+    ) -> Result<Partial<'facet, 'shape>, DeserError<'input, 'shape>>
     where
         'input: 'facet,
     {

@@ -1,10 +1,10 @@
 use alloc::format;
 
 use facet_core::Facet;
-use facet_deserialize::{
-    Cooked, Expectation, Format, NextData, NextResult, Outcome, Scalar, Span, Spannable, Spanned,
-};
 pub use facet_deserialize::{DeserError, DeserErrorKind};
+use facet_deserialize::{
+    Expectation, Format, NextData, NextResult, Outcome, Scalar, Span, Spannable, Spanned,
+};
 use log::trace;
 
 use crate::tokenizer::{Token, TokenError, TokenErrorKind, Tokenizer};
@@ -30,9 +30,6 @@ where
 }
 
 impl Format for crate::Json {
-    type Input<'input> = [u8];
-    type SpanType = Cooked;
-
     fn source(&self) -> &'static str {
         "json"
     }
@@ -41,15 +38,7 @@ impl Format for crate::Json {
         &mut self,
         nd: NextData<'input, 'facet, 'shape>,
         mut expectation: Expectation,
-    ) -> NextResult<
-        'input,
-        'facet,
-        'shape,
-        Spanned<Outcome<'input>, Self::SpanType>,
-        Spanned<DeserErrorKind<'shape>, Self::SpanType>,
-        Self::SpanType,
-        Self::Input<'input>,
-    >
+    ) -> NextResult<'input, 'facet, 'shape, Spanned<Outcome<'input>>, Spanned<DeserErrorKind<'shape>>>
     where
         'shape: 'input,
     {
@@ -188,15 +177,7 @@ impl Format for crate::Json {
     fn skip<'input, 'facet, 'shape>(
         &mut self,
         nd: NextData<'input, 'facet, 'shape>,
-    ) -> NextResult<
-        'input,
-        'facet,
-        'shape,
-        Span,
-        Spanned<DeserErrorKind<'shape>>,
-        Self::SpanType,
-        Self::Input<'input>,
-    >
+    ) -> NextResult<'input, 'facet, 'shape, Span, Spanned<DeserErrorKind<'shape>>>
     where
         'shape: 'input,
     {
