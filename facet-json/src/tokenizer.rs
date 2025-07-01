@@ -383,25 +383,37 @@ impl<'input> Tokenizer<'input> {
 
     #[inline(never)]
     fn parse_number(&mut self, start: Pos) -> TokenizeResult<'input> {
+        let input_len = self.input.len();
         let mut end = self.pos;
+        // true if starts with `-`
+        let mut is_negative = false;
+        // true if contains `.` or `e` or `E`
+        let mut is_float = false;
+
         if self.input[end] == b'-' {
+            is_negative = true;
             end += 1;
         }
-        while end < self.input.len() && self.input[end].is_ascii_digit() {
+
+        while end < input_len && self.input[end].is_ascii_digit() {
             end += 1;
         }
-        if end < self.input.len() && self.input[end] == b'.' {
+
+        if end < input_len && self.input[end] == b'.' {
+            is_float = true;
             end += 1;
-            while end < self.input.len() && self.input[end].is_ascii_digit() {
+            while end < input_len && self.input[end].is_ascii_digit() {
                 end += 1;
             }
         }
-        if end < self.input.len() && (self.input[end] == b'e' || self.input[end] == b'E') {
+
+        if end < input_len && (self.input[end] == b'e' || self.input[end] == b'E') {
+            is_float = true;
             end += 1;
-            if end < self.input.len() && (self.input[end] == b'+' || self.input[end] == b'-') {
+            if end < input_len && (self.input[end] == b'+' || self.input[end] == b'-') {
                 end += 1;
             }
-            while end < self.input.len() && self.input[end].is_ascii_digit() {
+            while end < input_len && self.input[end].is_ascii_digit() {
                 end += 1;
             }
         }
@@ -418,7 +430,7 @@ impl<'input> Tokenizer<'input> {
             }
         };
 
-        let token = if text.contains('.') || text.contains('e') || text.contains('E') {
+        let token = if is_float {
             // If the number contains a decimal point or exponent, parse as f64
             match text.parse::<f64>() {
                 Ok(n) => Token::F64(n),
@@ -429,7 +441,7 @@ impl<'input> Tokenizer<'input> {
                     });
                 }
             }
-        } else if text.starts_with('-') {
+        } else if is_negative {
             // If the number starts with a negative sign, parse as i64
             match text.parse::<i64>() {
                 Ok(n) => Token::I64(n),
