@@ -420,19 +420,9 @@ impl<'input> Tokenizer<'input> {
         let slice = &self.input[start..end];
         let span = Span::new(start, end - start);
 
-        let text = match str::from_utf8(slice) {
-            Ok(t) => t,
-            Err(e) => {
-                return Err(TokenError {
-                    kind: TokenErrorKind::InvalidUtf8(e.to_string()),
-                    span,
-                });
-            }
-        };
-
         let token = if is_float {
-            // If the number contains a decimal point or exponent, parse as f64
-            match text.parse::<f64>() {
+            use lexical_parse_float::FromLexical;
+            match f64::from_lexical(slice) {
                 Ok(n) => Token::F64(n),
                 Err(_) => {
                     return Err(TokenError {
@@ -442,6 +432,16 @@ impl<'input> Tokenizer<'input> {
                 }
             }
         } else if is_negative {
+            let text = match str::from_utf8(slice) {
+                Ok(t) => t,
+                Err(e) => {
+                    return Err(TokenError {
+                        kind: TokenErrorKind::InvalidUtf8(e.to_string()),
+                        span,
+                    });
+                }
+            };
+
             // If the number starts with a negative sign, parse as i64
             match text.parse::<i64>() {
                 Ok(n) => Token::I64(n),
@@ -461,6 +461,16 @@ impl<'input> Tokenizer<'input> {
                 }
             }
         } else {
+            let text = match str::from_utf8(slice) {
+                Ok(t) => t,
+                Err(e) => {
+                    return Err(TokenError {
+                        kind: TokenErrorKind::InvalidUtf8(e.to_string()),
+                        span,
+                    });
+                }
+            };
+
             // Otherwise, parse as u64
             match text.parse::<u64>() {
                 Ok(n) => Token::U64(n),

@@ -19,6 +19,7 @@ facet-deserialize = { version = "0.24.21", path = "../facet-deserialize", defaul
 facet-reflect = { version = "0.27.15", path = "../facet-reflect", default-features = false }
 facet-serialize = { version = "0.24.17", path = "../facet-serialize", default-features = false }
 itoa = "1.0.15"
+lexical-parse-float = "1.0.5"
 log = "0.4.27"
 ryu = "1"
 
