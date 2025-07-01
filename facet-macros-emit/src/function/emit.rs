@@ -12,7 +12,7 @@ pub fn facet_fn(_attr: TokenStream, item: TokenStream) -> TokenStream {
     result.to_string().parse().unwrap()
 }
 
-/// Entry point for the fn_shape procedural macro  
+/// Entry point for the fn_shape procedural macro
 pub fn fn_shape(input: TokenStream) -> TokenStream {
     let parsed = parse_fn_shape_input(input);
     let result = generate_fn_shape_call(parsed);
@@ -27,7 +27,7 @@ pub fn generate_function_shape(parsed: FunctionSignature) -> TokenStream {
     let return_type = parsed.return_type;
     let body = parsed.body;
 
-    let hidden_mod = Ident::new(&format!("__fn_shape_{}", fn_name), Span::call_site());
+    let hidden_mod = Ident::new(&format!("__fn_shape_{fn_name}"), Span::call_site());
     let shape_name = Ident::new(
         &format!("{}_SHAPE", fn_name.to_string().to_uppercase()),
         Span::call_site(),

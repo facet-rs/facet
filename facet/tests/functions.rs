@@ -112,7 +112,7 @@ fn function_shape_debug_output() {
     }
 
     let shape = fn_shape!(debug_test);
-    let debug_output = format!("{:?}", shape);
+    let debug_output = format!("{shape:?}");
 
     // Check that debug output contains expected information
     assert!(debug_output.contains("debug_test"));

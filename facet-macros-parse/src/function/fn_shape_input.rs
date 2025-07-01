@@ -34,7 +34,7 @@ pub fn parse_fn_shape_input(input: TokenStream) -> ParsedFnShapeInput {
             ParsedFnShapeInput { name, generics }
         }
         Err(err) => {
-            panic!("Failed to parse fn_shape input: {}", err);
+            panic!("Failed to parse fn_shape input: {err}");
         }
     }
 }
