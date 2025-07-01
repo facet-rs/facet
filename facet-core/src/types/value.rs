@@ -488,21 +488,38 @@ impl core::hash::Hasher for HasherProxy<'_> {
 
 bitflags! {
     /// Bitflags for common marker traits that a type may implement
+    ///
+    /// Note: facet is not able to see negative impls, so it might mistakenly think a struct `S`
+    /// is `Send` because all its fields are, ignoring that there is an `impl !Send for S`.
+    ///
+    /// Similarly, it might think a struct `S` is `!Send` just because one of the fields is an
+    /// `UnsafeCell` (which is `!Send`), ignoring that there is an `unsafe impl Send for S`.
+    ///
+    /// The reason facet's determination of `Send` or `!Send` is based on fields is because structs
+    /// can be generic, in which case our specialization trick does not work.
     #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct MarkerTraits: u8 {
         /// Indicates that the type implements the [`Eq`] marker trait
         const EQ = 1 << 0;
-        /// Indicates that the type implements the [`Send`] marker trait
+        /// Indicates that the type implements the [`Send`] marker trait.
+        ///
+        /// Note: this is a best-effort guess, see the documentation about negative impls in [MarkerTraits].
         const SEND = 1 << 1;
         /// Indicates that the type implements the [`Sync`] marker trait
+        ///
+        /// Note: this is a best-effort guess, see the documentation about negative impls in [MarkerTraits].
         const SYNC = 1 << 2;
         /// Indicates that the type implements the [`Copy`] marker trait
         const COPY = 1 << 3;
         /// Indicates that the type implements the [`Unpin`] marker trait
         const UNPIN = 1 << 4;
         /// Indicates that the type implements the [`UnwindSafe`](core::panic::UnwindSafe) marker trait
+        ///
+        /// Note: this is a best-effort guess, see the documentation about negative impls in [MarkerTraits].
         const UNWIND_SAFE = 1 << 5;
         /// Indicates that the type implements the [`RefUnwindSafe`](core::panic::RefUnwindSafe) marker trait
+        ///
+        /// Note: this is a best-effort guess, see the documentation about negative impls in [MarkerTraits].
         const REF_UNWIND_SAFE = 1 << 6;
     }
 }
