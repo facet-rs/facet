@@ -585,3 +585,28 @@ fn test_macro_u16() {
         Value3 = test_macro_u16!(),
     }
 }
+
+#[test]
+fn tests_enum_empty_tuple() {
+    #[repr(u16)]
+    #[derive(Facet)]
+    #[allow(dead_code)]
+    enum TestEnum {
+        EmptyTuple(),
+    }
+}
+
+#[test]
+fn test_skip_field_in_derive() {
+    #[allow(dead_code)]
+    struct NotFacet {
+        foo: i32,
+        bar: String,
+    }
+
+    #[derive(Facet)]
+    struct Foo {
+        #[facet(opaque)]
+        name: NotFacet,
+    }
+}
