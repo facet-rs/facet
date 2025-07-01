@@ -557,7 +557,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         }
         PRepr::Rust(None) => {
             return quote! {
-                compile_error!("Facet requires enums to have an explicit representation (e.g., #[repr(C)], #[repr(u8)])")
+                compile_error!("Facet requires enums to have an explicit representation (e.g., #[repr(C)], #[repr(u8)])");
             };
         }
     };
