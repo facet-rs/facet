@@ -101,10 +101,10 @@ facet-reflect = {{ path = {:?} }}
 
     // Generate a unique target directory based on the test name and source code
     let source_hash = hash_source(test.name, test.source);
-    let target_dir = format!("/tmp/ui_tests/target_{}", source_hash);
+    let target_dir = format!("/tmp/ui_tests/target_{source_hash}");
     println!(
         "{}",
-        format_args!("  Target directory: {}", target_dir).dimmed()
+        format_args!("  Target directory: {target_dir}").dimmed()
     );
 
     // Run cargo build
@@ -147,7 +147,7 @@ facet-reflect = {{ path = {:?} }}
         } else {
             println!(
                 "{}",
-                format_args!("  ✓ Found expected error: '{}'", expected_error).green()
+                format_args!("  ✓ Found expected error: '{expected_error}'").green()
             );
         }
     }
@@ -156,16 +156,16 @@ facet-reflect = {{ path = {:?} }}
     if !missing_errors.is_empty() {
         println!("{}", "\n❌ MISSING EXPECTED ERRORS:".bright_red().bold());
         for error in &missing_errors {
-            println!("{}", format_args!("  - '{}'", error).red());
+            println!("{}", format_args!("  - '{error}'").red());
         }
 
         // Print the error output for debugging
         println!("{}", "\nCompiler error output:".yellow().bold());
-        println!("{}", stderr);
+        println!("{stderr}");
 
         if !stdout.is_empty() {
             println!("{}", "\nCompiler standard output:".yellow());
-            println!("{}", stdout);
+            println!("{stdout}");
         }
 
         panic!(

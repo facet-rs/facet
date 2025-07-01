@@ -24,18 +24,6 @@ pub struct Span<C = Cooked> {
     _p: PhantomData<C>,
 }
 
-/// Trait for types that can be annotated with a Span.
-pub trait Spannable<C = Cooked>: Sized {
-    /// Annotate this value with a span, wrapping it in `Spanned<Self, C>`
-    fn with_span(self, span: Span<C>) -> Spanned<Self, C>;
-}
-
-impl<T, C> Spannable<C> for T {
-    fn with_span(self, span: Span<C>) -> Spanned<Self, C> {
-        Spanned { node: self, span }
-    }
-}
-
 impl<C> Span<C> {
     /// Creates a new span with the given start position and length
     pub fn new(start: Pos, len: usize) -> Self {
@@ -153,15 +141,6 @@ impl<C> Substack<C> {
         }
     }
 
-    /// Pop the most recently added subspan
-    pub fn pop(&mut self) -> Option<Subspan> {
-        if let Some(spans) = &mut self.spans {
-            spans.pop()
-        } else {
-            None
-        }
-    }
-
     /// Clear all subspans
     pub fn clear(&mut self) {
         if let Some(spans) = &mut self.spans {
@@ -183,48 +162,6 @@ impl<C> From<Vec<Subspan>> for Substack<C> {
             _marker: PhantomData,
         }
     }
-}
-
-impl Substack<Raw> {
-    /// Add a subspan for Raw spans
-    pub fn add(&mut self, offset: usize, len: usize, meta: Option<SubspanMeta>) {
-        if self.spans.is_none() {
-            self.spans = Some(Vec::new());
-        }
-
-        if let Some(spans) = &mut self.spans {
-            spans.push(Subspan { offset, len, meta });
-        }
-    }
-
-    /// Add a simple subspan with just offset and length
-    pub fn add_simple(&mut self, offset: usize, len: usize) {
-        self.add(offset, len, None);
-    }
-
-    /// Add a delimiter subspan
-    pub fn add_delimiter(&mut self, offset: usize, len: usize, delimiter: char) {
-        self.add(offset, len, Some(SubspanMeta::Delimiter(delimiter)));
-    }
-
-    /// Add a key-value subspan
-    pub fn add_key_value(&mut self, offset: usize, len: usize) {
-        self.add(offset, len, Some(SubspanMeta::KeyValue));
-    }
-}
-
-impl Substack<Cooked> {
-    /// Add a span for Cooked spans (does nothing)
-    pub fn add(&mut self, _offset: usize, _len: usize, _meta: Option<SubspanMeta>) {}
-
-    /// Add a simple subspan (does nothing for Cooked)
-    pub fn add_simple(&mut self, _offset: usize, _len: usize) {}
-
-    /// Add a delimiter subspan (does nothing for Cooked)
-    pub fn add_delimiter(&mut self, _offset: usize, _len: usize, _delimiter: char) {}
-
-    /// Add a key-value subspan (does nothing for Cooked)
-    pub fn add_key_value(&mut self, _offset: usize, _len: usize) {}
 }
 
 /// This trait allows the compiler to optimize away `Substack`-related code

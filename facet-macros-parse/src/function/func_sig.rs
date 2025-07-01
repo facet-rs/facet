@@ -118,7 +118,7 @@ pub fn parse_function_signature(input: TokenStream) -> FunctionSignature {
             }
         }
         Err(err) => {
-            panic!("Failed to parse function signature: {}", err);
+            panic!("Failed to parse function signature: {err}");
         }
     }
 }

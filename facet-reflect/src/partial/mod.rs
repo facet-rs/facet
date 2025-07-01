@@ -524,7 +524,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
         self.require_active()?;
 
         let fr = self.frames.last_mut().unwrap();
-        crate::trace!("set_shape({:?})", src_shape);
+        crate::trace!("set_shape({src_shape:?})");
         if !fr.shape.is_shape(src_shape) {
             let err = ReflectError::WrongShape {
                 expected: fr.shape,
@@ -1645,7 +1645,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
             };
 
             // Allocate space for the element
-            crate::trace!("Pointee is a slice of {}", element_shape);
+            crate::trace!("Pointee is a slice of {element_shape}");
             let element_layout = match element_shape.layout.sized_layout() {
                 Ok(layout) => layout,
                 Err(_) => {
@@ -1846,7 +1846,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                 let result = unsafe { try_from_fn(inner_ptr, inner_shape, parent_frame.data) };
 
                 if let Err(e) = result {
-                    trace!("Conversion failed: {:?}", e);
+                    trace!("Conversion failed: {e:?}");
 
                     // Deallocate the inner value's memory since conversion failed
                     if let FrameOwnership::Owned = popped_frame.ownership {
@@ -2590,8 +2590,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                 // This allows setting values of the inner type which will be converted
                 // The automatic conversion detection in end() will handle the conversion
                 trace!(
-                    "begin_inner: Creating frame for inner type {} (parent is {})",
-                    inner_shape, parent_shape
+                    "begin_inner: Creating frame for inner type {inner_shape} (parent is {parent_shape})"
                 );
                 self.frames
                     .push(Frame::new(inner_data, inner_shape, FrameOwnership::Owned));
@@ -2600,10 +2599,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
             } else {
                 // For wrapper types without try_from, navigate to the first field
                 // This is a common pattern for newtype wrappers
-                trace!(
-                    "begin_inner: No try_from for {}, using field navigation",
-                    parent_shape
-                );
+                trace!("begin_inner: No try_from for {parent_shape}, using field navigation");
                 self.begin_nth_field(0)
             }
         } else {
