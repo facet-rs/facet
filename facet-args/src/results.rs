@@ -1,5 +1,5 @@
+use crate::deserialize::{DeserErrorKind, Outcome, Raw, Scalar, Span, Spanned, Subspan};
 use alloc::borrow::Cow;
-use facet_deserialize::{DeserErrorKind, Outcome, Raw, Scalar, Span, Spanned, Subspan};
 
 /// General purpose wrapper for results
 pub(crate) fn wrap_result<'input, 'shape, T>(

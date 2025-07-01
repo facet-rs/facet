@@ -450,15 +450,16 @@ dependencies = [
 name = "facet-args"
 version = "0.19.17"
 dependencies = [
+ "ariadne",
  "eyre",
  "facet",
  "facet-core",
- "facet-deserialize",
  "facet-pretty",
  "facet-reflect",
  "facet-testhelpers 0.17.5",
  "insta",
  "log",
+ "owo-colors",
 ]
 
 [[package]]

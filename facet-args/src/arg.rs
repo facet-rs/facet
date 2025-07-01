@@ -1,5 +1,5 @@
+use crate::deserialize::{Subspan, SubspanMeta};
 use alloc::borrow::Cow;
-use facet_deserialize::{Subspan, SubspanMeta};
 
 #[derive(Debug)]
 pub(crate) enum ArgType<'a> {
