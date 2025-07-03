@@ -134,22 +134,3 @@ fn test_deserialize_arc_slice_only() {
     let empty_arc: Arc<[i32]> = from_str(empty_json)?;
     assert_eq!(empty_arc.len(), 0);
 }
-
-#[test]
-fn test_serialize_struct_with_reference() {
-    use facet::Facet;
-
-    #[derive(Facet)]
-    struct Data<'a> {
-        value: &'a Referee,
-    }
-    #[derive(Facet)]
-    struct Referee {
-        test: usize,
-    }
-
-    let referee = Referee { test: 42 };
-    let data = Data { value: &referee };
-    let json = to_string(&data);
-    assert_eq!(json, r#"{"value":{"test":42}}"#);
-}

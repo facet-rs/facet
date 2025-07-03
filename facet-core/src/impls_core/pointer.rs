@@ -160,7 +160,6 @@ impl_facet_for_pointer!(
 impl_facet_for_pointer!(
     Reference: &'a T
         => Shape::builder_for_sized::<Self>()
-            .inner(|| T::SHAPE)
         => {
             ValueVTable::builder::<Self>()
                 .marker_traits(|| {
@@ -246,7 +245,6 @@ impl_facet_for_pointer!(
 impl_facet_for_pointer!(
     Reference: &'a mut T
         => Shape::builder_for_sized::<Self>()
-            .inner(|| T::SHAPE)
         => {
             ValueVTable::builder::<Self>()
                 .marker_traits(|| {
