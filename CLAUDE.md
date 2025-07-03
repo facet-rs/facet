@@ -45,12 +45,6 @@ Always use `git push --force-with-lease` instead of `git push --force` when forc
 The `--force-with-lease` option provides a safety check that prevents overwriting others' work that
 you haven't seen yet, making it safer for collaborative development.
 
-### Tuple implementations
-
-The file `tuples_impls.rs` in facet-core is generated from `gen_tuples_impls.rs`
-in the `facet-codegen` crate. If you see any errors in it, do not correct them,
-simply make a note of it and I will take care of it.
-
 ### Dependencies
 
 crates like `facet-yaml`, `facet-json`, only have have a _dev_ dependency on
