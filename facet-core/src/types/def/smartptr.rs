@@ -563,4 +563,8 @@ pub enum KnownSmartPointer {
     RwLock,
     /// [`NonNull<T>`](core::ptr::NonNull), a wrapper around a raw pointer that is not null
     NonNull,
+    /// `&T`
+    SharedReference,
+    /// `&mut T`
+    ExclusiveReference,
 }
