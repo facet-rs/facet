@@ -73,3 +73,4 @@ facet supports deserialization from multiple data formats through dedicated crat
 Internal crates include:
 
 - [facet-testhelpers](https://github.com/facet-rs/facet/tree/main/facet-testhelpers) a simpler log logger and color-backtrace configured with the lightweight btparse backend
+- [facet-dev](https://github.com/facet-rs/facet/tree/main/facet-dev) contains custom precommit hooks that regenerate, format, and re-stage code
