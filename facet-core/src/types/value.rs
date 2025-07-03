@@ -664,31 +664,31 @@ pub struct ValueVTableUnsized {
     // Belongs in Shape directly.
     pub marker_traits: fn() -> MarkerTraits,
 
-    /// cf. [`DropInPlaceFn`] — if None, drops without side-effects
+    /// cf. [`DropInPlaceFnWide`] — if None, drops without side-effects
     pub drop_in_place: fn() -> Option<DropInPlaceFnWide>,
 
-    /// cf. [`InvariantsFn`]
+    /// cf. [`InvariantsFnWide`]
     pub invariants: fn() -> Option<InvariantsFnWide>,
 
-    /// cf. [`DisplayFn`]
+    /// cf. [`DisplayFnWide`]
     pub display: fn() -> Option<DisplayFnWide>,
 
-    /// cf. [`DebugFn`]
+    /// cf. [`DebugFnWide`]
     pub debug: fn() -> Option<DebugFnWide>,
 
-    /// cf. [`PartialEqFn`] for equality comparison
+    /// cf. [`PartialEqFnWide`] for equality comparison
     pub partial_eq: fn() -> Option<PartialEqFnWide>,
 
-    /// cf. [`PartialOrdFn`] for partial ordering comparison
+    /// cf. [`PartialOrdFnWide`] for partial ordering comparison
     pub partial_ord: fn() -> Option<PartialOrdFnWide>,
 
-    /// cf. [`CmpFn`] for total ordering
+    /// cf. [`CmpFnWide`] for total ordering
     pub ord: fn() -> Option<CmpFnWide>,
 
-    /// cf. [`HashFn`]
+    /// cf. [`HashFnWide`]
     pub hash: fn() -> Option<HashFnWide>,
 
-    /// cf. [`TryBorrowInnerFn`]
+    /// cf. [`TryBorrowInnerFnWide`]
     ///
     /// This is used by transparent types to efficiently access the inner value without copying.
     pub try_borrow_inner: fn() -> Option<TryBorrowInnerFnWide>,

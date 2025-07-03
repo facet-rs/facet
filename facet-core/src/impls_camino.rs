@@ -65,6 +65,24 @@ unsafe impl Facet<'_> for Utf8PathBuf {
     };
 }
 
+unsafe impl<'a> Facet<'a> for &'a Utf8Path {
+    const VTABLE: &'static ValueVTable = &const {
+        value_vtable!(&Utf8Path, |f, _opts| write!(
+            f,
+            "{}",
+            Self::SHAPE.type_identifier
+        ))
+    };
+
+    const SHAPE: &'static Shape<'static> = &const {
+        Shape::builder_for_sized::<Self>()
+            .type_identifier("&Utf8Path")
+            .ty(Type::User(UserType::Opaque))
+            .def(Def::Scalar)
+            .build()
+    };
+}
+
 unsafe impl Facet<'_> for Utf8Path {
     const VTABLE: &'static ValueVTable = &const {
         value_vtable_unsized!(Utf8Path, |f, _opts| write!(
