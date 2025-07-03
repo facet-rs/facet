@@ -134,3 +134,117 @@ fn test_deserialize_arc_slice_only() {
     let empty_arc: Arc<[i32]> = from_str(empty_json)?;
     assert_eq!(empty_arc.len(), 0);
 }
+
+#[test]
+fn test_serialize_shared_ref_foobar() {
+    #[derive(Debug, PartialEq, Facet)]
+    struct Outer<'a> {
+        foobar: &'a FooBar,
+    }
+
+    #[derive(Debug, PartialEq, Facet)]
+    struct FooBar {
+        foo: u32,
+        bar: String,
+    }
+
+    let foobar = FooBar {
+        foo: 7,
+        bar: "abc".to_string(),
+    };
+
+    let outer = Outer { foobar: &foobar };
+
+    let expected_json = r#"{"foobar":{"foo":7,"bar":"abc"}}"#;
+    let serialized = to_string(&outer);
+    assert_eq!(serialized, expected_json);
+}
+
+#[test]
+fn test_serialize_exclusive_ref_foobar() {
+    #[derive(Debug, PartialEq, Facet)]
+    struct Outer<'a> {
+        foobar: &'a mut FooBar,
+    }
+
+    #[derive(Debug, PartialEq, Facet)]
+    struct FooBar {
+        foo: u32,
+        bar: String,
+    }
+
+    let mut foobar = FooBar {
+        foo: 7,
+        bar: "abc".to_string(),
+    };
+
+    let outer = Outer {
+        foobar: &mut foobar,
+    };
+
+    let expected_json = r#"{"foobar":{"foo":7,"bar":"abc"}}"#;
+    let serialized = to_string(&outer);
+    assert_eq!(serialized, expected_json);
+}
+
+#[test]
+fn test_serialize_str_ref() {
+    #[derive(Debug, PartialEq, Facet)]
+    struct Outer<'a> {
+        text: &'a str,
+    }
+
+    let text = "hello world";
+    let outer = Outer { text };
+
+    let expected_json = r#"{"text":"hello world"}"#;
+    let serialized = to_string(&outer);
+    assert_eq!(serialized, expected_json);
+}
+
+#[test]
+fn test_serialize_str_mut_ref() {
+    #[derive(Debug, PartialEq, Facet)]
+    struct Outer<'a> {
+        text: &'a mut str,
+    }
+
+    let mut text = String::from("hello world");
+    let outer = Outer { text: &mut text };
+
+    let expected_json = r#"{"text":"hello world"}"#;
+    let serialized = to_string(&outer);
+    assert_eq!(serialized, expected_json);
+}
+
+#[test]
+fn test_serialize_slice_ref() {
+    #[derive(Debug, PartialEq, Facet)]
+    struct Outer<'a> {
+        numbers: &'a [u32],
+    }
+
+    let numbers = [1, 2, 3, 4, 5];
+    let outer = Outer { numbers: &numbers };
+
+    let expected_json = r#"{"numbers":[1,2,3,4,5]}"#;
+    let serialized = to_string(&outer);
+    assert_eq!(serialized, expected_json);
+}
+
+#[test]
+fn test_serialize_slice_mut_ref() {
+    #[derive(Debug, PartialEq, Facet)]
+    struct Outer<'a> {
+        numbers: &'a mut [u32],
+    }
+
+    let mut numbers = [1, 2, 3, 4, 5];
+    let outer = Outer {
+        numbers: &mut numbers,
+    };
+
+    let expected_json = r#"{"numbers":[1,2,3,4,5]}"#;
+    let serialized = to_string(&outer);
+    assert_eq!(serialized, expected_json);
+}

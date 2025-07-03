@@ -105,9 +105,17 @@ fn json_read_vec_u8() {
 }
 
 #[test]
-fn json_write_slice_u8() {
-    let bytes: [u8; 5] = [10, 20, 30, 40, 250];
-    let json = to_string(&bytes);
+fn json_write_array_u8() {
+    let array: [u8; 5] = [10, 20, 30, 40, 250];
+    let json = to_string(&array);
+    assert_eq!(json, r#"[10,20,30,40,250]"#);
+}
+
+#[test]
+fn json_write_slice_ref_u8() {
+    let array: [u8; 5] = [10, 20, 30, 40, 250];
+    let slice: &[u8] = &array;
+    let json = to_string(slice);
     assert_eq!(json, r#"[10,20,30,40,250]"#);
 }
 

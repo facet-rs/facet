@@ -432,7 +432,7 @@ where
                     }
                     (Def::Slice(sd), _) => {
                         if sd.t().is_type::<u8>() {
-                            serializer.serialize_bytes(cpeek.get::<&[u8]>().unwrap())?
+                            serializer.serialize_bytes(cpeek.get::<[u8]>().unwrap())?
                         } else {
                             let peek_list = cpeek.into_list_like().unwrap();
                             stack.push(SerializeTask::Array {

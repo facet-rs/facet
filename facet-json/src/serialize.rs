@@ -7,7 +7,7 @@ use itoa::Integer;
 use log::debug;
 
 /// Serializes a value implementing `Facet` to a JSON string.
-pub fn to_string<'facet, T: Facet<'facet>>(value: &T) -> String {
+pub fn to_string<'facet, T: Facet<'facet> + ?Sized>(value: &T) -> String {
     peek_to_string(Peek::new(value))
 }
 

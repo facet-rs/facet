@@ -1227,13 +1227,14 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                 match smart_ptr_def.known {
                     Some(KnownSmartPointer::Box)
                     | Some(KnownSmartPointer::Rc)
-                    | Some(KnownSmartPointer::Arc) => {
+                    | Some(KnownSmartPointer::Arc)
+                    | Some(KnownSmartPointer::SharedReference) => {
                         // Supported types, continue
                     }
                     _ => {
                         return Err(ReflectError::OperationFailed {
                             shape: frame.shape,
-                            operation: "only Box and Arc smart pointers are currently supported",
+                            operation: "only the following pointers are currently supported: Box<T>, Rc<T>, Arc<T>, and &T",
                         });
                     }
                 }

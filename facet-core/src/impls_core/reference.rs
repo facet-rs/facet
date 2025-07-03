@@ -1,8 +1,9 @@
 use core::fmt;
 
 use crate::{
-    Facet, MarkerTraits, PointerType, Shape, Type, TypeParam, VTableView, ValuePointerType,
-    ValueVTable,
+    Def, Facet, KnownSmartPointer, MarkerTraits, PointerType, PtrConst, PtrConstWide, Shape,
+    SmartPointerDef, SmartPointerFlags, SmartPointerVTable, Type, TypeParam, VTableView,
+    ValuePointerType, ValueVTable,
 };
 
 macro_rules! impl_for_ref {
@@ -86,27 +87,41 @@ macro_rules! impl_for_ref {
 
             const SHAPE: &'static Shape<'static> = &const {
                 Shape::builder_for_sized::<Self>()
-                .type_identifier("&")
+                    .type_identifier("&")
                     .type_params(&[TypeParam {
                         name: "T",
                         shape: || T::SHAPE,
                     }])
                     .ty({
                         let vpt = ValuePointerType {
-                            mutable: {
-                                let bytes = stringify!($($modifiers)*).as_bytes();
-                                (bytes.len() == 3
-                                    && bytes[0] == b'm'
-                                    && bytes[1] == b'u'
-                                    && bytes[2] == b't'
-                                )
-                            },
+                            mutable: !stringify!($($modifiers)*).is_empty(),
                             wide: false,
                             target: || T::SHAPE,
                         };
 
                         Type::Pointer(PointerType::Reference(vpt))
                     })
+                    .def(Def::SmartPointer(
+                        SmartPointerDef::builder()
+                            .pointee(|| T::SHAPE)
+                            .flags(SmartPointerFlags::EMPTY)
+                            .known(if stringify!($($modifiers)*).is_empty() {
+                                KnownSmartPointer::SharedReference
+                            } else {
+                                KnownSmartPointer::ExclusiveReference
+                            })
+                            .vtable(
+                                &const {
+                                    SmartPointerVTable::builder()
+                                        .borrow_fn(|this| {
+                                            let ptr: && $($modifiers)* T = unsafe { this.get::<Self>() };
+                                            PtrConst::new(*ptr).into()
+                                        })
+                                        .build()
+                                },
+                            )
+                            .build(),
+                    ))
                     .build()
             };
         }
@@ -268,20 +283,45 @@ macro_rules! impl_for_slice_ref {
                     }])
                     .ty({
                         let vpt = ValuePointerType {
-                            mutable: {
-                                let bytes = stringify!($($modifiers)*).as_bytes();
-                                (bytes.len() == 3
-                                    && bytes[0] == b'm'
-                                    && bytes[1] == b'u'
-                                    && bytes[2] == b't'
-                                )
-                            },
+                            mutable: !stringify!($($modifiers)*).is_empty(),
                             wide: true, // slice references are always wide (fat pointers)
                             target: || <[U]>::SHAPE,
                         };
 
                         Type::Pointer(PointerType::Reference(vpt))
                     })
+                    .def(Def::SmartPointer(
+                        SmartPointerDef::builder()
+                            .pointee(|| <[U]>::SHAPE)
+                            .flags(SmartPointerFlags::EMPTY)
+                            .known(if stringify!($($modifiers)*).is_empty() {
+                                KnownSmartPointer::SharedReference
+                            } else {
+                                KnownSmartPointer::ExclusiveReference
+                            })
+                            .vtable(
+                                &const {
+                                    SmartPointerVTable::builder()
+                                        .borrow_fn(|this| {
+                                            // `this` is a PtrConst pointing to our slice reference (&[U] or &mut [U])
+                                            // We get a reference to our slice reference, so we have &&[U] or &&mut [U]
+                                            let ptr: && $($modifiers)* [U] = unsafe { this.get::<Self>() };
+
+                                            // Dereference once to get the actual slice reference: &[U] or &mut [U]
+                                            // This is the wide pointer we want to return (contains ptr + length)
+                                            // Note: Even for &mut [U], we can coerce to &[U] for borrowing
+                                            let s: &[U] = *ptr;
+
+                                            // Convert the slice reference to a raw pointer (*const [U])
+                                            // The &raw const operator creates a raw pointer from a place expression
+                                            // without going through a reference first, preserving the wide pointer
+                                            PtrConstWide::new(&raw const *s).into()
+                                        })
+                                        .build()
+                                },
+                            )
+                            .build(),
+                    ))
                     .build()
             };
         }
