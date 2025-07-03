@@ -21,8 +21,8 @@ pub use set::*;
 mod option;
 pub use option::*;
 
-mod smartptr;
-pub use smartptr::*;
+mod pointer;
+pub use pointer::*;
 
 mod function;
 pub use function::*;
@@ -73,7 +73,7 @@ pub enum Def<'shape> {
     Option(OptionDef<'shape>),
 
     /// Smart pointers, like `Arc<T>`, `Rc<T>`, etc.
-    SmartPointer(SmartPointerDef<'shape>),
+    Pointer(PointerDef<'shape>),
 }
 
 impl<'shape> core::fmt::Debug for Def<'shape> {
@@ -89,7 +89,7 @@ impl<'shape> core::fmt::Debug for Def<'shape> {
             Def::Array(array_def) => write!(f, "Array<{}; {}>", array_def.t, array_def.n),
             Def::Slice(slice_def) => write!(f, "Slice<{}>", slice_def.t),
             Def::Option(option_def) => write!(f, "Option<{}>", option_def.t),
-            Def::SmartPointer(smart_ptr_def) => {
+            Def::Pointer(smart_ptr_def) => {
                 if let Some(pointee) = smart_ptr_def.pointee {
                     write!(f, "SmartPointer<{}>", pointee())
                 } else {
@@ -153,10 +153,10 @@ impl<'shape> Def<'shape> {
             _ => Err(self),
         }
     }
-    /// Returns the `SmartPointerDef` wrapped in an `Ok` if this is a [`Def::SmartPointer`].
-    pub fn into_smart_pointer(self) -> Result<SmartPointerDef<'shape>, Self> {
+    /// Returns the `PointerDef` wrapped in an `Ok` if this is a [`Def::Pointer`].
+    pub fn into_pointer(self) -> Result<PointerDef<'shape>, Self> {
         match self {
-            Self::SmartPointer(def) => Ok(def),
+            Self::Pointer(def) => Ok(def),
             _ => Err(self),
         }
     }

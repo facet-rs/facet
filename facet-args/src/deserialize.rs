@@ -1509,7 +1509,7 @@ where
                 trace!("  Starting Some(_) option for {}", wip.shape().blue());
                 wip.begin_some().map_err(|e| self.reflect_err(e))?;
                 self.stack.push(Instruction::Pop(PopReason::Some));
-            } else if let Def::SmartPointer(inner) = wip.shape().def {
+            } else if let Def::Pointer(inner) = wip.shape().def {
                 // Check if we've already begun this smart pointer
                 // (this can happen with slice pointees where the shape doesn't change)
                 if smart_pointer_begun {
@@ -1596,7 +1596,7 @@ where
                     }
                     _ => {
                         // Check if we're building a smart pointer slice
-                        if matches!(shape.def, Def::SmartPointer(_)) && smart_pointer_begun {
+                        if matches!(shape.def, Def::Pointer(_)) && smart_pointer_begun {
                             trace!("Array starting for smart pointer slice ({})!", shape.blue());
                             wip.begin_list().map_err(|e| self.reflect_err(e))?;
                         } else if let Type::User(user_ty) = shape.ty {
@@ -2051,7 +2051,7 @@ where
                     }
                     _ => {
                         // Check if this is a smart pointer with slice pointee
-                        if matches!(shape.def, Def::SmartPointer(_)) {
+                        if matches!(shape.def, Def::Pointer(_)) {
                             trace!("List item for smart pointer slice");
                             wip.begin_list_item().map_err(|e| self.reflect_err(e))?;
                         }

@@ -7,8 +7,8 @@ use facet_core::{
 use crate::{PeekSet, ReflectError, ScalarType};
 
 use super::{
-    ListLikeDef, PeekEnum, PeekList, PeekListLike, PeekMap, PeekSmartPointer, PeekStruct,
-    PeekTuple, tuple::TupleType,
+    ListLikeDef, PeekEnum, PeekList, PeekListLike, PeekMap, PeekPointer, PeekStruct, PeekTuple,
+    tuple::TupleType,
 };
 
 /// A unique identifier for a peek value
@@ -374,13 +374,11 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
         }
     }
 
-    /// Tries to identify this value as a smart pointer
+    /// Tries to identify this value as a pointer
     #[inline]
-    pub fn into_smart_pointer(
-        self,
-    ) -> Result<PeekSmartPointer<'mem, 'facet, 'shape>, ReflectError<'shape>> {
-        if let Def::SmartPointer(def) = self.shape.def {
-            Ok(PeekSmartPointer { value: self, def })
+    pub fn into_pointer(self) -> Result<PeekPointer<'mem, 'facet, 'shape>, ReflectError<'shape>> {
+        if let Def::Pointer(def) = self.shape.def {
+            Ok(PeekPointer { value: self, def })
         } else {
             Err(ReflectError::WasNotA {
                 expected: "smart pointer",

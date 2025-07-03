@@ -1,7 +1,6 @@
 use crate::{
-    Def, Facet, Field, FieldFlags, KnownSmartPointer, PtrConst, Repr, SmartPointerDef,
-    SmartPointerFlags, SmartPointerVTable, StructKind, StructType, Type, UserType, ValueVTable,
-    value_vtable,
+    Def, Facet, Field, FieldFlags, KnownPointer, PointerDef, PointerFlags, PointerVTable, PtrConst,
+    Repr, StructKind, StructType, Type, UserType, ValueVTable, value_vtable,
 };
 
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for core::ptr::NonNull<T> {
@@ -32,14 +31,14 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for core::ptr::NonNull<T> {
                         .build()]
                 },
             })))
-            .def(Def::SmartPointer(
-                SmartPointerDef::builder()
+            .def(Def::Pointer(
+                PointerDef::builder()
                     .pointee(|| T::SHAPE)
-                    .flags(SmartPointerFlags::EMPTY)
-                    .known(KnownSmartPointer::NonNull)
+                    .flags(PointerFlags::EMPTY)
+                    .known(KnownPointer::NonNull)
                     .vtable(
                         &const {
-                            SmartPointerVTable::builder()
+                            PointerVTable::builder()
                                 .borrow_fn(|this| {
                                     let ptr = unsafe { this.get::<Self>().as_ptr() };
                                     PtrConst::new(ptr).into()
