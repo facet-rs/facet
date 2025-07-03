@@ -828,13 +828,7 @@ fn test_string_traits() {
     check_facts(
         &"hello",
         &"world",
-        FactBuilder::new()
-            .debug()
-            .display()
-            .partial_eq_and(false)
-            .correct_ord_and(Ordering::Less)
-            .clone()
-            .build(),
+        FactBuilder::new().debug().display().clone().build(),
         TypedMarkerTraits::new()
             .eq()
             .send()
@@ -988,11 +982,7 @@ fn test_slice_traits() {
     check_facts(
         &["hello", "world"][..],
         &["foo", "bar"][..],
-        FactBuilder::new()
-            .debug()
-            .partial_eq_and(false)
-            .correct_ord_and(Ordering::Greater)
-            .build(),
+        FactBuilder::new().debug().build(),
         TypedMarkerTraits::new()
             .eq()
             .send()
@@ -1009,12 +999,7 @@ fn test_slice_ref_traits() {
     check_facts(
         &&[1, 2, 3][..],
         &&[4, 5, 6][..],
-        FactBuilder::new()
-            .debug()
-            .partial_eq_and(false)
-            .correct_ord_and(Ordering::Less)
-            .clone()
-            .build(),
+        FactBuilder::new().debug().clone().build(),
         TypedMarkerTraits::new()
             .eq()
             .send()
@@ -1029,12 +1014,7 @@ fn test_slice_ref_traits() {
     check_facts(
         &&["hello", "world"][..],
         &&["foo", "bar"][..],
-        FactBuilder::new()
-            .debug()
-            .partial_eq_and(false)
-            .correct_ord_and(Ordering::Greater)
-            .clone()
-            .build(),
+        FactBuilder::new().debug().clone().build(),
         TypedMarkerTraits::new()
             .eq()
             .send()
@@ -1449,12 +1429,7 @@ fn test_ptr() {
     check_facts(
         &ptr,
         &ptr,
-        FactBuilder::new()
-            .debug()
-            .clone()
-            .partial_eq_and(true)
-            .correct_ord_and(Ordering::Equal)
-            .build(),
+        FactBuilder::new().debug().clone().build(),
         TypedMarkerTraits::new()
             .eq()
             .copy()
@@ -1466,12 +1441,7 @@ fn test_ptr() {
     check_facts(
         &ptr.cast_mut(),
         &ptr.cast_mut(),
-        FactBuilder::new()
-            .debug()
-            .clone()
-            .partial_eq_and(true)
-            .correct_ord_and(Ordering::Equal)
-            .build(),
+        FactBuilder::new().debug().clone().build(),
         TypedMarkerTraits::new()
             .eq()
             .copy()
@@ -1486,12 +1456,7 @@ fn test_ptr() {
     check_facts(
         &ptr,
         &ptr,
-        FactBuilder::new()
-            .debug()
-            .clone()
-            .partial_eq_and(true)
-            .correct_ord_and(Ordering::Equal)
-            .build(),
+        FactBuilder::new().debug().clone().build(),
         TypedMarkerTraits::new()
             .eq()
             .copy()
@@ -1503,12 +1468,7 @@ fn test_ptr() {
     check_facts(
         &ptr.cast_mut(),
         &ptr.cast_mut(),
-        FactBuilder::new()
-            .debug()
-            .clone()
-            .partial_eq_and(true)
-            .correct_ord_and(Ordering::Equal)
-            .build(),
+        FactBuilder::new().debug().clone().build(),
         TypedMarkerTraits::new()
             .eq()
             .copy()
@@ -1520,12 +1480,7 @@ fn test_ptr() {
     check_facts(
         &ptr,
         &&raw const s[..1],
-        FactBuilder::new()
-            .debug()
-            .clone()
-            .partial_eq_and(false)
-            .correct_ord_and(Ordering::Greater)
-            .build(),
+        FactBuilder::new().debug().clone().build(),
         TypedMarkerTraits::new()
             .eq()
             .copy()
@@ -1537,12 +1492,7 @@ fn test_ptr() {
     check_facts(
         &ptr.cast_mut(),
         &core::ptr::from_ref(&s[..1]).cast_mut(),
-        FactBuilder::new()
-            .debug()
-            .clone()
-            .partial_eq_and(false)
-            .correct_ord_and(Ordering::Greater)
-            .build(),
+        FactBuilder::new().debug().clone().build(),
         TypedMarkerTraits::new()
             .eq()
             .copy()
@@ -1557,12 +1507,7 @@ fn test_ref() {
     check_facts(
         &&(),
         &&(),
-        FactBuilder::new()
-            .debug()
-            .clone()
-            .partial_eq_and(true)
-            .correct_ord_and(Ordering::Equal)
-            .build(),
+        FactBuilder::new().debug().clone().build(),
         TypedMarkerTraits::new()
             .eq()
             .send()
@@ -1579,12 +1524,7 @@ fn test_ref() {
     check_facts(
         &&ptr,
         &&ptr,
-        FactBuilder::new()
-            .debug()
-            .clone()
-            .partial_eq_and(true)
-            .correct_ord_and(Ordering::Equal)
-            .build(),
+        FactBuilder::new().debug().clone().build(),
         TypedMarkerTraits::new()
             .eq()
             .copy()
@@ -1599,11 +1539,7 @@ fn test_mut_ref() {
     check_facts(
         &&mut (),
         &&mut (),
-        FactBuilder::new()
-            .debug()
-            .partial_eq_and(true)
-            .correct_ord_and(Ordering::Equal)
-            .build(),
+        FactBuilder::new().debug().build(),
         TypedMarkerTraits::new()
             .eq()
             .send()
@@ -1621,11 +1557,7 @@ fn test_mut_ref() {
     check_facts(
         &ref1,
         &ref2,
-        FactBuilder::new()
-            .debug()
-            .partial_eq_and(true)
-            .correct_ord_and(Ordering::Equal)
-            .build(),
+        FactBuilder::new().debug().build(),
         TypedMarkerTraits::new().eq().unpin().ref_unwind_safe(),
     );
 }
@@ -1662,24 +1594,14 @@ fn test_rc_weak() {
     check_facts(
         &ptr,
         &ptr,
-        FactBuilder::new()
-            .clone()
-            .debug()
-            .partial_eq_and(true)
-            .correct_ord_and(Ordering::Equal)
-            .build(),
+        FactBuilder::new().clone().debug().build(),
         TypedMarkerTraits::new().eq().copy().unpin(),
     );
 
     check_facts(
         &ptr.cast_mut(),
         &ptr.cast_mut(),
-        FactBuilder::new()
-            .clone()
-            .debug()
-            .partial_eq_and(true)
-            .correct_ord_and(Ordering::Equal)
-            .build(),
+        FactBuilder::new().clone().debug().build(),
         TypedMarkerTraits::new().eq().copy().unpin(),
     );
 }

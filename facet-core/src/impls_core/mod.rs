@@ -6,6 +6,7 @@ mod fn_ptr;
 mod ops;
 mod option;
 mod pointer;
+mod reference;
 mod scalar;
 mod slice;
 mod smartptr;

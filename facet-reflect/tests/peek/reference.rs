@@ -1,6 +1,14 @@
 use facet_reflect::Peek;
 
 #[test]
+fn string_owned() {
+    let s = String::from("abc");
+    let peek = Peek::new::<String>(&s);
+
+    assert_eq!(format!("{peek}"), "abc");
+}
+
+#[test]
 fn string_ref() {
     let s = String::from("abc");
     let r = &s;
