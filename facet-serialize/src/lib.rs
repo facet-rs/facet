@@ -466,11 +466,11 @@ where
                             serializer.serialize_none()?;
                         }
                     }
-                    (Def::SmartPointer(_), _) => {
+                    (Def::Pointer(_), _) => {
                         // For smart pointers, we need to borrow the inner value and serialize it
                         // This is similar to how transparent structs work - we serialize the inner value directly
 
-                        let sp = cpeek.into_smart_pointer().unwrap();
+                        let sp = cpeek.into_pointer().unwrap();
                         if let Some(inner_peek) = sp.borrow_inner() {
                             // Push the inner value to be serialized
                             stack.push(SerializeTask::Value(inner_peek, None));

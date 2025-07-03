@@ -4,15 +4,15 @@ use crate::{GenericPtr, PtrConst, PtrMut, PtrUninit};
 
 use super::Shape;
 
-/// Describes a smart pointer — including a vtable to query and alter its state,
-/// and the inner shape (the pointee type in the smart pointer).
+/// Describes a pointer — including a vtable to query and alter its state,
+/// and the inner shape (the pointee type in the pointer).
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-pub struct SmartPointerDef<'shape> {
-    /// vtable for interacting with the smart pointer
-    pub vtable: &'shape SmartPointerVTable<'shape>,
+pub struct PointerDef<'shape> {
+    /// vtable for interacting with the pointer
+    pub vtable: &'shape PointerVTable<'shape>,
 
-    /// shape of the inner type of the smart pointer, if not opaque
+    /// shape of the inner type of the pointer, if not opaque
     pub pointee: Option<fn() -> &'shape Shape<'shape>>,
 
     /// shape of the corresponding strong pointer, if this pointer is weak
@@ -21,18 +21,18 @@ pub struct SmartPointerDef<'shape> {
     /// shape of the corresponding weak pointer, if this pointer is strong
     pub strong: Option<fn() -> &'shape Shape<'shape>>,
 
-    /// Flags representing various characteristics of the smart pointer
-    pub flags: SmartPointerFlags,
+    /// Flags representing various characteristics of the pointer
+    pub flags: PointerFlags,
 
-    /// An optional field to identify the kind of smart pointer
-    pub known: Option<KnownSmartPointer>,
+    /// An optional field to identify the kind of pointer
+    pub known: Option<KnownPointer>,
 }
 
-impl<'shape> SmartPointerDef<'shape> {
-    /// Creates a new `SmartPointerDefBuilder` with all fields set to `None`.
+impl<'shape> PointerDef<'shape> {
+    /// Creates a new `PointerDefBuilder` with all fields set to `None`.
     #[must_use]
-    pub const fn builder() -> SmartPointerDefBuilder<'shape> {
-        SmartPointerDefBuilder {
+    pub const fn builder() -> PointerDefBuilder<'shape> {
+        PointerDefBuilder {
             vtable: None,
             pointee: None,
             flags: None,
@@ -42,7 +42,7 @@ impl<'shape> SmartPointerDef<'shape> {
         }
     }
 
-    /// Returns shape of the inner type of the smart pointer, if not opaque
+    /// Returns shape of the inner type of the pointer, if not opaque
     pub fn pointee(&self) -> Option<&'shape Shape<'shape>> {
         self.pointee.map(|v| v())
     }
@@ -58,19 +58,19 @@ impl<'shape> SmartPointerDef<'shape> {
     }
 }
 
-/// Builder for creating a `SmartPointerDef`.
+/// Builder for creating a `PointerDef`.
 #[derive(Debug)]
-pub struct SmartPointerDefBuilder<'shape> {
-    vtable: Option<&'shape SmartPointerVTable<'shape>>,
+pub struct PointerDefBuilder<'shape> {
+    vtable: Option<&'shape PointerVTable<'shape>>,
     pointee: Option<fn() -> &'shape Shape<'shape>>,
-    flags: Option<SmartPointerFlags>,
-    known: Option<KnownSmartPointer>,
+    flags: Option<PointerFlags>,
+    known: Option<KnownPointer>,
     weak: Option<fn() -> &'shape Shape<'shape>>,
     strong: Option<fn() -> &'shape Shape<'shape>>,
 }
 
-impl<'shape> SmartPointerDefBuilder<'shape> {
-    /// Creates a new `SmartPointerDefBuilder` with all fields set to `None`.
+impl<'shape> PointerDefBuilder<'shape> {
+    /// Creates a new `PointerDefBuilder` with all fields set to `None`.
     #[must_use]
     #[expect(clippy::new_without_default)]
     pub const fn new() -> Self {
@@ -84,30 +84,30 @@ impl<'shape> SmartPointerDefBuilder<'shape> {
         }
     }
 
-    /// Sets the vtable for the smart pointer.
+    /// Sets the vtable for the pointer.
     #[must_use]
-    pub const fn vtable(mut self, vtable: &'shape SmartPointerVTable) -> Self {
+    pub const fn vtable(mut self, vtable: &'shape PointerVTable) -> Self {
         self.vtable = Some(vtable);
         self
     }
 
-    /// Sets the shape of the inner type of the smart pointer.
+    /// Sets the shape of the inner type of the pointer.
     #[must_use]
     pub const fn pointee(mut self, pointee: fn() -> &'shape Shape<'shape>) -> Self {
         self.pointee = Some(pointee);
         self
     }
 
-    /// Sets the flags for the smart pointer.
+    /// Sets the flags for the pointer.
     #[must_use]
-    pub const fn flags(mut self, flags: SmartPointerFlags) -> Self {
+    pub const fn flags(mut self, flags: PointerFlags) -> Self {
         self.flags = Some(flags);
         self
     }
 
-    /// Sets the known smart pointer type.
+    /// Sets the known pointer type.
     #[must_use]
-    pub const fn known(mut self, known: KnownSmartPointer) -> Self {
+    pub const fn known(mut self, known: KnownPointer) -> Self {
         self.known = Some(known);
         self
     }
@@ -126,14 +126,14 @@ impl<'shape> SmartPointerDefBuilder<'shape> {
         self
     }
 
-    /// Builds a `SmartPointerDef` from the provided configuration.
+    /// Builds a `PointerDef` from the provided configuration.
     ///
     /// # Panics
     ///
     /// Panics if any required field (vtable, flags) is not set.
     #[must_use]
-    pub const fn build(self) -> SmartPointerDef<'shape> {
-        SmartPointerDef {
+    pub const fn build(self) -> PointerDef<'shape> {
+        PointerDef {
             vtable: self.vtable.unwrap(),
             pointee: self.pointee,
             weak: self.weak,
@@ -145,15 +145,15 @@ impl<'shape> SmartPointerDefBuilder<'shape> {
 }
 
 bitflags! {
-    /// Flags to represent various characteristics of smart pointers
+    /// Flags to represent various characteristics of pointers
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-    pub struct SmartPointerFlags: u8 {
+    pub struct PointerFlags: u8 {
         /// An empty set of flags
         const EMPTY = 0;
 
-        /// Whether the smart pointer is weak (like [`std::sync::Weak`])
+        /// Whether the pointer is weak (like [`std::sync::Weak`])
         const WEAK = 1 << 0;
-        /// Whether the smart pointer is atomic (like [`std::sync::Arc`])
+        /// Whether the pointer is atomic (like [`std::sync::Arc`])
         const ATOMIC = 1 << 1;
         /// Whether the pointer is a lock (like [`std::sync::Mutex`])
         const LOCK = 1 << 2;
@@ -162,7 +162,7 @@ bitflags! {
 
 /// Tries to upgrade the weak pointer to a strong one.
 ///
-/// If the upgrade succeeds, initializes the smart pointer into the given `strong`, and returns a
+/// If the upgrade succeeds, initializes the pointer into the given `strong`, and returns a
 /// copy of `strong`, which has been guaranteed to be initialized. If the upgrade fails, `None` is
 /// returned and `strong` is not initialized.
 ///
@@ -170,9 +170,9 @@ bitflags! {
 ///
 /// # Safety
 ///
-/// `weak` must be a valid weak smart pointer (like [`std::sync::Weak`] or [`std::rc::Weak`]).
+/// `weak` must be a valid weak pointer (like [`std::sync::Weak`] or [`std::rc::Weak`]).
 ///
-/// `strong` must be allocated, and of the right layout for the corresponding smart pointer.
+/// `strong` must be allocated, and of the right layout for the corresponding pointer.
 ///
 /// `strong` must not have been initialized yet.
 pub type UpgradeIntoFn =
@@ -180,14 +180,14 @@ pub type UpgradeIntoFn =
 
 /// Downgrades a strong pointer to a weak one.
 ///
-/// Initializes the smart pointer into the given `weak`, and returns a copy of `weak`, which has
+/// Initializes the pointer into the given `weak`, and returns a copy of `weak`, which has
 /// been guaranteed to be initialized.
 ///
 /// Only strong pointers can be downgraded (like [`std::sync::Arc`] or [`std::rc::Rc`]).
 ///
 /// # Safety
 ///
-/// `strong` must be a valid strong smart pointer (like [`std::sync::Arc`] or [`std::rc::Rc`]).
+/// `strong` must be a valid strong pointer (like [`std::sync::Arc`] or [`std::rc::Rc`]).
 ///
 /// `weak` must be allocated, and of the right layout for the corresponding weak pointer.
 ///
@@ -195,25 +195,25 @@ pub type UpgradeIntoFn =
 pub type DowngradeIntoFn =
     for<'ptr> unsafe fn(strong: PtrMut<'ptr>, weak: PtrUninit<'ptr>) -> PtrMut<'ptr>;
 
-/// Tries to obtain a reference to the inner value of the smart pointer.
+/// Tries to obtain a reference to the inner value of the pointer.
 ///
 /// This can only be used with strong pointers (like [`std::sync::Arc`] or [`std::rc::Rc`]).
 ///
 /// # Safety
 ///
-/// `this` must be a valid strong smart pointer (like [`std::sync::Arc`] or [`std::rc::Rc`]).
+/// `this` must be a valid strong pointer (like [`std::sync::Arc`] or [`std::rc::Rc`]).
 pub type BorrowFn = for<'ptr> unsafe fn(this: PtrConst<'ptr>) -> GenericPtr<'ptr>;
 
-/// Creates a new smart pointer wrapping the given value.
+/// Creates a new pointer wrapping the given value.
 ///
-/// Initializes the smart pointer into the given `this`, and returns a copy of `this`, which has
+/// Initializes the pointer into the given `this`, and returns a copy of `this`, which has
 /// been guaranteed to be initialized.
 ///
 /// This can only be used with strong pointers (like [`std::sync::Arc`] or [`std::rc::Rc`]).
 ///
 /// # Safety
 ///
-/// `this` must be allocated, and of the right layout for the corresponding smart pointer.
+/// `this` must be allocated, and of the right layout for the corresponding pointer.
 ///
 /// `this` must not have been initialized yet.
 ///
@@ -223,7 +223,7 @@ pub type BorrowFn = for<'ptr> unsafe fn(this: PtrConst<'ptr>) -> GenericPtr<'ptr
 /// with [`core::mem::forget`]) but NOT dropped).
 pub type NewIntoFn = for<'ptr> unsafe fn(this: PtrUninit<'ptr>, ptr: PtrMut<'ptr>) -> PtrMut<'ptr>;
 
-/// Type-erased result of locking a mutex-like smart pointer
+/// Type-erased result of locking a mutex-like pointer
 pub struct LockResult<'ptr> {
     /// The data that was locked
     data: PtrMut<'ptr>,
@@ -255,16 +255,16 @@ pub struct LockGuardVTable {
     pub drop_in_place: for<'ptr> unsafe fn(guard: PtrConst<'ptr>),
 }
 
-/// Acquires a lock on a mutex-like smart pointer
+/// Acquires a lock on a mutex-like pointer
 pub type LockFn = for<'ptr> unsafe fn(opaque: PtrConst<'ptr>) -> Result<LockResult<'ptr>, ()>;
 
-/// Acquires a read lock on a reader-writer lock-like smart pointer
+/// Acquires a read lock on a reader-writer lock-like pointer
 pub type ReadFn = for<'ptr> unsafe fn(opaque: PtrConst<'ptr>) -> Result<LockResult<'ptr>, ()>;
 
-/// Acquires a write lock on a reader-writer lock-like smart pointer
+/// Acquires a write lock on a reader-writer lock-like pointer
 pub type WriteFn = for<'ptr> unsafe fn(opaque: PtrConst<'ptr>) -> Result<LockResult<'ptr>, ()>;
 
-/// Creates a new slice builder for a smart pointer: ie. for `Arc<[u8]>`, it builds a
+/// Creates a new slice builder for a pointer: ie. for `Arc<[u8]>`, it builds a
 /// `Vec<u8>` internally, to which you can push, and then turn into an `Arc<[u8]>` at
 /// the last stage.
 ///
@@ -280,7 +280,7 @@ pub type SliceBuilderNewFn = fn() -> PtrMut<'static>;
 /// Function is infallible as it uses the global allocator.
 pub type SliceBuilderPushFn = unsafe fn(builder: PtrMut, item: PtrMut);
 
-/// Converts a slice builder into a smart pointer. This takes ownership of the builder
+/// Converts a slice builder into a pointer. This takes ownership of the builder
 /// and frees the backing storage.
 ///
 /// # Safety
@@ -289,7 +289,7 @@ pub type SliceBuilderPushFn = unsafe fn(builder: PtrMut, item: PtrMut);
 /// Function is infallible as it uses the global allocator.
 pub type SliceBuilderConvertFn = unsafe fn(builder: PtrMut<'static>) -> PtrConst<'static>;
 
-/// Frees a slice builder without converting it into a smart pointer
+/// Frees a slice builder without converting it into a pointer
 ///
 /// # Safety
 ///
@@ -384,9 +384,9 @@ impl SliceBuilderVTableBuilder {
     }
 }
 
-/// Functions for interacting with a smart pointer
+/// Functions for interacting with a pointer
 #[derive(Debug, Clone, Copy)]
-pub struct SmartPointerVTable<'shape> {
+pub struct PointerVTable<'shape> {
     /// See [`UpgradeIntoFn`]
     pub upgrade_into_fn: Option<UpgradeIntoFn>,
 
@@ -412,11 +412,11 @@ pub struct SmartPointerVTable<'shape> {
     pub slice_builder_vtable: Option<&'shape SliceBuilderVTable>,
 }
 
-impl<'shape> SmartPointerVTable<'shape> {
-    /// Creates a new `SmartPointerVTableBuilder` with all fields set to `None`.
+impl<'shape> PointerVTable<'shape> {
+    /// Creates a new `PointerVTableBuilder` with all fields set to `None`.
     #[must_use]
-    pub const fn builder() -> SmartPointerVTableBuilder<'shape> {
-        SmartPointerVTableBuilder {
+    pub const fn builder() -> PointerVTableBuilder<'shape> {
+        PointerVTableBuilder {
             upgrade_into_fn: None,
             downgrade_into_fn: None,
             borrow_fn: None,
@@ -429,9 +429,9 @@ impl<'shape> SmartPointerVTable<'shape> {
     }
 }
 
-/// Builder for creating a `SmartPointerVTable`.
+/// Builder for creating a `PointerVTable`.
 #[derive(Debug)]
-pub struct SmartPointerVTableBuilder<'shape> {
+pub struct PointerVTableBuilder<'shape> {
     upgrade_into_fn: Option<UpgradeIntoFn>,
     downgrade_into_fn: Option<DowngradeIntoFn>,
     borrow_fn: Option<BorrowFn>,
@@ -442,8 +442,8 @@ pub struct SmartPointerVTableBuilder<'shape> {
     slice_builder_vtable: Option<&'shape SliceBuilderVTable>,
 }
 
-impl<'shape> SmartPointerVTableBuilder<'shape> {
-    /// Creates a new `SmartPointerVTableBuilder` with all fields set to `None`.
+impl<'shape> PointerVTableBuilder<'shape> {
+    /// Creates a new `PointerVTableBuilder` with all fields set to `None`.
     #[must_use]
     #[expect(clippy::new_without_default)]
     pub const fn new() -> Self {
@@ -518,10 +518,10 @@ impl<'shape> SmartPointerVTableBuilder<'shape> {
         self
     }
 
-    /// Builds a `SmartPointerVTable` from the provided configuration.
+    /// Builds a `PointerVTable` from the provided configuration.
     #[must_use]
-    pub const fn build(self) -> SmartPointerVTable<'shape> {
-        SmartPointerVTable {
+    pub const fn build(self) -> PointerVTable<'shape> {
+        PointerVTable {
             upgrade_into_fn: self.upgrade_into_fn,
             downgrade_into_fn: self.downgrade_into_fn,
             borrow_fn: self.borrow_fn,
@@ -534,9 +534,9 @@ impl<'shape> SmartPointerVTableBuilder<'shape> {
     }
 }
 
-/// Represents common standard library smart pointer kinds
+/// Represents common standard library pointer kinds
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum KnownSmartPointer {
+pub enum KnownPointer {
     /// [`Box<T>`](std::boxed::Box), heap-allocated values with single ownership
     Box,
     /// [`Rc<T>`](std::rc::Rc), reference-counted values with multiple ownership

@@ -1,9 +1,9 @@
 use alloc::rc::{Rc, Weak};
 
 use crate::{
-    Def, Facet, KnownSmartPointer, PtrConst, PtrConstWide, PtrMut, PtrUninit, Shape,
-    SmartPointerDef, SmartPointerFlags, SmartPointerVTable, TryBorrowInnerError, TryFromError,
-    TryIntoInnerError, Type, UserType, ValueVTable, value_vtable,
+    Def, Facet, KnownPointer, PointerDef, PointerFlags, PointerVTable, PtrConst, PtrConstWide,
+    PtrMut, PtrUninit, Shape, TryBorrowInnerError, TryFromError, TryIntoInnerError, Type, UserType,
+    ValueVTable, value_vtable,
 };
 
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for Rc<T> {
@@ -76,15 +76,15 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Rc<T> {
                 shape: || T::SHAPE,
             }])
             .ty(Type::User(UserType::Opaque))
-            .def(Def::SmartPointer(
-                SmartPointerDef::builder()
+            .def(Def::Pointer(
+                PointerDef::builder()
                     .pointee(|| T::SHAPE)
-                    .flags(SmartPointerFlags::EMPTY)
-                    .known(KnownSmartPointer::Rc)
+                    .flags(PointerFlags::EMPTY)
+                    .known(KnownPointer::Rc)
                     .weak(|| <Weak<T> as Facet>::SHAPE)
                     .vtable(
                         &const {
-                            SmartPointerVTable::builder()
+                            PointerVTable::builder()
                                 .borrow_fn(|this| {
                                     let ptr = Self::as_ptr(unsafe { this.get() });
                                     PtrConst::new(ptr).into()
@@ -135,15 +135,15 @@ unsafe impl<'a> Facet<'a> for Rc<str> {
                 shape: || str::SHAPE,
             }])
             .ty(Type::User(UserType::Opaque))
-            .def(Def::SmartPointer(
-                SmartPointerDef::builder()
+            .def(Def::Pointer(
+                PointerDef::builder()
                     .pointee(|| str::SHAPE)
-                    .flags(SmartPointerFlags::EMPTY)
-                    .known(KnownSmartPointer::Rc)
+                    .flags(PointerFlags::EMPTY)
+                    .known(KnownPointer::Rc)
                     .weak(|| <Weak<str> as Facet>::SHAPE)
                     .vtable(
                         &const {
-                            SmartPointerVTable::builder()
+                            PointerVTable::builder()
                                 .borrow_fn(|this| unsafe {
                                     let concrete = this.get::<Rc<str>>();
                                     let s: &str = concrete;
@@ -189,15 +189,15 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Weak<T> {
                 shape: || T::SHAPE,
             }])
             .ty(Type::User(UserType::Opaque))
-            .def(Def::SmartPointer(
-                SmartPointerDef::builder()
+            .def(Def::Pointer(
+                PointerDef::builder()
                     .pointee(|| T::SHAPE)
-                    .flags(SmartPointerFlags::WEAK)
-                    .known(KnownSmartPointer::RcWeak)
+                    .flags(PointerFlags::WEAK)
+                    .known(KnownPointer::RcWeak)
                     .strong(|| <Rc<T> as Facet>::SHAPE)
                     .vtable(
                         &const {
-                            SmartPointerVTable::builder()
+                            PointerVTable::builder()
                                 .upgrade_into_fn(|weak, strong| unsafe {
                                     Some(strong.put(weak.get::<Self>().upgrade()?))
                                 })
@@ -239,15 +239,15 @@ unsafe impl<'a> Facet<'a> for Weak<str> {
                 shape: || str::SHAPE,
             }])
             .ty(Type::User(UserType::Opaque))
-            .def(Def::SmartPointer(
-                SmartPointerDef::builder()
+            .def(Def::Pointer(
+                PointerDef::builder()
                     .pointee(|| str::SHAPE)
-                    .flags(SmartPointerFlags::WEAK)
-                    .known(KnownSmartPointer::RcWeak)
+                    .flags(PointerFlags::WEAK)
+                    .known(KnownPointer::RcWeak)
                     .strong(|| <Rc<str> as Facet>::SHAPE)
                     .vtable(
                         &const {
-                            SmartPointerVTable::builder()
+                            PointerVTable::builder()
                                 .upgrade_into_fn(|_weak, _strong| todo!())
                                 .build()
                         },
@@ -281,7 +281,7 @@ mod tests {
         let rc_shape = <Rc<String>>::SHAPE;
         let rc_def = rc_shape
             .def
-            .into_smart_pointer()
+            .into_pointer()
             .expect("Rc<T> should have a smart pointer definition");
 
         // Allocate memory for the Rc
@@ -332,13 +332,13 @@ mod tests {
         let rc_shape = <Rc<String>>::SHAPE;
         let rc_def = rc_shape
             .def
-            .into_smart_pointer()
+            .into_pointer()
             .expect("Rc<T> should have a smart pointer definition");
 
         let weak_shape = <RcWeak<String>>::SHAPE;
         let weak_def = weak_shape
             .def
-            .into_smart_pointer()
+            .into_pointer()
             .expect("RcWeak<T> should have a smart pointer definition");
 
         // 1. Create the first Rc (rc1)
@@ -395,13 +395,13 @@ mod tests {
         let rc_shape = <Rc<String>>::SHAPE;
         let rc_def = rc_shape
             .def
-            .into_smart_pointer()
+            .into_pointer()
             .expect("Rc<T> should have a smart pointer definition");
 
         let weak_shape = <RcWeak<String>>::SHAPE;
         let weak_def = weak_shape
             .def
-            .into_smart_pointer()
+            .into_pointer()
             .expect("RcWeak<T> should have a smart pointer definition");
 
         // 1. Create the strong Rc (rc1)

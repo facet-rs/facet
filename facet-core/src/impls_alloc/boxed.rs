@@ -1,9 +1,9 @@
 use alloc::boxed::Box;
 
 use crate::{
-    Def, Facet, KnownSmartPointer, PtrConst, PtrConstWide, PtrMut, PtrUninit, Shape,
-    SmartPointerDef, SmartPointerFlags, SmartPointerVTable, TryBorrowInnerError, TryFromError,
-    TryIntoInnerError, Type, UserType, ValueVTable, value_vtable,
+    Def, Facet, KnownPointer, PointerDef, PointerFlags, PointerVTable, PtrConst, PtrConstWide,
+    PtrMut, PtrUninit, Shape, TryBorrowInnerError, TryFromError, TryIntoInnerError, Type, UserType,
+    ValueVTable, value_vtable,
 };
 
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for Box<T> {
@@ -73,14 +73,14 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Box<T> {
                 shape: || T::SHAPE,
             }])
             .ty(Type::User(UserType::Opaque))
-            .def(Def::SmartPointer(
-                SmartPointerDef::builder()
+            .def(Def::Pointer(
+                PointerDef::builder()
                     .pointee(|| T::SHAPE)
-                    .flags(SmartPointerFlags::EMPTY)
-                    .known(KnownSmartPointer::Box)
+                    .flags(PointerFlags::EMPTY)
+                    .known(KnownPointer::Box)
                     .vtable(
                         &const {
-                            SmartPointerVTable::builder()
+                            PointerVTable::builder()
                                 .borrow_fn(|this| unsafe {
                                     let concrete = this.get::<Box<T>>();
                                     let t: &T = concrete.as_ref();
@@ -128,14 +128,14 @@ unsafe impl<'a> Facet<'a> for Box<str> {
                 shape: || str::SHAPE,
             }])
             .ty(Type::User(UserType::Opaque))
-            .def(Def::SmartPointer(
-                SmartPointerDef::builder()
+            .def(Def::Pointer(
+                PointerDef::builder()
                     .pointee(|| str::SHAPE)
-                    .flags(SmartPointerFlags::EMPTY)
-                    .known(KnownSmartPointer::Box)
+                    .flags(PointerFlags::EMPTY)
+                    .known(KnownPointer::Box)
                     .vtable(
                         &const {
-                            SmartPointerVTable::builder()
+                            PointerVTable::builder()
                                 .borrow_fn(|this| unsafe {
                                     let concrete = this.get::<Box<str>>();
                                     let s: &str = concrete;
@@ -174,7 +174,7 @@ mod tests {
         let box_shape = <Box<String>>::SHAPE;
         let box_def = box_shape
             .def
-            .into_smart_pointer()
+            .into_pointer()
             .expect("Box<T> should have a smart pointer definition");
 
         // Allocate memory for the Box

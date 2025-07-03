@@ -5,7 +5,7 @@
 #![doc = include_str!("../README.md")]
 
 extern crate facet_core as facet;
-use facet::{PointerType, PrimitiveType, SmartPointerDef, TextualType};
+use facet::{PointerDef, PointerType, PrimitiveType, TextualType};
 use facet_core::{Def, Facet, Shape, Type, UserType};
 
 use core::alloc::Layout;
@@ -116,7 +116,7 @@ fn serialize<'shape, W: Write>(
         Def::Slice(slice_def) => serialize_slice(slice_def, writer)?,
         Def::Array(array_def) => serialize_array(array_def, writer)?,
         Def::Option(option_def) => serialize_option(option_def, writer)?,
-        Def::SmartPointer(SmartPointerDef {
+        Def::Pointer(PointerDef {
             pointee: Some(inner_shape),
             ..
         }) => serialize(inner_shape(), &[], writer)?,

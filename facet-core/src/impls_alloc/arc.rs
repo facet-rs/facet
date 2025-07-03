@@ -3,10 +3,9 @@ use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 
 use crate::{
-    Def, Facet, KnownSmartPointer, PtrConst, PtrConstWide, PtrMut, PtrUninit, Shape,
-    SliceBuilderVTable, SmartPointerDef, SmartPointerFlags, SmartPointerVTable,
-    TryBorrowInnerError, TryFromError, TryIntoInnerError, Type, UserType, ValueVTable,
-    value_vtable,
+    Def, Facet, KnownPointer, PointerDef, PointerFlags, PointerVTable, PtrConst, PtrConstWide,
+    PtrMut, PtrUninit, Shape, SliceBuilderVTable, TryBorrowInnerError, TryFromError,
+    TryIntoInnerError, Type, UserType, ValueVTable, value_vtable,
 };
 
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for Arc<T> {
@@ -89,15 +88,15 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Arc<T> {
                 shape: || T::SHAPE,
             }])
             .ty(Type::User(UserType::Opaque))
-            .def(Def::SmartPointer(
-                SmartPointerDef::builder()
+            .def(Def::Pointer(
+                PointerDef::builder()
                     .pointee(|| T::SHAPE)
-                    .flags(SmartPointerFlags::ATOMIC)
-                    .known(KnownSmartPointer::Arc)
+                    .flags(PointerFlags::ATOMIC)
+                    .known(KnownPointer::Arc)
                     .weak(|| <Weak<T> as Facet>::SHAPE)
                     .vtable(
                         &const {
-                            SmartPointerVTable::builder()
+                            PointerVTable::builder()
                                 .borrow_fn(|this| {
                                     let arc_ptr = unsafe { this.as_ptr::<Arc<T>>() };
                                     let ptr = unsafe { Arc::as_ptr(&*arc_ptr) };
@@ -149,15 +148,15 @@ unsafe impl<'a> Facet<'a> for Arc<str> {
                 shape: || str::SHAPE,
             }])
             .ty(Type::User(UserType::Opaque))
-            .def(Def::SmartPointer(
-                SmartPointerDef::builder()
+            .def(Def::Pointer(
+                PointerDef::builder()
                     .pointee(|| str::SHAPE)
-                    .flags(SmartPointerFlags::ATOMIC)
-                    .known(KnownSmartPointer::Arc)
+                    .flags(PointerFlags::ATOMIC)
+                    .known(KnownPointer::Arc)
                     .weak(|| <Weak<str> as Facet>::SHAPE)
                     .vtable(
                         &const {
-                            SmartPointerVTable::builder()
+                            PointerVTable::builder()
                                 .borrow_fn(|this| unsafe {
                                     let concrete = this.get::<Arc<str>>();
                                     let s: &str = concrete;
@@ -232,15 +231,15 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Arc<[U]> {
                 shape: || <[U]>::SHAPE,
             }])
             .ty(Type::User(UserType::Opaque))
-            .def(Def::SmartPointer(
-                SmartPointerDef::builder()
+            .def(Def::Pointer(
+                PointerDef::builder()
                     .pointee(|| <[U]>::SHAPE)
-                    .flags(SmartPointerFlags::ATOMIC)
-                    .known(KnownSmartPointer::Arc)
+                    .flags(PointerFlags::ATOMIC)
+                    .known(KnownPointer::Arc)
                     .weak(|| <Weak<[U]> as Facet>::SHAPE)
                     .vtable(
                         &const {
-                            SmartPointerVTable::builder()
+                            PointerVTable::builder()
                                 .borrow_fn(|this| unsafe {
                                     let concrete = this.get::<Arc<[U]>>();
                                     let s: &[U] = concrete;
@@ -296,15 +295,15 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Weak<T> {
                 shape: || T::SHAPE,
             }])
             .ty(Type::User(UserType::Opaque))
-            .def(Def::SmartPointer(
-                SmartPointerDef::builder()
+            .def(Def::Pointer(
+                PointerDef::builder()
                     .pointee(|| T::SHAPE)
-                    .flags(SmartPointerFlags::ATOMIC.union(SmartPointerFlags::WEAK))
-                    .known(KnownSmartPointer::ArcWeak)
+                    .flags(PointerFlags::ATOMIC.union(PointerFlags::WEAK))
+                    .known(KnownPointer::ArcWeak)
                     .strong(|| <Arc<T> as Facet>::SHAPE)
                     .vtable(
                         &const {
-                            SmartPointerVTable::builder()
+                            PointerVTable::builder()
                                 .upgrade_into_fn(|weak, strong| unsafe {
                                     Some(strong.put(weak.get::<Self>().upgrade()?))
                                 })
@@ -346,15 +345,15 @@ unsafe impl<'a> Facet<'a> for Weak<str> {
                 shape: || str::SHAPE,
             }])
             .ty(Type::User(UserType::Opaque))
-            .def(Def::SmartPointer(
-                SmartPointerDef::builder()
+            .def(Def::Pointer(
+                PointerDef::builder()
                     .pointee(|| str::SHAPE)
-                    .flags(SmartPointerFlags::ATOMIC.union(SmartPointerFlags::WEAK))
-                    .known(KnownSmartPointer::ArcWeak)
+                    .flags(PointerFlags::ATOMIC.union(PointerFlags::WEAK))
+                    .known(KnownPointer::ArcWeak)
                     .strong(|| <Arc<str> as Facet>::SHAPE)
                     .vtable(
                         &const {
-                            SmartPointerVTable::builder()
+                            PointerVTable::builder()
                                 .upgrade_into_fn(|_weak, _strong| todo!())
                                 .build()
                         },
@@ -393,15 +392,15 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Weak<[U]> {
                 shape: || <[U]>::SHAPE,
             }])
             .ty(Type::User(UserType::Opaque))
-            .def(Def::SmartPointer(
-                SmartPointerDef::builder()
+            .def(Def::Pointer(
+                PointerDef::builder()
                     .pointee(|| <[U]>::SHAPE)
-                    .flags(SmartPointerFlags::ATOMIC.union(SmartPointerFlags::WEAK))
-                    .known(KnownSmartPointer::ArcWeak)
+                    .flags(PointerFlags::ATOMIC.union(PointerFlags::WEAK))
+                    .known(KnownPointer::ArcWeak)
                     .strong(|| <Arc<[U]> as Facet>::SHAPE)
                     .vtable(
                         &const {
-                            SmartPointerVTable::builder()
+                            PointerVTable::builder()
                                 .upgrade_into_fn(|weak, strong| unsafe {
                                     Some(strong.put(weak.get::<Self>().upgrade()?))
                                 })
@@ -437,7 +436,7 @@ mod tests {
         let arc_shape = <Arc<String>>::SHAPE;
         let arc_def = arc_shape
             .def
-            .into_smart_pointer()
+            .into_pointer()
             .expect("Arc<T> should have a smart pointer definition");
 
         // Allocate memory for the Arc
@@ -488,13 +487,13 @@ mod tests {
         let arc_shape = <Arc<String>>::SHAPE;
         let arc_def = arc_shape
             .def
-            .into_smart_pointer()
+            .into_pointer()
             .expect("Arc<T> should have a smart pointer definition");
 
         let weak_shape = <ArcWeak<String>>::SHAPE;
         let weak_def = weak_shape
             .def
-            .into_smart_pointer()
+            .into_pointer()
             .expect("ArcWeak<T> should have a smart pointer definition");
 
         // 1. Create the first Arc (arc1)
@@ -551,13 +550,13 @@ mod tests {
         let arc_shape = <Arc<String>>::SHAPE;
         let arc_def = arc_shape
             .def
-            .into_smart_pointer()
+            .into_pointer()
             .expect("Arc<T> should have a smart pointer definition");
 
         let weak_shape = <ArcWeak<String>>::SHAPE;
         let weak_def = weak_shape
             .def
-            .into_smart_pointer()
+            .into_pointer()
             .expect("ArcWeak<T> should have a smart pointer definition");
 
         // 1. Create the strong Arc (arc1)
@@ -615,7 +614,7 @@ mod tests {
         let arc_shape = <Arc<String>>::SHAPE;
         let arc_def = arc_shape
             .def
-            .into_smart_pointer()
+            .into_pointer()
             .expect("Arc<T> should have a smart pointer definition");
 
         // 1. Create a String value
@@ -665,7 +664,7 @@ mod tests {
         let arc_shape = <Arc<String>>::SHAPE;
         let arc_def = arc_shape
             .def
-            .into_smart_pointer()
+            .into_pointer()
             .expect("Arc<T> should have a smart pointer definition");
 
         // 1. Create an Arc<String>
@@ -722,7 +721,7 @@ mod tests {
         let arc_slice_shape = <Arc<[i32]>>::SHAPE;
         let arc_slice_def = arc_slice_shape
             .def
-            .into_smart_pointer()
+            .into_pointer()
             .expect("Arc<[i32]> should have a smart pointer definition");
 
         // Get the slice builder vtable
@@ -775,7 +774,7 @@ mod tests {
         let arc_slice_shape = <Arc<[String]>>::SHAPE;
         let arc_slice_def = arc_slice_shape
             .def
-            .into_smart_pointer()
+            .into_pointer()
             .expect("Arc<[String]> should have a smart pointer definition");
 
         // Get the slice builder vtable

@@ -27,8 +27,8 @@ pub use set::*;
 mod option;
 pub use option::*;
 
-mod smartptr;
-pub use smartptr::*;
+mod pointer;
+pub use pointer::*;
 
 mod tuple;
 pub use tuple::*;

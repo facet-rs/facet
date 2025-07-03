@@ -126,8 +126,8 @@ use alloc::vec::Vec;
 pub use heap_value::*;
 
 use facet_core::{
-    Def, EnumRepr, Facet, KnownSmartPointer, PtrConst, PtrMut, PtrUninit, Shape,
-    SliceBuilderVTable, Type, UserType, Variant,
+    Def, EnumRepr, Facet, KnownPointer, PtrConst, PtrMut, PtrUninit, Shape, SliceBuilderVTable,
+    Type, UserType, Variant,
 };
 use iset::ISet;
 
@@ -1222,13 +1222,13 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
 
         // Check that we have a SmartPointer
         match &frame.shape.def {
-            Def::SmartPointer(smart_ptr_def) => {
+            Def::Pointer(smart_ptr_def) => {
                 // Check for supported smart pointer types
                 match smart_ptr_def.known {
-                    Some(KnownSmartPointer::Box)
-                    | Some(KnownSmartPointer::Rc)
-                    | Some(KnownSmartPointer::Arc)
-                    | Some(KnownSmartPointer::SharedReference) => {
+                    Some(KnownPointer::Box)
+                    | Some(KnownPointer::Rc)
+                    | Some(KnownPointer::Arc)
+                    | Some(KnownPointer::SharedReference) => {
                         // Supported types, continue
                     }
                     _ => {
@@ -1620,7 +1620,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
 
             // Get the element type from the smart pointer's pointee
             let element_shape = match &frame.shape.def {
-                Def::SmartPointer(smart_ptr_def) => match smart_ptr_def.pointee() {
+                Def::Pointer(smart_ptr_def) => match smart_ptr_def.pointee() {
                     Some(pointee_shape) => match &pointee_shape.ty {
                         Type::Sequence(SequenceType::Slice(slice_type)) => slice_type.t,
                         _ => {
@@ -1919,7 +1919,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
             }
             Tracker::SmartPointer { is_initialized } => {
                 // We just popped the inner value frame, so now we need to create the smart pointer
-                if let Def::SmartPointer(smart_ptr_def) = parent_frame.shape.def {
+                if let Def::Pointer(smart_ptr_def) = parent_frame.shape.def {
                     if let Some(new_into_fn) = smart_ptr_def.vtable.new_into_fn {
                         // The child frame contained the inner value
                         let inner_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
@@ -2114,14 +2114,14 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                 // We convert the String into Box<str>, Arc<str>, or Rc<str> as appropriate and write it to the parent frame.
                 use alloc::{rc::Rc, string::String, sync::Arc};
                 let parent_shape = parent_frame.shape;
-                if let Def::SmartPointer(smart_ptr_def) = parent_shape.def {
+                if let Def::Pointer(smart_ptr_def) = parent_shape.def {
                     if let Some(known) = smart_ptr_def.known {
                         // The popped_frame (child) must be a Tracker::SmartPointerStr (checked above)
                         // Interpret the memory as a String, then convert and write.
                         let string_ptr = popped_frame.data.as_mut_byte_ptr() as *mut String;
                         let string_value = unsafe { core::ptr::read(string_ptr) };
                         match known {
-                            KnownSmartPointer::Box => {
+                            KnownPointer::Box => {
                                 let boxed: Box<str> = string_value.into_boxed_str();
                                 unsafe {
                                     core::ptr::write(
@@ -2130,7 +2130,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                                     );
                                 }
                             }
-                            KnownSmartPointer::Arc => {
+                            KnownPointer::Arc => {
                                 let arc: Arc<str> = Arc::from(string_value.into_boxed_str());
                                 unsafe {
                                     core::ptr::write(
@@ -2139,7 +2139,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
                                     );
                                 }
                             }
-                            KnownSmartPointer::Rc => {
+                            KnownPointer::Rc => {
                                 let rc: Rc<str> = Rc::from(string_value.into_boxed_str());
                                 unsafe {
                                     core::ptr::write(

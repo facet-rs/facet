@@ -381,7 +381,7 @@ fn deserialize_value<'facet, 'shape>(
             }
         }
 
-        Def::SmartPointer(smart_ptr_def) => {
+        Def::Pointer(smart_ptr_def) => {
             #[cfg(feature = "log")]
             log::debug!("Processing smart pointer type");
 
