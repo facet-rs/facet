@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.18](https://github.com/facet-rs/facet/compare/facet-serialize-v0.24.17...facet-serialize-v0.24.18) - 2025-07-03
+
+### Other
+
+- Rename SmartPointer to Pointer
+- Allow serializing references
+
 ## [0.24.17](https://github.com/facet-rs/facet/compare/facet-serialize-v0.24.16...facet-serialize-v0.24.17) - 2025-06-30
 
 ### Other

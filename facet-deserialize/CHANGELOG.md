@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.22](https://github.com/facet-rs/facet/compare/facet-deserialize-v0.24.21...facet-deserialize-v0.24.22) - 2025-07-03
+
+### Other
+
+- Rename SmartPointer to Pointer
+- Remove args-specific stuff from deserialize
+
 ## [0.24.21](https://github.com/facet-rs/facet/compare/facet-deserialize-v0.24.20...facet-deserialize-v0.24.21) - 2025-06-26
 
 ### Other

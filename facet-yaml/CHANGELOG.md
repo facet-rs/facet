@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.16](https://github.com/facet-rs/facet/compare/facet-yaml-v0.25.15...facet-yaml-v0.25.16) - 2025-07-03
+
+### Other
+
+- Rename SmartPointer to Pointer
+- Fix some clippy warnings
+
 ## [0.25.15](https://github.com/facet-rs/facet/compare/facet-yaml-v0.25.14...facet-yaml-v0.25.15) - 2025-06-30
 
 ### Other

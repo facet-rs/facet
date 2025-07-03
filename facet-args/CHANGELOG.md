@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.18](https://github.com/facet-rs/facet/compare/facet-args-v0.19.17...facet-args-v0.19.18) - 2025-07-03
+
+### Other
+
+- Rename SmartPointer to Pointer
+- Fix clippy warnings and remove unused code
+- Vendor deserialize into facet-args
+
 ## [0.19.17](https://github.com/facet-rs/facet/compare/facet-args-v0.19.16...facet-args-v0.19.17) - 2025-06-26
 
 ### Other

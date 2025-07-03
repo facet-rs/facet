@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.16](https://github.com/facet-rs/facet/compare/facet-macros-emit-v0.27.15...facet-macros-emit-v0.27.16) - 2025-07-03
+
+### Other
+
+- Fix clippy warnings and remove unused code
+- Fix the compile error on missing `#[repr(...)]` annotation for enums
+
 ## [0.27.15](https://github.com/facet-rs/facet/compare/facet-macros-emit-v0.27.14...facet-macros-emit-v0.27.15) - 2025-06-26
 
 ### Other

@@ -1,6 +1,6 @@
 [package]
 name = "facet-inspect"
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -10,5 +10,5 @@ keywords = ["reflection", "introspection", "facet", "peek", "poke"]
 categories = ["development-tools", "rust-patterns"]
 
 [dependencies]
-facet = { path = "../facet", version = "0.27.15" }
-facet-reflect = { path = "../facet-reflect", version = "0.27.15" }
+facet = { path = "../facet", version = "0.27.16" }
+facet-reflect = { path = "../facet-reflect", version = "0.27.16" }

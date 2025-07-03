@@ -1,6 +1,6 @@
 [package]
 name = "facet-diff"
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -10,7 +10,7 @@ keywords = ["facet", "diff", "comparison", "reflection", "data-structures"]
 categories = ["development-tools", "data-structures"]
 
 [dependencies]
-facet = { version = "0.27.13", path = "../facet" }
-facet-core = { version = "0.27.13", path = "../facet-core" }
-facet-pretty = { version = "0.23.23", path = "../facet-pretty" }
-facet-reflect = { version = "0.27.13", path = "../facet-reflect" }
+facet = { version = "0.27.16", path = "../facet" }
+facet-core = { version = "0.27.16", path = "../facet-core" }
+facet-pretty = { version = "0.23.24", path = "../facet-pretty" }
+facet-reflect = { version = "0.27.16", path = "../facet-reflect" }

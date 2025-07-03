@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.23](https://github.com/facet-rs/facet/compare/facet-jsonschema-v0.23.22...facet-jsonschema-v0.23.23) - 2025-07-03
+
+### Other
+
+- Rename SmartPointer to Pointer
+
 ## [0.23.22](https://github.com/facet-rs/facet/compare/facet-jsonschema-v0.23.21...facet-jsonschema-v0.23.22) - 2025-06-26
 
 ### Other
