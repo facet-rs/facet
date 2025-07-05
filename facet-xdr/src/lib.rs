@@ -59,6 +59,14 @@ struct XdrSerializer<'w, W: Write> {
 impl<'shape, W: Write> Serializer<'shape> for XdrSerializer<'_, W> {
     type Error = XdrSerError;
 
+    fn serialize_u8(&mut self, value: u8) -> Result<(), Self::Error> {
+        self.serialize_u32(value as u32)
+    }
+
+    fn serialize_u16(&mut self, value: u16) -> Result<(), Self::Error> {
+        self.serialize_u32(value as u32)
+    }
+
     fn serialize_u32(&mut self, value: u32) -> Result<(), Self::Error> {
         self.writer
             .write_all(&value.to_be_bytes())
@@ -73,6 +81,14 @@ impl<'shape, W: Write> Serializer<'shape> for XdrSerializer<'_, W> {
 
     fn serialize_u128(&mut self, _value: u128) -> Result<(), Self::Error> {
         Err(Self::Error::UnsupportedType)
+    }
+
+    fn serialize_i8(&mut self, value: i8) -> Result<(), Self::Error> {
+        self.serialize_i32(value as i32)
+    }
+
+    fn serialize_i16(&mut self, value: i16) -> Result<(), Self::Error> {
+        self.serialize_i32(value as i32)
     }
 
     fn serialize_i32(&mut self, value: i32) -> Result<(), Self::Error> {
