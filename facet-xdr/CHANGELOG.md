@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- fix serialization for Option<T>
+
 ## [0.1.19](https://github.com/facet-rs/facet/compare/facet-xdr-v0.1.18...facet-xdr-v0.1.19) - 2025-07-03
 
 ### Other

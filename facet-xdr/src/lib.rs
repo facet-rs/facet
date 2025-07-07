@@ -138,8 +138,16 @@ impl<'shape, W: Write> Serializer<'shape> for XdrSerializer<'_, W> {
         Ok(())
     }
 
+    fn start_some(&mut self) -> Result<(), Self::Error> {
+        self.writer
+            .write_all(&1u32.to_be_bytes())
+            .map_err(Self::Error::Io)
+    }
+
     fn serialize_none(&mut self) -> Result<(), Self::Error> {
-        Ok(())
+        self.writer
+            .write_all(&0u32.to_be_bytes())
+            .map_err(Self::Error::Io)
     }
 
     fn serialize_unit(&mut self) -> Result<(), Self::Error> {
