@@ -457,6 +457,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-asn1"
+version = "0.1.0"
+dependencies = [
+ "facet",
+ "facet-core",
+ "facet-reflect",
+ "facet-testhelpers 0.17.5",
+]
+
+[[package]]
 name = "facet-bench"
 version = "0.23.0"
 dependencies = [
