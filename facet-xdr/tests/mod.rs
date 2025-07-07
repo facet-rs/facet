@@ -47,3 +47,20 @@ fn test_deserialize_file_example() {
     let file: File = deserialize(&FILE_EXAMPLE_BYTES)?;
     assert_eq!(file, file_example());
 }
+
+#[derive(Debug, Clone, Copy, Facet, PartialEq)]
+struct Data {
+    elem: u32,
+}
+
+#[test]
+fn test_option_is_the_same_as_vec() {
+    let inner = Data { elem: 57 };
+
+    let option_serialization = facet_xdr::to_vec(&Some(inner)).unwrap();
+    let vec_serialization = facet_xdr::to_vec(&vec![inner]).unwrap();
+    assert_eq!(
+        option_serialization, vec_serialization,
+        "Option and Vec Serialization are not identical.",
+    );
+}
