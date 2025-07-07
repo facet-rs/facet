@@ -69,6 +69,8 @@ Currently supports Distinguished Encoding Rules (DER) only
 Newtype structs using the `facet::Shape::type_tag` property can be used to create other basic types without any content validation:
 
 ```rust
+use facet::Facet;
+
 #[derive(Debug, Clone, Facet, PartialEq, Eq)]
 #[facet(type_tag = "IA5String", transparent)]
 struct IA5String(String);
@@ -79,6 +81,8 @@ struct IA5String(String);
 You can also set context specific BER/DER tags to a given number. Implicit tags must be set as transparent.
 
 ```rust
+use facet::Facet;
+
 // ImplicitString ::= [5] IMPLICIT UTF8String
 #[derive(Debug, Facet, PartialEq, Eq)]
 #[facet(type_tag = "5", transparent)]
