@@ -1,5 +1,4 @@
 use crate::VerbatimUntil;
-use proc_macro2::TokenStream;
 use unsynn::*;
 
 unsynn! {
@@ -36,7 +35,6 @@ pub fn parse_fn_parameters(params_ts: TokenStream) -> Vec<Parameter> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quote::quote;
 
     #[test]
     fn test_empty_parameters() {
