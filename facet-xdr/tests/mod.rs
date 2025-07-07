@@ -47,3 +47,24 @@ fn test_deserialize_file_example() {
     let file: File = deserialize(&FILE_EXAMPLE_BYTES)?;
     assert_eq!(file, file_example());
 }
+
+#[derive(Debug, Facet, PartialEq)]
+struct SmallInt {
+    a: u8,
+    b: u16,
+    c: i8,
+    d: i16,
+}
+
+#[test]
+fn test_small_int_roundtrip() {
+    let small_ints = SmallInt {
+        a: 123,
+        b: 45,
+        c: -123,
+        d: -45,
+    };
+    let bytes = to_vec(&small_ints).unwrap();
+    let result = deserialize(&bytes).unwrap();
+    assert_eq!(small_ints, result);
+}
