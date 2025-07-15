@@ -61,6 +61,11 @@ pub trait Serializer<'shape> {
     /// Serialize a `None` variant of an Option type.
     fn serialize_none(&mut self) -> Result<(), Self::Error>;
 
+    /// Serialize a `Some` discriminant of an Option type.
+    fn start_some(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
     /// Serialize a unit value `()`.
     fn serialize_unit(&mut self) -> Result<(), Self::Error>;
 
@@ -461,6 +466,7 @@ where
                     (Def::Option(_), _) => {
                         let opt = cpeek.into_option().unwrap();
                         if let Some(inner_peek) = opt.value() {
+                            serializer.start_some()?;
                             stack.push(SerializeTask::Value(inner_peek, None));
                         } else {
                             serializer.serialize_none()?;
