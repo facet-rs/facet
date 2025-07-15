@@ -15,9 +15,9 @@ default = ["rich-diagnostics"]
 
 [dependencies]
 facet-core = { version = "0.27.16", path = "../facet-core", default-features = false }
-facet-deserialize = { version = "0.24.22", path = "../facet-deserialize", default-features = false }
+facet-deserialize = { version = "0.24.22", path = "../facet-deserialize", default-features = false, features = ["std"] }
 facet-reflect = { version = "0.27.16", path = "../facet-reflect", default-features = false }
-facet-serialize = { version = "0.24.18", path = "../facet-serialize", default-features = false }
+facet-serialize = { version = "0.24.18", path = "../facet-serialize", default-features = false, features = ["std"] }
 itoa = "1.0.15"
 lexical-parse-float = "1.0.5"
 lexical-parse-integer = "1.0.5"
