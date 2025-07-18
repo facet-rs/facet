@@ -27,7 +27,7 @@ default = ["serialize", "deserialize", "std", "rich-diagnostics"]
 ariadne = { version = "=0.5.1", optional = true }
 log = "0.4.27"
 num-traits = { version = "0.2.19", default-features = false }
-toml_edit = { version = "0.22.26", default-features = false, features = [
+toml_edit = { version = "0.23.0", default-features = false, features = [
     "parse",
 ], optional = true }
 facet-core = { version = "0.27.16", path = "../facet-core", default-features = false }
@@ -41,7 +41,7 @@ facet = { path = "../facet" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 serde = { version = "1.0", features = ["derive"] }
 divan = { version = "3.0.1", package = "codspeed-divan-compat" }
-toml = "0.8.22"
+toml = "0.9.0"
 
 [[bench]]
 name = "compare_serde"
