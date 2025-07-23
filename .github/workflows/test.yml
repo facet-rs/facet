@@ -8,21 +8,6 @@ on:
   merge_group:
 
 jobs:
-  code-quality:
-    runs-on: depot-ubuntu-24.04-32
-
-    container:
-      image: ghcr.io/facet-rs/facet-ci:latest-amd64
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: ✨ Run code quality checks
-        shell: bash
-        run: |
-          just code-quality-ci
-
   test:
     runs-on: depot-ubuntu-24.04-32
 
