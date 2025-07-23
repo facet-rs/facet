@@ -124,7 +124,7 @@ mod tests {
     }
 
     #[test]
-    fn test_btreeset_vtable_1_new_insert_iter_drop() -> eyre::Result<()> {
+    fn test_btreeset_vtable_1_new_insert_iter_drop() {
         facet_testhelpers::setup();
 
         let btreeset_shape = <BTreeSet<String>>::SHAPE;
@@ -134,7 +134,7 @@ mod tests {
             .expect("BTreeSet<T> should have a set definition");
 
         // Allocate memory for the BTreeSet
-        let btreeset_uninit_ptr = btreeset_shape.allocate()?;
+        let btreeset_uninit_ptr = btreeset_shape.allocate().unwrap();
 
         // Create the BTreeSet
         let btreeset_ptr =
@@ -233,8 +233,6 @@ mod tests {
         unsafe { drop_fn(btreeset_ptr) };
 
         // Deallocate the memory
-        unsafe { btreeset_shape.deallocate_mut(btreeset_ptr)? };
-
-        Ok(())
+        unsafe { btreeset_shape.deallocate_mut(btreeset_ptr).unwrap() };
     }
 }

@@ -430,7 +430,7 @@ mod tests {
     }
 
     #[test]
-    fn test_arc_vtable_1_new_borrow_drop() -> eyre::Result<()> {
+    fn test_arc_vtable_1_new_borrow_drop() {
         facet_testhelpers::setup();
 
         let arc_shape = <Arc<String>>::SHAPE;
@@ -440,7 +440,7 @@ mod tests {
             .expect("Arc<T> should have a smart pointer definition");
 
         // Allocate memory for the Arc
-        let arc_uninit_ptr = arc_shape.allocate()?;
+        let arc_uninit_ptr = arc_shape.allocate().unwrap();
 
         // Get the function pointer for creating a new Arc from a value
         let new_into_fn = arc_def
@@ -475,13 +475,11 @@ mod tests {
 
         // Deallocate the memory
         // SAFETY: arc_ptr was allocated by arc_shape and is now dropped (but memory is still valid)
-        unsafe { arc_shape.deallocate_mut(arc_ptr)? };
-
-        Ok(())
+        unsafe { arc_shape.deallocate_mut(arc_ptr).unwrap() };
     }
 
     #[test]
-    fn test_arc_vtable_2_downgrade_upgrade_drop() -> eyre::Result<()> {
+    fn test_arc_vtable_2_downgrade_upgrade_drop() {
         facet_testhelpers::setup();
 
         let arc_shape = <Arc<String>>::SHAPE;
@@ -497,20 +495,20 @@ mod tests {
             .expect("ArcWeak<T> should have a smart pointer definition");
 
         // 1. Create the first Arc (arc1)
-        let arc1_uninit_ptr = arc_shape.allocate()?;
+        let arc1_uninit_ptr = arc_shape.allocate().unwrap();
         let new_into_fn = arc_def.vtable.new_into_fn.unwrap();
         let mut value = String::from("example");
         let arc1_ptr = unsafe { new_into_fn(arc1_uninit_ptr, PtrMut::new(&raw mut value)) };
         core::mem::forget(value); // Value now owned by arc1
 
         // 2. Downgrade arc1 to create a weak pointer (weak1)
-        let weak1_uninit_ptr = weak_shape.allocate()?;
+        let weak1_uninit_ptr = weak_shape.allocate().unwrap();
         let downgrade_into_fn = arc_def.vtable.downgrade_into_fn.unwrap();
         // SAFETY: arc1_ptr points to a valid Arc, weak1_uninit_ptr is allocated for a Weak
         let weak1_ptr = unsafe { downgrade_into_fn(arc1_ptr, weak1_uninit_ptr) };
 
         // 3. Upgrade weak1 to create a second Arc (arc2)
-        let arc2_uninit_ptr = arc_shape.allocate()?;
+        let arc2_uninit_ptr = arc_shape.allocate().unwrap();
         let upgrade_into_fn = weak_def.vtable.upgrade_into_fn.unwrap();
         // SAFETY: weak1_ptr points to a valid Weak, arc2_uninit_ptr is allocated for an Arc.
         // Upgrade should succeed as arc1 still exists.
@@ -531,20 +529,18 @@ mod tests {
         unsafe {
             // Drop Arcs
             arc_drop_fn(arc1_ptr);
-            arc_shape.deallocate_mut(arc1_ptr)?;
+            arc_shape.deallocate_mut(arc1_ptr).unwrap();
             arc_drop_fn(arc2_ptr);
-            arc_shape.deallocate_mut(arc2_ptr)?;
+            arc_shape.deallocate_mut(arc2_ptr).unwrap();
 
             // Drop Weak
             weak_drop_fn(weak1_ptr);
-            weak_shape.deallocate_mut(weak1_ptr)?;
+            weak_shape.deallocate_mut(weak1_ptr).unwrap();
         }
-
-        Ok(())
     }
 
     #[test]
-    fn test_arc_vtable_3_downgrade_drop_try_upgrade() -> eyre::Result<()> {
+    fn test_arc_vtable_3_downgrade_drop_try_upgrade() {
         facet_testhelpers::setup();
 
         let arc_shape = <Arc<String>>::SHAPE;
@@ -560,14 +556,14 @@ mod tests {
             .expect("ArcWeak<T> should have a smart pointer definition");
 
         // 1. Create the strong Arc (arc1)
-        let arc1_uninit_ptr = arc_shape.allocate()?;
+        let arc1_uninit_ptr = arc_shape.allocate().unwrap();
         let new_into_fn = arc_def.vtable.new_into_fn.unwrap();
         let mut value = String::from("example");
         let arc1_ptr = unsafe { new_into_fn(arc1_uninit_ptr, PtrMut::new(&raw mut value)) };
         core::mem::forget(value);
 
         // 2. Downgrade arc1 to create a weak pointer (weak1)
-        let weak1_uninit_ptr = weak_shape.allocate()?;
+        let weak1_uninit_ptr = weak_shape.allocate().unwrap();
         let downgrade_into_fn = arc_def.vtable.downgrade_into_fn.unwrap();
         // SAFETY: arc1_ptr is valid, weak1_uninit_ptr is allocated for Weak
         let weak1_ptr = unsafe { downgrade_into_fn(arc1_ptr, weak1_uninit_ptr) };
@@ -576,12 +572,12 @@ mod tests {
         let arc_drop_fn = (arc_shape.vtable.sized().unwrap().drop_in_place)().unwrap();
         unsafe {
             arc_drop_fn(arc1_ptr);
-            arc_shape.deallocate_mut(arc1_ptr)?;
+            arc_shape.deallocate_mut(arc1_ptr).unwrap();
         }
 
         // 4. Attempt to upgrade the weak pointer (weak1)
         let upgrade_into_fn = weak_def.vtable.upgrade_into_fn.unwrap();
-        let arc2_uninit_ptr = arc_shape.allocate()?;
+        let arc2_uninit_ptr = arc_shape.allocate().unwrap();
         // SAFETY: weak1_ptr is valid (though points to dropped data), arc2_uninit_ptr is allocated for Arc
         let upgrade_result = unsafe { upgrade_into_fn(weak1_ptr, arc2_uninit_ptr) };
 
@@ -595,18 +591,16 @@ mod tests {
         let weak_drop_fn = (weak_shape.vtable.sized().unwrap().drop_in_place)().unwrap();
         unsafe {
             // Deallocate the *uninitialized* memory allocated for the failed upgrade attempt
-            arc_shape.deallocate_uninit(arc2_uninit_ptr)?;
+            arc_shape.deallocate_uninit(arc2_uninit_ptr).unwrap();
 
             // Drop and deallocate the weak pointer
             weak_drop_fn(weak1_ptr);
-            weak_shape.deallocate_mut(weak1_ptr)?;
+            weak_shape.deallocate_mut(weak1_ptr).unwrap();
         }
-
-        Ok(())
     }
 
     #[test]
-    fn test_arc_vtable_4_try_from() -> eyre::Result<()> {
+    fn test_arc_vtable_4_try_from() {
         facet_testhelpers::setup();
 
         // Get the shapes we'll be working with
@@ -622,7 +616,7 @@ mod tests {
         let value_ptr = PtrConst::new(&value as *const String as *const u8);
 
         // 2. Allocate memory for the Arc<String>
-        let arc_uninit_ptr = arc_shape.allocate()?;
+        let arc_uninit_ptr = arc_shape.allocate().unwrap();
 
         // 3. Get the try_from function from the Arc<String> shape's ValueVTable
         let try_from_fn =
@@ -649,14 +643,12 @@ mod tests {
 
         unsafe {
             drop_fn(arc_ptr);
-            arc_shape.deallocate_mut(arc_ptr)?;
+            arc_shape.deallocate_mut(arc_ptr).unwrap();
         }
-
-        Ok(())
     }
 
     #[test]
-    fn test_arc_vtable_5_try_into_inner() -> eyre::Result<()> {
+    fn test_arc_vtable_5_try_into_inner() {
         facet_testhelpers::setup();
 
         // Get the shapes we'll be working with
@@ -668,7 +660,7 @@ mod tests {
             .expect("Arc<T> should have a smart pointer definition");
 
         // 1. Create an Arc<String>
-        let arc_uninit_ptr = arc_shape.allocate()?;
+        let arc_uninit_ptr = arc_shape.allocate().unwrap();
         let new_into_fn = arc_def
             .vtable
             .new_into_fn
@@ -679,7 +671,7 @@ mod tests {
         core::mem::forget(value); // Value now owned by arc
 
         // 2. Allocate memory for the extracted String
-        let string_uninit_ptr = string_shape.allocate()?;
+        let string_uninit_ptr = string_shape.allocate().unwrap();
 
         // 3. Get the try_into_inner function from the Arc<String>'s ValueVTable
         let try_into_inner_fn = (arc_shape.vtable.sized().unwrap().try_into_inner)()
@@ -703,18 +695,16 @@ mod tests {
         unsafe {
             // The Arc should already be dropped by try_into_inner
             // But we still need to deallocate its memory
-            arc_shape.deallocate_mut(arc_ptr)?;
+            arc_shape.deallocate_mut(arc_ptr).unwrap();
 
             // Drop and deallocate the extracted String
             string_drop_fn(string_ptr);
-            string_shape.deallocate_mut(string_ptr)?;
+            string_shape.deallocate_mut(string_ptr).unwrap();
         }
-
-        Ok(())
     }
 
     #[test]
-    fn test_arc_vtable_6_slice_builder() -> eyre::Result<()> {
+    fn test_arc_vtable_6_slice_builder() {
         facet_testhelpers::setup();
 
         // Get the shapes we'll be working with
@@ -762,12 +752,10 @@ mod tests {
         unsafe {
             let _ = Box::from_raw(arc_slice_ptr.as_ptr::<Arc<[i32]>>() as *mut Arc<[i32]>);
         }
-
-        Ok(())
     }
 
     #[test]
-    fn test_arc_vtable_7_slice_builder_free() -> eyre::Result<()> {
+    fn test_arc_vtable_7_slice_builder_free() {
         facet_testhelpers::setup();
 
         // Get the shapes we'll be working with
@@ -802,6 +790,5 @@ mod tests {
         unsafe { free_fn(builder_ptr) };
 
         // If we get here without panicking, the free worked correctly
-        Ok(())
     }
 }

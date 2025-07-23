@@ -168,7 +168,7 @@ mod tests {
     }
 
     #[test]
-    fn test_box_vtable_1_new_borrow_drop() -> eyre::Result<()> {
+    fn test_box_vtable_1_new_borrow_drop() {
         facet_testhelpers::setup();
 
         let box_shape = <Box<String>>::SHAPE;
@@ -178,7 +178,7 @@ mod tests {
             .expect("Box<T> should have a smart pointer definition");
 
         // Allocate memory for the Box
-        let box_uninit_ptr = box_shape.allocate()?;
+        let box_uninit_ptr = box_shape.allocate().unwrap();
 
         // Get the function pointer for creating a new Box from a value
         let new_into_fn = box_def
@@ -213,8 +213,6 @@ mod tests {
 
         // Deallocate the memory
         // SAFETY: box_ptr was allocated by box_shape and is now dropped (but memory is still valid)
-        unsafe { box_shape.deallocate_mut(box_ptr)? };
-
-        Ok(())
+        unsafe { box_shape.deallocate_mut(box_ptr).unwrap() };
     }
 }
