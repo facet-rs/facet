@@ -2,7 +2,6 @@ use facet::Facet;
 use facet_testhelpers::test;
 
 use super::Partial;
-use crate::ReflectError;
 
 #[cfg(not(miri))]
 macro_rules! assert_snapshot {
@@ -19,25 +18,38 @@ macro_rules! assert_snapshot {
 
 #[test]
 fn f64_uninit() {
-    assert_snapshot!(Partial::alloc::<f64>()?.build().unwrap_err());
+    assert_snapshot!(Partial::alloc::<f64>().unwrap().build().unwrap_err());
 }
 
 #[test]
 fn f64_init() {
-    let hv = Partial::alloc::<f64>()?.set::<f64>(6.241)?.build()?;
+    let hv = Partial::alloc::<f64>()
+        .unwrap()
+        .set::<f64>(6.241)
+        .unwrap()
+        .build()
+        .unwrap();
     assert_eq!(*hv, 6.241);
 }
 
 #[test]
 fn option_uninit() {
-    assert_snapshot!(Partial::alloc::<Option<f64>>()?.build().unwrap_err());
+    assert_snapshot!(
+        Partial::alloc::<Option<f64>>()
+            .unwrap()
+            .build()
+            .unwrap_err()
+    );
 }
 
 #[test]
 fn option_init() {
-    let hv = Partial::alloc::<Option<f64>>()?
-        .set::<Option<f64>>(Some(6.241))?
-        .build()?;
+    let hv = Partial::alloc::<Option<f64>>()
+        .unwrap()
+        .set::<Option<f64>>(Some(6.241))
+        .unwrap()
+        .build()
+        .unwrap();
     assert_eq!(*hv, Some(6.241));
 }
 
@@ -49,7 +61,7 @@ fn struct_fully_uninit() {
         bar: bool,
     }
 
-    assert_snapshot!(Partial::alloc::<FooBar>()?.build().unwrap_err());
+    assert_snapshot!(Partial::alloc::<FooBar>().unwrap().build().unwrap_err());
 }
 
 #[test]
@@ -60,8 +72,14 @@ fn struct_partially_uninit() {
         bar: bool,
     }
 
-    let mut partial = Partial::alloc::<FooBar>()?;
-    assert_snapshot!(partial.set_field("foo", 42_u64)?.build().unwrap_err());
+    let mut partial = Partial::alloc::<FooBar>().unwrap();
+    assert_snapshot!(
+        partial
+            .set_field("foo", 42_u64)
+            .unwrap()
+            .build()
+            .unwrap_err()
+    );
 }
 
 #[test]
@@ -72,10 +90,14 @@ fn struct_fully_init() {
         bar: bool,
     }
 
-    let hv = Partial::alloc::<FooBar>()?
-        .set_field("foo", 42u64)?
-        .set_field("bar", true)?
-        .build()?;
+    let hv = Partial::alloc::<FooBar>()
+        .unwrap()
+        .set_field("foo", 42u64)
+        .unwrap()
+        .set_field("bar", true)
+        .unwrap()
+        .build()
+        .unwrap();
     assert_eq!(hv.foo, 42u64);
     assert_eq!(hv.bar, true);
 }
@@ -105,31 +127,27 @@ fn struct_field_set_twice() {
 
     DROP_COUNT.store(0, Ordering::SeqCst);
 
-    let result = (|| -> Result<Box<Container>, ReflectError> {
-        let mut partial = Partial::alloc::<Container>()?;
+    let mut partial = Partial::alloc::<Container>().unwrap();
 
-        // Set tracker field first time
-        partial.set_field("tracker", DropTracker { id: 1 })?;
+    // Set tracker field first time
+    partial.set_field("tracker", DropTracker { id: 1 }).unwrap();
 
-        assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 0, "No drops yet");
+    assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 0, "No drops yet");
 
-        // Set tracker field second time (should drop the previous value)
-        partial.set_field("tracker", DropTracker { id: 2 })?;
+    // Set tracker field second time (should drop the previous value)
+    partial.set_field("tracker", DropTracker { id: 2 }).unwrap();
 
-        assert_eq!(
-            DROP_COUNT.load(Ordering::SeqCst),
-            1,
-            "First DropTracker should have been dropped"
-        );
+    assert_eq!(
+        DROP_COUNT.load(Ordering::SeqCst),
+        1,
+        "First DropTracker should have been dropped"
+    );
 
-        // Set value field
-        partial.set_field("value", 100u64)?;
+    // Set value field
+    partial.set_field("value", 100u64).unwrap();
 
-        partial.build()
-    })();
+    let container = partial.build().unwrap();
 
-    assert!(result.is_ok());
-    let container = result.unwrap();
     assert_eq!(container.tracker.id, 2); // Should have the second value
     assert_eq!(container.value, 100);
 
@@ -162,22 +180,22 @@ fn array_element_set_twice() {
 
     DROP_COUNT.store(0, Ordering::SeqCst);
 
-    let result = (|| -> Result<Box<[DropTracker; 3]>, ReflectError> {
-        Partial::alloc::<[DropTracker; 3]>()?
-            // Set element 0
-            .set_nth_element(0, DropTracker { id: 1 })?
-            // Set element 0 again - drops old value
-            .set_nth_element(0, DropTracker { id: 2 })?
-            // Set element 1
-            .set_nth_element(1, DropTracker { id: 3 })?
-            // Set element 2
-            .set_nth_element(2, DropTracker { id: 4 })?
-            .build()
-    })();
-
-    // Now this should succeed with array element re-initialization support
-    assert!(result.is_ok());
-    let array = result.unwrap();
+    let array = Partial::alloc::<[DropTracker; 3]>()
+        .unwrap()
+        // Set element 0
+        .set_nth_element(0, DropTracker { id: 1 })
+        .unwrap()
+        // Set element 0 again - drops old value
+        .set_nth_element(0, DropTracker { id: 2 })
+        .unwrap()
+        // Set element 1
+        .set_nth_element(1, DropTracker { id: 3 })
+        .unwrap()
+        // Set element 2
+        .set_nth_element(2, DropTracker { id: 4 })
+        .unwrap()
+        .build()
+        .unwrap();
 
     // Verify the final array has the expected values
     assert_eq!(array[0].id, 2); // Re-initialized value
@@ -200,7 +218,12 @@ fn set_default() {
         y: String,
     }
 
-    let sample = Partial::alloc::<Sample>()?.set_default()?.build()?;
+    let sample = Partial::alloc::<Sample>()
+        .unwrap()
+        .set_default()
+        .unwrap()
+        .build()
+        .unwrap();
     assert_eq!(*sample, Sample::default());
     assert_eq!(sample.x, 0);
     assert_eq!(sample.y, "");
@@ -213,7 +236,10 @@ fn set_default_no_default_impl() {
         value: u32,
     }
 
-    let result = Partial::alloc::<NoDefault>()?.set_default().map(|_| ());
+    let result = Partial::alloc::<NoDefault>()
+        .unwrap()
+        .set_default()
+        .map(|_| ());
     assert!(
         result
             .unwrap_err()
@@ -246,17 +272,17 @@ fn set_default_drops_previous() {
 
     DROP_COUNT.store(0, Ordering::SeqCst);
 
-    let mut partial = Partial::alloc::<DropTracker>()?;
+    let mut partial = Partial::alloc::<DropTracker>().unwrap();
 
     // Set initial value
-    partial.set(DropTracker { id: 1 })?;
+    partial.set(DropTracker { id: 1 }).unwrap();
     assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 0);
 
     // Set default (should drop the previous value)
-    partial.set_default()?;
+    partial.set_default().unwrap();
     assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 1);
 
-    let tracker = partial.build()?;
+    let tracker = partial.build().unwrap();
     assert_eq!(tracker.id, 999); // Default value
 
     drop(tracker);
@@ -293,20 +319,20 @@ fn drop_partially_initialized_struct() {
 
     // Create a partially initialized struct and drop it
     {
-        let mut partial = Partial::alloc::<Container>()?;
+        let mut partial = Partial::alloc::<Container>().unwrap();
 
         // Initialize first field
-        partial.begin_field("first")?;
+        partial.begin_field("first").unwrap();
         assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 0, "No drops yet");
 
-        partial.set(NoisyDrop { value: 1 })?;
+        partial.set(NoisyDrop { value: 1 }).unwrap();
         assert_eq!(
             DROP_COUNT.load(Ordering::SeqCst),
             0,
             "After set, the value should NOT be dropped yet"
         );
 
-        partial.end()?;
+        partial.end().unwrap();
         assert_eq!(
             DROP_COUNT.load(Ordering::SeqCst),
             0,
@@ -314,15 +340,15 @@ fn drop_partially_initialized_struct() {
         );
 
         // Initialize second field
-        partial.begin_field("second")?;
-        partial.set(NoisyDrop { value: 2 })?;
+        partial.begin_field("second").unwrap();
+        partial.set(NoisyDrop { value: 2 }).unwrap();
         assert_eq!(
             DROP_COUNT.load(Ordering::SeqCst),
             0,
             "After second set, still should have no drops"
         );
 
-        partial.end()?;
+        partial.end().unwrap();
 
         // Don't initialize third field - just drop the partial
         // This should call drop on the two NoisyDrop instances we created
@@ -369,11 +395,11 @@ fn drop_nested_partially_initialized() {
     DROP_COUNT.store(0, Ordering::SeqCst);
 
     {
-        let mut partial = Partial::alloc::<Outer>()?;
+        let mut partial = Partial::alloc::<Outer>().unwrap();
 
         // Start initializing inner struct
-        partial.begin_field("inner")?;
-        partial.set_field("a", NoisyDrop { id: 1 })?;
+        partial.begin_field("inner").unwrap();
+        partial.set_field("a", NoisyDrop { id: 1 }).unwrap();
 
         // Only initialize one field of inner, leave 'b' uninitialized
         // Don't end from inner
@@ -398,11 +424,11 @@ fn drop_with_copy_types() {
         more_copy: bool,
     }
 
-    let mut partial = Partial::alloc::<MixedTypes>()?;
+    let mut partial = Partial::alloc::<MixedTypes>().unwrap();
 
-    partial.set_field("copyable", 42u64)?;
+    partial.set_field("copyable", 42u64).unwrap();
 
-    partial.set_field("droppable", "Hello".to_string())?;
+    partial.set_field("droppable", "Hello".to_string()).unwrap();
 
     // Drop without initializing 'more_copy'
     drop(partial);
@@ -436,7 +462,7 @@ fn drop_fully_uninitialized() {
     DROP_COUNT.store(0, Ordering::SeqCst);
 
     {
-        let _partial = Partial::alloc::<Container>()?;
+        let _partial = Partial::alloc::<Container>().unwrap();
         // Drop immediately without initializing anything
     }
 
@@ -466,9 +492,12 @@ fn drop_after_successful_build() {
 
     DROP_COUNT.store(0, Ordering::SeqCst);
 
-    let hv = Partial::alloc::<NoisyDrop>()?
-        .set(NoisyDrop { value: 42 })?
-        .build()?;
+    let hv = Partial::alloc::<NoisyDrop>()
+        .unwrap()
+        .set(NoisyDrop { value: 42 })
+        .unwrap()
+        .build()
+        .unwrap();
 
     assert_eq!(
         DROP_COUNT.load(Ordering::SeqCst),
@@ -487,23 +516,33 @@ fn drop_after_successful_build() {
 
 #[test]
 fn array_init() {
-    let hv = Partial::alloc::<[u32; 3]>()?
+    let hv = Partial::alloc::<[u32; 3]>()
+        .unwrap()
         // Initialize in order
-        .set_nth_element(0, 42u32)?
-        .set_nth_element(1, 43u32)?
-        .set_nth_element(2, 44u32)?
-        .build()?;
+        .set_nth_element(0, 42u32)
+        .unwrap()
+        .set_nth_element(1, 43u32)
+        .unwrap()
+        .set_nth_element(2, 44u32)
+        .unwrap()
+        .build()
+        .unwrap();
     assert_eq!(*hv, [42, 43, 44]);
 }
 
 #[test]
 fn array_init_out_of_order() {
-    let hv = Partial::alloc::<[u32; 3]>()?
+    let hv = Partial::alloc::<[u32; 3]>()
+        .unwrap()
         // Initialize out of order
-        .set_nth_element(2, 44u32)?
-        .set_nth_element(0, 42u32)?
-        .set_nth_element(1, 43u32)?
-        .build()?;
+        .set_nth_element(2, 44u32)
+        .unwrap()
+        .set_nth_element(0, 42u32)
+        .unwrap()
+        .set_nth_element(1, 43u32)
+        .unwrap()
+        .build()
+        .unwrap();
     assert_eq!(*hv, [42, 43, 44]);
 }
 
@@ -511,10 +550,13 @@ fn array_init_out_of_order() {
 fn array_partial_init() {
     // Should fail to build
     assert_snapshot!(
-        Partial::alloc::<[u32; 3]>()?
+        Partial::alloc::<[u32; 3]>()
+            .unwrap()
             // Initialize only two elements
-            .set_nth_element(0, 42u32)?
-            .set_nth_element(2, 44u32)?
+            .set_nth_element(0, 42u32)
+            .unwrap()
+            .set_nth_element(2, 44u32)
+            .unwrap()
             .build()
             .unwrap_err()
     );
@@ -541,11 +583,11 @@ fn drop_array_partially_initialized() {
     DROP_COUNT.store(0, Ordering::SeqCst);
 
     {
-        let mut partial = Partial::alloc::<[NoisyDrop; 4]>()?;
+        let mut partial = Partial::alloc::<[NoisyDrop; 4]>().unwrap();
 
         // Initialize elements 0 and 2
-        partial.set_nth_element(0, NoisyDrop { value: 10 })?;
-        partial.set_nth_element(2, NoisyDrop { value: 30 })?;
+        partial.set_nth_element(0, NoisyDrop { value: 10 }).unwrap();
+        partial.set_nth_element(2, NoisyDrop { value: 30 }).unwrap();
 
         // Drop without initializing elements 1 and 3
     }
@@ -559,19 +601,24 @@ fn drop_array_partially_initialized() {
 
 #[test]
 fn box_init() {
-    let hv = Partial::alloc::<Box<u32>>()?
+    let hv = Partial::alloc::<Box<u32>>()
+        .unwrap()
         // Push into the Box to build its inner value
-        .begin_smart_ptr()?
-        .set(42u32)?
-        .end()?
-        .build()?;
+        .begin_smart_ptr()
+        .unwrap()
+        .set(42u32)
+        .unwrap()
+        .end()
+        .unwrap()
+        .build()
+        .unwrap();
     assert_eq!(**hv, 42);
 }
 
 #[test]
 fn box_partial_init() {
     // Don't initialize the Box at all
-    assert_snapshot!(Partial::alloc::<Box<u32>>()?.build().unwrap_err());
+    assert_snapshot!(Partial::alloc::<Box<u32>>().unwrap().build().unwrap_err());
 }
 
 #[test]
@@ -582,15 +629,21 @@ fn box_struct() {
         y: f64,
     }
 
-    let hv = Partial::alloc::<Box<Point>>()?
+    let hv = Partial::alloc::<Box<Point>>()
+        .unwrap()
         // Push into the Box
-        .begin_smart_ptr()?
+        .begin_smart_ptr()
+        .unwrap()
         // Build the Point inside the Box using set_field shorthand
-        .set_field("x", 1.0)?
-        .set_field("y", 2.0)?
+        .set_field("x", 1.0)
+        .unwrap()
+        .set_field("y", 2.0)
+        .unwrap()
         // end from Box
-        .end()?
-        .build()?;
+        .end()
+        .unwrap()
+        .build()
+        .unwrap();
     assert_eq!(**hv, Point { x: 1.0, y: 2.0 });
 }
 
@@ -616,12 +669,12 @@ fn drop_box_partially_initialized() {
     INNER_DROP_COUNT.store(0, Ordering::SeqCst);
 
     {
-        let mut partial = Partial::alloc::<Box<DropCounter>>()?;
+        let mut partial = Partial::alloc::<Box<DropCounter>>().unwrap();
 
         // Initialize the Box's inner value using set
-        partial.begin_smart_ptr()?;
-        partial.set(DropCounter { value: 99 })?;
-        partial.end()?;
+        partial.begin_smart_ptr().unwrap();
+        partial.set(DropCounter { value: 99 }).unwrap();
+        partial.end().unwrap();
 
         // Drop the partial - should drop the Box which drops the inner value
     }
@@ -637,12 +690,17 @@ fn drop_box_partially_initialized() {
 fn arc_init() {
     use alloc::sync::Arc;
 
-    let hv = Partial::alloc::<Arc<u32>>()?
+    let hv = Partial::alloc::<Arc<u32>>()
+        .unwrap()
         // Push into the Arc to build its inner value
-        .begin_smart_ptr()?
-        .set(42u32)?
-        .end()?
-        .build()?;
+        .begin_smart_ptr()
+        .unwrap()
+        .set(42u32)
+        .unwrap()
+        .end()
+        .unwrap()
+        .build()
+        .unwrap();
     assert_eq!(**hv, 42);
 }
 
@@ -651,7 +709,7 @@ fn arc_partial_init() {
     use alloc::sync::Arc;
 
     // Don't initialize the Arc at all
-    assert_snapshot!(Partial::alloc::<Arc<u32>>()?.build().unwrap_err());
+    assert_snapshot!(Partial::alloc::<Arc<u32>>().unwrap().build().unwrap_err());
 }
 
 #[test]
@@ -664,15 +722,21 @@ fn arc_struct() {
         y: f64,
     }
 
-    let hv = Partial::alloc::<Arc<Point>>()?
+    let hv = Partial::alloc::<Arc<Point>>()
+        .unwrap()
         // Push into the Arc
-        .begin_smart_ptr()?
+        .begin_smart_ptr()
+        .unwrap()
         // Build the Point inside the Arc using set_field shorthand
-        .set_field("x", 3.0)?
-        .set_field("y", 4.0)?
+        .set_field("x", 3.0)
+        .unwrap()
+        .set_field("y", 4.0)
+        .unwrap()
         // end from Arc
-        .end()?
-        .build()?;
+        .end()
+        .unwrap()
+        .build()
+        .unwrap();
     assert_eq!(**hv, Point { x: 3.0, y: 4.0 });
 }
 
@@ -697,12 +761,12 @@ fn drop_arc_partially_initialized() {
     INNER_DROP_COUNT.store(0, Ordering::SeqCst);
 
     {
-        let mut partial = Partial::alloc::<Arc<DropCounter>>()?;
+        let mut partial = Partial::alloc::<Arc<DropCounter>>().unwrap();
 
         // Initialize the Arc's inner value
-        partial.begin_smart_ptr()?;
-        partial.set(DropCounter { value: 123 })?;
-        partial.end()?;
+        partial.begin_smart_ptr().unwrap();
+        partial.set(DropCounter { value: 123 }).unwrap();
+        partial.end().unwrap();
 
         // Drop the partial - should drop the Arc which drops the inner value
     }
@@ -725,9 +789,12 @@ fn enum_unit_variant() {
         Pending = 2,
     }
 
-    let hv = Partial::alloc::<Status>()?
-        .select_variant(1)? // Inactive
-        .build()?;
+    let hv = Partial::alloc::<Status>()
+        .unwrap()
+        .select_variant(1)
+        .unwrap() // Inactive
+        .build()
+        .unwrap();
     assert_eq!(*hv, Status::Inactive);
 }
 
@@ -742,10 +809,14 @@ fn enum_struct_variant() {
         Empty = 2,
     }
 
-    let hv = Partial::alloc::<Message>()?
-        .select_variant(0)? // Text variant
-        .set_field("content", "Hello, world!".to_string())?
-        .build()?;
+    let hv = Partial::alloc::<Message>()
+        .unwrap()
+        .select_variant(0)
+        .unwrap() // Text variant
+        .set_field("content", "Hello, world!".to_string())
+        .unwrap()
+        .build()
+        .unwrap();
     assert_eq!(
         *hv,
         Message::Text {
@@ -765,11 +836,16 @@ fn enum_tuple_variant() {
         Pair(i32, String) = 2,
     }
 
-    let hv = Partial::alloc::<Value>()?
-        .select_variant(2)? // Pair variant
-        .set_nth_enum_field(0, 42)?
-        .set_nth_enum_field(1, "test".to_string())?
-        .build()?;
+    let hv = Partial::alloc::<Value>()
+        .unwrap()
+        .select_variant(2)
+        .unwrap() // Pair variant
+        .set_nth_enum_field(0, 42)
+        .unwrap()
+        .set_nth_enum_field(1, "test".to_string())
+        .unwrap()
+        .build()
+        .unwrap();
     assert_eq!(*hv, Value::Pair(42, "test".to_string()));
 }
 
@@ -781,15 +857,21 @@ fn enum_set_field_twice() {
         Point { x: f32, y: f32 } = 0,
     }
 
-    let hv = Partial::alloc::<Data>()?
-        .select_variant(0)? // Point variant
+    let hv = Partial::alloc::<Data>()
+        .unwrap()
+        .select_variant(0)
+        .unwrap() // Point variant
         // Set x field
-        .set_field("x", 1.0f32)?
+        .set_field("x", 1.0f32)
+        .unwrap()
         // Set x field again (should drop previous value)
-        .set_field("x", 2.0f32)?
+        .set_field("x", 2.0f32)
+        .unwrap()
         // Set y field
-        .set_field("y", 3.0f32)?
-        .build()?;
+        .set_field("y", 3.0f32)
+        .unwrap()
+        .build()
+        .unwrap();
     assert_eq!(*hv, Data::Point { x: 2.0, y: 3.0 });
 }
 
@@ -803,10 +885,13 @@ fn enum_partial_initialization_error() {
     }
 
     // Should fail to build because retries is not initialized
-    let result = Partial::alloc::<Config>()?
-        .select_variant(0)? // Settings variant
+    let result = Partial::alloc::<Config>()
+        .unwrap()
+        .select_variant(0)
+        .unwrap() // Settings variant
         // Only initialize timeout, not retries
-        .set_field("timeout", 5000u32)?
+        .set_field("timeout", 5000u32)
+        .unwrap()
         .build();
     assert!(result.is_err());
 }
@@ -823,15 +908,21 @@ fn enum_select_nth_variant() {
     }
 
     // Test selecting variant by index (0-based)
-    let hv = Partial::alloc::<Status>()?
-        .select_nth_variant(1)? // Inactive (index 1)
-        .build()?;
+    let hv = Partial::alloc::<Status>()
+        .unwrap()
+        .select_nth_variant(1)
+        .unwrap() // Inactive (index 1)
+        .build()
+        .unwrap();
     assert_eq!(*hv, Status::Inactive);
 
     // Test selecting different variant by index
-    let hv2 = Partial::alloc::<Status>()?
-        .select_nth_variant(2)? // Pending (index 2)
-        .build()?;
+    let hv2 = Partial::alloc::<Status>()
+        .unwrap()
+        .select_nth_variant(2)
+        .unwrap() // Pending (index 2)
+        .build()
+        .unwrap();
     assert_eq!(*hv2, Status::Pending);
 }
 
@@ -841,18 +932,24 @@ fn empty_struct_init() {
     struct EmptyStruct {}
 
     // Test that we can build an empty struct without setting any fields
-    let hv = Partial::alloc::<EmptyStruct>()?.build()?;
+    let hv = Partial::alloc::<EmptyStruct>().unwrap().build().unwrap();
     assert_eq!(*hv, EmptyStruct {});
 }
 
 #[test]
 fn list_vec_basic() {
-    let hv = Partial::alloc::<Vec<i32>>()?
-        .begin_list()?
-        .push(42)?
-        .push(84)?
-        .push(126)?
-        .build()?;
+    let hv = Partial::alloc::<Vec<i32>>()
+        .unwrap()
+        .begin_list()
+        .unwrap()
+        .push(42)
+        .unwrap()
+        .push(84)
+        .unwrap()
+        .push(126)
+        .unwrap()
+        .build()
+        .unwrap();
     let vec: &Vec<i32> = hv.as_ref();
     assert_eq!(vec, &vec![42, 84, 126]);
 }
@@ -865,19 +962,30 @@ fn list_vec_complex() {
         age: u32,
     }
 
-    let hv = Partial::alloc::<Vec<Person>>()?
-        .begin_list()?
+    let hv = Partial::alloc::<Vec<Person>>()
+        .unwrap()
+        .begin_list()
+        .unwrap()
         // Push first person
-        .begin_list_item()?
-        .set_field("name", "Alice".to_string())?
-        .set_field("age", 30u32)?
-        .end()? // Done with first person
+        .begin_list_item()
+        .unwrap()
+        .set_field("name", "Alice".to_string())
+        .unwrap()
+        .set_field("age", 30u32)
+        .unwrap()
+        .end()
+        .unwrap() // Done with first person
         // Push second person
-        .begin_list_item()?
-        .set_field("name", "Bob".to_string())?
-        .set_field("age", 25u32)?
-        .end()? // Done with second person
-        .build()?;
+        .begin_list_item()
+        .unwrap()
+        .set_field("name", "Bob".to_string())
+        .unwrap()
+        .set_field("age", 25u32)
+        .unwrap()
+        .end()
+        .unwrap() // Done with second person
+        .build()
+        .unwrap();
     let vec: &Vec<Person> = hv.as_ref();
     assert_eq!(
         vec,
@@ -896,32 +1004,49 @@ fn list_vec_complex() {
 
 #[test]
 fn list_vec_empty() {
-    let hv = Partial::alloc::<Vec<String>>()?
-        .begin_list()?
+    let hv = Partial::alloc::<Vec<String>>()
+        .unwrap()
+        .begin_list()
+        .unwrap()
         // Don't push any elements
-        .build()?;
+        .build()
+        .unwrap();
     let vec: &Vec<String> = hv.as_ref();
     assert_eq!(vec, &Vec::<String>::new());
 }
 
 #[test]
 fn list_vec_nested() {
-    let hv = Partial::alloc::<Vec<Vec<i32>>>()?
-        .begin_list()?
+    let hv = Partial::alloc::<Vec<Vec<i32>>>()
+        .unwrap()
+        .begin_list()
+        .unwrap()
         // Push first inner vec
-        .begin_list_item()?
-        .begin_list()?
-        .push(1)?
-        .push(2)?
-        .end()? // Done with first inner vec
+        .begin_list_item()
+        .unwrap()
+        .begin_list()
+        .unwrap()
+        .push(1)
+        .unwrap()
+        .push(2)
+        .unwrap()
+        .end()
+        .unwrap() // Done with first inner vec
         // Push second inner vec
-        .begin_list_item()?
-        .begin_list()?
-        .push(3)?
-        .push(4)?
-        .push(5)?
-        .end()? // Done with second inner vec
-        .build()?;
+        .begin_list_item()
+        .unwrap()
+        .begin_list()
+        .unwrap()
+        .push(3)
+        .unwrap()
+        .push(4)
+        .unwrap()
+        .push(5)
+        .unwrap()
+        .end()
+        .unwrap() // Done with second inner vec
+        .build()
+        .unwrap();
     let vec: &Vec<Vec<i32>> = hv.as_ref();
     assert_eq!(vec, &vec![vec![1, 2], vec![3, 4, 5]]);
 }
@@ -930,23 +1055,38 @@ fn list_vec_nested() {
 fn map_hashmap_simple() {
     use std::collections::HashMap;
 
-    let hv = Partial::alloc::<HashMap<String, i32>>()?
-        .begin_map()?
+    let hv = Partial::alloc::<HashMap<String, i32>>()
+        .unwrap()
+        .begin_map()
+        .unwrap()
         // Insert first pair: "foo" -> 42
-        .begin_key()?
-        .set("foo".to_string())?
-        .end()?
-        .begin_value()?
-        .set(42)?
-        .end()?
+        .begin_key()
+        .unwrap()
+        .set("foo".to_string())
+        .unwrap()
+        .end()
+        .unwrap()
+        .begin_value()
+        .unwrap()
+        .set(42)
+        .unwrap()
+        .end()
+        .unwrap()
         // Insert second pair: "bar" -> 123
-        .begin_key()?
-        .set("bar".to_string())?
-        .end()?
-        .begin_value()?
-        .set(123)?
-        .end()?
-        .build()?;
+        .begin_key()
+        .unwrap()
+        .set("bar".to_string())
+        .unwrap()
+        .end()
+        .unwrap()
+        .begin_value()
+        .unwrap()
+        .set(123)
+        .unwrap()
+        .end()
+        .unwrap()
+        .build()
+        .unwrap();
     let map: &HashMap<String, i32> = hv.as_ref();
     assert_eq!(map.len(), 2);
     assert_eq!(map.get("foo"), Some(&42));
@@ -957,10 +1097,13 @@ fn map_hashmap_simple() {
 fn map_hashmap_empty() {
     use std::collections::HashMap;
 
-    let hv = Partial::alloc::<HashMap<String, String>>()?
-        .begin_map()?
+    let hv = Partial::alloc::<HashMap<String, String>>()
+        .unwrap()
+        .begin_map()
+        .unwrap()
         // Don't insert any pairs
-        .build()?;
+        .build()
+        .unwrap();
     let map: &HashMap<String, String> = hv.as_ref();
     assert_eq!(map.len(), 0);
 }
@@ -975,21 +1118,34 @@ fn map_hashmap_complex_values() {
         age: u32,
     }
 
-    let hv = Partial::alloc::<HashMap<String, Person>>()?
-        .begin_map()?
+    let hv = Partial::alloc::<HashMap<String, Person>>()
+        .unwrap()
+        .begin_map()
+        .unwrap()
         // Insert "alice" -> Person { name: "Alice", age: 30 }
-        .set_key("alice".to_string())?
-        .begin_value()?
-        .set_field("name", "Alice".to_string())?
-        .set_field("age", 30u32)?
-        .end()? // Done with value
+        .set_key("alice".to_string())
+        .unwrap()
+        .begin_value()
+        .unwrap()
+        .set_field("name", "Alice".to_string())
+        .unwrap()
+        .set_field("age", 30u32)
+        .unwrap()
+        .end()
+        .unwrap() // Done with value
         // Insert "bob" -> Person { name: "Bob", age: 25 }
-        .set_key("bob".to_string())?
-        .begin_value()?
-        .set_field("name", "Bob".to_string())?
-        .set_field("age", 25u32)?
-        .end()? // Done with value
-        .build()?;
+        .set_key("bob".to_string())
+        .unwrap()
+        .begin_value()
+        .unwrap()
+        .set_field("name", "Bob".to_string())
+        .unwrap()
+        .set_field("age", 25u32)
+        .unwrap()
+        .end()
+        .unwrap() // Done with value
+        .build()
+        .unwrap();
     let map: &HashMap<String, Person> = hv.as_ref();
     assert_eq!(map.len(), 2);
     assert_eq!(
@@ -1019,11 +1175,16 @@ fn variant_named() {
     }
 
     // Test Dog variant
-    let animal = Partial::alloc::<Animal>()?
-        .select_variant_named("Dog")?
-        .set_field("name", "Buddy".to_string())?
-        .set_field("age", 5u8)?
-        .build()?;
+    let animal = Partial::alloc::<Animal>()
+        .unwrap()
+        .select_variant_named("Dog")
+        .unwrap()
+        .set_field("name", "Buddy".to_string())
+        .unwrap()
+        .set_field("age", 5u8)
+        .unwrap()
+        .build()
+        .unwrap();
     assert_eq!(
         *animal,
         Animal::Dog {
@@ -1033,11 +1194,16 @@ fn variant_named() {
     );
 
     // Test Cat variant
-    let animal = Partial::alloc::<Animal>()?
-        .select_variant_named("Cat")?
-        .set_field("name", "Whiskers".to_string())?
-        .set_field("lives", 9u8)?
-        .build()?;
+    let animal = Partial::alloc::<Animal>()
+        .unwrap()
+        .select_variant_named("Cat")
+        .unwrap()
+        .set_field("name", "Whiskers".to_string())
+        .unwrap()
+        .set_field("lives", 9u8)
+        .unwrap()
+        .build()
+        .unwrap();
     assert_eq!(
         *animal,
         Animal::Cat {
@@ -1047,10 +1213,14 @@ fn variant_named() {
     );
 
     // Test Bird variant
-    let animal = Partial::alloc::<Animal>()?
-        .select_variant_named("Bird")?
-        .set_field("species", "Parrot".to_string())?
-        .build()?;
+    let animal = Partial::alloc::<Animal>()
+        .unwrap()
+        .select_variant_named("Bird")
+        .unwrap()
+        .set_field("species", "Parrot".to_string())
+        .unwrap()
+        .build()
+        .unwrap();
     assert_eq!(
         *animal,
         Animal::Bird {
@@ -1059,7 +1229,7 @@ fn variant_named() {
     );
 
     // Test invalid variant name
-    let mut partial = Partial::alloc::<Animal>()?;
+    let mut partial = Partial::alloc::<Animal>().unwrap();
     let result = partial.select_variant_named("Fish");
     assert!(result.is_err());
     assert!(
@@ -1079,18 +1249,29 @@ fn field_named_on_struct() {
         email: String,
     }
 
-    let person = Partial::alloc::<Person>()?
+    let person = Partial::alloc::<Person>()
+        .unwrap()
         // Use field names instead of indices
-        .begin_field("email")?
-        .set("john@example.com".to_string())?
-        .end()?
-        .begin_field("name")?
-        .set("John Doe".to_string())?
-        .end()?
-        .begin_field("age")?
-        .set(30u32)?
-        .end()?
-        .build()?;
+        .begin_field("email")
+        .unwrap()
+        .set("john@example.com".to_string())
+        .unwrap()
+        .end()
+        .unwrap()
+        .begin_field("name")
+        .unwrap()
+        .set("John Doe".to_string())
+        .unwrap()
+        .end()
+        .unwrap()
+        .begin_field("age")
+        .unwrap()
+        .set(30u32)
+        .unwrap()
+        .end()
+        .unwrap()
+        .build()
+        .unwrap();
     assert_eq!(
         *person,
         Person {
@@ -1101,7 +1282,7 @@ fn field_named_on_struct() {
     );
 
     // Test invalid field name
-    let mut partial = Partial::alloc::<Person>()?;
+    let mut partial = Partial::alloc::<Person>().unwrap();
     let result = partial.begin_field("invalid_field");
     assert!(result.is_err());
     assert!(result.unwrap_err().to_string().contains("field not found"));
@@ -1118,12 +1299,18 @@ fn field_named_on_enum() {
     }
 
     // Test field access on Server variant
-    let config = Partial::alloc::<Config>()?
-        .select_variant_named("Server")?
-        .set_field("port", 8080u16)?
-        .set_field("host", "localhost".to_string())?
-        .set_field("tls", true)?
-        .build()?;
+    let config = Partial::alloc::<Config>()
+        .unwrap()
+        .select_variant_named("Server")
+        .unwrap()
+        .set_field("port", 8080u16)
+        .unwrap()
+        .set_field("host", "localhost".to_string())
+        .unwrap()
+        .set_field("tls", true)
+        .unwrap()
+        .build()
+        .unwrap();
     assert_eq!(
         *config,
         Config::Server {
@@ -1135,8 +1322,8 @@ fn field_named_on_enum() {
 
     // Test invalid field name on enum variant
 
-    let mut partial = Partial::alloc::<Config>()?;
-    partial.select_variant_named("Client")?;
+    let mut partial = Partial::alloc::<Config>().unwrap();
+    partial.select_variant_named("Client").unwrap();
     let result = partial.begin_field("port"); // port doesn't exist on Client
     assert!(result.is_err());
     assert!(
@@ -1168,20 +1355,30 @@ fn map_partial_initialization_drop() {
     DROP_COUNT.store(0, Ordering::SeqCst);
 
     {
-        let mut partial = Partial::alloc::<HashMap<String, DropTracker>>()?;
+        let mut partial = Partial::alloc::<HashMap<String, DropTracker>>().unwrap();
         partial
-            .begin_map()?
+            .begin_map()
+            .unwrap()
             // Insert a complete pair
-            .begin_key()?
-            .set("first".to_string())?
-            .end()?
-            .begin_value()?
-            .set(DropTracker { id: 1 })?
-            .end()?
+            .begin_key()
+            .unwrap()
+            .set("first".to_string())
+            .unwrap()
+            .end()
+            .unwrap()
+            .begin_value()
+            .unwrap()
+            .set(DropTracker { id: 1 })
+            .unwrap()
+            .end()
+            .unwrap()
             // Start inserting another pair but only complete the key
-            .begin_key()?
-            .set("second".to_string())?
-            .end()?;
+            .begin_key()
+            .unwrap()
+            .set("second".to_string())
+            .unwrap()
+            .end()
+            .unwrap();
         // Don't set_value - leave incomplete
 
         // Drop the partial - should clean up properly
@@ -1197,44 +1394,66 @@ fn map_partial_initialization_drop() {
 #[test]
 fn tuple_basic() {
     // Test building a simple tuple
-    let boxed = Partial::alloc::<(i32, String)>()?
-        .set_nth_field(0, 42i32)?
-        .set_nth_field(1, "hello".to_string())?
-        .build()?;
+    let boxed = Partial::alloc::<(i32, String)>()
+        .unwrap()
+        .set_nth_field(0, 42i32)
+        .unwrap()
+        .set_nth_field(1, "hello".to_string())
+        .unwrap()
+        .build()
+        .unwrap();
     assert_eq!(*boxed, (42, "hello".to_string()));
 }
 
 #[test]
 fn tuple_mixed_types() {
     // Test building a tuple with more diverse types
-    let boxed = Partial::alloc::<(u8, bool, f64, String)>()?
+    let boxed = Partial::alloc::<(u8, bool, f64, String)>()
+        .unwrap()
         // Set fields in non-sequential order to test flexibility
-        .set_nth_field(2, 56.124f64)?
-        .set_nth_field(0, 255u8)?
-        .set_nth_field(3, "world".to_string())?
-        .set_nth_field(1, true)?
-        .build()?;
+        .set_nth_field(2, 56.124f64)
+        .unwrap()
+        .set_nth_field(0, 255u8)
+        .unwrap()
+        .set_nth_field(3, "world".to_string())
+        .unwrap()
+        .set_nth_field(1, true)
+        .unwrap()
+        .build()
+        .unwrap();
     assert_eq!(*boxed, (255u8, true, 56.124f64, "world".to_string()));
 }
 
 #[test]
 fn tuple_nested() {
     // Test nested tuples
-    let boxed = Partial::alloc::<((i32, i32), String)>()?
+    let boxed = Partial::alloc::<((i32, i32), String)>()
+        .unwrap()
         // Build the nested tuple first
-        .begin_nth_field(0)?
-        .set_nth_field(0, 1i32)?
-        .set_nth_field(1, 2i32)?
-        .end()? // Pop out of the nested tuple
+        .begin_nth_field(0)
+        .unwrap()
+        .set_nth_field(0, 1i32)
+        .unwrap()
+        .set_nth_field(1, 2i32)
+        .unwrap()
+        .end()
+        .unwrap() // Pop out of the nested tuple
         // Now set the string
-        .set_nth_field(1, "nested".to_string())?
-        .build()?;
+        .set_nth_field(1, "nested".to_string())
+        .unwrap()
+        .build()
+        .unwrap();
     assert_eq!(*boxed, ((1, 2), "nested".to_string()));
 }
 
 #[test]
 fn tuple_empty() {
     // Test empty tuple (unit type)
-    let boxed = Partial::alloc::<()>()?.set(())?.build()?;
+    let boxed = Partial::alloc::<()>()
+        .unwrap()
+        .set(())
+        .unwrap()
+        .build()
+        .unwrap();
     assert_eq!(*boxed, ());
 }

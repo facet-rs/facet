@@ -4,7 +4,6 @@
 #![forbid(unsafe_code)]
 #![doc = include_str!("../README.md")]
 
-pub use color_eyre::eyre;
 pub use facet_testhelpers_macros::test;
 
 use log::{Level, LevelFilter, Log, Metadata, Record};
@@ -44,73 +43,8 @@ impl Log for SimpleLogger {
     }
 }
 
-/// Installs color-backtrace (except on miri), and sets up a simple logger.
+/// Set up a simple logger.
 pub fn setup() {
-    #[cfg(not(miri))]
-    {
-        use color_eyre::config::HookBuilder;
-
-        /// Function to check if a frame name should be ignored.
-        /// It ignores panic frames, test runners, and a few threading details.
-        fn should_ignore_frame(name: &str) -> bool {
-            name.starts_with("std::panic")
-                || name.starts_with("core::panic")
-                || name.starts_with("test::run_test")
-                || name.starts_with("__pthread_cond_wait")
-                || name.starts_with("std::sys::pal")
-                || name.starts_with("std::sys::backtrace")
-                || name.starts_with("std::thread::Builder")
-                || name.starts_with("core::ops::function")
-                || name.starts_with("test::__rust_begin_short_backtrace")
-                || name.starts_with("<core::panic::")
-                || name.starts_with(
-                    "<alloc::boxed::Box<F,A> as core::ops::function::FnOnce<Args>>::call_once",
-                )
-        }
-
-        // color-eyre filter
-        let eyre_filter = {
-            move |frames: &mut Vec<&color_eyre::config::Frame>| {
-                frames.retain(|frame| {
-                    frame
-                        .name
-                        .as_ref()
-                        .map(|n| !should_ignore_frame(&n.to_string()))
-                        .unwrap_or(true)
-                });
-            }
-        };
-
-        HookBuilder::default()
-            .add_frame_filter(Box::new(eyre_filter))
-            .install()
-            .expect("Failed to set up color-eyre");
-
-        // color-backtrace filter
-        {
-            use color_backtrace::{BacktracePrinter, Frame};
-
-            // The frame filter must be Fn(&mut Vec<&Frame>)
-            let filter = move |frames: &mut Vec<&Frame>| {
-                frames.retain(|frame| {
-                    frame
-                        .name
-                        .as_ref()
-                        .map(|name| !should_ignore_frame(name))
-                        .unwrap_or(true)
-                });
-            };
-
-            // Build and install custom BacktracePrinter with our filter.
-            // Use StandardStream to provide a WriteColor.
-            let stderr = color_backtrace::termcolor::StandardStream::stderr(
-                color_backtrace::termcolor::ColorChoice::Auto,
-            );
-            let printer = BacktracePrinter::new().add_frame_filter(Box::new(filter));
-            printer.install(Box::new(stderr));
-        }
-    }
-
     let logger = Box::new(SimpleLogger);
     log::set_boxed_logger(logger).unwrap();
     log::set_max_level(LevelFilter::Trace);

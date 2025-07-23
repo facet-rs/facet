@@ -60,12 +60,10 @@ pub fn test(
 
     quote::quote! {
         #[::core::prelude::rust_2024::test]
-        #until_fn fn #name #until_body -> ::facet_testhelpers::eyre::Result<()> {
+        #until_fn fn #name #until_body {
             ::facet_testhelpers::setup();
 
             #body
-
-            Ok(())
         }
     }
     .into()
