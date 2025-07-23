@@ -20,7 +20,7 @@ time = ["facet-core/time"]
 log = ["dep:log"]
 
 [dependencies]
-yaml-rust2 = "0.10.1"
+yaml-rust2 = "0.10.3"
 facet-core = { version = "0.27.16", path = "../facet-core", default-features = false }
 facet-reflect = { version = "0.27.16", path = "../facet-reflect", default-features = false }
 facet-serialize = { version = "0.24.18", path = "../facet-serialize", default-features = false, optional = true }

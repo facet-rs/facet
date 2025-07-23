@@ -42,12 +42,12 @@ fn-ptr = [
 ] # Enable Facet implementation for function pointers
 
 [dependencies]
-bitflags = "2.9.0"
+bitflags = "2.9.1"
 facet-core = { path = "../facet-core", version = "0.27.16", default-features = false }
 log = { version = "0.4.27", optional = true }
-owo-colors = { version = "4.2.0" }
+owo-colors = { version = "4.2.2" }
 camino = { version = "1", optional = true }
-uuid = { version = "1.16.0", optional = true }
+uuid = { version = "1.17.0", optional = true }
 ulid = { version = "1.2.1", optional = true }
 
 [dev-dependencies]
@@ -56,4 +56,4 @@ facet = { path = "../facet" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 insta = "1.43.1"
 log = "0.4.27"
-tempfile = "3.19.1"
+tempfile = "3.20.0"

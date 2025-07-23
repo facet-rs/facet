@@ -24,7 +24,7 @@ facet-core = { version = "0.27.16", path = "../facet-core" }
 facet-reflect = { version = "0.27.16", path = "../facet-reflect" }
 
 [dev-dependencies]
-camino = "1.1.9"
+camino = "1.1.10"
 facet = { path = "../facet" }
 facet-testhelpers = { version = "0.17.5", path = "../facet-testhelpers" }
 insta = "1.43.1"
