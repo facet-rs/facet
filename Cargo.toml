@@ -13,30 +13,30 @@ members = [
     "facet-reflect",
 
     # dev helpers
-    "facet-dev",
+    # "facet-dev",
 
     # # test helpers
     "facet-testhelpers",
 
     # # formats / ecosystem
-    "facet-args",
-    "facet-asn1",
-    "facet-csv",
-    "facet-json",
-    "facet-msgpack",
-    "facet-serialize",
-    "facet-pretty",
-    "facet-toml",
-    "facet-kdl",
-    "facet-urlencoded",
-    "facet-xdr",
-    "facet-yaml",
-    "facet-jsonschema",
-    "facet-deserialize",
-    "facet-bench",
+    # "facet-args",
+    # "facet-asn1",
+    # "facet-csv",
+    # "facet-json",
+    # "facet-msgpack",
+    # "facet-serialize",
+    # "facet-pretty",
+    # "facet-toml",
+    # "facet-kdl",
+    # "facet-urlencoded",
+    # "facet-xdr",
+    # "facet-yaml",
+    # "facet-jsonschema",
+    # "facet-deserialize",
+    # "facet-bench",
     "facet-testhelpers-macros",
-    "facet-inspect",
-    "facet-diff",
+    # "facet-inspect",
+    # "facet-diff",
 ]
 exclude = ["outside-workspace"]
 resolver = "3"
