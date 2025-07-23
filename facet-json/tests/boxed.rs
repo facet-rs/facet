@@ -38,7 +38,7 @@ struct BoxedVec {
 #[test]
 fn test_deserialize_boxed_struct() {
     let json = r#"{"boxed":{"value":42}}"#;
-    let wrapper: WrapperBox = from_str(json)?;
+    let wrapper: WrapperBox = from_str(json).unwrap();
 
     let expected = WrapperBox {
         boxed: Box::new(SimpleStruct { value: 42 }),
@@ -50,7 +50,7 @@ fn test_deserialize_boxed_struct() {
 #[test]
 fn test_deserialize_nested_box() {
     let json = r#"{"inner":"hello"}"#;
-    let nested: NestedBox = from_str(json)?;
+    let nested: NestedBox = from_str(json).unwrap();
 
     let expected = NestedBox {
         inner: Box::new("hello".to_string()),
@@ -62,7 +62,7 @@ fn test_deserialize_nested_box() {
 #[test]
 fn test_deserialize_boxed_primitive() {
     let json = r#"{"num":2.718281828459045}"#;
-    let boxed: BoxedPrimitive = from_str(json)?;
+    let boxed: BoxedPrimitive = from_str(json).unwrap();
 
     let expected = BoxedPrimitive {
         #[allow(clippy::approx_constant)]
@@ -75,7 +75,7 @@ fn test_deserialize_boxed_primitive() {
 #[test]
 fn test_deserialize_boxed_option_some() {
     let json = r#"{"maybe":"something"}"#;
-    let boxed: BoxedOption = from_str(json)?;
+    let boxed: BoxedOption = from_str(json).unwrap();
 
     let expected = BoxedOption {
         maybe: Box::new(Some("something".to_string())),
@@ -101,7 +101,7 @@ fn test_deserialize_boxed_option_some() {
 #[test]
 fn test_deserialize_boxed_vec() {
     let json = r#"{"items":[1,2,3,4,5]}"#;
-    let boxed: BoxedVec = from_str(json)?;
+    let boxed: BoxedVec = from_str(json).unwrap();
 
     let expected = BoxedVec {
         items: vec![1, 2, 3, 4, 5],

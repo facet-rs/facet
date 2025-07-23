@@ -13,7 +13,9 @@ fn transparent_ordered_float_1() {
     #[facet(transparent)]
     struct PixelDensity(f32);
 
-    let deser: PixelDensity = facet_json::from_str(r#"1.4"#).map_err(|e| eyre::eyre!("{e}"))?;
+    let deser: PixelDensity = facet_json::from_str(r#"1.4"#)
+        .map_err(|e| eyre::eyre!("{e}"))
+        .unwrap();
     assert_eq!(deser.0, 1.4);
 }
 
@@ -21,7 +23,9 @@ fn transparent_ordered_float_1() {
 fn transparent_ordered_float_2() {
     type PixelDensity = OrderedFloat<f32>;
 
-    let deser: PixelDensity = facet_json::from_str(r#"1.4"#).map_err(|e| eyre::eyre!("{e}"))?;
+    let deser: PixelDensity = facet_json::from_str(r#"1.4"#)
+        .map_err(|e| eyre::eyre!("{e}"))
+        .unwrap();
     assert_eq!(deser.0, 1.4);
 }
 
@@ -31,6 +35,8 @@ fn transparent_ordered_float_3() {
     #[facet(transparent)]
     struct PixelDensity(OrderedFloat<f32>);
 
-    let deser: PixelDensity = facet_json::from_str(r#"1.4"#).map_err(|e| eyre::eyre!("{e}"))?;
+    let deser: PixelDensity = facet_json::from_str(r#"1.4"#)
+        .map_err(|e| eyre::eyre!("{e}"))
+        .unwrap();
     assert_eq!(deser.0, OrderedFloat(1.4));
 }

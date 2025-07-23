@@ -14,7 +14,7 @@ fn test_scalar_map() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("[values]")?,
+        facet_toml::from_str::<Root>("[values]").unwrap(),
         Root {
             values: HashMap::new()
         },
@@ -27,7 +27,8 @@ fn test_scalar_map() {
             a = 0
             b = -1
             "#
-        )?,
+        )
+        .unwrap(),
         Root {
             values: [("a".to_string(), 0), ("b".to_string(), -1)].into()
         },
@@ -74,7 +75,8 @@ fn test_scalar_map_with_other_fields() {
             other = 1
             [values]
             "#
-        )?,
+        )
+        .unwrap(),
         Root {
             values: HashMap::new(),
             other: 1,
@@ -89,7 +91,8 @@ fn test_scalar_map_with_other_fields() {
             a = 0
             b = -1
             "#
-        )?,
+        )
+        .unwrap(),
         Root {
             values: [("a".to_string(), 0), ("b".to_string(), -1)].into(),
             other: 2,
@@ -134,7 +137,7 @@ fn test_unit_struct_map() {
     struct Item(bool);
 
     assert_eq!(
-        facet_toml::from_str::<Root>("[values]")?,
+        facet_toml::from_str::<Root>("[values]").unwrap(),
         Root {
             values: HashMap::new()
         },
@@ -146,7 +149,8 @@ fn test_unit_struct_map() {
             values.a = true
             values.b = false
             "#
-        )?,
+        )
+        .unwrap(),
         Root {
             values: [
                 ("a".to_string(), Item(true)),
@@ -190,7 +194,7 @@ fn test_struct_map() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("[dependencies]")?,
+        facet_toml::from_str::<Root>("[dependencies]").unwrap(),
         Root {
             dependencies: HashMap::new()
         },
@@ -203,7 +207,8 @@ fn test_struct_map() {
             syn = { version = "1", optional = false }
             paste = { version = "0.0.1", optional = true }
             "#
-        )?,
+        )
+        .unwrap(),
         Root {
             dependencies: [
                 (

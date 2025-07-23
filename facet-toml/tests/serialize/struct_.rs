@@ -134,7 +134,7 @@ fn test_rename_single_struct_fields() {
         Root {
             a: 1,
             b: true,
-            c: "quoted".parse()?,
+            c: "quoted".parse().unwrap(),
             d: 2
         },
     );

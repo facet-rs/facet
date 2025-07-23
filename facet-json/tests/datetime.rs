@@ -15,7 +15,7 @@ fn read_time_datetime() {
 
     let json = r#"{"created_at":"2023-01-15T12:34:56Z"}"#;
 
-    let s: FooBar = from_str(json)?;
+    let s: FooBar = from_str(json).unwrap();
     assert_eq!(
         s,
         FooBar {
@@ -34,14 +34,15 @@ fn read_jiff_zoned() {
 
     let json = r#"{"created_at":"2023-12-31T18:30:00+07:00[Asia/Ho_Chi_Minh]"}"#;
 
-    let s: FooBar = from_str(json)?;
+    let s: FooBar = from_str(json).unwrap();
 
     assert_eq!(
         s,
         FooBar {
             created_at: jiff::civil::date(2023, 12, 31)
                 .at(18, 30, 0, 0)
-                .in_tz("Asia/Ho_Chi_Minh")?
+                .in_tz("Asia/Ho_Chi_Minh")
+                .unwrap()
         }
     );
 }
@@ -55,12 +56,14 @@ fn read_jiff_timestamp() {
 
     let json = r#"{"created_at":"2023-12-31T11:30:00Z"}"#;
 
-    let s: FooBar = from_str(json)?;
+    let s: FooBar = from_str(json).unwrap();
 
     assert_eq!(
         s,
         FooBar {
-            created_at: "2023-12-31T18:30:00+07:00[Asia/Ho_Chi_Minh]".parse()?,
+            created_at: "2023-12-31T18:30:00+07:00[Asia/Ho_Chi_Minh]"
+                .parse()
+                .unwrap(),
         }
     );
 }
@@ -74,12 +77,12 @@ fn read_jiff_datetime() {
 
     let json = r#"{"created_at":"2024-06-19T15:22:45"}"#;
 
-    let s: FooBar = from_str(json)?;
+    let s: FooBar = from_str(json).unwrap();
 
     assert_eq!(
         s,
         FooBar {
-            created_at: "2024-06-19T15:22:45".parse()?,
+            created_at: "2024-06-19T15:22:45".parse().unwrap(),
         }
     );
 }
@@ -112,7 +115,8 @@ fn write_jiff_zoned() {
     let value = FooBar {
         created_at: jiff::civil::date(2023, 12, 31)
             .at(18, 30, 0, 0)
-            .in_tz("Asia/Ho_Chi_Minh")?,
+            .in_tz("Asia/Ho_Chi_Minh")
+            .unwrap(),
     };
 
     let json = to_string(&value);
@@ -130,7 +134,9 @@ fn write_jiff_timestamp() {
     }
 
     let value = FooBar {
-        created_at: "2023-12-31T18:30:00+07:00[Asia/Ho_Chi_Minh]".parse()?,
+        created_at: "2023-12-31T18:30:00+07:00[Asia/Ho_Chi_Minh]"
+            .parse()
+            .unwrap(),
     };
 
     let json = to_string(&value);
@@ -145,7 +151,7 @@ fn write_jiff_datetime() {
     }
 
     let value = FooBar {
-        created_at: "2024-06-19T15:22:45".parse()?,
+        created_at: "2024-06-19T15:22:45".parse().unwrap(),
     };
 
     let json = to_string(&value);

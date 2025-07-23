@@ -25,7 +25,8 @@ fn test_table_to_struct() {
             value = 1
             table.value = 2
             "#
-        )?,
+        )
+        .unwrap(),
         Root {
             value: 1,
             table: Table { value: 2 },
@@ -65,7 +66,8 @@ fn test_unit_struct() {
             value = 1
             unit = 2
             "#
-        )?,
+        )
+        .unwrap(),
         Root {
             value: 1,
             unit: Unit(2),
@@ -108,7 +110,8 @@ fn test_nested_unit_struct() {
             value = 1
             unit = 2
             "#
-        )?,
+        )
+        .unwrap(),
         Root {
             value: 1,
             unit: NestedUnit(Unit(2)),
@@ -132,7 +135,8 @@ fn test_root_struct_multiple_fields() {
             b = true
             c = '::1'
             "#
-        )?,
+        )
+        .unwrap(),
         Root {
             a: 1,
             b: true,
@@ -175,7 +179,8 @@ fn test_nested_struct_multiple_fields() {
             b = true
             c = '::1'
             "#
-        )?,
+        )
+        .unwrap(),
         Root {
             nested: Nested {
                 a: 1,
@@ -219,7 +224,8 @@ fn test_rename_single_struct_fields() {
             "'quoted'" = 'quoted'
             "" = 2
             "#
-        )?,
+        )
+        .unwrap(),
         Root {
             a: 1,
             b: true,
@@ -247,7 +253,8 @@ fn test_rename_all_struct_fields() {
             another-bool = true
             Overwrite = 1.0
             "#
-        )?,
+        )
+        .unwrap(),
         Root {
             a_number: 1,
             another_bool: true,
@@ -273,7 +280,8 @@ fn test_default_struct_fields() {
             r#"
             c = "hi"
             "#
-        )?,
+        )
+        .unwrap(),
         Root {
             a: i32::default(),
             b: bool::default(),
@@ -299,7 +307,7 @@ fn test_root_struct_deserialize_defaults() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("")?,
+        facet_toml::from_str::<Root>("").unwrap(),
         Root {
             a: 42,
             b: Some(true),

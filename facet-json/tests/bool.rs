@@ -12,7 +12,7 @@ fn json_read_bool() {
 
     let json = r#"{"yes": true, "no": false}"#;
 
-    let s: BoolStruct = from_str(json)?;
+    let s: BoolStruct = from_str(json).unwrap();
     assert_eq!(
         s,
         BoolStruct {

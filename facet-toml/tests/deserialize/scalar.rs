@@ -15,7 +15,7 @@ fn test_string() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 'string'")?,
+        facet_toml::from_str::<Root>("value = 'string'").unwrap(),
         Root {
             value: "string".to_string()
         },
@@ -38,7 +38,7 @@ fn test_cow_string() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 'string'")?,
+        facet_toml::from_str::<Root>("value = 'string'").unwrap(),
         Root {
             value: std::borrow::Cow::Borrowed("string")
         },
@@ -60,11 +60,11 @@ fn test_bool() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = true")?,
+        facet_toml::from_str::<Root>("value = true").unwrap(),
         Root { value: true },
     );
     assert_eq!(
-        facet_toml::from_str::<Root>("value = false")?,
+        facet_toml::from_str::<Root>("value = false").unwrap(),
         Root { value: false },
     );
     assert!(matches!(
@@ -100,7 +100,7 @@ fn test_char() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 'c'")?,
+        facet_toml::from_str::<Root>("value = 'c'").unwrap(),
         Root { value: 'c' },
     );
     assert!(matches!(
@@ -123,7 +123,7 @@ fn test_socket_addr() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = '127.0.0.1:8000'")?,
+        facet_toml::from_str::<Root>("value = '127.0.0.1:8000'").unwrap(),
         Root {
             value: "127.0.0.1:8000".parse().unwrap()
         },
@@ -138,13 +138,13 @@ fn test_ip_addr() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = '127.0.0.1'")?,
+        facet_toml::from_str::<Root>("value = '127.0.0.1'").unwrap(),
         Root {
             value: "127.0.0.1".parse().unwrap()
         },
     );
     assert_eq!(
-        facet_toml::from_str::<Root>("value = '::1'")?,
+        facet_toml::from_str::<Root>("value = '::1'").unwrap(),
         Root {
             value: "::1".parse().unwrap()
         },
@@ -177,7 +177,7 @@ fn test_ipv4_addr() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = '127.0.0.1'")?,
+        facet_toml::from_str::<Root>("value = '127.0.0.1'").unwrap(),
         Root {
             value: "127.0.0.1".parse().unwrap()
         },
@@ -192,7 +192,7 @@ fn test_ipv6_addr() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = '::1'")?,
+        facet_toml::from_str::<Root>("value = '::1'").unwrap(),
         Root {
             value: "::1".parse().unwrap()
         },
@@ -207,7 +207,7 @@ fn test_f64() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 1")?,
+        facet_toml::from_str::<Root>("value = 1").unwrap(),
         Root { value: 1.0 },
     );
     assert!(matches!(
@@ -229,7 +229,7 @@ fn test_f32() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 1")?,
+        facet_toml::from_str::<Root>("value = 1").unwrap(),
         Root { value: 1.0 },
     );
     assert!(matches!(
@@ -251,7 +251,7 @@ fn test_usize() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 1")?,
+        facet_toml::from_str::<Root>("value = 1").unwrap(),
         Root { value: 1 },
     );
     assert!(facet_toml::from_str::<Root>("value = -1").is_err());
@@ -274,7 +274,7 @@ fn test_u128() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 1")?,
+        facet_toml::from_str::<Root>("value = 1").unwrap(),
         Root { value: 1 },
     );
     assert!(facet_toml::from_str::<Root>("value = -1").is_err());
@@ -297,7 +297,7 @@ fn test_u64() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 1")?,
+        facet_toml::from_str::<Root>("value = 1").unwrap(),
         Root { value: 1 },
     );
     assert!(facet_toml::from_str::<Root>("value = -1").is_err());
@@ -320,7 +320,7 @@ fn test_u32() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 1")?,
+        facet_toml::from_str::<Root>("value = 1").unwrap(),
         Root { value: 1 },
     );
     assert!(facet_toml::from_str::<Root>("value = -1").is_err());
@@ -343,7 +343,7 @@ fn test_u16() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 1")?,
+        facet_toml::from_str::<Root>("value = 1").unwrap(),
         Root { value: 1 },
     );
     assert!(facet_toml::from_str::<Root>("value = -1").is_err());
@@ -366,7 +366,7 @@ fn test_u8() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 1")?,
+        facet_toml::from_str::<Root>("value = 1").unwrap(),
         Root { value: 1 },
     );
     assert!(facet_toml::from_str::<Root>("value = -1").is_err());
@@ -389,7 +389,7 @@ fn test_isize() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 1")?,
+        facet_toml::from_str::<Root>("value = 1").unwrap(),
         Root { value: 1 },
     );
     assert!(matches!(
@@ -411,7 +411,7 @@ fn test_i128() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 1")?,
+        facet_toml::from_str::<Root>("value = 1").unwrap(),
         Root { value: 1 },
     );
     assert!(matches!(
@@ -433,7 +433,7 @@ fn test_i64() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 1")?,
+        facet_toml::from_str::<Root>("value = 1").unwrap(),
         Root { value: 1 },
     );
     assert!(matches!(
@@ -455,7 +455,7 @@ fn test_i32() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 1")?,
+        facet_toml::from_str::<Root>("value = 1").unwrap(),
         Root { value: 1 },
     );
     assert!(matches!(
@@ -477,7 +477,7 @@ fn test_i16() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 1")?,
+        facet_toml::from_str::<Root>("value = 1").unwrap(),
         Root { value: 1 },
     );
     assert!(matches!(
@@ -499,7 +499,7 @@ fn test_i8() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 1")?,
+        facet_toml::from_str::<Root>("value = 1").unwrap(),
         Root { value: 1 },
     );
     let err = facet_toml::from_str::<Root>("value = 300.0").unwrap_err();
@@ -529,7 +529,10 @@ fn test_unit() {
         value: (),
     }
 
-    assert_eq!(facet_toml::from_str::<Root>("")?, Root { value: () });
+    assert_eq!(
+        facet_toml::from_str::<Root>("").unwrap(),
+        Root { value: () }
+    );
 }
 
 #[test]

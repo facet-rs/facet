@@ -13,10 +13,10 @@ fn json_read_unit_enum_variant() {
     let json_italic = r#""Italic""#;
     let json_oblique = r#""Oblique""#;
 
-    let s_italic: FontStyle = from_str(json_italic)?;
+    let s_italic: FontStyle = from_str(json_italic).unwrap();
     assert_eq!(s_italic, FontStyle::Italic);
 
-    let s_oblique: FontStyle = from_str(json_oblique)?;
+    let s_oblique: FontStyle = from_str(json_oblique).unwrap();
     assert_eq!(s_oblique, FontStyle::Oblique);
 }
 
@@ -32,10 +32,10 @@ fn json_read_unit_enum_variant_lowercase() {
     let json_italic = r#""italic""#;
     let json_oblique = r#""oblique""#;
 
-    let s_italic: FontStyle = from_str(json_italic)?;
+    let s_italic: FontStyle = from_str(json_italic).unwrap();
     assert_eq!(s_italic, FontStyle::Italic);
 
-    let s_oblique: FontStyle = from_str(json_oblique)?;
+    let s_oblique: FontStyle = from_str(json_oblique).unwrap();
     assert_eq!(s_oblique, FontStyle::Oblique);
 }
 
@@ -51,10 +51,10 @@ fn json_read_tuple_variant() {
     let json_x = r#"{ "X": 123 }"#;
     let json_y = r#"{ "Y": [ "hello", true ] }"#;
 
-    let p_x: Point = from_str(json_x)?;
+    let p_x: Point = from_str(json_x).unwrap();
     assert_eq!(p_x, Point::X(123));
 
-    let p_y: Point = from_str(json_y)?;
+    let p_y: Point = from_str(json_y).unwrap();
     assert_eq!(p_y, Point::Y("hello".to_string(), true));
 }
 
@@ -71,7 +71,7 @@ fn json_read_struct_variant() {
 
     let json1 = r#"{ "Well": { "made": "in germany", "i": false, "guess": 3 } }"#;
 
-    let point1: Point = from_str(json1)?;
+    let point1: Point = from_str(json1).unwrap();
     assert_eq!(
         point1,
         Point::Well {
@@ -168,8 +168,9 @@ fn enum_variants() {
     let json_italic = facet_json::to_string(&italic);
     assert_eq!(json_italic, r#""Italic""#);
 
-    let deserialized_italic: FontStyle =
-        facet_json::from_str(&json_italic).map_err(|e| eyre::eyre!("{}", e))?;
+    let deserialized_italic: FontStyle = facet_json::from_str(&json_italic)
+        .map_err(|e| eyre::eyre!("{}", e))
+        .unwrap();
     assert_eq!(deserialized_italic, italic);
 
     // Struct variants
@@ -194,8 +195,9 @@ fn enum_variants() {
     );
 
     // Test struct variant deserialization
-    let deserialized_good: Message =
-        facet_json::from_str(&json_good).map_err(|e| eyre::eyre!("{}", e))?;
+    let deserialized_good: Message = facet_json::from_str(&json_good)
+        .map_err(|e| eyre::eyre!("{}", e))
+        .unwrap();
     assert_eq!(deserialized_good, good);
 
     // Tuple variants
@@ -216,10 +218,14 @@ fn enum_variants() {
     assert_eq!(json_y, r#"{"Y":["hello",true]}"#);
 
     // Test tuple variant deserialization
-    let deserialized_x: Point = facet_json::from_str(&json_x).map_err(|e| eyre::eyre!("{}", e))?;
+    let deserialized_x: Point = facet_json::from_str(&json_x)
+        .map_err(|e| eyre::eyre!("{}", e))
+        .unwrap();
     assert_eq!(deserialized_x, x);
 
-    let deserialized_y: Point = facet_json::from_str(&json_y).map_err(|e| eyre::eyre!("{}", e))?;
+    let deserialized_y: Point = facet_json::from_str(&json_y)
+        .map_err(|e| eyre::eyre!("{}", e))
+        .unwrap();
     assert_eq!(deserialized_y, y);
 }
 
@@ -239,8 +245,9 @@ fn enum_unit_variants() {
     let json_italic = facet_json::to_string(&italic);
     assert_eq!(json_italic, r#""Italic""#);
 
-    let deserialized_italic: FontStyle =
-        facet_json::from_str(&json_italic).map_err(|e| eyre::eyre!("{}", e))?;
+    let deserialized_italic: FontStyle = facet_json::from_str(&json_italic)
+        .map_err(|e| eyre::eyre!("{}", e))
+        .unwrap();
     assert_eq!(deserialized_italic, italic);
 }
 
@@ -259,7 +266,9 @@ fn enum_tuple_primitive_variants() {
     let json_x = facet_json::to_string(&x);
     assert_eq!(json_x, r#"{"X":123}"#);
 
-    let deserialized_x: Point = facet_json::from_str(&json_x).map_err(|e| eyre::eyre!("{}", e))?;
+    let deserialized_x: Point = facet_json::from_str(&json_x)
+        .map_err(|e| eyre::eyre!("{}", e))
+        .unwrap();
     assert_eq!(deserialized_x, x);
 
     // Test tuple variant with multiple primitive types
@@ -267,7 +276,9 @@ fn enum_tuple_primitive_variants() {
     let json_y = facet_json::to_string(&y);
     assert_eq!(json_y, r#"{"Y":[456,true]}"#);
 
-    let deserialized_y: Point = facet_json::from_str(&json_y).map_err(|e| eyre::eyre!("{}", e))?;
+    let deserialized_y: Point = facet_json::from_str(&json_y)
+        .map_err(|e| eyre::eyre!("{}", e))
+        .unwrap();
     assert_eq!(deserialized_y, y);
 }
 
@@ -303,18 +314,22 @@ fn enum_struct_variants_1() {
 
     // Test struct variant deserialization
     let json_good = r#"{"Good":{"greeting":"Hello, sunshine!","time":800}}"#;
-    let deserialized_good: Message =
-        facet_json::from_str(json_good).map_err(|e| eyre::eyre!("{}", e))?;
+    let deserialized_good: Message = facet_json::from_str(json_good)
+        .map_err(|e| eyre::eyre!("{}", e))
+        .unwrap();
     assert_eq!(deserialized_good, good);
 
     let json_tenant = r#"{"Tenant":{"id":"tenant-123","action":"login"}}"#;
-    let deserialized_tenant: Message =
-        facet_json::from_str(json_tenant).map_err(|e| eyre::eyre!("{}", e))?;
+    let deserialized_tenant: Message = facet_json::from_str(json_tenant)
+        .map_err(|e| eyre::eyre!("{}", e))
+        .unwrap();
     assert_eq!(deserialized_tenant, tenant);
 
     // Test roundtrip
     let json = facet_json::to_string(&good);
-    let roundtrip: Message = facet_json::from_str(&json).map_err(|e| eyre::eyre!("{}", e))?;
+    let roundtrip: Message = facet_json::from_str(&json)
+        .map_err(|e| eyre::eyre!("{}", e))
+        .unwrap();
     assert_eq!(roundtrip, good);
 }
 
@@ -359,8 +374,9 @@ fn tuple_struct_variants() {
 
     // Test deserialization
     let json_good = r#"{"Good":{"greeting":"Hello, sunshine!","time":800}}"#;
-    let deserialized_good: MomEvent =
-        facet_json::from_str(json_good).map_err(|e| eyre::eyre!("{}", e))?;
+    let deserialized_good: MomEvent = facet_json::from_str(json_good)
+        .map_err(|e| eyre::eyre!("{}", e))
+        .unwrap();
 
     match deserialized_good {
         MomEvent::Good(gm) => {
@@ -371,8 +387,9 @@ fn tuple_struct_variants() {
     }
 
     let json_tenant = r#"{"Tenant":{"tenant_id":"tenant-123","action":"login"}}"#;
-    let deserialized_tenant: MomEvent =
-        facet_json::from_str(json_tenant).map_err(|e| eyre::eyre!("{}", e))?;
+    let deserialized_tenant: MomEvent = facet_json::from_str(json_tenant)
+        .map_err(|e| eyre::eyre!("{}", e))
+        .unwrap();
 
     match deserialized_tenant {
         MomEvent::Tenant(te) => {
@@ -401,7 +418,8 @@ fn enum_struct_variants_2() {
     assert_eq!(json_good, r#"{"Good":{"time":800}}"#);
 
     // Test struct variant deserialization
-    let deserialized_good: Message =
-        facet_json::from_str(&json_good).map_err(|e| eyre::eyre!("{}", e))?;
+    let deserialized_good: Message = facet_json::from_str(&json_good)
+        .map_err(|e| eyre::eyre!("{}", e))
+        .unwrap();
     assert_eq!(deserialized_good, good);
 }

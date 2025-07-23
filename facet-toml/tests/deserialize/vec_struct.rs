@@ -27,7 +27,8 @@ fn test_deserialize_vec_struct() {
             name = "Bob"
             age = 25
             "#
-        )?,
+        )
+        .unwrap(),
         Root {
             people: vec![
                 Person {

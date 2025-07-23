@@ -64,7 +64,7 @@ fn test_pretty_print_simple() {
 
     // Test the FacetPretty trait
     let mut buffer = String::new();
-    write!(buffer, "{}", person.pretty())?;
+    write!(buffer, "{}", person.pretty()).unwrap();
 
     // Ensure the output contains the field names
     assert!(buffer.contains("name"));
@@ -89,7 +89,7 @@ fn test_pretty_print_simple() {
 
     // Test the FacetPretty trait with custom printer
     let mut custom_buffer = String::new();
-    write!(custom_buffer, "{}", person.pretty_with(custom_printer))?;
+    write!(custom_buffer, "{}", person.pretty_with(custom_printer)).unwrap();
     // Ensure the output contains the field names
     assert!(custom_buffer.contains("name"));
     assert!(custom_buffer.contains("age"));
@@ -121,7 +121,7 @@ fn test_sensitive_fields() {
 
     // Test pretty with trait
     let mut buffer = String::new();
-    write!(buffer, "{}", test_data.pretty())?;
+    write!(buffer, "{}", test_data.pretty()).unwrap();
 
     eprintln!("{}", buffer);
 

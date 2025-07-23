@@ -86,6 +86,6 @@ fn test_null_handling() {
     }
 
     let json = r#"{"val": null}"#;
-    let ok = from_str::<OptionalStruct>(json)?;
+    let ok = from_str::<OptionalStruct>(json).unwrap();
     assert_eq!(ok.val, None);
 }

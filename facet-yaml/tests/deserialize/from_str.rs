@@ -14,7 +14,7 @@ fn test_deserialize_person() {
             age: 30
         "#;
 
-    let person: Person = facet_yaml::from_str(yaml)?;
+    let person: Person = facet_yaml::from_str(yaml).unwrap();
     assert_eq!(
         person,
         Person {

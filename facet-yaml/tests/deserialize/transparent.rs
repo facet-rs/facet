@@ -9,7 +9,7 @@ struct MyString(String);
 fn test_transparent_string() {
     let yaml = r#""Hello, world!""#;
 
-    let my_string: MyString = facet_yaml::from_str(yaml)?;
+    let my_string: MyString = facet_yaml::from_str(yaml).unwrap();
     assert_eq!(my_string.0, "Hello, world!".to_string());
 }
 
@@ -21,7 +21,7 @@ fn test_transparent_string_vec() {
         - "!"
     "#;
 
-    let strings: Vec<MyString> = facet_yaml::from_str(yaml)?;
+    let strings: Vec<MyString> = facet_yaml::from_str(yaml).unwrap();
     assert_eq!(
         strings,
         vec![
@@ -47,7 +47,7 @@ fn test_transparent_in_struct() {
           - "notification"
     "#;
 
-    let message: Message = facet_yaml::from_str(yaml)?;
+    let message: Message = facet_yaml::from_str(yaml).unwrap();
     assert_eq!(
         message,
         Message {

@@ -14,7 +14,7 @@ fn json_read_bytes() {
 
     let json = r#"{"data":[1, 2, 3, 4, 255]}"#;
 
-    let s: FooBar = from_str(json)?;
+    let s: FooBar = from_str(json).unwrap();
     assert_eq!(
         s,
         FooBar {
@@ -32,7 +32,7 @@ fn json_read_bytes_mut() {
 
     let json = r#"{"data":[1, 2, 3, 4, 255]}"#;
 
-    let s: FooBar = from_str(json)?;
+    let s: FooBar = from_str(json).unwrap();
     assert_eq!(
         s,
         FooBar {
@@ -95,7 +95,7 @@ fn json_read_vec_u8() {
 
     let json = r#"{"data":[0, 128, 255, 42]}"#;
 
-    let s: FooBar = from_str(json)?;
+    let s: FooBar = from_str(json).unwrap();
     assert_eq!(
         s,
         FooBar {

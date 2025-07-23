@@ -9,7 +9,7 @@ fn test_deserialize_string_to_string_map() {
         key3: value3
     "#;
 
-    let map: HashMap<String, String> = facet_yaml::from_str(yaml)?;
+    let map: HashMap<String, String> = facet_yaml::from_str(yaml).unwrap();
     assert_eq!(map.len(), 3);
     assert_eq!(map.get("key1"), Some(&"value1".to_string()));
     assert_eq!(map.get("key2"), Some(&"value2".to_string()));
@@ -24,7 +24,7 @@ fn test_deserialize_string_to_u64_map() {
         three: 3
     "#;
 
-    let map: HashMap<String, u64> = facet_yaml::from_str(yaml)?;
+    let map: HashMap<String, u64> = facet_yaml::from_str(yaml).unwrap();
     assert_eq!(map.len(), 3);
     assert_eq!(map.get("one"), Some(&1));
     assert_eq!(map.get("two"), Some(&2));
@@ -35,7 +35,7 @@ fn test_deserialize_string_to_u64_map() {
 fn test_deserialize_empty_map() {
     let yaml = r#"{}"#;
 
-    let map: HashMap<String, String> = facet_yaml::from_str(yaml)?;
+    let map: HashMap<String, String> = facet_yaml::from_str(yaml).unwrap();
     assert_eq!(map.len(), 0);
 }
 
@@ -50,7 +50,7 @@ fn test_deserialize_nested_maps() {
             inner4: value4
     "#;
 
-    let map: HashMap<String, HashMap<String, String>> = facet_yaml::from_str(yaml)?;
+    let map: HashMap<String, HashMap<String, String>> = facet_yaml::from_str(yaml).unwrap();
     assert_eq!(map.len(), 2);
 
     let inner1 = map.get("outer1").expect("outer1 key not found");

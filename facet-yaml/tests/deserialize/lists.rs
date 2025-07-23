@@ -18,7 +18,7 @@ fn test_deserialize_primitive_list() {
         - 5
     "#;
 
-    let numbers: Vec<u64> = facet_yaml::from_str(yaml)?;
+    let numbers: Vec<u64> = facet_yaml::from_str(yaml).unwrap();
     assert_eq!(numbers, vec![1, 2, 3, 4, 5]);
 }
 
@@ -33,7 +33,7 @@ fn test_deserialize_struct_list() {
           age: 35
     "#;
 
-    let people: Vec<Person> = facet_yaml::from_str(yaml)?;
+    let people: Vec<Person> = facet_yaml::from_str(yaml).unwrap();
     assert_eq!(
         people,
         vec![
@@ -57,7 +57,7 @@ fn test_deserialize_struct_list() {
 fn test_deserialize_empty_list() {
     let yaml = r#"[]"#;
 
-    let empty_list: Vec<u64> = facet_yaml::from_str(yaml)?;
+    let empty_list: Vec<u64> = facet_yaml::from_str(yaml).unwrap();
     assert_eq!(empty_list, Vec::<u64>::new());
 }
 
@@ -72,7 +72,7 @@ fn test_deserialize_nested_lists() {
           - 4
     "#;
 
-    let nested: Vec<Vec<u64>> = facet_yaml::from_str(yaml)?;
+    let nested: Vec<Vec<u64>> = facet_yaml::from_str(yaml).unwrap();
     assert_eq!(nested, vec![vec![1, 2], vec![3, 4]]);
 }
 
@@ -80,7 +80,7 @@ fn test_deserialize_nested_lists() {
 fn test_deserialize_arc_slice_i32() {
     let yaml = r#"[1, 2, 3, 4, 5]"#;
 
-    let arc_slice: Arc<[i32]> = facet_yaml::from_str(yaml)?;
+    let arc_slice: Arc<[i32]> = facet_yaml::from_str(yaml).unwrap();
     assert_eq!(arc_slice.as_ref(), &[1, 2, 3, 4, 5]);
 }
 
@@ -88,7 +88,7 @@ fn test_deserialize_arc_slice_i32() {
 fn test_deserialize_arc_slice_string() {
     let yaml = r#"["hello", "world", "test"]"#;
 
-    let arc_slice: Arc<[String]> = facet_yaml::from_str(yaml)?;
+    let arc_slice: Arc<[String]> = facet_yaml::from_str(yaml).unwrap();
     assert_eq!(arc_slice.len(), 3);
     assert_eq!(&arc_slice[0], "hello");
     assert_eq!(&arc_slice[1], "world");
@@ -99,7 +99,7 @@ fn test_deserialize_arc_slice_string() {
 fn test_deserialize_arc_slice_empty() {
     let yaml = r#"[]"#;
 
-    let arc_slice: Arc<[i32]> = facet_yaml::from_str(yaml)?;
+    let arc_slice: Arc<[i32]> = facet_yaml::from_str(yaml).unwrap();
     assert!(arc_slice.is_empty());
 }
 
@@ -112,7 +112,7 @@ fn test_deserialize_arc_slice_struct() {
           age: 25
     "#;
 
-    let people: Arc<[Person]> = facet_yaml::from_str(yaml)?;
+    let people: Arc<[Person]> = facet_yaml::from_str(yaml).unwrap();
     assert_eq!(people.len(), 2);
     assert_eq!(people[0].name, "Alice");
     assert_eq!(people[0].age, 30);

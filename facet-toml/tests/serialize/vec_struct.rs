@@ -29,7 +29,7 @@ fn test_serialize_vec_struct() {
         ],
     };
 
-    let toml = facet_toml::to_string(&root)?;
+    let toml = facet_toml::to_string(&root).unwrap();
 
     // This is what we get currently (inline array)
     println!("Current output:\n{}", toml);

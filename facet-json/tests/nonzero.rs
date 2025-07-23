@@ -11,7 +11,7 @@ fn read_nonzero_one() {
         foo: NonZero<u64>,
     }
     let json = r#"{"foo": 1}"#;
-    let s: Foo = from_str(json)?;
+    let s: Foo = from_str(json).unwrap();
     assert_eq!(s.foo, { const { NonZero::new(1).unwrap() } });
 }
 
