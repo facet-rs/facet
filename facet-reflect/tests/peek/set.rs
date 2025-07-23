@@ -9,7 +9,7 @@ fn test_peek_set_basics() {
     source.insert("b");
 
     let peek_value = Peek::new(&source);
-    let peek_set = peek_value.into_set()?;
+    let peek_set = peek_value.into_set().unwrap();
 
     assert_eq!(peek_set.len(), 2);
     assert!(!peek_set.is_empty());
@@ -22,7 +22,7 @@ fn test_peek_set_iteration() {
     source.insert("b");
 
     let peek_value = Peek::new(&source);
-    let peek_set = peek_value.into_set()?;
+    let peek_set = peek_value.into_set().unwrap();
     let mut entries: Vec<_> = peek_set.iter().map(|v| *v.get::<&str>().unwrap()).collect();
     entries.sort();
 

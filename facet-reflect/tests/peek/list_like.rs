@@ -8,7 +8,7 @@ fn peek_list_like_list() {
     let peek_value = Peek::new(&test_list);
 
     // Convert to list and check we can convert to PeekListLike
-    let peek_list = peek_value.into_list_like()?;
+    let peek_list = peek_value.into_list_like().unwrap();
 
     // Test length
     assert_eq!(peek_list.len(), 5);
@@ -19,13 +19,13 @@ fn peek_list_like_list() {
     let last = peek_list.get(4).unwrap();
 
     // Test element values
-    let first_value = *first.get::<i32>()?;
+    let first_value = *first.get::<i32>().unwrap();
     assert_eq!(first_value, 1);
 
-    let third_value = *third.get::<i32>()?;
+    let third_value = *third.get::<i32>().unwrap();
     assert_eq!(third_value, 3);
 
-    let last_value = *last.get::<i32>()?;
+    let last_value = *last.get::<i32>().unwrap();
     assert_eq!(last_value, 5);
 
     // Test out of bounds
@@ -39,7 +39,7 @@ fn peek_list_like_array() {
     let peek_value = Peek::new(&test_list);
 
     // Convert to list and check we can convert to PeekListLike
-    let peek_list = peek_value.into_list_like()?;
+    let peek_list = peek_value.into_list_like().unwrap();
 
     // Test length
     assert_eq!(peek_list.len(), 5);
@@ -50,13 +50,13 @@ fn peek_list_like_array() {
     let last = peek_list.get(4).unwrap();
 
     // Test element values
-    let first_value = *first.get::<i32>()?;
+    let first_value = *first.get::<i32>().unwrap();
     assert_eq!(first_value, 1);
 
-    let third_value = *third.get::<i32>()?;
+    let third_value = *third.get::<i32>().unwrap();
     assert_eq!(third_value, 3);
 
-    let last_value = *last.get::<i32>()?;
+    let last_value = *last.get::<i32>().unwrap();
     assert_eq!(last_value, 5);
 
     // Test out of bounds
@@ -70,7 +70,7 @@ fn peek_list_like_slice() {
     let peek_value = Peek::new(&test_list);
 
     // Convert to list and check we can convert to PeekListLike
-    let peek_list = peek_value.into_list_like()?;
+    let peek_list = peek_value.into_list_like().unwrap();
 
     // Test length
     assert_eq!(peek_list.len(), 5);
@@ -81,13 +81,13 @@ fn peek_list_like_slice() {
     let last = peek_list.get(4).unwrap();
 
     // Test element values
-    let first_value = *first.get::<i32>()?;
+    let first_value = *first.get::<i32>().unwrap();
     assert_eq!(first_value, 1);
 
-    let third_value = *third.get::<i32>()?;
+    let third_value = *third.get::<i32>().unwrap();
     assert_eq!(third_value, 3);
 
-    let last_value = *last.get::<i32>()?;
+    let last_value = *last.get::<i32>().unwrap();
     assert_eq!(last_value, 5);
 
     // Test out of bounds

@@ -176,7 +176,6 @@ dependencies = [
  "facet-macros",
  "facet-reflect",
  "facet-testhelpers",
- "ordered-float",
  "owo-colors",
  "static_assertions",
 ]

@@ -18,19 +18,19 @@ struct Inner {
 
 #[test]
 fn wip_nested() {
-    let mut partial = Partial::alloc::<Outer>()?;
-    partial.begin_field("name")?;
-    partial.set(String::from("Hello, world!"))?;
-    partial.end()?;
-    partial.begin_field("inner")?;
-    partial.begin_field("x")?;
-    partial.set(42)?;
-    partial.end()?;
-    partial.begin_field("b")?;
-    partial.set(43)?;
-    partial.end()?;
-    partial.end()?;
-    let v = *partial.build()?;
+    let mut partial = Partial::alloc::<Outer>().unwrap();
+    partial.begin_field("name").unwrap();
+    partial.set(String::from("Hello, world!")).unwrap();
+    partial.end().unwrap();
+    partial.begin_field("inner").unwrap();
+    partial.begin_field("x").unwrap();
+    partial.set(42).unwrap();
+    partial.end().unwrap();
+    partial.begin_field("b").unwrap();
+    partial.set(43).unwrap();
+    partial.end().unwrap();
+    partial.end().unwrap();
+    let v = *partial.build().unwrap();
 
     assert_eq!(
         v,
@@ -51,14 +51,14 @@ fn readme_sample() {
         bar: String,
     }
 
-    let mut partial = Partial::alloc::<FooBar>()?;
-    partial.begin_field("foo")?;
-    partial.set(42u64)?;
-    partial.end()?;
-    partial.begin_field("bar")?;
-    partial.set(String::from("Hello, World!"))?;
-    partial.end()?;
-    let foo_bar = *partial.build()?;
+    let mut partial = Partial::alloc::<FooBar>().unwrap();
+    partial.begin_field("foo").unwrap();
+    partial.set(42u64).unwrap();
+    partial.end().unwrap();
+    partial.begin_field("bar").unwrap();
+    partial.set(String::from("Hello, World!")).unwrap();
+    partial.end().unwrap();
+    let foo_bar = *partial.build().unwrap();
 
     println!("{}", foo_bar.bar);
 }
@@ -77,15 +77,15 @@ enum SimpleEnum {
 #[test]
 fn wip_unit_enum() {
     // Test unit variant A
-    let mut partial = Partial::alloc::<SimpleEnum>()?;
-    partial.select_variant_named("A")?;
-    let a = *partial.build()?;
+    let mut partial = Partial::alloc::<SimpleEnum>().unwrap();
+    partial.select_variant_named("A").unwrap();
+    let a = *partial.build().unwrap();
     assert_eq!(a, SimpleEnum::A);
 
     // Test unit variant B
-    let mut partial = Partial::alloc::<SimpleEnum>()?;
-    partial.select_variant(1)?; // B is at index 1
-    let b = *partial.build()?;
+    let mut partial = Partial::alloc::<SimpleEnum>().unwrap();
+    partial.select_variant(1).unwrap(); // B is at index 1
+    let b = *partial.build().unwrap();
     assert_eq!(b, SimpleEnum::B);
 }
 
@@ -101,42 +101,42 @@ enum EnumWithData {
 #[test]
 fn wip_enum_with_data() {
     // Test empty variant
-    let mut partial = Partial::alloc::<EnumWithData>()?;
-    partial.select_variant_named("Empty")?;
-    let empty = *partial.build()?;
+    let mut partial = Partial::alloc::<EnumWithData>().unwrap();
+    partial.select_variant_named("Empty").unwrap();
+    let empty = *partial.build().unwrap();
     assert_eq!(empty, EnumWithData::Empty);
 
     // Test single-field tuple variant
-    let mut partial = Partial::alloc::<EnumWithData>()?;
-    partial.select_variant_named("Single")?;
-    partial.begin_nth_enum_field(0)?; // Access the first field
-    partial.set(42)?;
-    partial.end()?;
-    let single = *partial.build()?;
+    let mut partial = Partial::alloc::<EnumWithData>().unwrap();
+    partial.select_variant_named("Single").unwrap();
+    partial.begin_nth_enum_field(0).unwrap(); // Access the first field
+    partial.set(42).unwrap();
+    partial.end().unwrap();
+    let single = *partial.build().unwrap();
     assert_eq!(single, EnumWithData::Single(42));
 
     // Test multi-field tuple variant
-    let mut partial = Partial::alloc::<EnumWithData>()?;
-    partial.select_variant_named("Tuple")?;
-    partial.begin_nth_enum_field(0)?;
-    partial.set(42)?;
-    partial.end()?;
-    partial.begin_nth_enum_field(1)?;
-    partial.set(String::from("Hello"))?;
-    partial.end()?;
-    let tuple = *partial.build()?;
+    let mut partial = Partial::alloc::<EnumWithData>().unwrap();
+    partial.select_variant_named("Tuple").unwrap();
+    partial.begin_nth_enum_field(0).unwrap();
+    partial.set(42).unwrap();
+    partial.end().unwrap();
+    partial.begin_nth_enum_field(1).unwrap();
+    partial.set(String::from("Hello")).unwrap();
+    partial.end().unwrap();
+    let tuple = *partial.build().unwrap();
     assert_eq!(tuple, EnumWithData::Tuple(42, String::from("Hello")));
 
     // Test struct variant
-    let mut partial = Partial::alloc::<EnumWithData>()?;
-    partial.select_variant_named("Struct")?;
-    partial.begin_field("x")?;
-    partial.set(42)?;
-    partial.end()?;
-    partial.begin_field("y")?;
-    partial.set(String::from("World"))?;
-    partial.end()?;
-    let struct_variant = *partial.build()?;
+    let mut partial = Partial::alloc::<EnumWithData>().unwrap();
+    partial.select_variant_named("Struct").unwrap();
+    partial.begin_field("x").unwrap();
+    partial.set(42).unwrap();
+    partial.end().unwrap();
+    partial.begin_field("y").unwrap();
+    partial.set(String::from("World")).unwrap();
+    partial.end().unwrap();
+    let struct_variant = *partial.build().unwrap();
     assert_eq!(
         struct_variant,
         EnumWithData::Struct {
@@ -158,42 +158,42 @@ enum EnumWithDataReprC {
 #[test]
 fn wip_enum_with_data_repr_c() {
     // Test empty variant
-    let mut partial = Partial::alloc::<EnumWithDataReprC>()?;
-    partial.select_variant_named("Empty")?;
-    let empty = *partial.build()?;
+    let mut partial = Partial::alloc::<EnumWithDataReprC>().unwrap();
+    partial.select_variant_named("Empty").unwrap();
+    let empty = *partial.build().unwrap();
     assert_eq!(empty, EnumWithDataReprC::Empty);
 
     // Test single-field tuple variant
-    let mut partial = Partial::alloc::<EnumWithDataReprC>()?;
-    partial.select_variant_named("Single")?;
-    partial.begin_nth_enum_field(0)?; // Access the first field
-    partial.set(42)?;
-    partial.end()?;
-    let single = *partial.build()?;
+    let mut partial = Partial::alloc::<EnumWithDataReprC>().unwrap();
+    partial.select_variant_named("Single").unwrap();
+    partial.begin_nth_enum_field(0).unwrap(); // Access the first field
+    partial.set(42).unwrap();
+    partial.end().unwrap();
+    let single = *partial.build().unwrap();
     assert_eq!(single, EnumWithDataReprC::Single(42));
 
     // Test multi-field tuple variant
-    let mut partial = Partial::alloc::<EnumWithDataReprC>()?;
-    partial.select_variant_named("Tuple")?;
-    partial.begin_nth_enum_field(0)?;
-    partial.set(42)?;
-    partial.end()?;
-    partial.begin_nth_enum_field(1)?;
-    partial.set(String::from("Hello"))?;
-    partial.end()?;
-    let tuple = *partial.build()?;
+    let mut partial = Partial::alloc::<EnumWithDataReprC>().unwrap();
+    partial.select_variant_named("Tuple").unwrap();
+    partial.begin_nth_enum_field(0).unwrap();
+    partial.set(42).unwrap();
+    partial.end().unwrap();
+    partial.begin_nth_enum_field(1).unwrap();
+    partial.set(String::from("Hello")).unwrap();
+    partial.end().unwrap();
+    let tuple = *partial.build().unwrap();
     assert_eq!(tuple, EnumWithDataReprC::Tuple(42, String::from("Hello")));
 
     // Test struct variant
-    let mut partial = Partial::alloc::<EnumWithDataReprC>()?;
-    partial.select_variant_named("Struct")?;
-    partial.begin_field("x")?;
-    partial.set(42)?;
-    partial.end()?;
-    partial.begin_field("y")?;
-    partial.set(String::from("World"))?;
-    partial.end()?;
-    let struct_variant = *partial.build()?;
+    let mut partial = Partial::alloc::<EnumWithDataReprC>().unwrap();
+    partial.select_variant_named("Struct").unwrap();
+    partial.begin_field("x").unwrap();
+    partial.set(42).unwrap();
+    partial.end().unwrap();
+    partial.begin_field("y").unwrap();
+    partial.set(String::from("World")).unwrap();
+    partial.end().unwrap();
+    let struct_variant = *partial.build().unwrap();
     assert_eq!(
         struct_variant,
         EnumWithDataReprC::Struct {
@@ -215,45 +215,45 @@ enum EnumWithDataReprCI16 {
 #[test]
 fn wip_enum_with_data_repr_c_i16() {
     // Test empty variant
-    let mut partial = Partial::alloc::<EnumWithDataReprCI16>()?;
-    partial.select_variant_named("Empty")?;
-    let empty = *partial.build()?;
+    let mut partial = Partial::alloc::<EnumWithDataReprCI16>().unwrap();
+    partial.select_variant_named("Empty").unwrap();
+    let empty = *partial.build().unwrap();
     assert_eq!(empty, EnumWithDataReprCI16::Empty);
 
     // Test single-field tuple variant
-    let mut partial = Partial::alloc::<EnumWithDataReprCI16>()?;
-    partial.select_variant_named("Single")?;
-    partial.begin_nth_enum_field(0)?; // Access the first field
-    partial.set(42)?;
-    partial.end()?;
-    let single = *partial.build()?;
+    let mut partial = Partial::alloc::<EnumWithDataReprCI16>().unwrap();
+    partial.select_variant_named("Single").unwrap();
+    partial.begin_nth_enum_field(0).unwrap(); // Access the first field
+    partial.set(42).unwrap();
+    partial.end().unwrap();
+    let single = *partial.build().unwrap();
     assert_eq!(single, EnumWithDataReprCI16::Single(42));
 
     // Test multi-field tuple variant
-    let mut partial = Partial::alloc::<EnumWithDataReprCI16>()?;
-    partial.select_variant_named("Tuple")?;
-    partial.begin_nth_enum_field(0)?;
-    partial.set(42)?;
-    partial.end()?;
-    partial.begin_nth_enum_field(1)?;
-    partial.set(String::from("Hello"))?;
-    partial.end()?;
-    let tuple = *partial.build()?;
+    let mut partial = Partial::alloc::<EnumWithDataReprCI16>().unwrap();
+    partial.select_variant_named("Tuple").unwrap();
+    partial.begin_nth_enum_field(0).unwrap();
+    partial.set(42).unwrap();
+    partial.end().unwrap();
+    partial.begin_nth_enum_field(1).unwrap();
+    partial.set(String::from("Hello")).unwrap();
+    partial.end().unwrap();
+    let tuple = *partial.build().unwrap();
     assert_eq!(
         tuple,
         EnumWithDataReprCI16::Tuple(42, String::from("Hello"))
     );
 
     // Test struct variant
-    let mut partial = Partial::alloc::<EnumWithDataReprCI16>()?;
-    partial.select_variant_named("Struct")?;
-    partial.begin_field("x")?;
-    partial.set(42)?;
-    partial.end()?;
-    partial.begin_field("y")?;
-    partial.set(String::from("World"))?;
-    partial.end()?;
-    let struct_variant = *partial.build()?;
+    let mut partial = Partial::alloc::<EnumWithDataReprCI16>().unwrap();
+    partial.select_variant_named("Struct").unwrap();
+    partial.begin_field("x").unwrap();
+    partial.set(42).unwrap();
+    partial.end().unwrap();
+    partial.begin_field("y").unwrap();
+    partial.set(String::from("World")).unwrap();
+    partial.end().unwrap();
+    let struct_variant = *partial.build().unwrap();
     assert_eq!(
         struct_variant,
         EnumWithDataReprCI16::Struct {
@@ -331,37 +331,37 @@ fn test_enum_reprs() {
         Ok(v)
     }
 
-    let v1: ReprU8 = build()?;
+    let v1: ReprU8 = build().unwrap();
     assert_eq!(v1, ReprU8::A(1, 2));
 
-    let v2: ReprCU8 = build()?;
+    let v2: ReprCU8 = build().unwrap();
     assert_eq!(v2, ReprCU8::A(1, 2));
 }
 
 #[test]
 fn wip_enum_error_cases() {
     // Test error: trying to access a field without selecting a variant
-    let mut partial = Partial::alloc::<EnumWithData>()?;
+    let mut partial = Partial::alloc::<EnumWithData>().unwrap();
     let result = partial.begin_field("x");
     assert!(result.is_err());
 
     // Test error: trying to select a non-existent variant
-    let mut partial = Partial::alloc::<EnumWithData>()?;
+    let mut partial = Partial::alloc::<EnumWithData>().unwrap();
     let result = partial.select_variant_named("NonExistent");
     assert!(result.is_err());
 
     // Test error: trying to access a non-existent field in a variant
-    let mut partial = Partial::alloc::<EnumWithData>()?;
-    partial.select_variant_named("Struct")?;
+    let mut partial = Partial::alloc::<EnumWithData>().unwrap();
+    partial.select_variant_named("Struct").unwrap();
     let result = partial.begin_field("non_existent");
     assert!(result.is_err());
 
     // Test error: trying to build without initializing all fields
-    let mut partial = Partial::alloc::<EnumWithData>()?;
-    partial.select_variant_named("Struct")?;
-    partial.begin_field("x")?;
-    partial.set(42)?;
-    partial.end()?;
+    let mut partial = Partial::alloc::<EnumWithData>().unwrap();
+    partial.select_variant_named("Struct").unwrap();
+    partial.begin_field("x").unwrap();
+    partial.set(42).unwrap();
+    partial.end().unwrap();
     let result = partial.build();
     assert!(result.is_err());
 }
@@ -372,19 +372,19 @@ fn wip_enum_error_cases() {
 #[test]
 fn wip_switch_enum_variant() {
     // Test switching variants
-    let mut partial = Partial::alloc::<EnumWithData>()?;
-    partial.select_variant_named("Single")?;
-    partial.begin_nth_enum_field(0)?;
-    partial.set(42)?;
-    partial.end()?;
-    partial.select_variant_named("Tuple")?; // Switch to another variant
-    partial.begin_nth_enum_field(0)?;
-    partial.set(43)?;
-    partial.end()?;
-    partial.begin_nth_enum_field(1)?;
-    partial.set(String::from("Changed"))?;
-    partial.end()?;
-    let result = *partial.build()?;
+    let mut partial = Partial::alloc::<EnumWithData>().unwrap();
+    partial.select_variant_named("Single").unwrap();
+    partial.begin_nth_enum_field(0).unwrap();
+    partial.set(42).unwrap();
+    partial.end().unwrap();
+    partial.select_variant_named("Tuple").unwrap(); // Switch to another variant
+    partial.begin_nth_enum_field(0).unwrap();
+    partial.set(43).unwrap();
+    partial.end().unwrap();
+    partial.begin_nth_enum_field(1).unwrap();
+    partial.set(String::from("Changed")).unwrap();
+    partial.end().unwrap();
+    let result = *partial.build().unwrap();
 
     assert_eq!(result, EnumWithData::Tuple(43, String::from("Changed")));
 }
@@ -394,9 +394,9 @@ fn wip_switch_enum_variant() {
 #[test]
 fn wip_empty_list() {
     // Create an empty list by setting an empty vec
-    let mut partial = Partial::alloc::<Vec<i32>>()?;
-    partial.set(Vec::<i32>::new())?;
-    let empty_list = *partial.build()?;
+    let mut partial = Partial::alloc::<Vec<i32>>().unwrap();
+    partial.set(Vec::<i32>::new()).unwrap();
+    let empty_list = *partial.build().unwrap();
 
     assert_eq!(empty_list, Vec::<i32>::new());
     assert_eq!(empty_list.len(), 0);
@@ -405,18 +405,18 @@ fn wip_empty_list() {
 #[test]
 fn wip_list_push() {
     // Build a vector by pushing elements one by one
-    let mut partial = Partial::alloc::<Vec<i32>>()?;
-    partial.begin_list()?;
-    partial.begin_list_item()?;
-    partial.set(10)?;
-    partial.end()?;
-    partial.begin_list_item()?;
-    partial.set(20)?;
-    partial.end()?;
-    partial.begin_list_item()?;
-    partial.set(30)?;
-    partial.end()?;
-    let list = *partial.build()?;
+    let mut partial = Partial::alloc::<Vec<i32>>().unwrap();
+    partial.begin_list().unwrap();
+    partial.begin_list_item().unwrap();
+    partial.set(10).unwrap();
+    partial.end().unwrap();
+    partial.begin_list_item().unwrap();
+    partial.set(20).unwrap();
+    partial.end().unwrap();
+    partial.begin_list_item().unwrap();
+    partial.set(30).unwrap();
+    partial.end().unwrap();
+    let list = *partial.build().unwrap();
 
     assert_eq!(list, vec![10, 20, 30]);
     assert_eq!(list.len(), 3);
@@ -425,15 +425,15 @@ fn wip_list_push() {
 #[test]
 fn wip_list_string() {
     // Build a vector of strings
-    let mut partial = Partial::alloc::<Vec<String>>()?;
-    partial.begin_list()?;
-    partial.begin_list_item()?;
-    partial.set("hello".to_string())?;
-    partial.end()?;
-    partial.begin_list_item()?;
-    partial.set("world".to_string())?;
-    partial.end()?;
-    let list = *partial.build()?;
+    let mut partial = Partial::alloc::<Vec<String>>().unwrap();
+    partial.begin_list().unwrap();
+    partial.begin_list_item().unwrap();
+    partial.set("hello".to_string()).unwrap();
+    partial.end().unwrap();
+    partial.begin_list_item().unwrap();
+    partial.set("world".to_string()).unwrap();
+    partial.end().unwrap();
+    let list = *partial.build().unwrap();
 
     assert_eq!(list, vec!["hello".to_string(), "world".to_string()]);
 }
@@ -447,23 +447,23 @@ struct WithList {
 #[test]
 fn wip_struct_with_list() {
     // Create a struct that contains a list
-    let mut partial = Partial::alloc::<WithList>()?;
-    partial.begin_field("name")?;
-    partial.set("test list".to_string())?;
-    partial.end()?;
-    partial.begin_field("values")?;
-    partial.begin_list()?;
-    partial.begin_list_item()?;
-    partial.set(42)?;
-    partial.end()?;
-    partial.begin_list_item()?;
-    partial.set(43)?;
-    partial.end()?;
-    partial.begin_list_item()?;
-    partial.set(44)?;
-    partial.end()?;
-    partial.end()?;
-    let with_list = *partial.build()?;
+    let mut partial = Partial::alloc::<WithList>().unwrap();
+    partial.begin_field("name").unwrap();
+    partial.set("test list".to_string()).unwrap();
+    partial.end().unwrap();
+    partial.begin_field("values").unwrap();
+    partial.begin_list().unwrap();
+    partial.begin_list_item().unwrap();
+    partial.set(42).unwrap();
+    partial.end().unwrap();
+    partial.begin_list_item().unwrap();
+    partial.set(43).unwrap();
+    partial.end().unwrap();
+    partial.begin_list_item().unwrap();
+    partial.set(44).unwrap();
+    partial.end().unwrap();
+    partial.end().unwrap();
+    let with_list = *partial.build().unwrap();
 
     assert_eq!(
         with_list,
@@ -477,17 +477,17 @@ fn wip_struct_with_list() {
 #[test]
 fn wip_list_error_cases() {
     // Test error: trying to begin_list_item on a non-list type
-    let mut partial = Partial::alloc::<i32>()?;
+    let mut partial = Partial::alloc::<i32>().unwrap();
     let result = partial.begin_list_item();
     assert!(result.is_err());
 
     // Test error: trying to begin_list on non-list type
-    let mut partial = Partial::alloc::<String>()?;
+    let mut partial = Partial::alloc::<String>().unwrap();
     let result = partial.begin_list();
     assert!(result.is_err());
 
     // Test error: trying to use list API on non-list type
-    let mut partial = Partial::alloc::<i32>()?;
+    let mut partial = Partial::alloc::<i32>().unwrap();
     let result = partial.begin_list();
     assert!(result.is_err());
 }
@@ -505,11 +505,13 @@ fn wip_opaque_arc() {
         inner: Handle,
     }
 
-    let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_field("inner")?;
-    partial.set(Handle(std::sync::Arc::new(NotDerivingFacet(35))))?;
-    partial.end()?;
-    let result = *partial.build()?;
+    let mut partial = Partial::alloc::<Container>().unwrap();
+    partial.begin_field("inner").unwrap();
+    partial
+        .set(Handle(std::sync::Arc::new(NotDerivingFacet(35))))
+        .unwrap();
+    partial.end().unwrap();
+    let result = *partial.build().unwrap();
 
     assert_eq!(*result.inner.0, NotDerivingFacet(35));
 }
@@ -517,18 +519,18 @@ fn wip_opaque_arc() {
 #[test]
 fn wip_put_option_explicit_some() {
     // Test explicit Some
-    let mut partial = Partial::alloc::<Option<u64>>()?;
-    partial.set(Some(42u64))?;
-    let result = *partial.build()?;
+    let mut partial = Partial::alloc::<Option<u64>>().unwrap();
+    partial.set(Some(42u64)).unwrap();
+    let result = *partial.build().unwrap();
 
     assert_eq!(result, Some(42));
 }
 
 #[test]
 fn wip_put_option_explicit_none() {
-    let mut partial = Partial::alloc::<Option<u64>>()?;
-    partial.set(None::<u64>)?;
-    let result = *partial.build()?;
+    let mut partial = Partial::alloc::<Option<u64>>().unwrap();
+    partial.set(None::<u64>).unwrap();
+    let result = *partial.build().unwrap();
 
     assert_eq!(result, None);
 }
@@ -536,9 +538,9 @@ fn wip_put_option_explicit_none() {
 #[test]
 fn wip_put_option_implicit_some() {
     // Note: implicit conversion removed in new API, must use explicit Some
-    let mut partial = Partial::alloc::<Option<u64>>()?;
-    partial.set(Some(42u64))?;
-    let result = *partial.build()?;
+    let mut partial = Partial::alloc::<Option<u64>>().unwrap();
+    partial.set(Some(42u64)).unwrap();
+    let result = *partial.build().unwrap();
 
     assert_eq!(result, Some(42));
 }
@@ -546,9 +548,9 @@ fn wip_put_option_implicit_some() {
 #[test]
 fn wip_parse_option() {
     // parse() replaced with set() with parsed value
-    let mut partial = Partial::alloc::<Option<f64>>()?;
-    partial.set(Some(8.13))?;
-    let result = *partial.build()?;
+    let mut partial = Partial::alloc::<Option<f64>>().unwrap();
+    partial.set(Some(8.13)).unwrap();
+    let result = *partial.build().unwrap();
 
     assert_eq!(result, Some(8.13));
 }
@@ -565,16 +567,16 @@ fn wip_fn_ptr() {
         1113
     }
 
-    let mut partial = Partial::alloc::<Foo>()?;
-    partial.begin_field("foo")?;
-    partial.set(f as fn() -> i32)?;
-    partial.end()?;
-    let result = *partial.build()?;
+    let mut partial = Partial::alloc::<Foo>().unwrap();
+    partial.begin_field("foo").unwrap();
+    partial.set(f as fn() -> i32).unwrap();
+    partial.end().unwrap();
+    let result = *partial.build().unwrap();
 
     assert_eq!((result.foo)(), 1113);
 
-    let mut partial = Partial::alloc::<Foo>()?;
-    partial.begin_field("foo")?;
+    let mut partial = Partial::alloc::<Foo>().unwrap();
+    partial.begin_field("foo").unwrap();
     assert!(partial.set((|| 0.0) as fn() -> f32).is_err());
 }
 
@@ -653,18 +655,18 @@ fn clone_into() {
 
 #[test]
 fn wip_build_tuple_through_listlike_api_exact() {
-    let mut partial = Partial::alloc::<(f64,)>()?;
-    partial.begin_nth_field(0)?;
-    partial.set(5.4321)?;
-    partial.end()?;
-    let tuple = *partial.build()?;
+    let mut partial = Partial::alloc::<(f64,)>().unwrap();
+    partial.begin_nth_field(0).unwrap();
+    partial.set(5.4321).unwrap();
+    partial.end().unwrap();
+    let tuple = *partial.build().unwrap();
     assert_eq!(tuple.0, 5.4321);
 }
 
 #[test]
 fn wip_build_option_none_through_default() {
-    let mut partial = Partial::alloc::<Option<u32>>()?;
-    partial.set_default()?;
-    let option = *partial.build()?;
+    let mut partial = Partial::alloc::<Option<u32>>().unwrap();
+    partial.set_default().unwrap();
+    let option = *partial.build().unwrap();
     assert_eq!(option, None);
 }
