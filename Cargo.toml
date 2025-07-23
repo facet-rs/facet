@@ -16,7 +16,7 @@ members = [
     "facet-testhelpers",
     "facet-testhelpers-macros",
 
-    # utilities
+    # # utilities
     "facet-pretty",
     "facet-inspect",
     "facet-diff",
@@ -25,25 +25,25 @@ members = [
     "facet-serialize",
     "facet-deserialize",
 
-    # tier 1 formats
-    "facet-json",
-    "facet-toml",
+    # # tier 1 formats
+    # "facet-json",
+    # "facet-toml",
 
-    # tier 2 formats
-    "facet-yaml",
-    "facet-asn1",
-    "facet-csv",
-    "facet-msgpack",
-    "facet-urlencoded",
-
-    # tier 3 formats
-    "facet-xdr",
-    "facet-kdl",
-    "facet-args",
-    "facet-jsonschema",
-
-    # benchmarks
-    "facet-bench",
+    # # tier 2 formats
+    # "facet-yaml",
+    # "facet-asn1",
+    # "facet-csv",
+    # "facet-msgpack",
+    # "facet-urlencoded",
+    #
+    # # tier 3 formats
+    # "facet-xdr",
+    # "facet-kdl",
+    # "facet-args",
+    # "facet-jsonschema",
+    #
+    # # benchmarks
+    # "facet-bench",
 ]
 exclude = ["outside-workspace"]
 resolver = "3"
