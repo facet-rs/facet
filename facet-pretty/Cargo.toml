@@ -26,7 +26,6 @@ facet-reflect = { version = "0.27.16", path = "../facet-reflect" }
 [dev-dependencies]
 camino = "1.1.9"
 facet = { path = "../facet" }
-divan = { version = "3.0.1", package = "codspeed-divan-compat" }
 facet-testhelpers = { version = "0.17.5", path = "../facet-testhelpers" }
 insta = "1.43.1"
 

@@ -20,7 +20,6 @@ facet-reflect = { version = "0.27.16", path = "../facet-reflect", default-featur
 log = "0.4.27"
 
 [dev-dependencies]
-eyre = "0.6.12"
 facet = { path = "../facet" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 insta = "1.43.1"
