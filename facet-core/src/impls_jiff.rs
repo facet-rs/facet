@@ -176,20 +176,26 @@ mod tests {
 
     #[test]
     #[cfg(not(miri))] // I don't think we can read time zones from miri, the test just fails
-    fn parse_zoned() -> eyre::Result<()> {
+    fn parse_zoned() {
         use jiff::Zoned;
 
         facet_testhelpers::setup();
 
-        let target = Zoned::SHAPE.allocate()?;
+        let target = Zoned::SHAPE.allocate().unwrap();
         unsafe {
             ((Zoned::VTABLE.sized().unwrap().parse)().unwrap())(
                 "2023-12-31T18:30:00+07:00[Asia/Ho_Chi_Minh]",
                 target,
-            )?;
+            )
+            .unwrap();
         }
         let odt: Zoned = unsafe { target.assume_init().read() };
-        assert_eq!(odt, "2023-12-31T18:30:00+07:00[Asia/Ho_Chi_Minh]".parse()?);
+        assert_eq!(
+            odt,
+            "2023-12-31T18:30:00+07:00[Asia/Ho_Chi_Minh]"
+                .parse()
+                .unwrap()
+        );
 
         struct DisplayWrapper<'a>(PtrConst<'a>);
 
@@ -204,25 +210,21 @@ mod tests {
 
         // Deallocate the heap allocation to avoid memory leaks under Miri
         unsafe {
-            Zoned::SHAPE.deallocate_uninit(target)?;
+            Zoned::SHAPE.deallocate_uninit(target).unwrap();
         }
-
-        Ok(())
     }
 
     #[test]
-    fn parse_timestamp() -> eyre::Result<()> {
+    fn parse_timestamp() {
         facet_testhelpers::setup();
 
-        let target = Timestamp::SHAPE.allocate()?;
+        let target = Timestamp::SHAPE.allocate().unwrap();
         unsafe {
-            ((Timestamp::VTABLE.sized().unwrap().parse)().unwrap())(
-                "2024-06-19T15:22:45Z",
-                target,
-            )?;
+            ((Timestamp::VTABLE.sized().unwrap().parse)().unwrap())("2024-06-19T15:22:45Z", target)
+                .unwrap();
         }
         let odt: Timestamp = unsafe { target.assume_init().read() };
-        assert_eq!(odt, "2024-06-19T15:22:45Z".parse()?);
+        assert_eq!(odt, "2024-06-19T15:22:45Z".parse().unwrap());
 
         struct DisplayWrapper<'a>(PtrConst<'a>);
 
@@ -237,22 +239,21 @@ mod tests {
 
         // Deallocate the heap allocation to avoid memory leaks under Miri
         unsafe {
-            Timestamp::SHAPE.deallocate_uninit(target)?;
+            Timestamp::SHAPE.deallocate_uninit(target).unwrap();
         }
-
-        Ok(())
     }
 
     #[test]
-    fn parse_datetime() -> eyre::Result<()> {
+    fn parse_datetime() {
         facet_testhelpers::setup();
 
-        let target = DateTime::SHAPE.allocate()?;
+        let target = DateTime::SHAPE.allocate().unwrap();
         unsafe {
-            ((DateTime::VTABLE.sized().unwrap().parse)().unwrap())("2024-06-19T15:22:45", target)?;
+            ((DateTime::VTABLE.sized().unwrap().parse)().unwrap())("2024-06-19T15:22:45", target)
+                .unwrap();
         }
         let odt: DateTime = unsafe { target.assume_init().read() };
-        assert_eq!(odt, "2024-06-19T15:22:45".parse()?);
+        assert_eq!(odt, "2024-06-19T15:22:45".parse().unwrap());
 
         struct DisplayWrapper<'a>(PtrConst<'a>);
 
@@ -267,9 +268,7 @@ mod tests {
 
         // Deallocate the heap allocation to avoid memory leaks under Miri
         unsafe {
-            DateTime::SHAPE.deallocate_uninit(target)?;
+            DateTime::SHAPE.deallocate_uninit(target).unwrap();
         }
-
-        Ok(())
     }
 }

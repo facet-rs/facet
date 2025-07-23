@@ -142,15 +142,16 @@ mod tests {
     use crate::{Facet, PtrConst};
 
     #[test]
-    fn parse_offset_date_time() -> eyre::Result<()> {
+    fn parse_offset_date_time() {
         facet_testhelpers::setup();
 
-        let target = OffsetDateTime::SHAPE.allocate()?;
+        let target = OffsetDateTime::SHAPE.allocate().unwrap();
         unsafe {
             ((OffsetDateTime::VTABLE.sized().unwrap().parse)().unwrap())(
                 "2023-03-14T15:09:26Z",
                 target,
-            )?;
+            )
+            .unwrap();
         }
         let odt: OffsetDateTime = unsafe { target.assume_init().read() };
         assert_eq!(
@@ -175,9 +176,7 @@ mod tests {
 
         // Deallocate the heap allocation to avoid memory leaks under Miri
         unsafe {
-            OffsetDateTime::SHAPE.deallocate_uninit(target)?;
+            OffsetDateTime::SHAPE.deallocate_uninit(target).unwrap();
         }
-
-        Ok(())
     }
 }

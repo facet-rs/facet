@@ -123,7 +123,7 @@ mod tests {
     }
 
     #[test]
-    fn test_hashset_vtable_1_new_insert_iter_drop() -> eyre::Result<()> {
+    fn test_hashset_vtable_1_new_insert_iter_drop() {
         facet_testhelpers::setup();
 
         let hashset_shape = <HashSet<String>>::SHAPE;
@@ -133,7 +133,7 @@ mod tests {
             .expect("HashSet<T> should have a set definition");
 
         // Allocate memory for the HashSet
-        let hashset_uninit_ptr = hashset_shape.allocate()?;
+        let hashset_uninit_ptr = hashset_shape.allocate().unwrap();
 
         // Create the HashSet with a capacity of 3
         let hashset_ptr =
@@ -230,8 +230,6 @@ mod tests {
         unsafe { drop_fn(hashset_ptr) };
 
         // Deallocate the memory
-        unsafe { hashset_shape.deallocate_mut(hashset_ptr)? };
-
-        Ok(())
+        unsafe { hashset_shape.deallocate_mut(hashset_ptr).unwrap() };
     }
 }

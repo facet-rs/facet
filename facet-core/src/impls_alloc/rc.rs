@@ -275,7 +275,7 @@ mod tests {
     }
 
     #[test]
-    fn test_rc_vtable_1_new_borrow_drop() -> eyre::Result<()> {
+    fn test_rc_vtable_1_new_borrow_drop() {
         facet_testhelpers::setup();
 
         let rc_shape = <Rc<String>>::SHAPE;
@@ -285,7 +285,7 @@ mod tests {
             .expect("Rc<T> should have a smart pointer definition");
 
         // Allocate memory for the Rc
-        let rc_uninit_ptr = rc_shape.allocate()?;
+        let rc_uninit_ptr = rc_shape.allocate().unwrap();
 
         // Get the function pointer for creating a new Rc from a value
         let new_into_fn = rc_def
@@ -320,13 +320,11 @@ mod tests {
 
         // Deallocate the memory
         // SAFETY: rc_ptr was allocated by rc_shape and is now dropped (but memory is still valid)
-        unsafe { rc_shape.deallocate_mut(rc_ptr)? };
-
-        Ok(())
+        unsafe { rc_shape.deallocate_mut(rc_ptr).unwrap() };
     }
 
     #[test]
-    fn test_rc_vtable_2_downgrade_upgrade_drop() -> eyre::Result<()> {
+    fn test_rc_vtable_2_downgrade_upgrade_drop() {
         facet_testhelpers::setup();
 
         let rc_shape = <Rc<String>>::SHAPE;
@@ -342,20 +340,20 @@ mod tests {
             .expect("RcWeak<T> should have a smart pointer definition");
 
         // 1. Create the first Rc (rc1)
-        let rc1_uninit_ptr = rc_shape.allocate()?;
+        let rc1_uninit_ptr = rc_shape.allocate().unwrap();
         let new_into_fn = rc_def.vtable.new_into_fn.unwrap();
         let mut value = String::from("example");
         let rc1_ptr = unsafe { new_into_fn(rc1_uninit_ptr, PtrMut::new(&raw mut value)) };
         core::mem::forget(value); // Value now owned by rc1
 
         // 2. Downgrade rc1 to create a weak pointer (weak1)
-        let weak1_uninit_ptr = weak_shape.allocate()?;
+        let weak1_uninit_ptr = weak_shape.allocate().unwrap();
         let downgrade_into_fn = rc_def.vtable.downgrade_into_fn.unwrap();
         // SAFETY: rc1_ptr points to a valid Rc, weak1_uninit_ptr is allocated for a Weak
         let weak1_ptr = unsafe { downgrade_into_fn(rc1_ptr, weak1_uninit_ptr) };
 
         // 3. Upgrade weak1 to create a second Rc (rc2)
-        let rc2_uninit_ptr = rc_shape.allocate()?;
+        let rc2_uninit_ptr = rc_shape.allocate().unwrap();
         let upgrade_into_fn = weak_def.vtable.upgrade_into_fn.unwrap();
         // SAFETY: weak1_ptr points to a valid Weak, rc2_uninit_ptr is allocated for an Rc.
         // Upgrade should succeed as rc1 still exists.
@@ -376,20 +374,18 @@ mod tests {
         unsafe {
             // Drop Rcs
             rc_drop_fn(rc1_ptr);
-            rc_shape.deallocate_mut(rc1_ptr)?;
+            rc_shape.deallocate_mut(rc1_ptr).unwrap();
             rc_drop_fn(rc2_ptr);
-            rc_shape.deallocate_mut(rc2_ptr)?;
+            rc_shape.deallocate_mut(rc2_ptr).unwrap();
 
             // Drop Weak
             weak_drop_fn(weak1_ptr);
-            weak_shape.deallocate_mut(weak1_ptr)?;
+            weak_shape.deallocate_mut(weak1_ptr).unwrap();
         }
-
-        Ok(())
     }
 
     #[test]
-    fn test_rc_vtable_3_downgrade_drop_try_upgrade() -> eyre::Result<()> {
+    fn test_rc_vtable_3_downgrade_drop_try_upgrade() {
         facet_testhelpers::setup();
 
         let rc_shape = <Rc<String>>::SHAPE;
@@ -405,14 +401,14 @@ mod tests {
             .expect("RcWeak<T> should have a smart pointer definition");
 
         // 1. Create the strong Rc (rc1)
-        let rc1_uninit_ptr = rc_shape.allocate()?;
+        let rc1_uninit_ptr = rc_shape.allocate().unwrap();
         let new_into_fn = rc_def.vtable.new_into_fn.unwrap();
         let mut value = String::from("example");
         let rc1_ptr = unsafe { new_into_fn(rc1_uninit_ptr, PtrMut::new(&raw mut value)) };
         core::mem::forget(value);
 
         // 2. Downgrade rc1 to create a weak pointer (weak1)
-        let weak1_uninit_ptr = weak_shape.allocate()?;
+        let weak1_uninit_ptr = weak_shape.allocate().unwrap();
         let downgrade_into_fn = rc_def.vtable.downgrade_into_fn.unwrap();
         // SAFETY: rc1_ptr is valid, weak1_uninit_ptr is allocated for Weak
         let weak1_ptr = unsafe { downgrade_into_fn(rc1_ptr, weak1_uninit_ptr) };
@@ -421,12 +417,12 @@ mod tests {
         let rc_drop_fn = (rc_shape.vtable.sized().unwrap().drop_in_place)().unwrap();
         unsafe {
             rc_drop_fn(rc1_ptr);
-            rc_shape.deallocate_mut(rc1_ptr)?;
+            rc_shape.deallocate_mut(rc1_ptr).unwrap();
         }
 
         // 4. Attempt to upgrade the weak pointer (weak1)
         let upgrade_into_fn = weak_def.vtable.upgrade_into_fn.unwrap();
-        let rc2_uninit_ptr = rc_shape.allocate()?;
+        let rc2_uninit_ptr = rc_shape.allocate().unwrap();
         // SAFETY: weak1_ptr is valid (though points to dropped data), rc2_uninit_ptr is allocated for Rc
         let upgrade_result = unsafe { upgrade_into_fn(weak1_ptr, rc2_uninit_ptr) };
 
@@ -440,13 +436,11 @@ mod tests {
         let weak_drop_fn = (weak_shape.vtable.sized().unwrap().drop_in_place)().unwrap();
         unsafe {
             // Deallocate the *uninitialized* memory allocated for the failed upgrade attempt
-            rc_shape.deallocate_uninit(rc2_uninit_ptr)?;
+            rc_shape.deallocate_uninit(rc2_uninit_ptr).unwrap();
 
             // Drop and deallocate the weak pointer
             weak_drop_fn(weak1_ptr);
-            weak_shape.deallocate_mut(weak1_ptr)?;
+            weak_shape.deallocate_mut(weak1_ptr).unwrap();
         }
-
-        Ok(())
     }
 }
