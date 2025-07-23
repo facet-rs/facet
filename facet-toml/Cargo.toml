@@ -40,9 +40,4 @@ eyre = "0.6.12"
 facet = { path = "../facet" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 serde = { version = "1.0", features = ["derive"] }
-divan = { version = "3.0.1", package = "codspeed-divan-compat" }
 toml = "0.8.22"
-
-[[bench]]
-name = "compare_serde"
-harness = false

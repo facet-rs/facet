@@ -28,8 +28,3 @@ camino = "1.1.9"
 facet = { path = "../facet" }
 facet-testhelpers = { version = "0.17.5", path = "../facet-testhelpers" }
 insta = "1.43.1"
-
-[[bench]]
-path = "benches/compare_derive_more.rs"
-name = "compare_derive_more"
-harness = false
