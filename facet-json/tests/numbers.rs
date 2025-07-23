@@ -35,7 +35,7 @@ fn json_read_more_types() {
         "f64_val": 3.141592653589793
     }"#;
 
-    let test_struct: TestStructWithMoreTypes = from_str(json)?;
+    let test_struct: TestStructWithMoreTypes = from_str(json).unwrap();
 
     assert_eq!(test_struct.u8_val, 255);
     assert_eq!(test_struct.u16_val, 65535);

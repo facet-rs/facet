@@ -38,13 +38,13 @@ struct File {
 
 #[test]
 fn test_serialize_file_example() {
-    let file_bytes = to_vec(&file_example())?;
+    let file_bytes = to_vec(&file_example()).unwrap();
     assert_eq!(&file_bytes[..], FILE_EXAMPLE_BYTES);
 }
 
 #[test]
 fn test_deserialize_file_example() {
-    let file: File = deserialize(&FILE_EXAMPLE_BYTES)?;
+    let file: File = deserialize(&FILE_EXAMPLE_BYTES).unwrap();
     assert_eq!(file, file_example());
 }
 

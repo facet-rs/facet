@@ -36,7 +36,8 @@ fn test_arg_parse_easy() {
         "--consider-casing",
         "0",
         "example.rs",
-    ])?;
+    ])
+    .unwrap();
     assert!(args.verbose);
     assert_eq!(args.path, "example.rs");
     assert_eq!(args.concurrency, 14);
@@ -71,7 +72,8 @@ fn test_arg_parse() {
         "0",
         "example.rs",
         "test.rs",
-    ])?;
+    ])
+    .unwrap();
     assert!(args.verbose);
     assert_eq!(args.path, "example.rs");
     assert_eq!(args.path_borrow, "test.rs");
@@ -93,7 +95,7 @@ fn test_arg_parse_nums() {
         zzz: f64,
     }
 
-    let args: Args = facet_args::from_slice(&["-x", "1", "-y", "2", "-z", "3"])?;
+    let args: Args = facet_args::from_slice(&["-x", "1", "-y", "2", "-z", "3"]).unwrap();
     assert_eq!(args.x, 1);
     assert_eq!(args.y, 2);
     assert_eq!(args.zzz, 3.0);
@@ -111,7 +113,7 @@ fn test_arg_parse_list() {
     }
 
     // Test parsing string list
-    let string_args: Args = facet_args::from_slice(&["-n", "1", "-n", "2", "-n", "3"])?;
+    let string_args: Args = facet_args::from_slice(&["-n", "1", "-n", "2", "-n", "3"]).unwrap();
 
     // Verify the integer list was parsed correctly
     assert_eq!(string_args.nums, vec![1, 2, 3]);
@@ -126,7 +128,7 @@ fn test_missing_bool_is_false() {
         #[facet(positional)]
         path: String,
     }
-    let args: Args = facet_args::from_slice(&["absence_is_falsey.rs"])?;
+    let args: Args = facet_args::from_slice(&["absence_is_falsey.rs"]).unwrap();
     assert!(!args.verbose);
 }
 
@@ -140,11 +142,12 @@ fn test_missing_default() {
         path: String,
     }
 
-    let args: Args = facet_args::from_slice(&["-p", "absence_uses_default.rs"])?;
+    let args: Args = facet_args::from_slice(&["-p", "absence_uses_default.rs"]).unwrap();
     assert_eq!(args.answer, 42);
     assert_eq!(args.path, "absence_uses_default.rs".to_string());
 
-    let args: Args = facet_args::from_slice(&["100", "-p", "presence_overrides_default.rs"])?;
+    let args: Args =
+        facet_args::from_slice(&["100", "-p", "presence_overrides_default.rs"]).unwrap();
     assert_eq!(args.answer, 100);
     assert_eq!(args.path, "presence_overrides_default.rs".to_string());
 }
@@ -164,12 +167,12 @@ fn test_missing_default_fn() {
         concurrency: usize,
     }
 
-    let args: Args = facet_args::from_slice(&["-p", "absence_uses_default_fn.rs"])?;
+    let args: Args = facet_args::from_slice(&["-p", "absence_uses_default_fn.rs"]).unwrap();
     assert_eq!(args.path, "absence_uses_default_fn.rs".to_string());
     assert_eq!(args.concurrency, 4);
 
     let args: Args =
-        facet_args::from_slice(&["-p", "presence_overrides_default_fn.rs", "-j", "2"])?;
+        facet_args::from_slice(&["-p", "presence_overrides_default_fn.rs", "-j", "2"]).unwrap();
     assert_eq!(args.path, "presence_overrides_default_fn.rs".to_string());
     assert_eq!(args.concurrency, 2);
 }
@@ -181,7 +184,7 @@ fn test_inf_float_parsing() {
         #[facet(named)]
         rate: f64,
     }
-    let args: Args = facet_args::from_slice(&["--rate", "infinity"])?;
+    let args: Args = facet_args::from_slice(&["--rate", "infinity"]).unwrap();
     assert_eq!(args.rate, f64::INFINITY);
 }
 
@@ -192,7 +195,7 @@ fn test_short_rename() {
         #[facet(named, short, rename = "j")]
         concurrency: i64,
     }
-    let args: Args = facet_args::from_slice(&["-j", "4"])?;
+    let args: Args = facet_args::from_slice(&["-j", "4"]).unwrap();
     assert_eq!(args.concurrency, 4);
 }
 
@@ -205,7 +208,7 @@ fn test_bool_str_before() {
         #[facet(named)]
         hello: String,
     }
-    let args: Args = facet_args::from_slice(&["--foo", "--hello", "world"])?;
+    let args: Args = facet_args::from_slice(&["--foo", "--hello", "world"]).unwrap();
     assert!(args.foo);
     assert_eq!(args.hello, "world".to_string());
 }
@@ -224,7 +227,7 @@ fn test_bool_str_mix_middle() {
         #[facet(named)]
         bar: bool,
     }
-    let args: Args = facet_args::from_slice(&["--foo", "--hello", "world", "--bar"])?;
+    let args: Args = facet_args::from_slice(&["--foo", "--hello", "world", "--bar"]).unwrap();
     assert!(args.foo);
     assert_eq!(args.hello, "world".to_string());
     assert!(args.bar);
@@ -240,7 +243,7 @@ fn test_bool_str_after() {
         #[facet(named)]
         bar: bool,
     }
-    let args: Args = facet_args::from_slice(&["--hello", "world", "--bar"])?;
+    let args: Args = facet_args::from_slice(&["--hello", "world", "--bar"]).unwrap();
     assert_eq!(args.hello, "world".to_string());
     assert!(args.bar);
 }
@@ -255,7 +258,7 @@ fn test_int_str_after() {
         #[facet(named)]
         baz: i64,
     }
-    let args: Args = facet_args::from_slice(&["--hello", "world", "--baz", "2"])?;
+    let args: Args = facet_args::from_slice(&["--hello", "world", "--baz", "2"]).unwrap();
     assert_eq!(args.hello, "world".to_string());
     assert_eq!(args.baz, 2);
 }

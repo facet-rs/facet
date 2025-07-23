@@ -19,7 +19,7 @@ struct Wrapper {
 fn test_deserialize_struct_with_arc_field() {
     let json = r#"{"inner":{"value":42}}"#;
 
-    let wrapper: Wrapper = from_str(json)?;
+    let wrapper: Wrapper = from_str(json).unwrap();
 
     let expected = Wrapper {
         inner: Arc::new(SomeStruct { value: 42 }),
@@ -39,7 +39,7 @@ fn test_roundtrip_arc_foobar() {
 
     let json = r#"{"foo":123,"bar":"baz"}"#;
 
-    let arc_foobar: Arc<Foobar> = from_str(json)?;
+    let arc_foobar: Arc<Foobar> = from_str(json).unwrap();
 
     let expected = Arc::new(Foobar {
         foo: 123,
@@ -57,7 +57,7 @@ fn test_roundtrip_arc_foobar() {
 fn test_roundtrip_arc_str() {
     let json = r#""hello world""#;
 
-    let arc_str: Arc<str> = from_str(json)?;
+    let arc_str: Arc<str> = from_str(json).unwrap();
 
     let expected: Arc<str> = Arc::from("hello world");
 
@@ -73,7 +73,7 @@ fn test_roundtrip_rc_str() {
     use std::rc::Rc;
     let json = r#""hello world""#;
 
-    let rc_str: Rc<str> = from_str(json)?;
+    let rc_str: Rc<str> = from_str(json).unwrap();
 
     let expected: Rc<str> = Rc::from("hello world");
 
@@ -88,7 +88,7 @@ fn test_roundtrip_rc_str() {
 fn test_roundtrip_box_str() {
     let json = r#""hello world""#;
 
-    let box_str: Box<str> = from_str(json)?;
+    let box_str: Box<str> = from_str(json).unwrap();
 
     let expected: Box<str> = Box::from("hello world");
 
@@ -103,7 +103,7 @@ fn test_roundtrip_box_str() {
 fn test_roundtrip_arc_slice() {
     let json = r#"[1,2,3,4]"#;
 
-    let arc_slice: Arc<[i32]> = from_str(json)?;
+    let arc_slice: Arc<[i32]> = from_str(json).unwrap();
 
     let expected: Arc<[i32]> = Arc::from([1, 2, 3, 4]);
 
@@ -119,7 +119,7 @@ fn test_deserialize_arc_slice_only() {
     // Test only deserialization of Arc<[i32]> (not serialization)
     let json = r#"[1,2,3,4,5]"#;
 
-    let arc_slice: Arc<[i32]> = from_str(json)?;
+    let arc_slice: Arc<[i32]> = from_str(json).unwrap();
 
     // Verify the deserialized values
     assert_eq!(arc_slice.len(), 5);
@@ -131,7 +131,7 @@ fn test_deserialize_arc_slice_only() {
 
     // Also test with empty array
     let empty_json = r#"[]"#;
-    let empty_arc: Arc<[i32]> = from_str(empty_json)?;
+    let empty_arc: Arc<[i32]> = from_str(empty_json).unwrap();
     assert_eq!(empty_arc.len(), 0);
 }
 

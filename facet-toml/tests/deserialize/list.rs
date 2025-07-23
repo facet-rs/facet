@@ -12,17 +12,17 @@ fn test_scalar_list() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("values = []")?,
+        facet_toml::from_str::<Root>("values = []").unwrap(),
         Root { values: Vec::new() },
     );
 
     assert_eq!(
-        facet_toml::from_str::<Root>("values = [2]")?,
+        facet_toml::from_str::<Root>("values = [2]").unwrap(),
         Root { values: vec![2] },
     );
 
     assert_eq!(
-        facet_toml::from_str::<Root>("values = [1, -1, 0, 100]")?,
+        facet_toml::from_str::<Root>("values = [1, -1, 0, 100]").unwrap(),
         Root {
             values: vec![1, -1, 0, 100],
         },
@@ -50,19 +50,19 @@ fn test_unit_struct_list() {
     struct Item(i32);
 
     assert_eq!(
-        facet_toml::from_str::<Root>("values = []")?,
+        facet_toml::from_str::<Root>("values = []").unwrap(),
         Root { values: Vec::new() },
     );
 
     assert_eq!(
-        facet_toml::from_str::<Root>("values = [2]")?,
+        facet_toml::from_str::<Root>("values = [2]").unwrap(),
         Root {
             values: vec![Item(2)]
         },
     );
 
     assert_eq!(
-        facet_toml::from_str::<Root>("values = [1, -1, 0, 100]")?,
+        facet_toml::from_str::<Root>("values = [1, -1, 0, 100]").unwrap(),
         Root {
             values: vec![Item(1), Item(-1), Item(0), Item(100)],
         },
@@ -105,25 +105,25 @@ fn test_nested_lists() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("values = []")?,
+        facet_toml::from_str::<Root>("values = []").unwrap(),
         Root { values: Vec::new() },
     );
     assert_eq!(
-        facet_toml::from_str::<Root>("values = [[], []]")?,
+        facet_toml::from_str::<Root>("values = [[], []]").unwrap(),
         Root {
             values: vec![Vec::new(); 2]
         },
     );
 
     assert_eq!(
-        facet_toml::from_str::<Root>("values = [[2]]")?,
+        facet_toml::from_str::<Root>("values = [[2]]").unwrap(),
         Root {
             values: vec![vec![2]]
         },
     );
 
     assert_eq!(
-        facet_toml::from_str::<Root>("values = [[1, -1], [0], [100], []]")?,
+        facet_toml::from_str::<Root>("values = [[1, -1], [0], [100], []]").unwrap(),
         Root {
             values: vec![vec![1, -1], vec![0], vec![100], vec![]],
         },

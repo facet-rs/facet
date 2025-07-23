@@ -9,7 +9,7 @@ fn ulid_read() {
 
     let json = r#"{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}"#;
 
-    let s: FooBar = facet_json::from_str(json)?;
+    let s: FooBar = facet_json::from_str(json).unwrap();
     assert_eq!(
         s,
         FooBar {

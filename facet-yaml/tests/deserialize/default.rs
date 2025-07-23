@@ -15,7 +15,7 @@ fn test_struct_level_default() {
         foo: 123
     "#;
 
-    let s: DefaultStruct = facet_yaml::from_str(yaml)?;
+    let s: DefaultStruct = facet_yaml::from_str(yaml).unwrap();
     assert_eq!(s.foo, 123, "Expected foo to be 123, got {}", s.foo);
     assert!(
         s.bar.is_empty(),
@@ -38,7 +38,7 @@ fn test_field_level_default_no_function() {
         foo: 789
     "#;
 
-    let s: FieldDefault = facet_yaml::from_str(yaml)?;
+    let s: FieldDefault = facet_yaml::from_str(yaml).unwrap();
     assert_eq!(s.foo, 789, "Expected foo to be 789, got {}", s.foo);
     assert_eq!(
         s.bar, "",
@@ -65,7 +65,7 @@ fn test_field_level_default_function() {
         bar: hello
     "#;
 
-    let s: FieldDefaultFn = facet_yaml::from_str(yaml)?;
+    let s: FieldDefaultFn = facet_yaml::from_str(yaml).unwrap();
     assert_eq!(s.foo, 12345, "Expected foo to be 12345, got {}", s.foo);
     assert_eq!(s.bar, "hello", "Expected bar to be 'hello', got {}", s.bar);
 }
@@ -94,7 +94,7 @@ fn test_nested_struct_with_defaults() {
         value: 100
     "#;
 
-    let s: Root = facet_yaml::from_str(yaml)?;
+    let s: Root = facet_yaml::from_str(yaml).unwrap();
     assert_eq!(s.value, 100);
     println!("Got nested.answer = {}, expected 0", s.nested.answer);
     assert_eq!(
@@ -111,7 +111,7 @@ fn test_nested_struct_with_defaults() {
             name: test
     "#;
 
-    let s2: Root = facet_yaml::from_str(yaml2)?;
+    let s2: Root = facet_yaml::from_str(yaml2).unwrap();
     assert_eq!(s2.value, 100);
     assert_eq!(
         s2.nested.answer, 42,
@@ -147,7 +147,7 @@ fn test_default_with_complex_expression() {
         host: localhost
     "#;
 
-    let config: ServerConfig = facet_yaml::from_str(yaml)?;
+    let config: ServerConfig = facet_yaml::from_str(yaml).unwrap();
     assert_eq!(config.host, "localhost");
     assert_eq!(config.port, 8080);
     assert_eq!(config.timeout_seconds, 30);
@@ -165,7 +165,7 @@ fn test_default_with_complex_expression() {
           - guest
     "#;
 
-    let config2: ServerConfig = facet_yaml::from_str(yaml2)?;
+    let config2: ServerConfig = facet_yaml::from_str(yaml2).unwrap();
     assert_eq!(config2.host, "example.com");
     assert_eq!(config2.port, 9000);
     assert_eq!(config2.timeout_seconds, 60);

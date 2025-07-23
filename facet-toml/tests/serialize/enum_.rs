@@ -19,13 +19,13 @@ fn test_unit_only_enum() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 'VariantA'")?,
+        facet_toml::from_str::<Root>("value = 'VariantA'").unwrap(),
         Root {
             value: UnitOnlyEnum::VariantA,
         },
     );
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 'VariantB'")?,
+        facet_toml::from_str::<Root>("value = 'VariantB'").unwrap(),
         Root {
             value: UnitOnlyEnum::VariantB,
         },
@@ -55,7 +55,7 @@ fn test_single_value_on_non_unit_enum() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 'VariantA'")?,
+        facet_toml::from_str::<Root>("value = 'VariantA'").unwrap(),
         Root {
             value: WithNonUnitVariant::VariantA
         },
@@ -78,7 +78,7 @@ fn test_tuple_enum() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value = { OneField = 0.5 }")?,
+        facet_toml::from_str::<Root>("value = { OneField = 0.5 }").unwrap(),
         Root {
             value: WithTupleVariants::OneField(0.5)
         },
@@ -90,7 +90,8 @@ fn test_tuple_enum() {
             0 = true
             1 = 1
             "#
-        )?,
+        )
+        .unwrap(),
         Root {
             value: WithTupleVariants::TwoFields(true, 1)
         },
@@ -112,7 +113,7 @@ fn test_struct_enum() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value.OneField.one = 0.5")?,
+        facet_toml::from_str::<Root>("value.OneField.one = 0.5").unwrap(),
         Root {
             value: WithStructVariants::OneField { one: 0.5 }
         },
@@ -124,7 +125,8 @@ fn test_struct_enum() {
             first = true
             second = 1
             "#
-        )?,
+        )
+        .unwrap(),
         Root {
             value: WithStructVariants::TwoFields {
                 first: true,
@@ -161,7 +163,7 @@ fn test_nested_struct_enum() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("value.OneField.one.NestedOneField.nested_one = 0.5")?,
+        facet_toml::from_str::<Root>("value.OneField.one.NestedOneField.nested_one = 0.5").unwrap(),
         Root {
             value: WithNestedStructVariants::OneField {
                 one: NestedStructs::NestedOneField { nested_one: 0.5 }
@@ -175,7 +177,8 @@ fn test_nested_struct_enum() {
             first.NestedTwoFields = { nested_first = false, nested_second = 8 }
             second = 1
             "#
-        )?,
+        )
+        .unwrap(),
         Root {
             value: WithNestedStructVariants::TwoFields {
                 first: NestedStructs::NestedTwoFields {
@@ -199,9 +202,9 @@ fn test_enum_root() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("A.value = 1")?,
+        facet_toml::from_str::<Root>("A.value = 1").unwrap(),
         Root::A { value: 1 },
     );
-    assert_eq!(facet_toml::from_str::<Root>("B = 2")?, Root::B(2));
-    assert_eq!(facet_toml::from_str::<Root>("[C]")?, Root::C);
+    assert_eq!(facet_toml::from_str::<Root>("B = 2").unwrap(), Root::B(2));
+    assert_eq!(facet_toml::from_str::<Root>("[C]").unwrap(), Root::C);
 }

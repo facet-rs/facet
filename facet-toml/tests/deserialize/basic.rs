@@ -14,7 +14,7 @@ fn test_deserialize_person() {
             age = 30
         "#;
 
-    let person: Person = facet_toml::from_str(toml)?;
+    let person: Person = facet_toml::from_str(toml).unwrap();
     assert_eq!(
         person,
         Person {

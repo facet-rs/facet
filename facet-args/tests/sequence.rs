@@ -14,7 +14,7 @@ fn test_value_singleton_list() {
     }
 
     // Test with a single value (no delimiter used)
-    let args_single: Args = facet_args::from_slice(&["-n", "42"])?;
+    let args_single: Args = facet_args::from_slice(&["-n", "42"]).unwrap();
 
     assert_eq!(args_single.numbers, vec![42]);
 }
@@ -32,7 +32,7 @@ fn test_value_singleton_lists_x2() {
     }
 
     // Test with a single value (no delimiter used)
-    let args_single: Args = facet_args::from_slice(&["-n", "42", "-s", "single"])?;
+    let args_single: Args = facet_args::from_slice(&["-n", "42", "-s", "single"]).unwrap();
 
     assert_eq!(args_single.numbers, vec![42]);
     assert_eq!(args_single.strings, vec!["single".to_string()]);
@@ -54,7 +54,7 @@ fn test_value_delimiter_approach() {
     }
 
     // Test with delimited values in a single argument
-    let args: Args = facet_args::from_slice(&["-n", "1,2,3", "-s", "foo:bar:baz", "-v"])?;
+    let args: Args = facet_args::from_slice(&["-n", "1,2,3", "-s", "foo:bar:baz", "-v"]).unwrap();
 
     assert_eq!(args.numbers, vec![1, 2, 3]);
     assert_eq!(
@@ -64,7 +64,8 @@ fn test_value_delimiter_approach() {
     assert!(args.verbose);
 
     // Test with empty parts in delimited values
-    let args_empty_parts: Args = facet_args::from_slice(&["-n", "1,,3", "-s", "start::end", "-v"])?;
+    let args_empty_parts: Args =
+        facet_args::from_slice(&["-n", "1,,3", "-s", "start::end", "-v"]).unwrap();
 
     assert_eq!(args_empty_parts.numbers, vec![1, 0, 3]); // Empty part becomes 0 for numbers
     assert_eq!(
@@ -92,14 +93,15 @@ fn test_repeated_flag_approach() {
     // Test with multiple flags providing multiple values
     let args: Args = facet_args::from_slice(&[
         "-n", "1", "-n", "2", "-n", "3", "-s", "foo", "-s", "bar", "-v",
-    ])?;
+    ])
+    .unwrap();
 
     assert_eq!(args.numbers, vec![1, 2, 3]);
     assert_eq!(args.strings, vec!["foo".to_string(), "bar".to_string()]);
     assert!(args.verbose);
 
     // Test with an empty vector (no flags provided)
-    let args_empty: Args = facet_args::from_slice(&["-v"])?;
+    let args_empty: Args = facet_args::from_slice(&["-v"]).unwrap();
     assert_eq!(args_empty.numbers, Vec::<i64>::new());
     assert_eq!(args_empty.strings, Vec::<String>::new());
     assert!(args_empty.verbose);
@@ -124,7 +126,7 @@ fn test_fixed_length_sequence() {
     }
 
     // Test with exact number of values
-    let args: Args = facet_args::from_slice(&["-p", "10", "20", "-c", "255", "0", "128"])?;
+    let args: Args = facet_args::from_slice(&["-p", "10", "20", "-c", "255", "0", "128"]).unwrap();
 
     assert_eq!(args.point, vec![10, 20]);
     assert_eq!(args.color, vec![255, 0, 128]);
@@ -149,7 +151,8 @@ fn test_fixed_length_sequence() {
         point: Point,
     }
 
-    let complex_args: ComplexArgs = facet_args::from_slice(&["--point", "--coords", "5", "10"])?;
+    let complex_args: ComplexArgs =
+        facet_args::from_slice(&["--point", "--coords", "5", "10"]).unwrap();
 
     assert_eq!(complex_args.point.coords, vec![5, 10]);
 }
@@ -173,7 +176,8 @@ fn test_mixed_approaches() {
     // Test combining all approaches
     let args: Args = facet_args::from_slice(&[
         "-n", "1,2,3", "-r", "10", "-r", "20", "-r", "30", "-f", "3.14", "2.71",
-    ])?;
+    ])
+    .unwrap();
 
     assert_eq!(args.delimiter_numbers, vec![1, 2, 3]);
     assert_eq!(args.repeated_numbers, vec![10, 20, 30]);

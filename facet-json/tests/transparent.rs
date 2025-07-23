@@ -8,7 +8,7 @@ fn transparent_string() {
         "I look like a string"
     "#;
 
-    let s: String = from_str(markup)?;
+    let s: String = from_str(markup).unwrap();
     assert_eq!(s, "I look like a string");
 }
 
@@ -22,7 +22,7 @@ fn transparent_tuple_struct() {
     #[facet(transparent)]
     struct MyString(String);
 
-    let t: MyString = from_str(markup)?;
+    let t: MyString = from_str(markup).unwrap();
     assert_eq!(t.0, "I look like a string".to_string());
 }
 
@@ -35,7 +35,7 @@ fn transparent_non_zero_u64_with_42_value() {
     "#;
 
     // Test deserialization of NonZeroU64
-    let number: NonZeroU64 = from_str(markup)?;
+    let number: NonZeroU64 = from_str(markup).unwrap();
     assert_eq!(number, NonZeroU64::new(42).unwrap());
 }
 
@@ -61,7 +61,7 @@ fn transparent_arc_string() {
     "#;
 
     // Test deserializing directly into Arc<String>
-    let arc_string: Arc<String> = from_str(markup)?;
+    let arc_string: Arc<String> = from_str(markup).unwrap();
     assert_eq!(*arc_string, "I'm in an Arc".to_string());
 }
 
@@ -72,7 +72,7 @@ fn transparent_option_string() {
     "#;
 
     // Test deserializing a JSON string into Option<String>
-    let opt: Option<String> = from_str(markup)?;
+    let opt: Option<String> = from_str(markup).unwrap();
     assert_eq!(opt, Some("I'm optional".to_string()));
 }
 
@@ -84,7 +84,7 @@ fn transparent_option_non_zero_u64_some() {
     let markup = r#"
         10
     "#;
-    let opt_num: Option<NonZeroU64> = from_str(markup)?;
+    let opt_num: Option<NonZeroU64> = from_str(markup).unwrap();
     assert_eq!(opt_num, Some(NonZeroU64::new(10).unwrap()));
 }
 
@@ -96,7 +96,7 @@ fn transparent_option_non_zero_u64_none() {
     let markup = r#"
         null
     "#;
-    let opt_none: Option<NonZeroU64> = from_str(markup)?;
+    let opt_none: Option<NonZeroU64> = from_str(markup).unwrap();
     assert_eq!(opt_none, None);
 }
 
@@ -108,7 +108,7 @@ fn transparent_option_non_zero_u16_some() {
     let markup = r#"
         10
     "#;
-    let opt_num: Option<NonZeroU16> = from_str(markup)?;
+    let opt_num: Option<NonZeroU16> = from_str(markup).unwrap();
     assert_eq!(opt_num, Some(NonZeroU16::new(10).unwrap()));
 }
 
@@ -120,7 +120,7 @@ fn transparent_option_non_zero_u16_none() {
     let markup = r#"
         null
     "#;
-    let opt_none: Option<NonZeroU16> = from_str(markup)?;
+    let opt_none: Option<NonZeroU16> = from_str(markup).unwrap();
     assert_eq!(opt_none, None);
 }
 
@@ -140,7 +140,7 @@ fn transparent_string_as_map_key() {
         }
     "#;
 
-    let map: HashMap<UserId, String> = from_str(markup)?;
+    let map: HashMap<UserId, String> = from_str(markup).unwrap();
     assert_eq!(
         map.get(&UserId("user123".to_string())),
         Some(&"Alice".to_string())

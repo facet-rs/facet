@@ -13,7 +13,7 @@ fn json_read_utf8pathbuf() {
 
     let json = r#"{"path":"foo/bar"}"#;
 
-    let s: FooBar = from_str(json)?;
+    let s: FooBar = from_str(json).unwrap();
     assert_eq!(
         s,
         FooBar {

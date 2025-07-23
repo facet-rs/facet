@@ -128,7 +128,7 @@ fn test_vec_of_structs_fine() {
     }
 ]"#;
 
-    let foos: Vec<FooBar> = from_str(payload)?;
+    let foos: Vec<FooBar> = from_str(payload).unwrap();
     assert_eq!(foos.len(), 2);
     assert_eq!(foos[0].foo, 32);
     assert_eq!(foos[0].bar, "hello");

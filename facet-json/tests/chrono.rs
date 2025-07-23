@@ -12,7 +12,7 @@ fn read_chrono_datetime_utc() {
 
     let json = r#"{"created_at":"2023-01-15T12:34:56Z"}"#;
 
-    let s: FooBar = from_str(json)?;
+    let s: FooBar = from_str(json).unwrap();
     assert_eq!(
         s,
         FooBar {
@@ -30,7 +30,7 @@ fn read_chrono_datetime_fixed_offset() {
 
     let json = r#"{"created_at":"2023-01-15T12:34:56+07:00"}"#;
 
-    let s: FooBar = from_str(json)?;
+    let s: FooBar = from_str(json).unwrap();
     let expected_offset = FixedOffset::east_opt(7 * 3600).unwrap();
     assert_eq!(
         s,
@@ -51,7 +51,7 @@ fn read_chrono_naive_datetime() {
 
     let json = r#"{"created_at":"2023-01-15T12:34:56"}"#;
 
-    let s: FooBar = from_str(json)?;
+    let s: FooBar = from_str(json).unwrap();
     assert_eq!(
         s,
         FooBar {
@@ -72,7 +72,7 @@ fn read_chrono_naive_date() {
 
     let json = r#"{"birth_date":"2023-01-15"}"#;
 
-    let s: FooBar = from_str(json)?;
+    let s: FooBar = from_str(json).unwrap();
     assert_eq!(
         s,
         FooBar {
@@ -90,7 +90,7 @@ fn read_chrono_naive_time() {
 
     let json = r#"{"alarm_time":"12:34:56"}"#;
 
-    let s: FooBar = from_str(json)?;
+    let s: FooBar = from_str(json).unwrap();
     assert_eq!(
         s,
         FooBar {
@@ -188,7 +188,7 @@ fn read_chrono_optional_datetime() {
 
     let json = r#"{"created_at":"2023-01-15T12:34:56Z","updated_at":null}"#;
 
-    let s: FooBar = from_str(json)?;
+    let s: FooBar = from_str(json).unwrap();
     assert_eq!(
         s,
         FooBar {
@@ -207,7 +207,7 @@ fn chrono_in_vec() {
 
     let json = r#"{"timestamps":["2023-01-15T12:34:56Z","2023-02-20T10:00:00Z"]}"#;
 
-    let events: Events = from_str(json)?;
+    let events: Events = from_str(json).unwrap();
     assert_eq!(events.timestamps.len(), 2);
     assert_eq!(
         events.timestamps[0],

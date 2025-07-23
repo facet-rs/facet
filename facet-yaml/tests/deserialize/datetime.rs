@@ -17,7 +17,7 @@ fn test_deserialize_datetime_utc() {
 
     // Test deserialization
     let yaml_input = "timestamp: 2023-04-15T14:30:25Z";
-    let parsed: TimeObject = from_str(yaml_input)?;
+    let parsed: TimeObject = from_str(yaml_input).unwrap();
 
     assert_eq!(
         parsed,
@@ -43,7 +43,7 @@ fn test_deserialize_datetime_with_offset() {
 
     // Test with timezone offset
     let yaml_input = "timestamp: 2023-04-15T14:30:25+02:00";
-    let parsed: TimeObject = from_str(yaml_input)?;
+    let parsed: TimeObject = from_str(yaml_input).unwrap();
 
     assert_eq!(
         parsed,

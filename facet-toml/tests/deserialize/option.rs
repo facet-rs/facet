@@ -11,9 +11,12 @@ fn test_option_scalar() {
         value: Option<i32>,
     }
 
-    assert_eq!(facet_toml::from_str::<Root>("")?, Root { value: None },);
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 1")?,
+        facet_toml::from_str::<Root>("").unwrap(),
+        Root { value: None },
+    );
+    assert_eq!(
+        facet_toml::from_str::<Root>("value = 1").unwrap(),
         Root { value: Some(1) },
     );
 
@@ -35,9 +38,12 @@ fn test_nested_option() {
         value: Option<Option<i32>>,
     }
 
-    assert_eq!(facet_toml::from_str::<Root>("")?, Root { value: None },);
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 1")?,
+        facet_toml::from_str::<Root>("").unwrap(),
+        Root { value: None },
+    );
+    assert_eq!(
+        facet_toml::from_str::<Root>("value = 1").unwrap(),
         Root {
             value: Some(Some(1))
         },
@@ -66,9 +72,12 @@ fn test_option_struct() {
         value: i32,
     }
 
-    assert_eq!(facet_toml::from_str::<Root>("")?, Root { value: None },);
     assert_eq!(
-        facet_toml::from_str::<Root>("value.value = 1")?,
+        facet_toml::from_str::<Root>("").unwrap(),
+        Root { value: None },
+    );
+    assert_eq!(
+        facet_toml::from_str::<Root>("value.value = 1").unwrap(),
         Root {
             value: Some(Item { value: 1 })
         },
@@ -94,9 +103,12 @@ fn test_option_struct_with_option() {
         sub: Option<i32>,
     }
 
-    assert_eq!(facet_toml::from_str::<Root>("")?, Root { value: None },);
     assert_eq!(
-        facet_toml::from_str::<Root>("value.sub = 1")?,
+        facet_toml::from_str::<Root>("").unwrap(),
+        Root { value: None },
+    );
+    assert_eq!(
+        facet_toml::from_str::<Root>("value.sub = 1").unwrap(),
         Root {
             value: Some(Item { sub: Some(1) })
         },
@@ -127,15 +139,18 @@ fn test_option_enum() {
         B(i32),
     }
 
-    assert_eq!(facet_toml::from_str::<Root>("")?, Root { value: None },);
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 'A'")?,
+        facet_toml::from_str::<Root>("").unwrap(),
+        Root { value: None },
+    );
+    assert_eq!(
+        facet_toml::from_str::<Root>("value = 'A'").unwrap(),
         Root {
             value: Some(Item::A)
         },
     );
     assert_eq!(
-        facet_toml::from_str::<Root>("value.B = 1")?,
+        facet_toml::from_str::<Root>("value.B = 1").unwrap(),
         Root {
             value: Some(Item::B(1))
         },
@@ -159,33 +174,33 @@ fn test_option_enum_option_scalar() {
     }
 
     assert_eq!(
-        facet_toml::from_str::<Root>("A = 'hi'")?,
+        facet_toml::from_str::<Root>("A = 'hi'").unwrap(),
         Root::A(Some("hi".to_owned())),
     );
     assert_eq!(
-        facet_toml::from_str::<Root>("B.b1 = 1")?,
+        facet_toml::from_str::<Root>("B.b1 = 1").unwrap(),
         Root::B {
             b1: Some(1),
             b2: None
         },
     );
     assert_eq!(
-        facet_toml::from_str::<Root>("B.b2 = true")?,
+        facet_toml::from_str::<Root>("B.b2 = true").unwrap(),
         Root::B {
             b1: None,
             b2: Some(true)
         },
     );
     assert_eq!(
-        facet_toml::from_str::<Root>("B = { b1 = 1, b2 = true }")?,
+        facet_toml::from_str::<Root>("B = { b1 = 1, b2 = true }").unwrap(),
         Root::B {
             b1: Some(1),
             b2: Some(true)
         },
     );
-    assert_eq!(facet_toml::from_str::<Root>("[A]")?, Root::A(None),);
+    assert_eq!(facet_toml::from_str::<Root>("[A]").unwrap(), Root::A(None),);
     assert_eq!(
-        facet_toml::from_str::<Root>("[B]")?,
+        facet_toml::from_str::<Root>("[B]").unwrap(),
         Root::B { b1: None, b2: None },
     );
 
@@ -221,15 +236,18 @@ fn test_option_enum_with_option_variant() {
         B(Option<i32>),
     }
 
-    assert_eq!(facet_toml::from_str::<Root>("")?, Root { value: None },);
     assert_eq!(
-        facet_toml::from_str::<Root>("value = 'A'")?,
+        facet_toml::from_str::<Root>("").unwrap(),
+        Root { value: None },
+    );
+    assert_eq!(
+        facet_toml::from_str::<Root>("value = 'A'").unwrap(),
         Root {
             value: Some(Item::A)
         },
     );
     assert_eq!(
-        facet_toml::from_str::<Root>("value.B = 1")?,
+        facet_toml::from_str::<Root>("value.B = 1").unwrap(),
         Root {
             value: Some(Item::B(Some(1)))
         },

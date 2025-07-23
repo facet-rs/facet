@@ -62,7 +62,7 @@ fn test_socket_addr() {
     assert_serialize!(
         Root,
         Root {
-            value: "127.0.0.1:8000".parse()?
+            value: "127.0.0.1:8000".parse().unwrap()
         }
     );
 }
@@ -78,13 +78,13 @@ fn test_ip_addr() {
     assert_serialize!(
         Root,
         Root {
-            value: "127.0.0.1".parse()?
+            value: "127.0.0.1".parse().unwrap()
         },
     );
     assert_serialize!(
         Root,
         Root {
-            value: "::1".parse()?
+            value: "::1".parse().unwrap()
         },
     );
 }
@@ -100,7 +100,7 @@ fn test_ipv4_addr() {
     assert_serialize!(
         Root,
         Root {
-            value: "127.0.0.1".parse()?
+            value: "127.0.0.1".parse().unwrap()
         },
     );
 }
@@ -116,7 +116,7 @@ fn test_ipv6_addr() {
     assert_serialize!(
         Root,
         Root {
-            value: "::1".parse()?
+            value: "::1".parse().unwrap()
         },
     );
 }

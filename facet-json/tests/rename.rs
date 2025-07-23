@@ -18,7 +18,7 @@ fn test_field_rename_deserialization() {
 
     let json = r#"{"bonjour":"monde","au_revoir":"world"}"#;
 
-    let result: Greetings = from_str(json)?;
+    let result: Greetings = from_str(json).unwrap();
 
     assert_eq!(result.hello, "monde");
     assert_eq!(result.goodbye, "world");
@@ -61,7 +61,7 @@ fn test_field_rename_common_case_styles() {
 
     let json = r#"{"kebab-case":"dash","snake_case":"underscore","camelCase":"hump"}"#;
 
-    let result: SpecialNames = from_str(json)?;
+    let result: SpecialNames = from_str(json).unwrap();
     assert_eq!(result.kebab_case, "dash");
     assert_eq!(result.original_snake, "underscore");
     assert_eq!(result.camel_case, "hump");
@@ -445,7 +445,7 @@ fn test_field_rename_not_alias() {
 
     let json = r#"{"b":"focus group 1","c":"focus group 2"}"#;
 
-    let result: ABTesting = from_str(json)?;
+    let result: ABTesting = from_str(json).unwrap();
 
     assert_eq!(result.a, "focus group 1");
     assert_eq!(result.b, "focus group 2");

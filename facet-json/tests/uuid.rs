@@ -11,7 +11,7 @@ fn uuid_write() {
     }
 
     let original = FooBar {
-        id: "f49e1d6c-7e95-4654-a861-8b66f94a623a".parse()?,
+        id: "f49e1d6c-7e95-4654-a861-8b66f94a623a".parse().unwrap(),
     };
 
     let _json = to_string(&original);
@@ -26,11 +26,11 @@ fn uuid_read() {
 
     let json = r#"{"id":"f49e1d6c-7e95-4654-a861-8b66f94a623a"}"#;
 
-    let s: FooBar = from_str(json)?;
+    let s: FooBar = from_str(json).unwrap();
     assert_eq!(
         s,
         FooBar {
-            id: "f49e1d6c-7e95-4654-a861-8b66f94a623a".parse()?,
+            id: "f49e1d6c-7e95-4654-a861-8b66f94a623a".parse().unwrap(),
         }
     );
 }

@@ -33,7 +33,7 @@ struct OrderForm {
 fn test_basic_urlencoded() {
     let query_string = "query=rust+programming&page=2";
 
-    let params: SearchParams = from_str(query_string)?;
+    let params: SearchParams = from_str(query_string).unwrap();
     assert_eq!(
         params,
         SearchParams {
@@ -47,7 +47,7 @@ fn test_basic_urlencoded() {
 fn test_encoded_characters() {
     let query_string = "query=rust%20programming%21&page=3";
 
-    let params: SearchParams = from_str(query_string)?;
+    let params: SearchParams = from_str(query_string).unwrap();
     assert_eq!(
         params,
         SearchParams {
@@ -90,7 +90,7 @@ fn test_missing_field_light() {
 fn test_unknown_field() {
     let query_string = "query=rust+programming&page=2&unknown=value";
 
-    let params: SearchParams = from_str(query_string)?;
+    let params: SearchParams = from_str(query_string).unwrap();
     assert_eq!(
         params,
         SearchParams {
@@ -122,7 +122,7 @@ fn test_invalid_number() {
 fn test_nested_struct() {
     let query_string = "user[name]=John+Doe&user[age]=30&user[address][street]=123+Main+St&user[address][city]=Anytown&user[address][zip]=12345&product_id=ABC123&quantity=2";
 
-    let order: OrderForm = from_str(query_string)?;
+    let order: OrderForm = from_str(query_string).unwrap();
 
     assert_eq!(
         order,
@@ -196,7 +196,7 @@ fn test_deep_nesting() {
         simple: String,
     }
 
-    let deep_test: DeepTest = from_str(query_string)?;
+    let deep_test: DeepTest = from_str(query_string).unwrap();
 
     assert_eq!(
         deep_test,
