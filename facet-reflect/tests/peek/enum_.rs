@@ -17,19 +17,19 @@ fn peek_enum() {
     let peek_value = Peek::new(&some_value);
 
     // Convert to enum and check we can convert to PeekEnum
-    let peek_enum = peek_value.into_enum()?;
+    let peek_enum = peek_value.into_enum().unwrap();
     let peek_def_not_enum = peek_enum;
 
-    assert!(peek_def_not_enum.variant_name_active()? == "Some");
+    assert!(peek_def_not_enum.variant_name_active().unwrap() == "Some");
 
     // Check if it's the Some variant
-    if peek_def_not_enum.variant_name_active()? == "Some" {
+    if peek_def_not_enum.variant_name_active().unwrap() == "Some" {
         // Get the value field using the field method with index
-        let inner_value = peek_def_not_enum.field(0)?.unwrap();
-        let value = *inner_value.get::<u32>()?;
+        let inner_value = peek_def_not_enum.field(0).unwrap().unwrap();
+        let value = *inner_value.get::<u32>().unwrap();
         assert_eq!(value, 42);
     } else {
-        return Err(eyre::eyre!("Expected Some variant"));
+        panic!("Expected Some variant");
     }
 
     // Test with None value
@@ -37,10 +37,10 @@ fn peek_enum() {
     let peek_value = Peek::new(&none_value);
 
     // Convert to enum and check we can convert to PeekEnum
-    let peek_enum = peek_value.into_enum()?;
+    let peek_enum = peek_value.into_enum().unwrap();
     let peek_def_not_enum = peek_enum;
 
-    assert!(peek_def_not_enum.variant_name_active()? == "None");
+    assert!(peek_def_not_enum.variant_name_active().unwrap() == "None");
     // None variant has no fields to check
 }
 
@@ -60,20 +60,20 @@ fn peek_repr_c_enum() {
     let peek_value = Peek::new(&unit_value);
 
     // Convert to enum and check we can convert to PeekEnum
-    let peek_enum = peek_value.into_enum()?;
-    assert!(peek_enum.variant_name_active()? == "Unit");
+    let peek_enum = peek_value.into_enum().unwrap();
+    assert!(peek_enum.variant_name_active().unwrap() == "Unit");
 
     // Test with tuple
     let unit_value = ReprCEnum::Tuple(42);
     let peek_value = Peek::new(&unit_value);
 
     // Convert to enum and check we can convert to PeekEnum
-    let peek_enum = peek_value.into_enum()?;
+    let peek_enum = peek_value.into_enum().unwrap();
 
-    assert!(peek_enum.variant_name_active()? == "Tuple");
+    assert!(peek_enum.variant_name_active().unwrap() == "Tuple");
     // Get the value field using the field method with index
-    let inner_value = peek_enum.field(0)?.unwrap();
-    let value = *inner_value.get::<u32>()?;
+    let inner_value = peek_enum.field(0).unwrap().unwrap();
+    let value = *inner_value.get::<u32>().unwrap();
     assert_eq!(value, 42);
 
     // Test with struct
@@ -83,14 +83,14 @@ fn peek_repr_c_enum() {
     };
     let peek_value = Peek::new(&unit_value);
     // Convert to enum and check we can convert to PeekEnum
-    let peek_enum = peek_value.into_enum()?;
-    assert!(peek_enum.variant_name_active()? == "Struct");
+    let peek_enum = peek_value.into_enum().unwrap();
+    assert!(peek_enum.variant_name_active().unwrap() == "Struct");
     // Get the value field using the field method with index
-    let inner_value = peek_enum.field(0)?.unwrap();
-    let value = *inner_value.get::<u8>()?;
+    let inner_value = peek_enum.field(0).unwrap().unwrap();
+    let value = *inner_value.get::<u8>().unwrap();
     assert_eq!(value, 42);
     // Get the value field using the field method with name
-    let inner_value = peek_enum.field_by_name("b")?.unwrap();
-    let value = inner_value.get::<String>()?;
+    let inner_value = peek_enum.field_by_name("b").unwrap().unwrap();
+    let value = inner_value.get::<String>().unwrap();
     assert_eq!(value, "Hello");
 }

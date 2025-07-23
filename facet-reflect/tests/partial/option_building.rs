@@ -4,7 +4,7 @@ use facet_testhelpers::test;
 #[test]
 fn test_option_building_manual() {
     // Test building Option<String> manually step by step
-    let mut wip = Partial::alloc::<Option<String>>()?;
+    let mut wip = Partial::alloc::<Option<String>>().unwrap();
 
     // Check initial state - option starts uninitialized
 
@@ -25,21 +25,21 @@ fn test_option_building_manual() {
     }
 
     // For now, let's use the high-level API to see what works
-    wip.set(Some("hello".to_string()))?;
+    wip.set(Some("hello".to_string())).unwrap();
 
-    let result = wip.build()?;
+    let result = wip.build().unwrap();
     let option_value: Option<String> = *result;
     assert_eq!(option_value, Some("hello".to_string()));
 }
 
 #[test]
 fn test_option_building_none() {
-    let mut wip = Partial::alloc::<Option<String>>()?;
+    let mut wip = Partial::alloc::<Option<String>>().unwrap();
 
     // Set to None
-    wip.set(None::<String>)?;
+    wip.set(None::<String>).unwrap();
 
-    let result = wip.build()?;
+    let result = wip.build().unwrap();
     let option_value: Option<String> = *result;
     assert_eq!(option_value, None);
 }
@@ -48,7 +48,7 @@ fn test_option_building_none() {
 fn test_option_building_with_begin_some() {
     // This test will likely fail with the current implementation
     // but it shows what we WANT to be able to do
-    let mut wip = Partial::alloc::<Option<String>>()?;
+    let mut wip = Partial::alloc::<Option<String>>().unwrap();
 
     // Try the current begin_some API
     let result = wip.begin_some();
@@ -56,10 +56,10 @@ fn test_option_building_with_begin_some() {
     match result {
         Ok(_) => {
             // If begin_some works, continue building
-            wip.set("hello".to_string())?;
-            wip.end()?;
+            wip.set("hello".to_string()).unwrap();
+            wip.end().unwrap();
 
-            let result = wip.build()?;
+            let result = wip.build().unwrap();
             let option_value: Option<String> = *result;
             assert_eq!(option_value, Some("hello".to_string()));
         }
@@ -73,11 +73,11 @@ fn test_option_building_with_begin_some() {
 #[test]
 fn test_option_building_set_default() {
     // Test using set_default to create None
-    let mut wip = Partial::alloc::<Option<String>>()?;
+    let mut wip = Partial::alloc::<Option<String>>().unwrap();
 
-    wip.set_default()?;
+    wip.set_default().unwrap();
 
-    let result = wip.build()?;
+    let result = wip.build().unwrap();
     let option_value: Option<String> = *result;
     assert_eq!(option_value, None);
 }
@@ -85,12 +85,12 @@ fn test_option_building_set_default() {
 #[test]
 fn test_nested_option_building() {
     // Test building Option<Option<String>>
-    let mut wip = Partial::alloc::<Option<Option<String>>>()?;
+    let mut wip = Partial::alloc::<Option<Option<String>>>().unwrap();
 
     // Build Some(Some("hello"))
-    wip.set(Some(Some("hello".to_string())))?;
+    wip.set(Some(Some("hello".to_string()))).unwrap();
 
-    let result = wip.build()?;
+    let result = wip.build().unwrap();
     let option_value: Option<Option<String>> = *result;
     assert_eq!(option_value, Some(Some("hello".to_string())));
 }
@@ -103,18 +103,18 @@ fn test_option_in_struct() {
         age: Option<u32>,
     }
 
-    let mut wip = Partial::alloc::<TestStruct>()?;
+    let mut wip = Partial::alloc::<TestStruct>().unwrap();
 
     // Build the struct with option fields
-    wip.begin_nth_field(0)?; // name field
-    wip.set(Some("Alice".to_string()))?;
-    wip.end()?;
+    wip.begin_nth_field(0).unwrap(); // name field
+    wip.set(Some("Alice".to_string())).unwrap();
+    wip.end().unwrap();
 
-    wip.begin_nth_field(1)?; // age field  
-    wip.set(None::<u32>)?;
-    wip.end()?;
+    wip.begin_nth_field(1).unwrap(); // age field
+    wip.set(None::<u32>).unwrap();
+    wip.end().unwrap();
 
-    let result = wip.build()?;
+    let result = wip.build().unwrap();
     let struct_value: TestStruct = *result;
     assert_eq!(
         struct_value,
@@ -133,19 +133,19 @@ fn test_option_field_manual_building() {
         value: Option<String>,
     }
 
-    let mut wip = Partial::alloc::<TestStruct>()?;
+    let mut wip = Partial::alloc::<TestStruct>().unwrap();
 
     // Navigate to the option field
-    wip.begin_nth_field(0)?; // value field
+    wip.begin_nth_field(0).unwrap(); // value field
 
     // Now we're in the Option<String> context
     // This is where we want to test proper option building
 
     // For now, use the high-level API
-    wip.set(Some("test".to_string()))?;
-    wip.end()?;
+    wip.set(Some("test".to_string())).unwrap();
+    wip.end().unwrap();
 
-    let result = wip.build()?;
+    let result = wip.build().unwrap();
     let struct_value: TestStruct = *result;
     assert_eq!(struct_value.value, Some("test".to_string()));
 }
@@ -153,7 +153,7 @@ fn test_option_field_manual_building() {
 #[test]
 fn explore_option_shape() {
     // Explore the shape of Option<String> to understand its structure
-    let wip = Partial::alloc::<Option<String>>()?;
+    let wip = Partial::alloc::<Option<String>>().unwrap();
 
     println!("Option<String> shape: {:?}", wip.shape());
 

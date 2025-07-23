@@ -4,16 +4,16 @@ use std::collections::HashMap;
 
 #[test]
 fn wip_map_trivial() {
-    let mut partial = Partial::alloc::<HashMap<String, String>>()?;
-    partial.begin_map()?;
+    let mut partial = Partial::alloc::<HashMap<String, String>>().unwrap();
+    partial.begin_map().unwrap();
 
-    partial.begin_key()?;
-    partial.set::<String>("key".into())?;
-    partial.end()?;
-    partial.begin_value()?;
-    partial.set::<String>("value".into())?;
-    partial.end()?;
-    let wip: HashMap<String, String> = *partial.build()?;
+    partial.begin_key().unwrap();
+    partial.set::<String>("key".into()).unwrap();
+    partial.end().unwrap();
+    partial.begin_value().unwrap();
+    partial.set::<String>("value".into()).unwrap();
+    partial.end().unwrap();
+    let wip: HashMap<String, String> = *partial.build().unwrap();
 
     assert_eq!(
         wip,

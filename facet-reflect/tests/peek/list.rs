@@ -8,7 +8,7 @@ fn peek_list() {
     let peek_value = Peek::new(&test_list);
 
     // Convert to list and check we can convert to PeekList
-    let peek_list = peek_value.into_list()?;
+    let peek_list = peek_value.into_list().unwrap();
 
     // Test length
     assert_eq!(peek_list.len(), 5);
@@ -19,13 +19,13 @@ fn peek_list() {
     let last = peek_list.get(4).unwrap();
 
     // Test element values
-    let first_value = *first.get::<i32>()?;
+    let first_value = *first.get::<i32>().unwrap();
     assert_eq!(first_value, 1);
 
-    let third_value = *third.get::<i32>()?;
+    let third_value = *third.get::<i32>().unwrap();
     assert_eq!(third_value, 3);
 
-    let last_value = *last.get::<i32>()?;
+    let last_value = *last.get::<i32>().unwrap();
     assert_eq!(last_value, 5);
 
     // Test out of bounds

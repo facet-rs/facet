@@ -26,16 +26,22 @@ fn covariant_works() {
     }
 
     fn scope<'a>(token: CovariantLifetime<'a>) -> Result<Wrapper<'a>, ReflectError> {
-        Partial::<'a>::alloc_shape(Wrapper::<'a>::SHAPE)?
-            .begin_field("token")?
-            .set(token)?
-            .end()?
-            .build()?
+        Partial::<'a>::alloc_shape(Wrapper::<'a>::SHAPE)
+            .unwrap()
+            .begin_field("token")
+            .unwrap()
+            .set(token)
+            .unwrap()
+            .end()
+            .unwrap()
+            .build()
+            .unwrap()
             .materialize::<Wrapper>()
     }
     scope(CovariantLifetime {
         _pd: std::marker::PhantomData,
-    })?;
+    })
+    .unwrap();
 }
 
 #[test]
@@ -46,16 +52,22 @@ fn contravariant_works() {
     }
 
     fn scope<'a>(token: ContravariantLifetime<'a>) -> Result<Wrapper<'a>, ReflectError> {
-        Partial::<'a>::alloc_shape(Wrapper::<'a>::SHAPE)?
-            .begin_field("token")?
-            .set(token)?
-            .end()?
-            .build()?
+        Partial::<'a>::alloc_shape(Wrapper::<'a>::SHAPE)
+            .unwrap()
+            .begin_field("token")
+            .unwrap()
+            .set(token)
+            .unwrap()
+            .end()
+            .unwrap()
+            .build()
+            .unwrap()
             .materialize::<Wrapper>()
     }
     scope(ContravariantLifetime {
         _pd: std::marker::PhantomData,
-    })?;
+    })
+    .unwrap();
 }
 
 #[test]
@@ -66,14 +78,20 @@ fn invariant_works() {
     }
 
     fn scope<'a>(token: InvariantLifetime<'a>) -> Result<Wrapper<'a>, ReflectError> {
-        Partial::<'a>::alloc_shape(Wrapper::<'a>::SHAPE)?
-            .begin_field("token")?
-            .set(token)?
-            .end()?
-            .build()?
+        Partial::<'a>::alloc_shape(Wrapper::<'a>::SHAPE)
+            .unwrap()
+            .begin_field("token")
+            .unwrap()
+            .set(token)
+            .unwrap()
+            .end()
+            .unwrap()
+            .build()
+            .unwrap()
             .materialize::<Wrapper>()
     }
     scope(InvariantLifetime {
         _pd: std::marker::PhantomData,
-    })?;
+    })
+    .unwrap();
 }

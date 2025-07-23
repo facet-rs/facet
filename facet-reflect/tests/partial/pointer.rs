@@ -21,13 +21,13 @@ struct OuterNoArc {
 
 #[test]
 fn outer_no_arc() {
-    let mut partial = Partial::alloc::<OuterNoArc>()?;
-    partial.begin_field("inner")?;
-    partial.begin_field("value")?;
-    partial.set(1234_i32)?;
-    partial.end()?;
-    partial.end()?;
-    let o: Box<OuterNoArc> = partial.build()?;
+    let mut partial = Partial::alloc::<OuterNoArc>().unwrap();
+    partial.begin_field("inner").unwrap();
+    partial.begin_field("value").unwrap();
+    partial.set(1234_i32).unwrap();
+    partial.end().unwrap();
+    partial.end().unwrap();
+    let o: Box<OuterNoArc> = partial.build().unwrap();
     assert_eq!(
         *o,
         OuterNoArc {
@@ -38,26 +38,26 @@ fn outer_no_arc() {
 
 #[test]
 fn outer_yes_arc_put() {
-    let mut partial = Partial::alloc::<OuterYesArc>()?;
+    let mut partial = Partial::alloc::<OuterYesArc>().unwrap();
     let inner = Arc::new(Inner { value: 5678 });
-    partial.begin_field("inner")?;
-    partial.set(inner.clone())?;
-    partial.end()?;
-    let o: Box<OuterYesArc> = partial.build()?;
+    partial.begin_field("inner").unwrap();
+    partial.set(inner.clone()).unwrap();
+    partial.end().unwrap();
+    let o: Box<OuterYesArc> = partial.build().unwrap();
     assert_eq!(*o, OuterYesArc { inner });
 }
 
 #[test]
 fn outer_yes_arc_pointee() {
-    let mut partial = Partial::alloc::<OuterYesArc>()?;
-    partial.begin_field("inner")?;
-    partial.begin_smart_ptr()?;
-    partial.begin_field("value")?;
-    partial.set(4321_i32)?;
-    partial.end()?;
-    partial.end()?;
-    partial.end()?;
-    let o: Box<OuterYesArc> = partial.build()?;
+    let mut partial = Partial::alloc::<OuterYesArc>().unwrap();
+    partial.begin_field("inner").unwrap();
+    partial.begin_smart_ptr().unwrap();
+    partial.begin_field("value").unwrap();
+    partial.set(4321_i32).unwrap();
+    partial.end().unwrap();
+    partial.end().unwrap();
+    partial.end().unwrap();
+    let o: Box<OuterYesArc> = partial.build().unwrap();
     assert_eq!(
         *o,
         OuterYesArc {
@@ -82,10 +82,10 @@ fn outer_yes_arc_field_named_twice_error() {
 #[test]
 fn arc_str_begin_smart_ptr_good() {
     let mut partial = Partial::alloc::<Arc<str>>().unwrap();
-    partial.begin_smart_ptr()?;
-    partial.set(String::from("foobar"))?;
-    partial.end()?;
-    let built = *partial.build()?;
+    partial.begin_smart_ptr().unwrap();
+    partial.set(String::from("foobar")).unwrap();
+    partial.end().unwrap();
+    let built = *partial.build().unwrap();
     assert_eq!(&*built, "foobar");
 }
 
@@ -100,7 +100,7 @@ fn arc_str_begin_smart_ptr_bad_1() {
 #[test]
 fn arc_str_begin_smart_ptr_bad_2() {
     let mut partial = Partial::alloc::<Arc<str>>().unwrap();
-    partial.begin_smart_ptr()?;
+    partial.begin_smart_ptr().unwrap();
     let _err = partial.build().unwrap_err();
     #[cfg(not(miri))]
     insta::assert_snapshot!(_err);
@@ -109,8 +109,8 @@ fn arc_str_begin_smart_ptr_bad_2() {
 #[test]
 fn arc_str_begin_smart_ptr_bad_3() {
     let mut partial = Partial::alloc::<Arc<str>>().unwrap();
-    partial.begin_smart_ptr()?;
-    partial.set(String::from("foobar"))?;
+    partial.begin_smart_ptr().unwrap();
+    partial.set(String::from("foobar")).unwrap();
     let _err = partial.build().unwrap_err();
     #[cfg(not(miri))]
     insta::assert_snapshot!(_err);
@@ -120,20 +120,20 @@ fn arc_str_begin_smart_ptr_bad_3() {
 fn rc_str_begin_smart_ptr() {
     use std::rc::Rc;
     let mut partial = Partial::alloc::<Rc<str>>().unwrap();
-    partial.begin_smart_ptr()?;
-    partial.set(String::from("foobar"))?;
-    partial.end()?;
-    let built = *partial.build()?;
+    partial.begin_smart_ptr().unwrap();
+    partial.set(String::from("foobar")).unwrap();
+    partial.end().unwrap();
+    let built = *partial.build().unwrap();
     assert_eq!(&*built, "foobar");
 }
 
 #[test]
 fn box_str_begin_smart_ptr() {
     let mut partial = Partial::alloc::<Box<str>>().unwrap();
-    partial.begin_smart_ptr()?;
-    partial.set(String::from("foobar"))?;
-    partial.end()?;
-    let built = *partial.build()?;
+    partial.begin_smart_ptr().unwrap();
+    partial.set(String::from("foobar")).unwrap();
+    partial.end().unwrap();
+    let built = *partial.build().unwrap();
     assert_eq!(&*built, "foobar");
 }
 
@@ -142,24 +142,24 @@ fn arc_slice_u8_begin_smart_ptr_good() {
     {
         // Just to make sure: Vec<u8> construction works
         let mut partial = Partial::alloc::<Vec<u8>>().unwrap();
-        partial.begin_list()?;
-        partial.push(2_u8)?;
-        partial.push(3_u8)?;
-        partial.push(4_u8)?;
-        let built = *partial.build()?;
+        partial.begin_list().unwrap();
+        partial.push(2_u8).unwrap();
+        partial.push(3_u8).unwrap();
+        partial.push(4_u8).unwrap();
+        let built = *partial.build().unwrap();
         assert_eq!(&*built, &[2, 3, 4]);
     }
 
     {
-        // Now, does Arc<[u8]> work?
+        // Now, does Arc<[u8]> work.unwrap()
         let mut partial = Partial::alloc::<Arc<[u8]>>().unwrap();
-        partial.begin_smart_ptr()?;
-        partial.begin_list()?;
-        partial.push(2_u8)?;
-        partial.push(3_u8)?;
-        partial.push(4_u8)?;
-        partial.end()?;
-        let built = *partial.build()?;
+        partial.begin_smart_ptr().unwrap();
+        partial.begin_list().unwrap();
+        partial.push(2_u8).unwrap();
+        partial.push(3_u8).unwrap();
+        partial.push(4_u8).unwrap();
+        partial.end().unwrap();
+        let built = *partial.build().unwrap();
         assert_eq!(&*built, &[2, 3, 4]);
     }
 }
