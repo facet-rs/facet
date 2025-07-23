@@ -71,17 +71,19 @@ pub use types::*;
 /// Allows querying the [`Shape`] of a type, which in turn lets us inspect any fields, build a value of
 /// this type progressively, etc.
 ///
+/// The `'facet` lifetime allows `Facet` to be derived for types that borrow from something else.
+///
 /// # Safety
 ///
 /// If you implement this wrong, all the safe abstractions in `facet-reflect`,
 /// all the serializers, deserializers, the entire ecosystem is unsafe.
 ///
 /// You're responsible for describing the type layout properly, and annotating all the invariants.
-pub unsafe trait Facet<'a>: 'a {
+pub unsafe trait Facet<'facet>: 'facet {
     /// The shape of this type
     ///
     /// Shape embeds all other constants of this trait.
-    const SHAPE: &'static Shape<'static>;
+    const SHAPE: &'static Shape;
 
     /// Function pointers to perform various operations: print the full type
     /// name (with generic type parameters), use the Display implementation,

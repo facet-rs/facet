@@ -3,18 +3,18 @@ use super::{EnumType, StructType, UnionType};
 /// User-defined types (structs, enums, unions)
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-pub enum UserType<'shape> {
+pub enum UserType {
     /// Describes a `struct`
-    Struct(StructType<'shape>),
+    Struct(StructType),
     /// Describes an `enum`
-    Enum(EnumType<'shape>),
+    Enum(EnumType),
     /// Describes a `union`
-    Union(UnionType<'shape>),
+    Union(UnionType),
     /// Special variant for representing external types with unknown internal representation.
     Opaque,
 }
 
-impl<'shape> UserType<'shape> {
+impl UserType {
     /// Retrieves underlying representation of the type
     #[inline]
     pub const fn repr(&self) -> Option<Repr> {

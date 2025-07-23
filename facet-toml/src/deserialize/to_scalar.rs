@@ -11,11 +11,11 @@ use super::error::{TomlDeError, TomlDeErrorKind};
 /// Try to convert a TOML integer or float to a Rust number.
 ///
 /// Applies to all Rust scalars supported by the `num` crate.
-pub(crate) fn put_number<'input, 'a, 'shape, T>(
+pub(crate) fn put_number<'input, 'a, T>(
     toml: &'input str,
-    wip: &mut Partial<'a, 'shape>,
+    wip: &mut Partial<'a>,
     item: &Item,
-) -> Result<(), TomlDeError<'input, 'shape>>
+) -> Result<(), TomlDeError<'input>>
 where
     T: Facet<'a> + NumCast + 'a,
 {
@@ -76,11 +76,11 @@ where
 }
 
 /// Try to convert a TOML boolean to a Rust boolean.
-pub(crate) fn put_boolean<'input, 'a, 'shape>(
+pub(crate) fn put_boolean<'input, 'a>(
     toml: &'input str,
-    wip: &mut Partial<'a, 'shape>,
+    wip: &mut Partial<'a>,
     item: &Item,
-) -> Result<(), TomlDeError<'input, 'shape>> {
+) -> Result<(), TomlDeError<'input>> {
     let v = item.as_value().ok_or_else(|| {
         TomlDeError::new(
             toml,
@@ -116,11 +116,11 @@ pub(crate) fn put_boolean<'input, 'a, 'shape>(
 }
 
 /// Try to convert a TOML char to a Rust char.
-pub(crate) fn put_char<'input, 'a, 'shape>(
+pub(crate) fn put_char<'input, 'a>(
     toml: &'input str,
-    wip: &mut Partial<'a, 'shape>,
+    wip: &mut Partial<'a>,
     item: &Item,
-) -> Result<(), TomlDeError<'input, 'shape>> {
+) -> Result<(), TomlDeError<'input>> {
     let v = item.as_value().ok_or_else(|| {
         TomlDeError::new(
             toml,
@@ -169,11 +169,11 @@ pub(crate) fn put_char<'input, 'a, 'shape>(
 }
 
 /// Try to convert a TOML string to a Rust string.
-pub(crate) fn put_string<'input, 'a, 'shape, T>(
+pub(crate) fn put_string<'input, 'a, T>(
     toml: &'input str,
-    wip: &mut Partial<'a, 'shape>,
+    wip: &mut Partial<'a>,
     item: &Item,
-) -> Result<(), TomlDeError<'input, 'shape>>
+) -> Result<(), TomlDeError<'input>>
 where
     T: From<String> + Facet<'a> + 'a,
 {
@@ -203,11 +203,11 @@ where
 }
 
 /// Try to convert a TOML string to a Rust type that implements `FromStr`.
-pub(crate) fn put_from_str<'input, 'a, 'shape>(
+pub(crate) fn put_from_str<'input, 'a>(
     toml: &'input str,
-    wip: &mut Partial<'a, 'shape>,
+    wip: &mut Partial<'a>,
     item: &Item,
-) -> Result<(), TomlDeError<'input, 'shape>> {
+) -> Result<(), TomlDeError<'input>> {
     let string = item.as_str().ok_or_else(|| {
         TomlDeError::new(
             toml,

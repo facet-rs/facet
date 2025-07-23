@@ -4,7 +4,7 @@ use facet_serialize::{Serializer, serialize_iterative};
 use std::io::{self, Write};
 
 /// Serializes a value to CSV
-pub fn to_string<'a, T: Facet<'a>>(value: &'a T) -> String {
+pub fn to_string<'facet, T: Facet<'facet>>(value: &'facet T) -> String {
     let peek = Peek::new(value);
     let mut output = Vec::new();
     let mut serializer = CsvSerializer::new(&mut output);
@@ -13,10 +13,10 @@ pub fn to_string<'a, T: Facet<'a>>(value: &'a T) -> String {
 }
 
 /// Serializes a Peek instance to CSV
-pub fn peek_to_string<'a>(peek: &'a Peek<'_, 'a, '_>) -> String {
+pub fn peek_to_string<'facet>(peek: Peek<'_, 'facet>) -> String {
     let mut output = Vec::new();
     let mut serializer = CsvSerializer::new(&mut output);
-    serialize_iterative(*peek, &mut serializer).unwrap();
+    serialize_iterative(peek, &mut serializer).unwrap();
     String::from_utf8(output).unwrap()
 }
 
@@ -28,9 +28,9 @@ pub fn to_writer<'a, T: Facet<'a>, W: Write>(value: &'a T, writer: &mut W) -> io
 }
 
 /// Serializes a Peek instance to a writer in CSV format
-pub fn peek_to_writer<'a, W: Write>(peek: &'a Peek<'_, 'a, '_>, writer: &mut W) -> io::Result<()> {
+pub fn peek_to_writer<'facet, W: Write>(peek: Peek<'_, 'facet>, writer: &mut W) -> io::Result<()> {
     let mut serializer = CsvSerializer::new(writer);
-    serialize_iterative(*peek, &mut serializer)
+    serialize_iterative(peek, &mut serializer)
 }
 
 /// A struct to handle the CSV serializer logic
@@ -94,7 +94,7 @@ where
     }
 }
 
-impl<'shape, W> Serializer<'shape> for CsvSerializer<W>
+impl<W> Serializer for CsvSerializer<W>
 where
     W: Write,
 {

@@ -44,12 +44,12 @@ impl<A, B> Default for Interspersed<A, B> {
 
 #[derive(Default)]
 pub(crate) struct ReplaceGroup<'mem, 'facet> {
-    pub(crate) removals: Vec<Peek<'mem, 'facet, 'static>>,
-    pub(crate) additions: Vec<Peek<'mem, 'facet, 'static>>,
+    pub(crate) removals: Vec<Peek<'mem, 'facet>>,
+    pub(crate) additions: Vec<Peek<'mem, 'facet>>,
 }
 
 impl<'mem, 'facet> ReplaceGroup<'mem, 'facet> {
-    fn push_add(&mut self, addition: Peek<'mem, 'facet, 'static>) {
+    fn push_add(&mut self, addition: Peek<'mem, 'facet>) {
         assert!(
             self.removals.is_empty(),
             "We want all blocks of updates to have removals first, then additions, this should follow from our implementation of myers' algorithm"
@@ -57,7 +57,7 @@ impl<'mem, 'facet> ReplaceGroup<'mem, 'facet> {
         self.additions.insert(0, addition);
     }
 
-    fn push_remove(&mut self, removal: Peek<'mem, 'facet, 'static>) {
+    fn push_remove(&mut self, removal: Peek<'mem, 'facet>) {
         self.removals.insert(0, removal);
     }
 }
@@ -68,11 +68,11 @@ pub(crate) struct UpdatesGroup<'mem, 'facet>(
 );
 
 impl<'mem, 'facet> UpdatesGroup<'mem, 'facet> {
-    fn push_add(&mut self, addition: Peek<'mem, 'facet, 'static>) {
+    fn push_add(&mut self, addition: Peek<'mem, 'facet>) {
         self.0.front_a().push_add(addition);
     }
 
-    fn push_remove(&mut self, removal: Peek<'mem, 'facet, 'static>) {
+    fn push_remove(&mut self, removal: Peek<'mem, 'facet>) {
         self.0.front_a().push_remove(removal);
     }
 
@@ -122,17 +122,17 @@ impl<'mem, 'facet> UpdatesGroup<'mem, 'facet> {
 
 #[derive(Default)]
 pub struct Updates<'mem, 'facet>(
-    pub(crate) Interspersed<UpdatesGroup<'mem, 'facet>, Vec<Peek<'mem, 'facet, 'static>>>,
+    pub(crate) Interspersed<UpdatesGroup<'mem, 'facet>, Vec<Peek<'mem, 'facet>>>,
 );
 
 impl<'mem, 'facet> Updates<'mem, 'facet> {
     /// All `push_*` methods on [`Updates`] push from the front, because the myers' algorithm finds updates back to front.
-    pub(crate) fn push_add(&mut self, addition: Peek<'mem, 'facet, 'static>) {
+    pub(crate) fn push_add(&mut self, addition: Peek<'mem, 'facet>) {
         self.0.front_a().push_add(addition);
     }
 
     /// All `push_*` methods on [`Updates`] push from the front, because the myers' algorithm finds updates back to front.
-    pub(crate) fn push_remove(&mut self, removal: Peek<'mem, 'facet, 'static>) {
+    pub(crate) fn push_remove(&mut self, removal: Peek<'mem, 'facet>) {
         self.0.front_a().push_remove(removal);
     }
 
@@ -142,7 +142,7 @@ impl<'mem, 'facet> Updates<'mem, 'facet> {
     }
 
     /// All `push_*` methods on [`Updates`] push from the front, because the myers' algorithm finds updates back to front.
-    fn push_keep(&mut self, value: Peek<'mem, 'facet, 'static>) {
+    fn push_keep(&mut self, value: Peek<'mem, 'facet>) {
         self.0.front_b().insert(0, value);
     }
 
@@ -159,8 +159,8 @@ impl<'mem, 'facet> Updates<'mem, 'facet> {
 
 /// Gets the diff of a sequence by using myers' algorithm
 pub fn diff<'mem, 'facet>(
-    a: Vec<Peek<'mem, 'facet, 'static>>,
-    b: Vec<Peek<'mem, 'facet, 'static>>,
+    a: Vec<Peek<'mem, 'facet>>,
+    b: Vec<Peek<'mem, 'facet>>,
 ) -> Updates<'mem, 'facet> {
     // Moving l-t-r represents removing an element from a
     // Moving t-t-b represents adding an element from b

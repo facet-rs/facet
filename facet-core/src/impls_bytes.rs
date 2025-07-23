@@ -39,7 +39,7 @@ unsafe impl Facet<'_> for Bytes {
         vtable
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .ty(Type::User(UserType::Opaque))
             .type_identifier("Bytes")
@@ -105,7 +105,7 @@ unsafe impl Facet<'_> for BytesMut {
         ))
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("BytesMut")
             .ty(Type::User(UserType::Opaque))

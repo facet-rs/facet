@@ -60,7 +60,7 @@ unsafe impl Facet<'_> for UtcDateTime {
         vtable
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("UtcDateTime")
             .ty(Type::User(UserType::Opaque))
@@ -124,7 +124,7 @@ unsafe impl Facet<'_> for OffsetDateTime {
         vtable
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("OffsetDateTime")
             .ty(Type::User(UserType::Opaque))

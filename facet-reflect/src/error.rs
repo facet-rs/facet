@@ -3,65 +3,65 @@ use owo_colors::OwoColorize;
 
 /// Errors that can occur when reflecting on types.
 #[derive(Clone)]
-pub enum ReflectError<'shape> {
+pub enum ReflectError {
     /// Tried to set an enum to a variant that does not exist
     NoSuchVariant {
         /// The enum definition containing all known variants.
-        enum_type: EnumType<'shape>,
+        enum_type: EnumType,
     },
 
     /// Tried to get the wrong shape out of a value — e.g. we were manipulating
     /// a `String`, but `.get()` was called with a `u64` or something.
     WrongShape {
         /// The expected shape of the value.
-        expected: &'shape Shape<'shape>,
+        expected: &'static Shape,
         /// The actual shape of the value.
-        actual: &'shape Shape<'shape>,
+        actual: &'static Shape,
     },
 
     /// Attempted to perform an operation that expected a struct or something
     WasNotA {
         /// The name of the expected type.
-        expected: &'shape str,
+        expected: &'static str,
 
         /// The type we got instead
-        actual: &'shape Shape<'shape>,
+        actual: &'static Shape,
     },
 
     /// A field was not initialized during build
     UninitializedField {
         /// The shape containing the field
-        shape: &'shape Shape<'shape>,
+        shape: &'static Shape,
         /// The name of the field that wasn't initialized
-        field_name: &'shape str,
+        field_name: &'static str,
     },
 
     /// A field in an enum variant was not initialized during build
     UninitializedEnumField {
         /// The enum shape
-        shape: &'shape Shape<'shape>,
+        shape: &'static Shape,
         /// The name of the field that wasn't initialized
-        field_name: &'shape str,
+        field_name: &'static str,
         /// The name of the variant containing the field
-        variant_name: &'shape str,
+        variant_name: &'static str,
     },
 
     /// A scalar value was not initialized during build
     UninitializedValue {
         /// The scalar shape
-        shape: &'shape Shape<'shape>,
+        shape: &'static Shape,
     },
 
     /// An invariant of the reflection system was violated.
     InvariantViolation {
         /// The invariant that was violated.
-        invariant: &'shape str,
+        invariant: &'static str,
     },
 
     /// Attempted to set a value to its default, but the value doesn't implement `Default`.
     MissingCharacteristic {
         /// The shape of the value that doesn't implement `Default`.
-        shape: &'shape Shape<'shape>,
+        shape: &'static Shape,
         /// The characteristic that is missing.
         characteristic: Characteristic,
     },
@@ -69,15 +69,15 @@ pub enum ReflectError<'shape> {
     /// An operation failed for a given shape
     OperationFailed {
         /// The shape of the value for which the operation failed.
-        shape: &'shape Shape<'shape>,
+        shape: &'static Shape,
         /// The name of the operation that failed.
-        operation: &'shape str,
+        operation: &'static str,
     },
 
     /// An error occurred when attempting to access or modify a field.
     FieldError {
         /// The shape of the value containing the field.
-        shape: &'shape Shape<'shape>,
+        shape: &'static Shape,
         /// The specific error that occurred with the field.
         field_error: FieldError,
     },
@@ -86,7 +86,7 @@ pub enum ReflectError<'shape> {
     /// on the T, but you need to do begin_smart_ptr first when using the WIP API.
     MissingPushPointee {
         /// The smart pointer (`Arc<T>`, `Box<T>` etc.) shape on which field was caleld
-        shape: &'shape Shape<'shape>,
+        shape: &'static Shape,
     },
 
     /// An unknown error occurred.
@@ -95,25 +95,25 @@ pub enum ReflectError<'shape> {
     /// An error occured while putting
     TryFromError {
         /// The shape of the value being converted from.
-        src_shape: &'shape Shape<'shape>,
+        src_shape: &'static Shape,
 
         /// The shape of the value being converted to.
-        dst_shape: &'shape Shape<'shape>,
+        dst_shape: &'static Shape,
 
         /// The inner error
-        inner: TryFromError<'shape>,
+        inner: TryFromError,
     },
 
     /// A shape has a `default` attribute, but no implementation of the `Default` trait.
     DefaultAttrButNoDefaultImpl {
         /// The shape of the value that has a `default` attribute but no default implementation.
-        shape: &'shape Shape<'shape>,
+        shape: &'static Shape,
     },
 
     /// The type is unsized
     Unsized {
         /// The shape for the type that is unsized
-        shape: &'shape Shape<'shape>,
+        shape: &'static Shape,
         /// The operation we were trying to perform
         operation: &'static str,
     },
@@ -121,7 +121,7 @@ pub enum ReflectError<'shape> {
     /// Array not fully initialized during build
     ArrayNotFullyInitialized {
         /// The shape of the array
-        shape: &'shape Shape<'shape>,
+        shape: &'static Shape,
         /// The number of elements pushed
         pushed_count: usize,
         /// The expected array size
@@ -131,7 +131,7 @@ pub enum ReflectError<'shape> {
     /// Array index out of bounds
     ArrayIndexOutOfBounds {
         /// The shape of the array
-        shape: &'shape Shape<'shape>,
+        shape: &'static Shape,
         /// The index that was out of bounds
         index: usize,
         /// The array size
@@ -150,7 +150,7 @@ pub enum ReflectError<'shape> {
     NoActiveFrame,
 }
 
-impl core::fmt::Display for ReflectError<'_> {
+impl core::fmt::Display for ReflectError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             ReflectError::NoSuchVariant { enum_type } => {
@@ -282,11 +282,11 @@ impl core::fmt::Display for ReflectError<'_> {
     }
 }
 
-impl core::fmt::Debug for ReflectError<'_> {
+impl core::fmt::Debug for ReflectError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // Use Display implementation for more readable output
         write!(f, "ReflectError({self})")
     }
 }
 
-impl core::error::Error for ReflectError<'_> {}
+impl core::error::Error for ReflectError {}

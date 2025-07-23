@@ -54,10 +54,10 @@ nostd-ci:
     cmd_group "cargo check --no-default-features --features alloc -p facet-reflect --target thumbv8m.main-none-eabihf"
 
 clippy-all:
-    cargo clippy --workspace --all-targets --all-features --target-dir target/clippy-all-features -- -D warnings
+    cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 clippy:
-    cargo clippy --workspace --all-targets --target-dir target/clippy -- -D warnings
+    cargo clippy --workspace --all-targets -- -D warnings
 
 test *args:
     cargo nextest run {{args}} < /dev/null
@@ -138,10 +138,10 @@ docsrs *args:
     cargo +nightly doc {{args}}
 
 msrv:
-    cargo hack check --each-feature --locked --rust-version --ignore-private --workspace --keep-going --exclude-no-default-features --target-dir target/msrv
+    cargo hack check --each-feature --locked --rust-version --ignore-private --workspace --keep-going --exclude-no-default-features
 
 msrv-power:
-    cargo hack check --feature-powerset --locked --rust-version --ignore-private --workspace --all-targets --keep-going --exclude-no-default-features --target-dir target/msrv
+    cargo hack check --feature-powerset --locked --rust-version --ignore-private --workspace --all-targets --keep-going --exclude-no-default-features -
 
 docs:
     cargo doc --workspace --all-features --no-deps --document-private-items --keep-going

@@ -585,7 +585,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                 ::facet::value_vtable!(Self, #type_name_fn)
             };
 
-            const SHAPE: &'static ::facet::Shape<'static> = &const {
+            const SHAPE: &'static ::facet::Shape = &const {
                 #(#shadow_struct_defs)*
 
                 let __facet_variants: &'static [::facet::Variant] = &const {[

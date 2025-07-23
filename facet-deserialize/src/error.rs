@@ -1,7 +1,7 @@
 #[cfg(feature = "rich-diagnostics")]
 use ariadne::{Color, Config, IndexType, Label, Report, ReportKind, Source};
 
-use alloc::string::String;
+use alloc::{borrow::Cow, string::String};
 
 use facet_core::{Shape, Type, UserType};
 use facet_reflect::{ReflectError, VariantError};
@@ -9,46 +9,41 @@ use owo_colors::OwoColorize;
 
 use crate::{Outcome, Span};
 
-/// A JSON parse error, with context. Never would've guessed huh.
-pub struct DeserError<'input, 'shape> {
+/// A deserialization error, associated with a specific input and location.
+pub struct DeserError<'input> {
     /// The input associated with the error.
-    pub input: alloc::borrow::Cow<'input, [u8]>,
+    pub input: Cow<'input, [u8]>,
 
     /// Where the error occured
     pub span: Span,
 
-    /// The specific error that occurred while parsing the JSON.
-    pub kind: DeserErrorKind<'shape>,
-
-    /// The source identifier for error reporting
-    pub source_id: &'static str,
+    /// The specific error that occurred
+    pub kind: DeserErrorKind,
 }
 
-impl<'input, 'shape> DeserError<'input, 'shape> {
+impl<'input> DeserError<'input> {
     /// Converts the error into an owned error.
-    pub fn into_owned(self) -> DeserError<'static, 'shape> {
+    pub fn into_owned(self) -> DeserError<'static> {
         DeserError {
             input: self.input.into_owned().into(),
             span: self.span,
             kind: self.kind,
-            source_id: self.source_id,
         }
     }
 
     /// Sets the span of this error
-    pub fn with_span(self, span: Span) -> DeserError<'input, 'shape> {
+    pub fn with_span(self, span: Span) -> DeserError<'input> {
         DeserError {
             input: self.input,
             span,
             kind: self.kind,
-            source_id: self.source_id,
         }
     }
 }
 
 /// An error kind for JSON parsing.
 #[derive(Debug, Clone)]
-pub enum DeserErrorKind<'shape> {
+pub enum DeserErrorKind {
     /// An unexpected byte was encountered in the input.
     UnexpectedByte {
         /// The byte that was found.
@@ -102,14 +97,14 @@ pub enum DeserErrorKind<'shape> {
         field_name: String,
 
         /// The shape definition where the unknown field was encountered
-        shape: &'shape Shape<'shape>,
+        shape: &'static Shape,
     },
 
     /// A string that could not be built into valid UTF-8 Unicode
     InvalidUtf8(String),
 
     /// An error occurred while reflecting a type.
-    ReflectError(ReflectError<'shape>),
+    ReflectError(ReflectError),
 
     /// Some feature is not yet implemented (under development).
     Unimplemented(&'static str),
@@ -117,7 +112,7 @@ pub enum DeserErrorKind<'shape> {
     /// An unsupported type was encountered.
     UnsupportedType {
         /// The shape we got
-        got: &'shape Shape<'shape>,
+        got: &'static Shape,
 
         /// The shape we wanted
         wanted: &'static str,
@@ -129,7 +124,7 @@ pub enum DeserErrorKind<'shape> {
         name: String,
 
         /// The enum shape definition where the variant was looked up
-        enum_shape: &'shape Shape<'shape>,
+        enum_shape: &'static Shape,
     },
 
     /// An error occurred when reflecting an enum variant (index) from a user type.
@@ -138,7 +133,7 @@ pub enum DeserErrorKind<'shape> {
     /// Too many elements for an array.
     ArrayOverflow {
         /// The array shape
-        shape: &'shape Shape<'shape>,
+        shape: &'static Shape,
 
         /// Maximum allowed length
         max_len: usize,
@@ -154,48 +149,31 @@ pub enum DeserErrorKind<'shape> {
     },
 }
 
-impl<'input, 'shape> DeserError<'input, 'shape> {
+impl<'input> DeserError<'input> {
     /// Creates a new deser error, preserving input and location context for accurate reporting.
-    pub fn new(
-        kind: DeserErrorKind<'shape>,
-        input: &'input [u8],
-        span: Span,
-        source_id: &'static str,
-    ) -> Self {
+    pub fn new(kind: DeserErrorKind, input: &'input [u8], span: Span) -> Self {
         Self {
             input: input.into(),
             span,
             kind,
-            source_id,
         }
     }
 
     /// Constructs a reflection-related deser error, keeping contextual information intact.
-    pub(crate) fn new_reflect(
-        e: ReflectError<'shape>,
-        input: &'input [u8],
-        span: Span,
-        source_id: &'static str,
-    ) -> Self {
-        DeserError::new(DeserErrorKind::ReflectError(e), input, span, source_id)
-    }
-
-    /// Sets the source ID for this error
-    pub fn with_source_id(mut self, source_id: &'static str) -> Self {
-        self.source_id = source_id;
-        self
+    pub(crate) fn new_reflect(e: ReflectError, input: &'input [u8], span: Span) -> Self {
+        DeserError::new(DeserErrorKind::ReflectError(e), input, span)
     }
 
     /// Provides a human-friendly message wrapper to improve error readability.
-    pub fn message(&self) -> DeserErrorMessage<'_, '_> {
+    pub fn message(&self) -> DeserErrorMessage<'_> {
         DeserErrorMessage(self)
     }
 }
 
 /// A wrapper type for displaying deser error messages
-pub struct DeserErrorMessage<'input, 'shape>(&'input DeserError<'input, 'shape>);
+pub struct DeserErrorMessage<'input>(&'input DeserError<'input>);
 
-impl core::fmt::Display for DeserErrorMessage<'_, '_> {
+impl core::fmt::Display for DeserErrorMessage<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match &self.0.kind {
             DeserErrorKind::UnexpectedByte { got, wanted } => write!(
@@ -301,21 +279,20 @@ impl core::fmt::Display for DeserErrorMessage<'_, '_> {
 }
 
 #[cfg(not(feature = "rich-diagnostics"))]
-impl core::fmt::Display for DeserError<'_, '_> {
+impl core::fmt::Display for DeserError<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{} at byte {}", self.message(), self.span.start(),)
     }
 }
 
 #[cfg(feature = "rich-diagnostics")]
-impl core::fmt::Display for DeserError<'_, '_> {
+impl core::fmt::Display for DeserError<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // Try to convert input to utf8 for source display, otherwise fallback to error
         let Ok(orig_input_str) = core::str::from_utf8(&self.input[..]) else {
             return write!(f, "(JSON input was invalid UTF-8)");
         };
 
-        let source_id = self.source_id;
         let mut span_start = self.span.start();
         let mut span_end = self.span.end();
         use alloc::borrow::Cow;
@@ -408,10 +385,10 @@ impl core::fmt::Display for DeserError<'_, '_> {
             )?;
         }
 
-        let mut report = Report::build(ReportKind::Error, (source_id, span_start..span_end))
+        let mut report = Report::build(ReportKind::Error, span_start..span_end)
             .with_config(Config::new().with_index_type(IndexType::Byte));
 
-        let label = Label::new((source_id, span_start..span_end))
+        let label = Label::new(span_start..span_end)
             .with_message(self.message())
             .with_color(Color::Red);
 
@@ -458,7 +435,7 @@ impl core::fmt::Display for DeserError<'_, '_> {
             }
         }
 
-        let cache = (source_id, &source);
+        let cache = &source;
 
         let fmt_writer = FmtWriter { f, error: None };
         let mut io_writer = IoWriter { inner: fmt_writer };
@@ -476,10 +453,10 @@ impl core::fmt::Display for DeserError<'_, '_> {
     }
 }
 
-impl core::fmt::Debug for DeserError<'_, '_> {
+impl core::fmt::Debug for DeserError<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         core::fmt::Display::fmt(self, f)
     }
 }
 
-impl core::error::Error for DeserError<'_, '_> {}
+impl core::error::Error for DeserError<'_> {}

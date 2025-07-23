@@ -367,11 +367,11 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
 
             quote! {
                 // Define the try_from function for the value vtable
-                unsafe fn try_from<'shape, 'src, 'dst>(
+                unsafe fn try_from<'src, 'dst>(
                     src_ptr: ::facet::PtrConst<'src>,
-                    src_shape: &'shape ::facet::Shape<'shape>,
+                    src_shape: &'static ::facet::Shape,
                     dst: ::facet::PtrUninit<'dst>
-                ) -> Result<::facet::PtrMut<'dst>, ::facet::TryFromError<'shape>> {
+                ) -> Result<::facet::PtrMut<'dst>, ::facet::TryFromError> {
                     // Try the inner type's try_from function if it exists
                     let inner_result = match (<#inner_field_type as ::facet::Facet>::SHAPE.vtable.sized().and_then(|v| (v.try_from)())) {
                         Some(inner_try) => unsafe { (inner_try)(src_ptr, src_shape, dst) },
@@ -461,14 +461,14 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
             let ty = &inner_field.ty;
             quote! {
                 // Function to return inner type's shape
-                fn inner_shape() -> &'static ::facet::Shape<'static> {
+                fn inner_shape() -> &'static ::facet::Shape {
                     <#ty as ::facet::Facet>::SHAPE
                 }
             }
         } else {
             // Transparent ZST case
             quote! {
-                fn inner_shape() -> &'static ::facet::Shape<'static> {
+                fn inner_shape() -> &'static ::facet::Shape {
                     <() as ::facet::Facet>::SHAPE // Inner shape is unit
                 }
             }
@@ -504,7 +504,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 vtable
             };
 
-            const SHAPE: &'static ::facet::Shape<'static> = &const {
+            const SHAPE: &'static ::facet::Shape = &const {
                 let fields: &'static [::facet::Field] = &const {[#(#fields_vec),*]};
 
                 #inner_shape_fn // Include inner_shape function if needed

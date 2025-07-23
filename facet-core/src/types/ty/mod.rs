@@ -29,22 +29,22 @@ pub use pointer::*;
 /// See <https://doc.rust-lang.org/reference/types.html>
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-pub enum Type<'shape> {
+pub enum Type {
     /// Built-in primitive.
     Primitive(PrimitiveType),
     /// Sequence (tuple, array, slice).
-    Sequence(SequenceType<'shape>),
+    Sequence(SequenceType),
     /// User-defined type (struct, enum, union).
-    User(UserType<'shape>),
+    User(UserType),
     /// Pointer type (reference, raw, function pointer).
-    Pointer(PointerType<'shape>),
+    Pointer(PointerType),
 }
 
 // This implementation of `Display` is user-facing output, where the users are developers.
 // It is intended to show structure up to a certain depth, but for readability and brevity,
 // some complicated types have custom formatting surrounded by guillemet characters
 // (`«` and `»`) to indicate divergence from AST.
-impl core::fmt::Display for Type<'_> {
+impl core::fmt::Display for Type {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Type::Primitive(_) => {
@@ -58,7 +58,7 @@ impl core::fmt::Display for Type<'_> {
                 write!(f, "Sequence(Slice(«&[{t}]»))")?;
             }
             Type::User(UserType::Struct(struct_type)) => {
-                struct __Display<'a>(&'a StructType<'a>);
+                struct __Display<'a>(&'a StructType);
                 impl core::fmt::Display for __Display<'_> {
                     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                         write!(f, "«")?;
@@ -105,7 +105,7 @@ impl core::fmt::Display for Type<'_> {
                 write!(f, "User(Struct({show_struct}))")?;
             }
             Type::User(UserType::Enum(enum_type)) => {
-                struct __Display<'a>(&'a EnumType<'a>);
+                struct __Display<'a>(&'a EnumType);
                 impl<'a> core::fmt::Display for __Display<'a> {
                     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                         write!(f, "«")?;
@@ -156,7 +156,7 @@ impl core::fmt::Display for Type<'_> {
                 write!(f, "User(Enum({show_enum}))")?;
             }
             Type::User(UserType::Union(union_type)) => {
-                struct __Display<'a>(&'a UnionType<'a>);
+                struct __Display<'a>(&'a UnionType);
                 impl<'a> core::fmt::Display for __Display<'a> {
                     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                         write!(f, "«")?;

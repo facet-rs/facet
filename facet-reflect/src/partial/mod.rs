@@ -148,9 +148,9 @@ enum PartialState {
 ///
 /// * `'facet`: The lifetime of borrowed values within the structure (or 'static if it's owned)
 /// * `'shape`: The lifetime of the Shape structure itself (often 'static)
-pub struct Partial<'facet, 'shape> {
+pub struct Partial<'facet> {
     /// stack of frames to keep track of deeply nested initialization
-    frames: Vec<Frame<'shape>>,
+    frames: Vec<Frame>,
 
     /// current state of the Partial
     state: PartialState,
@@ -186,22 +186,22 @@ enum FrameOwnership {
     ManagedElsewhere,
 }
 
-struct Frame<'shape> {
+struct Frame {
     /// Address of the value being initialized
     data: PtrUninit<'static>,
 
     /// Shape of the value being initialized
-    shape: &'shape Shape<'shape>,
+    shape: &'static Shape,
 
     /// Tracks initialized fields
-    tracker: Tracker<'shape>,
+    tracker: Tracker,
 
     /// Whether this frame owns the allocation or is just a field pointer
     ownership: FrameOwnership,
 }
 
 #[derive(Debug)]
-enum Tracker<'shape> {
+enum Tracker {
     /// Wholly uninitialized
     Uninit,
 
@@ -243,14 +243,14 @@ enum Tracker<'shape> {
     /// We're using the slice builder API to construct the slice
     SmartPointerSlice {
         /// The slice builder vtable
-        vtable: &'shape SliceBuilderVTable,
+        vtable: &'static SliceBuilderVTable,
         /// Whether we're currently building an item to push
         building_item: bool,
     },
 
     /// Partially initialized enum (but we picked a variant)
     Enum {
-        variant: &'shape Variant<'shape>,
+        variant: &'static Variant,
         data: ISet,
         /// If we're pushing another frame, this is set to the field index
         current_child: Option<usize>,
@@ -279,12 +279,8 @@ enum Tracker<'shape> {
     },
 }
 
-impl<'shape> Frame<'shape> {
-    fn new(
-        data: PtrUninit<'static>,
-        shape: &'shape Shape<'shape>,
-        ownership: FrameOwnership,
-    ) -> Self {
+impl Frame {
+    fn new(data: PtrUninit<'static>, shape: &'static Shape, ownership: FrameOwnership) -> Self {
         // For empty structs (structs with 0 fields), start as Init since there's nothing to initialize
         // This includes empty tuples () which are zero-sized types with no fields to initialize
         let tracker = match shape.ty {
@@ -303,7 +299,7 @@ impl<'shape> Frame<'shape> {
     }
 
     /// Returns an error if the value is not fully initialized
-    fn require_full_initialization(&self) -> Result<(), ReflectError<'shape>> {
+    fn require_full_initialization(&self) -> Result<(), ReflectError> {
         match self.tracker {
             Tracker::Uninit => Err(ReflectError::UninitializedValue { shape: self.shape }),
             Tracker::Init => Ok(()),
@@ -375,7 +371,7 @@ impl<'shape> Frame<'shape> {
                     Err(ReflectError::UninitializedValue { shape: self.shape })
                 }
             }
-            Tracker::SmartPointerStr { .. } => {
+            Tracker::SmartPointerStr => {
                 todo!()
             }
             Tracker::SmartPointerSlice { building_item, .. } => {
@@ -413,9 +409,9 @@ impl<'shape> Frame<'shape> {
     }
 }
 
-impl<'facet, 'shape> Partial<'facet, 'shape> {
+impl<'facet> Partial<'facet> {
     /// Allocates a new Partial instance with the given shape
-    pub fn alloc_shape(shape: &'shape Shape<'shape>) -> Result<Self, ReflectError<'shape>> {
+    pub fn alloc_shape(shape: &'static Shape) -> Result<Self, ReflectError> {
         crate::trace!(
             "alloc_shape({:?}), with layout {:?}",
             shape,
@@ -441,7 +437,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Allocates a new TypedPartial instance with the given shape and type
-    pub fn alloc<T>() -> Result<TypedPartial<'facet, 'shape, T>, ReflectError<'shape>>
+    pub fn alloc<T>() -> Result<TypedPartial<'facet, T>, ReflectError>
     where
         T: Facet<'facet>,
     {
@@ -452,7 +448,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Creates a Partial from an existing pointer and shape (used for nested initialization)
-    pub fn from_ptr(data: PtrUninit<'_>, shape: &'shape Shape<'shape>) -> Self {
+    pub fn from_ptr(data: PtrUninit<'_>, shape: &'static Shape) -> Self {
         // We need to convert the lifetime, which is safe because we're storing it in a frame
         // that will manage the lifetime correctly
         let data_static = PtrUninit::new(data.as_mut_byte_ptr());
@@ -464,7 +460,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Require that the partial is active
-    fn require_active(&self) -> Result<(), ReflectError<'shape>> {
+    fn require_active(&self) -> Result<(), ReflectError> {
         if self.state == PartialState::Active {
             Ok(())
         } else {
@@ -481,7 +477,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Sets a value wholesale into the current frame
-    pub fn set<U>(&mut self, value: U) -> Result<&mut Self, ReflectError<'shape>>
+    pub fn set<U>(&mut self, value: U) -> Result<&mut Self, ReflectError>
     where
         U: Facet<'facet>,
     {
@@ -519,8 +515,8 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     pub unsafe fn set_shape(
         &mut self,
         src_value: PtrConst<'_>,
-        src_shape: &'shape Shape<'shape>,
-    ) -> Result<&mut Self, ReflectError<'shape>> {
+        src_shape: &'static Shape,
+    ) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
 
         let fr = self.frames.last_mut().unwrap();
@@ -549,7 +545,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
 
     /// Sets the current frame to its default value
     #[inline]
-    pub fn set_default(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn set_default(&mut self) -> Result<&mut Self, ReflectError> {
         let frame = self.frames.last().unwrap(); // Get frame to access vtable
 
         if let Some(default_fn) = frame
@@ -582,7 +578,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     pub fn set_field_default(
         &mut self,
         field_default_fn: DefaultInPlaceFn,
-    ) -> Result<&mut Self, ReflectError<'shape>> {
+    ) -> Result<&mut Self, ReflectError> {
         // Use the field-level default function to initialize the value
         // SAFETY: set_from_function handles the active check, dropping,
         // and setting tracker. The closure passes the correct pointer type
@@ -596,9 +592,9 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Sets the current frame using a function that initializes the value
-    pub fn set_from_function<F>(&mut self, f: F) -> Result<&mut Self, ReflectError<'shape>>
+    pub fn set_from_function<F>(&mut self, f: F) -> Result<&mut Self, ReflectError>
     where
-        F: FnOnce(PtrUninit<'_>) -> Result<(), ReflectError<'shape>>,
+        F: FnOnce(PtrUninit<'_>) -> Result<(), ReflectError>,
     {
         self.require_active()?;
 
@@ -636,7 +632,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Parses a string value into the current frame using the type's ParseFn from the vtable
-    pub fn parse_from_str(&mut self, s: &str) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn parse_from_str(&mut self, s: &str) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
 
         let frame = self.frames.last_mut().unwrap();
@@ -687,10 +683,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Pushes a variant for enum initialization by name
-    pub fn select_variant_named(
-        &mut self,
-        variant_name: &str,
-    ) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn select_variant_named(&mut self, variant_name: &str) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
 
         let fr = self.frames.last_mut().unwrap();
@@ -733,7 +726,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Pushes a variant for enum initialization
-    pub fn select_variant(&mut self, discriminant: i64) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn select_variant(&mut self, discriminant: i64) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
 
         // Check all invariants early before making any changes
@@ -848,7 +841,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Selects a field of a struct with a given name
-    pub fn begin_field(&mut self, field_name: &str) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn begin_field(&mut self, field_name: &str) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
 
         let frame = self.frames.last_mut().unwrap();
@@ -918,7 +911,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Selects a variant for enum initialization, by variant index in the enum's variant list (0-based)
-    pub fn select_nth_variant(&mut self, index: usize) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn select_nth_variant(&mut self, index: usize) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
 
         let fr = self.frames.last().unwrap();
@@ -958,7 +951,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Selects the nth field of a struct by index
-    pub fn begin_nth_field(&mut self, idx: usize) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn begin_nth_field(&mut self, idx: usize) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
         match frame.shape.ty {
@@ -1043,7 +1036,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Selects the nth element of an array by index
-    pub fn begin_nth_element(&mut self, idx: usize) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn begin_nth_element(&mut self, idx: usize) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
         match frame.shape.ty {
@@ -1132,7 +1125,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Selects the nth field of an enum variant by index
-    pub fn begin_nth_enum_field(&mut self, idx: usize) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn begin_nth_enum_field(&mut self, idx: usize) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
 
@@ -1215,7 +1208,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Pushes a frame to initialize the inner value of a smart pointer (`Box<T>`, `Arc<T>`, etc.)
-    pub fn begin_smart_ptr(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn begin_smart_ptr(&mut self) -> Result<&mut Self, ReflectError> {
         crate::trace!("begin_smart_ptr()");
         self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
@@ -1353,7 +1346,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
 
     /// Begins a pushback operation for a list (Vec, etc.)
     /// This initializes the list with default capacity and allows pushing elements
-    pub fn begin_list(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn begin_list(&mut self) -> Result<&mut Self, ReflectError> {
         crate::trace!("begin_list()");
         self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
@@ -1404,7 +1397,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
 
     /// Begins a map initialization operation
     /// This initializes the map with default capacity and allows inserting key-value pairs
-    pub fn begin_map(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn begin_map(&mut self) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
 
@@ -1438,7 +1431,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
 
     /// Pushes a frame for the map key
     /// Automatically starts a new insert if we're idle
-    pub fn begin_key(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn begin_key(&mut self) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
 
@@ -1526,7 +1519,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
 
     /// Pushes a frame for the map value
     /// Must be called after the key has been set and popped
-    pub fn begin_value(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn begin_value(&mut self) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
 
@@ -1600,7 +1593,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
 
     /// Pushes an element to the list
     /// The element should be set using `set()` or similar methods, then `pop()` to complete
-    pub fn begin_list_item(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn begin_list_item(&mut self) -> Result<&mut Self, ReflectError> {
         crate::trace!("begin_list_item()");
         self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
@@ -1750,7 +1743,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Pops the current frame off the stack, indicating we're done initializing the current field
-    pub fn end(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn end(&mut self) -> Result<&mut Self, ReflectError> {
         crate::trace!("end() called");
         self.require_active()?;
 
@@ -2216,7 +2209,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Builds the value
-    pub fn build(&mut self) -> Result<HeapValue<'facet, 'shape>, ReflectError<'shape>> {
+    pub fn build(&mut self) -> Result<HeapValue<'facet>, ReflectError> {
         self.require_active()?;
         if self.frames.len() != 1 {
             self.state = PartialState::BuildFailed;
@@ -2375,7 +2368,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
 
     /// Returns the shape of the current frame.
     #[inline]
-    pub fn shape(&self) -> &'shape Shape<'shape> {
+    pub fn shape(&self) -> &'static Shape {
         self.frames
             .last()
             .expect("Partial always has at least one frame")
@@ -2384,12 +2377,12 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
 
     /// Returns the innermost shape (alias for shape(), for compatibility)
     #[inline]
-    pub fn innermost_shape(&self) -> &'shape Shape<'shape> {
+    pub fn innermost_shape(&self) -> &'static Shape {
         self.shape()
     }
 
     /// Check if a struct field at the given index has been set
-    pub fn is_field_set(&self, index: usize) -> Result<bool, ReflectError<'shape>> {
+    pub fn is_field_set(&self, index: usize) -> Result<bool, ReflectError> {
         let frame = self.frames.last().ok_or(ReflectError::NoActiveFrame)?;
 
         match &frame.tracker {
@@ -2458,7 +2451,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Get the currently selected variant for an enum
-    pub fn selected_variant(&self) -> Option<Variant<'shape>> {
+    pub fn selected_variant(&self) -> Option<Variant> {
         let frame = self.frames.last()?;
 
         match &frame.tracker {
@@ -2468,7 +2461,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Find a variant by name in the current enum
-    pub fn find_variant(&self, variant_name: &str) -> Option<(usize, &'shape Variant<'shape>)> {
+    pub fn find_variant(&self, variant_name: &str) -> Option<(usize, &'static Variant)> {
         let frame = self.frames.last()?;
 
         if let Type::User(UserType::Enum(enum_def)) = frame.shape.ty {
@@ -2483,7 +2476,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Begin building the Some variant of an Option
-    pub fn begin_some(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn begin_some(&mut self) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
 
@@ -2538,7 +2531,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Begin building the inner value of a wrapper type
-    pub fn begin_inner(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn begin_inner(&mut self) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
 
         // Get the inner shape and check for try_from
@@ -2612,10 +2605,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Copy a value from a Peek into the current position (safe alternative to set_shape)
-    pub fn set_from_peek(
-        &mut self,
-        peek: &Peek<'_, '_, 'shape>,
-    ) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn set_from_peek(&mut self, peek: &Peek<'_, '_>) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
 
         // Get the source value's pointer and shape
@@ -2632,8 +2622,8 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     pub fn set_field_from_default(
         &mut self,
         field_data: PtrConst<'_>,
-        field_shape: &'shape Shape<'shape>,
-    ) -> Result<&mut Self, ReflectError<'shape>> {
+        field_shape: &'static Shape,
+    ) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
 
         // Safety: The caller guarantees that field_data points to valid data for field_shape
@@ -2643,7 +2633,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
 
     /// Fill all unset fields from the struct's default value
     /// This is a safe API for format deserializers that forbid unsafe code
-    pub fn fill_unset_fields_from_default(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn fill_unset_fields_from_default(&mut self) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
 
         let frame = self.frames.last().unwrap();
@@ -2708,11 +2698,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Convenience shortcut: sets the nth element of an array directly to value, popping after.
-    pub fn set_nth_element<U>(
-        &mut self,
-        idx: usize,
-        value: U,
-    ) -> Result<&mut Self, ReflectError<'shape>>
+    pub fn set_nth_element<U>(&mut self, idx: usize, value: U) -> Result<&mut Self, ReflectError>
     where
         U: Facet<'facet>,
     {
@@ -2720,11 +2706,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Convenience shortcut: sets the field at index `idx` directly to value, popping after.
-    pub fn set_nth_field<U>(
-        &mut self,
-        idx: usize,
-        value: U,
-    ) -> Result<&mut Self, ReflectError<'shape>>
+    pub fn set_nth_field<U>(&mut self, idx: usize, value: U) -> Result<&mut Self, ReflectError>
     where
         U: Facet<'facet>,
     {
@@ -2732,11 +2714,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Convenience shortcut: sets the named field to value, popping after.
-    pub fn set_field<U>(
-        &mut self,
-        field_name: &str,
-        value: U,
-    ) -> Result<&mut Self, ReflectError<'shape>>
+    pub fn set_field<U>(&mut self, field_name: &str, value: U) -> Result<&mut Self, ReflectError>
     where
         U: Facet<'facet>,
     {
@@ -2744,11 +2722,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Convenience shortcut: sets the nth field of an enum variant directly to value, popping after.
-    pub fn set_nth_enum_field<U>(
-        &mut self,
-        idx: usize,
-        value: U,
-    ) -> Result<&mut Self, ReflectError<'shape>>
+    pub fn set_nth_enum_field<U>(&mut self, idx: usize, value: U) -> Result<&mut Self, ReflectError>
     where
         U: Facet<'facet>,
     {
@@ -2756,7 +2730,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Convenience shortcut: sets the key for a map key-value insertion, then pops after.
-    pub fn set_key<U>(&mut self, value: U) -> Result<&mut Self, ReflectError<'shape>>
+    pub fn set_key<U>(&mut self, value: U) -> Result<&mut Self, ReflectError>
     where
         U: Facet<'facet>,
     {
@@ -2764,7 +2738,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Convenience shortcut: sets the value for a map key-value insertion, then pops after.
-    pub fn set_value<U>(&mut self, value: U) -> Result<&mut Self, ReflectError<'shape>>
+    pub fn set_value<U>(&mut self, value: U) -> Result<&mut Self, ReflectError>
     where
         U: Facet<'facet>,
     {
@@ -2772,7 +2746,7 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
     }
 
     /// Shorthand for: begin_list_item(), set, end
-    pub fn push<U>(&mut self, value: U) -> Result<&mut Self, ReflectError<'shape>>
+    pub fn push<U>(&mut self, value: U) -> Result<&mut Self, ReflectError>
     where
         U: Facet<'facet>,
     {
@@ -2782,22 +2756,21 @@ impl<'facet, 'shape> Partial<'facet, 'shape> {
 
 /// A typed wrapper around `Partial`, for when you want to statically
 /// ensure that `build` gives you the proper type.
-pub struct TypedPartial<'facet, 'shape, T> {
-    inner: Partial<'facet, 'shape>,
+pub struct TypedPartial<'facet, T> {
+    inner: Partial<'facet>,
     phantom: PhantomData<T>,
 }
 
-impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
+impl<'facet, T> TypedPartial<'facet, T> {
     /// Unwraps the underlying Partial, consuming self.
-    pub fn inner_mut(&mut self) -> &mut Partial<'facet, 'shape> {
+    pub fn inner_mut(&mut self) -> &mut Partial<'facet> {
         &mut self.inner
     }
 
     /// Builds the value and returns a `Box<T>`
-    pub fn build(&mut self) -> Result<Box<T>, ReflectError<'shape>>
+    pub fn build(&mut self) -> Result<Box<T>, ReflectError>
     where
         T: Facet<'facet>,
-        'facet: 'shape,
     {
         trace!(
             "TypedPartial::build: Building value for type {} which should == {}",
@@ -2816,7 +2789,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
     }
 
     /// Sets a value wholesale into the current frame
-    pub fn set<U>(&mut self, value: U) -> Result<&mut Self, ReflectError<'shape>>
+    pub fn set<U>(&mut self, value: U) -> Result<&mut Self, ReflectError>
     where
         U: Facet<'facet>,
     {
@@ -2828,116 +2801,113 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
     pub fn set_shape(
         &mut self,
         src_value: PtrConst<'_>,
-        src_shape: &'shape Shape<'shape>,
-    ) -> Result<&mut Self, ReflectError<'shape>> {
+        src_shape: &'static Shape,
+    ) -> Result<&mut Self, ReflectError> {
         unsafe { self.inner.set_shape(src_value, src_shape)? };
         Ok(self)
     }
 
     /// Forwards begin_field to the inner partial instance.
-    pub fn begin_field(&mut self, field_name: &str) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn begin_field(&mut self, field_name: &str) -> Result<&mut Self, ReflectError> {
         self.inner.begin_field(field_name)?;
         Ok(self)
     }
 
     /// Forwards begin_nth_field to the inner partial instance.
-    pub fn begin_nth_field(&mut self, idx: usize) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn begin_nth_field(&mut self, idx: usize) -> Result<&mut Self, ReflectError> {
         self.inner.begin_nth_field(idx)?;
         Ok(self)
     }
 
     /// Forwards begin_nth_element to the inner partial instance.
-    pub fn begin_nth_element(&mut self, idx: usize) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn begin_nth_element(&mut self, idx: usize) -> Result<&mut Self, ReflectError> {
         self.inner.begin_nth_element(idx)?;
         Ok(self)
     }
 
     /// Forwards begin_smart_ptr to the inner partial instance.
-    pub fn begin_smart_ptr(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn begin_smart_ptr(&mut self) -> Result<&mut Self, ReflectError> {
         self.inner.begin_smart_ptr()?;
         Ok(self)
     }
 
     /// Forwards end to the inner partial instance.
-    pub fn end(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn end(&mut self) -> Result<&mut Self, ReflectError> {
         self.inner.end()?;
         Ok(self)
     }
 
     /// Forwards set_default to the inner partial instance.
-    pub fn set_default(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn set_default(&mut self) -> Result<&mut Self, ReflectError> {
         self.inner.set_default()?;
         Ok(self)
     }
 
     /// Forwards set_from_function to the inner partial instance.
-    pub fn set_from_function<F>(&mut self, f: F) -> Result<&mut Self, ReflectError<'shape>>
+    pub fn set_from_function<F>(&mut self, f: F) -> Result<&mut Self, ReflectError>
     where
-        F: FnOnce(PtrUninit<'_>) -> Result<(), ReflectError<'shape>>,
+        F: FnOnce(PtrUninit<'_>) -> Result<(), ReflectError>,
     {
         self.inner.set_from_function(f)?;
         Ok(self)
     }
 
     /// Forwards parse_from_str to the inner partial instance.
-    pub fn parse_from_str(&mut self, s: &str) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn parse_from_str(&mut self, s: &str) -> Result<&mut Self, ReflectError> {
         self.inner.parse_from_str(s)?;
         Ok(self)
     }
 
     /// Forwards begin_variant to the inner partial instance.
-    pub fn select_variant(&mut self, discriminant: i64) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn select_variant(&mut self, discriminant: i64) -> Result<&mut Self, ReflectError> {
         self.inner.select_variant(discriminant)?;
         Ok(self)
     }
 
     /// Forwards begin_variant_named to the inner partial instance.
-    pub fn select_variant_named(
-        &mut self,
-        variant_name: &str,
-    ) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn select_variant_named(&mut self, variant_name: &str) -> Result<&mut Self, ReflectError> {
         self.inner.select_variant_named(variant_name)?;
         Ok(self)
     }
 
     /// Forwards select_nth_variant to the inner partial instance.
-    pub fn select_nth_variant(&mut self, index: usize) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn select_nth_variant(&mut self, index: usize) -> Result<&mut Self, ReflectError> {
         self.inner.select_nth_variant(index)?;
         Ok(self)
     }
 
     /// Forwards begin_nth_enum_field to the inner partial instance.
-    pub fn begin_nth_enum_field(&mut self, idx: usize) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn begin_nth_enum_field(&mut self, idx: usize) -> Result<&mut Self, ReflectError> {
         self.inner.begin_nth_enum_field(idx)?;
         Ok(self)
     }
 
     /// Forwards begin_list to the inner partial instance.
-    pub fn begin_list(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn begin_list(&mut self) -> Result<&mut Self, ReflectError> {
         self.inner.begin_list()?;
         Ok(self)
     }
 
     /// Forwards begin_list_item to the inner partial instance.
-    pub fn begin_list_item(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn begin_list_item(&mut self) -> Result<&mut Self, ReflectError> {
         self.inner.begin_list_item()?;
         Ok(self)
     }
 
     /// Forwards begin_map to the inner partial instance.
-    pub fn begin_map(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn begin_map(&mut self) -> Result<&mut Self, ReflectError> {
         self.inner.begin_map()?;
         Ok(self)
     }
 
     /// Forwards begin_key to the inner partial instance.
-    pub fn begin_key(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn begin_key(&mut self) -> Result<&mut Self, ReflectError> {
         self.inner.begin_key()?;
         Ok(self)
     }
 
     /// Forwards begin_value to the inner partial instance.
-    pub fn begin_value(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn begin_value(&mut self) -> Result<&mut Self, ReflectError> {
         self.inner.begin_value()?;
         Ok(self)
     }
@@ -2949,16 +2919,12 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
     }
 
     /// Returns the shape of the current frame.
-    pub fn shape(&self) -> &'shape Shape<'shape> {
+    pub fn shape(&self) -> &'static Shape {
         self.inner.shape()
     }
 
     /// Convenience shortcut: sets the nth element of an array directly to value, popping after.
-    pub fn set_nth_element<U>(
-        &mut self,
-        idx: usize,
-        value: U,
-    ) -> Result<&mut Self, ReflectError<'shape>>
+    pub fn set_nth_element<U>(&mut self, idx: usize, value: U) -> Result<&mut Self, ReflectError>
     where
         U: Facet<'facet>,
     {
@@ -2967,11 +2933,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
     }
 
     /// Convenience shortcut: sets the field at index `idx` directly to value, popping after.
-    pub fn set_nth_field<U>(
-        &mut self,
-        idx: usize,
-        value: U,
-    ) -> Result<&mut Self, ReflectError<'shape>>
+    pub fn set_nth_field<U>(&mut self, idx: usize, value: U) -> Result<&mut Self, ReflectError>
     where
         U: Facet<'facet>,
     {
@@ -2980,11 +2942,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
     }
 
     /// Convenience shortcut: sets the named field to value, popping after.
-    pub fn set_field<U>(
-        &mut self,
-        field_name: &str,
-        value: U,
-    ) -> Result<&mut Self, ReflectError<'shape>>
+    pub fn set_field<U>(&mut self, field_name: &str, value: U) -> Result<&mut Self, ReflectError>
     where
         U: Facet<'facet>,
     {
@@ -2993,11 +2951,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
     }
 
     /// Convenience shortcut: sets the nth field of an enum variant directly to value, popping after.
-    pub fn set_nth_enum_field<U>(
-        &mut self,
-        idx: usize,
-        value: U,
-    ) -> Result<&mut Self, ReflectError<'shape>>
+    pub fn set_nth_enum_field<U>(&mut self, idx: usize, value: U) -> Result<&mut Self, ReflectError>
     where
         U: Facet<'facet>,
     {
@@ -3006,7 +2960,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
     }
 
     /// Convenience shortcut: sets the key for a map key-value insertion, then pops after.
-    pub fn set_key<U>(&mut self, value: U) -> Result<&mut Self, ReflectError<'shape>>
+    pub fn set_key<U>(&mut self, value: U) -> Result<&mut Self, ReflectError>
     where
         U: Facet<'facet>,
     {
@@ -3015,7 +2969,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
     }
 
     /// Convenience shortcut: sets the value for a map key-value insertion, then pops after.
-    pub fn set_value<U>(&mut self, value: U) -> Result<&mut Self, ReflectError<'shape>>
+    pub fn set_value<U>(&mut self, value: U) -> Result<&mut Self, ReflectError>
     where
         U: Facet<'facet>,
     {
@@ -3024,7 +2978,7 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
     }
 
     /// Shorthand for: begin_list_item(), set, end
-    pub fn push<U>(&mut self, value: U) -> Result<&mut Self, ReflectError<'shape>>
+    pub fn push<U>(&mut self, value: U) -> Result<&mut Self, ReflectError>
     where
         U: Facet<'facet>,
     {
@@ -3033,19 +2987,19 @@ impl<'facet, 'shape, T> TypedPartial<'facet, 'shape, T> {
     }
 
     /// Begin building the Some variant of an Option
-    pub fn begin_some(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn begin_some(&mut self) -> Result<&mut Self, ReflectError> {
         self.inner.begin_some()?;
         Ok(self)
     }
 
     /// Begin building the inner value of a wrapper type
-    pub fn begin_inner(&mut self) -> Result<&mut Self, ReflectError<'shape>> {
+    pub fn begin_inner(&mut self) -> Result<&mut Self, ReflectError> {
         self.inner.begin_inner()?;
         Ok(self)
     }
 }
 
-impl<'facet, 'shape, T> core::fmt::Debug for TypedPartial<'facet, 'shape, T> {
+impl<'facet, T> core::fmt::Debug for TypedPartial<'facet, T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("TypedPartial")
             .field("shape", &self.inner.frames.last().map(|frame| frame.shape))
@@ -3053,7 +3007,7 @@ impl<'facet, 'shape, T> core::fmt::Debug for TypedPartial<'facet, 'shape, T> {
     }
 }
 
-impl<'facet, 'shape> Drop for Partial<'facet, 'shape> {
+impl<'facet> Drop for Partial<'facet> {
     fn drop(&mut self) {
         trace!("🧹 Partial is being dropped");
 
@@ -3135,7 +3089,7 @@ impl<'facet, 'shape> Drop for Partial<'facet, 'shape> {
                     // Note: we don't deallocate the inner value here because
                     // the Box's drop will handle that
                 }
-                Tracker::SmartPointerStr { .. } => {
+                Tracker::SmartPointerStr => {
                     // nothing to do for now
                 }
                 Tracker::SmartPointerSlice { vtable, .. } => {

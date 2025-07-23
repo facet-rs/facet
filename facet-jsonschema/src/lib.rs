@@ -53,11 +53,7 @@ pub fn to_string<'a, T: Facet<'a>>() -> String {
     String::from_utf8(buffer).unwrap()
 }
 
-fn serialize<'shape, W: Write>(
-    shape: &'shape Shape<'shape>,
-    doc: &[&str],
-    writer: &mut W,
-) -> std::io::Result<()> {
+fn serialize<W: Write>(shape: &Shape, doc: &[&str], writer: &mut W) -> std::io::Result<()> {
     serialize_doc(&[shape.doc, doc].concat(), writer)?;
 
     // First check the type system (Type)

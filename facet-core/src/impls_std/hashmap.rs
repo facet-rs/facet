@@ -45,7 +45,7 @@ where
             .build()
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("HashMap")
             .type_params(&[
@@ -131,7 +131,7 @@ unsafe impl Facet<'_> for RandomState {
     const VTABLE: &'static ValueVTable =
         &const { value_vtable!((), |f, _opts| write!(f, "{}", Self::SHAPE.type_identifier)) };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("RandomState")
             .ty(Type::User(UserType::Opaque))

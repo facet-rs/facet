@@ -57,7 +57,7 @@ unsafe impl Facet<'_> for DateTime<Utc> {
         vtable
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("DateTime<Utc>")
             .ty(Type::User(UserType::Opaque))
@@ -115,7 +115,7 @@ unsafe impl Facet<'_> for DateTime<FixedOffset> {
         vtable
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("DateTime<FixedOffset>")
             .ty(Type::User(UserType::Opaque))
@@ -175,7 +175,7 @@ unsafe impl Facet<'_> for DateTime<Local> {
         vtable
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("DateTime<Local>")
             .ty(Type::User(UserType::Opaque))
@@ -238,7 +238,7 @@ unsafe impl Facet<'_> for NaiveDateTime {
         vtable
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("NaiveDateTime")
             .ty(Type::User(UserType::Opaque))
@@ -296,7 +296,7 @@ unsafe impl Facet<'_> for NaiveDate {
         vtable
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("NaiveDate")
             .ty(Type::User(UserType::Opaque))
@@ -356,7 +356,7 @@ unsafe impl Facet<'_> for NaiveTime {
         vtable
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("NaiveTime")
             .ty(Type::User(UserType::Opaque))

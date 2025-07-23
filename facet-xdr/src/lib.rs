@@ -56,7 +56,7 @@ struct XdrSerializer<'w, W: Write> {
     writer: &'w mut W,
 }
 
-impl<'shape, W: Write> Serializer<'shape> for XdrSerializer<'_, W> {
+impl<W: Write> Serializer for XdrSerializer<'_, W> {
     type Error = XdrSerError;
 
     fn serialize_u32(&mut self, value: u32) -> Result<(), Self::Error> {
@@ -157,7 +157,7 @@ impl<'shape, W: Write> Serializer<'shape> for XdrSerializer<'_, W> {
     fn serialize_unit_variant(
         &mut self,
         _variant_index: usize,
-        _variant_name: &'shape str,
+        _variant_name: &'static str,
     ) -> Result<(), Self::Error> {
         Ok(())
     }
@@ -166,7 +166,7 @@ impl<'shape, W: Write> Serializer<'shape> for XdrSerializer<'_, W> {
         Ok(())
     }
 
-    fn serialize_field_name(&mut self, _name: &'shape str) -> Result<(), Self::Error> {
+    fn serialize_field_name(&mut self, _name: &'static str) -> Result<(), Self::Error> {
         Ok(())
     }
 
@@ -284,7 +284,7 @@ struct XdrDeserializerStack<'input> {
     stack: Vec<DeserializeTask>,
 }
 
-impl<'shape, 'input> XdrDeserializerStack<'input> {
+impl<'input> XdrDeserializerStack<'input> {
     fn next_u32(&mut self) -> Result<u32, XdrDeserError> {
         assert_eq!(self.pos % 4, 0);
         if self.input[self.pos..].len() < 4 {
@@ -319,10 +319,7 @@ impl<'shape, 'input> XdrDeserializerStack<'input> {
         Ok(data)
     }
 
-    fn next<'f>(
-        &mut self,
-        mut wip: Partial<'f, 'shape>,
-    ) -> Result<Partial<'f, 'shape>, XdrDeserError> {
+    fn next<'f>(&mut self, mut wip: Partial<'f>) -> Result<Partial<'f>, XdrDeserError> {
         match (wip.shape().def, wip.shape().ty) {
             (Def::Scalar, Type::Primitive(PrimitiveType::Numeric(numeric_type))) => {
                 let size = wip.shape().layout.sized_layout().unwrap().size();
@@ -551,10 +548,10 @@ impl<'shape, 'input> XdrDeserializerStack<'input> {
 }
 
 /// Deserialize an XDR slice given some some [`Partial`] into a [`HeapValue`]
-pub fn deserialize_wip<'facet, 'shape>(
+pub fn deserialize_wip<'facet>(
     input: &[u8],
-    mut wip: Partial<'facet, 'shape>,
-) -> Result<HeapValue<'facet, 'shape>, XdrDeserError> {
+    mut wip: Partial<'facet>,
+) -> Result<HeapValue<'facet>, XdrDeserError> {
     let mut runner = XdrDeserializerStack {
         input,
         pos: 0,

@@ -100,7 +100,7 @@ where
             .build()
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_unsized::<Self>()
             .type_identifier("[_]")
             .type_params(&[TypeParam {

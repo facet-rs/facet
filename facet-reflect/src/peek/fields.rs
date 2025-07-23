@@ -11,12 +11,12 @@ use super::{PeekEnum, PeekStruct, PeekTuple};
 ///
 /// This trait allows code to be written generically over both structs and enums
 /// that provide field access and iteration capabilities.
-pub trait HasFields<'mem, 'facet, 'shape> {
+pub trait HasFields<'mem, 'facet> {
     /// Iterates over all fields in this type, providing both field metadata and value
-    fn fields(&self) -> FieldIter<'mem, 'facet, 'shape>;
+    fn fields(&self) -> FieldIter<'mem, 'facet>;
 
     /// Iterates over fields in this type that should be included when it is serialized
-    fn fields_for_serialize(&self) -> FieldsForSerializeIter<'mem, 'facet, 'shape> {
+    fn fields_for_serialize(&self) -> FieldsForSerializeIter<'mem, 'facet> {
         FieldsForSerializeIter {
             stack: vec![self.fields()],
         }
@@ -24,27 +24,27 @@ pub trait HasFields<'mem, 'facet, 'shape> {
 }
 
 /// An iterator over all the fields of a struct or enum. See [`HasFields::fields`]
-pub struct FieldIter<'mem, 'facet, 'shape> {
-    state: FieldIterState<'mem, 'facet, 'shape>,
+pub struct FieldIter<'mem, 'facet> {
+    state: FieldIterState<'mem, 'facet>,
     range: Range<usize>,
 }
 
-enum FieldIterState<'mem, 'facet, 'shape> {
-    Struct(PeekStruct<'mem, 'facet, 'shape>),
-    Tuple(PeekTuple<'mem, 'facet, 'shape>),
+enum FieldIterState<'mem, 'facet> {
+    Struct(PeekStruct<'mem, 'facet>),
+    Tuple(PeekTuple<'mem, 'facet>),
     Enum {
-        peek_enum: PeekEnum<'mem, 'facet, 'shape>,
-        fields: &'shape [Field<'shape>],
+        peek_enum: PeekEnum<'mem, 'facet>,
+        fields: &'static [Field],
     },
     FlattenedEnum {
-        field: Field<'shape>,
-        value: Peek<'mem, 'facet, 'shape>,
+        field: Field,
+        value: Peek<'mem, 'facet>,
     },
 }
 
-impl<'mem, 'facet, 'shape> FieldIter<'mem, 'facet, 'shape> {
+impl<'mem, 'facet> FieldIter<'mem, 'facet> {
     #[inline]
-    pub(crate) fn new_struct(struct_: PeekStruct<'mem, 'facet, 'shape>) -> Self {
+    pub(crate) fn new_struct(struct_: PeekStruct<'mem, 'facet>) -> Self {
         Self {
             range: 0..struct_.ty.fields.len(),
             state: FieldIterState::Struct(struct_),
@@ -52,7 +52,7 @@ impl<'mem, 'facet, 'shape> FieldIter<'mem, 'facet, 'shape> {
     }
 
     #[inline]
-    pub(crate) fn new_enum(enum_: PeekEnum<'mem, 'facet, 'shape>) -> Self {
+    pub(crate) fn new_enum(enum_: PeekEnum<'mem, 'facet>) -> Self {
         // Get the fields of the active variant
         let variant = match enum_.active_variant() {
             Ok(v) => v,
@@ -70,17 +70,14 @@ impl<'mem, 'facet, 'shape> FieldIter<'mem, 'facet, 'shape> {
     }
 
     #[inline]
-    pub(crate) fn new_tuple(tuple: PeekTuple<'mem, 'facet, 'shape>) -> Self {
+    pub(crate) fn new_tuple(tuple: PeekTuple<'mem, 'facet>) -> Self {
         Self {
             range: 0..tuple.len(),
             state: FieldIterState::Tuple(tuple),
         }
     }
 
-    fn get_field_by_index(
-        &self,
-        index: usize,
-    ) -> Option<(Field<'shape>, Peek<'mem, 'facet, 'shape>)> {
+    fn get_field_by_index(&self, index: usize) -> Option<(Field, Peek<'mem, 'facet>)> {
         match self.state {
             FieldIterState::Struct(peek_struct) => {
                 let field = peek_struct.ty.fields.get(index).copied()?;
@@ -115,8 +112,8 @@ impl<'mem, 'facet, 'shape> FieldIter<'mem, 'facet, 'shape> {
     }
 }
 
-impl<'mem, 'facet, 'shape> Iterator for FieldIter<'mem, 'facet, 'shape> {
-    type Item = (Field<'shape>, Peek<'mem, 'facet, 'shape>);
+impl<'mem, 'facet> Iterator for FieldIter<'mem, 'facet> {
+    type Item = (Field, Peek<'mem, 'facet>);
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
@@ -137,7 +134,7 @@ impl<'mem, 'facet, 'shape> Iterator for FieldIter<'mem, 'facet, 'shape> {
     }
 }
 
-impl DoubleEndedIterator for FieldIter<'_, '_, '_> {
+impl DoubleEndedIterator for FieldIter<'_, '_> {
     #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
         loop {
@@ -152,15 +149,15 @@ impl DoubleEndedIterator for FieldIter<'_, '_, '_> {
     }
 }
 
-impl ExactSizeIterator for FieldIter<'_, '_, '_> {}
+impl ExactSizeIterator for FieldIter<'_, '_> {}
 
 /// An iterator over the fields of a struct or enum that should be serialized. See [`HasFields::fields_for_serialize`]
-pub struct FieldsForSerializeIter<'mem, 'facet, 'shape> {
-    stack: Vec<FieldIter<'mem, 'facet, 'shape>>,
+pub struct FieldsForSerializeIter<'mem, 'facet> {
+    stack: Vec<FieldIter<'mem, 'facet>>,
 }
 
-impl<'mem, 'facet, 'shape> Iterator for FieldsForSerializeIter<'mem, 'facet, 'shape> {
-    type Item = (Field<'shape>, Peek<'mem, 'facet, 'shape>);
+impl<'mem, 'facet> Iterator for FieldsForSerializeIter<'mem, 'facet> {
+    type Item = (Field, Peek<'mem, 'facet>);
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {

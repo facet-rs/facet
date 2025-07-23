@@ -5,40 +5,40 @@ use super::{IterVTable, Shape};
 /// Fields for map types
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-pub struct MapDef<'shape> {
+pub struct MapDef {
     /// vtable for interacting with the map
-    pub vtable: &'shape MapVTable,
+    pub vtable: &'static MapVTable,
     /// shape of the keys in the map
-    pub k: fn() -> &'shape Shape<'shape>,
+    pub k: fn() -> &'static Shape,
     /// shape of the values in the map
-    pub v: fn() -> &'shape Shape<'shape>,
+    pub v: fn() -> &'static Shape,
 }
 
-impl<'shape> MapDef<'shape> {
+impl MapDef {
     /// Returns a builder for MapDef
-    pub const fn builder() -> MapDefBuilder<'shape> {
+    pub const fn builder() -> MapDefBuilder {
         MapDefBuilder::new()
     }
 
     /// Returns the shape of the keys of the map
-    pub fn k(&self) -> &'shape Shape<'shape> {
+    pub fn k(&self) -> &'static Shape {
         (self.k)()
     }
 
     /// Returns the shape of the values of the map
-    pub fn v(&self) -> &'shape Shape<'shape> {
+    pub fn v(&self) -> &'static Shape {
         (self.v)()
     }
 }
 
 /// Builder for MapDef
-pub struct MapDefBuilder<'shape> {
-    vtable: Option<&'shape MapVTable>,
-    k: Option<fn() -> &'shape Shape<'shape>>,
-    v: Option<fn() -> &'shape Shape<'shape>>,
+pub struct MapDefBuilder {
+    vtable: Option<&'static MapVTable>,
+    k: Option<fn() -> &'static Shape>,
+    v: Option<fn() -> &'static Shape>,
 }
 
-impl<'shape> MapDefBuilder<'shape> {
+impl MapDefBuilder {
     /// Creates a new MapDefBuilder
     #[allow(clippy::new_without_default)]
     pub const fn new() -> Self {
@@ -50,25 +50,25 @@ impl<'shape> MapDefBuilder<'shape> {
     }
 
     /// Sets the vtable for the MapDef
-    pub const fn vtable(mut self, vtable: &'shape MapVTable) -> Self {
+    pub const fn vtable(mut self, vtable: &'static MapVTable) -> Self {
         self.vtable = Some(vtable);
         self
     }
 
     /// Sets the key shape for the MapDef
-    pub const fn k(mut self, k: fn() -> &'shape Shape<'shape>) -> Self {
+    pub const fn k(mut self, k: fn() -> &'static Shape) -> Self {
         self.k = Some(k);
         self
     }
 
     /// Sets the value shape for the MapDef
-    pub const fn v(mut self, v: fn() -> &'shape Shape<'shape>) -> Self {
+    pub const fn v(mut self, v: fn() -> &'static Shape) -> Self {
         self.v = Some(v);
         self
     }
 
     /// Builds the MapDef
-    pub const fn build(self) -> MapDef<'shape> {
+    pub const fn build(self) -> MapDef {
         MapDef {
             vtable: self.vtable.unwrap(),
             k: self.k.unwrap(),

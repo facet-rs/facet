@@ -12,7 +12,7 @@ pub fn to_string<'facet, T: Facet<'facet> + ?Sized>(value: &T) -> String {
 }
 
 /// Serializes a `Peek` instance to a JSON string.
-pub fn peek_to_string<'input, 'facet, 'shape>(peek: Peek<'input, 'facet, 'shape>) -> String {
+pub fn peek_to_string<'input, 'facet>(peek: Peek<'input, 'facet>) -> String {
     let mut s = Vec::new();
     peek_to_writer(peek, &mut s).unwrap();
     String::from_utf8(s).unwrap()
@@ -27,8 +27,8 @@ pub fn to_writer<'mem, 'facet, T: Facet<'facet>, W: crate::JsonWrite>(
 }
 
 /// Serializes a `Peek` value to JSON and writes it to the given writer.
-pub fn peek_to_writer<'mem, 'facet, 'shape, W: crate::JsonWrite>(
-    peek: Peek<'mem, 'facet, 'shape>,
+pub fn peek_to_writer<'mem, 'facet, W: crate::JsonWrite>(
+    peek: Peek<'mem, 'facet>,
     writer: W,
 ) -> Result<(), SerializeError> {
     let mut serializer = JsonSerializer::new(writer);
@@ -128,7 +128,7 @@ impl<W: crate::JsonWrite> JsonSerializer<W> {
     }
 }
 
-impl<'shape, W: crate::JsonWrite> Serializer<'shape> for JsonSerializer<W> {
+impl<W: crate::JsonWrite> Serializer for JsonSerializer<W> {
     type Error = SerializeError;
 
     fn serialize_u8(&mut self, value: u8) -> Result<(), Self::Error> {
@@ -239,7 +239,7 @@ impl<'shape, W: crate::JsonWrite> Serializer<'shape> for JsonSerializer<W> {
     fn serialize_unit_variant(
         &mut self,
         _variant_index: usize,
-        variant_name: &'shape str,
+        variant_name: &'static str,
     ) -> Result<(), Self::Error> {
         self.start_value()?;
         crate::write_json_string(&mut self.writer, variant_name);
@@ -299,7 +299,7 @@ impl<'shape, W: crate::JsonWrite> Serializer<'shape> for JsonSerializer<W> {
         self.end_object()
     }
 
-    fn serialize_field_name(&mut self, name: &'shape str) -> Result<(), Self::Error> {
+    fn serialize_field_name(&mut self, name: &'static str) -> Result<(), Self::Error> {
         // Handle object key comma logic
         if let Some(StackItem::ObjectItem { object_state }) = self.stack.last_mut() {
             match object_state {

@@ -61,7 +61,7 @@ pub enum ScalarType {
 impl ScalarType {
     /// Infer the type from a shape definition.
     #[inline]
-    pub fn try_from_shape(shape: &Shape<'_>) -> Option<Self> {
+    pub fn try_from_shape(shape: &Shape) -> Option<Self> {
         let type_id = shape.id.get();
 
         #[cfg(feature = "alloc")]

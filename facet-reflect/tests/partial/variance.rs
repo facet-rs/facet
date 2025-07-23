@@ -25,8 +25,8 @@ fn covariant_works() {
         token: CovariantLifetime<'a>,
     }
 
-    fn scope<'a>(token: CovariantLifetime<'a>) -> Result<Wrapper<'a>, ReflectError<'static>> {
-        Partial::<'a, 'static>::alloc_shape(Wrapper::<'a>::SHAPE)?
+    fn scope<'a>(token: CovariantLifetime<'a>) -> Result<Wrapper<'a>, ReflectError> {
+        Partial::<'a>::alloc_shape(Wrapper::<'a>::SHAPE)?
             .begin_field("token")?
             .set(token)?
             .end()?
@@ -45,8 +45,8 @@ fn contravariant_works() {
         token: ContravariantLifetime<'a>,
     }
 
-    fn scope<'a>(token: ContravariantLifetime<'a>) -> Result<Wrapper<'a>, ReflectError<'static>> {
-        Partial::<'a, 'static>::alloc_shape(Wrapper::<'a>::SHAPE)?
+    fn scope<'a>(token: ContravariantLifetime<'a>) -> Result<Wrapper<'a>, ReflectError> {
+        Partial::<'a>::alloc_shape(Wrapper::<'a>::SHAPE)?
             .begin_field("token")?
             .set(token)?
             .end()?
@@ -65,8 +65,8 @@ fn invariant_works() {
         token: InvariantLifetime<'a>,
     }
 
-    fn scope<'a>(token: InvariantLifetime<'a>) -> Result<Wrapper<'a>, ReflectError<'static>> {
-        Partial::<'a, 'static>::alloc_shape(Wrapper::<'a>::SHAPE)?
+    fn scope<'a>(token: InvariantLifetime<'a>) -> Result<Wrapper<'a>, ReflectError> {
+        Partial::<'a>::alloc_shape(Wrapper::<'a>::SHAPE)?
             .begin_field("token")?
             .set(token)?
             .end()?

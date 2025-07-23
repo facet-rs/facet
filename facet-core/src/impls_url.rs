@@ -64,9 +64,9 @@ unsafe impl Facet<'_> for Url {
         vtable
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         // Function to return inner type's shape
-        fn inner_shape() -> &'static Shape<'static> {
+        fn inner_shape() -> &'static Shape {
             <String as Facet>::SHAPE
         }
 

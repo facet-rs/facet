@@ -8,13 +8,13 @@ use facet_core::{Facet, PtrConst, PtrMut, Shape};
 use owo_colors::OwoColorize as _;
 
 /// A type-erased value stored on the heap
-pub struct HeapValue<'facet, 'shape> {
+pub struct HeapValue<'facet> {
     pub(crate) guard: Option<Guard>,
-    pub(crate) shape: &'shape Shape<'shape>,
+    pub(crate) shape: &'static Shape,
     pub(crate) phantom: PhantomData<&'facet ()>,
 }
 
-impl<'facet, 'shape> Drop for HeapValue<'facet, 'shape> {
+impl<'facet> Drop for HeapValue<'facet> {
     fn drop(&mut self) {
         if let Some(guard) = self.guard.take() {
             if let Some(drop_fn) = (self.shape.vtable.sized().unwrap().drop_in_place)() {
@@ -25,19 +25,19 @@ impl<'facet, 'shape> Drop for HeapValue<'facet, 'shape> {
     }
 }
 
-impl<'facet, 'shape> HeapValue<'facet, 'shape> {
+impl<'facet> HeapValue<'facet> {
     /// Returns a peek that allows exploring the heap value.
-    pub fn peek(&self) -> Peek<'_, 'facet, 'shape> {
+    pub fn peek(&self) -> Peek<'_, 'facet> {
         unsafe { Peek::unchecked_new(PtrConst::new(self.guard.as_ref().unwrap().ptr), self.shape) }
     }
 
     /// Returns the shape of this heap value.
-    pub fn shape(&self) -> &'shape Shape<'shape> {
+    pub fn shape(&self) -> &'static Shape {
         self.shape
     }
 
     /// Turn this heapvalue into a concrete type
-    pub fn materialize<T: Facet<'facet>>(mut self) -> Result<T, ReflectError<'shape>> {
+    pub fn materialize<T: Facet<'facet>>(mut self) -> Result<T, ReflectError> {
         trace!(
             "HeapValue::materialize: Materializing heap value with shape {} to type {}",
             self.shape,
@@ -65,7 +65,7 @@ impl<'facet, 'shape> HeapValue<'facet, 'shape> {
     }
 }
 
-impl<'facet, 'shape> HeapValue<'facet, 'shape> {
+impl<'facet> HeapValue<'facet> {
     /// Formats the value using its Display implementation, if available
     pub fn fmt_display(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if let Some(display_fn) = self.shape.vtable.sized().and_then(|v| (v.display)()) {
@@ -85,19 +85,19 @@ impl<'facet, 'shape> HeapValue<'facet, 'shape> {
     }
 }
 
-impl<'facet, 'shape> core::fmt::Display for HeapValue<'facet, 'shape> {
+impl<'facet> core::fmt::Display for HeapValue<'facet> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.fmt_display(f)
     }
 }
 
-impl<'facet, 'shape> core::fmt::Debug for HeapValue<'facet, 'shape> {
+impl<'facet> core::fmt::Debug for HeapValue<'facet> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.fmt_debug(f)
     }
 }
 
-impl<'facet, 'shape> PartialEq for HeapValue<'facet, 'shape> {
+impl<'facet> PartialEq for HeapValue<'facet> {
     fn eq(&self, other: &Self) -> bool {
         if self.shape != other.shape {
             return false;
@@ -115,7 +115,7 @@ impl<'facet, 'shape> PartialEq for HeapValue<'facet, 'shape> {
     }
 }
 
-impl<'facet, 'shape> PartialOrd for HeapValue<'facet, 'shape> {
+impl<'facet> PartialOrd for HeapValue<'facet> {
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         if self.shape != other.shape {
             return None;
@@ -160,7 +160,7 @@ impl Drop for Guard {
     }
 }
 
-impl<'facet, 'shape> HeapValue<'facet, 'shape> {
+impl<'facet> HeapValue<'facet> {
     /// Unsafely convert this HeapValue into a `Box<T>` without checking shape.
     ///
     /// # Safety

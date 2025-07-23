@@ -9,7 +9,7 @@ unsafe impl Facet<'_> for std::path::PathBuf {
         ))
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("PathBuf")
             .ty(Type::User(UserType::Opaque))
@@ -27,7 +27,7 @@ unsafe impl Facet<'_> for std::path::Path {
         ))
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_unsized::<Self>()
             .type_identifier("Path")
             .ty(Type::User(UserType::Opaque))

@@ -21,7 +21,7 @@ unsafe impl Facet<'_> for alloc::string::String {
         vtable
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .def(Def::Scalar)
             .type_identifier("String")
@@ -38,7 +38,7 @@ unsafe impl<'a> Facet<'a> for alloc::borrow::Cow<'a, str> {
         ))
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .def(Def::Scalar)
             .type_identifier("Cow")

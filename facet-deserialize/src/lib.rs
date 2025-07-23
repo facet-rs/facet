@@ -140,7 +140,7 @@ impl Outcome<'_> {
 
 /// Carries the current parsing state and the in-progress value during deserialization.
 /// This bundles the mutable context that must be threaded through parsing steps.
-pub struct NextData<'input, 'facet, 'shape>
+pub struct NextData<'input, 'facet>
 where
     'input: 'facet,
 {
@@ -151,10 +151,10 @@ where
     runner: StackRunner<'input>,
 
     /// Holds the intermediate representation of the value being built.
-    pub wip: Partial<'facet, 'shape>,
+    pub wip: Partial<'facet>,
 }
 
-impl<'input, 'facet, 'shape> NextData<'input, 'facet, 'shape>
+impl<'input, 'facet> NextData<'input, 'facet>
 where
     'input: 'facet,
 {
@@ -170,8 +170,7 @@ where
 }
 
 /// The result of advancing the parser: updated state and parse outcome or error.
-pub type NextResult<'input, 'facet, 'shape, T, E> =
-    (NextData<'input, 'facet, 'shape>, Result<T, E>);
+pub type NextResult<'input, 'facet, T, E> = (NextData<'input, 'facet>, Result<T, E>);
 
 /// Trait defining a deserialization format.
 /// Provides the next parsing step based on current state and expected input.
@@ -181,22 +180,18 @@ pub trait Format {
 
     /// Advance the parser with current state and expectation, producing the next outcome or error.
     #[allow(clippy::type_complexity)]
-    fn next<'input, 'facet, 'shape>(
+    fn next<'input, 'facet>(
         &mut self,
-        nd: NextData<'input, 'facet, 'shape>,
+        nd: NextData<'input, 'facet>,
         expectation: Expectation,
-    ) -> NextResult<'input, 'facet, 'shape, Spanned<Outcome<'input>>, Spanned<DeserErrorKind<'shape>>>
-    where
-        'shape: 'input;
+    ) -> NextResult<'input, 'facet, Spanned<Outcome<'input>>, Spanned<DeserErrorKind>>;
 
     /// Skip the next value; used to ignore an input.
     #[allow(clippy::type_complexity)]
-    fn skip<'input, 'facet, 'shape>(
+    fn skip<'input, 'facet>(
         &mut self,
-        nd: NextData<'input, 'facet, 'shape>,
-    ) -> NextResult<'input, 'facet, 'shape, Span, Spanned<DeserErrorKind<'shape>>>
-    where
-        'shape: 'input;
+        nd: NextData<'input, 'facet>,
+    ) -> NextResult<'input, 'facet, Span, Spanned<DeserErrorKind>>;
 }
 
 /// Instructions guiding the parsing flow, indicating the next expected action or token.
@@ -247,26 +242,23 @@ mod deser_impl {
     ///
     /// This function sets up the initial working state and drives the deserialization process,
     /// ensuring that the resulting value is fully materialized and valid.
-    pub fn deserialize<'input, 'facet, 'shape, T, F>(
+    pub fn deserialize<'input, 'facet, T, F>(
         input: &'input [u8],
         format: &mut F,
-    ) -> Result<T, DeserError<'input, 'shape>>
+    ) -> Result<T, DeserError<'input>>
     where
         T: Facet<'facet>,
-        F: Format + 'shape,
+        F: Format,
         'input: 'facet,
-        'shape: 'input,
     {
         // Run the entire deserialization process and capture any errors
-        let result: Result<T, DeserError<'input, 'shape>> = {
-            let source = format.source();
-
+        let result: Result<T, DeserError<'input>> = {
             // Step 1: Allocate shape
             let wip = match Partial::alloc_shape(T::SHAPE) {
                 Ok(wip) => wip,
                 Err(e) => {
                     let default_span = Span::default();
-                    return Err(DeserError::new_reflect(e, input, default_span, source));
+                    return Err(DeserError::new_reflect(e, input, default_span));
                 }
             };
 
@@ -283,7 +275,7 @@ mod deser_impl {
                 Ok(val) => Ok(val),
                 Err(e) => {
                     let default_span = Span::default();
-                    return Err(DeserError::new_reflect(e, input, default_span, source));
+                    return Err(DeserError::new_reflect(e, input, default_span));
                 }
             }
         };
@@ -296,15 +288,14 @@ mod deser_impl {
 ///
 /// This function sets up the initial working state and drives the deserialization process,
 /// ensuring that the resulting value is fully materialized and valid.
-pub fn deserialize<'input, 'facet, 'shape, T, F>(
+pub fn deserialize<'input, 'facet, T, F>(
     input: &'input [u8],
     format: F,
-) -> Result<T, DeserError<'input, 'shape>>
+) -> Result<T, DeserError<'input>>
 where
     T: Facet<'facet>,
-    F: Format + 'shape,
+    F: Format,
     'input: 'facet,
-    'shape: 'input,
 {
     let mut format_copy = format;
     deser_impl::deserialize(input, &mut format_copy)
@@ -312,15 +303,14 @@ where
 
 /// Deserializes a working-in-progress value into a fully materialized heap value.
 /// This function drives the parsing loop until the entire input is consumed and the value is complete.
-pub fn deserialize_wip<'input, 'facet, 'shape, F>(
-    mut wip: Partial<'facet, 'shape>,
+pub fn deserialize_wip<'input, 'facet, F>(
+    mut wip: Partial<'facet>,
     input: &'input [u8],
     format: &mut F,
-) -> Result<HeapValue<'facet, 'shape>, DeserError<'input, 'shape>>
+) -> Result<HeapValue<'facet>, DeserError<'input>>
 where
-    F: Format + 'shape,
+    F: Format,
     'input: 'facet,
-    'shape: 'input,
 {
     // This struct is just a bundle of the state that we need to pass around all the time.
     let mut runner = StackRunner {
@@ -768,28 +758,23 @@ pub struct StackRunner<'input> {
     pub enum_tuple_current_field: Option<usize>,
 }
 
-impl<'input, 'shape> StackRunner<'input> {
+impl<'input> StackRunner<'input> {
     /// Convenience function to create a DeserError using the original input and last_span.
-    fn err(&self, kind: DeserErrorKind<'shape>) -> DeserError<'input, 'shape> {
-        DeserError::new(
-            kind,
-            self.original_input,
-            self.last_span,
-            self.format_source,
-        )
+    fn err(&self, kind: DeserErrorKind) -> DeserError<'input> {
+        DeserError::new(kind, self.original_input, self.last_span)
     }
 
     /// Convenience function to create a DeserError from a ReflectError,
     /// using the original input and last_span for context.
-    fn reflect_err(&self, err: ReflectError<'shape>) -> DeserError<'input, 'shape> {
-        DeserError::new_reflect(err, self.original_input, self.last_span, self.format_source)
+    fn reflect_err(&self, err: ReflectError) -> DeserError<'input> {
+        DeserError::new_reflect(err, self.original_input, self.last_span)
     }
 
     pub fn pop<'facet>(
         &mut self,
-        mut wip: Partial<'facet, 'shape>,
+        mut wip: Partial<'facet>,
         reason: PopReason,
-    ) -> Result<Partial<'facet, 'shape>, DeserError<'input, 'shape>> {
+    ) -> Result<Partial<'facet>, DeserError<'input>> {
         trace!(
             "--- STACK has {:?} {}",
             self.stack.green(),
@@ -1066,9 +1051,9 @@ impl<'input, 'shape> StackRunner<'input> {
     /// Helper to set numeric values with type conversion
     fn set_numeric_value<'facet>(
         &self,
-        wip: &mut Partial<'facet, 'shape>,
+        wip: &mut Partial<'facet>,
         value: &dyn NumericConvert,
-    ) -> Result<(), DeserError<'input, 'shape>>
+    ) -> Result<(), DeserError<'input>>
     where
         'input: 'facet,
     {
@@ -1164,9 +1149,9 @@ impl<'input, 'shape> StackRunner<'input> {
 
     fn handle_scalar<'facet>(
         &self,
-        wip: &mut Partial<'facet, 'shape>,
+        wip: &mut Partial<'facet>,
         scalar: Scalar<'input>,
-    ) -> Result<(), DeserError<'input, 'shape>>
+    ) -> Result<(), DeserError<'input>>
     where
         'input: 'facet, // 'input outlives 'facet
     {
@@ -1272,9 +1257,9 @@ impl<'input, 'shape> StackRunner<'input> {
     /// Handle value parsing
     fn value<'facet>(
         &mut self,
-        mut wip: Partial<'facet, 'shape>,
+        mut wip: Partial<'facet>,
         outcome: Spanned<Outcome<'input>>,
-    ) -> Result<Partial<'facet, 'shape>, DeserError<'input, 'shape>>
+    ) -> Result<Partial<'facet>, DeserError<'input>>
     where
         'input: 'facet, // 'input must outlive 'facet
     {
@@ -1527,9 +1512,9 @@ impl<'input, 'shape> StackRunner<'input> {
 
     fn object_key_or_object_close<'facet>(
         &mut self,
-        mut wip: Partial<'facet, 'shape>,
+        mut wip: Partial<'facet>,
         outcome: Spanned<Outcome<'input>>,
-    ) -> Result<Partial<'facet, 'shape>, DeserError<'input, 'shape>>
+    ) -> Result<Partial<'facet>, DeserError<'input>>
     where
         'input: 'facet,
     {
@@ -1730,9 +1715,9 @@ impl<'input, 'shape> StackRunner<'input> {
 
     fn list_item_or_list_close<'facet>(
         &mut self,
-        mut wip: Partial<'facet, 'shape>,
+        mut wip: Partial<'facet>,
         outcome: Spanned<Outcome<'input>>,
-    ) -> Result<Partial<'facet, 'shape>, DeserError<'input, 'shape>>
+    ) -> Result<Partial<'facet>, DeserError<'input>>
     where
         'input: 'facet,
     {

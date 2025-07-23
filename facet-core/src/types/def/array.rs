@@ -5,37 +5,37 @@ use super::Shape;
 /// Fields for array types
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-pub struct ArrayDef<'shape> {
+pub struct ArrayDef {
     /// vtable for interacting with the array
-    pub vtable: &'shape ArrayVTable,
+    pub vtable: &'static ArrayVTable,
 
     /// shape of the items in the array
-    pub t: &'shape Shape<'shape>,
+    pub t: &'static Shape,
 
     /// The length of the array
     pub n: usize,
 }
 
-impl<'shape> ArrayDef<'shape> {
+impl ArrayDef {
     /// Returns a builder for ArrayDef
-    pub const fn builder() -> ArrayDefBuilder<'shape> {
+    pub const fn builder() -> ArrayDefBuilder {
         ArrayDefBuilder::new()
     }
 
     /// Returns the shape of the items in the array
-    pub fn t(&self) -> &'shape Shape<'shape> {
+    pub fn t(&self) -> &'static Shape {
         self.t
     }
 }
 
 /// Builder for ArrayDef
-pub struct ArrayDefBuilder<'shape> {
-    vtable: Option<&'shape ArrayVTable>,
-    t: Option<&'shape Shape<'shape>>,
+pub struct ArrayDefBuilder {
+    vtable: Option<&'static ArrayVTable>,
+    t: Option<&'static Shape>,
     n: Option<usize>,
 }
 
-impl<'shape> ArrayDefBuilder<'shape> {
+impl ArrayDefBuilder {
     /// Creates a new ArrayDefBuilder
     #[allow(clippy::new_without_default)]
     pub const fn new() -> Self {
@@ -47,13 +47,13 @@ impl<'shape> ArrayDefBuilder<'shape> {
     }
 
     /// Sets the vtable for the ArrayDef
-    pub const fn vtable(mut self, vtable: &'shape ArrayVTable) -> Self {
+    pub const fn vtable(mut self, vtable: &'static ArrayVTable) -> Self {
         self.vtable = Some(vtable);
         self
     }
 
     /// Sets the item shape for the ArrayDef
-    pub const fn t(mut self, t: &'shape Shape<'shape>) -> Self {
+    pub const fn t(mut self, t: &'static Shape) -> Self {
         self.t = Some(t);
         self
     }
@@ -65,7 +65,7 @@ impl<'shape> ArrayDefBuilder<'shape> {
     }
 
     /// Builds the ArrayDef
-    pub const fn build(self) -> ArrayDef<'shape> {
+    pub const fn build(self) -> ArrayDef {
         ArrayDef {
             vtable: self.vtable.unwrap(),
             t: self.t.unwrap(),

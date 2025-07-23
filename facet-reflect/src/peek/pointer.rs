@@ -5,19 +5,19 @@ use super::Peek;
 /// Represents a pointer that can be peeked at during memory inspection.
 ///
 /// This struct holds the value being pointed to and the definition of the pointer type.
-pub struct PeekPointer<'mem, 'facet, 'shape> {
+pub struct PeekPointer<'mem, 'facet> {
     /// The value being pointed to by this pointer.
-    pub(crate) value: Peek<'mem, 'facet, 'shape>,
+    pub(crate) value: Peek<'mem, 'facet>,
 
     /// The definition of this pointer type.
-    pub(crate) def: PointerDef<'shape>,
+    pub(crate) def: PointerDef,
 }
 
-impl<'mem, 'facet, 'shape> PeekPointer<'mem, 'facet, 'shape> {
+impl<'mem, 'facet> PeekPointer<'mem, 'facet> {
     /// Returns a reference to the pointer definition.
     #[must_use]
     #[inline]
-    pub fn def(&self) -> &PointerDef<'shape> {
+    pub fn def(&self) -> &PointerDef {
         &self.def
     }
 
@@ -25,7 +25,7 @@ impl<'mem, 'facet, 'shape> PeekPointer<'mem, 'facet, 'shape> {
     ///
     /// Returns `None` if the pointer doesn't have a borrow function or pointee shape.
     #[inline]
-    pub fn borrow_inner(&self) -> Option<Peek<'mem, 'facet, 'shape>> {
+    pub fn borrow_inner(&self) -> Option<Peek<'mem, 'facet>> {
         let borrow_fn = self.def.vtable.borrow_fn?;
         let pointee_shape = self.def.pointee()?;
 

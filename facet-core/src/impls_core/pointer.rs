@@ -38,7 +38,7 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *const T {
             .build()
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .inner(|| T::SHAPE)
             .type_identifier("*const _")
@@ -94,7 +94,7 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *mut T {
             .build()
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .inner(|| T::SHAPE)
             .type_identifier("*mut _")

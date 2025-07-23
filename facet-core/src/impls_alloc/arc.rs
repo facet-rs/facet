@@ -11,11 +11,11 @@ use crate::{
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for Arc<T> {
     const VTABLE: &'static ValueVTable = &const {
         // Define the functions for transparent conversion between Arc<T> and T
-        unsafe fn try_from<'a, 'shape, 'src, 'dst, T: Facet<'a>>(
+        unsafe fn try_from<'a, 'src, 'dst, T: Facet<'a>>(
             src_ptr: PtrConst<'src>,
-            src_shape: &'shape Shape<'shape>,
+            src_shape: &'static Shape,
             dst: PtrUninit<'dst>,
-        ) -> Result<PtrMut<'dst>, TryFromError<'shape>> {
+        ) -> Result<PtrMut<'dst>, TryFromError> {
             if src_shape.id != T::SHAPE.id {
                 return Err(TryFromError::UnsupportedSourceShape {
                     src_shape,
@@ -75,9 +75,9 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Arc<T> {
         vtable
     };
 
-    const SHAPE: &'static crate::Shape<'static> = &const {
+    const SHAPE: &'static crate::Shape = &const {
         // Function to return inner type's shape
-        fn inner_shape<'a, T: Facet<'a>>() -> &'static Shape<'static> {
+        fn inner_shape<'a, T: Facet<'a>>() -> &'static Shape {
             T::SHAPE
         }
 
@@ -135,9 +135,9 @@ unsafe impl<'a> Facet<'a> for Arc<str> {
         })
     };
 
-    const SHAPE: &'static crate::Shape<'static> = &const {
+    const SHAPE: &'static crate::Shape = &const {
         // Function to return inner type's shape
-        fn inner_shape() -> &'static Shape<'static> {
+        fn inner_shape() -> &'static Shape {
             str::SHAPE
         }
 
@@ -189,9 +189,9 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Arc<[U]> {
         })
     };
 
-    const SHAPE: &'static crate::Shape<'static> = &const {
+    const SHAPE: &'static crate::Shape = &const {
         // Function to return inner type's shape
-        fn inner_shape<'a, U: Facet<'a>>() -> &'static Shape<'static> {
+        fn inner_shape<'a, U: Facet<'a>>() -> &'static Shape {
             <[U]>::SHAPE
         }
 
@@ -282,9 +282,9 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Weak<T> {
         })
     };
 
-    const SHAPE: &'static crate::Shape<'static> = &const {
+    const SHAPE: &'static crate::Shape = &const {
         // Function to return inner type's shape
-        fn inner_shape<'a, T: Facet<'a>>() -> &'static Shape<'static> {
+        fn inner_shape<'a, T: Facet<'a>>() -> &'static Shape {
             T::SHAPE
         }
 
@@ -332,9 +332,9 @@ unsafe impl<'a> Facet<'a> for Weak<str> {
         })
     };
 
-    const SHAPE: &'static crate::Shape<'static> = &const {
+    const SHAPE: &'static crate::Shape = &const {
         // Function to return inner type's shape
-        fn inner_shape() -> &'static Shape<'static> {
+        fn inner_shape() -> &'static Shape {
             str::SHAPE
         }
 
@@ -380,8 +380,8 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Weak<[U]> {
         })
     };
 
-    const SHAPE: &'static crate::Shape<'static> = &const {
-        fn inner_shape<'a, U: Facet<'a>>() -> &'static Shape<'static> {
+    const SHAPE: &'static crate::Shape = &const {
+        fn inner_shape<'a, U: Facet<'a>>() -> &'static Shape {
             <[U]>::SHAPE
         }
 

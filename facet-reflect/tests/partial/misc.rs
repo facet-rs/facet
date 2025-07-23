@@ -586,7 +586,7 @@ fn gh_354_leak_1() {
         b: String,
     }
 
-    fn leak1() -> Result<(), ReflectError<'static>> {
+    fn leak1() -> Result<(), ReflectError> {
         let mut partial = Partial::alloc::<Foo>()?;
         partial.begin_field("a")?;
         partial.set(String::from("Hello, World!"))?;
@@ -605,7 +605,7 @@ fn gh_354_leak_2() {
         b: String,
     }
 
-    fn leak2() -> Result<(), ReflectError<'static>> {
+    fn leak2() -> Result<(), ReflectError> {
         let mut partial = Partial::alloc::<Foo>()?;
         partial.begin_field("a")?;
         partial.set(String::from("Hello, World!"))?;

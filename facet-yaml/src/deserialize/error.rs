@@ -30,7 +30,7 @@ impl From<&str> for AnyErr {
     }
 }
 
-impl<'shape> From<ReflectError<'shape>> for AnyErr {
+impl From<ReflectError> for AnyErr {
     fn from(value: ReflectError) -> Self {
         Self(format!("Reflection error: {value}"))
     }

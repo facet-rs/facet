@@ -3,7 +3,7 @@ use super::{Field, Repr};
 /// Common fields for struct-like types
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-pub struct StructType<'shape> {
+pub struct StructType {
     /// Representation of the struct's data
     pub repr: Repr,
 
@@ -11,24 +11,24 @@ pub struct StructType<'shape> {
     pub kind: StructKind,
 
     /// all fields, in declaration order (not necessarily in memory order)
-    pub fields: &'shape [Field<'shape>],
+    pub fields: &'static [Field],
 }
 
-impl<'shape> StructType<'shape> {
+impl StructType {
     /// Returns a builder for StructType
-    pub const fn builder() -> StructBuilder<'shape> {
+    pub const fn builder() -> StructBuilder {
         StructBuilder::new()
     }
 }
 
 /// Builder for StructType
-pub struct StructBuilder<'shape> {
+pub struct StructBuilder {
     repr: Option<Repr>,
     kind: Option<StructKind>,
-    fields: &'shape [Field<'shape>],
+    fields: &'static [Field],
 }
 
-impl<'shape> StructBuilder<'shape> {
+impl StructBuilder {
     /// Creates a new StructBuilder
     #[allow(clippy::new_without_default)]
     pub const fn new() -> Self {
@@ -75,7 +75,7 @@ impl<'shape> StructBuilder<'shape> {
     }
 
     /// Builds the StructType
-    pub const fn build(self) -> StructType<'shape> {
+    pub const fn build(self) -> StructType {
         StructType {
             repr: self.repr.unwrap(),
             kind: self.kind.unwrap(),

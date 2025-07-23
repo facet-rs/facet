@@ -12,10 +12,8 @@ fn main() {
         token: InvariantLifetime<'facet>,
     }
 
-    fn scope<'facet>(
-        token: InvariantLifetime<'facet>,
-    ) -> Result<Wrapper<'static>, ReflectError<'static>> {
-        Partial::<'static, 'static>::alloc_shape(Wrapper::<'static>::SHAPE)?
+    fn scope<'facet>(token: InvariantLifetime<'facet>) -> Result<Wrapper<'static>, ReflectError> {
+        Partial::<'static>::alloc_shape(Wrapper::<'static>::SHAPE)?
             .set_field("token", token)?
             .build()?
             .materialize()

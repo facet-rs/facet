@@ -7,11 +7,11 @@ use crate::deserialize::{
 };
 use facet_reflect::Partial;
 
-pub(crate) fn validate_field<'facet, 'shape>(
+pub(crate) fn validate_field<'facet>(
     field_name: &str,
-    shape: &'shape Shape<'shape>,
-    wip: &Partial<'facet, 'shape>,
-) -> Result<(), DeserErrorKind<'shape>> {
+    shape: &'static Shape,
+    wip: &Partial<'facet>,
+) -> Result<(), DeserErrorKind> {
     if let Type::User(UserType::Struct(_)) = &shape.ty {
         if wip.field_index(field_name).is_none() {
             return Err(DeserErrorKind::UnknownField {
@@ -24,10 +24,10 @@ pub(crate) fn validate_field<'facet, 'shape>(
 }
 
 // Find a positional field
-pub(crate) fn find_positional_field<'facet, 'shape>(
-    shape: &'shape Shape<'shape>,
-    wip: &Partial<'facet, 'shape>,
-) -> Result<&'shape str, DeserErrorKind<'shape>> {
+pub(crate) fn find_positional_field<'facet>(
+    shape: &'static Shape,
+    wip: &Partial<'facet>,
+) -> Result<&'static str, DeserErrorKind> {
     if let Type::User(UserType::Struct(st)) = &shape.ty {
         for (idx, field) in st.fields.iter().enumerate() {
             for attr in field.attributes.iter() {
@@ -49,10 +49,10 @@ pub(crate) fn find_positional_field<'facet, 'shape>(
 }
 
 // Find an unset boolean field for implicit false handling
-pub(crate) fn find_unset_bool_field<'facet, 'shape>(
-    shape: &'shape Shape<'shape>,
-    wip: &Partial<'facet, 'shape>,
-) -> Option<&'shape str> {
+pub(crate) fn find_unset_bool_field<'facet>(
+    shape: &'static Shape,
+    wip: &Partial<'facet>,
+) -> Option<&'static str> {
     if let Type::User(UserType::Struct(st)) = &shape.ty {
         for (idx, field) in st.fields.iter().enumerate() {
             if !wip.is_field_set(idx).unwrap_or(false) && field.shape().is_type::<bool>() {
@@ -66,7 +66,7 @@ pub(crate) fn find_unset_bool_field<'facet, 'shape>(
 pub(crate) fn handle_unset_bool_field_error<'shape>(
     field_name_opt: Option<&'shape str>,
     span: Span<Raw>,
-) -> Result<Spanned<Outcome<'shape>, Raw>, Spanned<DeserErrorKind<'shape>, Raw>> {
+) -> Result<Spanned<Outcome<'shape>, Raw>, Spanned<DeserErrorKind, Raw>> {
     Ok(Spanned {
         node: match field_name_opt {
             Some(field_name) => Outcome::Scalar(Scalar::String(Cow::Borrowed(field_name))),
@@ -78,8 +78,8 @@ pub(crate) fn handle_unset_bool_field_error<'shape>(
 
 pub(crate) fn find_field_by_short_flag<'shape>(
     key: &str,
-    shape: &'shape Shape<'shape>,
-) -> Result<&'shape str, DeserErrorKind<'shape>> {
+    shape: &'static Shape,
+) -> Result<&'shape str, DeserErrorKind> {
     match &shape.ty {
         Type::User(UserType::Struct(st)) => st
             .fields
@@ -103,7 +103,7 @@ pub(crate) fn find_field_by_short_flag<'shape>(
 }
 
 // Create a missing value error
-pub(crate) fn create_missing_value_error<'shape>(field: &str) -> DeserErrorKind<'shape> {
+pub(crate) fn create_missing_value_error(field: &str) -> DeserErrorKind {
     DeserErrorKind::MissingValue {
         expected: "argument value",
         field: field.to_string(),
@@ -111,17 +111,15 @@ pub(crate) fn create_missing_value_error<'shape>(field: &str) -> DeserErrorKind<
 }
 
 // Handle boolean value parsing
-pub(crate) fn handle_bool_value<'shape>(
-    args_available: bool,
-) -> Result<Scalar<'static>, DeserErrorKind<'shape>> {
+pub(crate) fn handle_bool_value(args_available: bool) -> Result<Scalar<'static>, DeserErrorKind> {
     Ok(Scalar::Bool(args_available))
 }
 
 // Check if a value is available and valid (not a flag)
-pub(crate) fn validate_value_available<'shape, 'input>(
+pub(crate) fn validate_value_available<'input>(
     arg_idx: usize,
     args: &[&'input str],
-) -> Result<&'input str, DeserErrorKind<'shape>> {
+) -> Result<&'input str, DeserErrorKind> {
     if arg_idx >= args.len() {
         return Err(create_missing_value_error(args[arg_idx.saturating_sub(1)]));
     }
@@ -140,9 +138,7 @@ pub(crate) fn is_list_ended(arg_idx: usize, args: &[&str]) -> bool {
 }
 
 // Validate a struct type and return appropriate error if it's not a struct
-pub(crate) fn validate_struct_type<'shape>(
-    shape: &'shape Shape<'shape>,
-) -> Result<(), DeserErrorKind<'shape>> {
+pub(crate) fn validate_struct_type(shape: &'static Shape) -> Result<(), DeserErrorKind> {
     if !matches!(shape.ty, Type::User(UserType::Struct(_))) {
         Err(DeserErrorKind::UnsupportedType {
             got: shape,
@@ -153,10 +149,10 @@ pub(crate) fn validate_struct_type<'shape>(
     }
 }
 
-pub(crate) fn create_unknown_field_error<'shape>(
+pub(crate) fn create_unknown_field_error(
     field_name: &str,
-    shape: &'shape Shape<'shape>,
-) -> DeserErrorKind<'shape> {
+    shape: &'static Shape,
+) -> DeserErrorKind {
     DeserErrorKind::UnknownField {
         field_name: field_name.to_string(),
         shape,

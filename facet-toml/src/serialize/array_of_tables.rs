@@ -24,8 +24,8 @@ pub fn is_array_of_tables(peek: &Peek) -> bool {
 }
 
 /// Serialize an array of tables to TOML array of tables format
-pub fn serialize_array_of_tables<'mem, 'facet, 'shape>(
-    list: PeekListLike<'mem, 'facet, 'shape>,
+pub fn serialize_array_of_tables<'mem, 'facet>(
+    list: PeekListLike<'mem, 'facet>,
 ) -> Result<ArrayOfTables, super::TomlSerError> {
     let mut array_of_tables = ArrayOfTables::new();
 
@@ -43,8 +43,8 @@ pub fn serialize_array_of_tables<'mem, 'facet, 'shape>(
 }
 
 /// Serialize a struct as a TOML table
-fn serialize_struct_as_table<'mem, 'facet, 'shape>(
-    struct_peek: PeekStruct<'mem, 'facet, 'shape>,
+fn serialize_struct_as_table<'mem, 'facet>(
+    struct_peek: PeekStruct<'mem, 'facet>,
 ) -> Result<Table, super::TomlSerError> {
     let mut table = Table::new();
 
@@ -59,8 +59,8 @@ fn serialize_struct_as_table<'mem, 'facet, 'shape>(
 }
 
 /// Helper to serialize a value to a TOML Item
-fn serialize_value_to_toml<'mem, 'facet, 'shape>(
-    value: Peek<'mem, 'facet, 'shape>,
+fn serialize_value_to_toml<'mem, 'facet>(
+    value: Peek<'mem, 'facet>,
 ) -> Result<Item, super::TomlSerError> {
     // Create a temporary serializer to serialize just this value
     let mut temp_serializer = super::TomlSerializer::new();

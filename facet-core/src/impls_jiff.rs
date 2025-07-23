@@ -48,7 +48,7 @@ unsafe impl Facet<'_> for Zoned {
         vtable
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("Zoned")
             .ty(Type::User(UserType::Opaque))
@@ -103,7 +103,7 @@ unsafe impl Facet<'_> for Timestamp {
         vtable
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("Timestamp")
             .ty(Type::User(UserType::Opaque))
@@ -157,7 +157,7 @@ unsafe impl Facet<'_> for DateTime {
         vtable
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("DateTime")
             .ty(Type::User(UserType::Opaque))

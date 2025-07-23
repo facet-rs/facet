@@ -6,24 +6,24 @@ use super::{FieldIter, HasFields};
 
 /// Lets you read from a struct (implements read-only struct operations)
 #[derive(Clone, Copy)]
-pub struct PeekStruct<'mem, 'facet, 'shape> {
+pub struct PeekStruct<'mem, 'facet> {
     /// the underlying value
-    pub(crate) value: Peek<'mem, 'facet, 'shape>,
+    pub(crate) value: Peek<'mem, 'facet>,
 
     /// the definition of the struct!
-    pub(crate) ty: StructType<'shape>,
+    pub(crate) ty: StructType,
 }
 
-impl core::fmt::Debug for PeekStruct<'_, '_, '_> {
+impl core::fmt::Debug for PeekStruct<'_, '_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("PeekStruct").finish_non_exhaustive()
     }
 }
 
-impl<'mem, 'facet, 'shape> PeekStruct<'mem, 'facet, 'shape> {
+impl<'mem, 'facet> PeekStruct<'mem, 'facet> {
     /// Returns the struct definition
     #[inline(always)]
-    pub fn ty(&self) -> &StructType<'shape> {
+    pub fn ty(&self) -> &StructType {
         &self.ty
     }
 
@@ -35,7 +35,7 @@ impl<'mem, 'facet, 'shape> PeekStruct<'mem, 'facet, 'shape> {
 
     /// Returns the value of the field at the given index
     #[inline(always)]
-    pub fn field(&self, index: usize) -> Result<Peek<'mem, 'facet, 'shape>, FieldError> {
+    pub fn field(&self, index: usize) -> Result<Peek<'mem, 'facet>, FieldError> {
         self.ty
             .fields
             .get(index)
@@ -51,7 +51,7 @@ impl<'mem, 'facet, 'shape> PeekStruct<'mem, 'facet, 'shape> {
 
     /// Gets the value of the field with the given name
     #[inline]
-    pub fn field_by_name(&self, name: &str) -> Result<Peek<'mem, 'facet, 'shape>, FieldError> {
+    pub fn field_by_name(&self, name: &str) -> Result<Peek<'mem, 'facet>, FieldError> {
         for (i, field) in self.ty.fields.iter().enumerate() {
             if field.name == name {
                 return self.field(i);
@@ -61,10 +61,10 @@ impl<'mem, 'facet, 'shape> PeekStruct<'mem, 'facet, 'shape> {
     }
 }
 
-impl<'mem, 'facet, 'shape> HasFields<'mem, 'facet, 'shape> for PeekStruct<'mem, 'facet, 'shape> {
+impl<'mem, 'facet> HasFields<'mem, 'facet> for PeekStruct<'mem, 'facet> {
     /// Iterates over all fields in this struct, providing both name and value
     #[inline]
-    fn fields(&self) -> FieldIter<'mem, 'facet, 'shape> {
+    fn fields(&self) -> FieldIter<'mem, 'facet> {
         FieldIter::new_struct(*self)
     }
 }

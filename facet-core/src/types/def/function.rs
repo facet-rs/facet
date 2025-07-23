@@ -8,10 +8,10 @@ pub struct FunctionPointerDef {
     pub abi: FunctionAbi,
 
     /// All parameter types, in declaration order
-    pub parameters: &'static [fn() -> &'static Shape<'static>],
+    pub parameters: &'static [fn() -> &'static Shape],
 
     /// The return type
-    pub return_type: fn() -> &'static Shape<'static>,
+    pub return_type: fn() -> &'static Shape,
 }
 
 /// The calling ABI of a function pointer
@@ -49,8 +49,8 @@ impl FunctionPointerDef {
 /// Builder for FunctionPointerDef
 pub struct FunctionPointerDefBuilder {
     abi: Option<FunctionAbi>,
-    parameters: &'static [fn() -> &'static Shape<'static>],
-    return_type: Option<fn() -> &'static Shape<'static>>,
+    parameters: &'static [fn() -> &'static Shape],
+    return_type: Option<fn() -> &'static Shape>,
 }
 
 impl FunctionPointerDefBuilder {
@@ -71,16 +71,13 @@ impl FunctionPointerDefBuilder {
     }
 
     /// Sets the parameters for the FunctionPointerDef
-    pub const fn parameter_types(
-        mut self,
-        parameters: &'static [fn() -> &'static Shape<'static>],
-    ) -> Self {
+    pub const fn parameter_types(mut self, parameters: &'static [fn() -> &'static Shape]) -> Self {
         self.parameters = parameters;
         self
     }
 
     /// Sets the return type for the FunctionPointerDef
-    pub const fn return_type(mut self, ty: fn() -> &'static Shape<'static>) -> Self {
+    pub const fn return_type(mut self, ty: fn() -> &'static Shape) -> Self {
         self.return_type = Some(ty);
         self
     }

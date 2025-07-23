@@ -71,7 +71,7 @@ enum Asn1TagForShapeError {
 /// Get the BER/DER tag for a given shape
 ///
 /// Returns `None` for CHOICE/Enum
-fn ber_tag_for_shape(shape: &Shape<'_>) -> Result<Option<u8>, Asn1TagForShapeError> {
+fn ber_tag_for_shape(shape: &Shape) -> Result<Option<u8>, Asn1TagForShapeError> {
     let type_tag = shape
         .type_tag
         .map(|t| tag::Asn1TypeTag::from_str(t).map_err(Asn1TagForShapeError::TypeTag))
@@ -286,8 +286,8 @@ impl<'w, W: Asn1Write> DerSerializer<'w, W> {
     }
 }
 
-fn serialize_der_recursive<'shape, 'w, W: Asn1Write>(
-    pv: Peek<'shape, '_, '_>,
+fn serialize_der_recursive<'w, W: Asn1Write>(
+    pv: Peek<'_, '_>,
     serializer: &'w mut DerSerializer<'w, W>,
     wrapper_tag: Option<u8>,
 ) -> Result<(), Asn1SerError> {
@@ -571,7 +571,7 @@ struct Asn1DeserializerStack<'input> {
     stack: Vec<DeserializeTask>,
 }
 
-impl<'shape, 'input> Asn1DeserializerStack<'input> {
+impl<'input> Asn1DeserializerStack<'input> {
     fn next_tl(&mut self, expected_tag: u8) -> Result<usize, Asn1DeserError> {
         let tag = self.input[self.pos];
         if tag != expected_tag {
@@ -714,9 +714,9 @@ impl<'shape, 'input> Asn1DeserializerStack<'input> {
 
     fn next<'f>(
         &mut self,
-        mut wip: Partial<'f, 'shape>,
+        mut wip: Partial<'f>,
         with_tag: Option<u8>,
-    ) -> Result<Partial<'f, 'shape>, Asn1DeserError> {
+    ) -> Result<Partial<'f>, Asn1DeserError> {
         let shape = wip.shape();
         let tag_for_shape = with_tag.or(ber_tag_for_shape(shape)?);
         match (shape.def, shape.ty) {
@@ -923,10 +923,10 @@ impl<'shape, 'input> Asn1DeserializerStack<'input> {
 }
 
 /// Deserialize an ASN.1 DER slice given some some [`Partial`] into a [`HeapValue`]
-pub fn deserialize_der_wip<'facet, 'shape>(
+pub fn deserialize_der_wip<'facet>(
     input: &[u8],
-    mut wip: Partial<'facet, 'shape>,
-) -> Result<HeapValue<'facet, 'shape>, Asn1DeserError> {
+    mut wip: Partial<'facet>,
+) -> Result<HeapValue<'facet>, Asn1DeserError> {
     let mut runner = Asn1DeserializerStack {
         _rules: EncodingRules::Distinguished,
         input,

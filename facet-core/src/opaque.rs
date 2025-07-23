@@ -11,7 +11,7 @@ unsafe impl<'a, T: 'a> Facet<'a> for Opaque<T> {
     const VTABLE: &'static ValueVTable =
         &const { value_vtable!((), |f, _opts| write!(f, "{}", Self::SHAPE.type_identifier)) };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("Opaque")
             .ty(Type::User(UserType::Opaque))

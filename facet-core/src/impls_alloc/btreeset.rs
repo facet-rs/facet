@@ -36,7 +36,7 @@ where
             .build()
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("BTreeSet")
             .type_params(&[TypeParam {

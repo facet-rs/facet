@@ -20,20 +20,19 @@ impl fmt::Display for Cli {
 }
 
 /// Parse command line arguments into a Facet-compatible type
-pub fn from_slice<'input, 'facet, 'shape, T: Facet<'facet>>(
+pub fn from_slice<'input, 'facet, T: Facet<'facet>>(
     args: &'input [&'input str],
-) -> Result<T, DeserError<'input, 'shape>>
+) -> Result<T, DeserError<'input>>
 where
-    'input: 'facet + 'shape,
+    'input: 'facet,
 {
     crate::deserialize::deserialize(args, Cli)
 }
 
 /// Parse command line arguments provided by std::env::args() into a Facet-compatible type
-pub fn from_std_args<'input, 'facet, 'shape, T: Facet<'facet>>()
--> Result<T, DeserError<'input, 'shape>>
+pub fn from_std_args<'input, 'facet, T: Facet<'facet>>() -> Result<T, DeserError<'input>>
 where
-    'input: 'facet + 'shape,
+    'input: 'facet,
 {
     let args = std::env::args().skip(1).collect::<Vec<String>>();
     let args_str: Vec<&'static str> = args
@@ -48,26 +47,18 @@ impl Format for Cli {
     type Input<'input> = [&'input str];
     type SpanType = Raw;
 
-    fn source(&self) -> &'static str {
-        "args"
-    }
-
-    fn next<'input, 'facet, 'shape>(
+    fn next<'input, 'facet>(
         &mut self,
-        nd: NextData<'input, 'facet, 'shape, Self::SpanType, Self::Input<'input>>,
+        nd: NextData<'input, 'facet, Self::SpanType, Self::Input<'input>>,
         expectation: Expectation,
     ) -> NextResult<
         'input,
         'facet,
-        'shape,
         Spanned<Outcome<'input>, Self::SpanType>,
-        Spanned<DeserErrorKind<'shape>, Self::SpanType>,
+        Spanned<DeserErrorKind, Self::SpanType>,
         Self::SpanType,
         Self::Input<'input>,
-    >
-    where
-        'shape: 'input,
-    {
+    > {
         let arg_idx = nd.start();
         let shape = nd.wip.shape();
         let args = nd.input();
@@ -210,21 +201,17 @@ impl Format for Cli {
         (nd, result)
     }
 
-    fn skip<'input, 'facet, 'shape>(
+    fn skip<'input, 'facet>(
         &mut self,
-        nd: NextData<'input, 'facet, 'shape, Self::SpanType, Self::Input<'input>>,
+        nd: NextData<'input, 'facet, Self::SpanType, Self::Input<'input>>,
     ) -> NextResult<
         'input,
         'facet,
-        'shape,
         Span<Self::SpanType>,
-        Spanned<DeserErrorKind<'shape>, Self::SpanType>,
+        Spanned<DeserErrorKind, Self::SpanType>,
         Self::SpanType,
         Self::Input<'input>,
-    >
-    where
-        'shape: 'input,
-    {
+    > {
         let arg_idx = nd.start();
         let args = nd.input();
         let span = Span::new(arg_idx, 1);

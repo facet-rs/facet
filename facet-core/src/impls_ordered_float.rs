@@ -9,11 +9,11 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
         unsafe impl<'a> Facet<'a> for OrderedFloat<$float> {
             const VTABLE: &'static ValueVTable = &const {
                 // Define conversion functions for transparency
-                unsafe fn try_from<'shape, 'dst>(
+                unsafe fn try_from<'dst>(
                     src_ptr: PtrConst<'_>,
-                    src_shape: &'shape Shape<'shape>,
+                    src_shape: &'static Shape,
                     dst: PtrUninit<'dst>,
-                ) -> Result<PtrMut<'dst>, TryFromError<'shape>> {
+                ) -> Result<PtrMut<'dst>, TryFromError> {
                     if src_shape == <$float as Facet>::SHAPE {
                         // Get the inner value and wrap as OrderedFloat
                         let value = unsafe { src_ptr.get::<$float>() };
@@ -75,8 +75,8 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                 vtable
             };
 
-            const SHAPE: &'static Shape<'static> = &const {
-                fn inner_shape() -> &'static Shape<'static> {
+            const SHAPE: &'static Shape = &const {
+                fn inner_shape() -> &'static Shape {
                     <$float as Facet>::SHAPE
                 }
 
@@ -98,11 +98,11 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
         unsafe impl<'a> Facet<'a> for NotNan<$float> {
             const VTABLE: &'static ValueVTable = &const {
                 // Conversion from inner float type to NotNan<$float>
-                unsafe fn try_from<'shape, 'dst>(
+                unsafe fn try_from<'dst>(
                     src_ptr: PtrConst<'_>,
-                    src_shape: &'shape Shape<'shape>,
+                    src_shape: &'static Shape,
                     dst: PtrUninit<'dst>,
-                ) -> Result<PtrMut<'dst>, TryFromError<'shape>> {
+                ) -> Result<PtrMut<'dst>, TryFromError> {
                     if src_shape == <$float as Facet>::SHAPE {
                         // Get the inner value and check that it's not NaN
                         let value = unsafe { *src_ptr.get::<$float>() };
@@ -179,8 +179,8 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                 vtable
             };
 
-            const SHAPE: &'static Shape<'static> = &const {
-                fn inner_shape() -> &'static Shape<'static> {
+            const SHAPE: &'static Shape = &const {
+                fn inner_shape() -> &'static Shape {
                     <$float as Facet>::SHAPE
                 }
 
