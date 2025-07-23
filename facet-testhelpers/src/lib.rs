@@ -49,17 +49,24 @@ pub fn setup() {
     #[cfg(not(miri))]
     {
         use color_eyre::config::HookBuilder;
-        use regex::Regex;
-        use std::sync::LazyLock;
 
-        /// This regex is used to filter out unwanted frames in error backtraces.
+        /// Function to check if a frame name should be ignored.
         /// It ignores panic frames, test runners, and a few threading details.
-        ///
-        /// Regex: ^(std::panic|core::panic|test::run_test|__pthread_cond_wait|Thread::new::thread_start)
-        static IGNORE_FRAMES: LazyLock<Regex> = LazyLock::new(|| {
-            Regex::new(r"^(std::panic|core::panic|test::run_test|__pthread_cond_wait|std::sys::(pal|backtrace)|std::thread::Builder|core::ops::function|test::__rust_begin_short_backtrace|<core::panic::|<alloc::boxed::Box<F,A> as core::ops::function::FnOnce<Args>>::call_once)")
-                .unwrap()
-        });
+        fn should_ignore_frame(name: &str) -> bool {
+            name.starts_with("std::panic")
+                || name.starts_with("core::panic")
+                || name.starts_with("test::run_test")
+                || name.starts_with("__pthread_cond_wait")
+                || name.starts_with("std::sys::pal")
+                || name.starts_with("std::sys::backtrace")
+                || name.starts_with("std::thread::Builder")
+                || name.starts_with("core::ops::function")
+                || name.starts_with("test::__rust_begin_short_backtrace")
+                || name.starts_with("<core::panic::")
+                || name.starts_with(
+                    "<alloc::boxed::Box<F,A> as core::ops::function::FnOnce<Args>>::call_once",
+                )
+        }
 
         // color-eyre filter
         let eyre_filter = {
@@ -68,7 +75,7 @@ pub fn setup() {
                     frame
                         .name
                         .as_ref()
-                        .map(|n| !IGNORE_FRAMES.is_match(&n.to_string()))
+                        .map(|n| !should_ignore_frame(&n.to_string()))
                         .unwrap_or(true)
                 });
             }
@@ -89,7 +96,7 @@ pub fn setup() {
                     frame
                         .name
                         .as_ref()
-                        .map(|name| !IGNORE_FRAMES.is_match(name))
+                        .map(|name| !should_ignore_frame(name))
                         .unwrap_or(true)
                 });
             };
