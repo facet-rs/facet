@@ -80,13 +80,6 @@ doc-tests-ci *args:
     echo -e "\033[1;36m📚 Running documentation tests...\033[0m"
     cmd_group "cargo test --doc {{args}}"
 
-code-quality-ci:
-    #!/usr/bin/env -S bash -euo pipefail
-    source .envrc
-    cmd_group "just gen --check"
-    cmd_group "cargo fmt --check --all"
-    cmd_group "just absolve"
-
 miri *args:
     export RUSTUP_TOOLCHAIN=nightly-2025-06-29
     rustup toolchain install nightly-2025-06-29
