@@ -31,10 +31,6 @@ version_group = "core"
 name = "facet-reflect"
 version_group = "core"
 
-# Dev tools - separate versioning
-[[package]]
-name = "facet-dev"
-
 [[package]]
 name = "facet-testhelpers"
 
@@ -71,6 +67,3 @@ name = "facet-jsonschema"
 
 [[package]]
 name = "facet-deserialize"
-
-[[package]]
-name = "facet-bench"
