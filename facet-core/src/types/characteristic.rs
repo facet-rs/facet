@@ -157,7 +157,7 @@ impl Characteristic {
     }
 }
 
-impl<'shape> Shape<'shape> {
+impl Shape {
     /// Checks if a shape has the given characteristic.
     #[inline]
     pub fn is(&self, characteristic: Characteristic) -> bool {

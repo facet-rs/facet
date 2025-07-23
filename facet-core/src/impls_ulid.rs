@@ -10,11 +10,11 @@ use crate::{
 unsafe impl Facet<'_> for Ulid {
     const VTABLE: &'static ValueVTable = &const {
         // Functions to transparently convert between Ulid and String
-        unsafe fn try_from<'shape, 'dst>(
+        unsafe fn try_from<'dst>(
             src_ptr: PtrConst<'_>,
-            src_shape: &'shape Shape<'shape>,
+            src_shape: &'static Shape,
             dst: PtrUninit<'dst>,
-        ) -> Result<PtrMut<'dst>, TryFromError<'shape>> {
+        ) -> Result<PtrMut<'dst>, TryFromError> {
             if src_shape.id != <String as Facet>::SHAPE.id {
                 return Err(TryFromError::UnsupportedSourceShape {
                     src_shape,
@@ -58,9 +58,9 @@ unsafe impl Facet<'_> for Ulid {
         vtable
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         // Return the Shape of the inner type (String)
-        fn inner_shape() -> &'static Shape<'static> {
+        fn inner_shape() -> &'static Shape {
             <String as Facet>::SHAPE
         }
 

@@ -12,7 +12,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for core::ptr::NonNull<T> {
         ))
     };
 
-    const SHAPE: &'static crate::Shape<'static> = &const {
+    const SHAPE: &'static crate::Shape = &const {
         crate::Shape::builder_for_sized::<Self>()
             .type_identifier("NonNull")
             .type_params(&[crate::TypeParam {

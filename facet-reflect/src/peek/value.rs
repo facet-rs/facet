@@ -7,31 +7,31 @@ use facet_core::{
 use crate::{PeekSet, ReflectError, ScalarType};
 
 use super::{
-    ListLikeDef, PeekEnum, PeekList, PeekListLike, PeekMap, PeekPointer, PeekStruct, PeekTuple,
-    tuple::TupleType,
+    ListLikeDef, PeekEnum, PeekList, PeekListLike, PeekMap, PeekOption, PeekPointer, PeekStruct,
+    PeekTuple, tuple::TupleType,
 };
 
 /// A unique identifier for a peek value
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ValueId<'shape> {
-    pub(crate) shape: &'shape Shape<'shape>,
+pub struct ValueId {
+    pub(crate) shape: &'static Shape,
     pub(crate) ptr: *const u8,
 }
 
-impl<'shape> ValueId<'shape> {
+impl ValueId {
     #[inline]
-    pub(crate) fn new(shape: &'shape Shape<'shape>, ptr: *const u8) -> Self {
+    pub(crate) fn new(shape: &'static Shape, ptr: *const u8) -> Self {
         Self { shape, ptr }
     }
 }
 
-impl core::fmt::Display for ValueId<'_> {
+impl core::fmt::Display for ValueId {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}@{:p}", self.shape, self.ptr)
     }
 }
 
-impl core::fmt::Debug for ValueId<'_> {
+impl core::fmt::Debug for ValueId {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         core::fmt::Display::fmt(self, f)
     }
@@ -39,17 +39,17 @@ impl core::fmt::Debug for ValueId<'_> {
 
 /// Lets you read from a value (implements read-only [`ValueVTable`] proxies)
 #[derive(Clone, Copy)]
-pub struct Peek<'mem, 'facet, 'shape> {
+pub struct Peek<'mem, 'facet> {
     /// Underlying data
     pub(crate) data: GenericPtr<'mem>,
 
     /// Shape of the value
-    pub(crate) shape: &'shape Shape<'shape>,
+    pub(crate) shape: &'static Shape,
 
     invariant: PhantomData<fn(&'facet ()) -> &'facet ()>,
 }
 
-impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
+impl<'mem, 'facet> Peek<'mem, 'facet> {
     /// Creates a new `PeekValue` instance for a value of type `T`.
     pub fn new<T: Facet<'facet> + ?Sized>(t: &'mem T) -> Self {
         Self {
@@ -66,10 +66,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     /// This function is unsafe because it doesn't check if the provided data
     /// and shape are compatible. The caller must ensure that the data is valid
     /// for the given shape.
-    pub unsafe fn unchecked_new(
-        data: impl Into<GenericPtr<'mem>>,
-        shape: &'shape Shape<'shape>,
-    ) -> Self {
+    pub unsafe fn unchecked_new(data: impl Into<GenericPtr<'mem>>, shape: &'static Shape) -> Self {
         Self {
             data: data.into(),
             shape,
@@ -79,19 +76,19 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
 
     /// Returns the vtable
     #[inline(always)]
-    pub fn vtable(&self) -> &'shape ValueVTable {
+    pub fn vtable(&self) -> &'static ValueVTable {
         self.shape.vtable
     }
 
     /// Returns a unique identifier for this value, usable for cycle detection
     #[inline]
-    pub fn id(&self) -> ValueId<'shape> {
+    pub fn id(&self) -> ValueId {
         ValueId::new(self.shape, self.data.as_byte_ptr())
     }
 
     /// Returns true if the two values are pointer-equal
     #[inline]
-    pub fn ptr_eq(&self, other: &Peek<'_, '_, '_>) -> bool {
+    pub fn ptr_eq(&self, other: &Peek<'_, '_>) -> bool {
         self.data.as_byte_ptr() == other.data.as_byte_ptr()
     }
 
@@ -101,7 +98,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     ///
     /// `false` if equality comparison is not supported for this scalar type
     #[inline]
-    pub fn partial_eq(&self, other: &Peek<'_, '_, '_>) -> Option<bool> {
+    pub fn partial_eq(&self, other: &Peek<'_, '_>) -> Option<bool> {
         match (self.data, other.data) {
             (GenericPtr::Thin(a), GenericPtr::Thin(b)) => unsafe {
                 (self.vtable().sized().unwrap().partial_eq)().map(|f| f(a, b))
@@ -119,7 +116,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     ///
     /// `None` if comparison is not supported for this scalar type
     #[inline]
-    pub fn partial_cmp(&self, other: &Peek<'_, '_, '_>) -> Option<Option<Ordering>> {
+    pub fn partial_cmp(&self, other: &Peek<'_, '_>) -> Option<Option<Ordering>> {
         match (self.data, other.data) {
             (GenericPtr::Thin(a), GenericPtr::Thin(b)) => unsafe {
                 (self.vtable().sized().unwrap().partial_ord)().map(|f| f(a, b))
@@ -136,7 +133,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     ///
     /// `Err` if hashing is not supported for this scalar type, `Ok` otherwise
     #[inline(always)]
-    pub fn hash<H: core::hash::Hasher>(&self, hasher: &mut H) -> Result<(), ReflectError<'_>> {
+    pub fn hash<H: core::hash::Hasher>(&self, hasher: &mut H) -> Result<(), ReflectError> {
         match self.data {
             GenericPtr::Thin(ptr) => {
                 if let Some(hash_fn) = (self.vtable().sized().unwrap().hash)() {
@@ -188,7 +185,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
 
     /// Returns the shape
     #[inline(always)]
-    pub const fn shape(&self) -> &'shape Shape<'shape> {
+    pub const fn shape(&self) -> &'static Shape {
         self.shape
     }
 
@@ -210,7 +207,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     ///
     /// Panics if the shape doesn't match the type `T`.
     #[inline]
-    pub fn get<T: Facet<'facet> + ?Sized>(&self) -> Result<&T, ReflectError<'shape>> {
+    pub fn get<T: Facet<'facet> + ?Sized>(&self) -> Result<&T, ReflectError> {
         if self.shape != T::SHAPE {
             Err(ReflectError::WrongShape {
                 expected: self.shape,
@@ -259,7 +256,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
 
     /// Tries to identify this value as a struct
     #[inline]
-    pub fn into_struct(self) -> Result<PeekStruct<'mem, 'facet, 'shape>, ReflectError<'shape>> {
+    pub fn into_struct(self) -> Result<PeekStruct<'mem, 'facet>, ReflectError> {
         if let Type::User(UserType::Struct(ty)) = self.shape.ty {
             Ok(PeekStruct { value: self, ty })
         } else {
@@ -272,7 +269,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
 
     /// Tries to identify this value as an enum
     #[inline]
-    pub fn into_enum(self) -> Result<PeekEnum<'mem, 'facet, 'shape>, ReflectError<'shape>> {
+    pub fn into_enum(self) -> Result<PeekEnum<'mem, 'facet>, ReflectError> {
         if let Type::User(UserType::Enum(ty)) = self.shape.ty {
             Ok(PeekEnum { value: self, ty })
         } else {
@@ -285,7 +282,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
 
     /// Tries to identify this value as a map
     #[inline]
-    pub fn into_map(self) -> Result<PeekMap<'mem, 'facet, 'shape>, ReflectError<'shape>> {
+    pub fn into_map(self) -> Result<PeekMap<'mem, 'facet>, ReflectError> {
         if let Def::Map(def) = self.shape.def {
             Ok(PeekMap { value: self, def })
         } else {
@@ -298,7 +295,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
 
     /// Tries to identify this value as a set
     #[inline]
-    pub fn into_set(self) -> Result<PeekSet<'mem, 'facet, 'shape>, ReflectError<'shape>> {
+    pub fn into_set(self) -> Result<PeekSet<'mem, 'facet>, ReflectError> {
         if let Def::Set(def) = self.shape.def {
             Ok(PeekSet { value: self, def })
         } else {
@@ -311,7 +308,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
 
     /// Tries to identify this value as a list
     #[inline]
-    pub fn into_list(self) -> Result<PeekList<'mem, 'facet, 'shape>, ReflectError<'shape>> {
+    pub fn into_list(self) -> Result<PeekList<'mem, 'facet>, ReflectError> {
         if let Def::List(def) = self.shape.def {
             return Ok(PeekList { value: self, def });
         }
@@ -324,9 +321,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
 
     /// Tries to identify this value as a list, array or slice
     #[inline]
-    pub fn into_list_like(
-        self,
-    ) -> Result<PeekListLike<'mem, 'facet, 'shape>, ReflectError<'shape>> {
+    pub fn into_list_like(self) -> Result<PeekListLike<'mem, 'facet>, ReflectError> {
         match self.shape.def {
             Def::List(def) => Ok(PeekListLike::new(self, ListLikeDef::List(def))),
             Def::Array(def) => Ok(PeekListLike::new(self, ListLikeDef::Array(def))),
@@ -376,7 +371,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
 
     /// Tries to identify this value as a pointer
     #[inline]
-    pub fn into_pointer(self) -> Result<PeekPointer<'mem, 'facet, 'shape>, ReflectError<'shape>> {
+    pub fn into_pointer(self) -> Result<PeekPointer<'mem, 'facet>, ReflectError> {
         if let Def::Pointer(def) = self.shape.def {
             Ok(PeekPointer { value: self, def })
         } else {
@@ -389,11 +384,9 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
 
     /// Tries to identify this value as an option
     #[inline]
-    pub fn into_option(
-        self,
-    ) -> Result<super::PeekOption<'mem, 'facet, 'shape>, ReflectError<'shape>> {
+    pub fn into_option(self) -> Result<PeekOption<'mem, 'facet>, ReflectError> {
         if let Def::Option(def) = self.shape.def {
-            Ok(super::PeekOption { value: self, def })
+            Ok(PeekOption { value: self, def })
         } else {
             Err(ReflectError::WasNotA {
                 expected: "option",
@@ -404,7 +397,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
 
     /// Tries to identify this value as a tuple
     #[inline]
-    pub fn into_tuple(self) -> Result<PeekTuple<'mem, 'facet, 'shape>, ReflectError<'shape>> {
+    pub fn into_tuple(self) -> Result<PeekTuple<'mem, 'facet>, ReflectError> {
         if let Type::User(UserType::Struct(struct_type)) = self.shape.ty {
             if struct_type.kind == StructKind::Tuple {
                 Ok(PeekTuple {
@@ -459,7 +452,7 @@ impl<'mem, 'facet, 'shape> Peek<'mem, 'facet, 'shape> {
     }
 }
 
-impl<'mem, 'facet, 'shape> core::fmt::Display for Peek<'mem, 'facet, 'shape> {
+impl<'mem, 'facet> core::fmt::Display for Peek<'mem, 'facet> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self.data {
             GenericPtr::Thin(ptr) => {
@@ -477,7 +470,7 @@ impl<'mem, 'facet, 'shape> core::fmt::Display for Peek<'mem, 'facet, 'shape> {
     }
 }
 
-impl<'mem, 'facet, 'shape> core::fmt::Debug for Peek<'mem, 'facet, 'shape> {
+impl<'mem, 'facet> core::fmt::Debug for Peek<'mem, 'facet> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self.data {
             GenericPtr::Thin(ptr) => {
@@ -495,21 +488,21 @@ impl<'mem, 'facet, 'shape> core::fmt::Debug for Peek<'mem, 'facet, 'shape> {
     }
 }
 
-impl<'mem, 'facet, 'shape> core::cmp::PartialEq for Peek<'mem, 'facet, 'shape> {
+impl<'mem, 'facet> core::cmp::PartialEq for Peek<'mem, 'facet> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.partial_eq(other).unwrap_or(false)
     }
 }
 
-impl<'mem, 'facet, 'shape> core::cmp::PartialOrd for Peek<'mem, 'facet, 'shape> {
+impl<'mem, 'facet> core::cmp::PartialOrd for Peek<'mem, 'facet> {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         self.partial_cmp(other).unwrap_or(None)
     }
 }
 
-impl<'mem, 'facet, 'shape> core::hash::Hash for Peek<'mem, 'facet, 'shape> {
+impl<'mem, 'facet> core::hash::Hash for Peek<'mem, 'facet> {
     fn hash<H: core::hash::Hasher>(&self, hasher: &mut H) {
         self.hash(hasher)
             .expect("Hashing is not supported for this shape");

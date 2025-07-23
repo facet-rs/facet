@@ -8,18 +8,18 @@ use super::Shape;
 /// and the inner shape (the pointee type in the pointer).
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-pub struct PointerDef<'shape> {
+pub struct PointerDef {
     /// vtable for interacting with the pointer
-    pub vtable: &'shape PointerVTable<'shape>,
+    pub vtable: &'static PointerVTable,
 
     /// shape of the inner type of the pointer, if not opaque
-    pub pointee: Option<fn() -> &'shape Shape<'shape>>,
+    pub pointee: Option<fn() -> &'static Shape>,
 
     /// shape of the corresponding strong pointer, if this pointer is weak
-    pub weak: Option<fn() -> &'shape Shape<'shape>>,
+    pub weak: Option<fn() -> &'static Shape>,
 
     /// shape of the corresponding weak pointer, if this pointer is strong
-    pub strong: Option<fn() -> &'shape Shape<'shape>>,
+    pub strong: Option<fn() -> &'static Shape>,
 
     /// Flags representing various characteristics of the pointer
     pub flags: PointerFlags,
@@ -28,10 +28,10 @@ pub struct PointerDef<'shape> {
     pub known: Option<KnownPointer>,
 }
 
-impl<'shape> PointerDef<'shape> {
+impl PointerDef {
     /// Creates a new `PointerDefBuilder` with all fields set to `None`.
     #[must_use]
-    pub const fn builder() -> PointerDefBuilder<'shape> {
+    pub const fn builder() -> PointerDefBuilder {
         PointerDefBuilder {
             vtable: None,
             pointee: None,
@@ -43,33 +43,33 @@ impl<'shape> PointerDef<'shape> {
     }
 
     /// Returns shape of the inner type of the pointer, if not opaque
-    pub fn pointee(&self) -> Option<&'shape Shape<'shape>> {
+    pub fn pointee(&self) -> Option<&'static Shape> {
         self.pointee.map(|v| v())
     }
 
     /// Returns shape of the corresponding strong pointer, if this pointer is weak
-    pub fn weak(&self) -> Option<&'shape Shape<'shape>> {
+    pub fn weak(&self) -> Option<&'static Shape> {
         self.weak.map(|v| v())
     }
 
     /// Returns shape of the corresponding weak pointer, if this pointer is strong
-    pub fn strong(&self) -> Option<&'shape Shape<'shape>> {
+    pub fn strong(&self) -> Option<&'static Shape> {
         self.strong.map(|v| v())
     }
 }
 
 /// Builder for creating a `PointerDef`.
 #[derive(Debug)]
-pub struct PointerDefBuilder<'shape> {
-    vtable: Option<&'shape PointerVTable<'shape>>,
-    pointee: Option<fn() -> &'shape Shape<'shape>>,
+pub struct PointerDefBuilder {
+    vtable: Option<&'static PointerVTable>,
+    pointee: Option<fn() -> &'static Shape>,
     flags: Option<PointerFlags>,
     known: Option<KnownPointer>,
-    weak: Option<fn() -> &'shape Shape<'shape>>,
-    strong: Option<fn() -> &'shape Shape<'shape>>,
+    weak: Option<fn() -> &'static Shape>,
+    strong: Option<fn() -> &'static Shape>,
 }
 
-impl<'shape> PointerDefBuilder<'shape> {
+impl PointerDefBuilder {
     /// Creates a new `PointerDefBuilder` with all fields set to `None`.
     #[must_use]
     #[expect(clippy::new_without_default)]
@@ -86,14 +86,14 @@ impl<'shape> PointerDefBuilder<'shape> {
 
     /// Sets the vtable for the pointer.
     #[must_use]
-    pub const fn vtable(mut self, vtable: &'shape PointerVTable) -> Self {
+    pub const fn vtable(mut self, vtable: &'static PointerVTable) -> Self {
         self.vtable = Some(vtable);
         self
     }
 
     /// Sets the shape of the inner type of the pointer.
     #[must_use]
-    pub const fn pointee(mut self, pointee: fn() -> &'shape Shape<'shape>) -> Self {
+    pub const fn pointee(mut self, pointee: fn() -> &'static Shape) -> Self {
         self.pointee = Some(pointee);
         self
     }
@@ -114,14 +114,14 @@ impl<'shape> PointerDefBuilder<'shape> {
 
     /// Sets the shape of the corresponding weak pointer, if this pointer is strong.
     #[must_use]
-    pub const fn weak(mut self, weak: fn() -> &'shape Shape<'shape>) -> Self {
+    pub const fn weak(mut self, weak: fn() -> &'static Shape) -> Self {
         self.weak = Some(weak);
         self
     }
 
     /// Sets the shape of the corresponding strong pointer, if this pointer is weak
     #[must_use]
-    pub const fn strong(mut self, strong: fn() -> &'shape Shape<'shape>) -> Self {
+    pub const fn strong(mut self, strong: fn() -> &'static Shape) -> Self {
         self.strong = Some(strong);
         self
     }
@@ -132,7 +132,7 @@ impl<'shape> PointerDefBuilder<'shape> {
     ///
     /// Panics if any required field (vtable, flags) is not set.
     #[must_use]
-    pub const fn build(self) -> PointerDef<'shape> {
+    pub const fn build(self) -> PointerDef {
         PointerDef {
             vtable: self.vtable.unwrap(),
             pointee: self.pointee,
@@ -386,7 +386,7 @@ impl SliceBuilderVTableBuilder {
 
 /// Functions for interacting with a pointer
 #[derive(Debug, Clone, Copy)]
-pub struct PointerVTable<'shape> {
+pub struct PointerVTable {
     /// See [`UpgradeIntoFn`]
     pub upgrade_into_fn: Option<UpgradeIntoFn>,
 
@@ -409,13 +409,13 @@ pub struct PointerVTable<'shape> {
     pub write_fn: Option<WriteFn>,
 
     /// See [`SliceBuilderVTable`]
-    pub slice_builder_vtable: Option<&'shape SliceBuilderVTable>,
+    pub slice_builder_vtable: Option<&'static SliceBuilderVTable>,
 }
 
-impl<'shape> PointerVTable<'shape> {
+impl PointerVTable {
     /// Creates a new `PointerVTableBuilder` with all fields set to `None`.
     #[must_use]
-    pub const fn builder() -> PointerVTableBuilder<'shape> {
+    pub const fn builder() -> PointerVTableBuilder {
         PointerVTableBuilder {
             upgrade_into_fn: None,
             downgrade_into_fn: None,
@@ -431,7 +431,7 @@ impl<'shape> PointerVTable<'shape> {
 
 /// Builder for creating a `PointerVTable`.
 #[derive(Debug)]
-pub struct PointerVTableBuilder<'shape> {
+pub struct PointerVTableBuilder {
     upgrade_into_fn: Option<UpgradeIntoFn>,
     downgrade_into_fn: Option<DowngradeIntoFn>,
     borrow_fn: Option<BorrowFn>,
@@ -439,10 +439,10 @@ pub struct PointerVTableBuilder<'shape> {
     lock_fn: Option<LockFn>,
     read_fn: Option<ReadFn>,
     write_fn: Option<WriteFn>,
-    slice_builder_vtable: Option<&'shape SliceBuilderVTable>,
+    slice_builder_vtable: Option<&'static SliceBuilderVTable>,
 }
 
-impl<'shape> PointerVTableBuilder<'shape> {
+impl PointerVTableBuilder {
     /// Creates a new `PointerVTableBuilder` with all fields set to `None`.
     #[must_use]
     #[expect(clippy::new_without_default)]
@@ -512,7 +512,7 @@ impl<'shape> PointerVTableBuilder<'shape> {
     #[must_use]
     pub const fn slice_builder_vtable(
         mut self,
-        slice_builder_vtable: &'shape SliceBuilderVTable,
+        slice_builder_vtable: &'static SliceBuilderVTable,
     ) -> Self {
         self.slice_builder_vtable = Some(slice_builder_vtable);
         self
@@ -520,7 +520,7 @@ impl<'shape> PointerVTableBuilder<'shape> {
 
     /// Builds a `PointerVTable` from the provided configuration.
     #[must_use]
-    pub const fn build(self) -> PointerVTable<'shape> {
+    pub const fn build(self) -> PointerVTable {
         PointerVTable {
             upgrade_into_fn: self.upgrade_into_fn,
             downgrade_into_fn: self.downgrade_into_fn,

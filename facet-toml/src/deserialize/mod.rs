@@ -34,9 +34,9 @@ macro_rules! reflect {
 }
 
 /// Deserializes a TOML string into a value of type `T` that implements `Facet`.
-pub fn from_str<'input, 'facet: 'shape, 'shape, T: Facet<'facet>>(
+pub fn from_str<'input, 'facet, T: Facet<'facet>>(
     toml: &'input str,
-) -> Result<T, TomlDeError<'input, 'shape>> {
+) -> Result<T, TomlDeError<'input>> {
     trace!("Parsing TOML");
 
     // Allocate the type
@@ -79,11 +79,11 @@ pub fn from_str<'input, 'facet: 'shape, 'shape, T: Facet<'facet>>(
     Ok(*result)
 }
 
-fn deserialize_item<'input, 'facet, 'shape>(
+fn deserialize_item<'input, 'facet>(
     toml: &'input str,
-    wip: &mut Partial<'facet, 'shape>,
+    wip: &mut Partial<'facet>,
     item: &Item,
-) -> Result<(), TomlDeError<'input, 'shape>> {
+) -> Result<(), TomlDeError<'input>> {
     // Check for Option before anything else, since it's a special case
     // Option is an enum in Rust, but we handle it specially
     if let Def::Option(_) = wip.shape().def {
@@ -112,12 +112,12 @@ fn deserialize_item<'input, 'facet, 'shape>(
     Ok(())
 }
 
-fn deserialize_as_struct<'input, 'a, 'shape>(
+fn deserialize_as_struct<'input, 'a>(
     toml: &'input str,
-    wip: &mut Partial<'a, 'shape>,
-    def: &facet_core::StructType<'shape>,
+    wip: &mut Partial<'a>,
+    def: &facet_core::StructType,
     item: &Item,
-) -> Result<(), TomlDeError<'input, 'shape>> {
+) -> Result<(), TomlDeError<'input>> {
     trace!(
         "Deserializing {} as {}",
         item.type_name().cyan(),
@@ -217,11 +217,11 @@ fn deserialize_as_struct<'input, 'a, 'shape>(
     Ok(())
 }
 
-fn deserialize_as_enum<'input, 'a, 'shape>(
+fn deserialize_as_enum<'input, 'a>(
     toml: &'input str,
-    wip: &mut Partial<'a, 'shape>,
+    wip: &mut Partial<'a>,
     item: &Item,
-) -> Result<(), TomlDeError<'input, 'shape>> {
+) -> Result<(), TomlDeError<'input>> {
     trace!(
         "Deserializing {} as {}",
         item.type_name().cyan(),
@@ -316,12 +316,12 @@ fn deserialize_as_enum<'input, 'a, 'shape>(
     Ok(())
 }
 
-fn build_enum_from_variant_name<'input, 'a, 'shape>(
+fn build_enum_from_variant_name<'input, 'a>(
     toml: &'input str,
-    wip: &mut Partial<'a, 'shape>,
+    wip: &mut Partial<'a>,
     variant_name: &str,
     item: &Item,
-) -> Result<(), TomlDeError<'input, 'shape>> {
+) -> Result<(), TomlDeError<'input>> {
     // Select the variant
     reflect!(wip, toml, item.span(), select_variant_named(variant_name));
 
@@ -388,11 +388,11 @@ fn build_enum_from_variant_name<'input, 'a, 'shape>(
     Ok(())
 }
 
-fn deserialize_as_list<'input, 'a, 'shape>(
+fn deserialize_as_list<'input, 'a>(
     toml: &'input str,
-    wip: &mut Partial<'a, 'shape>,
+    wip: &mut Partial<'a>,
     item: &Item,
-) -> Result<(), TomlDeError<'input, 'shape>> {
+) -> Result<(), TomlDeError<'input>> {
     trace!(
         "Deserializing {} as {}",
         item.type_name().cyan(),
@@ -466,11 +466,11 @@ fn deserialize_as_list<'input, 'a, 'shape>(
     Ok(())
 }
 
-fn deserialize_as_map<'input, 'a, 'shape>(
+fn deserialize_as_map<'input, 'a>(
     toml: &'input str,
-    wip: &mut Partial<'a, 'shape>,
+    wip: &mut Partial<'a>,
     item: &Item,
-) -> Result<(), TomlDeError<'input, 'shape>> {
+) -> Result<(), TomlDeError<'input>> {
     trace!(
         "Deserializing {} as {}",
         item.type_name().cyan(),
@@ -550,11 +550,11 @@ fn deserialize_as_map<'input, 'a, 'shape>(
     Ok(())
 }
 
-fn deserialize_as_option<'input, 'a, 'shape>(
+fn deserialize_as_option<'input, 'a>(
     toml: &'input str,
-    wip: &mut Partial<'a, 'shape>,
+    wip: &mut Partial<'a>,
     item: &Item,
-) -> Result<(), TomlDeError<'input, 'shape>> {
+) -> Result<(), TomlDeError<'input>> {
     trace!(
         "Deserializing {} as {}",
         item.type_name().cyan(),
@@ -575,11 +575,11 @@ fn deserialize_as_option<'input, 'a, 'shape>(
     Ok(())
 }
 
-fn deserialize_as_smartpointer<'input, 'a, 'shape>(
+fn deserialize_as_smartpointer<'input, 'a>(
     _toml: &'input str,
-    _wip: &mut Partial<'a, 'shape>,
+    _wip: &mut Partial<'a>,
     item: &Item,
-) -> Result<(), TomlDeError<'input, 'shape>> {
+) -> Result<(), TomlDeError<'input>> {
     trace!(
         "Deserializing {} as {}",
         item.type_name().cyan(),
@@ -591,11 +591,11 @@ fn deserialize_as_smartpointer<'input, 'a, 'shape>(
     todo!();
 }
 
-fn deserialize_as_scalar<'input, 'a, 'shape>(
+fn deserialize_as_scalar<'input, 'a>(
     toml: &'input str,
-    wip: &mut Partial<'a, 'shape>,
+    wip: &mut Partial<'a>,
     item: &Item,
-) -> Result<(), TomlDeError<'input, 'shape>> {
+) -> Result<(), TomlDeError<'input>> {
     trace!(
         "Deserializing {} as {}",
         item.type_name().cyan(),

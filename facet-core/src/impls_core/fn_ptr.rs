@@ -98,7 +98,7 @@ macro_rules! impl_facet_for_fn_ptr {
                     .build()
             };
 
-            const SHAPE: &'static Shape<'static> = &const {
+            const SHAPE: &'static Shape = &const {
                 Shape::builder_for_sized::<Self>()
                     .type_identifier("fn")
                     .type_params(&[

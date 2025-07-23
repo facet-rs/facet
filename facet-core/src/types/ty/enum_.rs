@@ -3,7 +3,7 @@ use super::{Repr, StructType};
 /// Fields for enum types
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-pub struct EnumType<'shape> {
+pub struct EnumType {
     /// Representation of the enum's data
     pub repr: Repr,
 
@@ -11,24 +11,24 @@ pub struct EnumType<'shape> {
     pub enum_repr: EnumRepr,
 
     /// all variants for this enum
-    pub variants: &'shape [Variant<'shape>],
+    pub variants: &'static [Variant],
 }
 
-impl<'shape> EnumType<'shape> {
+impl EnumType {
     /// Returns a builder for EnumDef
-    pub const fn builder() -> EnumDefBuilder<'shape> {
+    pub const fn builder() -> EnumDefBuilder {
         EnumDefBuilder::new()
     }
 }
 
 /// Builder for EnumDef
-pub struct EnumDefBuilder<'shape> {
+pub struct EnumDefBuilder {
     repr: Option<Repr>,
     enum_repr: Option<EnumRepr>,
-    variants: Option<&'shape [Variant<'shape>]>,
+    variants: Option<&'static [Variant]>,
 }
 
-impl<'shape> EnumDefBuilder<'shape> {
+impl EnumDefBuilder {
     /// Creates a new EnumDefBuilder
     #[allow(clippy::new_without_default)]
     pub const fn new() -> Self {
@@ -58,7 +58,7 @@ impl<'shape> EnumDefBuilder<'shape> {
     }
 
     /// Builds the EnumDef
-    pub const fn build(self) -> EnumType<'shape> {
+    pub const fn build(self) -> EnumType {
         EnumType {
             repr: self.repr.unwrap(),
             enum_repr: self.enum_repr.unwrap(),
@@ -70,28 +70,28 @@ impl<'shape> EnumDefBuilder<'shape> {
 /// Describes a variant of an enum
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-pub struct Variant<'shape> {
-    /// Name of the jariant, e.g. `Foo` for `enum FooBar { Foo, Bar }`
-    pub name: &'shape str,
+pub struct Variant {
+    /// Name of the variant, e.g. `Foo` for `enum FooBar { Foo, Bar }`
+    pub name: &'static str,
 
     /// Discriminant value (if available). Might fit in a u8, etc.
     pub discriminant: Option<i64>,
 
     /// Attributes set for this variant via the derive macro
-    pub attributes: &'shape [VariantAttribute<'shape>],
+    pub attributes: &'static [VariantAttribute],
 
     /// Fields for this variant (empty if unit, number-named if tuple).
     /// IMPORTANT: the offset for the fields already takes into account the size & alignment of the
     /// discriminant.
-    pub data: StructType<'shape>,
+    pub data: StructType,
 
     /// Doc comment for the variant
-    pub doc: &'shape [&'shape str],
+    pub doc: &'static [&'static str],
 }
 
-impl<'shape> Variant<'shape> {
+impl Variant {
     /// Returns a builder for Variant
-    pub const fn builder() -> VariantBuilder<'shape> {
+    pub const fn builder() -> VariantBuilder {
         VariantBuilder::new()
     }
 
@@ -105,15 +105,15 @@ impl<'shape> Variant<'shape> {
 }
 
 /// Builder for Variant
-pub struct VariantBuilder<'shape> {
-    name: Option<&'shape str>,
+pub struct VariantBuilder {
+    name: Option<&'static str>,
     discriminant: Option<i64>,
-    attributes: &'shape [VariantAttribute<'shape>],
-    data: Option<StructType<'shape>>,
-    doc: &'shape [&'shape str],
+    attributes: &'static [VariantAttribute],
+    data: Option<StructType>,
+    doc: &'static [&'static str],
 }
 
-impl<'shape> VariantBuilder<'shape> {
+impl VariantBuilder {
     /// Creates a new VariantBuilder
     #[allow(clippy::new_without_default)]
     pub const fn new() -> Self {
@@ -145,7 +145,7 @@ impl<'shape> VariantBuilder<'shape> {
     }
 
     /// Sets the fields for the Variant
-    pub const fn data(mut self, data: StructType<'shape>) -> Self {
+    pub const fn data(mut self, data: StructType) -> Self {
         self.data = Some(data);
         self
     }
@@ -157,7 +157,7 @@ impl<'shape> VariantBuilder<'shape> {
     }
 
     /// Builds the Variant
-    pub const fn build(self) -> Variant<'shape> {
+    pub const fn build(self) -> Variant {
         Variant {
             name: self.name.unwrap(),
             discriminant: self.discriminant,
@@ -171,9 +171,9 @@ impl<'shape> VariantBuilder<'shape> {
 /// An attribute that can be set on an enum variant
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
-pub enum VariantAttribute<'shape> {
+pub enum VariantAttribute {
     /// Custom field attribute containing arbitrary text
-    Arbitrary(&'shape str),
+    Arbitrary(&'static str),
 }
 
 /// All possible representations for Rust enums — ie. the type/size of the discriminant

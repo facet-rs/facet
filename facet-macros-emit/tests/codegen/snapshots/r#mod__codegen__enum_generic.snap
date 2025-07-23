@@ -28,7 +28,7 @@ where
             Ok(())
         })
     };
-    const SHAPE: &'static ::facet::Shape<'static> = &const {
+    const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
         #[allow(non_snake_case, dead_code)]
         struct __Shadow_RustRepr_Tuple_for_E_Tuple<

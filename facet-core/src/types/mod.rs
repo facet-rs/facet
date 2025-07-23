@@ -22,7 +22,7 @@ use crate::{ConstTypeId, Facet};
 /// Schema for reflection of a type
 #[derive(Clone, Copy)]
 #[repr(C)]
-pub struct Shape<'shape> {
+pub struct Shape {
     /// Unique type identifier, provided by the compiler.
     pub id: ConstTypeId,
 
@@ -37,37 +37,37 @@ pub struct Shape<'shape> {
     /// If the shape has `ShapeLayout::Unsized`, then the parent pointer needs to be passed.
     ///
     /// There are more specific vtables in variants of [`Def`]
-    pub vtable: &'shape ValueVTable,
+    pub vtable: &'static ValueVTable,
 
     /// Underlying type: primitive, sequence, user, pointer.
     ///
     /// This follows the [`Rust Reference`](https://doc.rust-lang.org/reference/types.html), but
     /// omits function types, and trait types, as they cannot be represented here.
-    pub ty: Type<'shape>,
+    pub ty: Type,
 
     /// Functional definition of the value: details for scalars, functions for inserting values into
     /// a map, or fetching a value from a list.
-    pub def: Def<'shape>,
+    pub def: Def,
 
     /// Identifier for a type: the type's name without generic parameters. To get the type's full
     /// name with generic parameters, see [`ValueVTable::type_name`].
-    pub type_identifier: &'shape str,
+    pub type_identifier: &'static str,
 
     /// Generic parameters for the shape
-    pub type_params: &'shape [TypeParam<'shape>],
+    pub type_params: &'static [TypeParam],
 
     /// Doc comment lines, collected by facet-macros. Note that they tend to
     /// start with a space.
-    pub doc: &'shape [&'shape str],
+    pub doc: &'static [&'static str],
 
     /// Attributes that can be applied to a shape
-    pub attributes: &'shape [ShapeAttribute<'shape>],
+    pub attributes: &'static [ShapeAttribute],
 
     /// Shape type tag, used to identify the type in self describing formats.
     ///
     /// For some formats, this is a fully or partially qualified name.
     /// For other formats, this is a simple string or integer type.
-    pub type_tag: Option<&'shape str>,
+    pub type_tag: Option<&'static str>,
 
     /// As far as serialization and deserialization goes, we consider that this shape is a wrapper
     /// for that shape This is true for "newtypes" like `NonZero`, wrappers like `Utf8PathBuf`,
@@ -85,7 +85,7 @@ pub struct Shape<'shape> {
     /// Same for `Utf8PathBuf`, which is parsed from and serialized to "just a string".
     ///
     /// See Partial's `innermost_shape` function (and its support in `put`).
-    pub inner: Option<fn() -> &'shape Shape<'shape>>,
+    pub inner: Option<fn() -> &'static Shape>,
 }
 
 /// Layout of the shape
@@ -122,7 +122,7 @@ impl core::error::Error for UnsizedError {}
 
 /// An attribute that can be applied to a shape
 #[derive(Debug, PartialEq)]
-pub enum ShapeAttribute<'shape> {
+pub enum ShapeAttribute {
     /// Reject deserialization upon encountering an unknown key.
     DenyUnknownFields,
     /// Indicates that, when deserializing, fields from this shape that are
@@ -134,35 +134,35 @@ pub enum ShapeAttribute<'shape> {
     /// from `T` and converted back to `T`
     Transparent,
     /// Specifies a case conversion rule for all fields or variants
-    RenameAll(&'shape str),
+    RenameAll(&'static str),
     /// Custom field attribute containing arbitrary text
-    Arbitrary(&'shape str),
+    Arbitrary(&'static str),
 }
 
-impl<'shape> Shape<'shape> {
+impl Shape {
     /// Returns a builder for a shape for some type `T`.
-    pub const fn builder_for_sized<'a, T: Facet<'a>>() -> ShapeBuilder<'shape> {
+    pub const fn builder_for_sized<'a, T: Facet<'a>>() -> ShapeBuilder {
         ShapeBuilder::new(T::VTABLE)
             .layout(Layout::new::<T>())
             .id(ConstTypeId::of::<T>())
     }
 
     /// Returns a builder for a shape for some type `T`.
-    pub const fn builder_for_unsized<'a, T: Facet<'a> + ?Sized>() -> ShapeBuilder<'shape> {
+    pub const fn builder_for_unsized<'a, T: Facet<'a> + ?Sized>() -> ShapeBuilder {
         ShapeBuilder::new(T::VTABLE)
             .set_unsized()
             .id(ConstTypeId::of::<T>())
     }
 
     /// Check if this shape is of the given type
-    pub fn is_type<Other: Facet<'shape>>(&self) -> bool {
+    pub fn is_type<'facet, Other: Facet<'facet>>(&self) -> bool {
         let l = self;
         let r = Other::SHAPE;
         l == r
     }
 
     /// Assert that this shape is of the given type, panicking if it's not
-    pub fn assert_type<Other: Facet<'shape>>(&self) {
+    pub fn assert_type<'facet, Other: Facet<'facet>>(&self) {
         assert!(
             self.is_type::<Other>(),
             "Type mismatch: expected {}, found {self}",
@@ -196,24 +196,24 @@ impl<'shape> Shape<'shape> {
 }
 
 /// Builder for [`Shape`]
-pub struct ShapeBuilder<'shape> {
+pub struct ShapeBuilder {
     id: Option<ConstTypeId>,
     layout: Option<ShapeLayout>,
-    vtable: &'shape ValueVTable,
-    def: Def<'shape>,
-    ty: Option<Type<'shape>>,
-    type_identifier: Option<&'shape str>,
-    type_params: &'shape [TypeParam<'shape>],
-    doc: &'shape [&'shape str],
-    attributes: &'shape [ShapeAttribute<'shape>],
-    type_tag: Option<&'shape str>,
-    inner: Option<fn() -> &'shape Shape<'shape>>,
+    vtable: &'static ValueVTable,
+    def: Def,
+    ty: Option<Type>,
+    type_identifier: Option<&'static str>,
+    type_params: &'static [TypeParam],
+    doc: &'static [&'static str],
+    attributes: &'static [ShapeAttribute],
+    type_tag: Option<&'static str>,
+    inner: Option<fn() -> &'static Shape>,
 }
 
-impl<'shape> ShapeBuilder<'shape> {
+impl ShapeBuilder {
     /// Creates a new `ShapeBuilder` with all fields set to `None`.
     #[allow(clippy::new_without_default)]
-    pub const fn new(vtable: &'shape ValueVTable) -> Self {
+    pub const fn new(vtable: &'static ValueVTable) -> Self {
         Self {
             id: None,
             layout: None,
@@ -252,49 +252,49 @@ impl<'shape> ShapeBuilder<'shape> {
 
     /// Sets the `def` field of the `ShapeBuilder`.
     #[inline]
-    pub const fn def(mut self, def: Def<'shape>) -> Self {
+    pub const fn def(mut self, def: Def) -> Self {
         self.def = def;
         self
     }
 
     /// Sets the `ty` field of the `ShapeBuilder`.
     #[inline]
-    pub const fn ty(mut self, ty: Type<'shape>) -> Self {
+    pub const fn ty(mut self, ty: Type) -> Self {
         self.ty = Some(ty);
         self
     }
 
     /// Sets the `type_identifier` field of the `ShapeBuilder`.
     #[inline]
-    pub const fn type_identifier(mut self, type_identifier: &'shape str) -> Self {
+    pub const fn type_identifier(mut self, type_identifier: &'static str) -> Self {
         self.type_identifier = Some(type_identifier);
         self
     }
 
     /// Sets the `type_params` field of the `ShapeBuilder`.
     #[inline]
-    pub const fn type_params(mut self, type_params: &'shape [TypeParam<'shape>]) -> Self {
+    pub const fn type_params(mut self, type_params: &'static [TypeParam]) -> Self {
         self.type_params = type_params;
         self
     }
 
     /// Sets the `doc` field of the `ShapeBuilder`.
     #[inline]
-    pub const fn doc(mut self, doc: &'shape [&'shape str]) -> Self {
+    pub const fn doc(mut self, doc: &'static [&'static str]) -> Self {
         self.doc = doc;
         self
     }
 
     /// Sets the `attributes` field of the `ShapeBuilder`.
     #[inline]
-    pub const fn attributes(mut self, attributes: &'shape [ShapeAttribute]) -> Self {
+    pub const fn attributes(mut self, attributes: &'static [ShapeAttribute]) -> Self {
         self.attributes = attributes;
         self
     }
 
     /// Sets the `type_tag` field of the `ShapeBuilder`.
     #[inline]
-    pub const fn type_tag(mut self, type_tag: &'shape str) -> Self {
+    pub const fn type_tag(mut self, type_tag: &'static str) -> Self {
         self.type_tag = Some(type_tag);
         self
     }
@@ -307,7 +307,7 @@ impl<'shape> ShapeBuilder<'shape> {
     ///
     /// The function `inner_fn` should return the static shape of the inner type.
     #[inline]
-    pub const fn inner(mut self, inner_fn: fn() -> &'shape Shape<'shape>) -> Self {
+    pub const fn inner(mut self, inner_fn: fn() -> &'static Shape) -> Self {
         self.inner = Some(inner_fn);
         self
     }
@@ -318,7 +318,7 @@ impl<'shape> ShapeBuilder<'shape> {
     ///
     /// This method will panic if any of the required fields (`id`, `layout`, `type_identifier`, or `ty`) are `None`.
     #[inline]
-    pub const fn build(self) -> Shape<'shape> {
+    pub const fn build(self) -> Shape {
         Shape {
             id: self.id.unwrap(),
             layout: self.layout.unwrap(),
@@ -335,31 +335,31 @@ impl<'shape> ShapeBuilder<'shape> {
     }
 }
 
-impl PartialEq for Shape<'_> {
+impl PartialEq for Shape {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
 }
 
-impl Eq for Shape<'_> {}
+impl Eq for Shape {}
 
-impl core::hash::Hash for Shape<'_> {
+impl core::hash::Hash for Shape {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.id.hash(state);
         self.layout.hash(state);
     }
 }
 
-impl Shape<'_> {
+impl Shape {
     /// Check if this shape is of the given type
     #[inline]
-    pub fn is_shape(&self, other: &Shape<'_>) -> bool {
+    pub fn is_shape(&self, other: &Shape) -> bool {
         self == other
     }
 
     /// Assert that this shape is equal to the given shape, panicking if it's not
-    pub fn assert_shape(&self, other: &Shape<'_>) {
+    pub fn assert_shape(&self, other: &Shape) {
         assert!(
             self.is_shape(other),
             "Shape mismatch: expected {other}, found {self}",
@@ -368,13 +368,13 @@ impl Shape<'_> {
 }
 
 // Helper struct to format the name for display
-impl core::fmt::Display for Shape<'_> {
+impl core::fmt::Display for Shape {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         (self.vtable.type_name())(f, TypeNameOpts::default())
     }
 }
 
-impl core::fmt::Debug for Shape<'_> {
+impl core::fmt::Debug for Shape {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         // NOTE:
         // This dummy destructuring is present to ensure that if fields are added,
@@ -424,7 +424,7 @@ impl core::fmt::Debug for Shape<'_> {
                 // and `«(...)»` to show custom-formatted parameter sets when present.
                 // Avoids visual conflict with array types like `[T; N]` in other fields.
                 field!("type_params", "{}", {
-                    struct TypeParams<'shape>(&'shape [TypeParam<'shape>]);
+                    struct TypeParams<'shape>(&'shape [TypeParam]);
                     impl core::fmt::Display for TypeParams<'_> {
                         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                             let mut iter = self.0.iter();
@@ -488,7 +488,7 @@ impl core::fmt::Debug for Shape<'_> {
     }
 }
 
-impl Shape<'_> {
+impl Shape {
     /// Heap-allocate a value of this shape
     #[cfg(feature = "alloc")]
     #[inline]
@@ -558,18 +558,18 @@ impl Shape<'_> {
 ///
 /// Note: these are subject to change — it's a bit too stringly-typed for now.
 #[derive(Debug, Clone)]
-pub struct TypeParam<'shape> {
+pub struct TypeParam {
     /// The name of the type parameter (e.g., `T`).
-    pub name: &'shape str,
+    pub name: &'static str,
 
     /// The shape of the type parameter (e.g. `String`)
-    pub shape: fn() -> &'shape Shape<'shape>,
+    pub shape: fn() -> &'static Shape,
 }
 
-impl<'shape> TypeParam<'shape> {
+impl TypeParam {
     /// Returns the shape of the type parameter.
     #[inline]
-    pub fn shape(&self) -> &'shape Shape<'shape> {
+    pub fn shape(&self) -> &'static Shape {
         (self.shape)()
     }
 }

@@ -21,16 +21,16 @@ use log::trace;
 use toml_edit::{DocumentMut, Item, Table, Value};
 
 /// Serializer for TOML values.
-pub struct TomlSerializer<'shape> {
+pub struct TomlSerializer {
     /// The TOML document.
     document: DocumentMut,
     /// Current stack of where we are in the tree.
-    key_stack: KeyStack<'shape>,
+    key_stack: KeyStack,
     /// What type the current item is.
     current: KeyOrValue,
 }
 
-impl<'shape> TomlSerializer<'shape> {
+impl TomlSerializer {
     /// Create a new serialzer.
     pub fn new() -> Self {
         Self {
@@ -93,7 +93,7 @@ impl<'shape> TomlSerializer<'shape> {
     }
 
     /// Create a new empty item at the key.
-    fn push_key(&mut self, key: impl Into<Cow<'shape, str>>) {
+    fn push_key(&mut self, key: impl Into<Cow<'static, str>>) {
         let key = key.into();
         // Push empty item
         self.item_mut()
@@ -111,13 +111,13 @@ impl<'shape> TomlSerializer<'shape> {
     }
 }
 
-impl<'shape> Default for TomlSerializer<'shape> {
+impl Default for TomlSerializer {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'shape> Serializer<'shape> for TomlSerializer<'shape> {
+impl Serializer for TomlSerializer {
     type Error = TomlSerError;
 
     fn serialize_u64(&mut self, value: u64) -> Result<(), Self::Error> {
@@ -179,7 +179,7 @@ impl<'shape> Serializer<'shape> for TomlSerializer<'shape> {
     fn serialize_unit_variant(
         &mut self,
         _variant_index: usize,
-        _variant_name: &'shape str,
+        _variant_name: &'static str,
     ) -> Result<(), Self::Error> {
         todo!()
     }
@@ -210,7 +210,7 @@ impl<'shape> Serializer<'shape> for TomlSerializer<'shape> {
         Ok(())
     }
 
-    fn serialize_field_name(&mut self, name: &'shape str) -> Result<(), Self::Error> {
+    fn serialize_field_name(&mut self, name: &'static str) -> Result<(), Self::Error> {
         self.push_key(name);
         trace!("Push field {}", self.key_stack);
 
@@ -254,29 +254,29 @@ enum KeyOrValue {
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
-struct KeyStack<'shape>(Vec<Cow<'shape, str>>);
+struct KeyStack(Vec<Cow<'static, str>>);
 
-impl KeyStack<'_> {
+impl KeyStack {
     fn new() -> Self {
         Self::default()
     }
 }
 
-impl<'shape> Deref for KeyStack<'shape> {
-    type Target = Vec<Cow<'shape, str>>;
+impl Deref for KeyStack {
+    type Target = Vec<Cow<'static, str>>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl<'shape> DerefMut for KeyStack<'shape> {
+impl DerefMut for KeyStack {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
 }
 
-impl core::fmt::Display for KeyStack<'_> {
+impl core::fmt::Display for KeyStack {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let mut iter = self.iter();
         if let Some(first) = iter.next() {

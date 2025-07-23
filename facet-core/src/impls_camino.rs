@@ -11,11 +11,11 @@ use crate::{
 unsafe impl Facet<'_> for Utf8PathBuf {
     const VTABLE: &'static ValueVTable = &const {
         // Define the functions for transparent conversion between Utf8PathBuf and String
-        unsafe fn try_from<'shape, 'dst>(
+        unsafe fn try_from<'dst>(
             src_ptr: PtrConst<'_>,
-            src_shape: &'shape Shape<'shape>,
+            src_shape: &'static Shape,
             dst: PtrUninit<'dst>,
-        ) -> Result<PtrMut<'dst>, TryFromError<'shape>> {
+        ) -> Result<PtrMut<'dst>, TryFromError> {
             if src_shape.id != <String as Facet>::SHAPE.id {
                 return Err(TryFromError::UnsupportedSourceShape {
                     src_shape,
@@ -50,9 +50,9 @@ unsafe impl Facet<'_> for Utf8PathBuf {
         vtable
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         // Function to return inner type's shape
-        fn inner_shape() -> &'static Shape<'static> {
+        fn inner_shape() -> &'static Shape {
             <String as Facet>::SHAPE
         }
 
@@ -74,7 +74,7 @@ unsafe impl<'a> Facet<'a> for &'a Utf8Path {
         ))
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("&Utf8Path")
             .ty(Type::User(UserType::Opaque))
@@ -92,7 +92,7 @@ unsafe impl Facet<'_> for Utf8Path {
         ))
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_unsized::<Self>()
             .type_identifier("Utf8Path")
             .ty(Type::User(UserType::Opaque))

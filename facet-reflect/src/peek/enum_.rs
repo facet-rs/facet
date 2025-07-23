@@ -6,18 +6,18 @@ use super::{FieldIter, HasFields};
 
 /// Lets you read from an enum (implements read-only enum operations)
 #[derive(Clone, Copy)]
-pub struct PeekEnum<'mem, 'facet, 'shape> {
+pub struct PeekEnum<'mem, 'facet> {
     /// The internal data storage for the enum
     ///
     /// Note that this stores both the discriminant and the variant data
     /// (if any), and the layout depends on the enum representation.
-    pub(crate) value: Peek<'mem, 'facet, 'shape>,
+    pub(crate) value: Peek<'mem, 'facet>,
 
     /// The definition of the enum.
-    pub(crate) ty: EnumType<'shape>,
+    pub(crate) ty: EnumType,
 }
 
-impl core::fmt::Debug for PeekEnum<'_, '_, '_> {
+impl core::fmt::Debug for PeekEnum<'_, '_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{:?}", self.value)
     }
@@ -25,7 +25,7 @@ impl core::fmt::Debug for PeekEnum<'_, '_, '_> {
 
 /// Returns the enum definition if the shape represents an enum, None otherwise
 #[inline]
-pub fn peek_enum<'shape>(shape: &'shape Shape) -> Option<EnumType<'shape>> {
+pub fn peek_enum(shape: &'static Shape) -> Option<EnumType> {
     match shape.ty {
         facet_core::Type::User(UserType::Enum(enum_ty)) => Some(enum_ty),
         _ => None,
@@ -34,18 +34,18 @@ pub fn peek_enum<'shape>(shape: &'shape Shape) -> Option<EnumType<'shape>> {
 
 /// Returns the enum representation if the shape represents an enum, None otherwise
 #[inline]
-pub fn peek_enum_repr(shape: &Shape) -> Option<EnumRepr> {
+pub fn peek_enum_repr(shape: &'static Shape) -> Option<EnumRepr> {
     peek_enum(shape).map(|enum_def| enum_def.enum_repr)
 }
 
 /// Returns the enum variants if the shape represents an enum, None otherwise
 #[inline]
-pub fn peek_enum_variants<'shape>(shape: &'shape Shape) -> Option<&'shape [Variant<'shape>]> {
+pub fn peek_enum_variants(shape: &'static Shape) -> Option<&'static [Variant]> {
     peek_enum(shape).map(|enum_def| enum_def.variants)
 }
 
-impl<'mem, 'facet, 'shape> core::ops::Deref for PeekEnum<'mem, 'facet, 'shape> {
-    type Target = Peek<'mem, 'facet, 'shape>;
+impl<'mem, 'facet> core::ops::Deref for PeekEnum<'mem, 'facet> {
+    type Target = Peek<'mem, 'facet>;
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
@@ -53,10 +53,10 @@ impl<'mem, 'facet, 'shape> core::ops::Deref for PeekEnum<'mem, 'facet, 'shape> {
     }
 }
 
-impl<'mem, 'facet, 'shape> PeekEnum<'mem, 'facet, 'shape> {
+impl<'mem, 'facet> PeekEnum<'mem, 'facet> {
     /// Returns the enum definition
     #[inline(always)]
-    pub fn ty(self) -> EnumType<'shape> {
+    pub fn ty(self) -> EnumType {
         self.ty
     }
 
@@ -68,7 +68,7 @@ impl<'mem, 'facet, 'shape> PeekEnum<'mem, 'facet, 'shape> {
 
     /// Returns the enum variants
     #[inline(always)]
-    pub fn variants(self) -> &'shape [Variant<'shape>] {
+    pub fn variants(self) -> &'static [Variant] {
         self.ty.variants
     }
 
@@ -80,7 +80,7 @@ impl<'mem, 'facet, 'shape> PeekEnum<'mem, 'facet, 'shape> {
 
     /// Returns the variant name at the given index
     #[inline(always)]
-    pub fn variant_name(self, index: usize) -> Option<&'shape str> {
+    pub fn variant_name(self, index: usize) -> Option<&'static str> {
         self.ty.variants.get(index).map(|variant| variant.name)
     }
 
@@ -193,21 +193,21 @@ impl<'mem, 'facet, 'shape> PeekEnum<'mem, 'facet, 'shape> {
 
     /// Returns the active variant
     #[inline]
-    pub fn active_variant(self) -> Result<&'shape Variant<'shape>, VariantError> {
+    pub fn active_variant(self) -> Result<&'static Variant, VariantError> {
         let index = self.variant_index()?;
         Ok(&self.ty.variants[index])
     }
 
     /// Returns the name of the active variant for this enum value
     #[inline]
-    pub fn variant_name_active(self) -> Result<&'shape str, VariantError> {
+    pub fn variant_name_active(self) -> Result<&'static str, VariantError> {
         Ok(self.active_variant()?.name)
     }
 
     // variant_data has been removed to reduce unsafe code exposure
 
     /// Returns a PeekValue handle to a field of a tuple or struct variant by index
-    pub fn field(self, index: usize) -> Result<Option<Peek<'mem, 'facet, 'shape>>, VariantError> {
+    pub fn field(self, index: usize) -> Result<Option<Peek<'mem, 'facet>>, VariantError> {
         let variant = self.active_variant()?;
         let fields = &variant.data.fields;
 
@@ -242,7 +242,7 @@ impl<'mem, 'facet, 'shape> PeekEnum<'mem, 'facet, 'shape> {
     pub fn field_by_name(
         self,
         field_name: &str,
-    ) -> Result<Option<Peek<'mem, 'facet, 'shape>>, VariantError> {
+    ) -> Result<Option<Peek<'mem, 'facet>>, VariantError> {
         let index_opt = self.field_index(field_name)?;
         match index_opt {
             Some(index) => self.field(index),
@@ -251,9 +251,9 @@ impl<'mem, 'facet, 'shape> PeekEnum<'mem, 'facet, 'shape> {
     }
 }
 
-impl<'mem, 'facet, 'shape> HasFields<'mem, 'facet, 'shape> for PeekEnum<'mem, 'facet, 'shape> {
+impl<'mem, 'facet> HasFields<'mem, 'facet> for PeekEnum<'mem, 'facet> {
     #[inline]
-    fn fields(&self) -> FieldIter<'mem, 'facet, 'shape> {
+    fn fields(&self) -> FieldIter<'mem, 'facet> {
         FieldIter::new_enum(*self)
     }
 }

@@ -5,33 +5,33 @@ use crate::ptr::{PtrConst, PtrMut, PtrUninit};
 /// and the inner shape (the `T` in `Option<T>`).
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-pub struct OptionDef<'shape> {
+pub struct OptionDef {
     /// vtable for interacting with the option
-    pub vtable: &'shape OptionVTable,
+    pub vtable: &'static OptionVTable,
 
     /// shape of the inner type of the option
-    pub t: &'shape Shape<'shape>,
+    pub t: &'static Shape,
 }
 
-impl<'shape> OptionDef<'shape> {
+impl OptionDef {
     /// Returns a builder for OptionDef
-    pub const fn builder() -> OptionDefBuilder<'shape> {
+    pub const fn builder() -> OptionDefBuilder {
         OptionDefBuilder::new()
     }
 
     /// Returns the inner type shape of the option
-    pub const fn t(&self) -> &'shape Shape<'shape> {
+    pub const fn t(&self) -> &'static Shape {
         self.t
     }
 }
 
 /// Builder for OptionDef
-pub struct OptionDefBuilder<'shape> {
-    vtable: Option<&'shape OptionVTable>,
-    t: Option<&'shape Shape<'shape>>,
+pub struct OptionDefBuilder {
+    vtable: Option<&'static OptionVTable>,
+    t: Option<&'static Shape>,
 }
 
-impl<'shape> OptionDefBuilder<'shape> {
+impl OptionDefBuilder {
     /// Creates a new OptionDefBuilder
     #[allow(clippy::new_without_default)]
     pub const fn new() -> Self {
@@ -42,19 +42,19 @@ impl<'shape> OptionDefBuilder<'shape> {
     }
 
     /// Sets the vtable for the OptionDef
-    pub const fn vtable(mut self, vtable: &'shape OptionVTable) -> Self {
+    pub const fn vtable(mut self, vtable: &'static OptionVTable) -> Self {
         self.vtable = Some(vtable);
         self
     }
 
     /// Sets the inner type shape for the OptionDef
-    pub const fn t(mut self, t: &'shape Shape<'shape>) -> Self {
+    pub const fn t(mut self, t: &'static Shape) -> Self {
         self.t = Some(t);
         self
     }
 
     /// Builds the OptionDef
-    pub const fn build(self) -> OptionDef<'shape> {
+    pub const fn build(self) -> OptionDef {
         OptionDef {
             vtable: self.vtable.unwrap(),
             t: self.t.unwrap(),

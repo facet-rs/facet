@@ -28,20 +28,20 @@ use kdl::{KdlDocument, KdlError as KdlParseError};
 
 /// Error type for KDL deserialization.
 #[derive(Debug)]
-pub struct KdlError<'shape> {
-    kind: KdlErrorKind<'shape>,
+pub struct KdlError {
+    kind: KdlErrorKind,
 }
 
-impl Display for KdlError<'_> {
+impl Display for KdlError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
         let kind = &self.kind;
         write!(f, "{kind}")
     }
 }
-impl Error for KdlError<'_> {}
+impl Error for KdlError {}
 
 // FIXME: Replace this with a proper constructor once there is other information to put into `KdlError`!
-impl<'shape, K: Into<KdlErrorKind<'shape>>> From<K> for KdlError<'shape> {
+impl<K: Into<KdlErrorKind>> From<K> for KdlError {
     fn from(value: K) -> Self {
         let kind = value.into();
         KdlError { kind }
@@ -49,14 +49,14 @@ impl<'shape, K: Into<KdlErrorKind<'shape>>> From<K> for KdlError<'shape> {
 }
 
 #[derive(Debug)]
-enum KdlErrorKind<'shape> {
-    InvalidDocumentShape(&'shape Def<'shape>),
+enum KdlErrorKind {
+    InvalidDocumentShape(&'static Def),
     MissingNodes(Vec<String>),
     Parse(KdlParseError),
-    Reflect(ReflectError<'shape>),
+    Reflect(ReflectError),
 }
 
-impl Display for KdlErrorKind<'_> {
+impl Display for KdlErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             KdlErrorKind::InvalidDocumentShape(def) => {
@@ -69,14 +69,14 @@ impl Display for KdlErrorKind<'_> {
     }
 }
 
-impl From<KdlParseError> for KdlErrorKind<'_> {
+impl From<KdlParseError> for KdlErrorKind {
     fn from(value: KdlParseError) -> Self {
         Self::Parse(value)
     }
 }
 
-impl<'shape> From<ReflectError<'shape>> for KdlErrorKind<'shape> {
-    fn from(value: ReflectError<'shape>) -> Self {
+impl From<ReflectError> for KdlErrorKind {
+    fn from(value: ReflectError) -> Self {
         Self::Reflect(value)
     }
 }
@@ -88,10 +88,10 @@ struct KdlDeserializer<'input> {
     kdl: &'input str,
 }
 
-type Result<'shape, T> = std::result::Result<T, KdlError<'shape>>;
+type Result<T> = std::result::Result<T, KdlError>;
 
-impl<'input, 'facet: 'shape, 'shape> KdlDeserializer<'input> {
-    fn from_str<T: Facet<'facet>>(kdl: &'input str) -> Result<'shape, T> {
+impl<'input, 'facet> KdlDeserializer<'input> {
+    fn from_str<T: Facet<'facet>>(kdl: &'input str) -> Result<T> {
         log::trace!("Entering `from_str` method");
 
         // PERF: This definitely isn't zero-copy, so it might be worth seeing if that's something that can be added to
@@ -122,9 +122,9 @@ impl<'input, 'facet: 'shape, 'shape> KdlDeserializer<'input> {
 
     fn deserialize_document(
         &mut self,
-        wip: &mut Partial<'facet, 'shape>,
+        wip: &mut Partial<'facet>,
         document: KdlDocument,
-    ) -> Result<'shape, ()> {
+    ) -> Result<()> {
         log::trace!("Entering `deserialize_document` method");
 
         // First check the type system (Type)
@@ -160,9 +160,9 @@ impl<'input, 'facet: 'shape, 'shape> KdlDeserializer<'input> {
 
     fn deserialize_node(
         &mut self,
-        wip: &mut Partial<'facet, 'shape>,
+        wip: &mut Partial<'facet>,
         mut document: KdlDocument,
-    ) -> Result<'shape, ()> {
+    ) -> Result<()> {
         log::trace!("Entering `deserialize_node` method");
 
         // TODO: Correctly generate that error and write a constructor that gets rid of the `.to_owned()`?
@@ -205,7 +205,7 @@ impl<'input, 'facet: 'shape, 'shape> KdlDeserializer<'input> {
 /// "#;
 /// let val: MyStruct = from_str(kdl)?;
 /// ```
-pub fn from_str<'input, 'facet: 'shape, 'shape, T>(kdl: &'input str) -> Result<'shape, T>
+pub fn from_str<'input, 'facet: 'shape, 'shape, T>(kdl: &'input str) -> Result<T>
 where
     T: Facet<'facet>,
     'input: 'facet,

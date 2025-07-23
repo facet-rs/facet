@@ -10,12 +10,11 @@ use alloc::{
 use ariadne::{Color, Label, Report, ReportKind, Source};
 use facet_core::Shape;
 use facet_reflect::ReflectError;
-use owo_colors::OwoColorize;
 
 /// Any error from deserializing TOML.
-pub struct TomlDeError<'input, 'shape> {
+pub struct TomlDeError<'input> {
     /// Type of error.
-    pub kind: TomlDeErrorKind<'shape>,
+    pub kind: TomlDeErrorKind,
     /// Reference to the TOML source.
     #[cfg_attr(not(feature = "rich-diagnostics"), allow(dead_code))]
     toml: &'input str,
@@ -26,11 +25,11 @@ pub struct TomlDeError<'input, 'shape> {
     path: String,
 }
 
-impl<'input, 'shape> TomlDeError<'input, 'shape> {
+impl<'input> TomlDeError<'input> {
     /// Create a new error.
     pub fn new(
         toml: &'input str,
-        kind: TomlDeErrorKind<'shape>,
+        kind: TomlDeErrorKind,
         span: Option<Range<usize>>,
         path: String,
     ) -> Self {
@@ -87,14 +86,14 @@ impl<'input, 'shape> TomlDeError<'input, 'shape> {
 }
 
 #[cfg(not(feature = "rich-diagnostics"))]
-impl<'shape> core::fmt::Display for TomlDeError<'_, 'shape> {
+impl core::fmt::Display for TomlDeError<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{} in path {}", self.message(), self.path)
     }
 }
 
 #[cfg(feature = "rich-diagnostics")]
-impl<'shape> core::fmt::Display for TomlDeError<'_, 'shape> {
+impl core::fmt::Display for TomlDeError<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // Don't print the TOML source if no span is set
         let Some(span) = &self.span else {
@@ -105,7 +104,7 @@ impl<'shape> core::fmt::Display for TomlDeError<'_, 'shape> {
 
         // Create a nicely formatted report
         let mut report = Report::build(ReportKind::Error, (source_id, span.clone()))
-            .with_message(format!("Error at {}", self.path.yellow()));
+            .with_message(format!("Error at {}", self.path));
 
         // The inline error message in the TOML document
         let label = Label::new((source_id, span.clone()))
@@ -131,9 +130,9 @@ impl<'shape> core::fmt::Display for TomlDeError<'_, 'shape> {
     }
 }
 
-impl<'shape> core::error::Error for TomlDeError<'_, 'shape> {}
+impl core::error::Error for TomlDeError<'_> {}
 
-impl<'shape> core::fmt::Debug for TomlDeError<'_, 'shape> {
+impl core::fmt::Debug for TomlDeError<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         core::fmt::Display::fmt(self, f)
     }
@@ -141,9 +140,9 @@ impl<'shape> core::fmt::Debug for TomlDeError<'_, 'shape> {
 
 /// Type of error.
 #[derive(Debug)]
-pub enum TomlDeErrorKind<'shape> {
+pub enum TomlDeErrorKind {
     /// Any error from facet.
-    GenericReflect(ReflectError<'shape>),
+    GenericReflect(ReflectError),
     /// Parsing TOML document error.
     GenericTomlError(String),
     /// Parsing a TOML type as a Rust type failed.
@@ -151,7 +150,7 @@ pub enum TomlDeErrorKind<'shape> {
         /// TOML type that failed to convert.
         toml_type_name: &'static str,
         /// Rust that type didn't match the TOML type.
-        rust_type: &'shape Shape<'shape>,
+        rust_type: &'static Shape,
         /// Explanation why it failed.
         reason: Option<String>,
     },
@@ -165,11 +164,11 @@ pub enum TomlDeErrorKind<'shape> {
     /// Found a TOML type that we don't know how to handle.
     UnrecognizedType(&'static str),
     /// Found a Rust scalar type that we don't know how to handle.
-    UnrecognizedScalar(&'shape Shape<'shape>),
+    UnrecognizedScalar(&'static Shape),
     /// Rust value is not a valid key.
-    InvalidKey(&'shape Shape<'shape>),
+    InvalidKey(&'static Shape),
     /// Expected a TOML field with the specified name, but couldn't find it.
-    ExpectedFieldWithName(&'shape str),
+    ExpectedFieldWithName(&'static str),
     /// Expected at least one field, got zero.
     ExpectedAtLeastOneField,
     /// Expected a single value, got multiple field.

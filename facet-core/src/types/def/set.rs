@@ -5,32 +5,32 @@ use super::{IterVTable, Shape};
 /// Fields for set types
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-pub struct SetDef<'shape> {
+pub struct SetDef {
     /// vtable for interacting with the set
-    pub vtable: &'shape SetVTable,
+    pub vtable: &'static SetVTable,
     /// shape of the values in the set
-    pub t: fn() -> &'shape Shape<'shape>,
+    pub t: fn() -> &'static Shape,
 }
 
-impl<'shape> SetDef<'shape> {
+impl SetDef {
     /// Returns a builder for SetDef
-    pub const fn builder() -> SetDefBuilder<'shape> {
+    pub const fn builder() -> SetDefBuilder {
         SetDefBuilder::new()
     }
 
     /// Returns the shape of the items in the set
-    pub fn t(&self) -> &'shape Shape<'shape> {
+    pub fn t(&self) -> &'static Shape {
         (self.t)()
     }
 }
 
 /// Builder for SetDef
-pub struct SetDefBuilder<'shape> {
-    vtable: Option<&'shape SetVTable>,
-    t: Option<fn() -> &'shape Shape<'shape>>,
+pub struct SetDefBuilder {
+    vtable: Option<&'static SetVTable>,
+    t: Option<fn() -> &'static Shape>,
 }
 
-impl<'shape> SetDefBuilder<'shape> {
+impl SetDefBuilder {
     /// Creates a new SetDefBuilder
     #[allow(clippy::new_without_default)]
     pub const fn new() -> Self {
@@ -41,19 +41,19 @@ impl<'shape> SetDefBuilder<'shape> {
     }
 
     /// Sets the vtable for the SetDef
-    pub const fn vtable(mut self, vtable: &'shape SetVTable) -> Self {
+    pub const fn vtable(mut self, vtable: &'static SetVTable) -> Self {
         self.vtable = Some(vtable);
         self
     }
 
     /// Sets the value shape for the SetDef
-    pub const fn t(mut self, t: fn() -> &'shape Shape<'shape>) -> Self {
+    pub const fn t(mut self, t: fn() -> &'static Shape) -> Self {
         self.t = Some(t);
         self
     }
 
     /// Builds the SetDef
-    pub const fn build(self) -> SetDef<'shape> {
+    pub const fn build(self) -> SetDef {
         SetDef {
             vtable: self.vtable.unwrap(),
             t: self.t.unwrap(),

@@ -3,20 +3,20 @@ use super::Shape;
 /// Describes built-in sequence type (array, slice)
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-pub enum SequenceType<'shape> {
+pub enum SequenceType {
     /// Array (`[T; N]`)
-    Array(ArrayType<'shape>),
+    Array(ArrayType),
 
     /// Slice (`[T]`)
-    Slice(SliceType<'shape>),
+    Slice(SliceType),
 }
 
 /// Describes a fixed-size array (`[T; N]`)
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-pub struct ArrayType<'shape> {
+pub struct ArrayType {
     /// Shape of the underlying object stored on array
-    pub t: &'shape Shape<'shape>,
+    pub t: &'static Shape,
 
     /// Constant length of the array
     pub n: usize,
@@ -25,7 +25,7 @@ pub struct ArrayType<'shape> {
 /// Describes a slice (`[T]`)
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-pub struct SliceType<'shape> {
+pub struct SliceType {
     /// Shape of the underlying object stored on slice
-    pub t: &'shape Shape<'shape>,
+    pub t: &'static Shape,
 }

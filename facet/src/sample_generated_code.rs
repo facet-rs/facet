@@ -397,7 +397,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkStruct {
         };
         vtable
     };
-    const SHAPE: &'static crate::Shape<'static> = &const {
+    const SHAPE: &'static crate::Shape = &const {
         let fields: &'static [crate::Field] = &const {
             [
                 {
@@ -870,7 +870,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for Point {
         };
         vtable
     };
-    const SHAPE: &'static crate::Shape<'static> = &const {
+    const SHAPE: &'static crate::Shape = &const {
         let fields: &'static [crate::Field] = &const {
             [
                 {
@@ -1336,7 +1336,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                 .build()
         }
     };
-    const SHAPE: &'static crate::Shape<'static> = &const {
+    const SHAPE: &'static crate::Shape = &const {
         #[repr(C)]
         #[allow(non_snake_case, dead_code)]
         struct __Shadow_RustRepr_Tuple_for_KitchenSinkEnum_TupleVariantSimple<'__facet> {
@@ -2020,7 +2020,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for SubEnum {
                 .build()
         }
     };
-    const SHAPE: &'static crate::Shape<'static> = &const {
+    const SHAPE: &'static crate::Shape = &const {
         #[repr(C)]
         #[allow(non_snake_case, dead_code)]
         struct __Shadow_RustRepr_Tuple_for_SubEnum_OptionB<'__facet> {

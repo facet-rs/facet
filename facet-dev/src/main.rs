@@ -875,8 +875,6 @@ fn pre_push() {
                 "clippy".into(),
                 "--workspace".into(),
                 "--all-targets".into(),
-                "--target-dir".into(),
-                "target/clippy".into(),
                 "--".into(),
                 "-D".into(),
                 "warnings".into(),

@@ -6,12 +6,12 @@ use bitflags::bitflags;
 /// Describes a field in a struct or tuple
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-pub struct Field<'shape> {
+pub struct Field {
     /// key for the struct field (for tuples and tuple-structs, this is the 0-based index)
-    pub name: &'shape str,
+    pub name: &'static str,
 
     /// shape of the inner type
-    pub shape: &'shape Shape<'shape>,
+    pub shape: &'static Shape,
 
     /// offset of the field in the struct (obtained through `core::mem::offset_of`)
     pub offset: usize,
@@ -20,20 +20,20 @@ pub struct Field<'shape> {
     pub flags: FieldFlags,
 
     /// arbitrary attributes set via the derive macro
-    pub attributes: &'shape [FieldAttribute<'shape>],
+    pub attributes: &'static [FieldAttribute],
 
     /// doc comments
-    pub doc: &'shape [&'shape str],
+    pub doc: &'static [&'static str],
 
     /// vtable for fields
-    pub vtable: &'shape FieldVTable,
+    pub vtable: &'static FieldVTable,
 
     /// true if returned from `fields_for_serialize` and it was flattened - which
     /// means, if it's an enum, the outer variant shouldn't be written.
     pub flattened: bool,
 }
 
-impl Field<'_> {
+impl Field {
     /// Returns true if the field has the skip-serializing unconditionally flag or if it has the
     /// skip-serializing-if function in its vtable and it returns true on the given data.
     ///
@@ -65,14 +65,14 @@ pub struct FieldVTable {
 /// step.
 pub type SkipSerializingIfFn = for<'mem> unsafe fn(value: PtrConst<'mem>) -> bool;
 
-impl<'shape> Field<'shape> {
+impl Field {
     /// Returns the shape of the inner type
-    pub const fn shape(&self) -> &'shape Shape<'shape> {
+    pub const fn shape(&self) -> &'static Shape {
         self.shape
     }
 
     /// Returns a builder for Field
-    pub const fn builder() -> FieldBuilder<'shape> {
+    pub const fn builder() -> FieldBuilder {
         FieldBuilder::new()
     }
 
@@ -85,9 +85,9 @@ impl<'shape> Field<'shape> {
 /// An attribute that can be set on a field
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
-pub enum FieldAttribute<'shape> {
+pub enum FieldAttribute {
     /// Custom field attribute containing arbitrary text
-    Arbitrary(&'shape str),
+    Arbitrary(&'static str),
 }
 
 /// Builder for FieldVTable
@@ -135,17 +135,17 @@ impl FieldVTable {
 }
 
 /// Builder for Field
-pub struct FieldBuilder<'shape> {
-    name: Option<&'shape str>,
-    shape: Option<&'shape Shape<'shape>>,
+pub struct FieldBuilder {
+    name: Option<&'static str>,
+    shape: Option<&'static Shape>,
     offset: Option<usize>,
     flags: Option<FieldFlags>,
-    attributes: &'shape [FieldAttribute<'shape>],
-    doc: &'shape [&'shape str],
-    vtable: &'shape FieldVTable,
+    attributes: &'static [FieldAttribute],
+    doc: &'static [&'static str],
+    vtable: &'static FieldVTable,
 }
 
-impl<'shape> FieldBuilder<'shape> {
+impl FieldBuilder {
     /// Creates a new FieldBuilder
     #[allow(clippy::new_without_default)]
     pub const fn new() -> Self {
@@ -208,7 +208,7 @@ impl<'shape> FieldBuilder<'shape> {
     }
 
     /// Builds the Field
-    pub const fn build(self) -> Field<'shape> {
+    pub const fn build(self) -> Field {
         Field {
             name: self.name.unwrap(),
             shape: self.shape.unwrap(),
@@ -308,10 +308,10 @@ pub enum FieldError {
     /// `set` or `set_by_name` was called with an mismatched type
     TypeMismatch {
         /// the actual type of the field
-        expected: &'static Shape<'static>,
+        expected: &'static Shape,
 
         /// what someone tried to write into it / read from it
-        actual: &'static Shape<'static>,
+        actual: &'static Shape,
     },
 
     /// The type is unsized

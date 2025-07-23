@@ -41,7 +41,7 @@ where
             .build()
     };
 
-    const SHAPE: &'static crate::Shape<'static> = &const {
+    const SHAPE: &'static crate::Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("BTreeMap")
             .type_params(&[

@@ -13,9 +13,7 @@ struct SimpleStruct {
 
 #[divan::bench(name = "Populate small struct by field names")]
 fn populate_simple_struct(bencher: Bencher) {
-    fn populate_by_field_name<'shape>(
-        partial: &mut Partial<'_, 'shape>,
-    ) -> Result<(), ReflectError<'shape>> {
+    fn populate_by_field_name(partial: &mut Partial<'_>) -> Result<(), ReflectError> {
         partial.set_field("a", 42u32)?;
         partial.set_field("b", -42i32)?;
         partial.set_field("c", 3.14f32)?;
@@ -31,9 +29,7 @@ fn populate_simple_struct(bencher: Bencher) {
 
 #[divan::bench(name = "Populate small struct by field index")]
 fn populate_simple_struct_by_field_index(bencher: Bencher) {
-    fn populate_by_field_index<'shape>(
-        partial: &mut Partial<'_, 'shape>,
-    ) -> Result<(), ReflectError<'shape>> {
+    fn populate_by_field_index(partial: &mut Partial<'_>) -> Result<(), ReflectError> {
         partial.set_nth_field(0, 42u32)?;
         partial.set_nth_field(1, -42i32)?;
         partial.set_nth_field(2, 3.14f32)?;

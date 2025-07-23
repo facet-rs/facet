@@ -39,12 +39,12 @@ impl From<&str> for FacetPath {
 /// This iterator will yield the [`Peek`]s of the [`Facet`] sub-objects composing the inspected object.
 /// Each [`Peek`] will be associated to the path leading to it, allowing to reconstruct the structure of the object.
 #[derive(Clone)]
-pub struct FacetIterator<'mem, 'facet, 'shape> {
-    stack: Vec<(FacetPath, Peek<'mem, 'facet, 'shape>)>,
+pub struct FacetIterator<'mem, 'facet> {
+    stack: Vec<(FacetPath, Peek<'mem, 'facet>)>,
 }
 
-impl<'mem, 'facet, 'shape> Iterator for FacetIterator<'mem, 'facet, 'shape> {
-    type Item = (FacetPath, Peek<'mem, 'facet, 'shape>);
+impl<'mem, 'facet> Iterator for FacetIterator<'mem, 'facet> {
+    type Item = (FacetPath, Peek<'mem, 'facet>);
 
     fn next(&mut self) -> Option<Self::Item> {
         let Some((path, peek)) = self.stack.pop() else {
@@ -104,11 +104,11 @@ impl<'mem, 'facet, 'shape> Iterator for FacetIterator<'mem, 'facet, 'shape> {
     }
 }
 
-impl<'mem, 'facet, 'shape> FacetIterator<'mem, 'facet, 'shape> {
+impl<'mem, 'facet> FacetIterator<'mem, 'facet> {
     fn push_fields_to_stack(
         &mut self,
         parent_path: &FacetPath,
-        object: impl HasFields<'mem, 'facet, 'shape>,
+        object: impl HasFields<'mem, 'facet>,
     ) {
         // TODO: discuss if the performance trade-off of having the fields in reverse order is worth it
         // We reverse the fields to maintain the order of fields as they are defined in the struct
@@ -121,7 +121,7 @@ impl<'mem, 'facet, 'shape> FacetIterator<'mem, 'facet, 'shape> {
     fn push_list_items_to_stack(
         &mut self,
         parent_path: &FacetPath,
-        list: impl Iterator<Item = Peek<'mem, 'facet, 'shape>>,
+        list: impl Iterator<Item = Peek<'mem, 'facet>>,
     ) {
         for (index, item) in list.enumerate() {
             let new_path = parent_path.join(&FacetPath::from(index.to_string().as_str()));
@@ -132,7 +132,7 @@ impl<'mem, 'facet, 'shape> FacetIterator<'mem, 'facet, 'shape> {
     fn push_map_items_to_stack(
         &mut self,
         parent_path: &FacetPath,
-        map: impl Iterator<Item = (Peek<'mem, 'facet, 'shape>, Peek<'mem, 'facet, 'shape>)>,
+        map: impl Iterator<Item = (Peek<'mem, 'facet>, Peek<'mem, 'facet>)>,
     ) {
         for (key, value_peek) in map {
             let new_path = parent_path.join(&FacetPath::from(format!("{key}").as_str()));
@@ -145,7 +145,7 @@ pub trait FacetInspect<'a>: Facet<'a> {
     /// Returns an iterator over the shape of the [`Facet`] object.
     ///
     /// The iterator will yield tuples containing the path to the sub-object and its corresponding [`Peek`].
-    fn inspect(&'a self) -> FacetIterator<'a, 'a, 'a> {
+    fn inspect(&'a self) -> FacetIterator<'a, 'a> {
         FacetIterator {
             stack: vec![(FacetPath::root(), Peek::new(self))], // Start with the root path and a Peek of self
         }
@@ -154,7 +154,7 @@ pub trait FacetInspect<'a>: Facet<'a> {
     /// Returns a [`Peek`] for the sub-object at the specified path.
     ///
     /// If the path does not lead to a valid sub-object, `None` is returned.
-    fn get(&'a self, path: &FacetPath) -> Option<Peek<'a, 'a, 'a>> {
+    fn get(&'a self, path: &FacetPath) -> Option<Peek<'a, 'a>> {
         self.inspect()
             .find(|(p, _)| p == path)
             .map(|(_, peek)| peek)

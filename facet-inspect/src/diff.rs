@@ -6,9 +6,9 @@ use facet_reflect::Peek;
 use crate::{FacetInspect, FacetPath};
 
 #[derive(Debug)]
-pub struct ModificationPeek<'mem, 'facet, 'shape> {
-    pub old_value: Peek<'mem, 'facet, 'shape>,
-    pub new_value: Peek<'mem, 'facet, 'shape>,
+pub struct ModificationPeek<'mem, 'facet> {
+    pub old_value: Peek<'mem, 'facet>,
+    pub new_value: Peek<'mem, 'facet>,
 }
 
 #[derive(Debug, Facet, PartialEq)]
@@ -18,8 +18,8 @@ pub enum Modification {
     String { before: String, after: String },
 }
 
-impl<'a> From<ModificationPeek<'a, 'a, 'a>> for Modification {
-    fn from(peek: ModificationPeek<'a, 'a, 'a>) -> Self {
+impl<'a> From<ModificationPeek<'a, 'a>> for Modification {
+    fn from(peek: ModificationPeek<'a, 'a>) -> Self {
         let old_value = peek.old_value;
         let new_value = peek.new_value;
 
@@ -91,9 +91,9 @@ pub struct ShapeDiff<'a> {
 
 #[derive(Debug)]
 pub enum DiffType<'a> {
-    Added(Peek<'a, 'a, 'a>),
-    Removed(Peek<'a, 'a, 'a>),
-    Modified(ModificationPeek<'a, 'a, 'a>),
+    Added(Peek<'a, 'a>),
+    Removed(Peek<'a, 'a>),
+    Modified(ModificationPeek<'a, 'a>),
 }
 
 impl<'a> ShapeDiff<'a> {

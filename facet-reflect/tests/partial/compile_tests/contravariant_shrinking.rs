@@ -14,8 +14,8 @@ fn main() {
 
     fn scope<'facet>(
         token: ContravariantLifetime<'static>,
-    ) -> Result<Wrapper<'facet>, ReflectError<'static>> {
-        Partial::<'facet, 'static>::alloc_shape(Wrapper::<'facet>::SHAPE)?
+    ) -> Result<Wrapper<'facet>, ReflectError> {
+        Partial::<'facet>::alloc_shape(Wrapper::<'facet>::SHAPE)?
             .set_field("token", token)?
             .build()?
             .materialize()

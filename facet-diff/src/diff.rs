@@ -17,17 +17,17 @@ pub enum Diff<'mem, 'facet> {
     ///
     /// We do not know much about the values, apart from that they are unequal to each other.
     Replace {
-        from: Peek<'mem, 'facet, 'static>,
-        to: Peek<'mem, 'facet, 'static>,
+        from: Peek<'mem, 'facet>,
+        to: Peek<'mem, 'facet>,
     },
 
     /// The two values are both structures or both enums with similar variants.
     User {
         /// The shape of the `from` struct.
-        from: &'static Shape<'static>,
+        from: &'static Shape,
 
         /// The shape of the `to` struct.
-        to: &'static Shape<'static>,
+        to: &'static Shape,
 
         /// The name of the variant, this is [`None`] if the values are structs
         variant: Option<&'static str>,
@@ -38,10 +38,10 @@ pub enum Diff<'mem, 'facet> {
     /// A diff between two sequences
     Sequence {
         /// The shape of the `from` sequence.
-        from: &'static Shape<'static>,
+        from: &'static Shape,
 
         /// The shape of the `to` sequence.
-        to: &'static Shape<'static>,
+        to: &'static Shape,
 
         /// The updates on the sequence
         updates: Updates<'mem, 'facet>,
@@ -59,10 +59,10 @@ pub enum Value<'mem, 'facet> {
         updates: HashMap<&'static str, Diff<'mem, 'facet>>,
 
         /// The fields that are in `from` but not in `to`.
-        deletions: HashMap<&'static str, Peek<'mem, 'facet, 'static>>,
+        deletions: HashMap<&'static str, Peek<'mem, 'facet>>,
 
         /// The fields that are in `to` but not in `from`.
-        insertions: HashMap<&'static str, Peek<'mem, 'facet, 'static>>,
+        insertions: HashMap<&'static str, Peek<'mem, 'facet>>,
 
         /// The fields that are unchanged
         unchanged: HashSet<&'static str>,
@@ -97,10 +97,7 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
         Self::new_peek(Peek::new(from), Peek::new(to))
     }
 
-    pub(crate) fn new_peek(
-        from: Peek<'mem, 'facet, 'static>,
-        to: Peek<'mem, 'facet, 'static>,
-    ) -> Self {
+    pub(crate) fn new_peek(from: Peek<'mem, 'facet>, to: Peek<'mem, 'facet>) -> Self {
         if from.shape().id == to.shape().id && from.shape().is_partial_eq() && from == to {
             return Diff::Equal;
         }

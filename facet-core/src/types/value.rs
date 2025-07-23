@@ -178,24 +178,22 @@ impl core::error::Error for ParseError {}
 /// The `target` parameter has the correct layout and alignment, but points to
 /// uninitialized memory. If this function succeeds, it should return `Ok` with the
 /// same pointer wrapped in an [`PtrMut`]. If conversion fails, it returns `Err` with an error.
-pub type TryFromFn =
-    for<'src, 'mem, 'shape> unsafe fn(
-        source: PtrConst<'src>,
-        source_shape: &'shape Shape<'shape>,
-        target: PtrUninit<'mem>,
-    ) -> Result<PtrMut<'mem>, TryFromError<'shape>>;
+pub type TryFromFn = for<'src, 'mem, 'shape> unsafe fn(
+    source: PtrConst<'src>,
+    source_shape: &'static Shape,
+    target: PtrUninit<'mem>,
+) -> Result<PtrMut<'mem>, TryFromError>;
 
 /// Function to try converting from another type
-pub type TryFromFnTyped<T> =
-    for<'src, 'mem, 'shape> fn(
-        source: &'src T,
-        source_shape: &'shape Shape<'shape>,
-        target: TypedPtrUninit<'mem, T>,
-    ) -> Result<&'mem mut T, TryFromError<'shape>>;
+pub type TryFromFnTyped<T> = for<'src, 'mem, 'shape> fn(
+    source: &'src T,
+    source_shape: &'static Shape,
+    target: TypedPtrUninit<'mem, T>,
+) -> Result<&'mem mut T, TryFromError>;
 
 /// Error type for TryFrom conversion failures
 #[derive(Debug, PartialEq, Clone)]
-pub enum TryFromError<'shape> {
+pub enum TryFromError {
     /// Generic conversion error
     Generic(&'static str),
 
@@ -205,17 +203,17 @@ pub enum TryFromError<'shape> {
     /// The target shape has a conversion implementation, but it doesn't support converting from this specific source shape
     UnsupportedSourceShape {
         /// The source shape that failed to convert
-        src_shape: &'shape Shape<'shape>,
+        src_shape: &'static Shape,
 
         /// The shapes that the `TryFrom` implementation supports
-        expected: &'shape [&'shape Shape<'shape>],
+        expected: &'static [&'static Shape],
     },
 
     /// `!Sized` type
     Unsized,
 }
 
-impl<'shape> core::fmt::Display for TryFromError<'shape> {
+impl core::fmt::Display for TryFromError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             TryFromError::Generic(msg) => write!(f, "{msg}"),
@@ -242,9 +240,9 @@ impl<'shape> core::fmt::Display for TryFromError<'shape> {
     }
 }
 
-impl<'shape> core::error::Error for TryFromError<'shape> {}
+impl core::error::Error for TryFromError {}
 
-impl<'shape> From<UnsizedError> for TryFromError<'shape> {
+impl From<UnsizedError> for TryFromError {
     #[inline]
     fn from(_value: UnsizedError) -> Self {
         Self::Unsized

@@ -5,27 +5,27 @@ use core::{fmt::Debug, marker::PhantomData};
 
 /// Fields for types which act like lists
 #[derive(Clone, Copy)]
-pub enum ListLikeDef<'shape> {
+pub enum ListLikeDef {
     /// Ordered list of heterogenous values, variable size
     ///
     /// e.g. `Vec<T>`
-    List(facet_core::ListDef<'shape>),
+    List(facet_core::ListDef),
 
     /// Fixed-size array of heterogenous values
     ///
     /// e.g. `[T; 32]`
-    Array(facet_core::ArrayDef<'shape>),
+    Array(facet_core::ArrayDef),
 
     /// Slice — a reference to a contiguous sequence of elements
     ///
     /// e.g. `&[T]`
-    Slice(facet_core::SliceDef<'shape>),
+    Slice(facet_core::SliceDef),
 }
 
-impl<'shape> ListLikeDef<'shape> {
+impl ListLikeDef {
     /// Returns the shape of the items in the list
     #[inline]
-    pub fn t(&self) -> &'shape Shape<'shape> {
+    pub fn t(&self) -> &'static Shape {
         match self {
             ListLikeDef::List(v) => v.t(),
             ListLikeDef::Array(v) => v.t(),
@@ -35,16 +35,16 @@ impl<'shape> ListLikeDef<'shape> {
 }
 
 /// Iterator over a `PeekListLike`
-pub struct PeekListLikeIter<'mem, 'facet, 'shape> {
+pub struct PeekListLikeIter<'mem, 'facet> {
     state: PeekListLikeIterState<'mem>,
     index: usize,
     len: usize,
-    def: ListLikeDef<'shape>,
-    _list: PhantomData<Peek<'mem, 'facet, 'shape>>,
+    def: ListLikeDef,
+    _list: PhantomData<Peek<'mem, 'facet>>,
 }
 
-impl<'mem, 'facet, 'shape> Iterator for PeekListLikeIter<'mem, 'facet, 'shape> {
-    type Item = Peek<'mem, 'facet, 'shape>;
+impl<'mem, 'facet> Iterator for PeekListLikeIter<'mem, 'facet> {
+    type Item = Peek<'mem, 'facet>;
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
@@ -73,11 +73,11 @@ impl<'mem, 'facet, 'shape> Iterator for PeekListLikeIter<'mem, 'facet, 'shape> {
     }
 }
 
-impl<'mem, 'facet, 'shape> ExactSizeIterator for PeekListLikeIter<'mem, 'facet, 'shape> {}
+impl<'mem, 'facet> ExactSizeIterator for PeekListLikeIter<'mem, 'facet> {}
 
-impl<'mem, 'facet, 'shape> IntoIterator for &'mem PeekListLike<'mem, 'facet, 'shape> {
-    type Item = Peek<'mem, 'facet, 'shape>;
-    type IntoIter = PeekListLikeIter<'mem, 'facet, 'shape>;
+impl<'mem, 'facet> IntoIterator for &'mem PeekListLike<'mem, 'facet> {
+    type Item = Peek<'mem, 'facet>;
+    type IntoIter = PeekListLikeIter<'mem, 'facet>;
 
     #[inline]
     fn into_iter(self) -> Self::IntoIter {
@@ -110,22 +110,22 @@ impl Drop for PeekListLikeIterState<'_> {
 
 /// Lets you read from a list, array or slice
 #[derive(Clone, Copy)]
-pub struct PeekListLike<'mem, 'facet, 'shape> {
-    pub(crate) value: Peek<'mem, 'facet, 'shape>,
-    pub(crate) def: ListLikeDef<'shape>,
+pub struct PeekListLike<'mem, 'facet> {
+    pub(crate) value: Peek<'mem, 'facet>,
+    pub(crate) def: ListLikeDef,
     len: usize,
 }
 
-impl<'mem, 'facet, 'shape> Debug for PeekListLike<'mem, 'facet, 'shape> {
+impl<'mem, 'facet> Debug for PeekListLike<'mem, 'facet> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("PeekListLike").finish_non_exhaustive()
     }
 }
 
-impl<'mem, 'facet, 'shape> PeekListLike<'mem, 'facet, 'shape> {
+impl<'mem, 'facet> PeekListLike<'mem, 'facet> {
     /// Creates a new peek list
     #[inline]
-    pub fn new(value: Peek<'mem, 'facet, 'shape>, def: ListLikeDef<'shape>) -> Self {
+    pub fn new(value: Peek<'mem, 'facet>, def: ListLikeDef) -> Self {
         let len = match def {
             ListLikeDef::List(v) => unsafe { (v.vtable.len)(value.data().thin().unwrap()) },
             ListLikeDef::Slice(v) => {
@@ -164,7 +164,7 @@ impl<'mem, 'facet, 'shape> PeekListLike<'mem, 'facet, 'shape> {
     /// Get an item from the list at the specified index
     ///
     /// Return `None` if the index is out of bounds
-    pub fn get(&self, index: usize) -> Option<Peek<'mem, 'facet, 'shape>> {
+    pub fn get(&self, index: usize) -> Option<Peek<'mem, 'facet>> {
         // Special handling for bare slices with wide pointers
         if let (ListLikeDef::Slice(_), GenericPtr::Wide(wide_ptr)) = (&self.def, self.value.data())
         {
@@ -223,7 +223,7 @@ impl<'mem, 'facet, 'shape> PeekListLike<'mem, 'facet, 'shape> {
     }
 
     /// Returns an iterator over the list
-    pub fn iter(self) -> PeekListLikeIter<'mem, 'facet, 'shape> {
+    pub fn iter(self) -> PeekListLikeIter<'mem, 'facet> {
         let (as_ptr_fn, iter_vtable) = match self.def {
             ListLikeDef::List(def) => (def.vtable.as_ptr, Some(def.vtable.iter_vtable)),
             ListLikeDef::Array(def) => (Some(def.vtable.as_ptr), None),
@@ -271,7 +271,7 @@ impl<'mem, 'facet, 'shape> PeekListLike<'mem, 'facet, 'shape> {
 
     /// Def getter
     #[inline]
-    pub fn def(&self) -> ListLikeDef<'shape> {
+    pub fn def(&self) -> ListLikeDef {
         self.def
     }
 }

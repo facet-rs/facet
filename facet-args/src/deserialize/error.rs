@@ -11,7 +11,7 @@ use super::debug::InputDebug;
 use super::{Cooked, Outcome, Span};
 
 /// A JSON parse error, with context. Never would've guessed huh.
-pub struct DeserError<'input, 'shape, C = Cooked> {
+pub struct DeserError<'input, C = Cooked> {
     /// The input associated with the error.
     pub input: alloc::borrow::Cow<'input, [u8]>,
 
@@ -19,37 +19,32 @@ pub struct DeserError<'input, 'shape, C = Cooked> {
     pub span: Span<C>,
 
     /// The specific error that occurred while parsing the JSON.
-    pub kind: DeserErrorKind<'shape>,
-
-    /// The source identifier for error reporting
-    pub source_id: &'static str,
+    pub kind: DeserErrorKind,
 }
 
-impl<'input, 'shape, C> DeserError<'input, 'shape, C> {
+impl<'input, C> DeserError<'input, C> {
     /// Converts the error into an owned error.
-    pub fn into_owned(self) -> DeserError<'static, 'shape, C> {
+    pub fn into_owned(self) -> DeserError<'static, C> {
         DeserError {
             input: self.input.into_owned().into(),
             span: self.span,
             kind: self.kind,
-            source_id: self.source_id,
         }
     }
 
     /// Sets the span of this error
-    pub fn with_span<D>(self, span: Span<D>) -> DeserError<'input, 'shape, D> {
+    pub fn with_span<D>(self, span: Span<D>) -> DeserError<'input, D> {
         DeserError {
             input: self.input,
             span,
             kind: self.kind,
-            source_id: self.source_id,
         }
     }
 }
 
 /// An error kind for JSON parsing.
 #[derive(Debug, Clone)]
-pub enum DeserErrorKind<'shape> {
+pub enum DeserErrorKind {
     /// An unexpected byte was encountered in the input.
     UnexpectedByte {
         /// The byte that was found.
@@ -103,14 +98,14 @@ pub enum DeserErrorKind<'shape> {
         field_name: String,
 
         /// The shape definition where the unknown field was encountered
-        shape: &'shape Shape<'shape>,
+        shape: &'static Shape,
     },
 
     /// A string that could not be built into valid UTF-8 Unicode
     InvalidUtf8(String),
 
     /// An error occurred while reflecting a type.
-    ReflectError(ReflectError<'shape>),
+    ReflectError(ReflectError),
 
     /// Some feature is not yet implemented (under development).
     Unimplemented(&'static str),
@@ -118,7 +113,7 @@ pub enum DeserErrorKind<'shape> {
     /// An unsupported type was encountered.
     UnsupportedType {
         /// The shape we got
-        got: &'shape Shape<'shape>,
+        got: &'static Shape,
 
         /// The shape we wanted
         wanted: &'static str,
@@ -130,7 +125,7 @@ pub enum DeserErrorKind<'shape> {
         name: String,
 
         /// The enum shape definition where the variant was looked up
-        enum_shape: &'shape Shape<'shape>,
+        enum_shape: &'static Shape,
     },
 
     /// An error occurred when reflecting an enum variant (index) from a user type.
@@ -139,7 +134,7 @@ pub enum DeserErrorKind<'shape> {
     /// Too many elements for an array.
     ArrayOverflow {
         /// The array shape
-        shape: &'shape Shape<'shape>,
+        shape: &'static Shape,
 
         /// Maximum allowed length
         max_len: usize,
@@ -155,14 +150,9 @@ pub enum DeserErrorKind<'shape> {
     },
 }
 
-impl<'input, 'shape, C> DeserError<'input, 'shape, C> {
+impl<'input, C> DeserError<'input, C> {
     /// Creates a new deser error, preserving input and location context for accurate reporting.
-    pub fn new<I>(
-        kind: DeserErrorKind<'shape>,
-        input: &'input I,
-        span: Span<C>,
-        source_id: &'static str,
-    ) -> Self
+    pub fn new<I>(kind: DeserErrorKind, input: &'input I, span: Span<C>) -> Self
     where
         I: ?Sized + 'input + InputDebug,
     {
@@ -170,39 +160,27 @@ impl<'input, 'shape, C> DeserError<'input, 'shape, C> {
             input: input.as_cow(),
             span,
             kind,
-            source_id,
         }
     }
 
     /// Constructs a reflection-related deser error, keeping contextual information intact.
-    pub(crate) fn new_reflect<I>(
-        e: ReflectError<'shape>,
-        input: &'input I,
-        span: Span<C>,
-        source_id: &'static str,
-    ) -> Self
+    pub(crate) fn new_reflect<I>(e: ReflectError, input: &'input I, span: Span<C>) -> Self
     where
         I: ?Sized + 'input + InputDebug,
     {
-        DeserError::new(DeserErrorKind::ReflectError(e), input, span, source_id)
-    }
-
-    /// Sets the source ID for this error
-    pub fn with_source_id(mut self, source_id: &'static str) -> Self {
-        self.source_id = source_id;
-        self
+        DeserError::new(DeserErrorKind::ReflectError(e), input, span)
     }
 
     /// Provides a human-friendly message wrapper to improve error readability.
-    pub fn message(&self) -> DeserErrorMessage<'_, '_, C> {
+    pub fn message(&self) -> DeserErrorMessage<'_, C> {
         DeserErrorMessage(self)
     }
 }
 
 /// A wrapper type for displaying deser error messages
-pub struct DeserErrorMessage<'input, 'shape, C = Cooked>(&'input DeserError<'input, 'shape, C>);
+pub struct DeserErrorMessage<'input, C = Cooked>(&'input DeserError<'input, C>);
 
-impl core::fmt::Display for DeserErrorMessage<'_, '_> {
+impl core::fmt::Display for DeserErrorMessage<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match &self.0.kind {
             DeserErrorKind::UnexpectedByte { got, wanted } => write!(
@@ -315,14 +293,13 @@ impl core::fmt::Display for DeserError<'_, '_> {
 }
 
 #[cfg(feature = "rich-diagnostics")]
-impl core::fmt::Display for DeserError<'_, '_> {
+impl core::fmt::Display for DeserError<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // Try to convert input to utf8 for source display, otherwise fallback to error
         let Ok(orig_input_str) = core::str::from_utf8(&self.input[..]) else {
             return write!(f, "(JSON input was invalid UTF-8)");
         };
 
-        let source_id = self.source_id;
         let mut span_start = self.span.start();
         let mut span_end = self.span.end();
         use alloc::borrow::Cow;
@@ -415,10 +392,10 @@ impl core::fmt::Display for DeserError<'_, '_> {
             )?;
         }
 
-        let mut report = Report::build(ReportKind::Error, (source_id, span_start..span_end))
+        let mut report = Report::build(ReportKind::Error, span_start..span_end)
             .with_config(Config::new().with_index_type(IndexType::Byte));
 
-        let label = Label::new((source_id, span_start..span_end))
+        let label = Label::new(span_start..span_end)
             .with_message(self.message())
             .with_color(Color::Red);
 
@@ -465,7 +442,7 @@ impl core::fmt::Display for DeserError<'_, '_> {
             }
         }
 
-        let cache = (source_id, &source);
+        let cache = &source;
 
         let fmt_writer = FmtWriter { f, error: None };
         let mut io_writer = IoWriter { inner: fmt_writer };
@@ -483,10 +460,10 @@ impl core::fmt::Display for DeserError<'_, '_> {
     }
 }
 
-impl core::fmt::Debug for DeserError<'_, '_> {
+impl core::fmt::Debug for DeserError<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         core::fmt::Display::fmt(self, f)
     }
 }
 
-impl core::error::Error for DeserError<'_, '_> {}
+impl core::error::Error for DeserError<'_> {}

@@ -56,10 +56,7 @@ fn yaml_to_u64(ty: &Yaml) -> Result<u64, AnyErr> {
     }
 }
 
-fn from_str_value<'facet, 'shape>(
-    wip: &mut Partial<'facet, 'shape>,
-    yaml: &str,
-) -> Result<(), AnyErr> {
+fn from_str_value<'facet>(wip: &mut Partial<'facet>, yaml: &str) -> Result<(), AnyErr> {
     let docs = YamlLoader::load_from_str(yaml).map_err(|e| e.to_string())?;
     if docs.len() != 1 {
         return Err("Expected exactly one YAML document".into());
@@ -68,10 +65,7 @@ fn from_str_value<'facet, 'shape>(
     Ok(())
 }
 
-fn deserialize_value<'facet, 'shape>(
-    wip: &mut Partial<'facet, 'shape>,
-    value: &Yaml,
-) -> Result<(), AnyErr> {
+fn deserialize_value<'facet>(wip: &mut Partial<'facet>, value: &Yaml) -> Result<(), AnyErr> {
     // Get the shape
     let shape = wip.shape();
     let innermost_shape = wip.innermost_shape();
@@ -429,10 +423,7 @@ fn deserialize_value<'facet, 'shape>(
     Ok(())
 }
 
-fn deserialize_as_list<'facet, 'shape>(
-    wip: &mut Partial<'facet, 'shape>,
-    value: &Yaml,
-) -> Result<(), AnyErr> {
+fn deserialize_as_list<'facet>(wip: &mut Partial<'facet>, value: &Yaml) -> Result<(), AnyErr> {
     #[cfg(feature = "log")]
     log::debug!("deserialize_as_list: shape={}", wip.shape());
 
@@ -465,10 +456,7 @@ fn deserialize_as_list<'facet, 'shape>(
     }
 }
 
-fn deserialize_as_map<'facet, 'shape>(
-    wip: &mut Partial<'facet, 'shape>,
-    value: &Yaml,
-) -> Result<(), AnyErr> {
+fn deserialize_as_map<'facet>(wip: &mut Partial<'facet>, value: &Yaml) -> Result<(), AnyErr> {
     if let Yaml::Hash(hash) = value {
         // Start the map
         wip.begin_map().map_err(|e| AnyErr(e.to_string()))?;

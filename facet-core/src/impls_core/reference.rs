@@ -84,7 +84,7 @@ macro_rules! impl_for_ref {
                     .build()
             };
 
-            const SHAPE: &'static Shape<'static> = &const {
+            const SHAPE: &'static Shape = &const {
                 Shape::builder_for_sized::<Self>()
                     .type_identifier("&")
                     .type_params(&[TypeParam {
@@ -180,7 +180,7 @@ macro_rules! impl_for_string_ref {
                     .build()
             };
 
-            const SHAPE: &'static Shape<'static> = &const {
+            const SHAPE: &'static Shape = &const {
                 Shape::builder_for_sized::<Self>()
                     .type_identifier("&_")
                     .type_params(&[TypeParam {
@@ -273,7 +273,7 @@ macro_rules! impl_for_slice_ref {
                     .build()
             };
 
-            const SHAPE: &'static Shape<'static> = &const {
+            const SHAPE: &'static Shape = &const {
                 Shape::builder_for_sized::<Self>()
                     .type_identifier("&[_]")
                     .type_params(&[TypeParam {

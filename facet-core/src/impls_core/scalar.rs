@@ -12,7 +12,7 @@ unsafe impl Facet<'_> for ConstTypeId {
         ))
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("ConstTypeId")
             .def(Def::Scalar)
@@ -30,7 +30,7 @@ unsafe impl Facet<'_> for core::any::TypeId {
         ))
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("TypeId")
             .def(Def::Scalar)
@@ -42,7 +42,7 @@ unsafe impl Facet<'_> for core::any::TypeId {
 unsafe impl Facet<'_> for () {
     const VTABLE: &'static ValueVTable = &const { value_vtable!((), |f, _opts| write!(f, "()")) };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("()")
             .ty(Type::User(UserType::Struct(StructType {
@@ -59,7 +59,7 @@ unsafe impl<'a, T: ?Sized + 'a> Facet<'a> for core::marker::PhantomData<T> {
     const VTABLE: &'static ValueVTable =
         &const { value_vtable!((), |f, _opts| write!(f, "{}", Self::SHAPE.type_identifier)) };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("PhantomData")
             .def(Def::Scalar)
@@ -81,7 +81,7 @@ unsafe impl Facet<'_> for char {
         ))
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("char")
             .def(Def::Scalar)
@@ -95,7 +95,7 @@ unsafe impl Facet<'_> for str {
         value_vtable_unsized!(str, |f, _opts| write!(f, "{}", Self::SHAPE.type_identifier))
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_unsized::<Self>()
             .type_identifier("str")
             .ty(Type::Primitive(PrimitiveType::Textual(TextualType::Str)))
@@ -113,7 +113,7 @@ unsafe impl Facet<'_> for bool {
         ))
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("bool")
             .def(Def::Scalar)
@@ -133,7 +133,7 @@ macro_rules! impl_facet_for_integer {
                 ))
             };
 
-            const SHAPE: &'static Shape<'static> = &const {
+            const SHAPE: &'static Shape = &const {
                 Shape::builder_for_sized::<Self>()
                     .type_identifier(stringify!($type))
                     .ty(Type::Primitive(PrimitiveType::Numeric(
@@ -149,11 +149,11 @@ macro_rules! impl_facet_for_integer {
         unsafe impl<'a> Facet<'a> for NonZero<$type> {
             const VTABLE: &'static ValueVTable = &const {
                 // Define conversion functions for transparency
-                unsafe fn try_from<'shape, 'dst>(
+                unsafe fn try_from<'dst>(
                     src_ptr: PtrConst<'_>,
-                    src_shape: &'shape Shape<'shape>,
+                    src_shape: &'static Shape,
                     dst: PtrUninit<'dst>,
-                ) -> Result<PtrMut<'dst>, TryFromError<'shape>> {
+                ) -> Result<PtrMut<'dst>, TryFromError> {
                     if src_shape == <$type as Facet>::SHAPE {
                         // Get the inner value and check that it's non-zero
                         let value = unsafe { *src_ptr.get::<$type>() };
@@ -224,9 +224,9 @@ macro_rules! impl_facet_for_integer {
                 vtable
             };
 
-            const SHAPE: &'static Shape<'static> = &const {
+            const SHAPE: &'static Shape = &const {
                 // Function to return inner type's shape
-                fn inner_shape() -> &'static Shape<'static> {
+                fn inner_shape() -> &'static Shape {
                     <$type as Facet>::SHAPE
                 }
 
@@ -271,7 +271,7 @@ unsafe impl Facet<'_> for f32 {
     const VTABLE: &'static ValueVTable =
         &const { value_vtable!(f32, |f, _opts| write!(f, "{}", Self::SHAPE.type_identifier)) };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("f32")
             .ty(Type::Primitive(PrimitiveType::Numeric(NumericType::Float)))
@@ -318,7 +318,7 @@ unsafe impl Facet<'_> for f64 {
         vtable
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("f64")
             .ty(Type::Primitive(PrimitiveType::Numeric(NumericType::Float)))
@@ -336,7 +336,7 @@ unsafe impl Facet<'_> for core::net::SocketAddr {
         ))
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("SocketAddr")
             .ty(Type::User(UserType::Opaque))
@@ -354,7 +354,7 @@ unsafe impl Facet<'_> for core::net::IpAddr {
         ))
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("IpAddr")
             .ty(Type::User(UserType::Opaque))
@@ -372,7 +372,7 @@ unsafe impl Facet<'_> for core::net::Ipv4Addr {
         ))
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("Ipv4Addr")
             .ty(Type::User(UserType::Opaque))
@@ -390,7 +390,7 @@ unsafe impl Facet<'_> for core::net::Ipv6Addr {
         ))
     };
 
-    const SHAPE: &'static Shape<'static> = &const {
+    const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .type_identifier("Ipv6Addr")
             .ty(Type::User(UserType::Opaque))

@@ -4,7 +4,7 @@ use facet_reflect::ReflectError;
 
 #[derive(Debug)]
 /// Errors that can occur during MessagePack encoding/decoding operations
-pub enum Error<'shape> {
+pub enum Error {
     /// Encountered a MessagePack type that doesn't match the expected type
     UnexpectedType,
     /// Not enough data available to decode a complete MessagePack value
@@ -24,18 +24,18 @@ pub enum Error<'shape> {
     /// Feature not yet implemented
     NotImplemented(String),
     /// Reflection error
-    ReflectError(ReflectError<'shape>),
+    ReflectError(ReflectError),
     /// Invalid enum variant
     InvalidEnum(String),
 }
 
-impl<'shape> From<ReflectError<'shape>> for Error<'shape> {
-    fn from(err: ReflectError<'shape>) -> Self {
+impl From<ReflectError> for Error {
+    fn from(err: ReflectError) -> Self {
         Self::ReflectError(err)
     }
 }
 
-impl fmt::Display for Error<'_> {
+impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::UnexpectedType => write!(f, "Unexpected MessagePack type"),
@@ -63,4 +63,4 @@ impl fmt::Display for Error<'_> {
     }
 }
 
-impl<'shape> std::error::Error for Error<'shape> {}
+impl std::error::Error for Error {}
