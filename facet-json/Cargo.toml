@@ -1,0 +1,48 @@
+[package]
+name = "facet-json"
+version = "0.24.18"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/facet-rs/facet-json"
+description = "A JSON deserializer and serializer for the facet ecosystem"
+keywords = ["json", "serialization", "deserialization", "reflection", "facet"]
+categories = ["encoding", "parser-implementations"]
+
+[features]
+rich-diagnostics = ["facet-deserialize/rich-diagnostics"]
+default = ["rich-diagnostics"]
+
+[dependencies]
+facet-core = { version = "0.28", default-features = false }
+facet-reflect = { version = "0.28", default-features = false }
+
+facet-deserialize = { version = "0.28", default-features = false }
+facet-serialize = { version = "0.28", default-features = false }
+
+itoa = "1.0.15"
+lexical-parse-float = "1.0.5"
+lexical-parse-integer = "1.0.5"
+log = "0.4.27"
+ryu = "1"
+
+[dev-dependencies]
+bytes = { version = "1.10.1" }
+camino = { version = "1" }
+facet = { version = "0.28", features = [
+    "bytes",
+    "camino",
+    "time",
+    "chrono",
+    "ulid",
+    "uuid",
+    "jiff02",
+    "ordered-float",
+] }
+facet-testhelpers = { version = "0.28" }
+insta = "1.43.1"
+time = { version = "0.3.41", features = ["macros"] }
+chrono = { version = "0.4", default-features = false }
+ulid = { version = "1.2.1" }
+uuid = { version = "1.17.0" }
+jiff = "0.2.15"
+ordered-float = "5.0.0"
