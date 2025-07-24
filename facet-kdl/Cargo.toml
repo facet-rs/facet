@@ -1,0 +1,31 @@
+[package]
+name = "facet-kdl"
+# can't publish as long as we have a git dependency on kdl
+publish = false
+version = "0.1.0"
+edition = "2024"
+license = "MIT or Apache-2.0"
+repository = "https://github.com/facet-rs/facet-kdl"
+authors = ["Brooks Rady <b.j.rady@gmail.com", "Amos Wenger <amos@bearcove.eu>"]
+description = "KDL serialization and deserialization for Facet types"
+keywords = ["kdl", "serialization", "deserialization", "reflection", "facet"]
+categories = ["encoding", "parsing", "data-structures"]
+
+[features]
+std = ["alloc", "facet-core/std", "facet-reflect/std"]
+alloc = ["facet-core/alloc", "facet-reflect/alloc"]
+default = ["std"]
+
+[dependencies]
+log = "0.4.27"
+facet-core = { version = "0.28", default-features = false }
+facet-reflect = { version = "0.28", default-features = false }
+kdl = { git = "https://github.com/TheLostLambda/kdl-rs.git", branch = "free-of-syn" }
+
+[dev-dependencies]
+cargo-husky = { version = "1.5.0", default-features = false, features = [
+    "user-hooks",
+] }
+facet = { version = "0.28" }
+facet-testhelpers = { version = "0.28" }
+indoc = "2.0.6"
