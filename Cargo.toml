@@ -35,14 +35,13 @@ members = [
     "facet-csv",
     "facet-msgpack",
     "facet-urlencoded",
-    
+
     # tier 3 formats
     "facet-xdr",
     "facet-kdl",
     "facet-args",
     "facet-jsonschema",
 ]
-exclude = ["outside-workspace"]
 resolver = "3"
 
 [workspace.package]

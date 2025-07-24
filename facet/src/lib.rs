@@ -8,9 +8,6 @@
 #![cfg_attr(docsrs, feature(prelude_import))]
 #![cfg_attr(docsrs, allow(internal_features))]
 
-#[cfg(docsrs)]
-pub mod sample_generated_code;
-
 pub use facet_core::*;
 
 /// Derive the [`Facet`] trait for structs, tuple structs, and enums.
