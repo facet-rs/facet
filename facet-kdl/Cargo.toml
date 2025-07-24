@@ -4,6 +4,7 @@ name = "facet-kdl"
 publish = false
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.87"
 license = "MIT or Apache-2.0"
 repository = "https://github.com/facet-rs/facet-kdl"
 authors = ["Brooks Rady <b.j.rady@gmail.com", "Amos Wenger <amos@bearcove.eu>"]
