@@ -199,7 +199,7 @@ dependencies = [
 
 [[package]]
 name = "facet"
-version = "0.27.16"
+version = "0.28.0"
 dependencies = [
  "cargo-husky",
  "eyre",
@@ -239,7 +239,7 @@ dependencies = [
 
 [[package]]
 name = "facet-core"
-version = "0.27.16"
+version = "0.28.0"
 dependencies = [
  "bitflags",
  "bytes",
@@ -339,21 +339,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-kdl"
-version = "0.23.0"
-dependencies = [
- "facet",
- "facet-core",
- "facet-reflect",
- "facet-testhelpers",
- "indoc",
- "kdl",
- "log",
-]
-
-[[package]]
 name = "facet-macros"
-version = "0.27.16"
+version = "0.28.0"
 dependencies = [
  "facet-core",
  "facet-macros-emit",
@@ -361,7 +348,7 @@ dependencies = [
 
 [[package]]
 name = "facet-macros-emit"
-version = "0.27.16"
+version = "0.28.0"
 dependencies = [
  "facet-macros-parse",
  "insta",
@@ -373,7 +360,7 @@ dependencies = [
 
 [[package]]
 name = "facet-macros-parse"
-version = "0.27.16"
+version = "0.28.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -729,12 +716,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "indoc"
-version = "2.0.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f4c7245a08504955605670dbf141fceab975f15ca21570696aebe9d2e71576bd"
-
-[[package]]
 name = "insta"
 version = "1.43.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -803,16 +784,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kdl"
-version = "6.3.3"
-source = "git+https://github.com/TheLostLambda/kdl-rs.git?branch=free-of-syn#963eb2571a734a800e88ea0548c2da738893e7a6"
-dependencies = [
- "miette",
- "num",
- "winnow 0.6.24",
-]
-
-[[package]]
 name = "lexical-parse-float"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -873,90 +844,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a282da65faaf38286cf3be983213fcf1d2e2a58700e808f83f4ea9a4804bc0"
 
 [[package]]
-name = "miette"
-version = "7.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f98efec8807c63c752b5bd61f862c165c115b0a35685bdcfd9238c7aeb592b7"
-dependencies = [
- "cfg-if",
- "unicode-width",
-]
-
-[[package]]
 name = "mutants"
 version = "0.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bc0287524726960e07b119cebd01678f852f147742ae0d925e6a520dca956126"
 
 [[package]]
-name = "num"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35bd024e8b2ff75562e5f34e7f4905839deb4b22955ef5e73d2fea1b9813cb23"
-dependencies = [
- "num-bigint",
- "num-complex",
- "num-integer",
- "num-iter",
- "num-rational",
- "num-traits",
-]
-
-[[package]]
-name = "num-bigint"
-version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5e44f723f1133c9deac646763579fdb3ac745e418f2a7af9cd0c431da1f20b9"
-dependencies = [
- "num-integer",
- "num-traits",
-]
-
-[[package]]
-name = "num-complex"
-version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73f88a1307638156682bada9d7604135552957b7818057dcef22705b4d509495"
-dependencies = [
- "num-traits",
-]
-
-[[package]]
 name = "num-conv"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "51d515d32fb182ee37cda2ccdcb92950d6a3c2893aa280e540671c2cd0f3b1d9"
-
-[[package]]
-name = "num-integer"
-version = "0.1.46"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7969661fd2958a5cb096e56c8e1ad0444ac2bbcd0061bd28660485a44879858f"
-dependencies = [
- "num-traits",
-]
-
-[[package]]
-name = "num-iter"
-version = "0.1.45"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1429034a0490724d0075ebb2bc9e875d6503c3cf69e235a8941aa757d83ef5bf"
-dependencies = [
- "autocfg",
- "num-integer",
- "num-traits",
-]
-
-[[package]]
-name = "num-rational"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f83d14da390562dca69fc84082e73e548e1ad308d24accdedd2720017cb37824"
-dependencies = [
- "num-bigint",
- "num-integer",
- "num-traits",
-]
 
 [[package]]
 name = "num-traits"
@@ -1330,7 +1227,7 @@ dependencies = [
  "serde_spanned",
  "toml_datetime",
  "toml_write",
- "winnow 0.7.12",
+ "winnow",
 ]
 
 [[package]]
@@ -1690,15 +1587,6 @@ name = "windows_x86_64_msvc"
 version = "0.53.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "271414315aff87387382ec3d271b52d7ae78726f5d44ac98b4f4030c91880486"
-
-[[package]]
-name = "winnow"
-version = "0.6.24"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c8d71a593cc5c42ad7876e2c1fda56f314f3754c084128833e64f1345ff8a03a"
-dependencies = [
- "memchr",
-]
 
 [[package]]
 name = "winnow"

@@ -38,7 +38,6 @@ members = [
 
     # tier 3 formats
     "facet-xdr",
-    "facet-kdl",
     "facet-args",
     "facet-jsonschema",
 ]

@@ -43,7 +43,7 @@ fn-ptr = [
 
 [dependencies]
 bitflags = "2.9.1"
-facet-core = { path = "../facet-core", version = "0.27.16", default-features = false }
+facet-core = { path = "../facet-core", version = "0.28.0", default-features = false }
 log = { version = "0.4.27", optional = true }
 owo-colors = { version = "4.2.2" }
 camino = { version = "1", optional = true }
