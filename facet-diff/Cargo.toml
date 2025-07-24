@@ -10,7 +10,7 @@ keywords = ["facet", "diff", "comparison", "reflection", "data-structures"]
 categories = ["development-tools", "data-structures"]
 
 [dependencies]
-facet = { version = "0.27.16", path = "../facet" }
-facet-core = { version = "0.27.16", path = "../facet-core" }
+facet = { version = "0.28.0", path = "../facet" }
+facet-core = { version = "0.28.0", path = "../facet-core" }
 facet-pretty = { version = "0.23.24", path = "../facet-pretty" }
 facet-reflect = { version = "0.27.16", path = "../facet-reflect" }

@@ -15,7 +15,7 @@ std = ["facet-core/std", "facet-reflect/std"]
 default = ["std"]
 
 [dependencies]
-facet-core = { version = "0.27.16", path = "../facet-core", default-features = false, features = ["alloc"] }
+facet-core = { version = "0.28.0", path = "../facet-core", default-features = false, features = ["alloc"] }
 facet-reflect = { version = "0.27.16", path = "../facet-reflect", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]

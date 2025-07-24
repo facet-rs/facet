@@ -24,7 +24,7 @@ default = ["std", "rich-diagnostics"]
 
 [dependencies]
 ariadne = { version = "0.5.1", optional = true }
-facet-core = { version = "0.27.16", path = "../facet-core", default-features = false }
+facet-core = { version = "0.28.0", path = "../facet-core", default-features = false }
 facet-reflect = { version = "0.27.16", path = "../facet-reflect", default-features = false }
 log = "0.4.27"
 owo-colors = "4.2.2"
