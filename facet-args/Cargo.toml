@@ -11,7 +11,7 @@ keywords = ["cli", "args", "parser", "facet"]
 categories = ["command-line-interface"]
 
 [dependencies]
-facet-reflect = { path = "../facet-reflect", version = "0.27.16" }
+facet-reflect = { path = "../facet-reflect", version = "0.28.0" }
 facet-core = { path = "../facet-core", version = "0.28.0" }
 log = "0.4.27"
 owo-colors = "4.2.2"

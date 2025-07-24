@@ -397,7 +397,7 @@ dependencies = [
 
 [[package]]
 name = "facet-reflect"
-version = "0.27.16"
+version = "0.28.0"
 dependencies = [
  "bitflags",
  "camino",

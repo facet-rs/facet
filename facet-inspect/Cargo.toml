@@ -11,4 +11,4 @@ categories = ["development-tools", "rust-patterns"]
 
 [dependencies]
 facet = { path = "../facet", version = "0.28.0" }
-facet-reflect = { path = "../facet-reflect", version = "0.27.16" }
+facet-reflect = { path = "../facet-reflect", version = "0.28.0" }

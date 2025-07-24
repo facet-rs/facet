@@ -11,7 +11,7 @@ rust-version.workspace = true
 
 [dependencies]
 facet-core = { version = "0.28.0", path = "../facet-core" }
-facet-reflect = { version = "0.27.16", path = "../facet-reflect" }
+facet-reflect = { version = "0.28.0", path = "../facet-reflect" }
 form_urlencoded = "1.2.1"
 log = "0.4.27"
 

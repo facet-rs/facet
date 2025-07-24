@@ -21,7 +21,7 @@ camino = ["alloc", "facet-core/camino"]
 
 [dependencies]
 facet-core = { version = "0.28.0", path = "../facet-core" }
-facet-reflect = { version = "0.27.16", path = "../facet-reflect" }
+facet-reflect = { version = "0.28.0", path = "../facet-reflect" }
 
 [dev-dependencies]
 camino = "1.1.10"
