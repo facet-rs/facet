@@ -53,8 +53,8 @@ name = "facet-pretty"
 [[package]]
 name = "facet-toml"
 
-[[package]]
-name = "facet-kdl"
+# [[package]]
+# name = "facet-kdl"
 
 [[package]]
 name = "facet-urlencoded"

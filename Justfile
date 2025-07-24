@@ -122,7 +122,7 @@ ship:
     just publish
 
 publish:
-    release-plz release --backend github --git-token $PUBLISH_GITHUB_TOKEN
+    release-plz release --backend github --git-token $(gh auth token)
 
 docsrs *args:
     #!/usr/bin/env -S bash -eux
