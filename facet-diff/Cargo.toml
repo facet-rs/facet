@@ -1,0 +1,19 @@
+[package]
+name = "facet-diff"
+version = "0.1.1"
+edition = "2024"
+rust-version = "1.87"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/facet-rs/facet-diff"
+description = "Diffing capabilities for types implementing the Facet trait"
+keywords = ["facet", "diff", "comparison", "reflection", "data-structures"]
+categories = ["development-tools", "data-structures"]
+
+[dependencies]
+facet = { version = "0.28.0" }
+facet-core = { version = "0.28.0" }
+facet-pretty = { version = "0.28.0" }
+facet-reflect = { version = "0.28.0" }
+
+[dev-dependencies]
+cargo-husky = { version = "1.5.0", default-features = false, features = ["user-hooks"] }
