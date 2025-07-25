@@ -142,45 +142,6 @@ docs:
 lockfile:
     cargo update --workspace --locked
 
-docker-build-push:
-    #!/usr/bin/env -S bash -eu
-    source .envrc
-    echo -e "\033[1;34m🐳 Building and pushing Docker images for CI...\033[0m"
-
-    # Set variables
-    IMAGE_NAME="ghcr.io/facet-rs/facet-ci"
-    TAG="$(date +%Y%m%d)-$(git rev-parse --short HEAD)"
-
-    # Build tests image using stable Rust
-    echo -e "\033[1;36m🔨 Building tests image with stable Rust...\033[0m"
-    docker build \
-        --push \
-        --build-arg BASE_IMAGE=rust:1.87-slim-bookworm \
-        --build-arg RUSTUP_TOOLCHAIN=1.87 \
-        -t "${IMAGE_NAME}:${TAG}" \
-        -t "${IMAGE_NAME}:latest" \
-        -f Dockerfile \
-        .
-
-    # Build miri image using nightly Rust
-    echo -e "\033[1;36m🔨 Building miri image with nightly Rust...\033[0m"
-    docker build \
-        --push \
-        --build-arg BASE_IMAGE=rustlang/rust:nightly-slim \
-        --build-arg RUSTUP_TOOLCHAIN=nightly \
-        --build-arg ADDITIONAL_RUST_COMPONENTS="miri" \
-        -t "${IMAGE_NAME}:${TAG}-miri" \
-        -t "${IMAGE_NAME}:latest-miri" \
-        -f Dockerfile \
-        .
-
-    # Push all tags
-    echo -e "\033[1;35m🚀 Pushing all image tags...\033[0m"
-    docker push "${IMAGE_NAME}:${TAG}"
-    docker push "${IMAGE_NAME}:latest"
-    docker push "${IMAGE_NAME}:${TAG}-miri"
-    docker push "${IMAGE_NAME}:latest-miri"
-
 docker-build-push-linux-amd64:
     #!/usr/bin/env -S bash -eu
     source .envrc
@@ -195,8 +156,8 @@ docker-build-push-linux-amd64:
     docker build \
         --push \
         --platform linux/amd64 \
-        --build-arg BASE_IMAGE=rust:1.87-slim-bookworm \
-        --build-arg RUSTUP_TOOLCHAIN=1.87 \
+        --build-arg BASE_IMAGE=rust:1.88-slim-bookworm \
+        --build-arg RUSTUP_TOOLCHAIN=1.88 \
         -t "${IMAGE_NAME}:${TAG}-amd64" \
         -t "${IMAGE_NAME}:latest-amd64" \
         -f Dockerfile \
@@ -214,10 +175,3 @@ docker-build-push-linux-amd64:
         -t "${IMAGE_NAME}:latest-miri-amd64" \
         -f Dockerfile \
         .
-
-    # # Push all tags
-    # echo -e "\033[1;35m🚀 Pushing all image tags...\033[0m"
-    # docker push "${IMAGE_NAME}:${TAG}-amd64"
-    # docker push "${IMAGE_NAME}:latest-amd64"
-    # docker push "${IMAGE_NAME}:${TAG}-miri-amd64"
-    # docker push "${IMAGE_NAME}:latest-miri-amd64"

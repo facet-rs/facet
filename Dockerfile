@@ -25,7 +25,7 @@ RUN apt-get update && apt-get install -y curl libssl-dev git-core pkg-config && 
     rm -rf /var/lib/apt/lists/*
 
 # Install tools using cargo-binstall
-RUN cargo binstall -y just cargo-nextest cargo-llvm-cov
+RUN cargo binstall -y just cargo-nextest cargo-llvm-cov cargo-hack clippy-sarif sarif-fmt
 
 # Add the thumbv8m.main-none-eabihf Rust target
 RUN rustup target add thumbv8m.main-none-eabihf
