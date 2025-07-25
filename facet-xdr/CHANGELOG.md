@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.0](https://github.com/facet-rs/facet-xdr/compare/v0.1.19...v0.28.0) - 2025-07-25
+
+### Other
+
+- Initial import in its own repository
+
 - fix serialization for Option<T>
 - Fixed serialization of `u8`, `u16`, `i8`, and `i16`
 
