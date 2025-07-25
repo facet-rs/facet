@@ -1,0 +1,28 @@
+[package]
+name = "facet-asn1"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.87"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/facet-rs/facet-asn1"
+description = "ASN.1 serialization and deserialization for Facet types"
+keywords = ["asn1", "serialization", "deserialization", "reflection", "facet"]
+categories = ["encoding", "parsing", "data-structures"]
+
+[features]
+# TODO features for different encoding rules
+std = ["facet-core/std", "facet-reflect/std"]
+default = ["std"]
+
+[dependencies]
+facet-core = { version = "0.28.0", default-features = false, features = [
+    "alloc",
+] }
+facet-reflect = { version = "0.28.0", default-features = false, features = [
+    "alloc",
+] }
+
+[dev-dependencies]
+cargo-husky = { version = "1.5.0", default-features = false, features = ["user-hooks"] }
+facet = { version = "0.28.0" }
+facet-testhelpers = { version = "0.28.0" }
