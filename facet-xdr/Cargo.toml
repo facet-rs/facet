@@ -1,0 +1,27 @@
+[package]
+name = "facet-xdr"
+version = "0.1.19"
+edition = "2024"
+rust-version = "1.87"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/facet-rs/facet-xdr"
+description = "XDR serialization and deserialization for Facet types"
+keywords = ["xdr", "serialization", "deserialization", "reflection", "facet"]
+categories = ["encoding", "parsing", "data-structures"]
+
+[features]
+std = ["alloc", "facet-core/std", "facet-reflect/std", "facet-serialize/std"]
+alloc = ["facet-core/alloc", "facet-reflect/alloc", "facet-serialize/alloc"]
+default = ["std"]
+
+[dependencies]
+facet-core = { version = "0.28.0", default-features = false }
+facet-reflect = { version = "0.28.0", default-features = false }
+facet-serialize = { version = "0.28.0", default-features = false }
+
+[dev-dependencies]
+cargo-husky = { version = "1.5.0", default-features = false, features = [
+    "user-hooks",
+] }
+facet = { version = "0.28.0" }
+facet-testhelpers = { version = "0.28.0" }
