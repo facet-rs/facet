@@ -33,37 +33,4 @@ version_group = "core"
 
 [[package]]
 name = "facet-testhelpers"
-
-# Formats and ecosystem - separate versioning for each format
-[[package]]
-name = "facet-args"
-
-[[package]]
-name = "facet-json"
-
-[[package]]
-name = "facet-msgpack"
-
-[[package]]
-name = "facet-serialize"
-
-[[package]]
-name = "facet-pretty"
-
-[[package]]
-name = "facet-toml"
-
-# [[package]]
-# name = "facet-kdl"
-
-[[package]]
-name = "facet-urlencoded"
-
-[[package]]
-name = "facet-yaml"
-
-[[package]]
-name = "facet-jsonschema"
-
-[[package]]
-name = "facet-deserialize"
+version_group = "core"
