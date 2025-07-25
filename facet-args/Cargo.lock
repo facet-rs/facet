@@ -87,7 +87,7 @@ dependencies = [
 
 [[package]]
 name = "facet-args"
-version = "0.19.18"
+version = "0.28.0"
 dependencies = [
  "ariadne",
  "cargo-husky",
