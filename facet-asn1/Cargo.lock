@@ -49,7 +49,7 @@ dependencies = [
 
 [[package]]
 name = "facet-asn1"
-version = "0.1.0"
+version = "0.28.0"
 dependencies = [
  "cargo-husky",
  "facet",
