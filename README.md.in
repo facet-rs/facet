@@ -8,42 +8,7 @@ generation, etc.
 
 See <https://facet.rs> for details.
 
-## Known issues and limitations
-
-We have the occasional soundness issue, see the [soundness tag](https://github.com/facet-rs/facet/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22%F0%9F%8E%BA%20soundness%22).
-Those are prioritized and fixed as soon as possible.
-
-Format crates like `facet-json` are still very much incomplete, and will
-probably always be slower than the `serde-*` equivalent. Reflection has
-advantages in terms of flexibility, ergonomics and compile time but has
-a runtime cost compared to "monomorphize all the things".
-
-(Note: with codegen, one could get the best of both worlds. To be researched
-more)
-
-Some format crates (like `facet-toml`) first deserialize to a DOM, and _then_
-to partial structs — this is not as efficient as it could be, but it's a good
-first step.
-
-`type_eq` is not const, thus preventing many useful things in `const fn`, see
-<https://github.com/facet-rs/facet/issues/98>. Language changes are needed
-to address that.
-
-The design of arbitrary attributes is still in flux, see:
-
-  * <https://github.com/facet-rs/facet/issues/108#issue-2986732759>
-  * <https://github.com/facet-rs/facet/issues/151#issuecomment-2820476301>
-
-There isn't a comparison between facet-reflect and bevy-reflect available right
-now— [this is by design](https://github.com/facet-rs/facet/issues/298). We're
-letting facet develop on its own for a while; we'll make a detailed comparison
-once things have settled.
-
-There are more issues and limitations of course, but this should get you started.
-
-## Ecosystem
-
-The core crates, `facet-trait`, `facet-types` etc. are no_std-friendly.
+## Workspace contents
 
 The main `facet` crate re-exports symbols from:
 
@@ -54,23 +19,54 @@ The main `facet` crate re-exports symbols from:
   - Autoderef specialization trick needed for `facet-macros`
 - [facet-macros](https://github.com/facet-rs/facet/tree/main/facet-macros), which implements the `Facet` derive attribute as a fast/light proc macro powered by [unsynn](https://docs.rs/unsynn)
 
-For struct manipulation and reflection, the following is available:
+For struct manipulation and reflection, we have:
 
 - [facet-reflect](https://github.com/facet-rs/facet/tree/main/facet-reflect),
   allows building values of arbitrary shapes in safe code, respecting invariants.
   It also allows peeking at existing values.
-- [facet-pretty](https://github.com/facet-rs/facet/tree/main/facet-pretty) is able to pretty-print Facet types.
-
-facet supports deserialization from multiple data formats through dedicated crates:
-
-- [facet-json](https://github.com/facet-rs/facet/tree/main/facet-json): JSON deserialization
-- [facet-yaml](https://github.com/facet-rs/facet/tree/main/facet-yaml): YAML deserialization
-- [facet-toml](https://github.com/facet-rs/facet/tree/main/facet-toml): TOML deserialization
-- [facet-msgpack](https://github.com/facet-rs/facet/tree/main/facet-msgpack): MessagePack deserialization
-- [facet-urlencoded](https://github.com/facet-rs/facet/tree/main/facet-urlencoded): URL-encoded form data deserialization
-- [facet-args](https://github.com/facet-rs/facet/tree/main/facet-args): CLI arguments (a-la clap)
 
 Internal crates include:
 
-- [facet-testhelpers](https://github.com/facet-rs/facet/tree/main/facet-testhelpers) a simpler log logger and color-backtrace configured with the lightweight btparse backend
-- [facet-dev](https://github.com/facet-rs/facet/tree/main/facet-dev) contains custom precommit hooks that regenerate, format, and re-stage code
+- [facet-testhelpers](https://github.com/facet-rs/facet/tree/main/facet-testhelpers) a simple log logger and color-backtrace configured with the lightweight btparse backend
+
+## Ecosystem
+
+Various crates live under the <https://github.com/facet-rs> umbrella, and their
+repositories are kept somewhat-consistent through [facet-dev](https://github.com/facet-rs/facet-dev).
+
+Crates are in various states of progress, buyer beware!
+
+In terms of data formats, we have:
+
+- [facet-json](https://github.com/facet-rs/facet-json): JSON format support
+- [facet-toml](https://github.com/facet-rs/facet-toml): TOML format support
+- [facet-yaml](https://github.com/facet-rs/facet-yaml): YAML format support
+- [facet-msgpack](https://github.com/facet-rs/facet-msgpack): MessagePack deserialization
+- [facet-asn1](https://github.com/facet-rs/facet-asn1): ASN.1 format support
+- [facet-xdr](https://github.com/facet-rs/facet-xdr): XDR format support
+- [facet-kdl](https://github.com/facet-rs/facet-kdl): KDL format support (non-functional so far)
+
+Still adjacent to serialization/deserialization, we have:
+
+- [facet-urlencoded](https://github.com/facet-rs/facet-urlencoded): URL-encoded form data deserialization
+- [facet-args](https://github.com/facet-rs/facet-args): CLI arguments (a-la clap)
+
+As far as utilities go:
+
+- [facet-pretty](https://github.com/facet-rs/facet-pretty) is able to pretty-print Facet types.
+- [facet-serialize](https://github.com/facet-rs/facet-serialize) provides generic iterative serialization facilities
+- [facet-deserialize](https://github.com/facet-rs/facet-deserialize) provides generic iterative deserialization facilities
+
+And the less developed:
+
+- [facet-inspect](https://github.com/facet-rs/facet-inspect): Provide utilities to inspect the content of a Facet object.
+- [facet-diff](https://github.com/facet-rs/facet-diff): Provides diffing capabilities for Facet types.
+
+## Extended cinematic universe
+
+Some crates are developed completely independently from the facet org:
+
+- [facet-v8](https://github.com/simonask/facet-v8) provides an experimental Facet/v8 integration
+- [facet-openapi](https://github.com/ThouCheese/facet-openapi) (experimental) Generates OpenAPI definitions from types that implement Facet
+- [facet_generate](https://github.com/redbadger/facet-generate) reflects Facet types into Java, Swift and TypeScript
+- [multi-array-list](https://lib.rs/crates/multi-array-list) provides an experimental `MultiArrayList` type
