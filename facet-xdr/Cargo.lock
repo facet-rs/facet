@@ -134,7 +134,7 @@ dependencies = [
 
 [[package]]
 name = "facet-xdr"
-version = "0.1.19"
+version = "0.1.20"
 dependencies = [
  "cargo-husky",
  "facet",
