@@ -36,8 +36,9 @@ facet-serialize = { version = "0.28", default-features = false, optional = true 
 owo-colors = "4.2.2"
 
 [dev-dependencies]
-cargo-husky = { version = "1.5.0", default-features = false, features = ["user-hooks"] }
+cargo-husky = { version = "1.5.0", default-features = false, features = [
+    "user-hooks",
+] }
 eyre = "0.6.12"
 facet = { version = "0.28" }
 facet-testhelpers = { version = "0.28" }
-toml = "0.8.23"
