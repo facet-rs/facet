@@ -14,8 +14,12 @@ rich-diagnostics = ["facet-deserialize/rich-diagnostics"]
 default = ["rich-diagnostics"]
 
 [dependencies]
-facet-core = { version = "0.28", default-features = false }
-facet-reflect = { version = "0.28", default-features = false }
+facet-core = { version = "0.28", default-features = false, features = [
+    "alloc",
+] }
+facet-reflect = { version = "0.28", default-features = false, features = [
+    "alloc",
+] }
 
 facet-deserialize = { version = "0.28", default-features = false }
 facet-serialize = { version = "0.28", default-features = false }
