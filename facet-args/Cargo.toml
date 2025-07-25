@@ -1,0 +1,32 @@
+[package]
+name = "facet-args"
+version = "0.19.18"
+edition = "2024"
+rust-version = "1.87"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/facet-rs/facet-args"
+description = "Command-line argument parsing for the facet ecosystem"
+documentation = "https://docs.rs/facet-args"
+keywords = ["cli", "args", "parser", "facet"]
+categories = ["command-line-interface"]
+
+[dependencies]
+facet-reflect = { version = "0.28.0" }
+facet-core = { version = "0.28.0" }
+log = "0.4.27"
+owo-colors = "4.2.2"
+ariadne = { version = "0.5.1", optional = true }
+
+[dev-dependencies]
+cargo-husky = { version = "1.5.0", default-features = false, features = [
+    "user-hooks",
+] }
+eyre = "0.6.12"
+facet = { version = "0.28.0" }
+facet-pretty = { version = "0.28.0" }
+facet-testhelpers = { version = "0.28" }
+insta = "1.43.1"
+
+[features]
+default = ["rich-diagnostics"]
+rich-diagnostics = ["dep:ariadne"]

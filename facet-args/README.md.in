@@ -1,0 +1,24 @@
+Provides CLI argument parsing (WIP).
+
+```rust
+use facet_pretty::FacetPretty;
+use facet::Facet;
+
+#[derive(Facet)]
+struct Args {
+    #[facet(positional)]
+    path: String,
+
+    #[facet(named, short = 'v')]
+    verbose: bool,
+
+    #[facet(named, short = 'j')]
+    concurrency: usize,
+}
+
+# fn main() -> Result<(), Box<dyn std::error::Error>> {
+let args: Args = facet_args::from_slice(&["--verbose", "-j", "14", "example.rs"])?;
+eprintln!("args: {}", args.pretty());
+Ok(())
+# }
+```
