@@ -1,0 +1,35 @@
+[package]
+name = "facet-yaml"
+version = "0.25.16"
+edition = "2024"
+rust-version = "1.87"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/facet-rs/facet-yaml"
+description = "YAML serialization and deserialization for Facet types"
+keywords = ["yaml", "serialization", "deserialization", "reflection", "facet"]
+categories = ["encoding", "parsing", "data-structures"]
+
+[features]
+deserialize = ["alloc"]
+serialize = ["alloc", "dep:facet-serialize"]
+std = ["alloc", "facet-core/std", "facet-reflect/std"]
+alloc = ["facet-core/alloc", "facet-reflect/alloc"]
+default = ["serialize", "deserialize", "std"]
+ulid = ["facet-core/ulid"]
+time = ["facet-core/time"]
+log = ["dep:log"]
+
+[dependencies]
+yaml-rust2 = "0.10.3"
+facet-core = { version = "0.28.0", default-features = false }
+facet-reflect = { version = "0.28.0", default-features = false }
+facet-serialize = { version = "0.28.0", default-features = false, optional = true }
+log = { version = "0.4.27", optional = true }
+
+[dev-dependencies]
+facet = { version = "0.28.0" }
+eyre = "0.6.12"
+ulid = "1.2.1"
+time = { version = "0.3.41", features = ["macros", "parsing", "formatting"] }
+facet-testhelpers = { version = "0.28.0" }
+cargo-husky = { version = "1.5.0", default-features = false, features = ["user-hooks"] }
