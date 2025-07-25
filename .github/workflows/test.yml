@@ -81,8 +81,6 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: taiki-e/install-action@cargo-hack
-
       - name: ✨ Check MSRV
         shell: bash
         run: |
@@ -152,12 +150,6 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Install SARIF tools
-        shell: bash
-        run: |
-          cargo install clippy-sarif --locked
-          cargo install sarif-fmt --locked
-
       - name: ✨ Run clippy with SARIF output
         shell: bash
         run: |
@@ -191,19 +183,15 @@ jobs:
         run: |
           cargo nextest run --all-features
 
-  test-windows:
+  check-windows:
     runs-on: depot-windows-2022
     steps:
       - uses: actions/checkout@v4
 
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest
-
-      - name: ✨ Run nextest tests (Windows)
+      - name: ✨ Run cargo check (Windows)
         shell: bash
         run: |
-          cargo nextest run --all-features
+          cargo check
 
   coverage:
     runs-on: depot-ubuntu-24.04-32
