@@ -97,7 +97,7 @@ dependencies = [
 
 [[package]]
 name = "facet-csv"
-version = "0.24.18"
+version = "0.28.0"
 dependencies = [
  "cargo-husky",
  "eyre",
