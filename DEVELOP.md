@@ -50,7 +50,7 @@ serve you, they're a sign, not a cop, etc.
 
 Only @fasterthanlime has publish rights for the crates.
 
-They run `just ship` locally — which uses [release-plz](https://release-plz.ieni.dev).
+They use [release-plz](https://release-plz.ieni.dev).
 
 ## Running tests
 
@@ -62,7 +62,7 @@ Make sure to check the platform-specific notes:
   * [for macOS](https://nexte.st/docs/installation/macos/)
   * [for Windows](https://nexte.st/docs/installation/windows/)
 
-As of Apr 22, 2025, the 349 tests run in .742s on a MacBook Pro M4.
+As of Jul 25, 2025, the 408 tests run in .547 on a MacBook Pro M4.
 
 ## Rust nightly / MSRV
 

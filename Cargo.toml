@@ -15,31 +15,6 @@ members = [
     # test helpers
     "facet-testhelpers",
     "facet-testhelpers-macros",
-
-    # utilities
-    "facet-pretty",
-    "facet-inspect",
-    "facet-diff",
-
-    # serialization infrastructure
-    "facet-serialize",
-    "facet-deserialize",
-
-    # tier 1 formats
-    "facet-json",
-    "facet-toml",
-
-    # tier 2 formats
-    "facet-yaml",
-    "facet-asn1",
-    "facet-csv",
-    "facet-msgpack",
-    "facet-urlencoded",
-
-    # tier 3 formats
-    "facet-xdr",
-    "facet-args",
-    "facet-jsonschema",
 ]
 resolver = "3"
 
@@ -48,6 +23,3 @@ edition = "2024"
 rust-version = "1.87.0"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/facet-rs/facet"
-
-[profile.bench]
-lto = true
