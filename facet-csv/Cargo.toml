@@ -1,6 +1,6 @@
 [package]
 name = "facet-csv"
-version = "0.24.18"
+version = "0.28.0"
 edition = "2024"
 rust-version = "1.87"
 license = "MIT OR Apache-2.0"
