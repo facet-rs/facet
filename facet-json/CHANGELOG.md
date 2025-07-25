@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.0](https://github.com/facet-rs/facet-json/compare/v0.24.18...v0.28.0) - 2025-07-25
+
+### Other
+
+- facet-dev generate
+- Set rust-version to 1.87
+- facet-dev generate
+- Initial import in own repository
+
 ## [0.24.18](https://github.com/facet-rs/facet/compare/facet-json-v0.24.17...facet-json-v0.24.18) - 2025-07-03
 
 ### Other
