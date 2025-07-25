@@ -1,6 +1,6 @@
 [package]
 name = "facet-yaml"
-version = "0.25.16"
+version = "0.28.0"
 edition = "2024"
 rust-version = "1.87"
 license = "MIT OR Apache-2.0"
