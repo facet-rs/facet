@@ -12,12 +12,7 @@ Provides a proc macro attribute named `#[test]` which calls `facet_testhelpers::
 
 Thanks to all individual sponsors:
 
-<p> <a href="https://ko-fi.com/fasterthanlime">
-<picture>
-<source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/kofi-dark.svg">
-<img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/kofi-light.svg" height="40" alt="Ko-fi">
-</picture>
-</a> <a href="https://github.com/sponsors/fasterthanlime">
+<p> <a href="https://github.com/sponsors/fasterthanlime">
 <picture>
 <source media="(prefers-color-scheme: dark)" srcset="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/github-dark.svg">
 <img src="https://github.com/facet-rs/facet/raw/main/static/sponsors-v3/github-light.svg" height="40" alt="GitHub Sponsors">
