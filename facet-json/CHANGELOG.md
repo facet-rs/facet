@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.2](https://github.com/facet-rs/facet-json/compare/v0.28.1...v0.28.2) - 2025-08-15
+
+### Other
+
+- Parse surrogate pairs, closes #14
+
 ## [0.28.1](https://github.com/facet-rs/facet-json/compare/v0.28.0...v0.28.1) - 2025-07-25
 
 ### Other

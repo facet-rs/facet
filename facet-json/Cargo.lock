@@ -189,7 +189,7 @@ dependencies = [
 
 [[package]]
 name = "facet-json"
-version = "0.28.1"
+version = "0.28.2"
 dependencies = [
  "bytes",
  "camino",
