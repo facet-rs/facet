@@ -55,6 +55,14 @@ const UNICODE_TEST_CASES: &[(&str, &str)] = &[
     ("\"Hello\\u0021\"", "Hello!"),
     // Mixed normal escapes and Unicode escapes
     ("\"\\u0048\\tello\\u0021\"", "H\tello!"),
+    // Surrogate pair for U+1F399 (🎙️ microphone emoji)
+    ("\"\\ud83c\\udf99\"", "🎙"),
+    // Surrogate pair for U+1F600 (😀 grinning face emoji)
+    ("\"\\ud83d\\ude00\"", "😀"),
+    // Multiple surrogate pairs in one string
+    ("\"\\ud83d\\ude00\\ud83d\\ude01\"", "😀😁"),
+    // Mixed text and surrogate pairs
+    ("\"Hello \\ud83d\\ude00 World\"", "Hello 😀 World"),
 ];
 
 #[test]
@@ -64,6 +72,56 @@ fn test_unicode_escapes() -> Result<(), Box<dyn std::error::Error>> {
         let parsed = facet_json::from_str::<String>(input)?;
         assert_eq!(&parsed, expected, "Failed on input: {input}");
     }
+    Ok(())
+}
+
+/// Test invalid surrogate sequences that should fail to parse
+#[test]
+fn test_invalid_surrogate_sequences() {
+    // High surrogate without low surrogate
+    let result = facet_json::from_str::<String>("\"\\ud83c\"");
+    assert!(
+        result.is_err(),
+        "High surrogate without low surrogate should fail"
+    );
+
+    // High surrogate followed by non-surrogate Unicode escape
+    let result = facet_json::from_str::<String>("\"\\ud83c\\u0041\"");
+    assert!(
+        result.is_err(),
+        "High surrogate followed by non-surrogate should fail"
+    );
+
+    // Low surrogate without high surrogate
+    let result = facet_json::from_str::<String>("\"\\udc00\"");
+    assert!(
+        result.is_err(),
+        "Low surrogate without high surrogate should fail"
+    );
+
+    // High surrogate at end of string without low surrogate
+    let result = facet_json::from_str::<String>("\"text\\ud83c\"");
+    assert!(
+        result.is_err(),
+        "High surrogate at end of string should fail"
+    );
+}
+
+/// Test that regular BMP characters still work after surrogate pair changes
+#[test]
+fn test_bmp_characters_after_surrogate_fix() -> Result<(), Box<dyn std::error::Error>> {
+    // ASCII characters via Unicode escapes
+    let parsed = facet_json::from_str::<String>("\"\\u0041\\u0042\\u0043\"")?;
+    assert_eq!(parsed, "ABC");
+
+    // Non-ASCII BMP characters (Chinese)
+    let parsed = facet_json::from_str::<String>("\"\\u4e2d\\u6587\"")?;
+    assert_eq!(parsed, "中文");
+
+    // Greek letters
+    let parsed = facet_json::from_str::<String>("\"\\u03b1\\u03b2\\u03b3\"")?;
+    assert_eq!(parsed, "αβγ");
+
     Ok(())
 }
 
