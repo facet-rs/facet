@@ -331,7 +331,7 @@ impl<'input> Tokenizer<'input> {
                             };
 
                             // Parse hexadecimal value
-                            let code_point = match u16::from_str_radix(hex_str, 16) {
+                            let code_value = match u16::from_str_radix(hex_str, 16) {
                                 Ok(cp) => cp,
                                 Err(_) => {
                                     return Err(TokenError {
@@ -341,9 +341,88 @@ impl<'input> Tokenizer<'input> {
                                 }
                             };
 
+                            self.pos += 4; // Move past the 4 hex digits
+
+                            // Check if this is a UTF-16 surrogate pair
+                            let final_code_point = if (0xD800..=0xDBFF).contains(&code_value) {
+                                // This is a high surrogate, we need to read a low surrogate
+                                // Check for \uXXXX pattern following
+                                if self.pos + 6 <= self.input.len()
+                                    && self.input[self.pos] == b'\\'
+                                    && self.input[self.pos + 1] == b'u'
+                                {
+                                    // Read the second \uXXXX
+                                    let low_hex_start = self.pos + 2;
+                                    let low_hex_digits =
+                                        &self.input[low_hex_start..low_hex_start + 4];
+                                    let low_hex_str = match str::from_utf8(low_hex_digits) {
+                                        Ok(s) => s,
+                                        Err(_) => {
+                                            return Err(TokenError {
+                                                kind: TokenErrorKind::InvalidUtf8(
+                                                    "invalid UTF-8 in Unicode escape".to_string(),
+                                                ),
+                                                span: Span::new(low_hex_start, 4),
+                                            });
+                                        }
+                                    };
+
+                                    let low_value = match u16::from_str_radix(low_hex_str, 16) {
+                                        Ok(cp) => cp,
+                                        Err(_) => {
+                                            return Err(TokenError {
+                                                kind: TokenErrorKind::UnexpectedCharacter('?'),
+                                                span: Span::new(low_hex_start, 4),
+                                            });
+                                        }
+                                    };
+
+                                    // Check if it's a valid low surrogate
+                                    if (0xDC00..=0xDFFF).contains(&low_value) {
+                                        // Combine the surrogates into a single code point
+                                        // Formula: 0x10000 + ((high & 0x3FF) << 10) + (low & 0x3FF)
+                                        let high = code_value as u32;
+                                        let low = low_value as u32;
+                                        let code_point =
+                                            0x10000 + ((high & 0x3FF) << 10) + (low & 0x3FF);
+
+                                        self.pos += 6; // Move past \uXXXX
+                                        code_point
+                                    } else {
+                                        // Not a valid low surrogate, treat high surrogate as invalid
+                                        return Err(TokenError {
+                                            kind: TokenErrorKind::InvalidUtf8(
+                                                "high surrogate not followed by low surrogate"
+                                                    .to_string(),
+                                            ),
+                                            span: Span::new(hex_start, 4),
+                                        });
+                                    }
+                                } else {
+                                    // High surrogate not followed by \uXXXX
+                                    return Err(TokenError {
+                                        kind: TokenErrorKind::InvalidUtf8(
+                                            "high surrogate not followed by low surrogate"
+                                                .to_string(),
+                                        ),
+                                        span: Span::new(hex_start, 4),
+                                    });
+                                }
+                            } else if (0xDC00..=0xDFFF).contains(&code_value) {
+                                // Low surrogate without high surrogate is invalid
+                                return Err(TokenError {
+                                    kind: TokenErrorKind::InvalidUtf8(
+                                        "unexpected low surrogate".to_string(),
+                                    ),
+                                    span: Span::new(hex_start, 4),
+                                });
+                            } else {
+                                // Regular BMP character
+                                code_value as u32
+                            };
+
                             // Convert to UTF-8 and append to buffer
-                            // Handle basic Unicode code points (BMP)
-                            let c = match char::from_u32(code_point as u32) {
+                            let c = match char::from_u32(final_code_point) {
                                 Some(c) => c,
                                 None => {
                                     return Err(TokenError {
@@ -360,7 +439,7 @@ impl<'input> Tokenizer<'input> {
                             let utf8_bytes = c.encode_utf8(&mut utf8_buf).as_bytes();
                             buf.push_owned(utf8_bytes);
 
-                            self.pos += 3; // +3 because we'll increment once more below
+                            self.pos -= 1; // -1 because we'll increment once more below
                         }
                         _ => buf.push_owned(&[esc]), // other escapes
                     }
