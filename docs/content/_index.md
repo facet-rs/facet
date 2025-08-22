@@ -525,7 +525,6 @@ principal maintainer of facet.
 
 You can support them:
 
-  * on [Ko-fi](https://ko-fi.com/fasterthanlime)
   * on [GitHub Sponsors](https://github.com/sponsors/fasterthanlime)
   * on [Patreon](https://www.patreon.com/fasterthanlime)
 
