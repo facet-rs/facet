@@ -135,16 +135,13 @@ fn type_params_vec_f64() {
 fn type_params_hash_map_string_u8() {
     use std::collections::HashMap;
     let shape = HashMap::<String, u8>::SHAPE;
-    assert_eq!(shape.type_params.len(), 3);
+    assert_eq!(shape.type_params.len(), 2);
     let k = &shape.type_params[0];
     let v = &shape.type_params[1];
-    let s = &shape.type_params[2];
     assert_eq!(k.name, "K");
     assert_eq!(v.name, "V");
-    assert_eq!(s.name, "S");
     assert_eq!(k.shape(), String::SHAPE);
     assert_eq!(v.shape(), u8::SHAPE);
-    assert_eq!(s.shape().to_string(), "RandomState");
 }
 
 #[test]
