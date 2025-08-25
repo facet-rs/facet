@@ -15,7 +15,7 @@ unsafe impl<'a, K, V, S> Facet<'a> for HashMap<K, V, S>
 where
     K: Facet<'a> + core::cmp::Eq + core::hash::Hash,
     V: Facet<'a>,
-    S: Facet<'a> + Default + BuildHasher,
+    S: 'a + Default + BuildHasher,
 {
     const VTABLE: &'static ValueVTable = &const {
         ValueVTable::builder::<Self>()
@@ -56,10 +56,6 @@ where
                 TypeParam {
                     name: "V",
                     shape: || V::SHAPE,
-                },
-                TypeParam {
-                    name: "S",
-                    shape: || S::SHAPE,
                 },
             ])
             .ty(Type::User(UserType::Opaque))
