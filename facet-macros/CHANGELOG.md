@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.1](https://github.com/facet-rs/facet/compare/facet-macros-v0.28.0...facet-macros-v0.28.1) - 2025-08-25
+
+### Other
+
+- remove ko-fi
+- Update sponsors.afdesign
+
 ## [0.27.12](https://github.com/facet-rs/facet/compare/facet-macros-v0.27.11...facet-macros-v0.27.12) - 2025-06-04
 
 ### Other

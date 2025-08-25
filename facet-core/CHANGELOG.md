@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.1](https://github.com/facet-rs/facet/compare/facet-core-v0.28.0...facet-core-v0.28.1) - 2025-08-25
+
+### Other
+
+- Relax S: Facet constraint for HashMap impl
+- remove ko-fi
+- Update sponsors.afdesign
+
 ## [0.28.0](https://github.com/facet-rs/facet/compare/facet-core-v0.27.15...facet-core-v0.28.0) - 2025-07-03
 
 ### Other
