@@ -16,7 +16,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: Swatinem/rust-cache@v2
 
@@ -47,7 +47,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: Swatinem/rust-cache@v2
 
@@ -68,7 +68,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: Swatinem/rust-cache@v2
 
@@ -92,7 +92,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: Swatinem/rust-cache@v2
 
@@ -111,7 +111,7 @@ jobs:
     container:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: Swatinem/rust-cache@v2
 
@@ -128,7 +128,7 @@ jobs:
     permissions:
       security-events: write # to upload sarif results
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - uses: Swatinem/rust-cache@v2
 
