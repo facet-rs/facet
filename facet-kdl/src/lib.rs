@@ -6,11 +6,15 @@
 use std::{
     error::Error,
     fmt::{self, Display},
+    mem,
 };
 
-use facet_core::{Def, Facet, FieldFlags, Type, UserType};
+use facet_core::{
+    Def, Facet, FieldAttribute, FieldFlags, NumericType, PrimitiveType, Shape, ShapeLayout, Type,
+    UserType,
+};
 use facet_reflect::{Partial, ReflectError};
-use kdl::{KdlDocument, KdlError as KdlParseError};
+use kdl::{KdlDocument, KdlEntry, KdlError as KdlParseError, KdlNode, KdlValue};
 
 // QUESTION: Any interest in making something a bit like `strum` with `facet`? Always nice to have an easy way to get
 // the names of enum variants as strings!
@@ -51,7 +55,6 @@ impl<K: Into<KdlErrorKind>> From<K> for KdlError {
 #[derive(Debug)]
 enum KdlErrorKind {
     InvalidDocumentShape(&'static Def),
-    MissingNodes(Vec<String>),
     Parse(KdlParseError),
     Reflect(ReflectError),
 }
@@ -62,7 +65,6 @@ impl Display for KdlErrorKind {
             KdlErrorKind::InvalidDocumentShape(def) => {
                 write!(f, "invalid shape {def:#?} — needed... TODO")
             }
-            KdlErrorKind::MissingNodes(expected) => write!(f, "failed to find node {expected:?}"),
             KdlErrorKind::Parse(kdl_error) => write!(f, "{kdl_error}"),
             KdlErrorKind::Reflect(reflect_error) => write!(f, "{reflect_error}"),
         }
@@ -110,7 +112,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
 
         {
             let wip = typed_partial.inner_mut();
-            Self { kdl }.deserialize_document(wip, document)?;
+            Self { kdl }.deserialize_toplevel_document(wip, document)?;
         }
 
         let boxed_value = typed_partial.build()?;
@@ -120,12 +122,12 @@ impl<'input, 'facet> KdlDeserializer<'input> {
         Ok(*boxed_value)
     }
 
-    fn deserialize_document(
+    fn deserialize_toplevel_document(
         &mut self,
         wip: &mut Partial<'facet>,
         document: KdlDocument,
     ) -> Result<()> {
-        log::trace!("Entering `deserialize_document` method");
+        log::trace!("Entering `deserialize_toplevel_document` method");
 
         // First check the type system (Type)
         if let Type::User(UserType::Struct(struct_def)) = &wip.shape().ty {
@@ -133,17 +135,16 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             // QUESTION: Would be be possible, once we allow custom types, to make all attributes arbitrary? With
             // the sort of general tool that `facet` is, I think it might actually be best if we didn't try to
             // "bake-in" anything like sensitive, default, skip, etc...
-            let is_valid_toplevel = struct_def
-                .fields
-                .iter()
-                .all(|field| field.flags.contains(FieldFlags::CHILD));
+            let is_valid_toplevel = struct_def.fields.iter().all(|field| {
+                field.flags.contains(FieldFlags::CHILD)
+                    || field
+                        .attributes
+                        .contains(&FieldAttribute::Arbitrary("children"))
+            });
             log::trace!("WIP represents a valid top-level: {is_valid_toplevel}");
 
             if is_valid_toplevel {
-                // FIXME: At this point I'm really not sure where function boundaries should be... It's a messy disaster
-                // whilst I try to work that out...
-                // FIXME: For example, this feels like maybe it should take a `KdlNode` and not a `KdlDocument`?
-                return self.deserialize_node(wip, document);
+                return self.deserialize_document(wip, document);
             } else {
                 return Err(KdlErrorKind::InvalidDocumentShape(&wip.shape().def).into());
             }
@@ -158,36 +159,272 @@ impl<'input, 'facet> KdlDeserializer<'input> {
         }
     }
 
-    fn deserialize_node(
+    fn deserialize_document(
         &mut self,
         wip: &mut Partial<'facet>,
         mut document: KdlDocument,
     ) -> Result<()> {
-        log::trace!("Entering `deserialize_node` method");
+        log::trace!("Entering `deserialize_document` method at {}", wip.path());
 
-        // TODO: Correctly generate that error and write a constructor that gets rid of the `.to_owned()`?
-        let node = document
-            .nodes_mut()
-            .pop()
-            .ok_or_else(|| KdlErrorKind::MissingNodes(vec!["TODO".to_owned()]))?;
-        log::trace!("Popped node from `KdlDocument`: {node:#?}");
+        let document_shape = wip.shape();
 
-        wip.begin_field(node.name().value())?;
-        log::trace!(
-            "Node matched expected child; New def: {:#?}",
-            wip.shape().def
-        );
+        let mut in_node_children_list = false;
 
-        // TODO: Planning to step through those entries one at a time then dispatch a method like
-        // `deserialize_argument()` or `deserialize_property()` depending on which it is. Then I need a way to keep
-        // track of which `Partial` fields have already been filled? I think that shouldn't be too bad, then I can just
-        // grab the next "unfilled" argument field if it's an argument, or search all of the (filled or unfilled) fields
-        // if it's a parameter?
-        for entry in node.entries() {
-            log::trace!("Processing entry: {entry:#?}");
+        for node in document.nodes_mut().drain(..) {
+            // log::trace!("Processing node: {node:#?}");
+            self.deserialize_node(wip, node, document_shape, &mut in_node_children_list)?;
         }
 
-        todo!()
+        if in_node_children_list {
+            wip.end()?;
+        }
+
+        log::trace!("Exiting `deserialize_document` method at {}", wip.path());
+
+        Ok(())
+    }
+
+    fn deserialize_node(
+        &mut self,
+        wip: &mut Partial<'facet>,
+        mut node: KdlNode,
+        document_shape: &Shape,
+        in_node_children_list: &mut bool,
+    ) -> Result<()> {
+        log::trace!("Entering `deserialize_node` method at {}", wip.path());
+
+        match document_shape.ty {
+            Type::User(UserType::Struct(struct_def)) => {
+                if let Some(child_field) = struct_def.fields.iter().find(|field| {
+                    field.flags.contains(FieldFlags::CHILD) && field.name == node.name().value()
+                }) {
+                    log::trace!("Node matched expected child {}", child_field.name);
+                    if *in_node_children_list {
+                        wip.end()?;
+                        *in_node_children_list = false;
+                    }
+                    wip.begin_field(child_field.name)?;
+                } else if let Some((children_field_index, children_field)) = struct_def
+                    .fields
+                    .iter()
+                    .enumerate()
+                    .find(|(_index, field)| {
+                        field
+                            .attributes
+                            .contains(&FieldAttribute::Arbitrary("children"))
+                    })
+                {
+                    log::trace!("Node matched children container");
+                    if !*in_node_children_list {
+                        if wip.is_field_set(children_field_index)? {
+                            todo!("reopening children already completed")
+                        }
+                        wip.begin_field(children_field.name)?;
+                        wip.begin_list()?;
+                        *in_node_children_list = true;
+                    }
+                    wip.begin_list_item()?;
+                } else {
+                    log::debug!("No fields for child {}", node.name());
+                    for field in struct_def.fields {
+                        log::debug!(
+                            "field {}\tflags {:?}\tattributes {:?}",
+                            field.name,
+                            field.flags,
+                            field.attributes
+                        );
+                    }
+                    todo!()
+                }
+            }
+            ty => todo!("deserialize_node with shape {ty}"),
+        }
+        log::trace!("New def: {:#?}", wip.shape().def);
+
+        match wip.shape().ty {
+            Type::User(UserType::Struct(struct_def)) => {
+                if let Some(node_name_field) = struct_def.fields.iter().find(|field| {
+                    field
+                        .attributes
+                        .contains(&FieldAttribute::Arbitrary("node_name"))
+                }) {
+                    wip.set_field(node_name_field.name, node.name().value().to_string())?;
+                }
+            }
+            _ => {}
+        }
+
+        let node_shape = wip.shape();
+        let mut in_entry_arguments_list = false;
+
+        for entry in node.entries_mut().drain(..) {
+            log::trace!("Processing entry: {entry:?}");
+
+            self.deserialize_entry(wip, entry, node_shape, &mut in_entry_arguments_list)?;
+        }
+
+        if in_entry_arguments_list {
+            wip.end()?;
+        }
+
+        if let Some(children) = node.children_mut().take() {
+            self.deserialize_document(wip, children)?;
+        }
+
+        wip.end()?;
+
+        log::trace!("Exiting `deserialize_node` method");
+
+        Ok(())
+    }
+
+    fn deserialize_entry(
+        &mut self,
+        wip: &mut Partial<'facet>,
+        mut entry: KdlEntry,
+        node_shape: &Shape,
+        in_entry_arguments_list: &mut bool,
+    ) -> Result<()> {
+        log::trace!("Entering `deserialize_entry` method at {}", wip.path());
+
+        if let Some(name) = entry.name() {
+            // property
+            match node_shape.ty {
+                Type::User(UserType::Struct(struct_def)) => {
+                    if let Some(matching_field) = struct_def.fields.iter().find(|field| {
+                        field
+                            .attributes
+                            .contains(&FieldAttribute::Arbitrary("property"))
+                            && field.name == name.value()
+                    }) {
+                        wip.begin_field(matching_field.name)?;
+                    } else {
+                        todo!()
+                    }
+                }
+                _ => todo!(),
+            }
+        } else {
+            // argument
+            match node_shape.ty {
+                Type::User(UserType::Struct(struct_def)) => {
+                    if let Some((_, next_arg_field)) =
+                        struct_def.fields.iter().enumerate().find(|(index, field)| {
+                            field
+                                .attributes
+                                .contains(&FieldAttribute::Arbitrary("argument"))
+                                && wip.is_field_set(*index).ok() == Some(false)
+                        })
+                    {
+                        if *in_entry_arguments_list {
+                            todo!("argument after arguments")
+                        }
+                        wip.begin_field(next_arg_field.name)?;
+                    } else if let Some((args_field_index, args_field)) =
+                        struct_def.fields.iter().enumerate().find(|(_, field)| {
+                            field
+                                .attributes
+                                .contains(&FieldAttribute::Arbitrary("arguments"))
+                        })
+                    {
+                        if !*in_entry_arguments_list {
+                            if wip.is_field_set(args_field_index)? {
+                                todo!("reopening arguments already completed")
+                            }
+                            wip.begin_field(args_field.name)?;
+                            wip.begin_list()?;
+                            *in_entry_arguments_list = true;
+                        }
+                        wip.begin_list_item()?;
+                    } else {
+                        log::debug!("No fields for argument");
+                        for field in struct_def.fields {
+                            log::debug!(
+                                "field {}\tattributes {:?}\tis_field_set {:?}",
+                                field.name,
+                                field.attributes,
+                                wip.is_field_set(field.offset)
+                            );
+                        }
+                        todo!()
+                    }
+                }
+                _ => todo!(),
+            }
+        }
+        let self1 = entry.value_mut();
+        self.deserialize_value(wip, mem::replace(self1, KdlValue::Null))?;
+        wip.end()?;
+
+        log::trace!("Exiting `deserialize_entry` method");
+
+        Ok(())
+    }
+
+    fn deserialize_value(&mut self, wip: &mut Partial<'facet>, value: KdlValue) -> Result<()> {
+        log::trace!("Entering `deserialize_value` method at {}", wip.path());
+
+        log::trace!("Parsing {:?} into {}", &value, wip.path());
+
+        enum Cleanup {
+            None,
+            End,
+        }
+
+        let cleanup = match wip.shape().def {
+            Def::Scalar => Cleanup::None,
+            Def::Option(_) => {
+                if value == KdlValue::Null {
+                    wip.set_default()?;
+                    Cleanup::None
+                } else {
+                    wip.begin_some()?;
+                    Cleanup::End
+                }
+            }
+            def => todo!("handle {def:?}"),
+        };
+
+        match value {
+            KdlValue::String(string) => {
+                wip.set(string)?;
+            }
+            KdlValue::Integer(integer) => {
+                let size = match wip.shape().layout {
+                    ShapeLayout::Sized(layout) => layout.size(),
+                    ShapeLayout::Unsized => todo!(),
+                };
+                let ty = match wip.shape().ty {
+                    Type::Primitive(PrimitiveType::Numeric(ty)) => ty,
+                    _ => todo!(),
+                };
+                match (ty, size) {
+                    (NumericType::Integer { signed: false }, 1) => wip.set(integer as u8)?,
+                    _ => todo!(),
+                };
+            }
+            KdlValue::Float(float) => {
+                wip.set(float)?;
+            }
+            KdlValue::Bool(bool) => {
+                wip.set(bool)?;
+            }
+            KdlValue::Null => match wip.shape().def {
+                Def::Option(_) => {}
+                _ => todo!(),
+            },
+        };
+
+        match cleanup {
+            Cleanup::None => {}
+            Cleanup::End => {
+                wip.end()?;
+            }
+        }
+
+        log::trace!("Exiting `deserialize_value` method");
+
+        Ok(())
     }
 }
 
