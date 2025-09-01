@@ -241,17 +241,14 @@ impl<'input, 'facet> KdlDeserializer<'input> {
         }
         log::trace!("New def: {:#?}", wip.shape().def);
 
-        match wip.shape().ty {
-            Type::User(UserType::Struct(struct_def)) => {
-                if let Some(node_name_field) = struct_def.fields.iter().find(|field| {
-                    field
-                        .attributes
-                        .contains(&FieldAttribute::Arbitrary("node_name"))
-                }) {
-                    wip.set_field(node_name_field.name, node.name().value().to_string())?;
-                }
+        if let Type::User(UserType::Struct(struct_def)) = wip.shape().ty {
+            if let Some(node_name_field) = struct_def.fields.iter().find(|field| {
+                field
+                    .attributes
+                    .contains(&FieldAttribute::Arbitrary("node_name"))
+            }) {
+                wip.set_field(node_name_field.name, node.name().value().to_string())?;
             }
-            _ => {}
         }
 
         let node_shape = wip.shape();
