@@ -233,7 +233,6 @@ dependencies = [
  "facet-testhelpers",
  "insta",
  "log",
- "owo-colors",
  "tempfile",
  "ulid",
  "uuid",
