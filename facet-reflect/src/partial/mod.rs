@@ -116,7 +116,7 @@ use alloc::vec;
 
 mod iset;
 
-use crate::{Peek, ReflectError, trace};
+use crate::{Peek, ReflectError, TrackerKind, trace};
 use facet_core::{DefaultInPlaceFn, SequenceType};
 
 use core::marker::PhantomData;
@@ -277,24 +277,6 @@ enum Tracker {
         /// Whether we're currently building the inner value
         building_inner: bool,
     },
-}
-
-/// A kind-only version of Tracker
-#[allow(missing_docs)]
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-#[non_exhaustive]
-pub enum TrackerKind {
-    Uninit,
-    Init,
-    Array,
-    Struct,
-    SmartPointer,
-    SmartPointerStr,
-    SmartPointerSlice,
-    Enum,
-    List,
-    Map,
-    Option,
 }
 
 impl Tracker {
