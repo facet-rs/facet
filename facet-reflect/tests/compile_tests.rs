@@ -119,17 +119,14 @@ facet-reflect = {{ path = {:?} }}
 
     // Verify the compilation failed as expected
     if exit_code == 0 {
-        println!("{}", "❌ Test failed:");
-        println!(
-            "{}",
-            "  The code compiled successfully, but it should have failed"
-        );
+        println!("❌ Test failed:");
+        println!("  The code compiled successfully, but it should have failed");
         panic!(
             "Test '{}' compiled successfully but should have failed",
             test.name
         );
     } else {
-        println!("{}", "  ✓ Compilation failed as expected");
+        println!("  ✓ Compilation failed as expected");
     }
 
     // Check for expected error messages
@@ -138,26 +135,23 @@ facet-reflect = {{ path = {:?} }}
         if !stderr_clean.contains(expected_error) {
             missing_errors.push(expected_error);
         } else {
-            println!(
-                "{}",
-                format_args!("  ✓ Found expected error: '{expected_error}'")
-            );
+            println!("  ✓ Found expected error: '{expected_error}'");
         }
     }
 
     // Report any missing expected errors
     if !missing_errors.is_empty() {
-        println!("{}", "\n❌ MISSING EXPECTED ERRORS:");
+        println!("\n❌ MISSING EXPECTED ERRORS:");
         for error in &missing_errors {
-            println!("{}", format_args!("  - '{error}'"));
+            println!("  - '{error}'");
         }
 
         // Print the error output for debugging
-        println!("{}", "\nCompiler error output:");
+        println!("\nCompiler error output:");
         println!("{stderr}");
 
         if !stdout.is_empty() {
-            println!("{}", "\nCompiler standard output:");
+            println!("\nCompiler standard output:");
             println!("{stdout}");
         }
 

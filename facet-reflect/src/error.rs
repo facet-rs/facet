@@ -188,10 +188,10 @@ impl core::fmt::Display for ReflectError {
                 write!(f, ", that's it.")
             }
             ReflectError::WrongShape { expected, actual } => {
-                write!(f, "Wrong shape: expected {}, but got {}", expected, actual)
+                write!(f, "Wrong shape: expected {expected}, but got {actual}")
             }
             ReflectError::WasNotA { expected, actual } => {
-                write!(f, "Wrong shape: expected {}, but got {}", expected, actual)
+                write!(f, "Wrong shape: expected {expected}, but got {actual}")
             }
             ReflectError::UninitializedField { shape, field_name } => {
                 write!(f, "Field '{shape}::{field_name}' was not initialized")
@@ -203,15 +203,14 @@ impl core::fmt::Display for ReflectError {
             } => {
                 write!(
                     f,
-                    "Field '{}::{}' in variant '{}' was not initialized",
-                    shape, field_name, variant_name
+                    "Field '{shape}::{field_name}' in variant '{variant_name}' was not initialized"
                 )
             }
             ReflectError::UninitializedValue { shape } => {
-                write!(f, "Value '{}' was not initialized", shape)
+                write!(f, "Value '{shape}' was not initialized")
             }
             ReflectError::InvariantViolation { invariant } => {
-                write!(f, "Invariant violation: {}", invariant)
+                write!(f, "Invariant violation: {invariant}")
             }
             ReflectError::MissingCharacteristic {
                 shape,
@@ -221,16 +220,15 @@ impl core::fmt::Display for ReflectError {
                 "{shape} does not implement characteristic {characteristic:?}",
             ),
             ReflectError::OperationFailed { shape, operation } => {
-                write!(f, "Operation failed on shape {}: {}", shape, operation)
+                write!(f, "Operation failed on shape {shape}: {operation}")
             }
             ReflectError::FieldError { shape, field_error } => {
-                write!(f, "Field error for shape {}: {}", shape, field_error)
+                write!(f, "Field error for shape {shape}: {field_error}")
             }
             ReflectError::MissingPushPointee { shape } => {
                 write!(
                     f,
-                    "Tried to access a field on smart pointer '{}', but you need to call {} first to work with the value it points to (and pop it with {} later)",
-                    shape, ".begin_smart_ptr()", ".pop()"
+                    "Tried to access a field on smart pointer '{shape}', but you need to call .begin_smart_ptr() first to work with the value it points to (and pop it with .pop() later)"
                 )
             }
             ReflectError::Unknown => write!(f, "Unknown error"),
@@ -241,19 +239,16 @@ impl core::fmt::Display for ReflectError {
             } => {
                 write!(
                     f,
-                    "While trying to put {} into a {}: {}",
-                    src_shape, dst_shape, inner
+                    "While trying to put {src_shape} into a {dst_shape}: {inner}"
                 )
             }
             ReflectError::DefaultAttrButNoDefaultImpl { shape } => write!(
                 f,
-                "Shape '{}' has a `default` attribute but no default implementation",
-                shape
+                "Shape '{shape}' has a `default` attribute but no default implementation"
             ),
             ReflectError::Unsized { shape, operation } => write!(
                 f,
-                "Shape '{}' is unsized, can't perform operation {}",
-                shape, operation
+                "Shape '{shape}' is unsized, can't perform operation {operation}"
             ),
             ReflectError::ArrayNotFullyInitialized {
                 shape,
@@ -262,25 +257,23 @@ impl core::fmt::Display for ReflectError {
             } => {
                 write!(
                     f,
-                    "Array '{}' not fully initialized: expected {} elements, but got {}",
-                    shape, expected_size, pushed_count
+                    "Array '{shape}' not fully initialized: expected {expected_size} elements, but got {pushed_count}"
                 )
             }
             ReflectError::ArrayIndexOutOfBounds { shape, index, size } => {
                 write!(
                     f,
-                    "Array index {} out of bounds for '{}' (array length is {})",
-                    index, shape, size
+                    "Array index {index} out of bounds for '{shape}' (array length is {size})"
                 )
             }
             ReflectError::InvalidOperation { operation, reason } => {
-                write!(f, "Invalid operation '{}': {}", operation, reason)
+                write!(f, "Invalid operation '{operation}': {reason}")
             }
             ReflectError::UnexpectedTracker {
                 message,
                 current_tracker,
             } => {
-                write!(f, "{}: current tracker is {:?}", message, current_tracker)
+                write!(f, "{message}: current tracker is {current_tracker:?}")
             }
             ReflectError::NoActiveFrame => {
                 write!(f, "No active frame in Partial")
