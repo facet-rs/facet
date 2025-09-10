@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.2](https://github.com/facet-rs/facet/compare/facet-v0.28.1...facet-v0.28.2) - 2025-09-10
+
+### Other
+
+- *(deps)* update actions/checkout action to v5
+
 ## [0.28.1](https://github.com/facet-rs/facet/compare/facet-v0.28.0...facet-v0.28.1) - 2025-08-25
 
 ### Other
