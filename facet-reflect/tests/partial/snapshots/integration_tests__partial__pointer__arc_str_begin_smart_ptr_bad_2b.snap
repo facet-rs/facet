@@ -1,0 +1,5 @@
+---
+source: facet-reflect/tests/partial/pointer.rs
+expression: _err
+---
+Value '[34mString[39m' was not initialized

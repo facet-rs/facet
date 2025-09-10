@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use facet::Facet;
-use facet_testhelpers::test;
+use facet_testhelpers::{IPanic, test};
 
 use super::Partial;
 
@@ -102,6 +102,34 @@ fn struct_fully_init() {
         .unwrap();
     assert_eq!(hv.foo, 42u64);
     assert_eq!(hv.bar, true);
+}
+
+#[test]
+fn set_should_drop_when_replacing() -> Result<(), IPanic> {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Facet, Debug, Default)]
+    struct DropTracker {
+        uninteresting: i32,
+    }
+
+    impl Drop for DropTracker {
+        fn drop(&mut self) {
+            DROP_COUNT.fetch_add(1, Ordering::AcqRel);
+        }
+    }
+
+    let mut p = Partial::alloc::<DropTracker>()?;
+    p.set(DropTracker::default())?;
+    p.set(DropTracker::default())?;
+    p.set(DropTracker::default())?;
+
+    assert_eq!(DROP_COUNT.load(Ordering::Acquire), 2);
+
+    let _p = p;
+
+    Ok(())
 }
 
 #[test]
@@ -1051,19 +1079,6 @@ fn list_vec_nested() {
         .unwrap();
     let vec: &Vec<Vec<i32>> = hv.as_ref();
     assert_eq!(vec, &vec![vec![1, 2], vec![3, 4, 5]]);
-}
-
-#[derive(Debug)]
-struct IPanic;
-
-impl<E> From<E> for IPanic
-where
-    E: core::error::Error + Send + Sync,
-{
-    #[track_caller]
-    fn from(value: E) -> Self {
-        panic!("from: {}: {value}", core::panic::Location::caller())
-    }
 }
 
 #[test]

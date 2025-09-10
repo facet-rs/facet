@@ -236,7 +236,10 @@ enum Tracker {
     /// We're initializing an `Arc<str>`, `Box<str>`, `Rc<str>`, etc.
     ///
     /// We expect `set` with a `String`
-    SmartPointerStr,
+    SmartPointerStr {
+        // whether `data` was initialized with a `String` or not
+        is_initialized: bool,
+    },
 
     /// We're initializing an `Arc<[T]>`, `Box<[T]>`, `Rc<[T]>`, etc.
     ///
@@ -287,7 +290,7 @@ impl Tracker {
             Tracker::Array { .. } => TrackerKind::Array,
             Tracker::Struct { .. } => TrackerKind::Struct,
             Tracker::SmartPointer { .. } => TrackerKind::SmartPointer,
-            Tracker::SmartPointerStr => TrackerKind::SmartPointerStr,
+            Tracker::SmartPointerStr { .. } => TrackerKind::SmartPointerStr,
             Tracker::SmartPointerSlice { .. } => TrackerKind::SmartPointerSlice,
             Tracker::Enum { .. } => TrackerKind::Enum,
             Tracker::List { .. } => TrackerKind::List,
@@ -389,8 +392,12 @@ impl Frame {
                     Err(ReflectError::UninitializedValue { shape: self.shape })
                 }
             }
-            Tracker::SmartPointerStr => {
-                todo!()
+            Tracker::SmartPointerStr { is_initialized } => {
+                if is_initialized {
+                    Ok(())
+                } else {
+                    Err(ReflectError::UninitializedValue { shape: self.shape })
+                }
             }
             Tracker::SmartPointerSlice { building_item, .. } => {
                 if building_item {
@@ -554,10 +561,62 @@ impl<'facet> Partial<'facet> {
             });
         }
 
+        let mut need_drop = false;
+        match fr.tracker {
+            Tracker::Uninit => {
+                // good! that's the easy path
+            }
+            Tracker::Init => {
+                need_drop = true;
+            }
+            Tracker::Array { .. } => {
+                todo!("deinitializing select array fields on set_shape is not implemented yet")
+            }
+            Tracker::Struct { .. } => {
+                todo!("deinitializing select struct fields on set_shape is not implemented yet")
+            }
+            Tracker::SmartPointer { is_initialized } => need_drop = is_initialized,
+            Tracker::SmartPointerStr { is_initialized } => need_drop = is_initialized,
+            Tracker::SmartPointerSlice { .. } => {
+                todo!("deinitializing smart pointer str on set_shape is not implemented yet")
+            }
+            Tracker::Enum { .. } => {
+                // if we have a Tracker::Enum that means a variant was selected,
+                // but it might only be partially initialized
+                todo!("deinitializing select enum fields on set_shape is not implemented yet")
+            }
+            Tracker::List { is_initialized, .. } => need_drop = is_initialized,
+            Tracker::Map { is_initialized, .. } => need_drop = is_initialized,
+            Tracker::Option { .. } => todo!(),
+        }
+
+        if need_drop {
+            let drop_in_place = (fr.shape.vtable.sized().unwrap().drop_in_place)();
+            crate::trace!(
+                "set_shape: should drop first (has drop? {:?})",
+                drop_in_place.is_some()
+            );
+
+            if let Some(drop_in_place) = drop_in_place {
+                unsafe {
+                    (drop_in_place)(fr.data.assume_init());
+                }
+            }
+        }
+
         unsafe {
             fr.data.copy_from(src_value, fr.shape).unwrap();
         }
-        fr.tracker = Tracker::Init;
+
+        match &mut fr.tracker {
+            Tracker::SmartPointerStr { is_initialized } => {
+                *is_initialized = true;
+            }
+            _ => {
+                fr.tracker = Tracker::Init;
+            }
+        }
+
         Ok(self)
     }
 
@@ -1294,6 +1353,7 @@ impl<'facet> Partial<'facet> {
                     // pointee is unsized, we only support a handful of cases there
                     if pointee_shape == str::SHAPE {
                         crate::trace!("Pointee is str");
+
                         // Allocate space for a String
                         let string_layout = String::SHAPE
                             .layout
@@ -1308,7 +1368,9 @@ impl<'facet> Partial<'facet> {
                             String::SHAPE,
                             FrameOwnership::Owned,
                         );
-                        frame.tracker = Tracker::SmartPointerStr;
+                        frame.tracker = Tracker::SmartPointerStr {
+                            is_initialized: false,
+                        };
                         self.frames.push(frame);
                     } else if let Type::Sequence(SequenceType::Slice(_st)) = pointee_shape.ty {
                         crate::trace!("Pointee is [{}]", _st.t);
@@ -1827,25 +1889,25 @@ impl<'facet> Partial<'facet> {
         {
             let frame = self.frames.last().unwrap();
             trace!(
-                "end(): Checking full initialization for frame with shape {}",
-                frame.shape
+                "end(): Checking full initialization for frame with shape {} and tracker {:?}",
+                frame.shape,
+                frame.tracker.kind()
             );
             frame.require_full_initialization()?
         }
 
         // Pop the frame and save its data pointer for SmartPointer handling
         let popped_frame = self.frames.pop().unwrap();
-        trace!(
-            "end(): Popped frame with shape {}, tracker {:?}",
-            popped_frame.shape, popped_frame.tracker
-        );
 
         // Update parent frame's tracking when popping from a child
         let parent_frame = self.frames.last_mut().unwrap();
 
         trace!(
-            "end(): Parent frame shape: {}, tracker: {:?}",
-            parent_frame.shape, parent_frame.tracker
+            "end(): Popped {} (tracker {:?}), Parent {} (tracker {:?})",
+            popped_frame.shape,
+            popped_frame.tracker.kind(),
+            parent_frame.shape,
+            parent_frame.tracker.kind()
         );
 
         // Check if we need to do a conversion - this happens when:
@@ -2141,67 +2203,103 @@ impl<'facet> Partial<'facet> {
                     }
                 }
             }
-            Tracker::Uninit => {
-                // if the just-popped frame was a SmartPointerStr, we have some conversion to do:
-                // Special-case: SmartPointer<str> (Box<str>, Arc<str>, Rc<str>) via SmartPointerStr tracker
-                // Here, popped_frame actually contains a value for String that should be moved into the smart pointer.
-                // We convert the String into Box<str>, Arc<str>, or Rc<str> as appropriate and write it to the parent frame.
-                use alloc::{rc::Rc, string::String, sync::Arc};
-                let parent_shape = parent_frame.shape;
-                if let Def::Pointer(smart_ptr_def) = parent_shape.def {
-                    if let Some(known) = smart_ptr_def.known {
-                        // The popped_frame (child) must be a Tracker::SmartPointerStr (checked above)
-                        // Interpret the memory as a String, then convert and write.
-                        let string_ptr = popped_frame.data.as_mut_byte_ptr() as *mut String;
-                        let string_value = unsafe { core::ptr::read(string_ptr) };
-                        match known {
-                            KnownPointer::Box => {
-                                let boxed: Box<str> = string_value.into_boxed_str();
-                                unsafe {
-                                    core::ptr::write(
-                                        parent_frame.data.as_mut_byte_ptr() as *mut Box<str>,
-                                        boxed,
-                                    );
-                                }
-                            }
-                            KnownPointer::Arc => {
-                                let arc: Arc<str> = Arc::from(string_value.into_boxed_str());
-                                unsafe {
-                                    core::ptr::write(
-                                        parent_frame.data.as_mut_byte_ptr() as *mut Arc<str>,
-                                        arc,
-                                    );
-                                }
-                            }
-                            KnownPointer::Rc => {
-                                let rc: Rc<str> = Rc::from(string_value.into_boxed_str());
-                                unsafe {
-                                    core::ptr::write(
-                                        parent_frame.data.as_mut_byte_ptr() as *mut Rc<str>,
-                                        rc,
-                                    );
-                                }
-                            }
-                            _ => {}
+            Tracker::Uninit | Tracker::Init => {
+                match popped_frame.tracker {
+                    Tracker::SmartPointerStr { is_initialized } => {
+                        if !is_initialized {
+                            return Err(ReflectError::InvariantViolation {
+                                invariant: "popping smart pointer str without initializing it",
+                            });
                         }
-                        parent_frame.tracker = Tracker::Init;
-                        // Now, deallocate temporary String allocation if necessary
-                        if let FrameOwnership::Owned = popped_frame.ownership {
-                            if let Ok(layout) = String::SHAPE.layout.sized_layout() {
-                                if layout.size() > 0 {
-                                    unsafe {
-                                        alloc::alloc::dealloc(
-                                            popped_frame.data.as_mut_byte_ptr(),
-                                            layout,
-                                        )
-                                    };
+
+                        // if the just-popped frame was a SmartPointerStr, we have some conversion to do:
+                        // Special-case: SmartPointer<str> (Box<str>, Arc<str>, Rc<str>) via SmartPointerStr tracker
+                        // Here, popped_frame actually contains a value for String that should be moved into the smart pointer.
+                        // We convert the String into Box<str>, Arc<str>, or Rc<str> as appropriate and write it to the parent frame.
+                        use alloc::{rc::Rc, string::String, sync::Arc};
+                        let parent_shape = parent_frame.shape;
+
+                        if let Def::Pointer(smart_ptr_def) = parent_shape.def {
+                            if let Some(known) = smart_ptr_def.known {
+                                // Before doing anything: if the parent is init, we must drop what's inside,
+                                // because we're about to replace it
+                                if matches!(parent_frame.tracker, Tracker::Init) {
+                                    if let Some(drop_fn) = parent_frame
+                                        .shape
+                                        .vtable
+                                        .sized()
+                                        .and_then(|v| (v.drop_in_place)())
+                                    {
+                                        unsafe { drop_fn(parent_frame.data.assume_init()) };
+                                    }
+                                    parent_frame.tracker = Tracker::Uninit;
                                 }
+
+                                // The popped_frame (child) must be a Tracker::SmartPointerStr (checked above)
+                                // Interpret the memory as a String, then convert and write.
+                                let string_ptr = popped_frame.data.as_mut_byte_ptr() as *mut String;
+                                let string_value = unsafe { core::ptr::read(string_ptr) };
+
+                                match known {
+                                    KnownPointer::Box => {
+                                        let boxed: Box<str> = string_value.into_boxed_str();
+                                        unsafe {
+                                            core::ptr::write(
+                                                parent_frame.data.as_mut_byte_ptr()
+                                                    as *mut Box<str>,
+                                                boxed,
+                                            );
+                                        }
+                                    }
+                                    KnownPointer::Arc => {
+                                        let arc: Arc<str> =
+                                            Arc::from(string_value.into_boxed_str());
+                                        unsafe {
+                                            core::ptr::write(
+                                                parent_frame.data.as_mut_byte_ptr()
+                                                    as *mut Arc<str>,
+                                                arc,
+                                            );
+                                        }
+                                    }
+                                    KnownPointer::Rc => {
+                                        let rc: Rc<str> = Rc::from(string_value.into_boxed_str());
+                                        unsafe {
+                                            core::ptr::write(
+                                                parent_frame.data.as_mut_byte_ptr() as *mut Rc<str>,
+                                                rc,
+                                            );
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                                parent_frame.tracker = Tracker::Init;
+
+                                // Now, deallocate temporary String allocation if necessary
+                                if let FrameOwnership::Owned = popped_frame.ownership {
+                                    if let Ok(layout) = String::SHAPE.layout.sized_layout() {
+                                        if layout.size() > 0 {
+                                            unsafe {
+                                                alloc::alloc::dealloc(
+                                                    popped_frame.data.as_mut_byte_ptr(),
+                                                    layout,
+                                                )
+                                            };
+                                        }
+                                    }
+                                }
+                            } else {
+                                return Err(ReflectError::OperationFailed {
+                                    shape: parent_shape,
+                                    operation: "SmartPointerStr for unknown smart pointer kind",
+                                });
                             }
                         }
-                    } else {
+                    }
+                    _ => {
                         return Err(ReflectError::OperationFailed {
-                            shape: parent_shape,
-                            operation: "SmartPointerStr for unknown smart pointer kind",
+                            shape: parent_frame.shape,
+                            operation: "end()-ing a frame but the parent is Init/Uninit, that's... confusing?",
                         });
                     }
                 }
@@ -2255,7 +2353,7 @@ impl<'facet> Partial<'facet> {
         if self.frames.len() != 1 {
             self.state = PartialState::BuildFailed;
             return Err(ReflectError::InvariantViolation {
-                invariant: "Partial::build() expects a single frame — pop until that's the case",
+                invariant: "Partial::build() expects a single frame — call end() until that's the case",
             });
         }
 
@@ -3124,14 +3222,21 @@ impl<'facet> Drop for Partial<'facet> {
                         if let Some(drop_fn) =
                             frame.shape.vtable.sized().and_then(|v| (v.drop_in_place)())
                         {
-                            unsafe { drop_fn(PtrMut::new(frame.data.as_mut_byte_ptr())) };
+                            unsafe { drop_fn(frame.data.assume_init()) };
                         }
                     }
                     // Note: we don't deallocate the inner value here because
                     // the Box's drop will handle that
                 }
-                Tracker::SmartPointerStr => {
-                    // nothing to do for now
+                Tracker::SmartPointerStr { is_initialized } => {
+                    // Drop the initialized string
+                    if *is_initialized {
+                        if let Some(drop_fn) =
+                            frame.shape.vtable.sized().and_then(|v| (v.drop_in_place)())
+                        {
+                            unsafe { drop_fn(frame.data.assume_init()) };
+                        }
+                    }
                 }
                 Tracker::SmartPointerSlice { vtable, .. } => {
                     // Free the slice builder
