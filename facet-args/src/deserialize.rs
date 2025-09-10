@@ -253,6 +253,17 @@ impl<'input, F: Format<SpanType = Raw, Input<'input> = [&'input str]>> ToCooked<
 {
     #[inline]
     fn to_cooked(self, _format: &F, input: &'input [&'input str]) -> Span<Cooked> {
+        trace!(
+            "cooking span, self.start = {}, input.len = {}",
+            self.start,
+            input.len()
+        );
+
+        if self.start == 0 && input.is_empty() {
+            // empty input
+            return Span::<Cooked>::new(0, 0);
+        }
+
         if self.start >= input.len() {
             // start points past the end of the args;
             // use byte offset = total length of whole input minus 1, len = 1
