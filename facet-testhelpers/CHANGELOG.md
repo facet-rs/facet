@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.3](https://github.com/facet-rs/facet/compare/facet-testhelpers-v0.28.2...facet-testhelpers-v0.28.3) - 2025-09-10
+
+### Other
+
+- Add stronger checks around SmartPointerStr usage
+
 ## [0.28.1](https://github.com/facet-rs/facet/compare/facet-testhelpers-v0.28.0...facet-testhelpers-v0.28.1) - 2025-08-25
 
 ### Other

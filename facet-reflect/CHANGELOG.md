@@ -6,6 +6,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.3](https://github.com/facet-rs/facet/compare/facet-reflect-v0.28.2...facet-reflect-v0.28.3) - 2025-09-10
+
+### Other
+
+- Update test snapshots for lack of color
+- Fix clippy warnings
+- Remove owo-colors dependency
+- Add stronger checks around SmartPointerStr usage
+- Allow appending to a list through begin_field/begin_list/end
+
 ## [0.28.2](https://github.com/facet-rs/facet/compare/facet-reflect-v0.28.1...facet-reflect-v0.28.2) - 2025-09-10
 
 ### Other
