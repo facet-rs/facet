@@ -4,8 +4,6 @@ use crate::trace;
 use alloc::boxed::Box;
 use core::{alloc::Layout, marker::PhantomData};
 use facet_core::{Facet, PtrConst, PtrMut, Shape};
-#[cfg(feature = "log")]
-use owo_colors::OwoColorize as _;
 
 /// A type-erased value stored on the heap
 pub struct HeapValue<'facet> {
@@ -150,9 +148,9 @@ impl Drop for Guard {
         if self.layout.size() != 0 {
             trace!(
                 "Deallocating memory at ptr: {:p}, size: {}, align: {}",
-                self.ptr.cyan(),
-                self.layout.size().yellow(),
-                self.layout.align().green()
+                self.ptr,
+                self.layout.size(),
+                self.layout.align()
             );
             // SAFETY: `ptr` has been allocated via the global allocator with the given layout
             unsafe { alloc::alloc::dealloc(self.ptr, self.layout) };

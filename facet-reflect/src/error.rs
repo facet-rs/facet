@@ -1,5 +1,4 @@
 use facet_core::{Characteristic, EnumType, FieldError, Shape, TryFromError};
-use owo_colors::OwoColorize;
 
 /// A kind-only version of Tracker
 #[allow(missing_docs)]
@@ -184,25 +183,15 @@ impl core::fmt::Display for ReflectError {
             ReflectError::NoSuchVariant { enum_type } => {
                 write!(f, "No such variant in enum. Known variants: ")?;
                 for v in enum_type.variants {
-                    write!(f, ", {}", v.name.cyan())?;
+                    write!(f, ", {}", v.name)?;
                 }
                 write!(f, ", that's it.")
             }
             ReflectError::WrongShape { expected, actual } => {
-                write!(
-                    f,
-                    "Wrong shape: expected {}, but got {}",
-                    expected.green(),
-                    actual.red()
-                )
+                write!(f, "Wrong shape: expected {}, but got {}", expected, actual)
             }
             ReflectError::WasNotA { expected, actual } => {
-                write!(
-                    f,
-                    "Wrong shape: expected {}, but got {}",
-                    expected.green(),
-                    actual.red()
-                )
+                write!(f, "Wrong shape: expected {}, but got {}", expected, actual)
             }
             ReflectError::UninitializedField { shape, field_name } => {
                 write!(f, "Field '{shape}::{field_name}' was not initialized")
@@ -215,16 +204,14 @@ impl core::fmt::Display for ReflectError {
                 write!(
                     f,
                     "Field '{}::{}' in variant '{}' was not initialized",
-                    shape.blue(),
-                    field_name.yellow(),
-                    variant_name.red()
+                    shape, field_name, variant_name
                 )
             }
             ReflectError::UninitializedValue { shape } => {
-                write!(f, "Value '{}' was not initialized", shape.blue())
+                write!(f, "Value '{}' was not initialized", shape)
             }
             ReflectError::InvariantViolation { invariant } => {
-                write!(f, "Invariant violation: {}", invariant.red())
+                write!(f, "Invariant violation: {}", invariant)
             }
             ReflectError::MissingCharacteristic {
                 shape,
@@ -234,23 +221,16 @@ impl core::fmt::Display for ReflectError {
                 "{shape} does not implement characteristic {characteristic:?}",
             ),
             ReflectError::OperationFailed { shape, operation } => {
-                write!(
-                    f,
-                    "Operation failed on shape {}: {}",
-                    shape.blue(),
-                    operation
-                )
+                write!(f, "Operation failed on shape {}: {}", shape, operation)
             }
             ReflectError::FieldError { shape, field_error } => {
-                write!(f, "Field error for shape {}: {}", shape.red(), field_error)
+                write!(f, "Field error for shape {}: {}", shape, field_error)
             }
             ReflectError::MissingPushPointee { shape } => {
                 write!(
                     f,
                     "Tried to access a field on smart pointer '{}', but you need to call {} first to work with the value it points to (and pop it with {} later)",
-                    shape.blue(),
-                    ".begin_smart_ptr()".yellow(),
-                    ".pop()".yellow()
+                    shape, ".begin_smart_ptr()", ".pop()"
                 )
             }
             ReflectError::Unknown => write!(f, "Unknown error"),
@@ -262,21 +242,18 @@ impl core::fmt::Display for ReflectError {
                 write!(
                     f,
                     "While trying to put {} into a {}: {}",
-                    src_shape.green(),
-                    dst_shape.blue(),
-                    inner.red()
+                    src_shape, dst_shape, inner
                 )
             }
             ReflectError::DefaultAttrButNoDefaultImpl { shape } => write!(
                 f,
                 "Shape '{}' has a `default` attribute but no default implementation",
-                shape.red()
+                shape
             ),
             ReflectError::Unsized { shape, operation } => write!(
                 f,
                 "Shape '{}' is unsized, can't perform operation {}",
-                shape.red(),
-                operation
+                shape, operation
             ),
             ReflectError::ArrayNotFullyInitialized {
                 shape,
@@ -286,33 +263,24 @@ impl core::fmt::Display for ReflectError {
                 write!(
                     f,
                     "Array '{}' not fully initialized: expected {} elements, but got {}",
-                    shape.blue(),
-                    expected_size,
-                    pushed_count
+                    shape, expected_size, pushed_count
                 )
             }
             ReflectError::ArrayIndexOutOfBounds { shape, index, size } => {
                 write!(
                     f,
                     "Array index {} out of bounds for '{}' (array length is {})",
-                    index,
-                    shape.blue(),
-                    size
+                    index, shape, size
                 )
             }
             ReflectError::InvalidOperation { operation, reason } => {
-                write!(f, "Invalid operation '{}': {}", operation.yellow(), reason)
+                write!(f, "Invalid operation '{}': {}", operation, reason)
             }
             ReflectError::UnexpectedTracker {
                 message,
                 current_tracker,
             } => {
-                write!(
-                    f,
-                    "{}: current tracker is {:?}",
-                    message,
-                    current_tracker.red()
-                )
+                write!(f, "{}: current tracker is {:?}", message, current_tracker)
             }
             ReflectError::NoActiveFrame => {
                 write!(f, "No active frame in Partial")

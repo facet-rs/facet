@@ -7,7 +7,6 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 
 use facet_testhelpers::test;
-use owo_colors::OwoColorize;
 
 /// Test case structure for compilation tests
 struct CompilationTest {
@@ -54,17 +53,14 @@ fn hash_source(name: &str, source: &str) -> u64 {
 
 /// Run a single compilation test that is expected to fail
 fn run_compilation_test(test: &CompilationTest) {
-    println!(
-        "{}",
-        format_args!("Running test: {}", test.name).blue().bold()
-    );
+    println!("{}", format_args!("Running test: {}", test.name));
 
     // Create a random temp directory for the Cargo project
     let temp_dir = tempfile::tempdir().expect("Failed to create temp directory");
     let project_dir = temp_dir.path();
     println!(
         "{}",
-        format_args!("  Project directory: {}", project_dir.display()).dimmed()
+        format_args!("  Project directory: {}", project_dir.display())
     );
 
     // Get absolute paths to the facet crates
@@ -102,10 +98,7 @@ facet-reflect = {{ path = {:?} }}
     // Generate a unique target directory based on the test name and source code
     let source_hash = hash_source(test.name, test.source);
     let target_dir = format!("/tmp/ui_tests/target_{source_hash}");
-    println!(
-        "{}",
-        format_args!("  Target directory: {target_dir}").dimmed()
-    );
+    println!("{}", format_args!("  Target directory: {target_dir}"));
 
     // Run cargo build
     let mut cmd = std::process::Command::new("cargo");
@@ -126,17 +119,17 @@ facet-reflect = {{ path = {:?} }}
 
     // Verify the compilation failed as expected
     if exit_code == 0 {
-        println!("{}", "❌ Test failed:".bright_red().bold());
+        println!("{}", "❌ Test failed:");
         println!(
             "{}",
-            "  The code compiled successfully, but it should have failed".red()
+            "  The code compiled successfully, but it should have failed"
         );
         panic!(
             "Test '{}' compiled successfully but should have failed",
             test.name
         );
     } else {
-        println!("{}", "  ✓ Compilation failed as expected".green());
+        println!("{}", "  ✓ Compilation failed as expected");
     }
 
     // Check for expected error messages
@@ -147,24 +140,24 @@ facet-reflect = {{ path = {:?} }}
         } else {
             println!(
                 "{}",
-                format_args!("  ✓ Found expected error: '{expected_error}'").green()
+                format_args!("  ✓ Found expected error: '{expected_error}'")
             );
         }
     }
 
     // Report any missing expected errors
     if !missing_errors.is_empty() {
-        println!("{}", "\n❌ MISSING EXPECTED ERRORS:".bright_red().bold());
+        println!("{}", "\n❌ MISSING EXPECTED ERRORS:");
         for error in &missing_errors {
-            println!("{}", format_args!("  - '{error}'").red());
+            println!("{}", format_args!("  - '{error}'"));
         }
 
         // Print the error output for debugging
-        println!("{}", "\nCompiler error output:".yellow().bold());
+        println!("{}", "\nCompiler error output:");
         println!("{stderr}");
 
         if !stdout.is_empty() {
-            println!("{}", "\nCompiler standard output:".yellow());
+            println!("{}", "\nCompiler standard output:");
             println!("{stdout}");
         }
 
@@ -174,12 +167,7 @@ facet-reflect = {{ path = {:?} }}
         );
     }
 
-    println!(
-        "{}",
-        format_args!("  ✓ Test '{}' passed", test.name)
-            .green()
-            .bold()
-    );
+    println!("{}", format_args!("  ✓ Test '{}' passed", test.name));
 }
 
 /// Test for lifetime issues in Poke implementation
