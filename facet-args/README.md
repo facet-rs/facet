@@ -31,6 +31,21 @@ Ok(())
 # }
 ```
 
+## Behavior
+
+The behavior of facet-args is still in flux, but here are the broad strokes:
+
+  * We're always parsing to a struct (not an enum, vec etc.)
+  * The struct we're parsing to is always owned — no borrowing happening here, it
+    gets too complicated with `&'slice [&'text str]`
+  * Arguments are either `positional` or `named` — fields lacking either annotation are ignored
+  * Accepted syntaxes for short flags are: `short = 'v'` and `short = "v"` (where v can be any letter)
+  * `positional` args of type `Vec` (or anything that has a `Def::List`) will soak up all the positional
+    arguments — if followed by `positional` arguments of type `String` for example, those will never
+    get filled
+  * After parsing every available argument, uninitialized struct fields are filled with their default value
+    if they have `facet(default)` set: this includes `Vec`.
+
 ## Sponsors
 
 Thanks to all individual sponsors:

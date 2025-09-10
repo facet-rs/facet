@@ -1,10 +1,10 @@
 ---
-source: tests/err.rs
+source: tests/sequence.rs
 expression: "$crate :: common :: DiagnosticDisplayWrapper(& err).to_string()"
 ---
   × Could not parse CLI arguments
    ╭────
- 1 │ --point.0 10 --point.1 20 
-   · ────┬────
-   ·     ╰── unknown long flag
+ 1 │ --foo --bar --baz 
+   ·             ──┬──
+   ·               ╰── unknown long flag
    ╰────
