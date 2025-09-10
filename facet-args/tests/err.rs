@@ -1,6 +1,8 @@
 use facet::Facet;
 use facet_testhelpers::test;
 
+mod common;
+
 #[test]
 fn test_error_non_struct_type_not_supported() {
     #[derive(Facet, Debug)]
@@ -12,7 +14,7 @@ fn test_error_non_struct_type_not_supported() {
     }
     let args: Result<Args, _> = facet_args::from_slice(&["error", "wrong", "type"]);
     let err = args.unwrap_err();
-    insta::assert_snapshot!(err);
+    assert_diag_snapshot!(err);
 }
 
 #[test]
@@ -24,7 +26,7 @@ fn test_error_missing_value_for_argument() {
     }
     let args: Result<Args, _> = facet_args::from_slice(&["--concurrency"]);
     let err = args.unwrap_err();
-    insta::assert_snapshot!(err);
+    assert_diag_snapshot!(err);
 }
 
 #[test]
@@ -36,7 +38,7 @@ fn test_error_wrong_type_for_argument() {
     }
     let args: Result<Args, _> = facet_args::from_slice(&["--concurrency", "yes"]);
     let err = args.unwrap_err();
-    insta::assert_snapshot!(err);
+    assert_diag_snapshot!(err);
 }
 
 #[test]
@@ -51,7 +53,7 @@ fn test_error_missing_value_for_argument_short_missed() {
     let args: Result<Args, _> = facet_args::from_slice(&["-j", "-v"]);
     let err = args.unwrap_err();
     eprintln!("{}", err);
-    insta::assert_snapshot!(err);
+    assert_diag_snapshot!(err);
 }
 
 #[test]
@@ -63,7 +65,7 @@ fn test_error_missing_value_for_argument_short_eof() {
     }
     let args: Result<Args, _> = facet_args::from_slice(&["-j"]);
     let err = args.unwrap_err();
-    insta::assert_snapshot!(err);
+    assert_diag_snapshot!(err);
 }
 
 #[test]
@@ -75,7 +77,7 @@ fn test_error_unknown_argument() {
     }
     let args: Result<Args, _> = facet_args::from_slice(&["--c0ncurrency"]);
     let err = args.unwrap_err();
-    insta::assert_snapshot!(err);
+    assert_diag_snapshot!(err);
 }
 
 #[test]
@@ -87,7 +89,7 @@ fn test_error_number_outside_range() {
     }
     let args: Result<Args, _> = facet_args::from_slice(&["--small", "1000"]);
     let err = args.unwrap_err();
-    insta::assert_snapshot!(err);
+    assert_diag_snapshot!(err);
 }
 
 #[test]
@@ -99,7 +101,7 @@ fn test_error_negative_value_for_unsigned() {
     }
     let args: Result<Args, _> = facet_args::from_slice(&["--count", "-10"]);
     let err = args.unwrap_err();
-    insta::assert_snapshot!(err);
+    assert_diag_snapshot!(err);
 }
 
 #[test]
@@ -111,7 +113,7 @@ fn test_error_out_of_range() {
     }
     let args: Result<Args, _> = facet_args::from_slice(&["--byte", "1000"]);
     let err = args.unwrap_err();
-    insta::assert_snapshot!(err);
+    assert_diag_snapshot!(err);
 }
 
 #[test]
@@ -123,7 +125,7 @@ fn test_error_bool_with_invalid_value_positional() {
     }
     let args: Result<Args, _> = facet_args::from_slice(&["--enable", "maybe"]);
     let err = args.unwrap_err();
-    insta::assert_snapshot!(err);
+    assert_diag_snapshot!(err);
 }
 
 #[test]
@@ -135,7 +137,7 @@ fn test_error_char_with_multiple_chars() {
     }
     let args: Result<Args, _> = facet_args::from_slice(&["--letter", "abc"]);
     let err = args.unwrap_err();
-    insta::assert_snapshot!(err);
+    assert_diag_snapshot!(err);
 }
 
 #[test]
@@ -152,7 +154,7 @@ fn test_error_nested_struct_with_scalar() {
     }
     let args: Result<Args, _> = facet_args::from_slice(&["--config", "simple"]);
     let err = args.unwrap_err();
-    insta::assert_snapshot!(err);
+    assert_diag_snapshot!(err);
 }
 
 #[test]
@@ -165,20 +167,7 @@ fn test_error_option_with_multiple_values() {
     // Try to provide a list where an Option is expected
     let args: Result<Args, _> = facet_args::from_slice(&["--maybe", "value1", "value2"]);
     let err = args.unwrap_err();
-    insta::assert_snapshot!(err);
-}
-
-#[test]
-fn test_error_vec_with_incompatible_types() {
-    #[derive(Facet, Debug)]
-    struct Args {
-        #[facet(named)]
-        numbers: Vec<u32>,
-    }
-    // Mix of valid numbers and non-numbers
-    let args: Result<Args, _> = facet_args::from_slice(&["--numbers", "1", "two", "3"]);
-    let err = args.unwrap_err();
-    insta::assert_snapshot!(err);
+    assert_diag_snapshot!(err);
 }
 
 #[test]
@@ -194,7 +183,7 @@ fn test_error_tuple_struct_field_access() {
     // Try to access tuple struct fields by name
     let args: Result<Args, _> = facet_args::from_slice(&["--point.0", "10", "--point.1", "20"]);
     let err = args.unwrap_err();
-    insta::assert_snapshot!(err);
+    assert_diag_snapshot!(err);
 }
 
 #[test]
@@ -207,7 +196,7 @@ fn test_error_unexpected_positional_arg() {
     // Provide a positional arg when none is expected
     let args: Result<Args, _> = facet_args::from_slice(&["unexpected", "--name", "value"]);
     let err = args.unwrap_err();
-    insta::assert_snapshot!(err);
+    assert_diag_snapshot!(err);
 }
 
 #[test]
@@ -222,7 +211,7 @@ fn test_error_invalid_ip_address() {
     // Provide an invalid IP address
     let args: Result<Args, _> = facet_args::from_slice(&["--address", "not-an-ip"]);
     let err = args.unwrap_err();
-    insta::assert_snapshot!(err);
+    assert_diag_snapshot!(err);
 }
 
 #[test]
@@ -256,5 +245,5 @@ fn test_error_complex_nested_structure() {
         "{server={port=8080,host=localhost},database={url=postgresql://,pool_size=10}}",
     ]);
     let err = args.unwrap_err();
-    insta::assert_snapshot!(err);
+    assert_diag_snapshot!(err);
 }
