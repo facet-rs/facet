@@ -31,6 +31,39 @@ fn test_simplest_value_singleton_list_positional() {
 }
 
 #[test]
+fn test_noargs_single_positional() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Args {
+        #[facet(positional)]
+        strings: String,
+    }
+    let err = facet_args::from_slice::<Args>(&[]).unwrap_err();
+    insta::assert_snapshot!(err);
+}
+
+#[test]
+fn test_noargs_vec_positional_default() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Args {
+        #[facet(positional, default)]
+        strings: Vec<String>,
+    }
+    let args = facet_args::from_slice::<Args>(&[]).unwrap();
+    assert!(args.strings.is_empty());
+}
+
+#[test]
+fn test_noargs_vec_positional_no_default() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Args {
+        #[facet(positional)]
+        strings: Vec<String>,
+    }
+    let err = facet_args::from_slice::<Args>(&[]).unwrap_err();
+    insta::assert_snapshot!(err);
+}
+
+#[test]
 #[ignore]
 fn test_value_singleton_list() {
     #[derive(Facet, Debug, PartialEq)]

@@ -302,7 +302,10 @@ impl core::fmt::Display for DeserError<'_> {
 
         let mut span_start = self.span.start();
         let mut span_end = self.span.end();
+        trace!("span range = {span_start}..{span_end}");
+
         use alloc::borrow::Cow;
+        use log::trace;
         let mut input_str: Cow<'_, str> = Cow::Borrowed(orig_input_str);
 
         // --- Context-sensitive truncation logic ---
