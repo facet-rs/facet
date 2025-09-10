@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.0](https://github.com/facet-rs/facet/compare/facet-kdl-v0.20.0...facet-kdl-v0.28.0) - 2025-09-10
+
+- This crate can now successfully deserialize the canon KDL example document. There
+  are still a lot of limitations, but it's now _useful_.
+
 ## [0.20.0](https://github.com/facet-rs/facet/compare/facet-kdl-v0.19.0...facet-kdl-v0.20.0) - 2025-04-29
 
 ### Other
