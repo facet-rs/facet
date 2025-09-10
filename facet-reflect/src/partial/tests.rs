@@ -1083,6 +1083,37 @@ fn list_vec_reinit() -> Result<(), IPanic> {
 }
 
 #[test]
+fn list_vec_field_reinit() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct S {
+        s: Vec<i32>,
+    }
+
+    let mut p = Partial::alloc::<S>()?;
+    p.begin_field("s")?;
+    p.begin_list()?;
+    p.push(1)?;
+    p.push(2)?;
+    p.end()?; // the field
+    p.begin_field("s")?;
+    p.begin_list()?;
+    p.push(3)?;
+    p.push(4)?;
+    p.end()?; // the field
+
+    let hv = p.build()?;
+    let s = hv.as_ref();
+    assert_eq!(
+        s,
+        &S {
+            s: vec![1, 2, 3, 4]
+        }
+    );
+
+    Ok(())
+}
+
+#[test]
 fn list_wrong_begin_list() -> Result<(), IPanic> {
     let mut hv = Partial::alloc::<HashMap<String, i32>>()?;
     assert!(
