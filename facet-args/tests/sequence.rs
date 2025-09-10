@@ -2,6 +2,35 @@ use facet::Facet;
 use facet_testhelpers::test;
 
 #[test]
+fn test_simplest_value_singleton_list_named() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Args {
+        #[facet(named, short = "s")]
+        strings: Vec<String>,
+    }
+
+    // Test with multiple values (no delimiters)
+    let args_single: Args =
+        facet_args::from_slice(&["-s", "joe", "-s", "le", "-s", "rigolo"]).unwrap();
+
+    assert_eq!(args_single.strings, vec!["joe", "le", "rigolo"]);
+}
+
+#[test]
+fn test_simplest_value_singleton_list_positional() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Args {
+        #[facet(positional)]
+        strings: Vec<String>,
+    }
+
+    // Test with multiple values (no delimiters)
+    let args_single: Args = facet_args::from_slice(&["joe", "le", "rigolo"]).unwrap();
+
+    assert_eq!(args_single.strings, vec!["joe", "le", "rigolo"]);
+}
+
+#[test]
 #[ignore]
 fn test_value_singleton_list() {
     #[derive(Facet, Debug, PartialEq)]

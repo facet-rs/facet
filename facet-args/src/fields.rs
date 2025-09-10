@@ -1,6 +1,7 @@
 use alloc::borrow::Cow;
 use alloc::string::ToString;
-use facet_core::{FieldAttribute, Shape, Type, UserType};
+use facet_core::{Def, FieldAttribute, Shape, Type, UserType};
+use log::trace;
 
 use crate::deserialize::{
     DeserErrorKind, Outcome, Raw, Scalar, Span, Spanned, Subspan, SubspanMeta,
@@ -28,16 +29,21 @@ pub(crate) fn find_positional_field<'facet>(
     shape: &'static Shape,
     wip: &Partial<'facet>,
 ) -> Result<&'static str, DeserErrorKind> {
+    trace!("attempting to find positional field for shape {shape:?}");
+
     if let Type::User(UserType::Struct(st)) = &shape.ty {
         for (idx, field) in st.fields.iter().enumerate() {
             for attr in field.attributes.iter() {
                 let FieldAttribute::Arbitrary(a) = attr;
                 if a.contains("positional") {
-                    // Check if this field is already set
                     let is_set = wip.is_field_set(idx).unwrap_or(false);
-                    if !is_set {
-                        return Ok(field.name);
+                    if matches!(field.shape.def, Def::List(_)) {
+                        // we can always append to a list
+                    } else if is_set {
+                        trace!("got field at {idx} but it's set");
+                        continue;
                     }
+                    return Ok(field.name);
                 }
             }
         }

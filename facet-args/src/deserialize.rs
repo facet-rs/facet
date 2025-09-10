@@ -1348,12 +1348,15 @@ where
     {
         match scalar {
             Scalar::String(cow) => {
+                trace!("parsed string, probing innermost type");
                 match wip.innermost_shape().ty {
                     Type::User(UserType::Enum(_)) => {
                         if wip.selected_variant().is_some() {
+                            trace!("has enum with variant selected, setting");
                             // If we already have a variant selected, just put the string
                             wip.set(cow).map_err(|e| self.reflect_err(e))?;
                         } else {
+                            trace!("has enum without selected variant");
                             // Try to select the variant
                             match wip.find_variant(&cow) {
                                 Some((variant_index, _)) => {
@@ -1372,6 +1375,8 @@ where
                     Type::Pointer(PointerType::Reference(_))
                         if wip.innermost_shape().is_type::<&str>() =>
                     {
+                        trace!("handling &str");
+
                         // This is for handling the &str type
                         // The Cow may be Borrowed (we may have an owned string but need a &str)
                         match cow {
@@ -1382,7 +1387,10 @@ where
                     _ => {
                         // Check if this is a scalar type that can be parsed from a string
                         let shape = wip.innermost_shape();
+
                         if matches!(shape.def, Def::Scalar) {
+                            trace!("is scalar, trying parse");
+
                             // Try parse_from_str for scalar types that might parse from strings
                             // (like IpAddr, UUID, Path, etc.)
                             match wip.parse_from_str(cow.as_ref()) {
@@ -1413,7 +1421,18 @@ where
                                     }
                                 }
                             }
+                        } else if matches!(shape.def, Def::List(_)) {
+                            trace!("is list, trying push");
+
+                            wip.begin_list()
+                                .map_err(|e| self.reflect_err(e))?
+                                .push(cow.to_string())
+                                .map_err(|e| self.reflect_err(e))?;
                         } else {
+                            trace!(
+                                "def was not a scalar, try to set as string (will probably fail)"
+                            );
+
                             // Not a scalar, just set as String
                             wip.set(cow.to_string()).map_err(|e| self.reflect_err(e))?;
                         }

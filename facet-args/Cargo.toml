@@ -11,8 +11,8 @@ keywords = ["cli", "args", "parser", "facet"]
 categories = ["command-line-interface"]
 
 [dependencies]
-facet-reflect = { version = "0.28.0" }
-facet-core = { version = "0.28.0" }
+facet-reflect = { version = "0.28.3" }
+facet-core = { version = "0.28.3" }
 log = "0.4.27"
 owo-colors = "4.2.2"
 ariadne = { version = "0.5.1", optional = true }
@@ -22,7 +22,7 @@ cargo-husky = { version = "1.5.0", default-features = false, features = [
     "user-hooks",
 ] }
 eyre = "0.6.12"
-facet = { version = "0.28.0" }
+facet = { version = "0.28.3" }
 facet-pretty = { version = "0.28.0" }
 facet-testhelpers = { version = "0.28" }
 insta = "1.43.1"
