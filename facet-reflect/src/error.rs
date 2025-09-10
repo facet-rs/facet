@@ -1,7 +1,23 @@
 use facet_core::{Characteristic, EnumType, FieldError, Shape, TryFromError};
 use owo_colors::OwoColorize;
 
-use crate::TrackerKind;
+/// A kind-only version of Tracker
+#[allow(missing_docs)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[non_exhaustive]
+pub enum TrackerKind {
+    Uninit,
+    Init,
+    Array,
+    Struct,
+    SmartPointer,
+    SmartPointerStr,
+    SmartPointerSlice,
+    Enum,
+    List,
+    Map,
+    Option,
+}
 
 /// Errors that can occur when reflecting on types.
 #[derive(Clone)]
