@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.28.1](https://github.com/facet-rs/facet-args/compare/v0.28.0...v0.28.1) - 2025-09-10
+
+### Other
+
+- Upgrade log and insta packages
+- Add very basic support for positional Vecs
+
 ## [0.28.0](https://github.com/facet-rs/facet-args/compare/v0.19.18...v0.28.0) - 2025-07-25
 
 ### Other
