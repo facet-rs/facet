@@ -982,6 +982,7 @@ impl<'facet> Partial<'facet> {
                         });
                     }
                     let field = &struct_type.fields[idx];
+                    let mut is_field_init = false;
 
                     match &mut frame.tracker {
                         Tracker::Uninit => {
@@ -996,15 +997,7 @@ impl<'facet> Partial<'facet> {
                         } => {
                             // Check if this field was already initialized
                             if iset.get(idx) {
-                                // Drop the existing value before re-initializing
-                                let field_ptr = unsafe { frame.data.field_init_at(field.offset) };
-                                if let Some(drop_fn) =
-                                    field.shape.vtable.sized().and_then(|v| (v.drop_in_place)())
-                                {
-                                    unsafe { drop_fn(field_ptr) };
-                                }
-                                // Unset the bit so we can re-initialize
-                                iset.unset(idx);
+                                is_field_init = true;
                             }
                             *current_child = Some(idx);
                         }
@@ -1014,8 +1007,11 @@ impl<'facet> Partial<'facet> {
                     // Push a new frame for this field onto the frames stack.
                     let field_ptr = unsafe { frame.data.field_uninit_at(field.offset) };
                     let field_shape = field.shape;
-                    self.frames
-                        .push(Frame::new(field_ptr, field_shape, FrameOwnership::Field));
+                    let mut next_frame = Frame::new(field_ptr, field_shape, FrameOwnership::Field);
+                    if is_field_init {
+                        next_frame.tracker = Tracker::Init;
+                    }
+                    self.frames.push(next_frame);
 
                     Ok(self)
                 }
@@ -1377,6 +1373,14 @@ impl<'facet> Partial<'facet> {
         match &frame.tracker {
             Tracker::Uninit => {
                 // that's good, let's initialize it
+            }
+            Tracker::Init => {
+                // initialized (perhaps from a previous round?) but should be a list tracker, let's fix that:
+                frame.tracker = Tracker::List {
+                    is_initialized: true,
+                    current_child: false,
+                };
+                return Ok(self);
             }
             Tracker::List { is_initialized, .. } => {
                 if *is_initialized {
