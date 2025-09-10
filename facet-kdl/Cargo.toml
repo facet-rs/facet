@@ -16,7 +16,7 @@ alloc = ["facet-core/alloc", "facet-reflect/alloc"]
 default = ["std"]
 
 [dependencies]
-log = "0.4.27"
+log = "0.4.28"
 facet-core = { version = "0.28", default-features = false }
 facet-reflect = { version = "0.28", default-features = false }
 kdl = "6.3.4"
