@@ -1,6 +1,8 @@
 use facet_core::{Characteristic, EnumType, FieldError, Shape, TryFromError};
 use owo_colors::OwoColorize;
 
+use crate::TrackerKind;
+
 /// Errors that can occur when reflecting on types.
 #[derive(Clone)]
 pub enum ReflectError {
@@ -146,6 +148,16 @@ pub enum ReflectError {
         reason: &'static str,
     },
 
+    /// Unexpected tracker state when performing a reflection operation
+    UnexpectedTracker {
+        /// User-friendly message including operation that was being
+        /// attempted
+        message: &'static str,
+
+        /// The current tracker set for this frame
+        current_tracker: TrackerKind,
+    },
+
     /// No active frame in Partial
     NoActiveFrame,
 }
@@ -274,6 +286,17 @@ impl core::fmt::Display for ReflectError {
             }
             ReflectError::InvalidOperation { operation, reason } => {
                 write!(f, "Invalid operation '{}': {}", operation.yellow(), reason)
+            }
+            ReflectError::UnexpectedTracker {
+                message,
+                current_tracker,
+            } => {
+                write!(
+                    f,
+                    "{}: current tracker is {:?}",
+                    message,
+                    current_tracker.red()
+                )
             }
             ReflectError::NoActiveFrame => {
                 write!(f, "No active frame in Partial")

@@ -279,6 +279,42 @@ enum Tracker {
     },
 }
 
+/// A kind-only version of Tracker
+#[allow(missing_docs)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[non_exhaustive]
+pub enum TrackerKind {
+    Uninit,
+    Init,
+    Array,
+    Struct,
+    SmartPointer,
+    SmartPointerStr,
+    SmartPointerSlice,
+    Enum,
+    List,
+    Map,
+    Option,
+}
+
+impl Tracker {
+    fn kind(&self) -> TrackerKind {
+        match self {
+            Tracker::Uninit => TrackerKind::Uninit,
+            Tracker::Init => TrackerKind::Init,
+            Tracker::Array { .. } => TrackerKind::Array,
+            Tracker::Struct { .. } => TrackerKind::Struct,
+            Tracker::SmartPointer { .. } => TrackerKind::SmartPointer,
+            Tracker::SmartPointerStr => TrackerKind::SmartPointerStr,
+            Tracker::SmartPointerSlice { .. } => TrackerKind::SmartPointerSlice,
+            Tracker::Enum { .. } => TrackerKind::Enum,
+            Tracker::List { .. } => TrackerKind::List,
+            Tracker::Map { .. } => TrackerKind::Map,
+            Tracker::Option { .. } => TrackerKind::Option,
+        }
+    }
+}
+
 impl Frame {
     fn new(data: PtrUninit<'static>, shape: &'static Shape, ownership: FrameOwnership) -> Self {
         // For empty structs (structs with 0 fields), start as Init since there's nothing to initialize
@@ -1344,20 +1380,39 @@ impl<'facet> Partial<'facet> {
         }
     }
 
-    /// Begins a pushback operation for a list (Vec, etc.)
-    /// This initializes the list with default capacity and allows pushing elements
+    /// Initializes a list (Vec, etc.) if it hasn't been initialized before.
+    /// This is a prerequisite to `begin_push_item`/`set`/`end` or the shorthand
+    /// `push`.
+    ///
+    /// `begin_list` does not clear the list if it was previously initialized.
+    /// `begin_list` does not push a new frame to the stack, and thus does not
+    /// require `end` to be called afterwards.
     pub fn begin_list(&mut self) -> Result<&mut Self, ReflectError> {
         crate::trace!("begin_list()");
         self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
 
-        // Check if we're in a SmartPointerSlice state - if so, the list is already initialized
-        if matches!(frame.tracker, Tracker::SmartPointerSlice { .. }) {
-            crate::trace!(
-                "begin_list is kinda superfluous when we're in a SmartPointerSlice state"
-            );
-            return Ok(self);
-        }
+        match &frame.tracker {
+            Tracker::Uninit => {
+                // that's good, let's initialize it
+            }
+            Tracker::List { is_initialized, .. } => {
+                if *is_initialized {
+                    // already initialized, nothing to do
+                    return Ok(self);
+                }
+            }
+            Tracker::SmartPointerSlice { .. } => {
+                // begin_list is kinda superfluous when we're in a SmartPointerSlice state
+                return Ok(self);
+            }
+            _ => {
+                return Err(ReflectError::UnexpectedTracker {
+                    message: "begin_list called but tracker isn't something list-like",
+                    current_tracker: frame.tracker.kind(),
+                });
+            }
+        };
 
         // Check that we have a List
         let list_def = match &frame.shape.def {
@@ -1365,7 +1420,7 @@ impl<'facet> Partial<'facet> {
             _ => {
                 return Err(ReflectError::OperationFailed {
                     shape: frame.shape,
-                    operation: "begin_pushback can only be called on List types",
+                    operation: "begin_list can only be called on List types",
                 });
             }
         };
@@ -1705,7 +1760,7 @@ impl<'facet> Partial<'facet> {
             _ => {
                 return Err(ReflectError::OperationFailed {
                     shape: frame.shape,
-                    operation: "must call begin_pushback() before push()",
+                    operation: "must call begin_list() before push()",
                 });
             }
         }
@@ -2807,43 +2862,43 @@ impl<'facet, T> TypedPartial<'facet, T> {
         Ok(self)
     }
 
-    /// Forwards begin_field to the inner partial instance.
+    /// See [Partial::begin_field]
     pub fn begin_field(&mut self, field_name: &str) -> Result<&mut Self, ReflectError> {
         self.inner.begin_field(field_name)?;
         Ok(self)
     }
 
-    /// Forwards begin_nth_field to the inner partial instance.
+    /// See [Partial::begin_nth_field]
     pub fn begin_nth_field(&mut self, idx: usize) -> Result<&mut Self, ReflectError> {
         self.inner.begin_nth_field(idx)?;
         Ok(self)
     }
 
-    /// Forwards begin_nth_element to the inner partial instance.
+    /// See [Partial::begin_nth_element]
     pub fn begin_nth_element(&mut self, idx: usize) -> Result<&mut Self, ReflectError> {
         self.inner.begin_nth_element(idx)?;
         Ok(self)
     }
 
-    /// Forwards begin_smart_ptr to the inner partial instance.
+    /// See [Partial::begin_smart_ptr]
     pub fn begin_smart_ptr(&mut self) -> Result<&mut Self, ReflectError> {
         self.inner.begin_smart_ptr()?;
         Ok(self)
     }
 
-    /// Forwards end to the inner partial instance.
+    /// See [Partial::end]
     pub fn end(&mut self) -> Result<&mut Self, ReflectError> {
         self.inner.end()?;
         Ok(self)
     }
 
-    /// Forwards set_default to the inner partial instance.
+    /// See [Partial::set_default]
     pub fn set_default(&mut self) -> Result<&mut Self, ReflectError> {
         self.inner.set_default()?;
         Ok(self)
     }
 
-    /// Forwards set_from_function to the inner partial instance.
+    /// See [Partial::set_from_function]
     pub fn set_from_function<F>(&mut self, f: F) -> Result<&mut Self, ReflectError>
     where
         F: FnOnce(PtrUninit<'_>) -> Result<(), ReflectError>,
@@ -2852,61 +2907,61 @@ impl<'facet, T> TypedPartial<'facet, T> {
         Ok(self)
     }
 
-    /// Forwards parse_from_str to the inner partial instance.
+    /// See [Partial::parse_from_str]
     pub fn parse_from_str(&mut self, s: &str) -> Result<&mut Self, ReflectError> {
         self.inner.parse_from_str(s)?;
         Ok(self)
     }
 
-    /// Forwards begin_variant to the inner partial instance.
+    /// See [Partial::select_variant]
     pub fn select_variant(&mut self, discriminant: i64) -> Result<&mut Self, ReflectError> {
         self.inner.select_variant(discriminant)?;
         Ok(self)
     }
 
-    /// Forwards begin_variant_named to the inner partial instance.
+    /// See [Partial::select_variant_named]
     pub fn select_variant_named(&mut self, variant_name: &str) -> Result<&mut Self, ReflectError> {
         self.inner.select_variant_named(variant_name)?;
         Ok(self)
     }
 
-    /// Forwards select_nth_variant to the inner partial instance.
+    /// See [Partial::select_nth_variant] to the inner partial instance.
     pub fn select_nth_variant(&mut self, index: usize) -> Result<&mut Self, ReflectError> {
         self.inner.select_nth_variant(index)?;
         Ok(self)
     }
 
-    /// Forwards begin_nth_enum_field to the inner partial instance.
+    /// See [Partial::begin_nth_enum_field] to the inner partial instance.
     pub fn begin_nth_enum_field(&mut self, idx: usize) -> Result<&mut Self, ReflectError> {
         self.inner.begin_nth_enum_field(idx)?;
         Ok(self)
     }
 
-    /// Forwards begin_list to the inner partial instance.
+    /// See [Partial::begin_list]
     pub fn begin_list(&mut self) -> Result<&mut Self, ReflectError> {
         self.inner.begin_list()?;
         Ok(self)
     }
 
-    /// Forwards begin_list_item to the inner partial instance.
+    /// See [Partial::begin_list_item]
     pub fn begin_list_item(&mut self) -> Result<&mut Self, ReflectError> {
         self.inner.begin_list_item()?;
         Ok(self)
     }
 
-    /// Forwards begin_map to the inner partial instance.
+    /// See [Partial::begin_map]
     pub fn begin_map(&mut self) -> Result<&mut Self, ReflectError> {
         self.inner.begin_map()?;
         Ok(self)
     }
 
-    /// Forwards begin_key to the inner partial instance.
+    /// See [Partial::begin_key]
     pub fn begin_key(&mut self) -> Result<&mut Self, ReflectError> {
         self.inner.begin_key()?;
         Ok(self)
     }
 
-    /// Forwards begin_value to the inner partial instance.
+    /// See [Partial::begin_value]
     pub fn begin_value(&mut self) -> Result<&mut Self, ReflectError> {
         self.inner.begin_value()?;
         Ok(self)
@@ -2977,7 +3032,7 @@ impl<'facet, T> TypedPartial<'facet, T> {
         Ok(self)
     }
 
-    /// Shorthand for: begin_list_item(), set, end
+    /// Shorthand for: begin_list_item(), set(), end(), useful when pushing a scalar
     pub fn push<U>(&mut self, value: U) -> Result<&mut Self, ReflectError>
     where
         U: Facet<'facet>,
@@ -2986,7 +3041,7 @@ impl<'facet, T> TypedPartial<'facet, T> {
         Ok(self)
     }
 
-    /// Begin building the Some variant of an Option
+    /// Begin building the `Some` variant of an `Option`
     pub fn begin_some(&mut self) -> Result<&mut Self, ReflectError> {
         self.inner.begin_some()?;
         Ok(self)
