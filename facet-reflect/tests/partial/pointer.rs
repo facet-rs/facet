@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use facet::Facet;
 use facet_reflect::Partial;
-use facet_testhelpers::test;
+use facet_testhelpers::{IPanic, test};
 
 #[derive(Debug, PartialEq, Facet)]
 struct Inner {
@@ -98,10 +98,19 @@ fn arc_str_begin_smart_ptr_bad_1() {
 }
 
 #[test]
-fn arc_str_begin_smart_ptr_bad_2() {
+fn arc_str_begin_smart_ptr_bad_2a() {
     let mut partial = Partial::alloc::<Arc<str>>().unwrap();
     partial.begin_smart_ptr().unwrap();
     let _err = partial.build().unwrap_err();
+    #[cfg(not(miri))]
+    insta::assert_snapshot!(_err);
+}
+
+#[test]
+fn arc_str_begin_smart_ptr_bad_2b() {
+    let mut partial = Partial::alloc::<Arc<str>>().unwrap();
+    partial.begin_smart_ptr().unwrap();
+    let _err = partial.end().unwrap_err();
     #[cfg(not(miri))]
     insta::assert_snapshot!(_err);
 }
@@ -117,7 +126,7 @@ fn arc_str_begin_smart_ptr_bad_3() {
 }
 
 #[test]
-fn rc_str_begin_smart_ptr() {
+fn rc_str_begin_smart_ptr_once() {
     use std::rc::Rc;
     let mut partial = Partial::alloc::<Rc<str>>().unwrap();
     partial.begin_smart_ptr().unwrap();
@@ -125,6 +134,28 @@ fn rc_str_begin_smart_ptr() {
     partial.end().unwrap();
     let built = *partial.build().unwrap();
     assert_eq!(&*built, "foobar");
+}
+
+#[test]
+fn rc_str_begin_smart_ptr_twice() -> Result<(), IPanic> {
+    use std::rc::Rc;
+    let mut partial = Partial::alloc::<Rc<str>>()?;
+
+    eprintln!("==== first go");
+    partial.begin_smart_ptr()?;
+    partial.set(String::from("foobar"))?;
+    partial.end()?;
+
+    eprintln!("==== second go");
+    partial.begin_smart_ptr()?;
+    partial.set(String::from("barbaz"))?;
+    partial.end()?;
+
+    eprintln!("==== build");
+    let built = *partial.build()?;
+    assert_eq!(&*built, "barbaz");
+
+    Ok(())
 }
 
 #[test]

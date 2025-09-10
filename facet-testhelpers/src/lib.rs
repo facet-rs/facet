@@ -49,3 +49,18 @@ pub fn setup() {
     log::set_boxed_logger(logger).unwrap();
     log::set_max_level(LevelFilter::Trace);
 }
+
+/// An error type that panics when it's built (such as when you use `?`
+/// to coerce to it)
+#[derive(Debug)]
+pub struct IPanic;
+
+impl<E> From<E> for IPanic
+where
+    E: core::error::Error + Send + Sync,
+{
+    #[track_caller]
+    fn from(value: E) -> Self {
+        panic!("from: {}: {value}", core::panic::Location::caller())
+    }
+}
