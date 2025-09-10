@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use facet::Facet;
 use facet_testhelpers::test;
 
@@ -1049,6 +1051,47 @@ fn list_vec_nested() {
         .unwrap();
     let vec: &Vec<Vec<i32>> = hv.as_ref();
     assert_eq!(vec, &vec![vec![1, 2], vec![3, 4, 5]]);
+}
+
+#[derive(Debug)]
+struct IPanic;
+
+impl<E> From<E> for IPanic
+where
+    E: core::error::Error + Send + Sync,
+{
+    #[track_caller]
+    fn from(value: E) -> Self {
+        panic!("from: {}: {value}", core::panic::Location::caller())
+    }
+}
+
+#[test]
+fn list_vec_reinit() -> Result<(), IPanic> {
+    let mut p = Partial::alloc::<Vec<i32>>()?;
+    p.begin_list()?;
+    p.push(1)?;
+    p.push(2)?;
+    p.begin_list()?;
+    p.push(3)?;
+    p.push(4)?;
+    let hv = p.build()?;
+    let vec: &Vec<i32> = hv.as_ref();
+    assert_eq!(vec, &vec![1, 2, 3, 4]);
+
+    Ok(())
+}
+
+#[test]
+fn list_wrong_begin_list() -> Result<(), IPanic> {
+    let mut hv = Partial::alloc::<HashMap<String, i32>>()?;
+    assert!(
+        hv.begin_list()
+            .unwrap_err()
+            .to_string()
+            .contains("begin_list can only be called on List types")
+    );
+    Ok(())
 }
 
 #[test]
