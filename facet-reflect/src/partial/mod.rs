@@ -543,7 +543,7 @@ impl Frame {
 
         // Now, deallocate temporary String allocation if necessary
         if let FrameOwnership::Owned = self.ownership {
-            if let Ok(layout) = String::SHAPE.layout.sized_layout() {
+            if let Ok(layout) = self.shape.layout.sized_layout() {
                 if layout.size() > 0 {
                     unsafe { alloc::alloc::dealloc(self.data.as_mut_byte_ptr(), layout) };
                 }
