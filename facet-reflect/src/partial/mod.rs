@@ -194,6 +194,7 @@ enum FrameOwnership {
 /// A frame can point to a complex data structure, like a struct or an enum:
 /// it keeps track of whether a variant was selected, which fields are initialized,
 /// etc. and is able to drop & deinitialize
+#[must_use]
 struct Frame {
     /// Address of the value being initialized
     data: PtrUninit<'static>,
