@@ -79,917 +79,14 @@ impl<'facet> Partial<'facet> {
     pub fn frame_count(&self) -> usize {
         self.frames.len()
     }
-}
 
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// `Set` and set helpers
-////////////////////////////////////////////////////////////////////////////////////////////////////
-impl<'facet> Partial<'facet> {
-    /// Sets a value wholesale into the current frame.
-    ///
-    /// If the current frame was already initialized, the previous value is
-    /// dropped. If it was partially initialized, the fields that were initialized
-    /// are dropped, etc.
-    pub fn set<U>(&mut self, value: U) -> Result<&mut Self, ReflectError>
-    where
-        U: Facet<'facet>,
-    {
-        self.require_active()?;
-
-        let ptr_const = PtrConst::new(&raw const value);
-        unsafe {
-            // Safety: We are calling set_shape with a valid shape and a valid pointer
-            self.set_shape(ptr_const, U::SHAPE)?
-        };
-
-        // Prevent the value from being dropped since we've copied it
-        core::mem::forget(value);
-
-        Ok(self)
-    }
-
-    /// Sets a value into the current frame by [PtrConst] / [Shape].
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure that `src_value` points to a valid instance of a value
-    /// whose memory layout and type matches `src_shape`, and that this value can be
-    /// safely copied (bitwise) into the destination specified by the Partial's current frame.
-    ///
-    /// After a successful call, the ownership of the value at `src_value` is effectively moved
-    /// into the Partial (i.e., the destination), and the original value should not be used
-    /// or dropped by the caller; you should use `core::mem::forget` on the passed value.
-    ///
-    /// If an error is returned, the destination remains unmodified and safe for future operations.
+    /// Returns the shape of the current frame.
     #[inline]
-    pub unsafe fn set_shape(
-        &mut self,
-        src_value: PtrConst<'_>,
-        src_shape: &'static Shape,
-    ) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
-
-        let fr = self.frames.last_mut().unwrap();
-        crate::trace!("set_shape({src_shape:?})");
-
-        if !fr.shape.is_shape(src_shape) {
-            return Err(ReflectError::WrongShape {
-                expected: fr.shape,
-                actual: src_shape,
-            });
-        }
-
-        fr.deinit();
-
-        // SAFETY: `fr.shape` and `src_shape` are the same, so they have the same size,
-        // and the preconditions for this function are that `src_value` is fully intialized.
-        unsafe {
-            // unwrap safety: the only failure condition for copy_from is that shape is unsized,
-            // which is not possible for `Partial`
-            fr.data.copy_from(src_value, fr.shape).unwrap();
-        }
-
-        // SAFETY: if we reached this point, `fr.data` is correctly initialized
-        unsafe {
-            fr.mark_as_init();
-        }
-
-        Ok(self)
-    }
-
-    /// Sets the current frame using a function that initializes the value
-    ///
-    /// # Safety
-    ///
-    /// If `f` returns Ok(), it is assumed that it initialized the passed pointer fully and with a
-    /// value of the right type.
-    ///
-    /// If `f` returns Err(), it is assumed that it did NOT initialize the passed pointer and that
-    /// there is no need to drop it in place.
-    pub unsafe fn set_from_function<F>(&mut self, f: F) -> Result<&mut Self, ReflectError>
-    where
-        F: FnOnce(PtrUninit<'_>) -> Result<(), ReflectError>,
-    {
-        self.require_active()?;
-        let frame = self.frames.last_mut().unwrap();
-
-        frame.deinit();
-        f(frame.data)?;
-
-        // safety: `f()` returned Ok, so `frame.data` must be initialized
-        unsafe {
-            frame.mark_as_init();
-        }
-
-        Ok(self)
-    }
-
-    /// Sets the current frame to its default value using `default_in_place` from the
-    /// vtable.
-    ///
-    /// Note: if you have `struct S { field: F }`, and `F` does not implement `Default`
-    /// but `S` does, this doesn't magically uses S's `Default` implementation to get a value
-    /// for `field`.
-    ///
-    /// If the current frame's shape does not implement `Default`, then this returns an error.
-    #[inline]
-    pub fn set_default(&mut self) -> Result<&mut Self, ReflectError> {
-        let frame = self.frames.last().unwrap();
-
-        let Some(default_fn) = (frame.shape.vtable.sized().unwrap().default_in_place)() else {
-            return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
-                operation: "type does not implement Default",
-            });
-        };
-
-        // SAFETY: `default_fn` fully initializes the passed pointer. we took it
-        // from the vtable of `frame.shape`.
-        unsafe {
-            self.set_from_function(move |ptr| {
-                default_fn(ptr);
-                Ok(())
-            })
-        }
-    }
-
-    /// Parses a string value into the current frame using the type's ParseFn from the vtable.
-    ///
-    /// If the current frame was previously initialized, its contents are dropped in place.
-    pub fn parse_from_str(&mut self, s: &str) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
-
-        let frame = self.frames.last_mut().unwrap();
-
-        // Check if the type has a parse function
-        let Some(parse_fn) = (frame.shape.vtable.sized().unwrap().parse)() else {
-            return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
-                operation: "Type does not support parsing from string",
-            });
-        };
-
-        // Note: deinit leaves us in `Tracker::Uninit` state which is valid even if we error out.
-        frame.deinit();
-
-        // Parse the string value using the type's parse function
-        let result = unsafe { parse_fn(s, frame.data) };
-        if let Err(_pe) = result {
-            // TODO: can we propagate the ParseError somehow?
-            return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
-                operation: "Failed to parse string value",
-            });
-        }
-
-        // SAFETY: `parse_fn` returned `Ok`, so `frame.data` is fully initialized now.
-        unsafe {
-            frame.mark_as_init();
-        }
-        Ok(self)
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// Enum variant selection
-////////////////////////////////////////////////////////////////////////////////////////////////////
-impl<'facet> Partial<'facet> {
-    /// Assuming the current frame is an enum, this selects a variant by index
-    /// (0-based, in declaration order).
-    ///
-    /// For example:
-    ///
-    /// ```rust,no_run
-    /// enum E { A, B, C }
-    /// ```
-    ///
-    /// Calling `select_nth_variant(2)` would select variant `C`.
-    ///
-    /// This will return an error if the current frame is anything other than fully-uninitialized.
-    /// In other words, it's not possible to "switch to a different variant" once you've selected one.
-    ///
-    /// This does _not_ push a frame on the stack.
-    pub fn select_nth_variant(&mut self, index: usize) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
-
-        let frame = self.frames.last().unwrap();
-        let enum_type = frame.get_enum_type()?;
-
-        if index >= enum_type.variants.len() {
-            return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
-                operation: "variant index out of bounds",
-            });
-        }
-        let variant = &enum_type.variants[index];
-
-        self.select_variant_internal(&enum_type, variant)?;
-        Ok(self)
-    }
-
-    /// Pushes a variant for enum initialization by name
-    ///
-    /// See [Self::select_nth_variant] for more notes.
-    pub fn select_variant_named(&mut self, variant_name: &str) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
-
-        let frame = self.frames.last_mut().unwrap();
-        let enum_type = frame.get_enum_type()?;
-
-        let Some(variant) = enum_type.variants.iter().find(|v| v.name == variant_name) else {
-            return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
-                operation: "No variant found with the given name",
-            });
-        };
-
-        self.select_variant_internal(&enum_type, variant)?;
-        Ok(self)
-    }
-
-    /// Selects a given enum variant by discriminant. If none of the variants
-    /// of the frame's enum have that discriminant, this returns an error.
-    ///
-    /// See [Self::select_nth_variant] for more notes.
-    pub fn select_variant(&mut self, discriminant: i64) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
-
-        // Check all invariants early before making any changes
-        let frame = self.frames.last().unwrap();
-
-        // Check that we're dealing with an enum
-        let enum_type = match frame.shape.ty {
-            Type::User(UserType::Enum(e)) => e,
-            _ => {
-                return Err(ReflectError::WasNotA {
-                    expected: "enum",
-                    actual: frame.shape,
-                });
-            }
-        };
-
-        // Find the variant with the matching discriminant
-        let Some(variant) = enum_type
-            .variants
-            .iter()
-            .find(|v| v.discriminant == Some(discriminant))
-        else {
-            return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
-                operation: "No variant found with the given discriminant",
-            });
-        };
-
-        // Update the frame tracker to select the variant
-        self.select_variant_internal(&enum_type, variant)?;
-
-        Ok(self)
-    }
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// Fields
-////////////////////////////////////////////////////////////////////////////////////////////////////
-impl<'facet> Partial<'facet> {
-    /// Selects a field (by name) of a struct or enum data.
-    ///
-    /// For enums, the variant needs to be selected first, see [Self::select_nth_variant]
-    /// and friends.
-    pub fn begin_field(&mut self, field_name: &str) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
-
-        let frame = self.frames.last().unwrap();
-        let fields = self.get_fields()?;
-        let Some(idx) = fields.iter().position(|f| f.name == field_name) else {
-            return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
-                operation: "field not found",
-            });
-        };
-        self.begin_nth_field(idx)
-    }
-
-    /// Begins the nth field of a struct, enum variant, or array, by index.
-    ///
-    /// On success, this pushes a new frame which must be ended with a call to [Partial::end]
-    pub fn begin_nth_field(&mut self, idx: usize) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
-        let frame = self.frames.last_mut().unwrap();
-
-        let next_frame = match frame.shape.ty {
-            Type::User(user_type) => match user_type {
-                UserType::Struct(struct_type) => {
-                    Self::begin_nth_struct_field(frame, struct_type, idx)?;
-                }
-                UserType::Enum(_) => {
-                    // Check if we have a variant selected
-                    match &frame.tracker {
-                        Tracker::Enum { variant, .. } => {
-                            if idx >= variant.data.fields.len() {
-                                return Err(ReflectError::OperationFailed {
-                                    shape: frame.shape,
-                                    operation: "enum field index out of bounds",
-                                });
-                            }
-                            self.begin_nth_enum_field(idx)
-                        }
-                        _ => Err(ReflectError::OperationFailed {
-                            shape: frame.shape,
-                            operation: "must call select_variant before selecting enum fields",
-                        }),
-                    }
-                }
-                UserType::Union(_) => Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
-                    operation: "cannot select a field from a union",
-                }),
-                UserType::Opaque => Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
-                    operation: "cannot select a field from an opaque type",
-                }),
-            },
-            Type::Sequence(sequence_type) => match sequence_type {
-                SequenceType::Array(array_type) => {
-                    Self::begin_nth_array_element(frame, array_type, idx)?
-                }
-                SequenceType::Slice(_) => {
-                    return Err(ReflectError::OperationFailed {
-                        shape: frame.shape,
-                        operation: "cannot select a field from slices yet",
-                    });
-                }
-            },
-            _ => Err(ReflectError::OperationFailed {
-                shape: frame.shape,
-                operation: "cannot select a field from this type",
-            }),
-        };
-
-        self.frames.push(next_frame);
-        Ok(self)
-    }
-
-    /// Pushes a frame to initialize the inner value of a smart pointer (`Box<T>`, `Arc<T>`, etc.)
-    pub fn begin_smart_ptr(&mut self) -> Result<&mut Self, ReflectError> {
-        crate::trace!("begin_smart_ptr()");
-        self.require_active()?;
-        let frame = self.frames.last_mut().unwrap();
-
-        // Check that we have a SmartPointer
-        match &frame.shape.def {
-            Def::Pointer(smart_ptr_def) => {
-                // Check for supported smart pointer types
-                match smart_ptr_def.known {
-                    Some(KnownPointer::Box)
-                    | Some(KnownPointer::Rc)
-                    | Some(KnownPointer::Arc)
-                    | Some(KnownPointer::SharedReference) => {
-                        // Supported types, continue
-                    }
-                    _ => {
-                        return Err(ReflectError::OperationFailed {
-                            shape: frame.shape,
-                            operation: "only the following pointers are currently supported: Box<T>, Rc<T>, Arc<T>, and &T",
-                        });
-                    }
-                }
-
-                // Get the pointee shape
-                let pointee_shape = match smart_ptr_def.pointee() {
-                    Some(shape) => shape,
-                    None => {
-                        return Err(ReflectError::OperationFailed {
-                            shape: frame.shape,
-                            operation: "Box must have a pointee shape",
-                        });
-                    }
-                };
-
-                if pointee_shape.layout.sized_layout().is_ok() {
-                    // pointee is sized, we can allocate it — for `Arc<T>` we'll be allocating a `T` and
-                    // holding onto it. We'll build a new Arc with it when ending the smart pointer frame.
-
-                    if matches!(frame.tracker, Tracker::Uninit) {
-                        frame.tracker = Tracker::SmartPointer {
-                            is_initialized: false,
-                        };
-                    }
-
-                    let inner_layout = match pointee_shape.layout.sized_layout() {
-                        Ok(layout) => layout,
-                        Err(_) => {
-                            return Err(ReflectError::Unsized {
-                                shape: pointee_shape,
-                                operation: "begin_smart_ptr, calculating inner value layout",
-                            });
-                        }
-                    };
-                    let inner_ptr: *mut u8 = unsafe { alloc::alloc::alloc(inner_layout) };
-                    if inner_ptr.is_null() {
-                        return Err(ReflectError::OperationFailed {
-                            shape: frame.shape,
-                            operation: "failed to allocate memory for smart pointer inner value",
-                        });
-                    }
-
-                    // Push a new frame for the inner value
-                    self.frames.push(Frame::new(
-                        PtrUninit::new(inner_ptr),
-                        pointee_shape,
-                        FrameOwnership::Owned,
-                    ));
-                } else {
-                    // pointee is unsized, we only support a handful of cases there
-                    if pointee_shape == str::SHAPE {
-                        crate::trace!("Pointee is str");
-
-                        // Allocate space for a String
-                        let string_layout = String::SHAPE
-                            .layout
-                            .sized_layout()
-                            .expect("String must have a sized layout");
-                        let string_ptr: *mut u8 = unsafe { alloc::alloc::alloc(string_layout) };
-                        if string_ptr.is_null() {
-                            alloc::alloc::handle_alloc_error(string_layout);
-                        }
-                        let mut frame = Frame::new(
-                            PtrUninit::new(string_ptr),
-                            String::SHAPE,
-                            FrameOwnership::Owned,
-                        );
-                        frame.tracker = Tracker::Uninit;
-                        self.frames.push(frame);
-                    } else if let Type::Sequence(SequenceType::Slice(_st)) = pointee_shape.ty {
-                        crate::trace!("Pointee is [{}]", _st.t);
-
-                        // Get the slice builder vtable
-                        let slice_builder_vtable = smart_ptr_def
-                            .vtable
-                            .slice_builder_vtable
-                            .ok_or(ReflectError::OperationFailed {
-                                shape: frame.shape,
-                                operation: "smart pointer does not support slice building",
-                            })?;
-
-                        // Create a new builder
-                        let builder_ptr = (slice_builder_vtable.new_fn)();
-
-                        // Deallocate the original Arc allocation before replacing with slice builder
-                        if let FrameOwnership::Owned = frame.ownership {
-                            if let Ok(layout) = frame.shape.layout.sized_layout() {
-                                if layout.size() > 0 {
-                                    unsafe {
-                                        alloc::alloc::dealloc(frame.data.as_mut_byte_ptr(), layout)
-                                    };
-                                }
-                            }
-                        }
-
-                        // Update the current frame to use the slice builder
-                        frame.data = PtrUninit::new(builder_ptr.as_mut_byte_ptr());
-                        frame.tracker = Tracker::SmartPointerSlice {
-                            vtable: slice_builder_vtable,
-                            building_item: false,
-                        };
-                        // The slice builder memory is managed by the vtable, not by us
-                        frame.ownership = FrameOwnership::ManagedElsewhere;
-                    } else {
-                        todo!("unsupported unsize pointee shape: {}", pointee_shape)
-                    }
-                }
-
-                Ok(self)
-            }
-            _ => Err(ReflectError::OperationFailed {
-                shape: frame.shape,
-                operation: "push_smart_ptr can only be called on compatible types",
-            }),
-        }
-    }
-
-    /// Initializes a list (Vec, etc.) if it hasn't been initialized before.
-    /// This is a prerequisite to `begin_push_item`/`set`/`end` or the shorthand
-    /// `push`.
-    ///
-    /// `begin_list` does not clear the list if it was previously initialized.
-    /// `begin_list` does not push a new frame to the stack, and thus does not
-    /// require `end` to be called afterwards.
-    pub fn begin_list(&mut self) -> Result<&mut Self, ReflectError> {
-        crate::trace!("begin_list()");
-        self.require_active()?;
-        let frame = self.frames.last_mut().unwrap();
-
-        match &frame.tracker {
-            Tracker::Uninit => {
-                // that's good, let's initialize it
-            }
-            Tracker::Init => {
-                // initialized (perhaps from a previous round?) but should be a list tracker, let's fix that:
-                frame.tracker = Tracker::List {
-                    is_initialized: true,
-                    current_child: false,
-                };
-                return Ok(self);
-            }
-            Tracker::List { is_initialized, .. } => {
-                if *is_initialized {
-                    // already initialized, nothing to do
-                    return Ok(self);
-                }
-            }
-            Tracker::SmartPointerSlice { .. } => {
-                // begin_list is kinda superfluous when we're in a SmartPointerSlice state
-                return Ok(self);
-            }
-            _ => {
-                return Err(ReflectError::UnexpectedTracker {
-                    message: "begin_list called but tracker isn't something list-like",
-                    current_tracker: frame.tracker.kind(),
-                });
-            }
-        };
-
-        // Check that we have a List
-        let list_def = match &frame.shape.def {
-            Def::List(list_def) => list_def,
-            _ => {
-                return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
-                    operation: "begin_list can only be called on List types",
-                });
-            }
-        };
-
-        // Check that we have init_in_place_with_capacity function
-        let init_fn = match list_def.vtable.init_in_place_with_capacity {
-            Some(f) => f,
-            None => {
-                return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
-                    operation: "list type does not support initialization with capacity",
-                });
-            }
-        };
-
-        // Initialize the list with default capacity (0)
-        unsafe {
-            init_fn(frame.data, 0);
-        }
-
-        // Update tracker to List state
-        frame.tracker = Tracker::List {
-            is_initialized: true,
-            current_child: false,
-        };
-
-        Ok(self)
-    }
-
-    /// Pushes an element to the list
-    /// The element should be set using `set()` or similar methods, then `pop()` to complete
-    pub fn begin_list_item(&mut self) -> Result<&mut Self, ReflectError> {
-        crate::trace!("begin_list_item()");
-        self.require_active()?;
-        let frame = self.frames.last_mut().unwrap();
-
-        // Check if we're building a smart pointer slice
-        if let Tracker::SmartPointerSlice {
-            building_item,
-            vtable: _,
-        } = &frame.tracker
-        {
-            if *building_item {
-                return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
-                    operation: "already building an item, call end() first",
-                });
-            }
-
-            // Get the element type from the smart pointer's pointee
-            let element_shape = match &frame.shape.def {
-                Def::Pointer(smart_ptr_def) => match smart_ptr_def.pointee() {
-                    Some(pointee_shape) => match &pointee_shape.ty {
-                        Type::Sequence(SequenceType::Slice(slice_type)) => slice_type.t,
-                        _ => {
-                            return Err(ReflectError::OperationFailed {
-                                shape: frame.shape,
-                                operation: "smart pointer pointee is not a slice",
-                            });
-                        }
-                    },
-                    None => {
-                        return Err(ReflectError::OperationFailed {
-                            shape: frame.shape,
-                            operation: "smart pointer has no pointee",
-                        });
-                    }
-                },
-                _ => {
-                    return Err(ReflectError::OperationFailed {
-                        shape: frame.shape,
-                        operation: "expected smart pointer definition",
-                    });
-                }
-            };
-
-            // Allocate space for the element
-            crate::trace!("Pointee is a slice of {element_shape}");
-            let element_layout = match element_shape.layout.sized_layout() {
-                Ok(layout) => layout,
-                Err(_) => {
-                    return Err(ReflectError::OperationFailed {
-                        shape: element_shape,
-                        operation: "cannot allocate unsized element",
-                    });
-                }
-            };
-
-            let element_ptr: *mut u8 = unsafe { alloc::alloc::alloc(element_layout) };
-            if element_ptr.is_null() {
-                alloc::alloc::handle_alloc_error(element_layout);
-            }
-
-            // Create and push the element frame
-            crate::trace!("Pushing element frame, which we just allocated");
-            let element_frame = Frame::new(
-                PtrUninit::new(element_ptr),
-                element_shape,
-                FrameOwnership::Owned,
-            );
-            self.frames.push(element_frame);
-
-            // Mark that we're building an item
-            // We need to update the tracker after pushing the frame
-            let parent_idx = self.frames.len() - 2;
-            if let Tracker::SmartPointerSlice { building_item, .. } =
-                &mut self.frames[parent_idx].tracker
-            {
-                crate::trace!("Marking element frame as building item");
-                *building_item = true;
-            }
-
-            return Ok(self);
-        }
-
-        // Check that we have a List that's been initialized
-        let list_def = match &frame.shape.def {
-            Def::List(list_def) => list_def,
-            _ => {
-                return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
-                    operation: "push can only be called on List types",
-                });
-            }
-        };
-
-        // Verify the tracker is in List state and initialized
-        match &mut frame.tracker {
-            Tracker::List {
-                is_initialized: true,
-                current_child,
-            } => {
-                if *current_child {
-                    return Err(ReflectError::OperationFailed {
-                        shape: frame.shape,
-                        operation: "already pushing an element, call pop() first",
-                    });
-                }
-                *current_child = true;
-            }
-            _ => {
-                return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
-                    operation: "must call begin_list() before push()",
-                });
-            }
-        }
-
-        // Get the element shape
-        let element_shape = list_def.t();
-
-        // Allocate space for the new element
-        let element_layout = match element_shape.layout.sized_layout() {
-            Ok(layout) => layout,
-            Err(_) => {
-                return Err(ReflectError::Unsized {
-                    shape: element_shape,
-                    operation: "begin_list_item: calculating element layout",
-                });
-            }
-        };
-        let element_ptr: *mut u8 = unsafe { alloc::alloc::alloc(element_layout) };
-
-        if element_ptr.is_null() {
-            return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
-                operation: "failed to allocate memory for list element",
-            });
-        }
-
-        // Push a new frame for the element
-        self.frames.push(Frame::new(
-            PtrUninit::new(element_ptr),
-            element_shape,
-            FrameOwnership::Owned,
-        ));
-
-        Ok(self)
-    }
-
-    /// Begins a map initialization operation
-    /// This initializes the map with default capacity and allows inserting key-value pairs
-    pub fn begin_map(&mut self) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
-        let frame = self.frames.last_mut().unwrap();
-
-        // Check that we have a Map
-        let map_def = match &frame.shape.def {
-            Def::Map(map_def) => map_def,
-            _ => {
-                return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
-                    operation: "begin_map can only be called on Map types",
-                });
-            }
-        };
-
-        // Check that we have init_in_place_with_capacity function
-        let init_fn = map_def.vtable.init_in_place_with_capacity_fn;
-
-        // Initialize the map with default capacity (0)
-        unsafe {
-            init_fn(frame.data, 0);
-        }
-
-        // Update tracker to Map state
-        frame.tracker = Tracker::Map {
-            is_initialized: true,
-            insert_state: MapInsertState::Idle,
-        };
-
-        Ok(self)
-    }
-
-    /// Pushes a frame for the map key
-    /// Automatically starts a new insert if we're idle
-    pub fn begin_key(&mut self) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
-        let frame = self.frames.last_mut().unwrap();
-
-        // Check that we have a Map and set up for key insertion
-        let map_def = match (&frame.shape.def, &mut frame.tracker) {
-            (
-                Def::Map(map_def),
-                Tracker::Map {
-                    is_initialized: true,
-                    insert_state,
-                },
-            ) => {
-                match insert_state {
-                    MapInsertState::Idle => {
-                        // Start a new insert automatically
-                        *insert_state = MapInsertState::PushingKey { key_ptr: None };
-                    }
-                    MapInsertState::PushingKey { key_ptr } => {
-                        if key_ptr.is_some() {
-                            return Err(ReflectError::OperationFailed {
-                                shape: frame.shape,
-                                operation: "already pushing a key, call end() first",
-                            });
-                        }
-                    }
-                    _ => {
-                        return Err(ReflectError::OperationFailed {
-                            shape: frame.shape,
-                            operation: "must complete current operation before begin_key()",
-                        });
-                    }
-                }
-                map_def
-            }
-            _ => {
-                return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
-                    operation: "must call begin_map() before begin_key()",
-                });
-            }
-        };
-
-        // Get the key shape
-        let key_shape = map_def.k();
-
-        // Allocate space for the key
-        let key_layout = match key_shape.layout.sized_layout() {
-            Ok(layout) => layout,
-            Err(_) => {
-                return Err(ReflectError::Unsized {
-                    shape: key_shape,
-                    operation: "begin_key allocating key",
-                });
-            }
-        };
-        let key_ptr_raw: *mut u8 = unsafe { alloc::alloc::alloc(key_layout) };
-
-        if key_ptr_raw.is_null() {
-            return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
-                operation: "failed to allocate memory for map key",
-            });
-        }
-
-        // Store the key pointer in the insert state
-        match &mut frame.tracker {
-            Tracker::Map {
-                insert_state: MapInsertState::PushingKey { key_ptr: kp },
-                ..
-            } => {
-                *kp = Some(PtrUninit::new(key_ptr_raw));
-            }
-            _ => unreachable!(),
-        }
-
-        // Push a new frame for the key
-        self.frames.push(Frame::new(
-            PtrUninit::new(key_ptr_raw),
-            key_shape,
-            FrameOwnership::ManagedElsewhere, // Ownership tracked in MapInsertState
-        ));
-
-        Ok(self)
-    }
-
-    /// Pushes a frame for the map value
-    /// Must be called after the key has been set and popped
-    pub fn begin_value(&mut self) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
-        let frame = self.frames.last_mut().unwrap();
-
-        // Check that we have a Map in PushingValue state
-        let map_def = match (&frame.shape.def, &mut frame.tracker) {
-            (
-                Def::Map(map_def),
-                Tracker::Map {
-                    insert_state: MapInsertState::PushingValue { value_ptr, .. },
-                    ..
-                },
-            ) => {
-                if value_ptr.is_some() {
-                    return Err(ReflectError::OperationFailed {
-                        shape: frame.shape,
-                        operation: "already pushing a value, call pop() first",
-                    });
-                }
-                map_def
-            }
-            _ => {
-                return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
-                    operation: "must complete key before push_value()",
-                });
-            }
-        };
-
-        // Get the value shape
-        let value_shape = map_def.v();
-
-        // Allocate space for the value
-        let value_layout = match value_shape.layout.sized_layout() {
-            Ok(layout) => layout,
-            Err(_) => {
-                return Err(ReflectError::Unsized {
-                    shape: value_shape,
-                    operation: "begin_value allocating value",
-                });
-            }
-        };
-        let value_ptr_raw: *mut u8 = unsafe { alloc::alloc::alloc(value_layout) };
-
-        if value_ptr_raw.is_null() {
-            return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
-                operation: "failed to allocate memory for map value",
-            });
-        }
-
-        // Store the value pointer in the insert state
-        match &mut frame.tracker {
-            Tracker::Map {
-                insert_state: MapInsertState::PushingValue { value_ptr: vp, .. },
-                ..
-            } => {
-                *vp = Some(PtrUninit::new(value_ptr_raw));
-            }
-            _ => unreachable!(),
-        }
-
-        // Push a new frame for the value
-        self.frames.push(Frame::new(
-            PtrUninit::new(value_ptr_raw),
-            value_shape,
-            FrameOwnership::ManagedElsewhere, // Ownership tracked in MapInsertState
-        ));
-
-        Ok(self)
+    pub fn shape(&self) -> &'static Shape {
+        self.frames
+            .last()
+            .expect("Partial always has at least one frame")
+            .shape
     }
 
     /// Pops the current frame off the stack, indicating we're done initializing the current field
@@ -1644,14 +741,322 @@ impl<'facet> Partial<'facet> {
         }
         out
     }
+}
 
-    /// Returns the shape of the current frame.
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// `Set` and set helpers
+////////////////////////////////////////////////////////////////////////////////////////////////////
+impl<'facet> Partial<'facet> {
+    /// Sets a value wholesale into the current frame.
+    ///
+    /// If the current frame was already initialized, the previous value is
+    /// dropped. If it was partially initialized, the fields that were initialized
+    /// are dropped, etc.
+    pub fn set<U>(&mut self, value: U) -> Result<&mut Self, ReflectError>
+    where
+        U: Facet<'facet>,
+    {
+        self.require_active()?;
+
+        let ptr_const = PtrConst::new(&raw const value);
+        unsafe {
+            // Safety: We are calling set_shape with a valid shape and a valid pointer
+            self.set_shape(ptr_const, U::SHAPE)?
+        };
+
+        // Prevent the value from being dropped since we've copied it
+        core::mem::forget(value);
+
+        Ok(self)
+    }
+
+    /// Sets a value into the current frame by [PtrConst] / [Shape].
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that `src_value` points to a valid instance of a value
+    /// whose memory layout and type matches `src_shape`, and that this value can be
+    /// safely copied (bitwise) into the destination specified by the Partial's current frame.
+    ///
+    /// After a successful call, the ownership of the value at `src_value` is effectively moved
+    /// into the Partial (i.e., the destination), and the original value should not be used
+    /// or dropped by the caller; you should use `core::mem::forget` on the passed value.
+    ///
+    /// If an error is returned, the destination remains unmodified and safe for future operations.
     #[inline]
-    pub fn shape(&self) -> &'static Shape {
-        self.frames
-            .last()
-            .expect("Partial always has at least one frame")
-            .shape
+    pub unsafe fn set_shape(
+        &mut self,
+        src_value: PtrConst<'_>,
+        src_shape: &'static Shape,
+    ) -> Result<&mut Self, ReflectError> {
+        self.require_active()?;
+
+        let fr = self.frames.last_mut().unwrap();
+        crate::trace!("set_shape({src_shape:?})");
+
+        if !fr.shape.is_shape(src_shape) {
+            return Err(ReflectError::WrongShape {
+                expected: fr.shape,
+                actual: src_shape,
+            });
+        }
+
+        fr.deinit();
+
+        // SAFETY: `fr.shape` and `src_shape` are the same, so they have the same size,
+        // and the preconditions for this function are that `src_value` is fully intialized.
+        unsafe {
+            // unwrap safety: the only failure condition for copy_from is that shape is unsized,
+            // which is not possible for `Partial`
+            fr.data.copy_from(src_value, fr.shape).unwrap();
+        }
+
+        // SAFETY: if we reached this point, `fr.data` is correctly initialized
+        unsafe {
+            fr.mark_as_init();
+        }
+
+        Ok(self)
+    }
+
+    /// Sets the current frame using a function that initializes the value
+    ///
+    /// # Safety
+    ///
+    /// If `f` returns Ok(), it is assumed that it initialized the passed pointer fully and with a
+    /// value of the right type.
+    ///
+    /// If `f` returns Err(), it is assumed that it did NOT initialize the passed pointer and that
+    /// there is no need to drop it in place.
+    pub unsafe fn set_from_function<F>(&mut self, f: F) -> Result<&mut Self, ReflectError>
+    where
+        F: FnOnce(PtrUninit<'_>) -> Result<(), ReflectError>,
+    {
+        self.require_active()?;
+        let frame = self.frames.last_mut().unwrap();
+
+        frame.deinit();
+        f(frame.data)?;
+
+        // safety: `f()` returned Ok, so `frame.data` must be initialized
+        unsafe {
+            frame.mark_as_init();
+        }
+
+        Ok(self)
+    }
+
+    /// Sets the current frame to its default value using `default_in_place` from the
+    /// vtable.
+    ///
+    /// Note: if you have `struct S { field: F }`, and `F` does not implement `Default`
+    /// but `S` does, this doesn't magically uses S's `Default` implementation to get a value
+    /// for `field`.
+    ///
+    /// If the current frame's shape does not implement `Default`, then this returns an error.
+    #[inline]
+    pub fn set_default(&mut self) -> Result<&mut Self, ReflectError> {
+        let frame = self.frames.last().unwrap();
+
+        let Some(default_fn) = (frame.shape.vtable.sized().unwrap().default_in_place)() else {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "type does not implement Default",
+            });
+        };
+
+        // SAFETY: `default_fn` fully initializes the passed pointer. we took it
+        // from the vtable of `frame.shape`.
+        unsafe {
+            self.set_from_function(move |ptr| {
+                default_fn(ptr);
+                Ok(())
+            })
+        }
+    }
+
+    /// Copy a value from a Peek into the current position (safe alternative to set_shape)
+    ///
+    /// # Invariants
+    ///
+    /// `peek` must be a thin pointer, otherwise this panics.
+    pub fn set_from_peek(&mut self, peek: &Peek<'_, '_>) -> Result<&mut Self, ReflectError> {
+        self.require_active()?;
+
+        // Get the source value's pointer and shape
+        let src_ptr = peek
+            .data()
+            .thin()
+            .expect("set_from_peek requires thin pointers");
+        let src_shape = peek.shape();
+
+        // SAFETY: `Peek` guarantees that src_ptr is initialized and of type src_shape
+        unsafe { self.set_shape(src_ptr, src_shape) }
+    }
+
+    /// Parses a string value into the current frame using the type's ParseFn from the vtable.
+    ///
+    /// If the current frame was previously initialized, its contents are dropped in place.
+    pub fn parse_from_str(&mut self, s: &str) -> Result<&mut Self, ReflectError> {
+        self.require_active()?;
+
+        let frame = self.frames.last_mut().unwrap();
+
+        // Check if the type has a parse function
+        let Some(parse_fn) = (frame.shape.vtable.sized().unwrap().parse)() else {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "Type does not support parsing from string",
+            });
+        };
+
+        // Note: deinit leaves us in `Tracker::Uninit` state which is valid even if we error out.
+        frame.deinit();
+
+        // Parse the string value using the type's parse function
+        let result = unsafe { parse_fn(s, frame.data) };
+        if let Err(_pe) = result {
+            // TODO: can we propagate the ParseError somehow?
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "Failed to parse string value",
+            });
+        }
+
+        // SAFETY: `parse_fn` returned `Ok`, so `frame.data` is fully initialized now.
+        unsafe {
+            frame.mark_as_init();
+        }
+        Ok(self)
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Enum variant selection
+////////////////////////////////////////////////////////////////////////////////////////////////////
+impl<'facet> Partial<'facet> {
+    /// Assuming the current frame is an enum, this selects a variant by index
+    /// (0-based, in declaration order).
+    ///
+    /// For example:
+    ///
+    /// ```rust,no_run
+    /// enum E { A, B, C }
+    /// ```
+    ///
+    /// Calling `select_nth_variant(2)` would select variant `C`.
+    ///
+    /// This will return an error if the current frame is anything other than fully-uninitialized.
+    /// In other words, it's not possible to "switch to a different variant" once you've selected one.
+    ///
+    /// This does _not_ push a frame on the stack.
+    pub fn select_nth_variant(&mut self, index: usize) -> Result<&mut Self, ReflectError> {
+        self.require_active()?;
+
+        let frame = self.frames.last().unwrap();
+        let enum_type = frame.get_enum_type()?;
+
+        if index >= enum_type.variants.len() {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "variant index out of bounds",
+            });
+        }
+        let variant = &enum_type.variants[index];
+
+        self.select_variant_internal(&enum_type, variant)?;
+        Ok(self)
+    }
+
+    /// Pushes a variant for enum initialization by name
+    ///
+    /// See [Self::select_nth_variant] for more notes.
+    pub fn select_variant_named(&mut self, variant_name: &str) -> Result<&mut Self, ReflectError> {
+        self.require_active()?;
+
+        let frame = self.frames.last_mut().unwrap();
+        let enum_type = frame.get_enum_type()?;
+
+        let Some(variant) = enum_type.variants.iter().find(|v| v.name == variant_name) else {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "No variant found with the given name",
+            });
+        };
+
+        self.select_variant_internal(&enum_type, variant)?;
+        Ok(self)
+    }
+
+    /// Selects a given enum variant by discriminant. If none of the variants
+    /// of the frame's enum have that discriminant, this returns an error.
+    ///
+    /// See [Self::select_nth_variant] for more notes.
+    pub fn select_variant(&mut self, discriminant: i64) -> Result<&mut Self, ReflectError> {
+        self.require_active()?;
+
+        // Check all invariants early before making any changes
+        let frame = self.frames.last().unwrap();
+
+        // Check that we're dealing with an enum
+        let enum_type = match frame.shape.ty {
+            Type::User(UserType::Enum(e)) => e,
+            _ => {
+                return Err(ReflectError::WasNotA {
+                    expected: "enum",
+                    actual: frame.shape,
+                });
+            }
+        };
+
+        // Find the variant with the matching discriminant
+        let Some(variant) = enum_type
+            .variants
+            .iter()
+            .find(|v| v.discriminant == Some(discriminant))
+        else {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "No variant found with the given discriminant",
+            });
+        };
+
+        // Update the frame tracker to select the variant
+        self.select_variant_internal(&enum_type, variant)?;
+
+        Ok(self)
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Field selection
+////////////////////////////////////////////////////////////////////////////////////////////////////
+impl Partial<'_> {
+    /// Find the index of a field by name in the current struct
+    ///
+    /// If the current frame isn't a struct or an enum (with a selected variant)
+    /// then this returns `None` for sure.
+    pub fn field_index(&self, field_name: &str) -> Option<usize> {
+        let frame = self.frames.last()?;
+
+        match frame.shape.ty {
+            Type::User(UserType::Struct(struct_def)) => {
+                struct_def.fields.iter().position(|f| f.name == field_name)
+            }
+            Type::User(UserType::Enum(_)) => {
+                // If we're in an enum variant, check its fields
+                if let Tracker::Enum { variant, .. } = &frame.tracker {
+                    variant
+                        .data
+                        .fields
+                        .iter()
+                        .position(|f| f.name == field_name)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
     }
 
     /// Check if a struct field at the given index has been set
@@ -1662,19 +1067,17 @@ impl<'facet> Partial<'facet> {
             Tracker::Uninit => Ok(false),
             Tracker::Init => Ok(true),
             Tracker::Struct { iset, .. } => Ok(iset.get(index)),
-            Tracker::Enum { data, .. } => {
+            Tracker::Enum { data, variant, .. } => {
                 // Check if the field is already marked as set
                 if data.get(index) {
                     return Ok(true);
                 }
 
                 // For enum variant fields that are empty structs, they are always initialized
-                if let Tracker::Enum { variant, .. } = &frame.tracker {
-                    if let Some(field) = variant.data.fields.get(index) {
-                        if let Type::User(UserType::Struct(field_struct)) = field.shape.ty {
-                            if field_struct.fields.is_empty() {
-                                return Ok(true);
-                            }
+                if let Some(field) = variant.data.fields.get(index) {
+                    if let Type::User(UserType::Struct(field_struct)) = field.shape.ty {
+                        if field_struct.fields.is_empty() {
+                            return Ok(true);
                         }
                     }
                 }
@@ -1699,28 +1102,663 @@ impl<'facet> Partial<'facet> {
         }
     }
 
-    /// Find the index of a field by name in the current struct
-    pub fn field_index(&self, field_name: &str) -> Option<usize> {
-        let frame = self.frames.last()?;
+    /// Selects a field (by name) of a struct or enum data.
+    ///
+    /// For enums, the variant needs to be selected first, see [Self::select_nth_variant]
+    /// and friends.
+    pub fn begin_field(&mut self, field_name: &str) -> Result<&mut Self, ReflectError> {
+        self.require_active()?;
 
-        match frame.shape.ty {
-            Type::User(UserType::Struct(struct_def)) => {
-                struct_def.fields.iter().position(|f| f.name == field_name)
+        let frame = self.frames.last().unwrap();
+        let fields = self.get_fields()?;
+        let Some(idx) = fields.iter().position(|f| f.name == field_name) else {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "field not found",
+            });
+        };
+        self.begin_nth_field(idx)
+    }
+
+    /// Begins the nth field of a struct, enum variant, or array, by index.
+    ///
+    /// On success, this pushes a new frame which must be ended with a call to [Partial::end]
+    pub fn begin_nth_field(&mut self, idx: usize) -> Result<&mut Self, ReflectError> {
+        self.require_active()?;
+        let frame = self.frames.last_mut().unwrap();
+
+        let next_frame = match frame.shape.ty {
+            Type::User(user_type) => match user_type {
+                UserType::Struct(struct_type) => {
+                    Self::begin_nth_struct_field(frame, struct_type, idx)?
+                }
+                UserType::Enum(_) => {
+                    // Check if we have a variant selected
+                    match &frame.tracker {
+                        Tracker::Enum { variant, .. } => {
+                            Self::begin_nth_enum_field(frame, variant, idx)?
+                        }
+                        _ => {
+                            return Err(ReflectError::OperationFailed {
+                                shape: frame.shape,
+                                operation: "must call select_variant before selecting enum fields",
+                            });
+                        }
+                    }
+                }
+                UserType::Union(_) => {
+                    return Err(ReflectError::OperationFailed {
+                        shape: frame.shape,
+                        operation: "cannot select a field from a union",
+                    });
+                }
+                UserType::Opaque => {
+                    return Err(ReflectError::OperationFailed {
+                        shape: frame.shape,
+                        operation: "cannot select a field from an opaque type",
+                    });
+                }
+            },
+            Type::Sequence(sequence_type) => match sequence_type {
+                SequenceType::Array(array_type) => {
+                    Self::begin_nth_array_element(frame, array_type, idx)?
+                }
+                SequenceType::Slice(_) => {
+                    return Err(ReflectError::OperationFailed {
+                        shape: frame.shape,
+                        operation: "cannot select a field from slices yet",
+                    });
+                }
+            },
+            _ => {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "cannot select a field from this type",
+                });
             }
-            Type::User(UserType::Enum(_)) => {
-                // If we're in an enum variant, check its fields
-                if let Tracker::Enum { variant, .. } = &frame.tracker {
-                    variant
-                        .data
-                        .fields
-                        .iter()
-                        .position(|f| f.name == field_name)
+        };
+
+        self.frames.push(next_frame);
+        Ok(self)
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Smart pointers
+////////////////////////////////////////////////////////////////////////////////////////////////////
+impl Partial<'_> {
+    /// Pushes a frame to initialize the inner value of a smart pointer (`Box<T>`, `Arc<T>`, etc.)
+    pub fn begin_smart_ptr(&mut self) -> Result<&mut Self, ReflectError> {
+        crate::trace!("begin_smart_ptr()");
+        self.require_active()?;
+        let frame = self.frames.last_mut().unwrap();
+
+        // Check that we have a SmartPointer
+        match &frame.shape.def {
+            Def::Pointer(smart_ptr_def) => {
+                // Check for supported smart pointer types
+                match smart_ptr_def.known {
+                    Some(KnownPointer::Box)
+                    | Some(KnownPointer::Rc)
+                    | Some(KnownPointer::Arc)
+                    | Some(KnownPointer::SharedReference) => {
+                        // Supported types, continue
+                    }
+                    _ => {
+                        return Err(ReflectError::OperationFailed {
+                            shape: frame.shape,
+                            operation: "only the following pointers are currently supported: Box<T>, Rc<T>, Arc<T>, and &T",
+                        });
+                    }
+                }
+
+                // Get the pointee shape
+                let pointee_shape = match smart_ptr_def.pointee() {
+                    Some(shape) => shape,
+                    None => {
+                        return Err(ReflectError::OperationFailed {
+                            shape: frame.shape,
+                            operation: "Box must have a pointee shape",
+                        });
+                    }
+                };
+
+                if pointee_shape.layout.sized_layout().is_ok() {
+                    // pointee is sized, we can allocate it — for `Arc<T>` we'll be allocating a `T` and
+                    // holding onto it. We'll build a new Arc with it when ending the smart pointer frame.
+
+                    if matches!(frame.tracker, Tracker::Uninit) {
+                        frame.tracker = Tracker::SmartPointer {
+                            is_initialized: false,
+                        };
+                    }
+
+                    let inner_layout = match pointee_shape.layout.sized_layout() {
+                        Ok(layout) => layout,
+                        Err(_) => {
+                            return Err(ReflectError::Unsized {
+                                shape: pointee_shape,
+                                operation: "begin_smart_ptr, calculating inner value layout",
+                            });
+                        }
+                    };
+                    let inner_ptr: *mut u8 = unsafe { alloc::alloc::alloc(inner_layout) };
+                    if inner_ptr.is_null() {
+                        return Err(ReflectError::OperationFailed {
+                            shape: frame.shape,
+                            operation: "failed to allocate memory for smart pointer inner value",
+                        });
+                    }
+
+                    // Push a new frame for the inner value
+                    self.frames.push(Frame::new(
+                        PtrUninit::new(inner_ptr),
+                        pointee_shape,
+                        FrameOwnership::Owned,
+                    ));
                 } else {
-                    None
+                    // pointee is unsized, we only support a handful of cases there
+                    if pointee_shape == str::SHAPE {
+                        crate::trace!("Pointee is str");
+
+                        // Allocate space for a String
+                        let string_layout = String::SHAPE
+                            .layout
+                            .sized_layout()
+                            .expect("String must have a sized layout");
+                        let string_ptr: *mut u8 = unsafe { alloc::alloc::alloc(string_layout) };
+                        if string_ptr.is_null() {
+                            alloc::alloc::handle_alloc_error(string_layout);
+                        }
+                        let mut frame = Frame::new(
+                            PtrUninit::new(string_ptr),
+                            String::SHAPE,
+                            FrameOwnership::Owned,
+                        );
+                        frame.tracker = Tracker::Uninit;
+                        self.frames.push(frame);
+                    } else if let Type::Sequence(SequenceType::Slice(_st)) = pointee_shape.ty {
+                        crate::trace!("Pointee is [{}]", _st.t);
+
+                        // Get the slice builder vtable
+                        let slice_builder_vtable = smart_ptr_def
+                            .vtable
+                            .slice_builder_vtable
+                            .ok_or(ReflectError::OperationFailed {
+                                shape: frame.shape,
+                                operation: "smart pointer does not support slice building",
+                            })?;
+
+                        // Create a new builder
+                        let builder_ptr = (slice_builder_vtable.new_fn)();
+
+                        // Deallocate the original Arc allocation before replacing with slice builder
+                        if let FrameOwnership::Owned = frame.ownership {
+                            if let Ok(layout) = frame.shape.layout.sized_layout() {
+                                if layout.size() > 0 {
+                                    unsafe {
+                                        alloc::alloc::dealloc(frame.data.as_mut_byte_ptr(), layout)
+                                    };
+                                }
+                            }
+                        }
+
+                        // Update the current frame to use the slice builder
+                        frame.data = PtrUninit::new(builder_ptr.as_mut_byte_ptr());
+                        frame.tracker = Tracker::SmartPointerSlice {
+                            vtable: slice_builder_vtable,
+                            building_item: false,
+                        };
+                        // The slice builder memory is managed by the vtable, not by us
+                        frame.ownership = FrameOwnership::ManagedElsewhere;
+                    } else {
+                        todo!("unsupported unsize pointee shape: {}", pointee_shape)
+                    }
+                }
+
+                Ok(self)
+            }
+            _ => Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "push_smart_ptr can only be called on compatible types",
+            }),
+        }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Lists
+////////////////////////////////////////////////////////////////////////////////////////////////////
+impl Partial<'_> {
+    /// Initializes a list (Vec, etc.) if it hasn't been initialized before.
+    /// This is a prerequisite to `begin_push_item`/`set`/`end` or the shorthand
+    /// `push`.
+    ///
+    /// `begin_list` does not clear the list if it was previously initialized.
+    /// `begin_list` does not push a new frame to the stack, and thus does not
+    /// require `end` to be called afterwards.
+    pub fn begin_list(&mut self) -> Result<&mut Self, ReflectError> {
+        crate::trace!("begin_list()");
+        self.require_active()?;
+        let frame = self.frames.last_mut().unwrap();
+
+        match &frame.tracker {
+            Tracker::Uninit => {
+                // that's good, let's initialize it
+            }
+            Tracker::Init => {
+                // initialized (perhaps from a previous round?) but should be a list tracker, let's fix that:
+                frame.tracker = Tracker::List {
+                    is_initialized: true,
+                    current_child: false,
+                };
+                return Ok(self);
+            }
+            Tracker::List { is_initialized, .. } => {
+                if *is_initialized {
+                    // already initialized, nothing to do
+                    return Ok(self);
                 }
             }
-            _ => None,
+            Tracker::SmartPointerSlice { .. } => {
+                // begin_list is kinda superfluous when we're in a SmartPointerSlice state
+                return Ok(self);
+            }
+            _ => {
+                return Err(ReflectError::UnexpectedTracker {
+                    message: "begin_list called but tracker isn't something list-like",
+                    current_tracker: frame.tracker.kind(),
+                });
+            }
+        };
+
+        // Check that we have a List
+        let list_def = match &frame.shape.def {
+            Def::List(list_def) => list_def,
+            _ => {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "begin_list can only be called on List types",
+                });
+            }
+        };
+
+        // Check that we have init_in_place_with_capacity function
+        let init_fn = match list_def.vtable.init_in_place_with_capacity {
+            Some(f) => f,
+            None => {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "list type does not support initialization with capacity",
+                });
+            }
+        };
+
+        // Initialize the list with default capacity (0)
+        unsafe {
+            init_fn(frame.data, 0);
         }
+
+        // Update tracker to List state
+        frame.tracker = Tracker::List {
+            is_initialized: true,
+            current_child: false,
+        };
+
+        Ok(self)
+    }
+
+    /// Pushes an element to the list
+    /// The element should be set using `set()` or similar methods, then `pop()` to complete
+    pub fn begin_list_item(&mut self) -> Result<&mut Self, ReflectError> {
+        crate::trace!("begin_list_item()");
+        self.require_active()?;
+        let frame = self.frames.last_mut().unwrap();
+
+        // Check if we're building a smart pointer slice
+        if let Tracker::SmartPointerSlice {
+            building_item,
+            vtable: _,
+        } = &frame.tracker
+        {
+            if *building_item {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "already building an item, call end() first",
+                });
+            }
+
+            // Get the element type from the smart pointer's pointee
+            let element_shape = match &frame.shape.def {
+                Def::Pointer(smart_ptr_def) => match smart_ptr_def.pointee() {
+                    Some(pointee_shape) => match &pointee_shape.ty {
+                        Type::Sequence(SequenceType::Slice(slice_type)) => slice_type.t,
+                        _ => {
+                            return Err(ReflectError::OperationFailed {
+                                shape: frame.shape,
+                                operation: "smart pointer pointee is not a slice",
+                            });
+                        }
+                    },
+                    None => {
+                        return Err(ReflectError::OperationFailed {
+                            shape: frame.shape,
+                            operation: "smart pointer has no pointee",
+                        });
+                    }
+                },
+                _ => {
+                    return Err(ReflectError::OperationFailed {
+                        shape: frame.shape,
+                        operation: "expected smart pointer definition",
+                    });
+                }
+            };
+
+            // Allocate space for the element
+            crate::trace!("Pointee is a slice of {element_shape}");
+            let element_layout = match element_shape.layout.sized_layout() {
+                Ok(layout) => layout,
+                Err(_) => {
+                    return Err(ReflectError::OperationFailed {
+                        shape: element_shape,
+                        operation: "cannot allocate unsized element",
+                    });
+                }
+            };
+
+            let element_ptr: *mut u8 = unsafe { alloc::alloc::alloc(element_layout) };
+            if element_ptr.is_null() {
+                alloc::alloc::handle_alloc_error(element_layout);
+            }
+
+            // Create and push the element frame
+            crate::trace!("Pushing element frame, which we just allocated");
+            let element_frame = Frame::new(
+                PtrUninit::new(element_ptr),
+                element_shape,
+                FrameOwnership::Owned,
+            );
+            self.frames.push(element_frame);
+
+            // Mark that we're building an item
+            // We need to update the tracker after pushing the frame
+            let parent_idx = self.frames.len() - 2;
+            if let Tracker::SmartPointerSlice { building_item, .. } =
+                &mut self.frames[parent_idx].tracker
+            {
+                crate::trace!("Marking element frame as building item");
+                *building_item = true;
+            }
+
+            return Ok(self);
+        }
+
+        // Check that we have a List that's been initialized
+        let list_def = match &frame.shape.def {
+            Def::List(list_def) => list_def,
+            _ => {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "push can only be called on List types",
+                });
+            }
+        };
+
+        // Verify the tracker is in List state and initialized
+        match &mut frame.tracker {
+            Tracker::List {
+                is_initialized: true,
+                current_child,
+            } => {
+                if *current_child {
+                    return Err(ReflectError::OperationFailed {
+                        shape: frame.shape,
+                        operation: "already pushing an element, call pop() first",
+                    });
+                }
+                *current_child = true;
+            }
+            _ => {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "must call begin_list() before push()",
+                });
+            }
+        }
+
+        // Get the element shape
+        let element_shape = list_def.t();
+
+        // Allocate space for the new element
+        let element_layout = match element_shape.layout.sized_layout() {
+            Ok(layout) => layout,
+            Err(_) => {
+                return Err(ReflectError::Unsized {
+                    shape: element_shape,
+                    operation: "begin_list_item: calculating element layout",
+                });
+            }
+        };
+        let element_ptr: *mut u8 = unsafe { alloc::alloc::alloc(element_layout) };
+
+        if element_ptr.is_null() {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "failed to allocate memory for list element",
+            });
+        }
+
+        // Push a new frame for the element
+        self.frames.push(Frame::new(
+            PtrUninit::new(element_ptr),
+            element_shape,
+            FrameOwnership::Owned,
+        ));
+
+        Ok(self)
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Maps
+////////////////////////////////////////////////////////////////////////////////////////////////////
+impl Partial<'_> {
+    /// Begins a map initialization operation
+    ///
+    /// This initializes the map with default capacity and allows inserting key-value pairs
+    /// It does _not_ push a new frame onto the stack.
+    pub fn begin_map(&mut self) -> Result<&mut Self, ReflectError> {
+        self.require_active()?;
+        let frame = self.frames.last_mut().unwrap();
+
+        // Check that we have a Map
+        let map_def = match &frame.shape.def {
+            Def::Map(map_def) => map_def,
+            _ => {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "begin_map can only be called on Map types",
+                });
+            }
+        };
+
+        let init_fn = map_def.vtable.init_in_place_with_capacity_fn;
+
+        // Initialize the map with default capacity (0)
+        unsafe {
+            init_fn(frame.data, 0);
+        }
+
+        // Update tracker to Map state
+        frame.tracker = Tracker::Map {
+            is_initialized: true,
+            insert_state: MapInsertState::Idle,
+        };
+
+        Ok(self)
+    }
+
+    /// Pushes a frame for the map key. After that, `set()` should be called
+    /// (or the key should be initialized somehow) and `end()` should be called
+    /// to pop the frame.
+    pub fn begin_key(&mut self) -> Result<&mut Self, ReflectError> {
+        self.require_active()?;
+        let frame = self.frames.last_mut().unwrap();
+
+        // Check that we have a Map and set up for key insertion
+        let map_def = match (&frame.shape.def, &mut frame.tracker) {
+            (
+                Def::Map(map_def),
+                Tracker::Map {
+                    is_initialized: true,
+                    insert_state,
+                },
+            ) => {
+                match insert_state {
+                    MapInsertState::Idle => {
+                        // Start a new insert automatically
+                        *insert_state = MapInsertState::PushingKey { key_ptr: None };
+                    }
+                    MapInsertState::PushingKey { key_ptr } => {
+                        if key_ptr.is_some() {
+                            return Err(ReflectError::OperationFailed {
+                                shape: frame.shape,
+                                operation: "already pushing a key, call end() first",
+                            });
+                        }
+                    }
+                    _ => {
+                        return Err(ReflectError::OperationFailed {
+                            shape: frame.shape,
+                            operation: "must complete current operation before begin_key()",
+                        });
+                    }
+                }
+                map_def
+            }
+            _ => {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "must call begin_map() before begin_key()",
+                });
+            }
+        };
+
+        // Get the key shape
+        let key_shape = map_def.k();
+
+        // Allocate space for the key
+        let key_layout = match key_shape.layout.sized_layout() {
+            Ok(layout) => layout,
+            Err(_) => {
+                return Err(ReflectError::Unsized {
+                    shape: key_shape,
+                    operation: "begin_key allocating key",
+                });
+            }
+        };
+        let key_ptr_raw: *mut u8 = unsafe { alloc::alloc::alloc(key_layout) };
+        if key_ptr_raw.is_null() {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "failed to allocate memory for map key",
+            });
+        }
+
+        // Store the key pointer in the insert state
+        match &mut frame.tracker {
+            Tracker::Map {
+                insert_state: MapInsertState::PushingKey { key_ptr: kp },
+                ..
+            } => {
+                *kp = Some(PtrUninit::new(key_ptr_raw));
+            }
+            _ => unreachable!(),
+        }
+
+        // Push a new frame for the key
+        self.frames.push(Frame::new(
+            PtrUninit::new(key_ptr_raw),
+            key_shape,
+            FrameOwnership::ManagedElsewhere, // Ownership tracked in MapInsertState
+        ));
+
+        Ok(self)
+    }
+
+    /// Pushes a frame for the map value
+    /// Must be called after the key has been set and popped
+    pub fn begin_value(&mut self) -> Result<&mut Self, ReflectError> {
+        self.require_active()?;
+        let frame = self.frames.last_mut().unwrap();
+
+        // Check that we have a Map in PushingValue state
+        let map_def = match (&frame.shape.def, &mut frame.tracker) {
+            (
+                Def::Map(map_def),
+                Tracker::Map {
+                    insert_state: MapInsertState::PushingValue { value_ptr, .. },
+                    ..
+                },
+            ) => {
+                if value_ptr.is_some() {
+                    return Err(ReflectError::OperationFailed {
+                        shape: frame.shape,
+                        operation: "already pushing a value, call pop() first",
+                    });
+                }
+                map_def
+            }
+            _ => {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "must complete key before push_value()",
+                });
+            }
+        };
+
+        // Get the value shape
+        let value_shape = map_def.v();
+
+        // Allocate space for the value
+        let value_layout = match value_shape.layout.sized_layout() {
+            Ok(layout) => layout,
+            Err(_) => {
+                return Err(ReflectError::Unsized {
+                    shape: value_shape,
+                    operation: "begin_value allocating value",
+                });
+            }
+        };
+        let value_ptr_raw: *mut u8 = unsafe { alloc::alloc::alloc(value_layout) };
+
+        if value_ptr_raw.is_null() {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "failed to allocate memory for map value",
+            });
+        }
+
+        // Store the value pointer in the insert state
+        match &mut frame.tracker {
+            Tracker::Map {
+                insert_state: MapInsertState::PushingValue { value_ptr: vp, .. },
+                ..
+            } => {
+                *vp = Some(PtrUninit::new(value_ptr_raw));
+            }
+            _ => unreachable!(),
+        }
+
+        // Push a new frame for the value
+        self.frames.push(Frame::new(
+            PtrUninit::new(value_ptr_raw),
+            value_shape,
+            FrameOwnership::ManagedElsewhere, // Ownership tracked in MapInsertState
+        ));
+
+        Ok(self)
     }
 
     /// Get the currently selected variant for an enum
@@ -1876,36 +1914,15 @@ impl<'facet> Partial<'facet> {
             })
         }
     }
+}
 
-    /// Copy a value from a Peek into the current position (safe alternative to set_shape)
-    ///
-    /// # Invariants
-    ///
-    /// `peek` must be a thin pointer, otherwise this panics.
-    pub fn set_from_peek(&mut self, peek: &Peek<'_, '_>) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
-
-        // Get the source value's pointer and shape
-        let src_ptr = peek
-            .data()
-            .thin()
-            .expect("set_from_peek requires thin pointers");
-        let src_shape = peek.shape();
-
-        // Safety: This is a safe wrapper around set_shape
-        // The peek guarantees the source data is valid for its shape
-        unsafe { self.set_shape(src_ptr, src_shape) }
-    }
-
-    /// Convenience shortcut: sets the nth element of an array directly to value, popping after.
-    pub fn set_nth_element<U>(&mut self, idx: usize, value: U) -> Result<&mut Self, ReflectError>
-    where
-        U: Facet<'facet>,
-    {
-        self.begin_nth_element(idx)?.set(value)?.end()
-    }
-
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Shorthands
+////////////////////////////////////////////////////////////////////////////////////////////////////
+impl<'facet> Partial<'facet> {
     /// Convenience shortcut: sets the field at index `idx` directly to value, popping after.
+    ///
+    /// Works on structs, enums (after selecting a variant) and arrays.
     pub fn set_nth_field<U>(&mut self, idx: usize, value: U) -> Result<&mut Self, ReflectError>
     where
         U: Facet<'facet>,
@@ -1919,14 +1936,6 @@ impl<'facet> Partial<'facet> {
         U: Facet<'facet>,
     {
         self.begin_field(field_name)?.set(value)?.end()
-    }
-
-    /// Convenience shortcut: sets the nth field of an enum variant directly to value, popping after.
-    pub fn set_nth_enum_field<U>(&mut self, idx: usize, value: U) -> Result<&mut Self, ReflectError>
-    where
-        U: Facet<'facet>,
-    {
-        self.begin_nth_enum_field(idx)?.set(value)?.end()
     }
 
     /// Convenience shortcut: sets the key for a map key-value insertion, then pops after.
@@ -1945,7 +1954,7 @@ impl<'facet> Partial<'facet> {
         self.begin_value()?.set(value)?.end()
     }
 
-    /// Shorthand for: begin_list_item(), set, end
+    /// Shorthand for: begin_list_item(), set(), end()
     pub fn push<U>(&mut self, value: U) -> Result<&mut Self, ReflectError>
     where
         U: Facet<'facet>,
@@ -2222,21 +2231,11 @@ impl<'facet> Partial<'facet> {
     }
 
     /// Selects the nth field of an enum variant by index
-    fn begin_nth_enum_field(&mut self, idx: usize) -> Result<&mut Self, ReflectError> {
-        let frame = self.frames.last_mut().unwrap();
-
-        // Ensure we're in an enum with a variant selected
-        let (variant, enum_type) = match (&frame.tracker, &frame.shape.ty) {
-            (Tracker::Enum { variant, .. }, Type::User(UserType::Enum(e))) => (variant, e),
-            _ => {
-                return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
-                    operation: "push_nth_enum_field requires an enum with a variant selected",
-                });
-            }
-        };
-
-        // Check bounds
+    fn begin_nth_enum_field(
+        frame: &mut Frame,
+        variant: &'static Variant,
+        idx: usize,
+    ) -> Result<Frame, ReflectError> {
         if idx >= variant.data.fields.len() {
             return Err(ReflectError::OperationFailed {
                 shape: frame.shape,
@@ -2247,59 +2246,36 @@ impl<'facet> Partial<'facet> {
         let field = &variant.data.fields[idx];
 
         // Update tracker
-        match &mut frame.tracker {
+        let was_field_init = match &mut frame.tracker {
             Tracker::Enum {
                 data,
                 current_child,
                 ..
             } => {
-                // Check if field was already initialized and drop if needed
-                if data.get(idx) {
-                    // Calculate the field offset, taking into account the discriminant
-                    let _discriminant_size = match enum_type.enum_repr {
-                        EnumRepr::U8 | EnumRepr::I8 => 1,
-                        EnumRepr::U16 | EnumRepr::I16 => 2,
-                        EnumRepr::U32 | EnumRepr::I32 => 4,
-                        EnumRepr::U64 | EnumRepr::I64 => 8,
-                        EnumRepr::USize | EnumRepr::ISize => core::mem::size_of::<usize>(),
-                        EnumRepr::RustNPO => {
-                            return Err(ReflectError::OperationFailed {
-                                shape: frame.shape,
-                                operation: "RustNPO enums are not supported",
-                            });
-                        }
-                    };
-
-                    // The field offset already includes the discriminant offset
-                    let field_ptr = unsafe { frame.data.as_mut_byte_ptr().add(field.offset) };
-
-                    if let Some(drop_fn) =
-                        field.shape.vtable.sized().and_then(|v| (v.drop_in_place)())
-                    {
-                        unsafe { drop_fn(PtrMut::new(field_ptr)) };
-                    }
-
-                    // Unset the bit so we can re-initialize
-                    data.unset(idx);
-                }
-
-                // Set current_child to track which field we're initializing
                 *current_child = Some(idx);
+                data.get(idx)
             }
-            _ => unreachable!("Already checked that we have Enum tracker"),
-        }
+            _ => {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "selecting a field on an enum requires selecting a variant first",
+                });
+            }
+        };
 
-        // Extract data we need before pushing frame
-        let field_ptr = unsafe { frame.data.as_mut_byte_ptr().add(field.offset) };
+        // SAFETY: the field offset comes from an unsafe impl of the Facet trait, we trust it.
+        // also, we checked that the variant was selected.
+        let field_ptr = unsafe { frame.data.field_uninit_at(field.offset) };
         let field_shape = field.shape;
 
-        // Push new frame for the field
-        self.frames.push(Frame::new(
-            PtrUninit::new(field_ptr),
-            field_shape,
-            FrameOwnership::Field,
-        ));
+        let mut next_frame = Frame::new(field_ptr, field_shape, FrameOwnership::Field);
+        if was_field_init {
+            // SAFETY: `ISet` told us the field was initialized
+            unsafe {
+                next_frame.mark_as_init();
+            }
+        }
 
-        Ok(self)
+        Ok(next_frame)
     }
 }
