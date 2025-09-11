@@ -251,36 +251,28 @@ impl<'facet> Partial<'facet> {
             Tracker::SmartPointer { is_initialized } => {
                 // We just popped the inner value frame, so now we need to create the smart pointer
                 if let Def::Pointer(smart_ptr_def) = parent_frame.shape.def {
-                    if let Some(new_into_fn) = smart_ptr_def.vtable.new_into_fn {
-                        // The child frame contained the inner value
-                        let inner_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
-
-                        // Use new_into_fn to create the Box
-                        unsafe {
-                            new_into_fn(parent_frame.data, inner_ptr);
-                        }
-
-                        // Deallocate the inner value's memory since new_into_fn moved it
-                        if let FrameOwnership::Owned = popped_frame.ownership {
-                            if let Ok(layout) = popped_frame.shape.layout.sized_layout() {
-                                if layout.size() > 0 {
-                                    unsafe {
-                                        alloc::alloc::dealloc(
-                                            popped_frame.data.as_mut_byte_ptr(),
-                                            layout,
-                                        );
-                                    }
-                                }
-                            }
-                        }
-
-                        *is_initialized = true;
-                    } else {
+                    let Some(new_into_fn) = smart_ptr_def.vtable.new_into_fn else {
                         return Err(ReflectError::OperationFailed {
                             shape: parent_frame.shape,
                             operation: "SmartPointer missing new_into_fn",
                         });
+                    };
+
+                    // The child frame contained the inner value
+                    let inner_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
+
+                    // Use new_into_fn to create the Box
+                    unsafe {
+                        new_into_fn(parent_frame.data, inner_ptr);
                     }
+
+                    // We just moved out of it
+                    popped_frame.tracker = Tracker::Uninit;
+
+                    // Deallocate the inner value's memory since new_into_fn moved it
+                    popped_frame.dealloc();
+
+                    *is_initialized = true;
                 }
             }
             Tracker::Enum {
@@ -300,39 +292,29 @@ impl<'facet> Partial<'facet> {
                 if *current_child {
                     // We just popped an element frame, now push it to the list
                     if let Def::List(list_def) = parent_frame.shape.def {
-                        if let Some(push_fn) = list_def.vtable.push {
-                            // The child frame contained the element value
-                            let element_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
-
-                            // Use push to add element to the list
-                            unsafe {
-                                push_fn(
-                                    PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
-                                    element_ptr,
-                                );
-                            }
-
-                            // Deallocate the element's memory since push moved it
-                            if let FrameOwnership::Owned = popped_frame.ownership {
-                                if let Ok(layout) = popped_frame.shape.layout.sized_layout() {
-                                    if layout.size() > 0 {
-                                        unsafe {
-                                            alloc::alloc::dealloc(
-                                                popped_frame.data.as_mut_byte_ptr(),
-                                                layout,
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-
-                            *current_child = false;
-                        } else {
+                        let Some(push_fn) = list_def.vtable.push else {
                             return Err(ReflectError::OperationFailed {
                                 shape: parent_frame.shape,
                                 operation: "List missing push function",
                             });
+                        };
+
+                        // The child frame contained the element value
+                        let element_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
+
+                        // Use push to add element to the list
+                        unsafe {
+                            push_fn(
+                                PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
+                                element_ptr,
+                            );
                         }
+
+                        // Push moved out of popped_frame
+                        popped_frame.tracker = Tracker::Uninit;
+                        popped_frame.dealloc();
+
+                        *current_child = false;
                     }
                 }
             }

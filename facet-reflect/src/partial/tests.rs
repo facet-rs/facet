@@ -56,6 +56,15 @@ fn frame_count() -> Result<(), IPanic> {
 }
 
 #[test]
+fn too_many_end() -> Result<(), IPanic> {
+    let mut p = Partial::alloc::<u32>()?;
+    let err = p.end().unwrap_err();
+    assert_snapshot!(err);
+
+    Ok(())
+}
+
+#[test]
 fn set_shape_wrong_shape() -> Result<(), IPanic> {
     let s = String::from("I am a String");
 
