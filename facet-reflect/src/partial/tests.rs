@@ -24,6 +24,37 @@ fn f64_uninit() {
 }
 
 #[test]
+fn partial_after_build() -> Result<(), IPanic> {
+    let mut p = Partial::alloc::<f64>()?;
+    p.set(3.24_f64)?;
+    let _hv = p.build()?;
+    let err = p.build().unwrap_err();
+    assert_snapshot!(err);
+    Ok(())
+}
+
+#[test]
+fn frame_count() -> Result<(), IPanic> {
+    #[derive(Facet)]
+    struct S {
+        s: f64,
+    }
+
+    let mut p = Partial::alloc::<S>()?;
+    assert_eq!(p.frame_count(), 1);
+    p.begin_field("s")?;
+    assert_eq!(p.frame_count(), 2);
+    p.set(4.121_f64)?;
+    assert_eq!(p.frame_count(), 2);
+    p.end()?;
+    assert_eq!(p.frame_count(), 1);
+    let hv = *p.build()?;
+    assert_eq!(hv.s, 4.121_f64);
+
+    Ok(())
+}
+
+#[test]
 fn f64_init() {
     let hv = Partial::alloc::<f64>()
         .unwrap()
