@@ -14,15 +14,15 @@ rich-diagnostics = ["facet-deserialize/rich-diagnostics"]
 default = ["rich-diagnostics"]
 
 [dependencies]
-facet-core = { version = "0.28", default-features = false, features = [
+facet-core = { version = "0.29", default-features = false, features = [
     "alloc",
 ] }
-facet-reflect = { version = "0.28", default-features = false, features = [
+facet-reflect = { version = "0.29", default-features = false, features = [
     "alloc",
 ] }
 
-facet-deserialize = { version = "0.28", default-features = false }
-facet-serialize = { version = "0.28", default-features = false }
+facet-deserialize = { version = "0.29", default-features = false }
+facet-serialize = { version = "0.29", default-features = false }
 
 itoa = "1.0.15"
 lexical-parse-float = "1.0.5"
@@ -33,7 +33,7 @@ ryu = "1"
 [dev-dependencies]
 bytes = { version = "1.10.1" }
 camino = { version = "1" }
-facet = { version = "0.28", features = [
+facet = { version = "0.29", features = [
     "bytes",
     "camino",
     "time",
@@ -43,7 +43,7 @@ facet = { version = "0.28", features = [
     "jiff02",
     "ordered-float",
 ] }
-facet-testhelpers = { version = "0.28" }
+facet-testhelpers = { version = "0.29" }
 insta = "1.43.1"
 time = { version = "0.3.41", features = ["macros"] }
 chrono = { version = "0.4", default-features = false }
