@@ -183,7 +183,7 @@ dependencies = [
 
 [[package]]
 name = "facet-json"
-version = "0.28.2"
+version = "0.29.0"
 dependencies = [
  "bytes",
  "camino",
