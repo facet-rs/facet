@@ -38,6 +38,10 @@ impl core::fmt::Debug for ValueId {
 }
 
 /// Lets you read from a value (implements read-only [`ValueVTable`] proxies)
+///
+/// If the value is a struct, you can read its fields, if the value is an enum,
+/// you can find out which variant is selected, if it's a scalar you can check
+/// against known types and get a concrete value out of it, etc.
 #[derive(Clone, Copy)]
 pub struct Peek<'mem, 'facet> {
     /// Underlying data
@@ -50,7 +54,7 @@ pub struct Peek<'mem, 'facet> {
 }
 
 impl<'mem, 'facet> Peek<'mem, 'facet> {
-    /// Creates a new `PeekValue` instance for a value of type `T`.
+    /// Returns a read-only view over a `T` value.
     pub fn new<T: Facet<'facet> + ?Sized>(t: &'mem T) -> Self {
         Self {
             data: GenericPtr::new(t),
@@ -59,7 +63,8 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
         }
     }
 
-    /// Creates a new `PeekValue` instance without checking the type.
+    /// Returns a read-only view over a value (given its shape), trusting you
+    /// that those two match.
     ///
     /// # Safety
     ///

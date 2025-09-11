@@ -12,8 +12,22 @@ use facet_core::{
     SequenceType, Shape, StructType, Type, UserType, Variant,
 };
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Allocation, constructors etc.
+////////////////////////////////////////////////////////////////////////////////////////////////////
 impl<'facet> Partial<'facet> {
-    /// Allocates a new Partial instance with the given shape
+    /// Allocates a new [TypedPartial] instance on the heap, with the given shape and type
+    pub fn alloc<T>() -> Result<TypedPartial<'facet, T>, ReflectError>
+    where
+        T: Facet<'facet> + ?Sized,
+    {
+        Ok(TypedPartial {
+            inner: Self::alloc_shape(T::SHAPE)?,
+            phantom: PhantomData,
+        })
+    }
+
+    /// Allocates a new [Partial] instance on the heap, with the given shape.
     pub fn alloc_shape(shape: &'static Shape) -> Result<Self, ReflectError> {
         crate::trace!(
             "alloc_shape({:?}), with layout {:?}",
@@ -37,29 +51,6 @@ impl<'facet> Partial<'facet> {
             state: PartialState::Active,
             invariant: PhantomData,
         })
-    }
-
-    /// Allocates a new TypedPartial instance with the given shape and type
-    pub fn alloc<T>() -> Result<TypedPartial<'facet, T>, ReflectError>
-    where
-        T: Facet<'facet> + ?Sized,
-    {
-        Ok(TypedPartial {
-            inner: Self::alloc_shape(T::SHAPE)?,
-            phantom: PhantomData,
-        })
-    }
-
-    /// Require that the partial is active
-    #[inline]
-    fn require_active(&self) -> Result<(), ReflectError> {
-        if self.state == PartialState::Active {
-            Ok(())
-        } else {
-            Err(ReflectError::InvariantViolation {
-                invariant: "Cannot use Partial after it has been built or poisoned",
-            })
-        }
     }
 }
 
@@ -584,70 +575,6 @@ impl<'facet> Partial<'facet> {
         Ok(self)
     }
 
-    /// Builds the value
-    pub fn build(&mut self) -> Result<HeapValue<'facet>, ReflectError> {
-        self.require_active()?;
-        if self.frames.len() != 1 {
-            self.state = PartialState::BuildFailed;
-            return Err(ReflectError::InvariantViolation {
-                invariant: "Partial::build() expects a single frame — call end() until that's the case",
-            });
-        }
-
-        let frame = self.frames.pop().unwrap();
-
-        // Check initialization before proceeding
-        if let Err(e) = frame.require_full_initialization() {
-            // Put the frame back so Drop can handle cleanup properly
-            self.frames.push(frame);
-            self.state = PartialState::BuildFailed;
-            return Err(e);
-        }
-
-        // Check invariants if present
-        if let Some(invariants_fn) = frame.shape.vtable.sized().and_then(|v| (v.invariants)()) {
-            // Safety: The value is fully initialized at this point (we just checked with require_full_initialization)
-            let value_ptr = unsafe { frame.data.assume_init().as_const() };
-            let invariants_ok = unsafe { invariants_fn(value_ptr) };
-
-            if !invariants_ok {
-                // Put the frame back so Drop can handle cleanup properly
-                self.frames.push(frame);
-                self.state = PartialState::BuildFailed;
-                return Err(ReflectError::InvariantViolation {
-                    invariant: "Type invariants check failed",
-                });
-            }
-        }
-
-        // Mark as built to prevent reuse
-        self.state = PartialState::Built;
-
-        match frame
-            .shape
-            .layout
-            .sized_layout()
-            .map_err(|_layout_err| ReflectError::Unsized {
-                shape: frame.shape,
-                operation: "build (final check for sized layout)",
-            }) {
-            Ok(layout) => Ok(HeapValue {
-                guard: Some(Guard {
-                    ptr: frame.data.as_mut_byte_ptr(),
-                    layout,
-                }),
-                shape: frame.shape,
-                phantom: PhantomData,
-            }),
-            Err(e) => {
-                // Put the frame back for proper cleanup
-                self.frames.push(frame);
-                self.state = PartialState::BuildFailed;
-                Err(e)
-            }
-        }
-    }
-
     /// Returns a human-readable path representing the current traversal in the builder,
     /// e.g., `RootStruct.fieldName[index].subfield`.
     pub fn path(&self) -> String {
@@ -740,6 +667,75 @@ impl<'facet> Partial<'facet> {
             out.push_str(&component);
         }
         out
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Build
+////////////////////////////////////////////////////////////////////////////////////////////////////
+impl<'facet> Partial<'facet> {
+    /// Builds the value
+    pub fn build(&mut self) -> Result<HeapValue<'facet>, ReflectError> {
+        self.require_active()?;
+        if self.frames.len() != 1 {
+            self.state = PartialState::BuildFailed;
+            return Err(ReflectError::InvariantViolation {
+                invariant: "Partial::build() expects a single frame — call end() until that's the case",
+            });
+        }
+
+        let frame = self.frames.pop().unwrap();
+
+        // Check initialization before proceeding
+        if let Err(e) = frame.require_full_initialization() {
+            // Put the frame back so Drop can handle cleanup properly
+            self.frames.push(frame);
+            self.state = PartialState::BuildFailed;
+            return Err(e);
+        }
+
+        // Check invariants if present
+        if let Some(invariants_fn) = frame.shape.vtable.sized().and_then(|v| (v.invariants)()) {
+            // Safety: The value is fully initialized at this point (we just checked with require_full_initialization)
+            let value_ptr = unsafe { frame.data.assume_init().as_const() };
+            let invariants_ok = unsafe { invariants_fn(value_ptr) };
+
+            if !invariants_ok {
+                // Put the frame back so Drop can handle cleanup properly
+                self.frames.push(frame);
+                self.state = PartialState::BuildFailed;
+                return Err(ReflectError::InvariantViolation {
+                    invariant: "Type invariants check failed",
+                });
+            }
+        }
+
+        // Mark as built to prevent reuse
+        self.state = PartialState::Built;
+
+        match frame
+            .shape
+            .layout
+            .sized_layout()
+            .map_err(|_layout_err| ReflectError::Unsized {
+                shape: frame.shape,
+                operation: "build (final check for sized layout)",
+            }) {
+            Ok(layout) => Ok(HeapValue {
+                guard: Some(Guard {
+                    ptr: frame.data.as_mut_byte_ptr(),
+                    layout,
+                }),
+                shape: frame.shape,
+                phantom: PhantomData,
+            }),
+            Err(e) => {
+                // Put the frame back for proper cleanup
+                self.frames.push(frame);
+                self.state = PartialState::BuildFailed;
+                Err(e)
+            }
+        }
     }
 }
 
@@ -935,6 +931,31 @@ impl<'facet> Partial<'facet> {
 // Enum variant selection
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 impl<'facet> Partial<'facet> {
+    /// Get the currently selected variant for an enum
+    pub fn selected_variant(&self) -> Option<Variant> {
+        let frame = self.frames.last()?;
+
+        match &frame.tracker {
+            Tracker::Enum { variant, .. } => Some(**variant),
+            _ => None,
+        }
+    }
+
+    /// Find a variant by name in the current enum
+    pub fn find_variant(&self, variant_name: &str) -> Option<(usize, &'static Variant)> {
+        let frame = self.frames.last()?;
+
+        if let Type::User(UserType::Enum(enum_def)) = frame.shape.ty {
+            enum_def
+                .variants
+                .iter()
+                .enumerate()
+                .find(|(_, v)| v.name == variant_name)
+        } else {
+            None
+        }
+    }
+
     /// Assuming the current frame is an enum, this selects a variant by index
     /// (0-based, in declaration order).
     ///
@@ -1760,32 +1781,12 @@ impl Partial<'_> {
 
         Ok(self)
     }
+}
 
-    /// Get the currently selected variant for an enum
-    pub fn selected_variant(&self) -> Option<Variant> {
-        let frame = self.frames.last()?;
-
-        match &frame.tracker {
-            Tracker::Enum { variant, .. } => Some(**variant),
-            _ => None,
-        }
-    }
-
-    /// Find a variant by name in the current enum
-    pub fn find_variant(&self, variant_name: &str) -> Option<(usize, &'static Variant)> {
-        let frame = self.frames.last()?;
-
-        if let Type::User(UserType::Enum(enum_def)) = frame.shape.ty {
-            enum_def
-                .variants
-                .iter()
-                .enumerate()
-                .find(|(_, v)| v.name == variant_name)
-        } else {
-            None
-        }
-    }
-
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Option / inner
+////////////////////////////////////////////////////////////////////////////////////////////////////
+impl Partial<'_> {
     /// Begin building the Some variant of an Option
     pub fn begin_some(&mut self) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
@@ -2277,5 +2278,17 @@ impl<'facet> Partial<'facet> {
         }
 
         Ok(next_frame)
+    }
+
+    /// Require that the partial is active
+    #[inline]
+    fn require_active(&self) -> Result<(), ReflectError> {
+        if self.state == PartialState::Active {
+            Ok(())
+        } else {
+            Err(ReflectError::InvariantViolation {
+                invariant: "Cannot use Partial after it has been built or poisoned",
+            })
+        }
     }
 }
