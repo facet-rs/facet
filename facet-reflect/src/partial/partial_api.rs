@@ -15,8 +15,8 @@ use crate::{
     trace,
 };
 use facet_core::{
-    ArrayType, Def, EnumRepr, EnumType, Facet, Field, KnownPointer, PtrConst, PtrMut, PtrUninit,
-    SequenceType, Shape, StructType, Type, UserType, Variant,
+    ArrayType, Characteristic, Def, EnumRepr, EnumType, Facet, Field, KnownPointer, PtrConst,
+    PtrMut, PtrUninit, SequenceType, Shape, StructType, Type, UserType, Variant,
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1184,6 +1184,51 @@ impl Partial<'_> {
 
         self.frames.push(next_frame);
         Ok(self)
+    }
+
+    /// Sets the given field to its default value, preferring:
+    ///
+    ///   * A `default = some_fn()` function
+    ///   * The field's `Default` implementation if any
+    ///
+    /// But without going all the way up to the parent struct's `Default` impl.
+    ///
+    /// Errors out if idx is out of bound, if the field has no default method or Default impl.
+    pub fn set_nth_field_to_default(&mut self, idx: usize) -> Result<&mut Self, ReflectError> {
+        self.require_active()?;
+
+        let frame = self.frames.last().unwrap();
+        let fields = self.get_fields()?;
+
+        if idx >= fields.len() {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "field index out of bounds",
+            });
+        }
+
+        let field = fields[idx];
+
+        // Check for field-level default function first, then type-level default
+        if let Some(field_default_fn) = field.vtable.default_fn {
+            self.begin_nth_field(idx)?;
+            // the field default fn should be well-behaved
+            unsafe {
+                self.set_from_function(|ptr| {
+                    field_default_fn(ptr);
+                    Ok(())
+                })?;
+            }
+            self.end()
+        } else if field.shape().is(Characteristic::Default) {
+            self.begin_nth_field(idx)?;
+            self.set_default()?;
+            self.end()
+        } else {
+            return Err(ReflectError::DefaultAttrButNoDefaultImpl {
+                shape: field.shape(),
+            });
+        }
     }
 }
 
