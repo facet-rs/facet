@@ -8,7 +8,7 @@ use super::Partial;
 #[cfg(not(miri))]
 macro_rules! assert_snapshot {
     ($($tt:tt)*) => {
-        insta::assert_snapshot!($($tt)*);
+        insta::assert_snapshot!($($tt)*)
     };
 }
 #[cfg(miri)]
@@ -51,6 +51,26 @@ fn frame_count() -> Result<(), IPanic> {
     let hv = *p.build()?;
     assert_eq!(hv.s, 4.121_f64);
 
+    Ok(())
+}
+
+#[test]
+fn set_shape_wrong_shape() -> Result<(), IPanic> {
+    let s = String::from("I am a String");
+
+    let mut p = Partial::alloc::<u32>()?;
+    let err = p.set(s).unwrap_err();
+    assert_snapshot!(err);
+
+    Ok(())
+}
+
+#[test]
+fn alloc_shape_unsized() -> Result<(), IPanic> {
+    match Partial::alloc::<str>() {
+        Ok(_) => unreachable!(),
+        Err(err) => assert_snapshot!(err),
+    }
     Ok(())
 }
 

@@ -42,7 +42,7 @@ impl<'facet> Partial<'facet> {
     /// Allocates a new TypedPartial instance with the given shape and type
     pub fn alloc<T>() -> Result<TypedPartial<'facet, T>, ReflectError>
     where
-        T: Facet<'facet>,
+        T: Facet<'facet> + ?Sized,
     {
         Ok(TypedPartial {
             inner: Self::alloc_shape(T::SHAPE)?,
@@ -78,7 +78,11 @@ impl<'facet> Partial<'facet> {
         self.frames.len()
     }
 
-    /// Sets a value wholesale into the current frame
+    /// Sets a value wholesale into the current frame.
+    ///
+    /// If the current frame was already initialized, the previous value is
+    /// dropped. If it was partially initialized, the fields that were initialized
+    /// are dropped, etc.
     pub fn set<U>(&mut self, value: U) -> Result<&mut Self, ReflectError>
     where
         U: Facet<'facet>,
@@ -93,23 +97,22 @@ impl<'facet> Partial<'facet> {
 
         // Prevent the value from being dropped since we've copied it
         core::mem::forget(value);
+
         Ok(self)
     }
 
-    /// Sets a value into the current frame by shape, for shape-based operations
-    ///
-    /// If this returns Ok, then `src_value` has been moved out of
+    /// Sets a value into the current frame by [PtrConst] / [Shape].
     ///
     /// # Safety
     ///
     /// The caller must ensure that `src_value` points to a valid instance of a value
     /// whose memory layout and type matches `src_shape`, and that this value can be
     /// safely copied (bitwise) into the destination specified by the Partial's current frame.
-    /// No automatic drop will be performed for any existing value, so calling this on an
-    /// already-initialized destination may result in leaks or double drops if misused.
+    ///
     /// After a successful call, the ownership of the value at `src_value` is effectively moved
     /// into the Partial (i.e., the destination), and the original value should not be used
-    /// or dropped by the caller; consider using `core::mem::forget` on the passed value.
+    /// or dropped by the caller; you should use `core::mem::forget` on the passed value.
+    ///
     /// If an error is returned, the destination remains unmodified and safe for future operations.
     #[inline]
     pub unsafe fn set_shape(
@@ -129,52 +132,51 @@ impl<'facet> Partial<'facet> {
             });
         }
 
-        if fr.shape.layout.sized_layout().is_err() {
-            return Err(ReflectError::Unsized {
-                shape: fr.shape,
-                operation: "set_shape",
-            });
-        }
-
         fr.deinit();
+
+        // SAFETY: `fr.shape` and `src_shape` are the same, so they have the same size,
+        // and the preconditions for this function are that `src_value` is fully intialized.
         unsafe {
+            // unwrap safety: the only failure condition for copy_from is that shape is unsized,
+            // which is not possible for `Partial`
             fr.data.copy_from(src_value, fr.shape).unwrap();
         }
-        fr.tracker = Tracker::Init;
+
+        // SAFETY: if we reached this point, `fr.data` is correctly initialized
+        unsafe {
+            fr.mark_as_init();
+        }
 
         Ok(self)
     }
 
-    /// Sets the current frame to its default value
+    /// Sets the current frame to its default value using `default_in_place` from the
+    /// vtable.
+    ///
+    /// Note: if you have `struct S { field: F }`, and `F` does not implement `Default`
+    /// but `S` does, this doesn't magically uses S's `Default` implementation to get a value
+    /// for `field`.
     #[inline]
     pub fn set_default(&mut self) -> Result<&mut Self, ReflectError> {
-        let frame = self.frames.last().unwrap(); // Get frame to access vtable
+        let frame = self.frames.last().unwrap();
 
-        if let Some(default_fn) = frame
-            .shape
-            .vtable
-            .sized()
-            .and_then(|v| (v.default_in_place)())
-        {
-            // Initialize with default value using set_from_function
-            //
-            // # Safety
-            //
-            // set_from_function handles the active check, dropping,
-            // and setting tracker. The closure passes the correct pointer type
-            // and casts to 'static which is safe within the context of calling
-            // the vtable function. The closure returns Ok(()) because the
-            // default_in_place function does not return errors.
-            unsafe {
-                self.set_from_function(move |ptr: PtrUninit<'_>| {
-                    default_fn(PtrUninit::new(ptr.as_mut_byte_ptr()));
-                    Ok(())
-                })
-            }
-        } else {
-            Err(ReflectError::OperationFailed {
+        let Some(default_fn) = (frame.shape.vtable.sized().unwrap().default_in_place)() else {
+            return Err(ReflectError::OperationFailed {
                 shape: frame.shape,
                 operation: "type does not implement Default",
+            });
+        };
+
+        // Initialize with default value using set_from_function
+        //
+        // # Safety
+        //
+        // `default_fn` must fully initialize the passed pointer. we took it
+        // from the vtable of `frame.shape`.
+        unsafe {
+            self.set_from_function(move |ptr| {
+                default_fn(ptr);
+                Ok(())
             })
         }
     }
@@ -192,27 +194,8 @@ impl<'facet> Partial<'facet> {
 
         let frame = self.frames.last_mut().unwrap();
 
-        // Check if we need to drop an existing value
-        // FIXME: there are other ways for values to be initialized /
-        // partially initialized, so this is actually a minefield
-        if matches!(frame.tracker, Tracker::Init) {
-            if let Some(drop_fn) = frame.shape.vtable.sized().and_then(|v| (v.drop_in_place)()) {
-                unsafe { drop_fn(PtrMut::new(frame.data.as_mut_byte_ptr())) };
-            }
-        }
-
-        // Don't allow overwriting when building an Option's inner value
-        if matches!(
-            frame.tracker,
-            Tracker::Option {
-                building_inner: true
-            }
-        ) {
-            return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
-                operation: "Cannot overwrite while building Option inner value",
-            });
-        }
+        // First deinit anything previously initialized
+        frame.deinit();
 
         // Call the function to initialize the value
         match f(frame.data) {
@@ -225,55 +208,39 @@ impl<'facet> Partial<'facet> {
         }
     }
 
-    /// Parses a string value into the current frame using the type's ParseFn from the vtable
+    /// Parses a string value into the current frame using the type's ParseFn from the vtable.
+    ///
+    /// If the current frame was previously initialized, its contents are dropped in place.
     pub fn parse_from_str(&mut self, s: &str) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
 
         let frame = self.frames.last_mut().unwrap();
 
         // Check if the type has a parse function
-        let parse_fn = match frame.shape.vtable.sized().and_then(|v| (v.parse)()) {
-            Some(parse_fn) => parse_fn,
-            None => {
-                return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
-                    operation: "Type does not support parsing from string",
-                });
-            }
-        };
-
-        // Check if we need to drop an existing value
-        if matches!(frame.tracker, Tracker::Init) {
-            if let Some(drop_fn) = frame.shape.vtable.sized().and_then(|v| (v.drop_in_place)()) {
-                unsafe { drop_fn(PtrMut::new(frame.data.as_mut_byte_ptr())) };
-            }
-        }
-
-        // Don't allow overwriting when building an Option's inner value
-        if matches!(
-            frame.tracker,
-            Tracker::Option {
-                building_inner: true
-            }
-        ) {
+        let Some(parse_fn) = (frame.shape.vtable.sized().unwrap().parse)() else {
             return Err(ReflectError::OperationFailed {
                 shape: frame.shape,
-                operation: "Cannot overwrite while building Option inner value",
+                operation: "Type does not support parsing from string",
             });
-        }
+        };
+
+        // Note: deinit leaves us in `Tracker::Uninit` state which is valid even if we error out.
+        frame.deinit();
 
         // Parse the string value using the type's parse function
         let result = unsafe { parse_fn(s, frame.data) };
-        match result {
-            Ok(_) => {
-                frame.tracker = Tracker::Init;
-                Ok(self)
-            }
-            Err(_parse_error) => Err(ReflectError::OperationFailed {
+        if let Err(_pe) = result {
+            return Err(ReflectError::OperationFailed {
                 shape: frame.shape,
                 operation: "Failed to parse string value",
-            }),
+            });
         }
+
+        // SAFETY: `parse_fn` returned `Ok`, so `frame.data` is fully initialized now.
+        unsafe {
+            frame.mark_as_init();
+        }
+        Ok(self)
     }
 
     /// Pushes a variant for enum initialization by name
