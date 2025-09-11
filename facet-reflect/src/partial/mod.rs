@@ -125,7 +125,7 @@ use alloc::vec::Vec;
 pub use heap_value::*;
 
 use facet_core::{
-    Def, Facet, PtrMut, PtrUninit, Shape, SliceBuilderVTable, Type, UserType, Variant,
+    Def, EnumType, Facet, PtrMut, PtrUninit, Shape, SliceBuilderVTable, Type, UserType, Variant,
 };
 use iset::ISet;
 
@@ -638,6 +638,17 @@ impl Frame {
                     Ok(())
                 }
             }
+        }
+    }
+
+    /// Get the [EnumType] of the frame's shape, if it is an enum type
+    pub(crate) fn get_enum_type(&self) -> Result<EnumType, ReflectError> {
+        match self.shape.ty {
+            Type::User(UserType::Enum(e)) => Ok(e),
+            _ => Err(ReflectError::WasNotA {
+                expected: "enum",
+                actual: self.shape,
+            }),
         }
     }
 }
