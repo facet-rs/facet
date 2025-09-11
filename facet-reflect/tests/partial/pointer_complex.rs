@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use facet::Facet;
 use facet_reflect::Partial;
+use facet_testhelpers::IPanic;
 
 #[derive(Facet, Debug, PartialEq)]
 struct Person {
@@ -11,7 +12,7 @@ struct Person {
 }
 
 #[test]
-fn arc_slice_complex_struct() -> eyre::Result<()> {
+fn arc_slice_complex_struct() -> Result<(), IPanic> {
     // Test building Arc<[Person]>
     let mut partial = Partial::alloc::<Arc<[Person]>>().unwrap();
     partial.begin_smart_ptr()?;
@@ -67,7 +68,7 @@ struct NestedStruct {
 }
 
 #[test]
-fn arc_slice_nested_struct() -> eyre::Result<()> {
+fn arc_slice_nested_struct() -> Result<(), IPanic> {
     // Test building Arc<[NestedStruct]> with nested structures
     let mut partial = Partial::alloc::<Arc<[NestedStruct]>>().unwrap();
     partial.begin_smart_ptr()?;
@@ -136,7 +137,7 @@ fn arc_slice_nested_struct() -> eyre::Result<()> {
 }
 
 #[test]
-fn arc_slice_empty() -> eyre::Result<()> {
+fn arc_slice_empty() -> Result<(), IPanic> {
     // Test building an empty Arc<[Person]>
     let mut partial = Partial::alloc::<Arc<[Person]>>().unwrap();
     partial.begin_smart_ptr()?;
@@ -151,7 +152,7 @@ fn arc_slice_empty() -> eyre::Result<()> {
 }
 
 #[test]
-fn arc_slice_single_element() -> eyre::Result<()> {
+fn arc_slice_single_element() -> Result<(), IPanic> {
     // Test building Arc<[Person]> with just one element
     let mut partial = Partial::alloc::<Arc<[Person]>>().unwrap();
     partial.begin_smart_ptr()?;
@@ -183,7 +184,7 @@ struct CopyableStruct {
 }
 
 #[test]
-fn arc_slice_copyable_struct() -> eyre::Result<()> {
+fn arc_slice_copyable_struct() -> Result<(), IPanic> {
     // Test with a copyable struct
     let mut partial = Partial::alloc::<Arc<[CopyableStruct]>>().unwrap();
     partial.begin_smart_ptr()?;
