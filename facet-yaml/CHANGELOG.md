@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.0](https://github.com/facet-rs/facet-yaml/compare/v0.28.0...v0.29.0) - 2025-09-11
+
+### Breaking changes
+
+- Regression: `#[default]` on a struct will not allow filling missing fields
+  with the corresponding field from `Default::default()` of the struct anymore.
+  The previous implementation was unsound. This functionality will be restored
+  in a future version.
+
+### Other
+
+- Upgrade to facet 0.29
+
 ## [0.28.0](https://github.com/facet-rs/facet-yaml/compare/v0.25.16...v0.28.0) - 2025-07-25
 
 ### Other
