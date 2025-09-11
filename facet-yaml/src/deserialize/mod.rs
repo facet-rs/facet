@@ -11,8 +11,7 @@ use alloc::{
 };
 use error::AnyErr;
 use facet_core::{
-    Characteristic, Def, Facet, FieldFlags, NumericType, PrimitiveType, SequenceType, Type,
-    UserType,
+    Def, Facet, FieldFlags, NumericType, PrimitiveType, SequenceType, Type, UserType,
 };
 use facet_reflect::Partial;
 use yaml_rust2::{Yaml, YamlLoader};
@@ -68,11 +67,10 @@ fn from_str_value<'facet>(wip: &mut Partial<'facet>, yaml: &str) -> Result<(), A
 fn deserialize_value<'facet>(wip: &mut Partial<'facet>, value: &Yaml) -> Result<(), AnyErr> {
     // Get the shape
     let shape = wip.shape();
-    let innermost_shape = wip.innermost_shape();
 
     #[cfg(feature = "log")]
     {
-        log::debug!("deserialize_value: shape={shape}, innermost_shape={innermost_shape}");
+        log::debug!("deserialize_value: shape={shape}");
         log::debug!("Shape type: {:?}", shape.ty);
         log::debug!("Shape attributes: {:?}", shape.attributes);
         log::debug!("YAML value: {value:?}");
@@ -123,58 +121,38 @@ fn deserialize_value<'facet>(wip: &mut Partial<'facet>, value: &Yaml) -> Result<
                         #[cfg(feature = "log")]
                         log::debug!("Setting default for field: {}", field.name);
 
-                        wip.begin_nth_field(index)
+                        wip.set_nth_field_to_default(index)
                             .map_err(|e| AnyErr(e.to_string()))?;
-
-                        // Check for field-level default function first, then type-level default
-                        if let Some(field_default_fn) = field.vtable.default_fn {
-                            #[cfg(feature = "log")]
-                            log::debug!("Using field default function for field: {}", field.name);
-
-                            wip.set_field_default(field_default_fn)
-                                .map_err(|e| AnyErr(e.to_string()))?;
-                        } else if field.shape().is(Characteristic::Default) {
-                            #[cfg(feature = "log")]
-                            log::debug!("Using type Default for field: {}", field.name);
-
-                            wip.set_default().map_err(|e| AnyErr(e.to_string()))?;
-                        } else {
-                            return Err(AnyErr(format!(
-                                "Field '{}' has default attribute but its type doesn't implement Default and no default function provided",
-                                field.name
-                            )));
-                        }
-
-                        wip.end().map_err(|e| AnyErr(e.to_string()))?;
                     }
                 }
             }
 
-            // Handle struct-level defaults using the safe API from facet-reflect
-            wip.fill_unset_fields_from_default()
-                .map_err(|e| AnyErr(e.to_string()))?;
+            for (index, _field) in sd.fields.iter().enumerate() {
+                let is_set = wip.is_field_set(index).map_err(|e| AnyErr(e.to_string()))?;
+                if !is_set {
+                    todo!(
+                        "should fill unset fields from struct's Default, but not implemented yet. the previous implementation was unsound."
+                    )
+                }
+            }
         } else {
             return Err(AnyErr(format!("Expected a YAML hash, got: {value:?}")));
         }
         return Ok(());
     }
 
-    // Then check the def system (Def) using innermost_shape instead of shape
-    // This handles transparent types automatically by using the wrapped type
-    match innermost_shape.def {
+    match shape.def {
         Def::Scalar => {
             #[cfg(feature = "log")]
             {
                 log::debug!("Processing scalar type");
                 log::debug!("  shape: {shape}");
-                log::debug!("  innermost_shape: {innermost_shape}");
                 log::debug!("  shape.ty: {:?}", shape.ty);
-                log::debug!("  innermost_shape.ty: {:?}", innermost_shape.ty);
             }
 
             // Check if it's a numeric type
-            if let Type::Primitive(PrimitiveType::Numeric(numeric_type)) = innermost_shape.ty {
-                let size = innermost_shape.layout.sized_layout().unwrap().size();
+            if let Type::Primitive(PrimitiveType::Numeric(numeric_type)) = shape.ty {
+                let size = shape.layout.sized_layout().unwrap().size();
                 match numeric_type {
                     NumericType::Integer { signed: false } => {
                         let u = yaml_to_u64(value)?;
@@ -199,7 +177,7 @@ fn deserialize_value<'facet>(wip: &mut Partial<'facet>, value: &Yaml) -> Result<
                             }
                             8 => {
                                 // Check if it's usize or u64
-                                if innermost_shape.is_type::<usize>() {
+                                if shape.is_type::<usize>() {
                                     let val = usize::try_from(u).map_err(|_| {
                                         AnyErr(format!("Value {u} out of range for usize"))
                                     })?;
@@ -265,7 +243,7 @@ fn deserialize_value<'facet>(wip: &mut Partial<'facet>, value: &Yaml) -> Result<
                             }
                             8 => {
                                 // Check if it's isize or i64
-                                if innermost_shape.is_type::<isize>() {
+                                if shape.is_type::<isize>() {
                                     let val = isize::try_from(i).map_err(|_| {
                                         AnyErr(format!("Value {i} out of range for isize"))
                                     })?;
@@ -313,7 +291,7 @@ fn deserialize_value<'facet>(wip: &mut Partial<'facet>, value: &Yaml) -> Result<
                         }
                     }
                 }
-            } else if innermost_shape.is_type::<bool>() {
+            } else if shape.is_type::<bool>() {
                 // Handle boolean values
                 let b = match value {
                     Yaml::Boolean(b) => *b,
@@ -330,7 +308,7 @@ fn deserialize_value<'facet>(wip: &mut Partial<'facet>, value: &Yaml) -> Result<
                     }
                 };
                 wip.set(b).map_err(|e| AnyErr(e.to_string()))?;
-            } else if innermost_shape.is_type::<String>() {
+            } else if shape.is_type::<String>() {
                 // For strings, set directly
                 let s = value
                     .as_str()
