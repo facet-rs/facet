@@ -279,6 +279,20 @@ impl<'facet, T: ?Sized> TypedPartial<'facet, T> {
         self.inner.begin_nth_field(idx)?;
         Ok(self)
     }
+
+    /// Sets the given field to its default value, preferring:
+    ///
+    ///   * A `default = some_fn()` function
+    ///   * The field's `Default` implementation if any
+    ///
+    /// But without going all the way up to the parent struct's `Default` impl.
+    ///
+    /// Errors out if idx is out of bound, if the field has no default method or Default impl.
+    #[inline]
+    pub fn set_nth_field_to_default(&mut self, idx: usize) -> Result<&mut Self, ReflectError> {
+        self.inner.set_nth_field_to_default(idx)?;
+        Ok(self)
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
