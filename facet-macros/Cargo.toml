@@ -1,6 +1,6 @@
 [package]
 name = "facet-macros"
-version = "0.28.3"
+version = "0.29.0"
 edition.workspace = true
 repository.workspace = true
 license.workspace = true
@@ -22,8 +22,8 @@ proc-macro = true
 function = ["facet-macros-emit/function"]
 
 [dependencies]
-facet-macros-emit = { version = "0.28.3", path = "../facet-macros-emit" }
+facet-macros-emit = { version = "0.29.0", path = "../facet-macros-emit" }
 
 # cf. https://hachyderm.io/@epage/114141126315983016
 [target.'cfg(any())'.dependencies]
-facet-core = { path = "../facet-core", version = "0.28.3" }
+facet-core = { path = "../facet-core", version = "0.29.0" }

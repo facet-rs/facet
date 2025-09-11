@@ -6,6 +6,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.0](https://github.com/facet-rs/facet/compare/facet-reflect-v0.28.3...facet-reflect-v0.29.0) - 2025-09-11
+
+### Breaking changes
+
+- Make sure `TypedPartial` and `Partial` expose the same API
+- Improve documentation somewhat
+- Retire `Partial::set_nth_element`, `Partial::set_nth_enum_field`, which are now
+  served by `Partial::set_nth_field`.
+- Introduce `Partial::set_nth_field_to_default`
+- Mark `Partial::set_from_peek` as unsafe
+
+### Cleanups
+
+- Use let else to simplify some code paths
+
 ## [0.28.3](https://github.com/facet-rs/facet/compare/facet-reflect-v0.28.2...facet-reflect-v0.28.3) - 2025-09-10
 
 ### Other

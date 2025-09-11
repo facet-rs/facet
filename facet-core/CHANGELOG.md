@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.0](https://github.com/facet-rs/facet/compare/facet-core-v0.28.3...facet-core-v0.29.0) - 2025-09-11
+
+### Breaking changes
+
+ - FieldError is not Copy anymore
+
 ## [0.28.1](https://github.com/facet-rs/facet/compare/facet-core-v0.28.0...facet-core-v0.28.1) - 2025-08-25
 
 ### Other

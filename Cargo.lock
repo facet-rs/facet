@@ -162,7 +162,7 @@ dependencies = [
 
 [[package]]
 name = "facet"
-version = "0.28.3"
+version = "0.29.0"
 dependencies = [
  "cargo-husky",
  "eyre",
@@ -176,7 +176,7 @@ dependencies = [
 
 [[package]]
 name = "facet-core"
-version = "0.28.3"
+version = "0.29.0"
 dependencies = [
  "bitflags",
  "bytes",
@@ -194,7 +194,7 @@ dependencies = [
 
 [[package]]
 name = "facet-macros"
-version = "0.28.3"
+version = "0.29.0"
 dependencies = [
  "facet-core",
  "facet-macros-emit",
@@ -202,7 +202,7 @@ dependencies = [
 
 [[package]]
 name = "facet-macros-emit"
-version = "0.28.3"
+version = "0.29.0"
 dependencies = [
  "facet-macros-parse",
  "insta",
@@ -214,7 +214,7 @@ dependencies = [
 
 [[package]]
 name = "facet-macros-parse"
-version = "0.28.3"
+version = "0.29.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -223,7 +223,7 @@ dependencies = [
 
 [[package]]
 name = "facet-reflect"
-version = "0.28.3"
+version = "0.29.0"
 dependencies = [
  "bitflags",
  "camino",
@@ -239,7 +239,7 @@ dependencies = [
 
 [[package]]
 name = "facet-testhelpers"
-version = "0.28.3"
+version = "0.29.0"
 dependencies = [
  "color-backtrace",
  "facet-testhelpers-macros",
@@ -249,7 +249,7 @@ dependencies = [
 
 [[package]]
 name = "facet-testhelpers-macros"
-version = "0.28.1"
+version = "0.29.0"
 dependencies = [
  "quote",
  "unsynn",
