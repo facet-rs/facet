@@ -35,7 +35,7 @@ fn test_nested_empty_tuple_field_check() {
         partial.begin_nth_field(0).unwrap();
 
         // Now we're at type (), which should be considered complete
-        let inner_shape = partial.innermost_shape();
+        let inner_shape = partial.shape();
         println!("Inner shape: {inner_shape:?}");
 
         // No need to set anything - it's a ZST
