@@ -1,5 +1,12 @@
 // This module contains the public-facing API for `Partial`
 
+use alloc::{
+    boxed::Box,
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
+
 use core::marker::PhantomData;
 
 use crate::{
@@ -529,19 +536,8 @@ impl<'facet> Partial<'facet> {
                         (vtable.push_fn)(parent_ptr, element_ptr);
                     }
 
-                    // Deallocate the element's memory since push_fn moved it
-                    if let FrameOwnership::Owned = popped_frame.ownership {
-                        if let Ok(layout) = popped_frame.shape.layout.sized_layout() {
-                            if layout.size() > 0 {
-                                unsafe {
-                                    alloc::alloc::dealloc(
-                                        popped_frame.data.as_mut_byte_ptr(),
-                                        layout,
-                                    );
-                                }
-                            }
-                        }
-                    }
+                    popped_frame.tracker = Tracker::Uninit;
+                    popped_frame.dealloc();
 
                     if let Tracker::SmartPointerSlice {
                         building_item: bi, ..
@@ -853,12 +849,17 @@ impl<'facet> Partial<'facet> {
         }
     }
 
-    /// Copy a value from a Peek into the current position (safe alternative to set_shape)
+    /// Copy a value from a Peek into the current frame.
     ///
     /// # Invariants
     ///
     /// `peek` must be a thin pointer, otherwise this panics.
-    pub fn set_from_peek(&mut self, peek: &Peek<'_, '_>) -> Result<&mut Self, ReflectError> {
+    ///
+    /// # Safety
+    ///
+    /// If this suceeds, the value `Peek` points to has been moved out of, and
+    /// as such, should not be dropped (but should be deallocated).
+    pub unsafe fn set_from_peek(&mut self, peek: &Peek<'_, '_>) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
 
         // Get the source value's pointer and shape

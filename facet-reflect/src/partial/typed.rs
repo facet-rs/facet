@@ -1,9 +1,8 @@
+use alloc::{boxed::Box, string::String};
+
+use crate::{Partial, Peek, ReflectError, trace};
 use core::marker::PhantomData;
-
-use crate::{Peek, trace};
 use facet_core::{Facet, PtrConst, PtrUninit, Shape, Variant};
-
-use crate::{Partial, ReflectError};
 
 /// A typed wrapper around `Partial`, for when you want to statically
 /// ensure that `build` gives you the proper type.
@@ -159,13 +158,20 @@ impl<'facet, T: ?Sized> TypedPartial<'facet, T> {
         Ok(self)
     }
 
-    /// Copy a value from a Peek into the current position (safe alternative to set_shape)
+    /// Copy a value from a Peek into the current frame.
     ///
     /// # Invariants
     ///
     /// `peek` must be a thin pointer, otherwise this panics.
-    pub fn set_from_peek(&mut self, peek: &Peek<'_, '_>) -> Result<&mut Self, ReflectError> {
-        self.inner.set_from_peek(peek)?;
+    ///
+    /// # Safety
+    ///
+    /// If this suceeds, the value `Peek` points to has been moved out of, and
+    /// as such, should not be dropped (but should be deallocated).
+    pub unsafe fn set_from_peek(&mut self, peek: &Peek<'_, '_>) -> Result<&mut Self, ReflectError> {
+        unsafe {
+            self.inner.set_from_peek(peek)?;
+        }
         Ok(self)
     }
 
