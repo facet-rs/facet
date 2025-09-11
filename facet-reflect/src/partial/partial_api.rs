@@ -2246,96 +2246,23 @@ impl<'facet> Partial<'facet> {
     }
 
     /// Copy a value from a Peek into the current position (safe alternative to set_shape)
+    ///
+    /// # Invariants
+    ///
+    /// `peek` must be a thin pointer, otherwise this panics.
     pub fn set_from_peek(&mut self, peek: &Peek<'_, '_>) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
 
         // Get the source value's pointer and shape
-        let src_ptr = peek.data();
+        let src_ptr = peek
+            .data()
+            .thin()
+            .expect("set_from_peek requires thin pointers");
         let src_shape = peek.shape();
 
         // Safety: This is a safe wrapper around set_shape
         // The peek guarantees the source data is valid for its shape
-        unsafe { self.set_shape(src_ptr.thin().unwrap(), src_shape) }
-    }
-
-    /// Copy a field from a struct's default value (safe wrapper for deserialization)
-    /// This method creates the Peek internally to avoid exposing unsafe code to callers
-    pub fn set_field_from_default(
-        &mut self,
-        field_data: PtrConst<'_>,
-        field_shape: &'static Shape,
-    ) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
-
-        // Safety: The caller guarantees that field_data points to valid data for field_shape
-        // This is typically used when copying default values during deserialization
-        unsafe { self.set_shape(field_data, field_shape) }
-    }
-
-    /// Fill all unset fields from the struct's default value
-    /// This is a safe API for format deserializers that forbid unsafe code
-    pub fn fill_unset_fields_from_default(&mut self) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
-
-        let frame = self.frames.last().unwrap();
-        let shape = frame.shape;
-
-        // Check if this is a struct with the default attribute
-        if !shape.has_default_attr() {
-            return Ok(self);
-        }
-
-        // Make sure we're working with a struct
-        let struct_def = match shape.ty {
-            Type::User(UserType::Struct(sd)) => sd,
-            _ => return Ok(self), // Not a struct, nothing to do
-        };
-
-        // Check if any fields are unset
-        let mut has_unset = false;
-        for index in 0..struct_def.fields.len() {
-            if !self.is_field_set(index)? {
-                has_unset = true;
-                break;
-            }
-        }
-
-        if !has_unset {
-            return Ok(self); // All fields are set, nothing to do
-        }
-
-        // Create a default instance
-        let default_val = Partial::alloc_shape(shape)?.set_default()?.build()?;
-        let peek = default_val.peek();
-
-        // Convert to struct peek
-        let struct_peek = peek
-            .into_struct()
-            .map_err(|_| ReflectError::OperationFailed {
-                shape,
-                operation: "expected struct peek for default value",
-            })?;
-
-        // Copy unset fields from the default
-        for (index, _field) in struct_def.fields.iter().enumerate() {
-            if !self.is_field_set(index)? {
-                self.begin_nth_field(index)?;
-
-                // Get the field from the default value
-                let def_field =
-                    struct_peek
-                        .field(index)
-                        .map_err(|_| ReflectError::OperationFailed {
-                            shape,
-                            operation: "failed to get field from default struct",
-                        })?;
-
-                self.set_from_peek(&def_field)?;
-                self.end()?;
-            }
-        }
-
-        Ok(self)
+        unsafe { self.set_shape(src_ptr, src_shape) }
     }
 
     /// Convenience shortcut: sets the nth element of an array directly to value, popping after.
