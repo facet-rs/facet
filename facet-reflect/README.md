@@ -7,7 +7,15 @@
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
 
-Allows building values, via `Partial`, and inspecting existing values, via `PeekValue`.
+Whereas the core `facet` crate provides essential traits like `Facet` itself, and
+data structures like `Type`, `StructType`, `Field`, etc., `facet-reflect` uses that
+information about the shape of types to allow:
+
+  * Read-only access to already-initialized values (via [`Peek`])
+  * Construction of values from scratch (via [`Partial`])
+
+This allows, respectively, serialization and deserialization, without risking breaking
+invariants in types that implement `Facet`.
 
 ## Sponsors
 
