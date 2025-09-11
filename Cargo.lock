@@ -227,7 +227,6 @@ version = "0.28.3"
 dependencies = [
  "bitflags",
  "camino",
- "eyre",
  "facet",
  "facet-core",
  "facet-testhelpers",

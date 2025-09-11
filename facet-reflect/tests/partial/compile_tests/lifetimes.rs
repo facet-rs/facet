@@ -6,15 +6,15 @@ struct Foo<'a> {
     s: &'a str,
 }
 
-fn main() -> eyre::Result<()> {
-    let mut partial = Partial::alloc_shape(Foo::SHAPE)?;
+fn main() {
+    let mut partial = Partial::alloc_shape(Foo::SHAPE).unwrap();
     let partial = {
         let s = "abc".to_string();
         let foo = Foo { s: &s };
-        partial.set(foo)?
+        partial.set(foo).unwrap()
     };
 
-    let v = partial.build()?.materialize()?;
+    let v = partial.build().unwrap().materialize().unwrap();
     dbg!(v);
 
     Ok(())
