@@ -142,9 +142,25 @@ enum PartialState {
     BuildFailed,
 }
 
-/// A work-in-progress heap-allocated value
+/// A type-erased, heap-allocated, partially-initialized value.
 ///
-/// `'facet` is the lifetime of borrowed values within the structure (or 'static if it's owned)
+/// [Partial] keeps track of the state of initialiation of the underlying
+/// value: if we're building `struct S { a: u32, b: String }`, we may
+/// have initialized `a`, or `b`, or both, or neither.
+///
+/// [Partial] allows navigating down nested structs and initializing them
+/// progressively: [Partial::begin_field] pushes a frame onto the stack,
+/// which then has to be initialized, and popped off with [Partial::end].
+///
+/// If [Partial::end] is called but the current frame isn't fully initialized,
+/// an error is returned: in other words, if you navigate down to a field,
+/// you have to fully initialize it one go. You can't go back up and back down
+/// to it again.
+///
+/// You might be interested in [TypedPartial] as well, which carries a generic
+/// type parameter to make [TypedPartial::build] type-safe. However, when
+/// implementing deserializers for example, if you want to avoid monomorphization,
+/// you might want to work with [Partial] directly.
 pub struct Partial<'facet> {
     /// stack of frames to keep track of deeply nested initialization
     frames: Vec<Frame>,
