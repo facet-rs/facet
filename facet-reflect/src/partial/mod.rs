@@ -106,6 +106,8 @@
 //! - Properly handling drop semantics for partially initialized values
 //! - Supporting both owned and borrowed values through lifetime parameters
 
+use alloc::{string::String, vec::Vec};
+
 #[cfg(test)]
 mod tests;
 
@@ -121,7 +123,6 @@ use crate::{ReflectError, TrackerKind, trace};
 use core::marker::PhantomData;
 
 mod heap_value;
-use alloc::vec::Vec;
 pub use heap_value::*;
 
 use facet_core::{
