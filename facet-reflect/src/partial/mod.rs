@@ -124,7 +124,9 @@ mod heap_value;
 use alloc::vec::Vec;
 pub use heap_value::*;
 
-use facet_core::{Def, PtrMut, PtrUninit, Shape, SliceBuilderVTable, Type, UserType, Variant};
+use facet_core::{
+    Def, Facet, PtrMut, PtrUninit, Shape, SliceBuilderVTable, Type, UserType, Variant,
+};
 use iset::ISet;
 
 /// State of a partial value
@@ -240,14 +242,6 @@ enum Tracker {
         is_initialized: bool,
     },
 
-    /// We're initializing an `Arc<str>`, `Box<str>`, `Rc<str>`, etc.
-    ///
-    /// We expect `set` with a `String`
-    SmartPointerStr {
-        // whether `data` was initialized with a `String` or not
-        is_initialized: bool,
-    },
-
     /// We're initializing an `Arc<[T]>`, `Box<[T]>`, `Rc<[T]>`, etc.
     ///
     /// We're using the slice builder API to construct the slice
@@ -303,7 +297,6 @@ impl Tracker {
             Tracker::Array { .. } => TrackerKind::Array,
             Tracker::Struct { .. } => TrackerKind::Struct,
             Tracker::SmartPointer { .. } => TrackerKind::SmartPointer,
-            Tracker::SmartPointerStr { .. } => TrackerKind::SmartPointerStr,
             Tracker::SmartPointerSlice { .. } => TrackerKind::SmartPointerSlice,
             Tracker::Enum { .. } => TrackerKind::Enum,
             Tracker::List { .. } => TrackerKind::List,
@@ -408,16 +401,6 @@ impl Frame {
                 // Note: we don't deallocate the inner value here because
                 // the Box's drop will handle that
             }
-            Tracker::SmartPointerStr { is_initialized } => {
-                // Drop the initialized string
-                if *is_initialized {
-                    if let Some(drop_fn) =
-                        self.shape.vtable.sized().and_then(|v| (v.drop_in_place)())
-                    {
-                        unsafe { drop_fn(self.data.assume_init()) };
-                    }
-                }
-            }
             Tracker::SmartPointerSlice { vtable, .. } => {
                 // Free the slice builder
                 let builder_ptr = unsafe { self.data.assume_init() };
@@ -520,6 +503,25 @@ impl Frame {
         self.tracker = Tracker::Uninit;
     }
 
+    /// Deallocate the memory associated with this frame, if it owns it.
+    ///
+    /// The memory has to be deinitialized first, see [Frame::deinit]
+    fn dealloc(self) {
+        if !matches!(self.tracker, Tracker::Uninit) {
+            unreachable!("a frame has to be deinitialized before being deallocated")
+        }
+
+        // Now, deallocate temporary String allocation if necessary
+        if let FrameOwnership::Owned = self.ownership {
+            if let Ok(layout) = String::SHAPE.layout.sized_layout() {
+                if layout.size() > 0 {
+                    unsafe { alloc::alloc::dealloc(self.data.as_mut_byte_ptr(), layout) };
+                }
+            }
+            // no need to update `self.ownership` since `self` drops at the end of this
+        }
+    }
+
     /// Returns an error if the value is not fully initialized
     fn require_full_initialization(&self) -> Result<(), ReflectError> {
         match self.tracker {
@@ -587,13 +589,6 @@ impl Frame {
                 }
             }
             Tracker::SmartPointer { is_initialized } => {
-                if is_initialized {
-                    Ok(())
-                } else {
-                    Err(ReflectError::UninitializedValue { shape: self.shape })
-                }
-            }
-            Tracker::SmartPointerStr { is_initialized } => {
                 if is_initialized {
                     Ok(())
                 } else {

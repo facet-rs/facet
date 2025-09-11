@@ -72,7 +72,7 @@ pub enum Def {
     /// e.g. `Option<T>`
     Option(OptionDef),
 
-    /// Smart pointers, like `Arc<T>`, `Rc<T>`, etc.
+    /// Pointer types like `Arc<T>`, `Rc<T>`, etc.
     Pointer(PointerDef),
 }
 

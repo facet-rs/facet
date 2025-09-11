@@ -10,7 +10,6 @@ pub enum TrackerKind {
     Array,
     Struct,
     SmartPointer,
-    SmartPointerStr,
     SmartPointerSlice,
     Enum,
     List,
