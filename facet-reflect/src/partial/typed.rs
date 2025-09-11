@@ -7,7 +7,7 @@ use crate::{Partial, ReflectError};
 
 /// A typed wrapper around `Partial`, for when you want to statically
 /// ensure that `build` gives you the proper type.
-pub struct TypedPartial<'facet, T> {
+pub struct TypedPartial<'facet, T: ?Sized> {
     pub(crate) inner: Partial<'facet>,
     pub(crate) phantom: PhantomData<T>,
 }
@@ -20,7 +20,7 @@ impl<'facet, T> TypedPartial<'facet, T> {
 }
 
 // This impl block mirrors/forwards/delegates methods of Partial
-impl<'facet, T> TypedPartial<'facet, T> {
+impl<'facet, T: ?Sized> TypedPartial<'facet, T> {
     /// Returns the current frame count (depth of nesting)
     #[inline]
     pub fn frame_count(&self) -> usize {
@@ -172,27 +172,6 @@ impl<'facet, T> TypedPartial<'facet, T> {
         Ok(self)
     }
 
-    /// Builds the value and returns a `Box<T>`
-    pub fn build(&mut self) -> Result<Box<T>, ReflectError>
-    where
-        T: Facet<'facet>,
-    {
-        trace!(
-            "TypedPartial::build: Building value for type {} which should == {}",
-            T::SHAPE,
-            self.inner.shape()
-        );
-        let heap_value = self.inner.build()?;
-        trace!(
-            "TypedPartial::build: Built heap value with shape: {}",
-            heap_value.shape()
-        );
-        // Safety: HeapValue was constructed from T and the shape layout is correct.
-        let result = unsafe { heap_value.into_box_unchecked::<T>() };
-        trace!("TypedPartial::build: Successfully converted to Box<T>");
-        Ok(result)
-    }
-
     /// Returns a human-readable path representing the current traversal in the builder,
     /// e.g., `RootStruct.fieldName[index].subfield`.
     pub fn path(&self) -> String {
@@ -297,6 +276,29 @@ impl<'facet, T> TypedPartial<'facet, T> {
     {
         self.inner.push(value)?;
         Ok(self)
+    }
+}
+
+impl<'facet, T> TypedPartial<'facet, T> {
+    /// Builds the value and returns a `Box<T>`
+    pub fn build(&mut self) -> Result<Box<T>, ReflectError>
+    where
+        T: Facet<'facet>,
+    {
+        trace!(
+            "TypedPartial::build: Building value for type {} which should == {}",
+            T::SHAPE,
+            self.inner.shape()
+        );
+        let heap_value = self.inner.build()?;
+        trace!(
+            "TypedPartial::build: Built heap value with shape: {}",
+            heap_value.shape()
+        );
+        // Safety: HeapValue was constructed from T and the shape layout is correct.
+        let result = unsafe { heap_value.into_box_unchecked::<T>() };
+        trace!("TypedPartial::build: Successfully converted to Box<T>");
+        Ok(result)
     }
 }
 

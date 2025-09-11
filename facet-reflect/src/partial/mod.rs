@@ -503,6 +503,18 @@ impl Frame {
         self.tracker = Tracker::Uninit;
     }
 
+    /// This must be called after (fully) initializing a value.
+    ///
+    /// This will most often result in a transition to [Tracker::Init] although
+    /// composite types (structs, enums, etc.) might be handled differently
+    ///
+    /// # Safety
+    ///
+    /// This should only be called when `self.data` has been actually initialized.
+    unsafe fn mark_as_init(&mut self) {
+        self.tracker = Tracker::Init;
+    }
+
     /// Deallocate the memory associated with this frame, if it owns it.
     ///
     /// The memory has to be deinitialized first, see [Frame::deinit]
