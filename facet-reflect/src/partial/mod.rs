@@ -106,7 +106,7 @@
 //! - Properly handling drop semantics for partially initialized values
 //! - Supporting both owned and borrowed values through lifetime parameters
 
-use alloc::{string::String, vec::Vec};
+use alloc::vec::Vec;
 
 #[cfg(test)]
 mod tests;
@@ -126,7 +126,7 @@ mod heap_value;
 pub use heap_value::*;
 
 use facet_core::{
-    Def, EnumType, Facet, PtrMut, PtrUninit, Shape, SliceBuilderVTable, Type, UserType, Variant,
+    Def, EnumType, PtrMut, PtrUninit, Shape, SliceBuilderVTable, Type, UserType, Variant,
 };
 use iset::ISet;
 
