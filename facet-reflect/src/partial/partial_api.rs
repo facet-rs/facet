@@ -2310,7 +2310,7 @@ impl<'facet> Partial<'facet> {
 
     /// Require that the partial is active
     #[inline]
-    fn require_active(&self) -> Result<(), ReflectError> {
+    pub(crate) fn require_active(&self) -> Result<(), ReflectError> {
         if self.state == PartialState::Active {
             Ok(())
         } else {

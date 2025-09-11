@@ -14,8 +14,6 @@ fn main() {
         partial.set(foo).unwrap()
     };
 
-    let v = partial.build().unwrap().materialize().unwrap();
+    let v: Foo = partial.build().unwrap().materialize().unwrap();
     dbg!(v);
-
-    Ok(())
 }

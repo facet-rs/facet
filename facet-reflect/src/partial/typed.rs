@@ -64,6 +64,8 @@ impl<'facet, T> TypedPartial<'facet, T> {
     where
         T: Facet<'facet>,
     {
+        self.inner.require_active()?;
+
         trace!(
             "TypedPartial::build: Building value for type {} which should == {}",
             T::SHAPE,
