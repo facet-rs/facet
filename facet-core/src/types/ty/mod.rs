@@ -32,7 +32,7 @@ pub use pointer::*;
 pub enum Type {
     /// Built-in primitive.
     Primitive(PrimitiveType),
-    /// Sequence (tuple, array, slice).
+    /// Sequence (array, slice).
     Sequence(SequenceType),
     /// User-defined type (struct, enum, union).
     User(UserType),

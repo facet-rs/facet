@@ -8,8 +8,8 @@ use crate::{
     trace,
 };
 use facet_core::{
-    Def, EnumRepr, Facet, KnownPointer, PtrConst, PtrMut, PtrUninit, SequenceType, Shape, Type,
-    UserType, Variant,
+    ArrayType, Def, EnumRepr, EnumType, Facet, Field, KnownPointer, PtrConst, PtrMut, PtrUninit,
+    SequenceType, Shape, StructType, Type, UserType, Variant,
 };
 
 impl<'facet> Partial<'facet> {
@@ -63,7 +63,9 @@ impl<'facet> Partial<'facet> {
     }
 }
 
-// These methods are also exposed by TypedPartial, see the typed mod
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Misc.
+////////////////////////////////////////////////////////////////////////////////////////////////////
 impl<'facet> Partial<'facet> {
     /// Returns the current frame count (depth of nesting)
     ///
@@ -77,7 +79,12 @@ impl<'facet> Partial<'facet> {
     pub fn frame_count(&self) -> usize {
         self.frames.len()
     }
+}
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// `Set` and set helpers
+////////////////////////////////////////////////////////////////////////////////////////////////////
+impl<'facet> Partial<'facet> {
     /// Sets a value wholesale into the current frame.
     ///
     /// If the current frame was already initialized, the previous value is
@@ -150,12 +157,41 @@ impl<'facet> Partial<'facet> {
         Ok(self)
     }
 
+    /// Sets the current frame using a function that initializes the value
+    ///
+    /// # Safety
+    ///
+    /// If `f` returns Ok(), it is assumed that it initialized the passed pointer fully and with a
+    /// value of the right type.
+    ///
+    /// If `f` returns Err(), it is assumed that it did NOT initialize the passed pointer and that
+    /// there is no need to drop it in place.
+    pub unsafe fn set_from_function<F>(&mut self, f: F) -> Result<&mut Self, ReflectError>
+    where
+        F: FnOnce(PtrUninit<'_>) -> Result<(), ReflectError>,
+    {
+        self.require_active()?;
+        let frame = self.frames.last_mut().unwrap();
+
+        frame.deinit();
+        f(frame.data)?;
+
+        // safety: `f()` returned Ok, so `frame.data` must be initialized
+        unsafe {
+            frame.mark_as_init();
+        }
+
+        Ok(self)
+    }
+
     /// Sets the current frame to its default value using `default_in_place` from the
     /// vtable.
     ///
     /// Note: if you have `struct S { field: F }`, and `F` does not implement `Default`
     /// but `S` does, this doesn't magically uses S's `Default` implementation to get a value
     /// for `field`.
+    ///
+    /// If the current frame's shape does not implement `Default`, then this returns an error.
     #[inline]
     pub fn set_default(&mut self) -> Result<&mut Self, ReflectError> {
         let frame = self.frames.last().unwrap();
@@ -167,44 +203,13 @@ impl<'facet> Partial<'facet> {
             });
         };
 
-        // Initialize with default value using set_from_function
-        //
-        // # Safety
-        //
-        // `default_fn` must fully initialize the passed pointer. we took it
+        // SAFETY: `default_fn` fully initializes the passed pointer. we took it
         // from the vtable of `frame.shape`.
         unsafe {
             self.set_from_function(move |ptr| {
                 default_fn(ptr);
                 Ok(())
             })
-        }
-    }
-
-    /// Sets the current frame using a function that initializes the value
-    ///
-    /// # Safety
-    ///
-    /// `f` must initialize the passed pointer fully and with a value of the right type
-    pub unsafe fn set_from_function<F>(&mut self, f: F) -> Result<&mut Self, ReflectError>
-    where
-        F: FnOnce(PtrUninit<'_>) -> Result<(), ReflectError>,
-    {
-        self.require_active()?;
-
-        let frame = self.frames.last_mut().unwrap();
-
-        // First deinit anything previously initialized
-        frame.deinit();
-
-        // Call the function to initialize the value
-        match f(frame.data) {
-            Ok(()) => {
-                // FIXME: what about finding out the discriminant of enums?
-                frame.tracker = Tracker::Init;
-                Ok(self)
-            }
-            Err(e) => Err(e),
         }
     }
 
@@ -230,6 +235,7 @@ impl<'facet> Partial<'facet> {
         // Parse the string value using the type's parse function
         let result = unsafe { parse_fn(s, frame.data) };
         if let Err(_pe) = result {
+            // TODO: can we propagate the ParseError somehow?
             return Err(ReflectError::OperationFailed {
                 shape: frame.shape,
                 operation: "Failed to parse string value",
@@ -242,321 +248,138 @@ impl<'facet> Partial<'facet> {
         }
         Ok(self)
     }
+}
 
-    /// Pushes a variant for enum initialization by name
-    pub fn select_variant_named(&mut self, variant_name: &str) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
-
-        let fr = self.frames.last_mut().unwrap();
-
-        // Check that we're dealing with an enum
-        let enum_type = match fr.shape.ty {
-            Type::User(UserType::Enum(e)) => e,
-            _ => {
-                return Err(ReflectError::OperationFailed {
-                    shape: fr.shape,
-                    operation: "push_variant_named requires an enum type",
-                });
-            }
-        };
-
-        // Find the variant with the matching name
-        let variant = match enum_type.variants.iter().find(|v| v.name == variant_name) {
-            Some(v) => v,
-            None => {
-                return Err(ReflectError::OperationFailed {
-                    shape: fr.shape,
-                    operation: "No variant found with the given name",
-                });
-            }
-        };
-
-        // Get the discriminant value
-        let discriminant = match variant.discriminant {
-            Some(d) => d,
-            None => {
-                return Err(ReflectError::OperationFailed {
-                    shape: fr.shape,
-                    operation: "Variant has no discriminant value",
-                });
-            }
-        };
-
-        // Delegate to push_variant
-        self.select_variant(discriminant)
-    }
-
-    /// Pushes a variant for enum initialization
-    pub fn select_variant(&mut self, discriminant: i64) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
-
-        // Check all invariants early before making any changes
-        let fr = self.frames.last().unwrap();
-
-        // Check that we're dealing with an enum
-        let enum_type = match fr.shape.ty {
-            Type::User(UserType::Enum(e)) => e,
-            _ => {
-                return Err(ReflectError::WasNotA {
-                    expected: "enum",
-                    actual: fr.shape,
-                });
-            }
-        };
-
-        // Find the variant with the matching discriminant
-        let variant = match enum_type
-            .variants
-            .iter()
-            .find(|v| v.discriminant == Some(discriminant))
-        {
-            Some(v) => v,
-            None => {
-                return Err(ReflectError::OperationFailed {
-                    shape: fr.shape,
-                    operation: "No variant found with the given discriminant",
-                });
-            }
-        };
-
-        // Check enum representation early
-        match enum_type.enum_repr {
-            EnumRepr::RustNPO => {
-                return Err(ReflectError::OperationFailed {
-                    shape: fr.shape,
-                    operation: "RustNPO enums are not supported for incremental building",
-                });
-            }
-            EnumRepr::U8
-            | EnumRepr::U16
-            | EnumRepr::U32
-            | EnumRepr::U64
-            | EnumRepr::I8
-            | EnumRepr::I16
-            | EnumRepr::I32
-            | EnumRepr::I64
-            | EnumRepr::USize
-            | EnumRepr::ISize => {
-                // These are supported, continue
-            }
-        }
-
-        // All checks passed, now we can safely make changes
-        let fr = self.frames.last_mut().unwrap();
-
-        // Write the discriminant to memory
-        unsafe {
-            match enum_type.enum_repr {
-                EnumRepr::U8 => {
-                    let ptr = fr.data.as_mut_byte_ptr();
-                    *ptr = discriminant as u8;
-                }
-                EnumRepr::U16 => {
-                    let ptr = fr.data.as_mut_byte_ptr() as *mut u16;
-                    *ptr = discriminant as u16;
-                }
-                EnumRepr::U32 => {
-                    let ptr = fr.data.as_mut_byte_ptr() as *mut u32;
-                    *ptr = discriminant as u32;
-                }
-                EnumRepr::U64 => {
-                    let ptr = fr.data.as_mut_byte_ptr() as *mut u64;
-                    *ptr = discriminant as u64;
-                }
-                EnumRepr::I8 => {
-                    let ptr = fr.data.as_mut_byte_ptr() as *mut i8;
-                    *ptr = discriminant as i8;
-                }
-                EnumRepr::I16 => {
-                    let ptr = fr.data.as_mut_byte_ptr() as *mut i16;
-                    *ptr = discriminant as i16;
-                }
-                EnumRepr::I32 => {
-                    let ptr = fr.data.as_mut_byte_ptr() as *mut i32;
-                    *ptr = discriminant as i32;
-                }
-                EnumRepr::I64 => {
-                    let ptr = fr.data.as_mut_byte_ptr() as *mut i64;
-                    *ptr = discriminant;
-                }
-                EnumRepr::USize => {
-                    let ptr = fr.data.as_mut_byte_ptr() as *mut usize;
-                    *ptr = discriminant as usize;
-                }
-                EnumRepr::ISize => {
-                    let ptr = fr.data.as_mut_byte_ptr() as *mut isize;
-                    *ptr = discriminant as isize;
-                }
-                _ => unreachable!("Already checked enum representation above"),
-            }
-        }
-
-        // Update tracker to track the variant
-        fr.tracker = Tracker::Enum {
-            variant,
-            data: ISet::new(variant.data.fields.len()),
-            current_child: None,
-        };
-
-        Ok(self)
-    }
-
-    /// Selects a variant for enum initialization, by variant index in the enum's variant list (0-based)
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Enum variant selection
+////////////////////////////////////////////////////////////////////////////////////////////////////
+impl<'facet> Partial<'facet> {
+    /// Assuming the current frame is an enum, this selects a variant by index
+    /// (0-based, in declaration order).
+    ///
+    /// For example:
+    ///
+    /// ```rust,no_run
+    /// enum E { A, B, C }
+    /// ```
+    ///
+    /// Calling `select_nth_variant(2)` would select variant `C`.
+    ///
+    /// This will return an error if the current frame is anything other than fully-uninitialized.
+    /// In other words, it's not possible to "switch to a different variant" once you've selected one.
+    ///
+    /// This does _not_ push a frame on the stack.
     pub fn select_nth_variant(&mut self, index: usize) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
 
-        let fr = self.frames.last().unwrap();
-
-        // Check that we're dealing with an enum
-        let enum_type = match fr.shape.ty {
-            Type::User(UserType::Enum(e)) => e,
-            _ => {
-                return Err(ReflectError::OperationFailed {
-                    shape: fr.shape,
-                    operation: "select_nth_variant requires an enum type",
-                });
-            }
-        };
+        let frame = self.frames.last().unwrap();
+        let enum_type = frame.get_enum_type()?;
 
         if index >= enum_type.variants.len() {
             return Err(ReflectError::OperationFailed {
-                shape: fr.shape,
+                shape: frame.shape,
                 operation: "variant index out of bounds",
             });
         }
         let variant = &enum_type.variants[index];
 
-        // Get the discriminant value
-        let discriminant = match variant.discriminant {
-            Some(d) => d,
-            None => {
-                return Err(ReflectError::OperationFailed {
-                    shape: fr.shape,
-                    operation: "Variant has no discriminant value",
+        self.select_variant_internal(&enum_type, variant)?;
+        Ok(self)
+    }
+
+    /// Pushes a variant for enum initialization by name
+    ///
+    /// See [Self::select_nth_variant] for more notes.
+    pub fn select_variant_named(&mut self, variant_name: &str) -> Result<&mut Self, ReflectError> {
+        self.require_active()?;
+
+        let frame = self.frames.last_mut().unwrap();
+        let enum_type = frame.get_enum_type()?;
+
+        let Some(variant) = enum_type.variants.iter().find(|v| v.name == variant_name) else {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "No variant found with the given name",
+            });
+        };
+
+        self.select_variant_internal(&enum_type, variant)?;
+        Ok(self)
+    }
+
+    /// Selects a given enum variant by discriminant. If none of the variants
+    /// of the frame's enum have that discriminant, this returns an error.
+    ///
+    /// See [Self::select_nth_variant] for more notes.
+    pub fn select_variant(&mut self, discriminant: i64) -> Result<&mut Self, ReflectError> {
+        self.require_active()?;
+
+        // Check all invariants early before making any changes
+        let frame = self.frames.last().unwrap();
+
+        // Check that we're dealing with an enum
+        let enum_type = match frame.shape.ty {
+            Type::User(UserType::Enum(e)) => e,
+            _ => {
+                return Err(ReflectError::WasNotA {
+                    expected: "enum",
+                    actual: frame.shape,
                 });
             }
         };
 
-        // Delegate to select_variant
-        self.select_variant(discriminant)
-    }
+        // Find the variant with the matching discriminant
+        let Some(variant) = enum_type
+            .variants
+            .iter()
+            .find(|v| v.discriminant == Some(discriminant))
+        else {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "No variant found with the given discriminant",
+            });
+        };
 
-    /// Selects a field of a struct with a given name
+        // Update the frame tracker to select the variant
+        self.select_variant_internal(&enum_type, variant)?;
+
+        Ok(self)
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Fields
+////////////////////////////////////////////////////////////////////////////////////////////////////
+impl<'facet> Partial<'facet> {
+    /// Selects a field (by name) of a struct or enum data.
+    ///
+    /// For enums, the variant needs to be selected first, see [Self::select_nth_variant]
+    /// and friends.
     pub fn begin_field(&mut self, field_name: &str) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
 
-        let frame = self.frames.last_mut().unwrap();
-        match frame.shape.ty {
-            Type::Primitive(_) => Err(ReflectError::OperationFailed {
+        let frame = self.frames.last().unwrap();
+        let fields = self.get_fields()?;
+        let Some(idx) = fields.iter().position(|f| f.name == field_name) else {
+            return Err(ReflectError::OperationFailed {
                 shape: frame.shape,
-                operation: "cannot select a field from a primitive type",
-            }),
-            Type::Sequence(_) => Err(ReflectError::OperationFailed {
-                shape: frame.shape,
-                operation: "cannot select a field from a sequence type",
-            }),
-            Type::User(user_type) => match user_type {
-                UserType::Struct(struct_type) => {
-                    let idx = struct_type.fields.iter().position(|f| f.name == field_name);
-                    let idx = match idx {
-                        Some(idx) => idx,
-                        None => {
-                            return Err(ReflectError::OperationFailed {
-                                shape: frame.shape,
-                                operation: "field not found",
-                            });
-                        }
-                    };
-                    self.begin_nth_field(idx)
-                }
-                UserType::Enum(_) => {
-                    // Check if we have a variant selected
-                    match &frame.tracker {
-                        Tracker::Enum { variant, .. } => {
-                            let idx = variant
-                                .data
-                                .fields
-                                .iter()
-                                .position(|f| f.name == field_name);
-                            let idx = match idx {
-                                Some(idx) => idx,
-                                None => {
-                                    return Err(ReflectError::OperationFailed {
-                                        shape: frame.shape,
-                                        operation: "field not found in current enum variant",
-                                    });
-                                }
-                            };
-                            self.begin_nth_enum_field(idx)
-                        }
-                        _ => Err(ReflectError::OperationFailed {
-                            shape: frame.shape,
-                            operation: "must call push_variant before selecting enum fields",
-                        }),
-                    }
-                }
-                UserType::Union(_) => Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
-                    operation: "unions are not supported",
-                }),
-                UserType::Opaque => Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
-                    operation: "opaque types cannot be reflected upon",
-                }),
-            },
-            Type::Pointer(_) => Err(ReflectError::OperationFailed {
-                shape: frame.shape,
-                operation: "cannot select a field from a pointer type",
-            }),
-        }
+                operation: "field not found",
+            });
+        };
+        self.begin_nth_field(idx)
     }
 
-    /// Selects the nth field of a struct by index
+    /// Begins the nth field of a struct, enum variant, or array, by index.
+    ///
+    /// On success, this pushes a new frame which must be ended with a call to [Partial::end]
     pub fn begin_nth_field(&mut self, idx: usize) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
-        match frame.shape.ty {
+
+        let next_frame = match frame.shape.ty {
             Type::User(user_type) => match user_type {
                 UserType::Struct(struct_type) => {
-                    if idx >= struct_type.fields.len() {
-                        return Err(ReflectError::OperationFailed {
-                            shape: frame.shape,
-                            operation: "field index out of bounds",
-                        });
-                    }
-                    let field = &struct_type.fields[idx];
-                    let mut is_field_init = false;
-
-                    match &mut frame.tracker {
-                        Tracker::Uninit => {
-                            frame.tracker = Tracker::Struct {
-                                iset: ISet::new(struct_type.fields.len()),
-                                current_child: Some(idx),
-                            }
-                        }
-                        Tracker::Struct {
-                            iset,
-                            current_child,
-                        } => {
-                            // Check if this field was already initialized
-                            if iset.get(idx) {
-                                is_field_init = true;
-                            }
-                            *current_child = Some(idx);
-                        }
-                        _ => unreachable!(),
-                    }
-
-                    // Push a new frame for this field onto the frames stack.
-                    let field_ptr = unsafe { frame.data.field_uninit_at(field.offset) };
-                    let field_shape = field.shape;
-                    let mut next_frame = Frame::new(field_ptr, field_shape, FrameOwnership::Field);
-                    if is_field_init {
-                        next_frame.tracker = Tracker::Init;
-                    }
-                    self.frames.push(next_frame);
-
-                    Ok(self)
+                    Self::begin_nth_struct_field(frame, struct_type, idx)?;
                 }
                 UserType::Enum(_) => {
                     // Check if we have a variant selected
@@ -578,189 +401,31 @@ impl<'facet> Partial<'facet> {
                 }
                 UserType::Union(_) => Err(ReflectError::OperationFailed {
                     shape: frame.shape,
-                    operation: "unions are not supported",
+                    operation: "cannot select a field from a union",
                 }),
                 UserType::Opaque => Err(ReflectError::OperationFailed {
                     shape: frame.shape,
-                    operation: "opaque types cannot be reflected upon",
+                    operation: "cannot select a field from an opaque type",
                 }),
+            },
+            Type::Sequence(sequence_type) => match sequence_type {
+                SequenceType::Array(array_type) => {
+                    Self::begin_nth_array_element(frame, array_type, idx)?
+                }
+                SequenceType::Slice(_) => {
+                    return Err(ReflectError::OperationFailed {
+                        shape: frame.shape,
+                        operation: "cannot select a field from slices yet",
+                    });
+                }
             },
             _ => Err(ReflectError::OperationFailed {
                 shape: frame.shape,
                 operation: "cannot select a field from this type",
             }),
-        }
-    }
-
-    /// Selects the nth element of an array by index
-    pub fn begin_nth_element(&mut self, idx: usize) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
-        let frame = self.frames.last_mut().unwrap();
-        match frame.shape.ty {
-            Type::Sequence(seq_type) => match seq_type {
-                facet_core::SequenceType::Array(array_def) => {
-                    if idx >= array_def.n {
-                        return Err(ReflectError::OperationFailed {
-                            shape: frame.shape,
-                            operation: "array index out of bounds",
-                        });
-                    }
-
-                    if array_def.n > 63 {
-                        return Err(ReflectError::OperationFailed {
-                            shape: frame.shape,
-                            operation: "arrays larger than 63 elements are not yet supported",
-                        });
-                    }
-
-                    // Ensure frame is in Array state
-                    if matches!(frame.tracker, Tracker::Uninit) {
-                        frame.tracker = Tracker::Array {
-                            iset: ISet::default(),
-                            current_child: None,
-                        };
-                    }
-
-                    match &mut frame.tracker {
-                        Tracker::Array {
-                            iset,
-                            current_child,
-                        } => {
-                            // Calculate the offset for this array element
-                            let element_layout = match array_def.t.layout.sized_layout() {
-                                Ok(layout) => layout,
-                                Err(_) => {
-                                    return Err(ReflectError::Unsized {
-                                        shape: array_def.t,
-                                        operation: "begin_nth_element, calculating array element offset",
-                                    });
-                                }
-                            };
-                            let offset = element_layout.size() * idx;
-
-                            // Check if this element was already initialized
-                            if iset.get(idx) {
-                                // Drop the existing value before re-initializing
-                                let element_ptr = unsafe { frame.data.field_init_at(offset) };
-                                if let Some(drop_fn) =
-                                    array_def.t.vtable.sized().and_then(|v| (v.drop_in_place)())
-                                {
-                                    unsafe { drop_fn(element_ptr) };
-                                }
-                                // Unset the bit so we can re-initialize
-                                iset.unset(idx);
-                            }
-
-                            *current_child = Some(idx);
-
-                            // Create a new frame for the array element
-                            let element_data = unsafe { frame.data.field_uninit_at(offset) };
-                            self.frames.push(Frame::new(
-                                element_data,
-                                array_def.t,
-                                FrameOwnership::Field,
-                            ));
-
-                            Ok(self)
-                        }
-                        _ => Err(ReflectError::OperationFailed {
-                            shape: frame.shape,
-                            operation: "expected array tracker state",
-                        }),
-                    }
-                }
-                _ => Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
-                    operation: "can only select elements from arrays",
-                }),
-            },
-            _ => Err(ReflectError::OperationFailed {
-                shape: frame.shape,
-                operation: "cannot select an element from this type",
-            }),
-        }
-    }
-
-    /// Selects the nth field of an enum variant by index
-    pub fn begin_nth_enum_field(&mut self, idx: usize) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
-        let frame = self.frames.last_mut().unwrap();
-
-        // Ensure we're in an enum with a variant selected
-        let (variant, enum_type) = match (&frame.tracker, &frame.shape.ty) {
-            (Tracker::Enum { variant, .. }, Type::User(UserType::Enum(e))) => (variant, e),
-            _ => {
-                return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
-                    operation: "push_nth_enum_field requires an enum with a variant selected",
-                });
-            }
         };
 
-        // Check bounds
-        if idx >= variant.data.fields.len() {
-            return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
-                operation: "enum field index out of bounds",
-            });
-        }
-
-        let field = &variant.data.fields[idx];
-
-        // Update tracker
-        match &mut frame.tracker {
-            Tracker::Enum {
-                data,
-                current_child,
-                ..
-            } => {
-                // Check if field was already initialized and drop if needed
-                if data.get(idx) {
-                    // Calculate the field offset, taking into account the discriminant
-                    let _discriminant_size = match enum_type.enum_repr {
-                        EnumRepr::U8 | EnumRepr::I8 => 1,
-                        EnumRepr::U16 | EnumRepr::I16 => 2,
-                        EnumRepr::U32 | EnumRepr::I32 => 4,
-                        EnumRepr::U64 | EnumRepr::I64 => 8,
-                        EnumRepr::USize | EnumRepr::ISize => core::mem::size_of::<usize>(),
-                        EnumRepr::RustNPO => {
-                            return Err(ReflectError::OperationFailed {
-                                shape: frame.shape,
-                                operation: "RustNPO enums are not supported",
-                            });
-                        }
-                    };
-
-                    // The field offset already includes the discriminant offset
-                    let field_ptr = unsafe { frame.data.as_mut_byte_ptr().add(field.offset) };
-
-                    if let Some(drop_fn) =
-                        field.shape.vtable.sized().and_then(|v| (v.drop_in_place)())
-                    {
-                        unsafe { drop_fn(PtrMut::new(field_ptr)) };
-                    }
-
-                    // Unset the bit so we can re-initialize
-                    data.unset(idx);
-                }
-
-                // Set current_child to track which field we're initializing
-                *current_child = Some(idx);
-            }
-            _ => unreachable!("Already checked that we have Enum tracker"),
-        }
-
-        // Extract data we need before pushing frame
-        let field_ptr = unsafe { frame.data.as_mut_byte_ptr().add(field.offset) };
-        let field_shape = field.shape;
-
-        // Push new frame for the field
-        self.frames.push(Frame::new(
-            PtrUninit::new(field_ptr),
-            field_shape,
-            FrameOwnership::Field,
-        ));
-
+        self.frames.push(next_frame);
         Ok(self)
     }
 
@@ -2286,5 +1951,355 @@ impl<'facet> Partial<'facet> {
         U: Facet<'facet>,
     {
         self.begin_list_item()?.set(value)?.end()
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Internal methods
+////////////////////////////////////////////////////////////////////////////////////////////////////
+impl<'facet> Partial<'facet> {
+    /// Preconditions:
+    ///
+    /// - `require_active()` check was made
+    /// - frame.shape.ty is an Enum
+    /// - `discriminant` is a valid discriminant
+    ///
+    /// Panics if current tracker is anything other than `Uninit`
+    /// (switching variants is not supported for now).
+    fn select_variant_internal(
+        &mut self,
+        enum_type: &EnumType,
+        variant: &'static Variant,
+    ) -> Result<(), ReflectError> {
+        // Check all invariants early before making any changes
+        let frame = self.frames.last().unwrap();
+
+        // Check enum representation early
+        match enum_type.enum_repr {
+            EnumRepr::RustNPO => {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "RustNPO enums are not supported for incremental building",
+                });
+            }
+            EnumRepr::U8
+            | EnumRepr::U16
+            | EnumRepr::U32
+            | EnumRepr::U64
+            | EnumRepr::I8
+            | EnumRepr::I16
+            | EnumRepr::I32
+            | EnumRepr::I64
+            | EnumRepr::USize
+            | EnumRepr::ISize => {
+                // These are supported, continue
+            }
+        }
+
+        let Some(discriminant) = variant.discriminant else {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "trying to select an enum variant without a discriminant",
+            });
+        };
+
+        // All checks passed, now we can safely make changes
+        let fr = self.frames.last_mut().unwrap();
+
+        // Write the discriminant to memory
+        unsafe {
+            match enum_type.enum_repr {
+                EnumRepr::U8 => {
+                    let ptr = fr.data.as_mut_byte_ptr();
+                    *ptr = discriminant as u8;
+                }
+                EnumRepr::U16 => {
+                    let ptr = fr.data.as_mut_byte_ptr() as *mut u16;
+                    *ptr = discriminant as u16;
+                }
+                EnumRepr::U32 => {
+                    let ptr = fr.data.as_mut_byte_ptr() as *mut u32;
+                    *ptr = discriminant as u32;
+                }
+                EnumRepr::U64 => {
+                    let ptr = fr.data.as_mut_byte_ptr() as *mut u64;
+                    *ptr = discriminant as u64;
+                }
+                EnumRepr::I8 => {
+                    let ptr = fr.data.as_mut_byte_ptr() as *mut i8;
+                    *ptr = discriminant as i8;
+                }
+                EnumRepr::I16 => {
+                    let ptr = fr.data.as_mut_byte_ptr() as *mut i16;
+                    *ptr = discriminant as i16;
+                }
+                EnumRepr::I32 => {
+                    let ptr = fr.data.as_mut_byte_ptr() as *mut i32;
+                    *ptr = discriminant as i32;
+                }
+                EnumRepr::I64 => {
+                    let ptr = fr.data.as_mut_byte_ptr() as *mut i64;
+                    *ptr = discriminant;
+                }
+                EnumRepr::USize => {
+                    let ptr = fr.data.as_mut_byte_ptr() as *mut usize;
+                    *ptr = discriminant as usize;
+                }
+                EnumRepr::ISize => {
+                    let ptr = fr.data.as_mut_byte_ptr() as *mut isize;
+                    *ptr = discriminant as isize;
+                }
+                _ => unreachable!("Already checked enum representation above"),
+            }
+        }
+
+        // Update tracker to track the variant
+        fr.tracker = Tracker::Enum {
+            variant,
+            data: ISet::new(variant.data.fields.len()),
+            current_child: None,
+        };
+
+        Ok(())
+    }
+
+    /// Used by `begin_field` etc. to get a list of fields to look through, errors out
+    /// if we're not pointing to a struct or an enum with an already-selected variant
+    fn get_fields(&self) -> Result<&'static [Field], ReflectError> {
+        let frame = self.frames.last().unwrap();
+        match frame.shape.ty {
+            Type::Primitive(_) => Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "cannot select a field from a primitive type",
+            }),
+            Type::Sequence(_) => Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "cannot select a field from a sequence type",
+            }),
+            Type::User(user_type) => match user_type {
+                UserType::Struct(struct_type) => Ok(struct_type.fields),
+                UserType::Enum(_) => {
+                    let Tracker::Enum { variant, .. } = &frame.tracker else {
+                        return Err(ReflectError::OperationFailed {
+                            shape: frame.shape,
+                            operation: "must select variant before selecting enum fields",
+                        });
+                    };
+                    Ok(variant.data.fields)
+                }
+                UserType::Union(_) => Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "cannot select a field from a union type",
+                }),
+                UserType::Opaque => Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "opaque types cannot be reflected upon",
+                }),
+            },
+            Type::Pointer(_) => Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "cannot select a field from a pointer type",
+            }),
+        }
+    }
+
+    /// Selects the nth field of a struct by index
+    fn begin_nth_struct_field(
+        frame: &mut Frame,
+        struct_type: StructType,
+        idx: usize,
+    ) -> Result<Frame, ReflectError> {
+        if idx >= struct_type.fields.len() {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "field index out of bounds",
+            });
+        }
+        let field = &struct_type.fields[idx];
+
+        if !matches!(frame.tracker, Tracker::Struct { .. }) {
+            frame.tracker = Tracker::Struct {
+                iset: ISet::new(struct_type.fields.len()),
+                current_child: None,
+            }
+        }
+
+        let was_field_init = match &mut frame.tracker {
+            Tracker::Struct {
+                iset,
+                current_child,
+            } => {
+                *current_child = Some(idx);
+                iset.get(idx)
+            }
+            _ => unreachable!(),
+        };
+
+        // Push a new frame for this field onto the frames stack.
+        let field_ptr = unsafe { frame.data.field_uninit_at(field.offset) };
+        let field_shape = field.shape;
+
+        let mut next_frame = Frame::new(field_ptr, field_shape, FrameOwnership::Field);
+        if was_field_init {
+            unsafe {
+                // the struct field tracker said so!
+                next_frame.mark_as_init();
+            }
+        }
+
+        Ok(next_frame)
+    }
+
+    /// Selects the nth element of an array by index
+    fn begin_nth_array_element(
+        frame: &mut Frame,
+        array_type: ArrayType,
+        idx: usize,
+    ) -> Result<Frame, ReflectError> {
+        if idx >= array_type.n {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "array index out of bounds",
+            });
+        }
+
+        if array_type.n > 63 {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "arrays larger than 63 elements are not yet supported",
+            });
+        }
+
+        // Ensure frame is in Array state
+        match &frame.tracker {
+            Tracker::Uninit => {
+                // this is fine
+                frame.tracker = Tracker::Array {
+                    iset: ISet::default(),
+                    current_child: None,
+                };
+            }
+            Tracker::Array { .. } => {
+                // fine too
+            }
+            _other => {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "unexpected tracker state: expected Uninit or Array",
+                });
+            }
+        }
+
+        match &mut frame.tracker {
+            Tracker::Array {
+                iset,
+                current_child,
+            } => {
+                *current_child = Some(idx);
+                let was_field_init = iset.get(idx);
+
+                // Calculate the offset for this array element
+                let Ok(element_layout) = array_type.t.layout.sized_layout() else {
+                    return Err(ReflectError::Unsized {
+                        shape: array_type.t,
+                        operation: "begin_nth_element, calculating array element offset",
+                    });
+                };
+                let offset = element_layout.size() * idx;
+                let element_data = unsafe { frame.data.field_uninit_at(offset) };
+
+                let mut next_frame = Frame::new(element_data, array_type.t, FrameOwnership::Field);
+                if was_field_init {
+                    // safety: `iset` said it was initialized already
+                    unsafe {
+                        next_frame.mark_as_init();
+                    }
+                }
+                Ok(next_frame)
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    /// Selects the nth field of an enum variant by index
+    fn begin_nth_enum_field(&mut self, idx: usize) -> Result<&mut Self, ReflectError> {
+        let frame = self.frames.last_mut().unwrap();
+
+        // Ensure we're in an enum with a variant selected
+        let (variant, enum_type) = match (&frame.tracker, &frame.shape.ty) {
+            (Tracker::Enum { variant, .. }, Type::User(UserType::Enum(e))) => (variant, e),
+            _ => {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "push_nth_enum_field requires an enum with a variant selected",
+                });
+            }
+        };
+
+        // Check bounds
+        if idx >= variant.data.fields.len() {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "enum field index out of bounds",
+            });
+        }
+
+        let field = &variant.data.fields[idx];
+
+        // Update tracker
+        match &mut frame.tracker {
+            Tracker::Enum {
+                data,
+                current_child,
+                ..
+            } => {
+                // Check if field was already initialized and drop if needed
+                if data.get(idx) {
+                    // Calculate the field offset, taking into account the discriminant
+                    let _discriminant_size = match enum_type.enum_repr {
+                        EnumRepr::U8 | EnumRepr::I8 => 1,
+                        EnumRepr::U16 | EnumRepr::I16 => 2,
+                        EnumRepr::U32 | EnumRepr::I32 => 4,
+                        EnumRepr::U64 | EnumRepr::I64 => 8,
+                        EnumRepr::USize | EnumRepr::ISize => core::mem::size_of::<usize>(),
+                        EnumRepr::RustNPO => {
+                            return Err(ReflectError::OperationFailed {
+                                shape: frame.shape,
+                                operation: "RustNPO enums are not supported",
+                            });
+                        }
+                    };
+
+                    // The field offset already includes the discriminant offset
+                    let field_ptr = unsafe { frame.data.as_mut_byte_ptr().add(field.offset) };
+
+                    if let Some(drop_fn) =
+                        field.shape.vtable.sized().and_then(|v| (v.drop_in_place)())
+                    {
+                        unsafe { drop_fn(PtrMut::new(field_ptr)) };
+                    }
+
+                    // Unset the bit so we can re-initialize
+                    data.unset(idx);
+                }
+
+                // Set current_child to track which field we're initializing
+                *current_child = Some(idx);
+            }
+            _ => unreachable!("Already checked that we have Enum tracker"),
+        }
+
+        // Extract data we need before pushing frame
+        let field_ptr = unsafe { frame.data.as_mut_byte_ptr().add(field.offset) };
+        let field_shape = field.shape;
+
+        // Push new frame for the field
+        self.frames.push(Frame::new(
+            PtrUninit::new(field_ptr),
+            field_shape,
+            FrameOwnership::Field,
+        ));
+
+        Ok(self)
     }
 }
