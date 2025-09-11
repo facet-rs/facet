@@ -1289,8 +1289,7 @@ fn field_named_on_struct() -> Result<(), IPanic> {
     // Test invalid field name
     let mut partial = Partial::alloc::<Person>()?;
     let result = partial.begin_field("invalid_field");
-    assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("field not found"));
+    assert_snapshot!(result.unwrap_err());
     Ok(())
 }
 
@@ -1326,12 +1325,7 @@ fn field_named_on_enum() -> Result<(), IPanic> {
     partial.select_variant_named("Client")?;
     let result = partial.begin_field("port"); // port doesn't exist on Client
     assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("field not found in current enum variant")
-    );
+    assert_snapshot!(result.unwrap_err());
     Ok(())
 }
 

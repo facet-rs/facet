@@ -289,7 +289,7 @@ impl core::fmt::Display for FieldFlags {
 }
 
 /// Errors encountered when calling `field_by_index` or `field_by_name`
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldError {
     /// `field_by_name` was called on a struct, and there is no static field
     /// with the given key.
@@ -323,7 +323,7 @@ impl core::error::Error for FieldError {}
 impl core::fmt::Display for FieldError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            FieldError::NoSuchField => write!(f, "No such field"),
+            FieldError::NoSuchField => write!(f, "no such field"),
             FieldError::IndexOutOfBounds { index, bound } => {
                 write!(f, "tried to access field {index} of {bound}")
             }

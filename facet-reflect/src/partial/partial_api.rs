@@ -1133,9 +1133,9 @@ impl Partial<'_> {
         let frame = self.frames.last().unwrap();
         let fields = self.get_fields()?;
         let Some(idx) = fields.iter().position(|f| f.name == field_name) else {
-            return Err(ReflectError::OperationFailed {
+            return Err(ReflectError::FieldError {
                 shape: frame.shape,
-                operation: "field not found",
+                field_error: facet_core::FieldError::NoSuchField,
             });
         };
         self.begin_nth_field(idx)
