@@ -857,7 +857,7 @@ impl<'facet> Partial<'facet> {
     ///
     /// # Safety
     ///
-    /// If this suceeds, the value `Peek` points to has been moved out of, and
+    /// If this succeeds, the value `Peek` points to has been moved out of, and
     /// as such, should not be dropped (but should be deallocated).
     pub unsafe fn set_from_peek(&mut self, peek: &Peek<'_, '_>) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
