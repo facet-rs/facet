@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.1](https://github.com/facet-rs/facet/compare/facet-reflect-v0.29.0...facet-reflect-v0.29.1) - 2025-09-18
+
+### Other
+
+- Introduce Partial::steal_nth_field, cf. <https://github.com/facet-rs/facet/issues/884>
+
 ## [0.29.0](https://github.com/facet-rs/facet/compare/facet-reflect-v0.28.3...facet-reflect-v0.29.0) - 2025-09-11
 
 ### Breaking changes
