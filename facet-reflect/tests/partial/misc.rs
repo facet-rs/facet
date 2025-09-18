@@ -1,5 +1,8 @@
 use facet_testhelpers::{IPanic, test};
-use std::mem::{MaybeUninit, size_of};
+use std::{
+    mem::{MaybeUninit, size_of},
+    sync::atomic::AtomicU64,
+};
 
 use facet::{EnumType, Facet, Field, PtrConst, PtrUninit, StructType, Type, UserType, Variant};
 use facet_reflect::{Partial, ReflectError};
@@ -723,28 +726,62 @@ fn wip_build_option_none_through_default() -> Result<(), IPanic> {
 }
 
 #[test]
-fn fill_from_default() -> Result<(), IPanic> {
+fn steal_from_default() -> Result<(), IPanic> {
+    use std::sync::atomic::Ordering;
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    #[derive(Facet)]
+    struct AddOnDrop {
+        value: u64,
+    }
+
+    impl Drop for AddOnDrop {
+        fn drop(&mut self) {
+            COUNTER.fetch_add(self.value, Ordering::SeqCst);
+        }
+    }
+
     #[derive(Facet)]
     struct S {
-        foo: String,
-        bar: String,
+        foo: AddOnDrop,
+        bar: AddOnDrop,
     }
 
     impl Default for S {
         fn default() -> Self {
             Self {
-                foo: "foo".to_string(),
-                bar: "bar".to_string(),
+                foo: AddOnDrop { value: 1 },
+                bar: AddOnDrop { value: 2 },
             }
         }
     }
 
-    let mut default_instance = Partial::alloc::<S>()?;
-    default_instance.set_default()?;
+    let mut dst = Partial::alloc::<S>()?;
+    assert_eq!(COUNTER.load(Ordering::SeqCst), 0);
 
-    let mut built_instance = Partial::alloc::<S>()?;
-    built_instance.steal_nth_field(&mut default_instance, 0)?;
-    built_instance.steal_nth_field(&mut default_instance, 1)?;
+    {
+        let mut src = Partial::alloc::<S>()?;
+        src.set_default()?;
+        assert_eq!(COUNTER.load(Ordering::SeqCst), 0);
+
+        assert!(!dst.is_field_set(0).unwrap());
+        assert!(src.is_field_set(0).unwrap());
+        dst.steal_nth_field(&mut src, 0)?;
+        assert_eq!(COUNTER.load(Ordering::SeqCst), 0);
+        assert!(dst.is_field_set(0).unwrap());
+        assert!(!src.is_field_set(0).unwrap());
+
+        assert!(!dst.is_field_set(1).unwrap());
+        assert!(src.is_field_set(1).unwrap());
+        dst.steal_nth_field(&mut src, 1)?;
+        assert_eq!(COUNTER.load(Ordering::SeqCst), 0);
+        assert!(dst.is_field_set(1).unwrap());
+        assert!(!src.is_field_set(1).unwrap());
+    }
+
+    drop(dst);
+    assert_eq!(COUNTER.load(Ordering::SeqCst), 3);
 
     Ok(())
 }
