@@ -127,12 +127,19 @@ fn deserialize_value<'facet>(wip: &mut Partial<'facet>, value: &Yaml) -> Result<
                 }
             }
 
+            let mut default_instance: Option<Partial> = None;
+
             for (index, _field) in sd.fields.iter().enumerate() {
                 let is_set = wip.is_field_set(index).map_err(|e| AnyErr(e.to_string()))?;
                 if !is_set {
-                    todo!(
-                        "should fill unset fields from struct's Default, but not implemented yet. the previous implementation was unsound."
-                    )
+                    let default_instance_mut = default_instance.get_or_insert_with(|| {
+                        // FIXME: those unwrap() don't look good
+                        let mut partial = Partial::alloc_shape(shape).unwrap();
+                        // FIXME: this'll blow up if the struct itself doesn't impl Default
+                        partial.set_default().unwrap();
+                        partial
+                    });
+                    wip.steal_nth_field(default_instance_mut, index)?;
                 }
             }
         } else {
