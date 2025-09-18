@@ -295,6 +295,19 @@ impl<'facet, T: ?Sized> TypedPartial<'facet, T> {
         self.inner.set_nth_field_to_default(idx)?;
         Ok(self)
     }
+
+    /// Given a `Partial` for the same shape, and assuming that partial has the nth
+    /// field initialized, move the value from `src` to `self`, marking it as deinitialized
+    /// in `src`.
+    #[inline]
+    pub fn steal_nth_field(
+        &mut self,
+        src: &mut TypedPartial<T>,
+        field_index: usize,
+    ) -> Result<&mut Self, ReflectError> {
+        self.inner.steal_nth_field(&mut src.inner, field_index)?;
+        Ok(self)
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

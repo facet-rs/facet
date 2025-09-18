@@ -721,3 +721,30 @@ fn wip_build_option_none_through_default() -> Result<(), IPanic> {
 
     Ok(())
 }
+
+#[test]
+fn fill_from_default() -> Result<(), IPanic> {
+    #[derive(Facet)]
+    struct S {
+        foo: String,
+        bar: String,
+    }
+
+    impl Default for S {
+        fn default() -> Self {
+            Self {
+                foo: "foo".to_string(),
+                bar: "bar".to_string(),
+            }
+        }
+    }
+
+    let mut default_instance = Partial::alloc::<S>()?;
+    default_instance.set_default()?;
+
+    let mut built_instance = Partial::alloc::<S>()?;
+    built_instance.steal_nth_field(&mut default_instance, 0)?;
+    built_instance.steal_nth_field(&mut default_instance, 1)?;
+
+    Ok(())
+}
