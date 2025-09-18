@@ -2,7 +2,6 @@ use facet::Facet;
 use facet_testhelpers::test;
 
 #[test]
-#[ignore]
 fn test_struct_level_default() {
     #[derive(Facet, Default, Debug, PartialEq)]
     #[facet(default)]
