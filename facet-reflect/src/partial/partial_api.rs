@@ -1230,6 +1230,120 @@ impl Partial<'_> {
             });
         }
     }
+
+    /// Given a `Partial` for the same shape, and assuming that partial has the nth
+    /// field initialized, move the value from `src` to `self`, marking it as deinitialized
+    /// in `src`.
+    pub fn steal_nth_field(
+        &mut self,
+        src: &mut Partial,
+        field_index: usize,
+    ) -> Result<&mut Self, ReflectError> {
+        let dst_shape = self.shape();
+        let src_shape = src.shape();
+        if dst_shape != src_shape {
+            return Err(ReflectError::HeistCancelledDifferentShapes {
+                src_shape,
+                dst_shape,
+            });
+        }
+
+        // FIXME: what about enums? we don't check that the right variant is
+        // selected here.
+        if !src.is_field_set(field_index)? {
+            return Err(ReflectError::InvariantViolation {
+                invariant: "stolen field must be initialized",
+            });
+        }
+
+        let maybe_fields = match src_shape.ty {
+            Type::Primitive(_primitive_type) => None,
+            Type::Sequence(_sequence_type) => None,
+            Type::User(user_type) => match user_type {
+                UserType::Struct(struct_type) => Some(struct_type.fields),
+                UserType::Enum(_enum_type) => match self.selected_variant() {
+                    Some(variant) => Some(variant.data.fields),
+                    None => {
+                        return Err(ReflectError::InvariantViolation {
+                            invariant: "enum field thief must have variant selected",
+                        });
+                    }
+                },
+                UserType::Union(_union_type) => None,
+                UserType::Opaque => None,
+            },
+            Type::Pointer(_pointer_type) => None,
+        };
+
+        let Some(fields) = maybe_fields else {
+            return Err(ReflectError::OperationFailed {
+                shape: src_shape,
+                operation: "fetching field list for steal_nth_field",
+            });
+        };
+
+        if field_index >= fields.len() {
+            return Err(ReflectError::OperationFailed {
+                shape: src_shape,
+                operation: "field index out of bounds",
+            });
+        }
+        let field = fields[field_index];
+
+        let src_frame = src.frames.last_mut().unwrap();
+
+        self.begin_nth_field(field_index)?;
+        unsafe {
+            self.set_from_function(|dst_field_ptr| {
+                let src_field_ptr = src_frame.data.field_init_at(field.offset).as_const();
+                dst_field_ptr.copy_from(src_field_ptr, field.shape).unwrap();
+                Ok(())
+            })?;
+        }
+        self.end()?;
+
+        // now mark field as uninitialized in `src`
+        match &mut src_frame.tracker {
+            Tracker::Uninit => {
+                unreachable!("we just stole a field from src, it couldn't have been fully uninit")
+            }
+            Tracker::Init => {
+                // all struct fields were init so we don't even have a struct tracker,
+                // let's make one!
+                let mut iset = ISet::new(fields.len());
+                iset.set_all();
+                iset.unset(field_index);
+                src_frame.tracker = Tracker::Struct {
+                    iset,
+                    current_child: None,
+                }
+            }
+            Tracker::Array { .. } => unreachable!("can't steal fields from arrays"),
+            Tracker::Struct { iset, .. } => {
+                iset.unset(field_index);
+            }
+            Tracker::SmartPointer { .. } => {
+                unreachable!("can't steal fields from smart pointers")
+            }
+            Tracker::SmartPointerSlice { .. } => {
+                unreachable!("can't steal fields from smart pointer slices")
+            }
+            Tracker::Enum { data, .. } => {
+                data.unset(field_index);
+            }
+            Tracker::List { .. } => {
+                unreachable!("can't steal fields from lists")
+            }
+            Tracker::Map { .. } => {
+                unreachable!("can't steal fields from maps")
+            }
+            Tracker::Option { .. } => {
+                unreachable!("can't steal fields from options")
+            }
+        }
+
+        Ok(self)
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

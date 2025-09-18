@@ -31,6 +31,15 @@ impl ISet {
         self.flags |= 1 << index;
     }
 
+    /// Unsets the bit at the given index.
+    #[inline]
+    pub fn unset(&mut self, index: usize) {
+        if index >= 64 {
+            panic!("ISet can only track up to 64 fields. Index {index} is out of bounds.");
+        }
+        self.flags &= !(1 << index);
+    }
+
     /// Checks if the bit at the given index is set.
     #[inline]
     pub fn get(&self, index: usize) -> bool {
@@ -44,5 +53,11 @@ impl ISet {
     #[inline]
     pub fn all_set(&self) -> bool {
         self.flags == u64::MAX >> (63 - Self::MAX_INDEX)
+    }
+
+    /// Sets all bits up to MAX_INDEX.
+    #[inline]
+    pub fn set_all(&mut self) {
+        self.flags = u64::MAX >> (63 - Self::MAX_INDEX);
     }
 }
