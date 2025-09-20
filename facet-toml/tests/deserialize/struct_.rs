@@ -291,7 +291,7 @@ fn test_default_struct_fields() {
 }
 
 #[test]
-fn test_root_struct_deserialize_defaults() {
+fn test_root_struct_deserialize_individual_defaults() {
     fn default_string() -> String {
         "hi".to_string()
     }
@@ -304,6 +304,40 @@ fn test_root_struct_deserialize_defaults() {
         b: Option<bool>,
         #[facet(default = default_string())]
         c: String,
+    }
+
+    assert_eq!(
+        facet_toml::from_str::<Root>("").unwrap(),
+        Root {
+            a: 42,
+            b: Some(true),
+            c: "hi".to_string()
+        },
+    );
+}
+
+#[test]
+fn test_root_struct_deserialize_container_defaults() {
+    fn default_string() -> String {
+        "hi".to_string()
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    #[facet(default)]
+    struct Root {
+        a: i32,
+        b: Option<bool>,
+        c: String,
+    }
+
+    impl Default for Root {
+        fn default() -> Self {
+            Self {
+                a: 42,
+                b: Some(true),
+                c: default_string(),
+            }
+        }
     }
 
     assert_eq!(

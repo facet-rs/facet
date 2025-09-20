@@ -161,8 +161,9 @@ fn deserialize_as_struct<'input, 'a>(
         )
     })?;
 
-    for (index, field) in def.fields.iter().enumerate() {
+    let mut donor_instance: Option<Partial<'static>> = None;
 
+    for (index, field) in def.fields.iter().enumerate() {
         // Find the matching TOML field
         let field_item = table.get(field.name);
         match field_item {
@@ -170,7 +171,7 @@ fn deserialize_as_struct<'input, 'a>(
                 reflect!(wip, toml, item.span(), begin_field(field.name));
                 deserialize_item(toml, wip, field_item)?;
                 reflect!(wip, toml, item.span(), end());
-            },
+            }
             None => {
                 if field.flags.contains(FieldFlags::DEFAULT) {
                     // Handle the default - set_default internally handles custom default functions safely
@@ -191,6 +192,19 @@ fn deserialize_as_struct<'input, 'a>(
                             wip.path(),
                         ));
                     }
+                } else if wip.shape().has_default_attr() {
+                    let donor_instance_mut = donor_instance.get_or_insert_with(|| {
+                        // FIXME: those unwraps are bad
+                        let mut partial = Partial::alloc_shape(wip.shape()).unwrap();
+                        partial.set_default().unwrap();
+                        partial
+                    });
+                    reflect!(
+                        wip,
+                        toml,
+                        item.span(),
+                        steal_nth_field(donor_instance_mut, index)
+                    )
                 } else if let Def::Option(..) = field.shape().def {
                     // Default of `Option<T>` is `None`
                     reflect!(wip, toml, item.span(), set_nth_field_to_default(index));
@@ -207,7 +221,6 @@ fn deserialize_as_struct<'input, 'a>(
                 }
             }
         }
-
     }
 
     trace!("Finished deserializing {}", "struct".blue());
