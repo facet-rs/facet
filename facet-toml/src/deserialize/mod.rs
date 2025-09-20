@@ -161,24 +161,23 @@ fn deserialize_as_struct<'input, 'a>(
         )
     })?;
 
-    for field in def.fields {
-        reflect!(wip, toml, item.span(), begin_field(field.name));
+    for (index, field) in def.fields.iter().enumerate() {
 
         // Find the matching TOML field
         let field_item = table.get(field.name);
         match field_item {
-            Some(field_item) => deserialize_item(toml, wip, field_item)?,
+            Some(field_item) => {
+                reflect!(wip, toml, item.span(), begin_field(field.name));
+                deserialize_item(toml, wip, field_item)?;
+                reflect!(wip, toml, item.span(), end());
+            },
             None => {
                 if field.flags.contains(FieldFlags::DEFAULT) {
                     // Handle the default - set_default internally handles custom default functions safely
                     if field.shape().is(Characteristic::Default)
                         || field.vtable.default_fn.is_some()
                     {
-                        if let Some(field_default_fn) = field.vtable.default_fn {
-                            reflect!(wip, toml, item.span(), set_field_default(field_default_fn));
-                        } else {
-                            reflect!(wip, toml, item.span(), set_default());
-                        }
+                        reflect!(wip, toml, item.span(), set_nth_field_to_default(index));
                     } else {
                         // Throw an error when there's a "default" attribute but no implementation for the type
                         return Err(TomlDeError::new(
@@ -194,10 +193,10 @@ fn deserialize_as_struct<'input, 'a>(
                     }
                 } else if let Def::Option(..) = field.shape().def {
                     // Default of `Option<T>` is `None`
-                    reflect!(wip, toml, item.span(), set_default());
+                    reflect!(wip, toml, item.span(), set_nth_field_to_default(index));
                 } else if field.shape().is_type::<()>() {
                     // Default of `()` is `()`
-                    reflect!(wip, toml, item.span(), set_default());
+                    reflect!(wip, toml, item.span(), set_nth_field_to_default(index));
                 } else {
                     return Err(TomlDeError::new(
                         toml,
@@ -209,7 +208,6 @@ fn deserialize_as_struct<'input, 'a>(
             }
         }
 
-        reflect!(wip, toml, item.span(), end());
     }
 
     trace!("Finished deserializing {}", "struct".blue());
