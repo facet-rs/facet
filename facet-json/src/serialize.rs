@@ -4,7 +4,7 @@ use facet_core::Facet;
 use facet_reflect::Peek;
 use facet_serialize::{Serializer, serialize_iterative};
 use itoa::Integer;
-use log::debug;
+use log::trace;
 
 /// Serializes a value implementing `Facet` to a JSON string.
 pub fn to_string<'facet, T: Facet<'facet> + ?Sized>(value: &T) -> String {
@@ -68,7 +68,7 @@ impl<W: crate::JsonWrite> JsonSerializer<W> {
     }
 
     fn start_value(&mut self) -> Result<(), SerializeError> {
-        debug!("start_value, stack = {:?}", self.stack);
+        trace!("start_value, stack = {:?}", self.stack);
 
         match self.stack.last_mut() {
             Some(StackItem::ArrayItem { first }) => {
@@ -79,7 +79,7 @@ impl<W: crate::JsonWrite> JsonSerializer<W> {
                 }
             }
             Some(StackItem::ObjectItem { object_state }) => {
-                debug!("ObjectItem: object_state = {object_state:?}");
+                trace!("ObjectItem: object_state = {object_state:?}");
                 match object_state {
                     ObjectItemState::FirstKey => {
                         *object_state = ObjectItemState::Value;
@@ -95,7 +95,7 @@ impl<W: crate::JsonWrite> JsonSerializer<W> {
                 }
             }
             None => {
-                debug!("No stack frame (top-level value)");
+                trace!("No stack frame (top-level value)");
             }
         }
 
