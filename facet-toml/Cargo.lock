@@ -165,7 +165,7 @@ dependencies = [
 
 [[package]]
 name = "facet-toml"
-version = "0.25.18"
+version = "0.25.19"
 dependencies = [
  "ariadne",
  "cargo-husky",

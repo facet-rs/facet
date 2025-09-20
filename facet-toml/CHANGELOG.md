@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.29.0](https://github.com/facet-rs/facet-toml/compare/v0.25.18...v0.29.0) - 2025-09-20
+
+### Fixed
+
+- Steal field from default struct when struct has default attr
+
+### Other
+
+- Update facet to 0.29
+- Remove unused dependencies
+- Update README
+- Initial import in own repository
+
 ## [0.25.18](https://github.com/facet-rs/facet/compare/facet-toml-v0.25.17...facet-toml-v0.25.18) - 2025-07-03
 
 ### Other
