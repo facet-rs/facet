@@ -778,7 +778,7 @@ impl<'facet> Partial<'facet> {
         fr.deinit();
 
         // SAFETY: `fr.shape` and `src_shape` are the same, so they have the same size,
-        // and the preconditions for this function are that `src_value` is fully intialized.
+        // and the preconditions for this function are that `src_value` is fully initialized.
         unsafe {
             // unwrap safety: the only failure condition for copy_from is that shape is unsized,
             // which is not possible for `Partial`

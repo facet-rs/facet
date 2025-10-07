@@ -1,7 +1,7 @@
 use proc_macro2::TokenStream;
 use unsynn::*;
 
-// Re-use the types from our other modules
+// Reuse the types from our other modules
 use crate::func_params::Parameter;
 use crate::generics::GenericParams;
 use crate::ret_type::ReturnType;

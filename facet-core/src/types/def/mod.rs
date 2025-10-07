@@ -47,12 +47,12 @@ pub enum Def {
     /// e.g. `HashMap<String, T>`
     Map(MapDef),
 
-    /// Unique set of homogenous values
+    /// Unique set of homogeneous values
     ///
     /// e.g. `HashSet<T>`
     Set(SetDef),
 
-    /// Ordered list of heterogenous values, variable size
+    /// Ordered list of heterogeneous values, variable size
     ///
     /// e.g. `Vec<T>`
     List(ListDef),

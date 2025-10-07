@@ -336,7 +336,7 @@ mod tests {
     use crate::LifetimeName;
     use quote::{ToTokens as _, quote};
 
-    // Helper to render ToTokens implementors to string for comparison
+    // Helper to render ToTokens implementers to string for comparison
     fn render_to_string<T: quote::ToTokens>(t: T) -> String {
         quote!(#t).to_string()
     }

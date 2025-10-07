@@ -6,12 +6,12 @@ use core::{fmt::Debug, marker::PhantomData};
 /// Fields for types which act like lists
 #[derive(Clone, Copy)]
 pub enum ListLikeDef {
-    /// Ordered list of heterogenous values, variable size
+    /// Ordered list of heterogeneous values, variable size
     ///
     /// e.g. `Vec<T>`
     List(facet_core::ListDef),
 
-    /// Fixed-size array of heterogenous values
+    /// Fixed-size array of heterogeneous values
     ///
     /// e.g. `[T; 32]`
     Array(facet_core::ArrayDef),
