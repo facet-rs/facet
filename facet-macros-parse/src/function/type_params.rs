@@ -1,7 +1,7 @@
 use proc_macro2::TokenStream;
 use unsynn::*;
 
-// Re-use the generics parser
+// Reuse the generics parser
 use crate::generics::GenericParams;
 
 /// Extract just the type parameter names from generic parameters

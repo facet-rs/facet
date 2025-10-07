@@ -145,7 +145,7 @@ enum PartialState {
 
 /// A type-erased, heap-allocated, partially-initialized value.
 ///
-/// [Partial] keeps track of the state of initialiation of the underlying
+/// [Partial] keeps track of the state of initialization of the underlying
 /// value: if we're building `struct S { a: u32, b: String }`, we may
 /// have initialized `a`, or `b`, or both, or neither.
 ///

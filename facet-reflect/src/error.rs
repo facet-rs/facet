@@ -108,7 +108,7 @@ pub enum ReflectError {
     /// An unknown error occurred.
     Unknown,
 
-    /// An error occured while putting
+    /// An error occurred while putting
     TryFromError {
         /// The shape of the value being converted from.
         src_shape: &'static Shape,

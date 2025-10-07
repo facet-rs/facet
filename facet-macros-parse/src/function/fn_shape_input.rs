@@ -1,7 +1,7 @@
 use proc_macro2::TokenStream;
 use unsynn::*;
 
-// Re-use the generics parser from our other module
+// Reuse the generics parser from our other module
 use crate::generics::GenericParams;
 
 unsynn! {
