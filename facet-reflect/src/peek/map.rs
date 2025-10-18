@@ -95,6 +95,30 @@ impl<'mem, 'facet> PeekMap<'mem, 'facet> {
         }
     }
 
+    /// Check if the map contains a key
+    #[inline]
+    pub fn contains_key_peek(&self, key: Peek<'_, 'facet>) -> bool {
+        unsafe {
+            let Some(key_ptr) = key.data().thin() else {
+                return false;
+            };
+            (self.def.vtable.contains_key_fn)(self.value.data().thin().unwrap(), key_ptr)
+        }
+    }
+
+    /// Get a value from the map for the given key
+    #[inline]
+    pub fn get_peek(&self, key: Peek<'_, 'facet>) -> Option<Peek<'mem, 'facet>> {
+        unsafe {
+            let Some(key_ptr) = key.data().thin() else {
+                return None;
+            };
+            let value_ptr =
+                (self.def.vtable.get_value_ptr_fn)(self.value.data().thin().unwrap(), key_ptr)?;
+            Some(Peek::unchecked_new(value_ptr, self.def.v()))
+        }
+    }
+
     /// Returns an iterator over the key-value pairs in the map
     #[inline]
     pub fn iter(self) -> PeekMapIter<'mem, 'facet> {
