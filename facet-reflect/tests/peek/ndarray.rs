@@ -68,12 +68,12 @@ unsafe impl<'facet, T: Facet<'facet>> Facet<'facet> for Mat<T> {
         .def(facet_core::Def::NdArray(facet_core::NdArrayDef {
             vtable: &facet_core::NdArrayVTable {
                 count: |ptr| {
-                    let p = unsafe { &*ptr.get::<Self>() };
+                    let p = unsafe { ptr.get::<Self>() };
                     p.nrows() * p.ncols()
                 },
                 n_dim: |_| 2,
                 dim: |ptr, i| {
-                    let p = unsafe { &*ptr.get::<Self>() };
+                    let p = unsafe { ptr.get::<Self>() };
                     match i {
                         0 => Some(p.nrows()),
                         1 => Some(p.ncols()),
@@ -81,7 +81,7 @@ unsafe impl<'facet, T: Facet<'facet>> Facet<'facet> for Mat<T> {
                     }
                 },
                 get: |ptr, index| {
-                    let p = unsafe { &*ptr.get::<Self>() };
+                    let p = unsafe { ptr.get::<Self>() };
                     let i = index % p.nrows();
                     let index = index / p.nrows();
                     let j = index % p.ncols();
@@ -107,14 +107,14 @@ unsafe impl<'facet, T: Facet<'facet>> Facet<'facet> for Mat<T> {
                     Some(PtrMut::new(&mut p[(i, j)]))
                 }),
                 byte_stride: Some(|ptr, i| {
-                    let p = unsafe { &*ptr.get::<Self>() };
+                    let p = unsafe { ptr.get::<Self>() };
                     match i {
                         0 => Some(p.row_stride()),
                         1 => Some(p.col_stride()),
                         _ => None,
                     }
                 }),
-                as_ptr: Some(|ptr| PtrConst::new(unsafe { &*ptr.as_ptr::<Self>() }.as_ptr())),
+                as_ptr: Some(|ptr| PtrConst::new(unsafe { ptr.get::<Self>() }.as_ptr())),
                 as_mut_ptr: Some(|ptr| PtrMut::new(unsafe { ptr.as_mut::<Self>() }.as_mut_ptr())),
             },
             t: || T::SHAPE,
