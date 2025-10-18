@@ -150,7 +150,7 @@ pub struct NdArrayVTable {
     /// Only available for mutable arrays
     pub get_mut: Option<NdArrayGetMutFn>,
 
-    /// cf. [`NdArrayStrideFn`]
+    /// cf. [`NdArrayByteStrideFn`]
     /// Only available for types that can be accessed as a strided array
     pub byte_stride: Option<NdArrayByteStrideFn>,
 
