@@ -110,9 +110,7 @@ impl<'mem, 'facet> PeekMap<'mem, 'facet> {
     #[inline]
     pub fn get_peek(&self, key: Peek<'_, 'facet>) -> Option<Peek<'mem, 'facet>> {
         unsafe {
-            let Some(key_ptr) = key.data().thin() else {
-                return None;
-            };
+            let key_ptr = key.data().thin()?;
             let value_ptr =
                 (self.def.vtable.get_value_ptr_fn)(self.value.data().thin().unwrap(), key_ptr)?;
             Some(Peek::unchecked_new(value_ptr, self.def.v()))
