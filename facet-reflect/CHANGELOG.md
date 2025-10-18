@@ -6,6 +6,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.0](https://github.com/facet-rs/facet/compare/facet-reflect-v0.29.1...facet-reflect-v0.30.0) - 2025-10-18
+
+### Fixed
+
+- fix typo (heterogeneous -> homogeneous)
+
+### Other
+
+- remove redundant deref
+- add ndarray def kind
+- add PeekMap::*_peek tests
+- replace let else with `?`
+- PeekMap peek access api
+
 ## [0.29.1](https://github.com/facet-rs/facet/compare/facet-reflect-v0.29.0...facet-reflect-v0.29.1) - 2025-09-18
 
 ### Other

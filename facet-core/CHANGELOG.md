@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.30.0](https://github.com/facet-rs/facet/compare/facet-core-v0.29.1...facet-core-v0.30.0) - 2025-10-18
+
+### Fixed
+
+- fix typo (heterogeneous -> homogeneous)
+- fix typo in ndarray docs
+
+### Other
+
+- make Def #[non_exhaustive]
+- change doc block from `ignore` to `text`
+- ignore block of not-code in docs
+- add ndarray def kind
+
 ## [0.29.0](https://github.com/facet-rs/facet/compare/facet-core-v0.28.3...facet-core-v0.29.0) - 2025-09-11
 
 ### Breaking changes
