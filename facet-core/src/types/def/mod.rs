@@ -55,17 +55,17 @@ pub enum Def {
     /// e.g. `HashSet<T>`
     Set(SetDef),
 
-    /// Ordered list of heterogenous values, variable size
+    /// Ordered list of homogenous values, variable size
     ///
     /// e.g. `Vec<T>`
     List(ListDef),
 
-    /// Fixed-size array of heterogeneous values, fixed size
+    /// Fixed-size array of homogeneous values, fixed size
     ///
     /// e.g. `[T; 3]`
     Array(ArrayDef),
 
-    /// n-dimensional array of heterogeneous values, fixed size
+    /// n-dimensional array of homogeneous values, fixed size
     ///
     /// e.g. `Vector<T>, Matrix<T>, Tensor<T>`
     NdArray(NdArrayDef),
