@@ -35,6 +35,7 @@ pub use ndarray::*;
 #[repr(C)]
 // this enum is only ever going to be owned in static space,
 // right?
+#[non_exhaustive]
 pub enum Def {
     /// Undefined - you can interact with the type through [`Type`] and [`ValueVTable`].
     Undefined,
