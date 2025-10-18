@@ -93,7 +93,7 @@ pub type NdArrayByteStrideFn = unsafe fn(array: PtrConst, i: usize) -> Option<is
 /// index is out of bounds.
 ///
 /// The flat index is transformed into separate array indices like this:
-/// ```
+/// ```ignore
 ///  - i0 = index % d0;
 ///  - i1 = index / d0 % d1;
 ///  - …
