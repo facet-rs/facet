@@ -10,8 +10,8 @@ keywords = ["urlencoded", "form", "serialization", "deserialization", "facet"]
 categories = ["encoding", "parsing", "data-structures"]
 
 [dependencies]
-facet-core = { version = "0.28.0" }
-facet-reflect = { version = "0.28.0" }
+facet-core = { version = "0.30" }
+facet-reflect = { version = "0.30" }
 form_urlencoded = "1.2.1"
 log = "0.4.27"
 
@@ -20,5 +20,5 @@ cargo-husky = { version = "1.5.0", default-features = false, features = [
     "user-hooks",
 ] }
 eyre = "0.6.12"
-facet = { version = "0.28.0" }
-facet-testhelpers = { version = "0.28.0" }
+facet = { version = "0.30" }
+facet-testhelpers = { version = "0.30" }
