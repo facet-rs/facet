@@ -21,15 +21,15 @@ log = ["dep:log"]
 
 [dependencies]
 yaml-rust2 = "0.10.3"
-facet-core = { version = "0.29.1", default-features = false }
-facet-reflect = { version = "0.29.1", default-features = false }
-facet-serialize = { version = "0.29", default-features = false, optional = true }
+facet-core = { version = "0.30", default-features = false }
+facet-reflect = { version = "0.30", default-features = false }
+facet-serialize = { version = "0.30", default-features = false, optional = true }
 log = { version = "0.4.27", optional = true }
 
 [dev-dependencies]
-facet = { version = "0.29.1" }
+facet = { version = "0.30" }
 eyre = "0.6.12"
 ulid = "1.2.1"
 time = { version = "0.3.41", features = ["macros", "parsing", "formatting"] }
-facet-testhelpers = { version = "0.29" }
+facet-testhelpers = { version = "0.30" }
 cargo-husky = { version = "1.5.0", default-features = false, features = ["user-hooks"] }
