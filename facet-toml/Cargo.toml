@@ -30,9 +30,9 @@ num-traits = { version = "0.2.19", default-features = false }
 toml_edit = { version = "0.22.27", default-features = false, features = [
     "parse",
 ], optional = true }
-facet-core = { version = "0.29", default-features = false }
-facet-reflect = { version = "0.29.1", default-features = false }
-facet-serialize = { version = "0.29", default-features = false, optional = true }
+facet-core = { version = "0.30", default-features = false }
+facet-reflect = { version = "0.30", default-features = false }
+facet-serialize = { version = "0.30", default-features = false, optional = true }
 owo-colors = "4.2.2"
 
 [dev-dependencies]
@@ -40,5 +40,5 @@ cargo-husky = { version = "1.5.0", default-features = false, features = [
     "user-hooks",
 ] }
 eyre = "0.6.12"
-facet = { version = "0.29" }
-facet-testhelpers = { version = "0.29" }
+facet = { version = "0.30" }
+facet-testhelpers = { version = "0.30" }
