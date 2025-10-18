@@ -27,6 +27,9 @@ pub use pointer::*;
 mod function;
 pub use function::*;
 
+mod ndarray;
+pub use ndarray::*;
+
 /// The semantic definition of a shape: is it more like a scalar, a map, a list?
 #[derive(Clone, Copy)]
 #[repr(C)]
@@ -62,6 +65,11 @@ pub enum Def {
     /// e.g. `[T; 3]`
     Array(ArrayDef),
 
+    /// n-dimensional array of heterogeneous values, fixed size
+    ///
+    /// e.g. `Vector<T>, Matrix<T>, Tensor<T>`
+    NdArray(NdArrayDef),
+
     /// Slice - a reference to a contiguous sequence of elements
     ///
     /// e.g. `[T]`
@@ -86,6 +94,7 @@ impl core::fmt::Debug for Def {
             Def::Map(map_def) => write!(f, "Map<{}>", (map_def.v)()),
             Def::Set(set_def) => write!(f, "Set<{}>", (set_def.t)()),
             Def::List(list_def) => write!(f, "List<{}>", (list_def.t)()),
+            Def::NdArray(list_def) => write!(f, "NdArray<{}>", (list_def.t)()),
             Def::Array(array_def) => write!(f, "Array<{}; {}>", array_def.t, array_def.n),
             Def::Slice(slice_def) => write!(f, "Slice<{}>", slice_def.t),
             Def::Option(option_def) => write!(f, "Option<{}>", option_def.t),
@@ -136,6 +145,13 @@ impl Def {
     pub fn into_array(self) -> Result<ArrayDef, Self> {
         match self {
             Self::Array(def) => Ok(def),
+            _ => Err(self),
+        }
+    }
+    /// Returns the `NdArrayDef` wrapped in an `Ok` if this is a [`Def::NdArray`].
+    pub fn into_ndarray(self) -> Result<NdArrayDef, Self> {
+        match self {
+            Self::NdArray(def) => Ok(def),
             _ => Err(self),
         }
     }

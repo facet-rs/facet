@@ -3,6 +3,7 @@ mod enum_;
 mod list;
 mod list_like;
 mod map;
+mod ndarray;
 mod option;
 mod pointer;
 mod reference;
