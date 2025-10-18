@@ -18,6 +18,9 @@ pub use list::*;
 mod list_like;
 pub use list_like::*;
 
+mod ndarray;
+pub use ndarray::*;
+
 mod map;
 pub use map::*;
 

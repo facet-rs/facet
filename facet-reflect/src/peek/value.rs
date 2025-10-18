@@ -4,7 +4,7 @@ use facet_core::{
     ValueVTable,
 };
 
-use crate::{PeekSet, ReflectError, ScalarType};
+use crate::{PeekNdArray, PeekSet, ReflectError, ScalarType};
 
 use super::{
     ListLikeDef, PeekEnum, PeekList, PeekListLike, PeekMap, PeekOption, PeekPointer, PeekStruct,
@@ -320,6 +320,19 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
 
         Err(ReflectError::WasNotA {
             expected: "list",
+            actual: self.shape,
+        })
+    }
+
+    /// Tries to identify this value as a ndarray
+    #[inline]
+    pub fn into_ndarray(self) -> Result<PeekNdArray<'mem, 'facet>, ReflectError> {
+        if let Def::NdArray(def) = self.shape.def {
+            return Ok(PeekNdArray { value: self, def });
+        }
+
+        Err(ReflectError::WasNotA {
+            expected: "ndarray",
             actual: self.shape,
         })
     }
