@@ -504,8 +504,7 @@ pub type DebugFnTyped<T> =
 /// A vtable representing the operations that can be performed on a type,
 /// either for sized or unsized types.
 ///
-/// This enum encapsulates the specific vtables for sized ([`ValueVTableSized`])
-/// and unsized ([`ValueVTableUnsized`]) shapes, allowing generic type-agnostic
+/// This enum encapsulates the specific vtables allowing generic type-agnostic
 /// dynamic dispatch for core capabilities (clone, drop, compare, hash, etc).
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
