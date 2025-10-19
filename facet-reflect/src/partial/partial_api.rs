@@ -7,7 +7,7 @@ use alloc::{
     vec::Vec,
 };
 
-use core::{marker::PhantomData, ptr::NonNull};
+use core::{marker::PhantomData, mem::ManuallyDrop, ptr::NonNull};
 
 use crate::{
     Guard, HeapValue, Partial, Peek, ReflectError, TypedPartial,
@@ -735,13 +735,27 @@ impl<'facet> Partial<'facet> {
         U: Facet<'facet>,
     {
         self.require_active()?;
-        let value = core::mem::ManuallyDrop::new(value);
+        struct DropVal<U> {
+            ptr: *mut U,
+        }
+        impl<U> Drop for DropVal<U> {
+            #[inline]
+            fn drop(&mut self) {
+                unsafe { core::ptr::drop_in_place(self.ptr) };
+            }
+        }
 
-        let ptr_const = PtrConst::new(NonNull::from(&value));
+        let mut value = ManuallyDrop::new(value);
+        let drop = DropVal {
+            ptr: (&mut value) as *mut ManuallyDrop<U> as *mut U,
+        };
+
+        let ptr_const = PtrConst::new(unsafe { NonNull::new_unchecked(drop.ptr) });
         unsafe {
             // Safety: We are calling set_shape with a valid shape and a valid pointer
             self.set_shape(ptr_const, U::SHAPE)?
         };
+        core::mem::forget(drop);
 
         Ok(self)
     }
