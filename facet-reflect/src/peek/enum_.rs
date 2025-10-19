@@ -89,11 +89,7 @@ impl<'mem, 'facet> PeekEnum<'mem, 'facet> {
     pub fn discriminant(self) -> i64 {
         // Read the discriminant based on the enum representation
         unsafe {
-            let data = self
-                .value
-                .data()
-                .thin()
-                .expect("discriminant must be Sized");
+            let data = self.value.data();
             match self.ty.enum_repr {
                 EnumRepr::U8 => data.read::<u8>() as i64,
                 EnumRepr::U16 => data.read::<u16>() as i64,
@@ -125,7 +121,7 @@ impl<'mem, 'facet> PeekEnum<'mem, 'facet> {
                 .sized_layout()
                 .expect("Unsized enums in NPO repr are unsupported");
 
-            let data = self.value.data().thin().unwrap();
+            let data = self.value.data();
             let slice = unsafe { core::slice::from_raw_parts(data.as_byte_ptr(), layout.size()) };
             let all_zero = slice.iter().all(|v| *v == 0);
 
@@ -216,13 +212,7 @@ impl<'mem, 'facet> PeekEnum<'mem, 'facet> {
         }
 
         let field = &fields[index];
-        let field_data = unsafe {
-            self.value
-                .data()
-                .thin()
-                .ok_or(VariantError::Unsized)?
-                .field(field.offset)
-        };
+        let field_data = unsafe { self.value.data().field(field.offset) };
         Ok(Some(unsafe {
             Peek::unchecked_new(field_data, field.shape())
         }))

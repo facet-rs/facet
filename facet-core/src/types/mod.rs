@@ -100,7 +100,7 @@ pub enum ShapeLayout {
 impl ShapeLayout {
     /// `Layout` if this type is `Sized`
     #[inline]
-    pub fn sized_layout(self) -> Result<Layout, UnsizedError> {
+    pub const fn sized_layout(self) -> Result<Layout, UnsizedError> {
         match self {
             ShapeLayout::Sized(layout) => Ok(layout),
             ShapeLayout::Unsized => Err(UnsizedError),
@@ -496,10 +496,22 @@ impl Shape {
         let layout = self.layout.sized_layout()?;
 
         Ok(crate::ptr::PtrUninit::new(if layout.size() == 0 {
-            core::ptr::without_provenance_mut(layout.align())
+            use core::ptr::NonNull;
+
+            unsafe {
+                NonNull::new_unchecked(
+                    core::ptr::null_mut::<u8>().wrapping_byte_add(layout.align()),
+                )
+            }
         } else {
             // SAFETY: We have checked that layout's size is non-zero
-            unsafe { alloc::alloc::alloc(layout) }
+
+            use core::ptr::NonNull;
+            let ptr = unsafe { alloc::alloc::alloc(layout) };
+            let Some(ptr) = NonNull::new(ptr) else {
+                alloc::alloc::handle_alloc_error(layout)
+            };
+            ptr
         }))
     }
 

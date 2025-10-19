@@ -10,7 +10,7 @@ unsafe impl Facet<'_> for alloc::string::String {
             Self::SHAPE.type_identifier
         ));
 
-        let vtable_sized = vtable.sized_mut().unwrap();
+        let vtable_sized = &mut vtable;
         vtable_sized.parse = || {
             Some(|s, target| {
                 // For String, parsing from a string is just copying the string
@@ -49,6 +49,8 @@ unsafe impl<'a> Facet<'a> for alloc::borrow::Cow<'a, str> {
 
 #[cfg(test)]
 mod tests {
+    use core::ptr::NonNull;
+
     use crate::Facet;
     use crate::ptr::PtrUninit;
     use alloc::string::String;
@@ -67,11 +69,14 @@ mod tests {
     fn test_string_parse() {
         // Test that we can parse a string into a String
         let shape = String::SHAPE;
-        let parse_fn = (shape.vtable.sized().unwrap().parse)().unwrap();
+        let parse_fn = (shape.vtable.parse)().unwrap();
 
         // Allocate memory for the String
         let layout = shape.layout.sized_layout().unwrap();
         let ptr = unsafe { alloc::alloc::alloc(layout) };
+        let Some(ptr) = NonNull::new(ptr) else {
+            alloc::alloc::handle_alloc_error(layout)
+        };
         let uninit = PtrUninit::new(ptr);
 
         // Parse the string
@@ -86,7 +91,7 @@ mod tests {
         // Clean up
         unsafe {
             ptr_mut.drop_in_place::<String>();
-            alloc::alloc::dealloc(ptr, layout);
+            alloc::alloc::dealloc(ptr.as_ptr(), layout);
         }
     }
 }

@@ -1,4 +1,4 @@
-use core::mem::MaybeUninit;
+use core::{mem::MaybeUninit, ptr::NonNull};
 
 use crate::{
     Def, EnumRepr, EnumType, Facet, Field, FieldFlags, OptionDef, OptionVTable, PtrConst, PtrMut,
@@ -41,7 +41,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
         ) -> Result<PtrConst<'src>, TryBorrowInnerError> {
             let option = unsafe { src_ptr.get::<Option<T>>() };
             match option {
-                Some(t) => Ok(PtrConst::new(t)),
+                Some(t) => Ok(PtrConst::new(NonNull::from(t))),
                 None => Err(TryBorrowInnerError::Unavailable),
             }
         }
@@ -59,14 +59,14 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
         });
 
         {
-            let vtable_sized = vtable.sized_mut().unwrap();
+            let vtable_sized = &mut vtable;
             vtable_sized.debug = || {
                 if T::SHAPE.is_debug() {
                     Some(|this, f| {
                         let this = unsafe { this.get::<Self>() };
                         if let Some(value) = &this {
                             write!(f, "Some(")?;
-                            (<VTableView<T>>::of().debug().unwrap())(value, f)?;
+                            (<VTableView<T>>::of().debug().unwrap())(value.into(), f)?;
                             write!(f, ")")?;
                         } else {
                             write!(f, "None")?;
@@ -83,7 +83,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
                     Some(|str, target| {
                         let mut t = MaybeUninit::<T>::uninit();
                         let parse = <VTableView<T>>::of().parse().unwrap();
-                        let _res = (parse)(str, TypedPtrUninit::new(t.as_mut_ptr()))?;
+                        let _res = (parse)(str, TypedPtrUninit::new(NonNull::from(&mut t).cast()))?;
                         // res points to t so we can't drop it yet. the option is not initialized though
                         unsafe {
                             target.put(Some(t.assume_init()));
@@ -176,7 +176,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
                                     option
                                         .get::<Option<T>>()
                                         .as_ref()
-                                        .map(|t| PtrConst::new(t as *const T))
+                                        .map(|t| PtrConst::new(NonNull::from(t)))
                                 })
                                 .init_some(|option, value| unsafe {
                                     option.put(Option::Some(value.read::<T>()))

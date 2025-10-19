@@ -328,8 +328,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 }
 
                 {
-                    let vtable_sized = vtable.sized_mut().unwrap();
-                    vtable_sized.invariants = || Some(invariants);
+                    vtable.invariants = || Some(invariants);
                 }
             }
         } else {
@@ -373,7 +372,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                     dst: ::facet::PtrUninit<'dst>
                 ) -> Result<::facet::PtrMut<'dst>, ::facet::TryFromError> {
                     // Try the inner type's try_from function if it exists
-                    let inner_result = match (<#inner_field_type as ::facet::Facet>::SHAPE.vtable.sized().and_then(|v| (v.try_from)())) {
+                    let inner_result = match (<#inner_field_type as ::facet::Facet>::SHAPE.vtable.try_from)() {
                         Some(inner_try) => unsafe { (inner_try)(src_ptr, src_shape, dst) },
                         None => Err(::facet::TryFromError::UnsupportedSourceShape {
                             src_shape,
@@ -417,10 +416,9 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 }
 
                 {
-                    let vtable_sized = vtable.sized_mut().unwrap();
-                    vtable_sized.try_from = || Some(try_from);
-                    vtable_sized.try_into_inner = || Some(try_into_inner);
-                    vtable_sized.try_borrow_inner = || Some(try_borrow_inner);
+                    vtable.try_from = || Some(try_from);
+                    vtable.try_into_inner = || Some(try_into_inner);
+                    vtable.try_borrow_inner = || Some(try_borrow_inner);
                 }
             }
         } else {
@@ -443,8 +441,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 }
 
                 {
-                    let vtable_sized = vtable.sized_mut().unwrap();
-                    vtable_sized.try_from = || Some(try_from);
+                    vtable.try_from = || Some(try_from);
                 }
 
                 // ZSTs cannot be meaningfully borrowed or converted *into* an inner value

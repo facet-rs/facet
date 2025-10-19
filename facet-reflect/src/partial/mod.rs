@@ -120,7 +120,7 @@ pub use typed::*;
 
 use crate::{ReflectError, TrackerKind, trace};
 
-use core::marker::PhantomData;
+use core::{marker::PhantomData, ptr::NonNull};
 
 mod heap_value;
 pub use heap_value::*;
@@ -354,8 +354,8 @@ impl Frame {
             }
             Tracker::Init => {
                 // Fully initialized, drop it
-                if let Some(drop_fn) = self.shape.vtable.sized().and_then(|v| (v.drop_in_place)()) {
-                    unsafe { drop_fn(PtrMut::new(self.data.as_mut_byte_ptr())) };
+                if let Some(drop_fn) = (self.shape.vtable.drop_in_place)() {
+                    unsafe { drop_fn(self.data.assume_init()) };
                 }
             }
             Tracker::Array { iset, .. } => {
@@ -367,9 +367,7 @@ impl Frame {
                             if iset.get(idx) {
                                 let offset = layout.size() * idx;
                                 let element_ptr = unsafe { self.data.field_init_at(offset) };
-                                if let Some(drop_fn) =
-                                    array_def.t.vtable.sized().and_then(|v| (v.drop_in_place)())
-                                {
+                                if let Some(drop_fn) = (array_def.t.vtable.drop_in_place)() {
                                     unsafe { drop_fn(element_ptr) };
                                 }
                             }
@@ -384,9 +382,7 @@ impl Frame {
                         if iset.get(idx) {
                             // This field was initialized, drop it
                             let field_ptr = unsafe { self.data.field_init_at(field.offset) };
-                            if let Some(drop_fn) =
-                                field.shape.vtable.sized().and_then(|v| (v.drop_in_place)())
-                            {
+                            if let Some(drop_fn) = (field.shape.vtable.drop_in_place)() {
                                 unsafe { drop_fn(field_ptr) };
                             }
                         }
@@ -399,10 +395,8 @@ impl Frame {
                     if data.get(idx) {
                         // This field was initialized, drop it
                         let field_ptr = unsafe { self.data.as_mut_byte_ptr().add(field.offset) };
-                        if let Some(drop_fn) =
-                            field.shape.vtable.sized().and_then(|v| (v.drop_in_place)())
-                        {
-                            unsafe { drop_fn(PtrMut::new(field_ptr)) };
+                        if let Some(drop_fn) = (field.shape.vtable.drop_in_place)() {
+                            unsafe { drop_fn(PtrMut::new(NonNull::new_unchecked(field_ptr))) };
                         }
                     }
                 }
@@ -410,9 +404,7 @@ impl Frame {
             Tracker::SmartPointer { is_initialized } => {
                 // Drop the initialized Box
                 if *is_initialized {
-                    if let Some(drop_fn) =
-                        self.shape.vtable.sized().and_then(|v| (v.drop_in_place)())
-                    {
+                    if let Some(drop_fn) = (self.shape.vtable.drop_in_place)() {
                         unsafe { drop_fn(self.data.assume_init()) };
                     }
                 }
@@ -429,10 +421,8 @@ impl Frame {
             Tracker::List { is_initialized, .. } => {
                 // Drop the initialized List
                 if *is_initialized {
-                    if let Some(drop_fn) =
-                        self.shape.vtable.sized().and_then(|v| (v.drop_in_place)())
-                    {
-                        unsafe { drop_fn(PtrMut::new(self.data.as_mut_byte_ptr())) };
+                    if let Some(drop_fn) = (self.shape.vtable.drop_in_place)() {
+                        unsafe { drop_fn(self.data.assume_init()) };
                     }
                 }
             }
@@ -442,10 +432,8 @@ impl Frame {
             } => {
                 // Drop the initialized Map
                 if *is_initialized {
-                    if let Some(drop_fn) =
-                        self.shape.vtable.sized().and_then(|v| (v.drop_in_place)())
-                    {
-                        unsafe { drop_fn(PtrMut::new(self.data.as_mut_byte_ptr())) };
+                    if let Some(drop_fn) = (self.shape.vtable.drop_in_place)() {
+                        unsafe { drop_fn(self.data.assume_init()) };
                     }
                 }
 
@@ -472,10 +460,8 @@ impl Frame {
                         // Drop and deallocate both key and value buffers
                         if let Def::Map(map_def) = self.shape.def {
                             // Drop and deallocate the key
-                            if let Some(drop_fn) =
-                                map_def.k().vtable.sized().and_then(|v| (v.drop_in_place)())
-                            {
-                                unsafe { drop_fn(PtrMut::new(key_ptr.as_mut_byte_ptr())) };
+                            if let Some(drop_fn) = (map_def.k().vtable.drop_in_place)() {
+                                unsafe { drop_fn(key_ptr.assume_init()) };
                             }
                             if let Ok(key_shape) = map_def.k().layout.sized_layout() {
                                 if key_shape.size() > 0 {
@@ -509,10 +495,8 @@ impl Frame {
                 // initialized or remain uninitialized
                 if !building_inner {
                     // Option is fully initialized, drop it normally
-                    if let Some(drop_fn) =
-                        self.shape.vtable.sized().and_then(|v| (v.drop_in_place)())
-                    {
-                        unsafe { drop_fn(PtrMut::new(self.data.as_mut_byte_ptr())) };
+                    if let Some(drop_fn) = (self.shape.vtable.drop_in_place)() {
+                        unsafe { drop_fn(self.data.assume_init()) };
                     }
                 }
             }

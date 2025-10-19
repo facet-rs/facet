@@ -97,7 +97,7 @@ impl<'mem, 'facet> PeekList<'mem, 'facet> {
     /// Get the length of the list
     #[inline]
     pub fn len(&self) -> usize {
-        unsafe { (self.def.vtable.len)(self.value.data().thin().unwrap()) }
+        unsafe { (self.def.vtable.len)(self.value.data()) }
     }
 
     /// Returns true if the list is empty
@@ -109,7 +109,7 @@ impl<'mem, 'facet> PeekList<'mem, 'facet> {
     /// Get an item from the list at the specified index
     #[inline]
     pub fn get(&self, index: usize) -> Option<Peek<'mem, 'facet>> {
-        let item = unsafe { (self.def.vtable.get)(self.value.data().thin().unwrap(), index)? };
+        let item = unsafe { (self.def.vtable.get)(self.value.data(), index)? };
 
         Some(unsafe { Peek::unchecked_new(item, self.def.t()) })
     }
@@ -117,7 +117,7 @@ impl<'mem, 'facet> PeekList<'mem, 'facet> {
     /// Returns an iterator over the list
     pub fn iter(self) -> PeekListIter<'mem, 'facet> {
         let state = if let Some(as_ptr_fn) = self.def.vtable.as_ptr {
-            let data = unsafe { as_ptr_fn(self.value.data().thin().unwrap()) };
+            let data = unsafe { as_ptr_fn(self.value.data()) };
             let layout = self
                 .def
                 .t()
@@ -129,9 +129,7 @@ impl<'mem, 'facet> PeekList<'mem, 'facet> {
             PeekListIterState::Ptr { data, stride }
         } else {
             let iter = unsafe {
-                (self.def.vtable.iter_vtable.init_with_value.unwrap())(
-                    self.value.data().thin().unwrap(),
-                )
+                (self.def.vtable.iter_vtable.init_with_value.unwrap())(self.value.data())
             };
             PeekListIterState::Iter { iter }
         };

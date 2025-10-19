@@ -1,3 +1,5 @@
+use core::ptr::NonNull;
+
 use crate::{
     Def, Facet, Field, FieldFlags, KnownPointer, PointerDef, PointerFlags, PointerVTable, PtrConst,
     Repr, StructKind, StructType, Type, UserType, ValueVTable, value_vtable,
@@ -40,8 +42,8 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for core::ptr::NonNull<T> {
                         &const {
                             PointerVTable::builder()
                                 .borrow_fn(|this| {
-                                    let ptr = unsafe { this.get::<Self>().as_ptr() };
-                                    PtrConst::new(ptr).into()
+                                    let ptr = unsafe { this.get::<Self>() };
+                                    PtrConst::new(NonNull::from(ptr))
                                 })
                                 .new_into_fn(|this, ptr| {
                                     let ptr = unsafe { ptr.read::<*mut T>() };

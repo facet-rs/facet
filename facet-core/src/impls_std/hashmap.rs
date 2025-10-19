@@ -1,4 +1,5 @@
 use core::hash::BuildHasher;
+use core::ptr::NonNull;
 use std::collections::HashMap;
 use std::hash::RandomState;
 
@@ -41,7 +42,7 @@ where
                     write!(f, "{}<⋯>", Self::SHAPE.type_identifier)
                 }
             })
-            .default_in_place(|| Some(|target| unsafe { target.put(Self::default()) }))
+            .default_in_place(|| Some(|target| unsafe { target.put(Self::default()).into() }))
             .build()
     };
 
@@ -86,7 +87,7 @@ where
                                 })
                                 .get_value_ptr(|ptr, key| unsafe {
                                     let map = ptr.get::<HashMap<K, V>>();
-                                    map.get(key.get()).map(|v| PtrConst::new(v))
+                                    map.get(key.get()).map(|v| PtrConst::new(NonNull::from(v)))
                                 })
                                 .iter_vtable(
                                     IterVTable::builder()
@@ -94,15 +95,18 @@ where
                                             let map = ptr.get::<HashMap<K, V>>();
                                             let iter: HashMapIterator<'_, K, V> = map.iter();
                                             let iter_state = Box::new(iter);
-                                            PtrMut::new(Box::into_raw(iter_state) as *mut u8)
+                                            PtrMut::new(NonNull::new_unchecked(Box::into_raw(
+                                                iter_state,
+                                            )
+                                                as *mut u8))
                                         })
                                         .next(|iter_ptr| unsafe {
                                             let state =
                                                 iter_ptr.as_mut::<HashMapIterator<'_, K, V>>();
                                             state.next().map(|(key, value)| {
                                                 (
-                                                    PtrConst::new(key as *const K),
-                                                    PtrConst::new(value as *const V),
+                                                    PtrConst::new(NonNull::from(key)),
+                                                    PtrConst::new(NonNull::from(value)),
                                                 )
                                             })
                                         })

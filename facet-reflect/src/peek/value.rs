@@ -1,6 +1,6 @@
-use core::{cmp::Ordering, marker::PhantomData};
+use core::{cmp::Ordering, marker::PhantomData, ptr::NonNull};
 use facet_core::{
-    Def, Facet, GenericPtr, PointerType, PtrMut, Shape, StructKind, Type, TypeNameOpts, UserType,
+    Def, Facet, PointerType, PtrConst, PtrMut, Shape, StructKind, Type, TypeNameOpts, UserType,
     ValueVTable,
 };
 
@@ -45,7 +45,7 @@ impl core::fmt::Debug for ValueId {
 #[derive(Clone, Copy)]
 pub struct Peek<'mem, 'facet> {
     /// Underlying data
-    pub(crate) data: GenericPtr<'mem>,
+    pub(crate) data: PtrConst<'mem>,
 
     /// Shape of the value
     pub(crate) shape: &'static Shape,
@@ -57,7 +57,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     /// Returns a read-only view over a `T` value.
     pub fn new<T: Facet<'facet> + ?Sized>(t: &'mem T) -> Self {
         Self {
-            data: GenericPtr::new(t),
+            data: PtrConst::new(NonNull::from(t)),
             shape: T::SHAPE,
             invariant: PhantomData,
         }
@@ -71,9 +71,9 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     /// This function is unsafe because it doesn't check if the provided data
     /// and shape are compatible. The caller must ensure that the data is valid
     /// for the given shape.
-    pub unsafe fn unchecked_new(data: impl Into<GenericPtr<'mem>>, shape: &'static Shape) -> Self {
+    pub unsafe fn unchecked_new(data: PtrConst<'mem>, shape: &'static Shape) -> Self {
         Self {
-            data: data.into(),
+            data,
             shape,
             invariant: PhantomData,
         }
@@ -103,16 +103,15 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     ///
     /// `false` if equality comparison is not supported for this scalar type
     #[inline]
-    pub fn partial_eq(&self, other: &Peek<'_, '_>) -> Option<bool> {
-        match (self.data, other.data) {
-            (GenericPtr::Thin(a), GenericPtr::Thin(b)) => unsafe {
-                (self.vtable().sized().unwrap().partial_eq)().map(|f| f(a, b))
-            },
-            (GenericPtr::Wide(a), GenericPtr::Wide(b)) => unsafe {
-                (self.vtable().r#unsized().unwrap().partial_eq)().map(|f| f(a, b))
-            },
-            _ => None,
+    pub fn partial_eq(&self, other: &Peek<'_, '_>) -> Result<bool, ReflectError> {
+        if let Some(f) = (self.vtable().partial_eq)() {
+            return Ok(unsafe { f(self.data, other.data) });
         }
+
+        Err(ReflectError::OperationFailed {
+            shape: self.shape(),
+            operation: "partial_eq",
+        })
     }
 
     /// Compares this scalar with another and returns their ordering
@@ -121,16 +120,15 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     ///
     /// `None` if comparison is not supported for this scalar type
     #[inline]
-    pub fn partial_cmp(&self, other: &Peek<'_, '_>) -> Option<Option<Ordering>> {
-        match (self.data, other.data) {
-            (GenericPtr::Thin(a), GenericPtr::Thin(b)) => unsafe {
-                (self.vtable().sized().unwrap().partial_ord)().map(|f| f(a, b))
-            },
-            (GenericPtr::Wide(a), GenericPtr::Wide(b)) => unsafe {
-                (self.vtable().r#unsized().unwrap().partial_ord)().map(|f| f(a, b))
-            },
-            _ => None,
+    pub fn partial_cmp(&self, other: &Peek<'_, '_>) -> Result<Option<Ordering>, ReflectError> {
+        if let Some(f) = (self.vtable().partial_ord)() {
+            return Ok(unsafe { f(self.data, other.data) });
         }
+
+        Err(ReflectError::OperationFailed {
+            shape: self.shape(),
+            operation: "partial_cmp",
+        })
     }
     /// Hashes this scalar
     ///
@@ -139,30 +137,16 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     /// `Err` if hashing is not supported for this scalar type, `Ok` otherwise
     #[inline(always)]
     pub fn hash<H: core::hash::Hasher>(&self, hasher: &mut H) -> Result<(), ReflectError> {
-        match self.data {
-            GenericPtr::Thin(ptr) => {
-                if let Some(hash_fn) = (self.vtable().sized().unwrap().hash)() {
-                    let hasher_opaque = PtrMut::new(hasher);
-                    unsafe {
-                        hash_fn(ptr, hasher_opaque, |opaque, bytes| {
-                            opaque.as_mut::<H>().write(bytes)
-                        })
-                    };
-                    return Ok(());
-                }
-            }
-            GenericPtr::Wide(ptr) => {
-                if let Some(hash_fn) = (self.vtable().r#unsized().unwrap().hash)() {
-                    let hasher_opaque = PtrMut::new(hasher);
-                    unsafe {
-                        hash_fn(ptr, hasher_opaque, |opaque, bytes| {
-                            opaque.as_mut::<H>().write(bytes)
-                        })
-                    };
-                    return Ok(());
-                }
-            }
+        if let Some(hash_fn) = (self.vtable().hash)() {
+            let hasher_opaque = PtrMut::new(NonNull::from(hasher));
+            unsafe {
+                hash_fn(self.data, hasher_opaque, |opaque, bytes| {
+                    opaque.as_mut::<H>().write(bytes)
+                });
+                return Ok(());
+            };
         }
+
         Err(ReflectError::OperationFailed {
             shape: self.shape(),
             operation: "hash",
@@ -196,7 +180,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
 
     /// Returns the data
     #[inline(always)]
-    pub const fn data(&self) -> GenericPtr<'mem> {
+    pub const fn data(&self) -> PtrConst<'mem> {
         self.data
     }
 
@@ -346,14 +330,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
             Def::Slice(def) => {
                 // When we have a bare slice shape with a wide pointer,
                 // it means we have a reference to a slice (e.g., from Arc<[T]>::borrow_inner)
-                if matches!(self.data, GenericPtr::Wide(_)) {
-                    Ok(PeekListLike::new(self, ListLikeDef::Slice(def)))
-                } else {
-                    Err(ReflectError::WasNotA {
-                        expected: "slice with wide pointer",
-                        actual: self.shape,
-                    })
-                }
+                Ok(PeekListLike::new(self, ListLikeDef::Slice(def)))
             }
             _ => {
                 // &[i32] is actually a _pointer_ to a slice.
@@ -363,7 +340,13 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
                             let target = (vpt.target)();
                             match target.def {
                                 Def::Slice(def) => {
-                                    return Ok(PeekListLike::new(self, ListLikeDef::Slice(def)));
+                                    let ptr = unsafe { self.data.as_ptr::<*const [()]>() };
+                                    let ptr = PtrConst::new(unsafe {
+                                        NonNull::new_unchecked((*ptr) as *mut [()])
+                                    });
+                                    let peek = unsafe { Peek::unchecked_new(ptr, def.t) };
+
+                                    return Ok(PeekListLike::new(peek, ListLikeDef::Slice(def)));
                                 }
                                 _ => {
                                     // well it's not list-like then
@@ -446,21 +429,17 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     pub fn innermost_peek(self) -> Self {
         let mut current_peek = self;
         while let (Some(try_borrow_inner_fn), Some(inner_shape)) = (
-            current_peek
-                .shape
-                .vtable
-                .sized()
-                .and_then(|v| (v.try_borrow_inner)()),
+            (current_peek.shape.vtable.try_borrow_inner)(),
             current_peek.shape.inner,
         ) {
             unsafe {
-                let inner_data = try_borrow_inner_fn(current_peek.data.thin().unwrap()).unwrap_or_else(|e| {
+                let inner_data = try_borrow_inner_fn(current_peek.data).unwrap_or_else(|e| {
                     panic!("innermost_peek: try_borrow_inner returned an error! was trying to go from {} to {}. error: {e}", current_peek.shape,
                         inner_shape())
                 });
 
                 current_peek = Peek {
-                    data: inner_data.into(),
+                    data: inner_data,
                     shape: inner_shape(),
                     invariant: PhantomData,
                 };
@@ -472,17 +451,8 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
 
 impl<'mem, 'facet> core::fmt::Display for Peek<'mem, 'facet> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self.data {
-            GenericPtr::Thin(ptr) => {
-                if let Some(display_fn) = (self.vtable().sized().unwrap().display)() {
-                    return unsafe { display_fn(ptr, f) };
-                }
-            }
-            GenericPtr::Wide(ptr) => {
-                if let Some(display_fn) = (self.vtable().r#unsized().unwrap().display)() {
-                    return unsafe { display_fn(ptr, f) };
-                }
-            }
+        if let Some(display_fn) = (self.vtable().display)() {
+            return unsafe { display_fn(self.data, f) };
         }
         write!(f, "⟨{}⟩", self.shape)
     }
@@ -490,18 +460,10 @@ impl<'mem, 'facet> core::fmt::Display for Peek<'mem, 'facet> {
 
 impl<'mem, 'facet> core::fmt::Debug for Peek<'mem, 'facet> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self.data {
-            GenericPtr::Thin(ptr) => {
-                if let Some(debug_fn) = (self.vtable().sized().unwrap().debug)() {
-                    return unsafe { debug_fn(ptr, f) };
-                }
-            }
-            GenericPtr::Wide(ptr) => {
-                if let Some(debug_fn) = (self.vtable().r#unsized().unwrap().debug)() {
-                    return unsafe { debug_fn(ptr, f) };
-                }
-            }
+        if let Some(debug_fn) = (self.vtable().debug)() {
+            return unsafe { debug_fn(self.data, f) };
         }
+
         write!(f, "⟨{}⟩", self.shape)
     }
 }

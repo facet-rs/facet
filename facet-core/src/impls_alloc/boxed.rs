@@ -1,43 +1,60 @@
+use core::{alloc::Layout, ptr::NonNull};
+
 use alloc::boxed::Box;
 
 use crate::{
-    Def, Facet, KnownPointer, PointerDef, PointerFlags, PointerVTable, PtrConst, PtrConstWide,
-    PtrMut, PtrUninit, Shape, TryBorrowInnerError, TryFromError, TryIntoInnerError, Type, UserType,
-    ValueVTable, value_vtable,
+    Def, Facet, KnownPointer, PointerDef, PointerFlags, PointerVTable, PtrConst, PtrMut, PtrUninit,
+    Shape, TryBorrowInnerError, TryFromError, TryIntoInnerError, Type, UserType, ValueVTable,
+    value_vtable,
 };
 
-unsafe impl<'a, T: Facet<'a>> Facet<'a> for Box<T> {
+// Define the functions for transparent conversion between Box<T> and T
+unsafe fn try_from<'src, 'dst>(
+    src_ptr: PtrConst<'src>,
+    src_shape: &'static Shape,
+    dst: PtrUninit<'dst>,
+) -> Result<PtrMut<'dst>, TryFromError> {
+    let layout = src_shape.layout.sized_layout().unwrap();
+
+    unsafe {
+        let alloc = alloc::alloc::alloc(layout);
+        if alloc.is_null() {
+            alloc::alloc::handle_alloc_error(layout);
+        }
+
+        let src_ptr = src_ptr.as_ptr::<u8>();
+        core::ptr::copy_nonoverlapping(src_ptr, alloc, layout.size());
+
+        // layout of
+        // Box<T> == *mut T == *mut u8
+        Ok(dst.put(alloc))
+    }
+}
+
+unsafe fn try_into_inner<'a, 'src, 'dst, T: ?Sized + Facet<'a>>(
+    src_ptr: PtrMut<'src>,
+    dst: PtrUninit<'dst>,
+) -> Result<PtrMut<'dst>, TryIntoInnerError> {
+    if const { size_of::<*const T>() == size_of::<*const ()>() } {
+        let boxed = unsafe { src_ptr.read::<Box<T>>() };
+        let layout = Layout::for_value(&*boxed);
+        let ptr = Box::into_raw(boxed) as *mut u8;
+        unsafe {
+            core::ptr::copy_nonoverlapping(ptr, dst.as_mut_byte_ptr(), layout.size());
+            alloc::alloc::dealloc(ptr, layout);
+            Ok(dst.assume_init())
+        }
+    } else {
+        panic!();
+    }
+}
+unsafe impl<'a, T: ?Sized + Facet<'a>> Facet<'a> for Box<T> {
     const VTABLE: &'static ValueVTable = &const {
-        // Define the functions for transparent conversion between Box<T> and T
-        unsafe fn try_from<'a, 'src, 'dst, T: Facet<'a>>(
-            src_ptr: PtrConst<'src>,
-            src_shape: &'static Shape,
-            dst: PtrUninit<'dst>,
-        ) -> Result<PtrMut<'dst>, TryFromError> {
-            if src_shape.id != T::SHAPE.id {
-                return Err(TryFromError::UnsupportedSourceShape {
-                    src_shape,
-                    expected: &[T::SHAPE],
-                });
-            }
-            let t = unsafe { src_ptr.read::<T>() };
-            let boxed = Box::new(t);
-            Ok(unsafe { dst.put(boxed) })
-        }
-
-        unsafe fn try_into_inner<'a, 'src, 'dst, T: Facet<'a>>(
-            src_ptr: PtrMut<'src>,
-            dst: PtrUninit<'dst>,
-        ) -> Result<PtrMut<'dst>, TryIntoInnerError> {
-            let boxed = unsafe { src_ptr.read::<Box<T>>() };
-            Ok(unsafe { dst.put(*boxed) })
-        }
-
-        unsafe fn try_borrow_inner<'a, 'src, T: Facet<'a>>(
+        unsafe fn try_borrow_inner<'a, 'src, T: ?Sized + Facet<'a>>(
             src_ptr: PtrConst<'src>,
         ) -> Result<PtrConst<'src>, TryBorrowInnerError> {
             let boxed = unsafe { src_ptr.get::<Box<T>>() };
-            Ok(PtrConst::new(&**boxed))
+            Ok(PtrConst::new(NonNull::from(&**boxed)))
         }
 
         let mut vtable = value_vtable!(alloc::boxed::Box<T>, |f, opts| {
@@ -51,18 +68,17 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Box<T> {
             }
             Ok(())
         });
-        {
-            let vtable = vtable.sized_mut().unwrap();
-            vtable.try_from = || Some(try_from::<T>);
+        if size_of::<*const T>() == size_of::<*const ()>() {
+            vtable.try_from = || Some(try_from);
             vtable.try_into_inner = || Some(try_into_inner::<T>);
-            vtable.try_borrow_inner = || Some(try_borrow_inner::<T>);
         }
+        vtable.try_borrow_inner = || Some(try_borrow_inner::<T>);
         vtable
     };
 
     const SHAPE: &'static crate::Shape = &const {
         // Function to return inner type's shape
-        fn inner_shape<'a, T: Facet<'a>>() -> &'static Shape {
+        fn inner_shape<'a, T: ?Sized + Facet<'a>>() -> &'static Shape {
             T::SHAPE
         }
 
@@ -80,18 +96,17 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Box<T> {
                     .known(KnownPointer::Box)
                     .vtable(
                         &const {
-                            PointerVTable::builder()
-                                .borrow_fn(|this| unsafe {
-                                    let concrete = this.get::<Box<T>>();
-                                    let t: &T = concrete.as_ref();
-                                    PtrConst::new(t as *const T).into()
+                            let mut vtable = PointerVTable::builder().borrow_fn(|this| unsafe {
+                                let concrete = this.get::<Box<T>>();
+                                let t: &T = concrete.as_ref();
+                                PtrConst::new(NonNull::from(t))
+                            });
+                            if size_of::<*const T>() == size_of::<*const ()>() {
+                                vtable = vtable.new_into_fn(|this, ptr| unsafe {
+                                    try_from(ptr.as_const(), T::SHAPE, this).unwrap()
                                 })
-                                .new_into_fn(|this, ptr| {
-                                    let t = unsafe { ptr.read::<T>() };
-                                    let boxed = Box::new(t);
-                                    unsafe { this.put(boxed) }
-                                })
-                                .build()
+                            }
+                            vtable.build()
                         },
                     )
                     .build(),
@@ -101,59 +116,10 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Box<T> {
     };
 }
 
-unsafe impl<'a> Facet<'a> for Box<str> {
-    const VTABLE: &'static ValueVTable = &const {
-        value_vtable!(alloc::boxed::Box<str>, |f, opts| {
-            write!(f, "{}", Self::SHAPE.type_identifier)?;
-            if let Some(opts) = opts.for_children() {
-                write!(f, "<")?;
-                (str::SHAPE.vtable.type_name())(f, opts)?;
-                write!(f, ">")?;
-            } else {
-                write!(f, "<…>")?;
-            }
-            Ok(())
-        })
-    };
-
-    const SHAPE: &'static crate::Shape = &const {
-        fn inner_shape() -> &'static Shape {
-            str::SHAPE
-        }
-
-        crate::Shape::builder_for_sized::<Self>()
-            .type_identifier("Box")
-            .type_params(&[crate::TypeParam {
-                name: "T",
-                shape: || str::SHAPE,
-            }])
-            .ty(Type::User(UserType::Opaque))
-            .def(Def::Pointer(
-                PointerDef::builder()
-                    .pointee(|| str::SHAPE)
-                    .flags(PointerFlags::EMPTY)
-                    .known(KnownPointer::Box)
-                    .vtable(
-                        &const {
-                            PointerVTable::builder()
-                                .borrow_fn(|this| unsafe {
-                                    let concrete = this.get::<Box<str>>();
-                                    let s: &str = concrete;
-                                    PtrConstWide::new(&raw const *s).into()
-                                })
-                                .new_into_fn(|_this, _ptr| todo!())
-                                .build()
-                        },
-                    )
-                    .build(),
-            ))
-            .inner(inner_shape)
-            .build()
-    };
-}
-
 #[cfg(test)]
 mod tests {
+    use core::mem::ManuallyDrop;
+
     use alloc::boxed::Box;
     use alloc::string::String;
 
@@ -187,10 +153,10 @@ mod tests {
             .expect("Box<T> should have new_into_fn");
 
         // Create the value and initialize the Box
-        let mut value = String::from("example");
-        let box_ptr = unsafe { new_into_fn(box_uninit_ptr, PtrMut::new(&raw mut value)) };
+        let mut value = ManuallyDrop::new(String::from("example"));
+        let box_ptr =
+            unsafe { new_into_fn(box_uninit_ptr, PtrMut::new(NonNull::from(&mut value))) };
         // The value now belongs to the Box, prevent its drop
-        core::mem::forget(value);
 
         // Get the function pointer for borrowing the inner value
         let borrow_fn = box_def
@@ -204,8 +170,7 @@ mod tests {
         assert_eq!(unsafe { borrowed_ptr.get::<String>() }, "example");
 
         // Get the function pointer for dropping the Box
-        let drop_fn = (box_shape.vtable.sized().unwrap().drop_in_place)()
-            .expect("Box<T> should have drop_in_place");
+        let drop_fn = (box_shape.vtable.drop_in_place)().expect("Box<T> should have drop_in_place");
 
         // Drop the Box in place
         // SAFETY: box_ptr points to a valid Box<String>

@@ -52,9 +52,10 @@ unsafe impl<'a, Idx: Facet<'a>> Facet<'a> for core::ops::Range<Idx> {
             .debug(|| {
                 if Idx::SHAPE.vtable.has_debug() {
                     Some(|this, f| {
-                        (<VTableView<Idx>>::of().debug().unwrap())(&this.start, f)?;
+                        let this = this.get();
+                        (<VTableView<Idx>>::of().debug().unwrap())((&this.start).into(), f)?;
                         write!(f, "..")?;
-                        (<VTableView<Idx>>::of().debug().unwrap())(&this.end, f)?;
+                        (<VTableView<Idx>>::of().debug().unwrap())((&this.end).into(), f)?;
                         Ok(())
                     })
                 } else {

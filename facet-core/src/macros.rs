@@ -48,7 +48,8 @@ macro_rules! value_vtable {
                 .type_name($type_name_fn)
                 .display(|| {
                     if $crate::spez::impls!($type_name: core::fmt::Display) {
-                        Some(|data, f| {
+                        Some(|data: $crate::TypedPtrConst<'_, _>, f| {
+                            let data = data.get();
                             use $crate::spez::*;
                             (&&Spez(data)).spez_display(f)
                         })
@@ -58,7 +59,8 @@ macro_rules! value_vtable {
                 })
                 .debug(|| {
                     if $crate::spez::impls!($type_name: core::fmt::Debug) {
-                        Some(|data, f| {
+                        Some(|data: $crate::TypedPtrConst<'_, _>, f| {
+                            let data = data.get();
                             use $crate::spez::*;
                             (&&Spez(data)).spez_debug(f)
                         })
@@ -68,9 +70,9 @@ macro_rules! value_vtable {
                 })
                 .default_in_place(|| {
                     if $crate::spez::impls!($type_name: core::default::Default) {
-                        Some(|target| unsafe {
+                        Some(|target: $crate::TypedPtrUninit<'_, _>| unsafe {
                             use $crate::spez::*;
-                            (&&SpezEmpty::<$type_name>::SPEZ).spez_default_in_place(target.into()).as_mut()
+                            $crate::TypedPtrMut::new((&&SpezEmpty::<$type_name>::SPEZ).spez_default_in_place(target.into()).as_mut())
                         })
                     } else {
                         None
@@ -78,9 +80,10 @@ macro_rules! value_vtable {
                 })
                 .clone_into(|| {
                     if $crate::spez::impls!($type_name: core::clone::Clone) {
-                        Some(|src, dst| unsafe {
+                        Some(|src: $crate::TypedPtrConst<'_, _>, dst: $crate::TypedPtrUninit<'_, _>| unsafe {
                             use $crate::spez::*;
-                            (&&Spez(src)).spez_clone_into(dst.into()).as_mut()
+                            let src = src.get();
+                            $crate::TypedPtrMut::new((&&Spez(src)).spez_clone_into(dst.into()).as_mut())
                         })
                     } else {
                         None
@@ -114,7 +117,9 @@ macro_rules! value_vtable {
                 })
                 .partial_eq(|| {
                     if $crate::spez::impls!($type_name: core::cmp::PartialEq) {
-                        Some(|left, right| {
+                        Some(|left: $crate::TypedPtrConst<'_, _>, right: $crate::TypedPtrConst<'_, _>| {
+                            let left = left.get();
+                            let right = right.get();
                             use $crate::spez::*;
                             (&&Spez(left))
                                 .spez_partial_eq(&&Spez(right))
@@ -125,7 +130,9 @@ macro_rules! value_vtable {
                 })
                 .partial_ord(|| {
                     if $crate::spez::impls!($type_name: core::cmp::PartialOrd) {
-                        Some(|left, right| {
+                        Some(|left: $crate::TypedPtrConst<'_, _>, right: $crate::TypedPtrConst<'_, _>| {
+                            let left = left.get();
+                            let right = right.get();
                             use $crate::spez::*;
                             (&&Spez(left))
                                 .spez_partial_cmp(&&Spez(right))
@@ -136,7 +143,9 @@ macro_rules! value_vtable {
                 })
                 .ord(|| {
                     if $crate::spez::impls!($type_name: core::cmp::Ord) {
-                        Some(|left, right| {
+                        Some(|left: $crate::TypedPtrConst<'_, _>, right: $crate::TypedPtrConst<'_, _>| {
+                            let left = left.get();
+                            let right = right.get();
                             use $crate::spez::*;
                             (&&Spez(left))
                                 .spez_cmp(&&Spez(right))
@@ -147,7 +156,8 @@ macro_rules! value_vtable {
                 })
                 .hash(|| {
                     if $crate::spez::impls!($type_name: core::hash::Hash) {
-                        Some(|value, hasher_this, hasher_write_fn| {
+                        Some(|value: $crate::TypedPtrConst<'_, _>, hasher_this, hasher_write_fn| {
+                            let value = value.get();
                             use $crate::spez::*;
                             use $crate::HasherProxy;
                             (&&Spez(value))
@@ -159,10 +169,10 @@ macro_rules! value_vtable {
                 })
                 .parse(|| {
                     if $crate::spez::impls!($type_name: core::str::FromStr) {
-                        Some(|s, target| {
+                        Some(|s, target: $crate::TypedPtrUninit<'_, _>| {
                             use $crate::spez::*;
                             let res = unsafe { (&&SpezEmpty::<$type_name>::SPEZ).spez_parse(s, target.into()) };
-                            res.map(|res| unsafe { res.as_mut() })
+                            res.map(|res| unsafe { $crate::TypedPtrMut::new(res.as_mut()) })
                         })
                     } else {
                         None
@@ -178,11 +188,12 @@ macro_rules! value_vtable {
 macro_rules! value_vtable_unsized {
     ($type_name:ty, $type_name_fn:expr) => {
         const {
-            $crate::ValueVTable::builder_unsized::<$type_name>()
+            $crate::ValueVTable::builder::<$type_name>()
                 .type_name($type_name_fn)
                 .display(|| {
                     if $crate::spez::impls!($type_name: core::fmt::Display) {
-                        Some(|data, f| {
+                        Some(|data: $crate::TypedPtrConst<'_, _>, f| {
+                            let data = data.get();
                             use $crate::spez::*;
                             (&&Spez(data)).spez_display(f)
                         })
@@ -192,7 +203,8 @@ macro_rules! value_vtable_unsized {
                 })
                 .debug(|| {
                     if $crate::spez::impls!($type_name: core::fmt::Debug) {
-                        Some(|data, f| {
+                        Some(|data: $crate::TypedPtrConst<'_, _>, f| {
+                            let data = data.get();
                             use $crate::spez::*;
                             (&&Spez(data)).spez_debug(f)
                         })
@@ -228,7 +240,9 @@ macro_rules! value_vtable_unsized {
                 })
                 .partial_eq(|| {
                     if $crate::spez::impls!($type_name: core::cmp::PartialEq) {
-                        Some(|left, right| {
+                        Some(|left: $crate::TypedPtrConst<'_, _>, right: $crate::TypedPtrConst<'_, _>| {
+                            let left = left.get();
+                            let right = right.get();
                             use $crate::spez::*;
                             (&&Spez(left))
                                 .spez_partial_eq(&&Spez(right))
@@ -239,7 +253,9 @@ macro_rules! value_vtable_unsized {
                 })
                 .partial_ord(|| {
                     if $crate::spez::impls!($type_name: core::cmp::PartialOrd) {
-                        Some(|left, right| {
+                        Some(|left: $crate::TypedPtrConst<'_, _>, right: $crate::TypedPtrConst<'_, _>| {
+                            let left = left.get();
+                            let right = right.get();
                             use $crate::spez::*;
                             (&&Spez(left))
                                 .spez_partial_cmp(&&Spez(right))
@@ -250,7 +266,9 @@ macro_rules! value_vtable_unsized {
                 })
                 .ord(|| {
                     if $crate::spez::impls!($type_name: core::cmp::Ord) {
-                        Some(|left, right| {
+                        Some(|left: $crate::TypedPtrConst<'_, _>, right: $crate::TypedPtrConst<'_, _>| {
+                            let left = left.get();
+                            let right = right.get();
                             use $crate::spez::*;
                             (&&Spez(left))
                                 .spez_cmp(&&Spez(right))
@@ -261,7 +279,8 @@ macro_rules! value_vtable_unsized {
                 })
                 .hash(|| {
                     if $crate::spez::impls!($type_name: core::hash::Hash) {
-                        Some(|value, hasher_this, hasher_write_fn| {
+                        Some(|value: $crate::TypedPtrConst<'_, _>, hasher_this, hasher_write_fn| {
+                            let value = value.get();
                             use $crate::spez::*;
                             use $crate::HasherProxy;
                             (&&Spez(value))

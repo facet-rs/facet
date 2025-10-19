@@ -1,11 +1,13 @@
+use core::ptr::NonNull;
+
 use alloc::boxed::Box;
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 
 use crate::{
-    Def, Facet, KnownPointer, PointerDef, PointerFlags, PointerVTable, PtrConst, PtrConstWide,
-    PtrMut, PtrUninit, Shape, SliceBuilderVTable, TryBorrowInnerError, TryFromError,
-    TryIntoInnerError, Type, UserType, ValueVTable, value_vtable,
+    Def, Facet, KnownPointer, PointerDef, PointerFlags, PointerVTable, PtrConst, PtrMut, PtrUninit,
+    Shape, SliceBuilderVTable, TryBorrowInnerError, TryFromError, TryIntoInnerError, Type,
+    UserType, ValueVTable, value_vtable,
 };
 
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for Arc<T> {
@@ -51,7 +53,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Arc<T> {
             src_ptr: PtrConst<'src>,
         ) -> Result<PtrConst<'src>, TryBorrowInnerError> {
             let arc = unsafe { src_ptr.get::<Arc<T>>() };
-            Ok(PtrConst::new(&**arc))
+            Ok(PtrConst::new(NonNull::from(&**arc)))
         }
 
         let mut vtable = value_vtable!(alloc::sync::Arc<T>, |f, opts| {
@@ -67,7 +69,6 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Arc<T> {
         });
 
         {
-            let vtable = vtable.sized_mut().unwrap();
             vtable.try_from = || Some(try_from::<T>);
             vtable.try_into_inner = || Some(try_into_inner::<T>);
             vtable.try_borrow_inner = || Some(try_borrow_inner::<T>);
@@ -99,8 +100,8 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Arc<T> {
                             PointerVTable::builder()
                                 .borrow_fn(|this| {
                                     let arc_ptr = unsafe { this.as_ptr::<Arc<T>>() };
-                                    let ptr = unsafe { Arc::as_ptr(&*arc_ptr) };
-                                    PtrConst::new(ptr).into()
+                                    let ptr = unsafe { &**arc_ptr };
+                                    PtrConst::new(NonNull::from(ptr))
                                 })
                                 .new_into_fn(|this, ptr| {
                                     let t = unsafe { ptr.read::<T>() };
@@ -160,7 +161,7 @@ unsafe impl<'a> Facet<'a> for Arc<str> {
                                 .borrow_fn(|this| unsafe {
                                     let concrete = this.get::<Arc<str>>();
                                     let s: &str = concrete;
-                                    PtrConstWide::new(&raw const *s).into()
+                                    PtrConst::new(NonNull::from(s))
                                 })
                                 .new_into_fn(|_this, _ptr| todo!())
                                 .downgrade_into_fn(|_strong, _weak| todo!())
@@ -198,7 +199,7 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Arc<[U]> {
         fn slice_builder_new<'a, U: Facet<'a>>() -> PtrMut<'static> {
             let v = Box::new(Vec::<U>::new());
             let raw = Box::into_raw(v);
-            PtrMut::new(raw)
+            PtrMut::new(unsafe { NonNull::new_unchecked(raw) })
         }
 
         fn slice_builder_push<'a, U: Facet<'a>>(builder: PtrMut, item: PtrMut) {
@@ -214,7 +215,7 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Arc<[U]> {
                 let vec_box = Box::from_raw(builder.as_ptr::<Vec<U>>() as *mut Vec<U>);
                 let arc: Arc<[U]> = (*vec_box).into();
                 let arc_box = Box::new(arc);
-                PtrConst::new(Box::into_raw(arc_box) as *const Arc<[U]>)
+                PtrConst::new(NonNull::new_unchecked(Box::into_raw(arc_box)))
             }
         }
 
@@ -243,7 +244,7 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Arc<[U]> {
                                 .borrow_fn(|this| unsafe {
                                     let concrete = this.get::<Arc<[U]>>();
                                     let s: &[U] = concrete;
-                                    PtrConstWide::new(&raw const *s).into()
+                                    PtrConst::new(NonNull::from(s))
                                 })
                                 .new_into_fn(|_this, _ptr| todo!())
                                 .downgrade_into_fn(|_strong, _weak| todo!())
@@ -416,6 +417,8 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Weak<[U]> {
 
 #[cfg(test)]
 mod tests {
+    use core::mem::ManuallyDrop;
+
     use alloc::string::String;
     use alloc::sync::{Arc, Weak as ArcWeak};
 
@@ -449,10 +452,10 @@ mod tests {
             .expect("Arc<T> should have new_into_fn");
 
         // Create the value and initialize the Arc
-        let mut value = String::from("example");
-        let arc_ptr = unsafe { new_into_fn(arc_uninit_ptr, PtrMut::new(&raw mut value)) };
+        let mut value = ManuallyDrop::new(String::from("example"));
+        let arc_ptr =
+            unsafe { new_into_fn(arc_uninit_ptr, PtrMut::new(NonNull::from(&mut value))) };
         // The value now belongs to the Arc, prevent its drop
-        core::mem::forget(value);
 
         // Get the function pointer for borrowing the inner value
         let borrow_fn = arc_def
@@ -466,8 +469,7 @@ mod tests {
         assert_eq!(unsafe { borrowed_ptr.get::<String>() }, "example");
 
         // Get the function pointer for dropping the Arc
-        let drop_fn = (arc_shape.vtable.sized().unwrap().drop_in_place)()
-            .expect("Arc<T> should have drop_in_place");
+        let drop_fn = (arc_shape.vtable.drop_in_place)().expect("Arc<T> should have drop_in_place");
 
         // Drop the Arc in place
         // SAFETY: arc_ptr points to a valid Arc<String>
@@ -497,9 +499,9 @@ mod tests {
         // 1. Create the first Arc (arc1)
         let arc1_uninit_ptr = arc_shape.allocate().unwrap();
         let new_into_fn = arc_def.vtable.new_into_fn.unwrap();
-        let mut value = String::from("example");
-        let arc1_ptr = unsafe { new_into_fn(arc1_uninit_ptr, PtrMut::new(&raw mut value)) };
-        core::mem::forget(value); // Value now owned by arc1
+        let mut value = ManuallyDrop::new(String::from("example"));
+        let arc1_ptr =
+            unsafe { new_into_fn(arc1_uninit_ptr, PtrMut::new(NonNull::from(&mut value))) };
 
         // 2. Downgrade arc1 to create a weak pointer (weak1)
         let weak1_uninit_ptr = weak_shape.allocate().unwrap();
@@ -523,8 +525,8 @@ mod tests {
         assert_eq!(unsafe { borrowed_ptr.get::<String>() }, "example");
 
         // 4. Drop everything and free memory
-        let arc_drop_fn = (arc_shape.vtable.sized().unwrap().drop_in_place)().unwrap();
-        let weak_drop_fn = (weak_shape.vtable.sized().unwrap().drop_in_place)().unwrap();
+        let arc_drop_fn = (arc_shape.vtable.drop_in_place)().unwrap();
+        let weak_drop_fn = (weak_shape.vtable.drop_in_place)().unwrap();
 
         unsafe {
             // Drop Arcs
@@ -558,9 +560,9 @@ mod tests {
         // 1. Create the strong Arc (arc1)
         let arc1_uninit_ptr = arc_shape.allocate().unwrap();
         let new_into_fn = arc_def.vtable.new_into_fn.unwrap();
-        let mut value = String::from("example");
-        let arc1_ptr = unsafe { new_into_fn(arc1_uninit_ptr, PtrMut::new(&raw mut value)) };
-        core::mem::forget(value);
+        let mut value = ManuallyDrop::new(String::from("example"));
+        let arc1_ptr =
+            unsafe { new_into_fn(arc1_uninit_ptr, PtrMut::new(NonNull::from(&mut value))) };
 
         // 2. Downgrade arc1 to create a weak pointer (weak1)
         let weak1_uninit_ptr = weak_shape.allocate().unwrap();
@@ -569,7 +571,7 @@ mod tests {
         let weak1_ptr = unsafe { downgrade_into_fn(arc1_ptr, weak1_uninit_ptr) };
 
         // 3. Drop and free the strong pointer (arc1)
-        let arc_drop_fn = (arc_shape.vtable.sized().unwrap().drop_in_place)().unwrap();
+        let arc_drop_fn = (arc_shape.vtable.drop_in_place)().unwrap();
         unsafe {
             arc_drop_fn(arc1_ptr);
             arc_shape.deallocate_mut(arc1_ptr).unwrap();
@@ -588,7 +590,7 @@ mod tests {
         );
 
         // 5. Clean up: Deallocate the memory intended for the failed upgrade and drop/deallocate the weak pointer
-        let weak_drop_fn = (weak_shape.vtable.sized().unwrap().drop_in_place)().unwrap();
+        let weak_drop_fn = (weak_shape.vtable.drop_in_place)().unwrap();
         unsafe {
             // Deallocate the *uninitialized* memory allocated for the failed upgrade attempt
             arc_shape.deallocate_uninit(arc2_uninit_ptr).unwrap();
@@ -612,20 +614,18 @@ mod tests {
             .expect("Arc<T> should have a smart pointer definition");
 
         // 1. Create a String value
-        let value = String::from("try_from test");
-        let value_ptr = PtrConst::new(&value as *const String as *const u8);
+        let value = ManuallyDrop::new(String::from("try_from test"));
+        let value_ptr = PtrConst::new(NonNull::from(&value));
 
         // 2. Allocate memory for the Arc<String>
         let arc_uninit_ptr = arc_shape.allocate().unwrap();
 
         // 3. Get the try_from function from the Arc<String> shape's ValueVTable
-        let try_from_fn =
-            (arc_shape.vtable.sized().unwrap().try_from)().expect("Arc<T> should have try_from");
+        let try_from_fn = (arc_shape.vtable.try_from)().expect("Arc<T> should have try_from");
 
         // 4. Try to convert String to Arc<String>
         let arc_ptr = unsafe { try_from_fn(value_ptr, string_shape, arc_uninit_ptr) }
             .expect("try_from should succeed");
-        core::mem::forget(value);
 
         // 5. Borrow the inner value and verify it's correct
         let borrow_fn = arc_def
@@ -638,8 +638,7 @@ mod tests {
         assert_eq!(unsafe { borrowed_ptr.get::<String>() }, "try_from test");
 
         // 6. Clean up
-        let drop_fn = (arc_shape.vtable.sized().unwrap().drop_in_place)()
-            .expect("Arc<T> should have drop_in_place");
+        let drop_fn = (arc_shape.vtable.drop_in_place)().expect("Arc<T> should have drop_in_place");
 
         unsafe {
             drop_fn(arc_ptr);
@@ -666,16 +665,16 @@ mod tests {
             .new_into_fn
             .expect("Arc<T> should have new_into_fn");
 
-        let mut value = String::from("try_into_inner test");
-        let arc_ptr = unsafe { new_into_fn(arc_uninit_ptr, PtrMut::new(&raw mut value)) };
-        core::mem::forget(value); // Value now owned by arc
+        let mut value = ManuallyDrop::new(String::from("try_into_inner test"));
+        let arc_ptr =
+            unsafe { new_into_fn(arc_uninit_ptr, PtrMut::new(NonNull::from(&mut value))) };
 
         // 2. Allocate memory for the extracted String
         let string_uninit_ptr = string_shape.allocate().unwrap();
 
         // 3. Get the try_into_inner function from the Arc<String>'s ValueVTable
-        let try_into_inner_fn = (arc_shape.vtable.sized().unwrap().try_into_inner)()
-            .expect("Arc<T> Shape should have try_into_inner");
+        let try_into_inner_fn =
+            (arc_shape.vtable.try_into_inner)().expect("Arc<T> Shape should have try_into_inner");
 
         // 4. Try to extract the String from the Arc<String>
         // This should succeed because we have exclusive access to the Arc (strong count = 1)
@@ -689,8 +688,8 @@ mod tests {
         );
 
         // 6. Clean up
-        let string_drop_fn = (string_shape.vtable.sized().unwrap().drop_in_place)()
-            .expect("String should have drop_in_place");
+        let string_drop_fn =
+            (string_shape.vtable.drop_in_place)().expect("String should have drop_in_place");
 
         unsafe {
             // The Arc should already be dropped by try_into_inner
@@ -728,9 +727,8 @@ mod tests {
         let values = [1i32, 2, 3, 4, 5];
         for &value in &values {
             let mut value_copy = value;
-            let value_ptr = PtrMut::new(&raw mut value_copy);
+            let value_ptr = PtrMut::new(NonNull::from(&mut value_copy));
             unsafe { push_fn(builder_ptr, value_ptr) };
-            let _ = value_copy; // Value now owned by the builder
         }
 
         // 3. Convert the builder to Arc<[i32]>
@@ -778,10 +776,9 @@ mod tests {
         let push_fn = slice_builder_vtable.push_fn;
         let strings = ["hello", "world", "test"];
         for &s in &strings {
-            let mut value = String::from(s);
-            let value_ptr = PtrMut::new(&raw mut value);
+            let mut value = ManuallyDrop::new(String::from(s));
+            let value_ptr = PtrMut::new(NonNull::from(&mut value));
             unsafe { push_fn(builder_ptr, value_ptr) };
-            core::mem::forget(value); // Value now owned by the builder
         }
 
         // 3. Instead of converting, test the free function

@@ -1,9 +1,10 @@
-use std::ops::{Index, IndexMut};
+use std::{
+    ops::{Index, IndexMut},
+    ptr::NonNull,
+};
 
 use facet::{Type, TypeParam};
-use facet_core::{
-    Facet, MarkerTraits, PtrConst, PtrMut, PtrUninit, Shape, ValueVTable, ValueVTableSized,
-};
+use facet_core::{Facet, MarkerTraits, PtrConst, PtrMut, PtrUninit, Shape, ValueVTable};
 use facet_reflect::Peek;
 use facet_testhelpers::test;
 
@@ -59,10 +60,6 @@ impl<T> Mat<T> {
     }
 }
 
-impl<'facet, T: Facet<'facet>> Mat<T> {
-    const T: &'static ValueVTableSized = T::VTABLE.sized().unwrap();
-}
-
 unsafe impl<'facet, T: Facet<'facet>> Facet<'facet> for Mat<T> {
     const SHAPE: &'static Shape = &Shape::builder_for_sized::<Mat<T>>()
         .def(facet_core::Def::NdArray(facet_core::NdArrayDef {
@@ -91,7 +88,7 @@ unsafe impl<'facet, T: Facet<'facet>> Facet<'facet> for Mat<T> {
                         return None;
                     }
 
-                    Some(PtrConst::new(&p[(i, j)]))
+                    Some(PtrConst::new(NonNull::from(&p[(i, j)])))
                 },
                 get_mut: Some(|ptr, index| {
                     let p = unsafe { ptr.as_mut::<Self>() };
@@ -104,7 +101,7 @@ unsafe impl<'facet, T: Facet<'facet>> Facet<'facet> for Mat<T> {
                         return None;
                     }
 
-                    Some(PtrMut::new(&mut p[(i, j)]))
+                    Some(PtrMut::new(NonNull::from(&mut p[(i, j)])))
                 }),
                 byte_stride: Some(|ptr, i| {
                     let p = unsafe { ptr.get::<Self>() };
@@ -114,8 +111,16 @@ unsafe impl<'facet, T: Facet<'facet>> Facet<'facet> for Mat<T> {
                         _ => None,
                     }
                 }),
-                as_ptr: Some(|ptr| PtrConst::new(unsafe { ptr.get::<Self>() }.as_ptr())),
-                as_mut_ptr: Some(|ptr| PtrMut::new(unsafe { ptr.as_mut::<Self>() }.as_mut_ptr())),
+                as_ptr: Some(|ptr| {
+                    PtrConst::new(unsafe {
+                        NonNull::new_unchecked(ptr.get::<Self>().as_ptr() as *mut T)
+                    })
+                }),
+                as_mut_ptr: Some(|ptr| {
+                    PtrMut::new(unsafe {
+                        NonNull::new_unchecked(ptr.as_mut::<Self>().as_mut_ptr())
+                    })
+                }),
             },
             t: || T::SHAPE,
         }))
@@ -127,21 +132,21 @@ unsafe impl<'facet, T: Facet<'facet>> Facet<'facet> for Mat<T> {
             shape: || T::SHAPE,
         }])
         .build();
-    const VTABLE: &'static ValueVTable = &ValueVTable::Sized(ValueVTableSized {
+    const VTABLE: &'static ValueVTable = &ValueVTable {
         type_name: |f, opts| {
             f.write_str("Mat<")?;
             match opts.for_children() {
-                Some(opts) => (Self::T.type_name)(f, opts)?,
+                Some(opts) => (T::VTABLE.type_name)(f, opts)?,
                 None => f.write_str("…")?,
             }
             f.write_str(">")
         },
-        marker_traits: || (Self::T.marker_traits)() & !MarkerTraits::COPY,
+        marker_traits: || (T::VTABLE.marker_traits)() & !MarkerTraits::COPY,
         drop_in_place: || {
             Some(|p| unsafe {
                 let ptr = p.as_ptr::<Self>() as *mut Self;
                 drop(ptr.read());
-                PtrUninit::new(ptr)
+                PtrUninit::new(NonNull::new_unchecked(ptr))
             })
         },
         invariants: || None,
@@ -157,7 +162,7 @@ unsafe impl<'facet, T: Facet<'facet>> Facet<'facet> for Mat<T> {
         try_from: || None,
         try_into_inner: || None,
         try_borrow_inner: || None,
-    });
+    };
 }
 
 #[test]
@@ -190,5 +195,8 @@ fn ndarray_test() {
     assert_eq!(mat.get(5).unwrap().get::<f64>().unwrap(), &3.0);
     assert_eq!(mat.get(6).unwrap().get::<f64>().unwrap(), &4.0);
     assert_eq!(mat.get(7).unwrap().get::<f64>().unwrap(), &5.0);
-    assert_eq!(mat.as_ptr().unwrap(), PtrConst::new(ptr));
+    assert_eq!(
+        mat.as_ptr().unwrap(),
+        PtrConst::new(NonNull::new(ptr as *mut ()).unwrap())
+    );
 }

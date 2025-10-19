@@ -51,25 +51,25 @@ impl<'mem, 'facet> PeekNdArray<'mem, 'facet> {
     /// Get the number of elements in the array
     #[inline]
     pub fn count(&self) -> usize {
-        unsafe { (self.def.vtable.count)(self.value.data().thin().unwrap()) }
+        unsafe { (self.def.vtable.count)(self.value.data()) }
     }
 
     /// Get the number of elements in the array
     #[inline]
     pub fn n_dim(&self) -> usize {
-        unsafe { (self.def.vtable.n_dim)(self.value.data().thin().unwrap()) }
+        unsafe { (self.def.vtable.n_dim)(self.value.data()) }
     }
 
     /// Get the i-th dimension of the array
     #[inline]
     pub fn dim(&self, i: usize) -> Option<usize> {
-        unsafe { (self.def.vtable.dim)(self.value.data().thin().unwrap(), i) }
+        unsafe { (self.def.vtable.dim)(self.value.data(), i) }
     }
 
     /// Get an item from the array at the specified index
     #[inline]
     pub fn get(&self, index: usize) -> Option<Peek<'mem, 'facet>> {
-        let item = unsafe { (self.def.vtable.get)(self.value.data().thin().unwrap(), index)? };
+        let item = unsafe { (self.def.vtable.get)(self.value.data(), index)? };
 
         Some(unsafe { Peek::unchecked_new(item, self.def.t()) })
     }
@@ -80,7 +80,7 @@ impl<'mem, 'facet> PeekNdArray<'mem, 'facet> {
         let Some(as_ptr) = self.def.vtable.as_ptr else {
             return Err(StrideError::NotStrided);
         };
-        let ptr = unsafe { as_ptr(self.value.data().thin().unwrap()) };
+        let ptr = unsafe { as_ptr(self.value.data()) };
         Ok(ptr)
     }
 
@@ -90,7 +90,7 @@ impl<'mem, 'facet> PeekNdArray<'mem, 'facet> {
         let Some(byte_stride) = self.def.vtable.byte_stride else {
             return Err(StrideError::NotStrided);
         };
-        Ok(unsafe { byte_stride(self.value.data().thin().unwrap(), i) })
+        Ok(unsafe { byte_stride(self.value.data(), i) })
     }
 
     /// Peek value getter

@@ -1,9 +1,11 @@
+use core::ptr::NonNull;
+
 use alloc::rc::{Rc, Weak};
 
 use crate::{
-    Def, Facet, KnownPointer, PointerDef, PointerFlags, PointerVTable, PtrConst, PtrConstWide,
-    PtrMut, PtrUninit, Shape, TryBorrowInnerError, TryFromError, TryIntoInnerError, Type, UserType,
-    ValueVTable, value_vtable,
+    Def, Facet, KnownPointer, PointerDef, PointerFlags, PointerVTable, PtrConst, PtrMut, PtrUninit,
+    Shape, TryBorrowInnerError, TryFromError, TryIntoInnerError, Type, UserType, ValueVTable,
+    value_vtable,
 };
 
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for Rc<T> {
@@ -40,7 +42,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Rc<T> {
             src_ptr: PtrConst<'src>,
         ) -> Result<PtrConst<'src>, TryBorrowInnerError> {
             let rc = unsafe { src_ptr.get::<Rc<T>>() };
-            Ok(PtrConst::new(&**rc))
+            Ok(PtrConst::new(NonNull::from(&**rc)))
         }
 
         let mut vtable = value_vtable!(alloc::rc::Rc<T>, |f, opts| {
@@ -55,7 +57,6 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Rc<T> {
             Ok(())
         });
         {
-            let vtable = vtable.sized_mut().unwrap();
             vtable.try_from = || Some(try_from::<T>);
             vtable.try_into_inner = || Some(try_into_inner::<T>);
             vtable.try_borrow_inner = || Some(try_borrow_inner::<T>);
@@ -87,7 +88,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Rc<T> {
                             PointerVTable::builder()
                                 .borrow_fn(|this| {
                                     let ptr = Self::as_ptr(unsafe { this.get() });
-                                    PtrConst::new(ptr).into()
+                                    PtrConst::new(unsafe { NonNull::new_unchecked(ptr as *mut T) })
                                 })
                                 .new_into_fn(|this, ptr| {
                                     let t = unsafe { ptr.read::<T>() };
@@ -147,7 +148,7 @@ unsafe impl<'a> Facet<'a> for Rc<str> {
                                 .borrow_fn(|this| unsafe {
                                     let concrete = this.get::<Rc<str>>();
                                     let s: &str = concrete;
-                                    PtrConstWide::new(&raw const *s).into()
+                                    PtrConst::new(NonNull::from(s))
                                 })
                                 .new_into_fn(|_this, _ptr| todo!())
                                 .downgrade_into_fn(|_strong, _weak| todo!())
@@ -261,6 +262,8 @@ unsafe impl<'a> Facet<'a> for Weak<str> {
 
 #[cfg(test)]
 mod tests {
+    use core::mem::ManuallyDrop;
+
     use alloc::rc::{Rc, Weak as RcWeak};
     use alloc::string::String;
 
@@ -294,10 +297,8 @@ mod tests {
             .expect("Rc<T> should have new_into_fn");
 
         // Create the value and initialize the Rc
-        let mut value = String::from("example");
-        let rc_ptr = unsafe { new_into_fn(rc_uninit_ptr, PtrMut::new(&raw mut value)) };
-        // The value now belongs to the Rc, prevent its drop
-        core::mem::forget(value);
+        let mut value = ManuallyDrop::new(String::from("example"));
+        let rc_ptr = unsafe { new_into_fn(rc_uninit_ptr, PtrMut::new(NonNull::from(&mut value))) };
 
         // Get the function pointer for borrowing the inner value
         let borrow_fn = rc_def
@@ -311,8 +312,7 @@ mod tests {
         assert_eq!(unsafe { borrowed_ptr.get::<String>() }, "example");
 
         // Get the function pointer for dropping the Rc
-        let drop_fn = (rc_shape.vtable.sized().unwrap().drop_in_place)()
-            .expect("Rc<T> should have drop_in_place");
+        let drop_fn = (rc_shape.vtable.drop_in_place)().expect("Rc<T> should have drop_in_place");
 
         // Drop the Rc in place
         // SAFETY: rc_ptr points to a valid Rc<String>
@@ -342,9 +342,9 @@ mod tests {
         // 1. Create the first Rc (rc1)
         let rc1_uninit_ptr = rc_shape.allocate().unwrap();
         let new_into_fn = rc_def.vtable.new_into_fn.unwrap();
-        let mut value = String::from("example");
-        let rc1_ptr = unsafe { new_into_fn(rc1_uninit_ptr, PtrMut::new(&raw mut value)) };
-        core::mem::forget(value); // Value now owned by rc1
+        let mut value = ManuallyDrop::new(String::from("example"));
+        let rc1_ptr =
+            unsafe { new_into_fn(rc1_uninit_ptr, PtrMut::new(NonNull::from(&mut value))) };
 
         // 2. Downgrade rc1 to create a weak pointer (weak1)
         let weak1_uninit_ptr = weak_shape.allocate().unwrap();
@@ -368,8 +368,8 @@ mod tests {
         assert_eq!(unsafe { borrowed_ptr.get::<String>() }, "example");
 
         // 4. Drop everything and free memory
-        let rc_drop_fn = (rc_shape.vtable.sized().unwrap().drop_in_place)().unwrap();
-        let weak_drop_fn = (weak_shape.vtable.sized().unwrap().drop_in_place)().unwrap();
+        let rc_drop_fn = (rc_shape.vtable.drop_in_place)().unwrap();
+        let weak_drop_fn = (weak_shape.vtable.drop_in_place)().unwrap();
 
         unsafe {
             // Drop Rcs
@@ -403,9 +403,9 @@ mod tests {
         // 1. Create the strong Rc (rc1)
         let rc1_uninit_ptr = rc_shape.allocate().unwrap();
         let new_into_fn = rc_def.vtable.new_into_fn.unwrap();
-        let mut value = String::from("example");
-        let rc1_ptr = unsafe { new_into_fn(rc1_uninit_ptr, PtrMut::new(&raw mut value)) };
-        core::mem::forget(value);
+        let mut value = ManuallyDrop::new(String::from("example"));
+        let rc1_ptr =
+            unsafe { new_into_fn(rc1_uninit_ptr, PtrMut::new(NonNull::from(&mut value))) };
 
         // 2. Downgrade rc1 to create a weak pointer (weak1)
         let weak1_uninit_ptr = weak_shape.allocate().unwrap();
@@ -414,7 +414,7 @@ mod tests {
         let weak1_ptr = unsafe { downgrade_into_fn(rc1_ptr, weak1_uninit_ptr) };
 
         // 3. Drop and free the strong pointer (rc1)
-        let rc_drop_fn = (rc_shape.vtable.sized().unwrap().drop_in_place)().unwrap();
+        let rc_drop_fn = (rc_shape.vtable.drop_in_place)().unwrap();
         unsafe {
             rc_drop_fn(rc1_ptr);
             rc_shape.deallocate_mut(rc1_ptr).unwrap();
@@ -433,7 +433,7 @@ mod tests {
         );
 
         // 5. Clean up: Deallocate the memory intended for the failed upgrade and drop/deallocate the weak pointer
-        let weak_drop_fn = (weak_shape.vtable.sized().unwrap().drop_in_place)().unwrap();
+        let weak_drop_fn = (weak_shape.vtable.drop_in_place)().unwrap();
         unsafe {
             // Deallocate the *uninitialized* memory allocated for the failed upgrade attempt
             rc_shape.deallocate_uninit(rc2_uninit_ptr).unwrap();
