@@ -68,8 +68,8 @@ macro_rules! impl_facet_for_fn_ptr {
                     .type_name(|f, opts| {
                         write_type_name_list(f, opts, $abi, &[$($args::SHAPE),*], R::SHAPE)
                     })
-                    .debug(|| Some(|data, f| fmt::Debug::fmt(data, f)))
-                    .clone_into(|| Some(|src, dst| unsafe { dst.put(src.clone()) }))
+                    .debug(|| Some(|data, f| fmt::Debug::fmt(data.get(), f)))
+                    .clone_into(|| Some(|src, dst| unsafe { dst.put(src.get().clone()).into() }))
                     .marker_traits(||
                         MarkerTraits::EQ
                             .union(MarkerTraits::SEND)
@@ -79,19 +79,19 @@ macro_rules! impl_facet_for_fn_ptr {
                             .union(MarkerTraits::UNWIND_SAFE)
                             .union(MarkerTraits::REF_UNWIND_SAFE)
                     )
-                    .partial_eq(|| Some(|&left, &right| {
-                        fn_addr_eq(left, right)
+                    .partial_eq(|| Some(|left, right| {
+                        fn_addr_eq(*left.get(), *right.get())
                     }))
                     .partial_ord(|| Some(|left, right| {
                         #[allow(unpredictable_function_pointer_comparisons)]
-                        left.partial_cmp(right)
+                        left.get().partial_cmp(right.get())
                     }))
                     .ord(|| Some(|left, right| {
                         #[allow(unpredictable_function_pointer_comparisons)]
-                        left.cmp(right)
+                        left.get().cmp(right.get())
                     }))
                     .hash(|| Some(|value, hasher_this, hasher_write_fn| {
-                        value.hash(&mut unsafe {
+                        value.get().hash(&mut unsafe {
                                 HasherProxy::new(hasher_this, hasher_write_fn)
                             })
                     }))

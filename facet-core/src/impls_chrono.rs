@@ -13,7 +13,6 @@ unsafe impl Facet<'_> for DateTime<Utc> {
             Self::SHAPE.type_identifier
         ));
         {
-            let vtable = vtable.sized_mut().unwrap();
             vtable.try_from = || {
                 Some(
                     |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
@@ -74,7 +73,6 @@ unsafe impl Facet<'_> for DateTime<FixedOffset> {
             Self::SHAPE.type_identifier
         ));
         {
-            let vtable = vtable.sized_mut().unwrap();
             vtable.try_from = || {
                 Some(
                     |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
@@ -132,7 +130,6 @@ unsafe impl Facet<'_> for DateTime<Local> {
             Self::SHAPE.type_identifier
         ));
         {
-            let vtable = vtable.sized_mut().unwrap();
             vtable.try_from = || {
                 Some(
                     |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
@@ -192,7 +189,6 @@ unsafe impl Facet<'_> for NaiveDateTime {
             Self::SHAPE.type_identifier
         ));
         {
-            let vtable = vtable.sized_mut().unwrap();
             vtable.try_from = || {
                 Some(
                     |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
@@ -255,7 +251,6 @@ unsafe impl Facet<'_> for NaiveDate {
             Self::SHAPE.type_identifier
         ));
         {
-            let vtable = vtable.sized_mut().unwrap();
             vtable.try_from = || {
                 Some(
                     |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
@@ -313,7 +308,6 @@ unsafe impl Facet<'_> for NaiveTime {
             Self::SHAPE.type_identifier
         ));
         {
-            let vtable = vtable.sized_mut().unwrap();
             vtable.try_from = || {
                 Some(
                     |source: PtrConst, source_shape: &Shape, target: PtrUninit| {

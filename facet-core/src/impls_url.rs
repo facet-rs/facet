@@ -50,13 +50,12 @@ unsafe impl Facet<'_> for Url {
             src_ptr: PtrConst<'_>,
         ) -> Result<PtrConst<'_>, TryBorrowInnerError> {
             let url = unsafe { src_ptr.get::<Url>() };
-            Ok(PtrConst::new(url.as_str().as_ptr()))
+            Ok(PtrConst::new(url.as_str().into()))
         }
 
         let mut vtable =
             value_vtable!(Url, |f, _opts| write!(f, "{}", Self::SHAPE.type_identifier));
         {
-            let vtable = vtable.sized_mut().unwrap();
             vtable.parse = || Some(parse);
             vtable.try_into_inner = || Some(try_into_inner);
             vtable.try_borrow_inner = || Some(try_borrow_inner);
