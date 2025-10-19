@@ -1,4 +1,4 @@
-use core::write;
+use core::{ptr::NonNull, write};
 
 use alloc::{boxed::Box, collections::BTreeMap};
 
@@ -37,7 +37,7 @@ where
                     write!(f, "BTreeMap<⋯>")
                 }
             })
-            .default_in_place(|| Some(|target| unsafe { target.put(Self::default()) }))
+            .default_in_place(|| Some(|target| unsafe { target.put(Self::default()).into() }))
             .build()
     };
 
@@ -81,7 +81,7 @@ where
                                 })
                                 .get_value_ptr(|ptr, key| unsafe {
                                     let map = ptr.get::<Self>();
-                                    map.get(key.get()).map(|v| PtrConst::new(v as *const _))
+                                    map.get(key.get()).map(|v| PtrConst::new(NonNull::from(v)))
                                 })
                                 .iter_vtable(
                                     IterVTable::builder()
@@ -89,20 +89,28 @@ where
                                             let map = ptr.get::<Self>();
                                             let iter: BTreeMapIterator<'_, K, V> = map.iter();
                                             let state = Box::new(iter);
-                                            PtrMut::new(Box::into_raw(state) as *mut u8)
+                                            PtrMut::new(NonNull::new_unchecked(
+                                                Box::into_raw(state) as *mut u8,
+                                            ))
                                         })
                                         .next(|iter_ptr| unsafe {
                                             let state =
                                                 iter_ptr.as_mut::<BTreeMapIterator<'_, K, V>>();
                                             state.next().map(|(key, value)| {
-                                                (PtrConst::new(key), PtrConst::new(value))
+                                                (
+                                                    PtrConst::new(NonNull::from(key)),
+                                                    PtrConst::new(NonNull::from(value)),
+                                                )
                                             })
                                         })
                                         .next_back(|iter_ptr| unsafe {
                                             let state =
                                                 iter_ptr.as_mut::<BTreeMapIterator<'_, K, V>>();
                                             state.next_back().map(|(key, value)| {
-                                                (PtrConst::new(key), PtrConst::new(value))
+                                                (
+                                                    PtrConst::new(NonNull::from(key)),
+                                                    PtrConst::new(NonNull::from(value)),
+                                                )
                                             })
                                         })
                                         .dealloc(|iter_ptr| unsafe {

@@ -25,8 +25,8 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *const T {
 
                 marker_traits
             })
-            .debug(|| Some(fmt::Debug::fmt))
-            .clone_into(|| Some(|src, dst| unsafe { dst.put(*src) }))
+            .debug(|| Some(|p, f| fmt::Debug::fmt(p.get(), f)))
+            .clone_into(|| Some(|src, dst| unsafe { dst.put(*src.get()).into() }))
             .type_name(|f, opts| {
                 if let Some(opts) = opts.for_children() {
                     write!(f, "*const ")?;
@@ -81,8 +81,8 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *mut T {
 
                 marker_traits
             })
-            .debug(|| Some(fmt::Debug::fmt))
-            .clone_into(|| Some(|src, dst| unsafe { dst.put(*src) }))
+            .debug(|| Some(|p, f| fmt::Debug::fmt(p.get(), f)))
+            .clone_into(|| Some(|src, dst| unsafe { dst.put(*src.get()).into() }))
             .type_name(|f, opts| {
                 if let Some(opts) = opts.for_children() {
                     write!(f, "*mut ")?;

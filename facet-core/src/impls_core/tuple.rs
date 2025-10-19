@@ -82,7 +82,7 @@ macro_rules! impl_facet_for_tuple {
                                     }
                                 )+
 
-                                unsafe { dst.assume_init() }
+                                unsafe { dst.assume_init().into() }
                             })
                         } else {
                             None

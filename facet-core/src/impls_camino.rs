@@ -41,7 +41,6 @@ unsafe impl Facet<'_> for Utf8PathBuf {
         ));
 
         {
-            let vtable = vtable.sized_mut().unwrap();
             vtable.parse =
                 || Some(|s, target| Ok(unsafe { target.put(Utf8Path::new(s).to_owned()) }));
             vtable.try_from = || Some(try_from);
@@ -61,24 +60,6 @@ unsafe impl Facet<'_> for Utf8PathBuf {
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .inner(inner_shape)
-            .build()
-    };
-}
-
-unsafe impl<'a> Facet<'a> for &'a Utf8Path {
-    const VTABLE: &'static ValueVTable = &const {
-        value_vtable!(&Utf8Path, |f, _opts| write!(
-            f,
-            "{}",
-            Self::SHAPE.type_identifier
-        ))
-    };
-
-    const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .type_identifier("&Utf8Path")
-            .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar)
             .build()
     };
 }

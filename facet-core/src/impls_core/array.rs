@@ -1,3 +1,5 @@
+use core::ptr::NonNull;
+
 use crate::*;
 
 unsafe impl<'a, T, const L: usize> Facet<'a> for [T; L]
@@ -19,7 +21,7 @@ where
             .default_in_place(|| {
                 if L == 0 {
                     // Zero-length arrays implement `Default` irrespective of the element type
-                    Some(|target| unsafe { target.assume_init() })
+                    Some(|target| unsafe { target.assume_init().into() })
                 } else if L <= 32 && T::SHAPE.vtable.has_default_in_place() {
                     Some(|mut target| unsafe {
                         let t_dip = <VTableView<T>>::of().default_in_place().unwrap();
@@ -32,7 +34,7 @@ where
                         for idx in 0..L {
                             t_dip(target.field_uninit_at(idx * stride));
                         }
-                        target.assume_init()
+                        target.assume_init().into()
                     })
                 } else {
                     // arrays do not yet implement `Default` for > 32 elements due
@@ -43,6 +45,7 @@ where
             .clone_into(|| {
                 if T::SHAPE.vtable.has_clone_into() {
                     Some(|src, mut dst| unsafe {
+                        let src = src.get();
                         let t_cip = <VTableView<T>>::of().clone_into().unwrap();
                         let stride = T::SHAPE
                             .layout
@@ -51,9 +54,9 @@ where
                             .pad_to_align()
                             .size();
                         for (idx, src) in src.iter().enumerate() {
-                            (t_cip)(src, dst.field_uninit_at(idx * stride));
+                            (t_cip)(src.into(), dst.field_uninit_at(idx * stride));
                         }
-                        dst.assume_init()
+                        dst.assume_init().into()
                     })
                 } else {
                     None
@@ -80,11 +83,11 @@ where
                             ArrayVTable::builder()
                                 .as_ptr(|ptr| unsafe {
                                     let array = ptr.get::<[T; L]>();
-                                    PtrConst::new(array.as_ptr())
+                                    PtrConst::new(NonNull::from(array))
                                 })
                                 .as_mut_ptr(|ptr| unsafe {
                                     let array = ptr.as_mut::<[T; L]>();
-                                    PtrMut::new(array.as_mut_ptr())
+                                    PtrMut::new(NonNull::from(array))
                                 })
                                 .build()
                         },

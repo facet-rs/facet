@@ -1,6 +1,7 @@
 use facet_testhelpers::{IPanic, test};
 use std::{
     mem::{MaybeUninit, size_of},
+    ptr::NonNull,
     sync::atomic::AtomicU64,
 };
 
@@ -689,14 +690,13 @@ fn clone_into() -> Result<(), IPanic> {
     assert_eq!(CLONES.load(Ordering::SeqCst), 1);
 
     let mut f3: MaybeUninit<Foo> = MaybeUninit::uninit();
-    let clone_into = (<Foo as Facet>::SHAPE
-        .vtable
-        .sized()
-        .expect("Foo should be sized")
-        .clone_into)()
-    .expect("Foo should have clone_into");
+    let clone_into =
+        (<Foo as Facet>::SHAPE.vtable.clone_into)().expect("Foo should have clone_into");
     unsafe {
-        clone_into(PtrConst::new(&f), PtrUninit::from_maybe_uninit(&mut f3));
+        clone_into(
+            PtrConst::new(NonNull::from(&f)),
+            PtrUninit::from_maybe_uninit(&mut f3),
+        );
     }
     assert_eq!(CLONES.load(Ordering::SeqCst), 2);
 

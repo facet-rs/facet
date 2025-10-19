@@ -1,6 +1,6 @@
 use bitflags::bitflags;
 
-use crate::{GenericPtr, PtrConst, PtrMut, PtrUninit};
+use crate::{PtrConst, PtrMut, PtrUninit};
 
 use super::Shape;
 
@@ -202,7 +202,7 @@ pub type DowngradeIntoFn =
 /// # Safety
 ///
 /// `this` must be a valid strong pointer (like [`std::sync::Arc`] or [`std::rc::Rc`]).
-pub type BorrowFn = for<'ptr> unsafe fn(this: PtrConst<'ptr>) -> GenericPtr<'ptr>;
+pub type BorrowFn = for<'ptr> unsafe fn(this: PtrConst<'ptr>) -> PtrConst<'ptr>;
 
 /// Creates a new pointer wrapping the given value.
 ///

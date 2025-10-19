@@ -1,3 +1,5 @@
+use core::ptr::NonNull;
+
 use crate::*;
 
 use alloc::boxed::Box;
@@ -20,7 +22,7 @@ where
                     write!(f, "{}<⋯>", Self::SHAPE.type_identifier)
                 }
             })
-            .default_in_place(|| Some(|target| unsafe { target.put(Self::default()) }))
+            .default_in_place(|| Some(|target| unsafe { target.put(Self::default()).into() }))
             .marker_traits(|| {
                 MarkerTraits::SEND
                     .union(MarkerTraits::SYNC)
@@ -61,20 +63,20 @@ where
                                 .get(|ptr, index| unsafe {
                                     let vec = ptr.get::<Self>();
                                     let item = vec.get(index)?;
-                                    Some(PtrConst::new(item))
+                                    Some(PtrConst::new(NonNull::from(item)))
                                 })
                                 .get_mut(|ptr, index| unsafe {
                                     let vec = ptr.as_mut::<Self>();
                                     let item = vec.get_mut(index)?;
-                                    Some(PtrMut::new(item))
+                                    Some(PtrMut::new(NonNull::from(item)))
                                 })
                                 .as_ptr(|ptr| unsafe {
                                     let vec = ptr.get::<Self>();
-                                    PtrConst::new(vec.as_ptr())
+                                    PtrConst::new(NonNull::new_unchecked(vec.as_ptr() as *mut T))
                                 })
                                 .as_mut_ptr(|ptr| unsafe {
                                     let vec = ptr.as_mut::<Self>();
-                                    PtrMut::new(vec.as_mut_ptr())
+                                    PtrMut::new(NonNull::new_unchecked(vec.as_mut_ptr()))
                                 })
                                 .iter_vtable(
                                     IterVTable::builder()
@@ -82,15 +84,22 @@ where
                                             let vec = ptr.get::<Self>();
                                             let iter: VecIterator<T> = vec.iter();
                                             let iter_state = Box::new(iter);
-                                            PtrMut::new(Box::into_raw(iter_state) as *mut u8)
+                                            PtrMut::new(NonNull::new_unchecked(Box::into_raw(
+                                                iter_state,
+                                            )
+                                                as *mut u8))
                                         })
                                         .next(|iter_ptr| unsafe {
                                             let state = iter_ptr.as_mut::<VecIterator<'_, T>>();
-                                            state.next().map(|value| PtrConst::new(value))
+                                            state
+                                                .next()
+                                                .map(|value| PtrConst::new(NonNull::from(value)))
                                         })
                                         .next_back(|iter_ptr| unsafe {
                                             let state = iter_ptr.as_mut::<VecIterator<'_, T>>();
-                                            state.next_back().map(|value| PtrConst::new(value))
+                                            state
+                                                .next_back()
+                                                .map(|value| PtrConst::new(NonNull::from(value)))
                                         })
                                         .dealloc(|iter_ptr| unsafe {
                                             drop(Box::from_raw(

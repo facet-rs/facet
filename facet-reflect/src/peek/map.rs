@@ -1,3 +1,5 @@
+use core::ptr::NonNull;
+
 use facet_core::{MapDef, PtrConst, PtrMut};
 
 use super::Peek;
@@ -66,7 +68,7 @@ impl<'mem, 'facet> PeekMap<'mem, 'facet> {
     /// Get the number of entries in the map
     #[inline]
     pub fn len(&self) -> usize {
-        unsafe { (self.def.vtable.len_fn)(self.value.data().thin().unwrap()) }
+        unsafe { (self.def.vtable.len_fn)(self.value.data()) }
     }
 
     /// Returns true if the map is empty
@@ -79,8 +81,8 @@ impl<'mem, 'facet> PeekMap<'mem, 'facet> {
     #[inline]
     pub fn contains_key(&self, key: &impl facet_core::Facet<'facet>) -> bool {
         unsafe {
-            let key_ptr = PtrConst::new(key);
-            (self.def.vtable.contains_key_fn)(self.value.data().thin().unwrap(), key_ptr)
+            let key_ptr = PtrConst::new(NonNull::from(key));
+            (self.def.vtable.contains_key_fn)(self.value.data(), key_ptr)
         }
     }
 
@@ -88,9 +90,8 @@ impl<'mem, 'facet> PeekMap<'mem, 'facet> {
     #[inline]
     pub fn get<'k>(&self, key: &'k impl facet_core::Facet<'facet>) -> Option<Peek<'mem, 'facet>> {
         unsafe {
-            let key_ptr = PtrConst::new(key);
-            let value_ptr =
-                (self.def.vtable.get_value_ptr_fn)(self.value.data().thin().unwrap(), key_ptr)?;
+            let key_ptr = PtrConst::new(NonNull::from(key));
+            let value_ptr = (self.def.vtable.get_value_ptr_fn)(self.value.data(), key_ptr)?;
             Some(Peek::unchecked_new(value_ptr, self.def.v()))
         }
     }
@@ -98,21 +99,14 @@ impl<'mem, 'facet> PeekMap<'mem, 'facet> {
     /// Check if the map contains a key
     #[inline]
     pub fn contains_key_peek(&self, key: Peek<'_, 'facet>) -> bool {
-        unsafe {
-            let Some(key_ptr) = key.data().thin() else {
-                return false;
-            };
-            (self.def.vtable.contains_key_fn)(self.value.data().thin().unwrap(), key_ptr)
-        }
+        unsafe { (self.def.vtable.contains_key_fn)(self.value.data(), key.data()) }
     }
 
     /// Get a value from the map for the given key
     #[inline]
     pub fn get_peek(&self, key: Peek<'_, 'facet>) -> Option<Peek<'mem, 'facet>> {
         unsafe {
-            let key_ptr = key.data().thin()?;
-            let value_ptr =
-                (self.def.vtable.get_value_ptr_fn)(self.value.data().thin().unwrap(), key_ptr)?;
+            let value_ptr = (self.def.vtable.get_value_ptr_fn)(self.value.data(), key.data())?;
             Some(Peek::unchecked_new(value_ptr, self.def.v()))
         }
     }
@@ -121,7 +115,7 @@ impl<'mem, 'facet> PeekMap<'mem, 'facet> {
     #[inline]
     pub fn iter(self) -> PeekMapIter<'mem, 'facet> {
         let iter_init_with_value_fn = self.def.vtable.iter_vtable.init_with_value.unwrap();
-        let iter = unsafe { iter_init_with_value_fn(self.value.data().thin().unwrap()) };
+        let iter = unsafe { iter_init_with_value_fn(self.value.data()) };
         PeekMapIter { map: self, iter }
     }
 

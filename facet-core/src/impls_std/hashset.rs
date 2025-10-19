@@ -1,4 +1,5 @@
 use core::hash::BuildHasher;
+use core::ptr::NonNull;
 use std::collections::HashSet;
 
 use crate::ptr::{PtrConst, PtrMut};
@@ -33,7 +34,7 @@ where
                     write!(f, "HashSet<⋯>")
                 }
             })
-            .default_in_place(|| Some(|target| unsafe { target.put(Self::default()) }))
+            .default_in_place(|| Some(|target| unsafe { target.put(Self::default()).into() }))
             .build()
     };
 
@@ -80,11 +81,16 @@ where
                                             let set = ptr.get::<HashSet<T>>();
                                             let iter: HashSetIterator<'_, T> = set.iter();
                                             let iter_state = Box::new(iter);
-                                            PtrMut::new(Box::into_raw(iter_state) as *mut u8)
+                                            PtrMut::new(NonNull::new_unchecked(Box::into_raw(
+                                                iter_state,
+                                            )
+                                                as *mut u8))
                                         })
                                         .next(|iter_ptr| unsafe {
                                             let state = iter_ptr.as_mut::<HashSetIterator<'_, T>>();
-                                            state.next().map(|value| PtrConst::new(value))
+                                            state
+                                                .next()
+                                                .map(|value| PtrConst::new(NonNull::from(value)))
                                         })
                                         .dealloc(|iter_ptr| unsafe {
                                             drop(Box::from_raw(
@@ -106,6 +112,7 @@ where
 #[cfg(test)]
 mod tests {
     use alloc::string::String;
+    use core::ptr::NonNull;
     use std::collections::HashSet;
     use std::hash::RandomState;
 
@@ -150,15 +157,15 @@ mod tests {
         let mut hashset_length = 0;
         for string in strings {
             // Create the value
-            let mut new_value = string.to_string();
+            let mut new_value = core::mem::ManuallyDrop::new(string.to_string());
 
             // Insert the value
             let did_insert = unsafe {
-                (hashset_def.vtable.insert_fn)(hashset_ptr, PtrMut::new(&raw mut new_value))
+                (hashset_def.vtable.insert_fn)(
+                    hashset_ptr,
+                    PtrMut::new(NonNull::from(&mut new_value)),
+                )
             };
-
-            // The value now belongs to the HashSet, so forget it
-            core::mem::forget(new_value);
 
             assert!(did_insert, "expected value to be inserted in the HashSet");
 
@@ -172,15 +179,15 @@ mod tests {
         // Insert the same 5 values again, ensuring they are deduplicated
         for string in strings {
             // Create the value
-            let mut new_value = string.to_string();
+            let mut new_value = core::mem::ManuallyDrop::new(string.to_string());
 
             // Try to insert the value
             let did_insert = unsafe {
-                (hashset_def.vtable.insert_fn)(hashset_ptr, PtrMut::new(&raw mut new_value))
+                (hashset_def.vtable.insert_fn)(
+                    hashset_ptr,
+                    PtrMut::new(NonNull::from(&mut new_value)),
+                )
             };
-
-            // The value now belongs to the HashSet, so forget it
-            core::mem::forget(new_value);
 
             assert!(
                 !did_insert,
@@ -223,8 +230,8 @@ mod tests {
         assert_eq!(iter_items, strings.iter().copied().collect::<HashSet<_>>());
 
         // Get the function pointer for dropping the HashSet
-        let drop_fn = (hashset_shape.vtable.sized().unwrap().drop_in_place)()
-            .expect("HashSet<T> should have drop_in_place");
+        let drop_fn =
+            (hashset_shape.vtable.drop_in_place)().expect("HashSet<T> should have drop_in_place");
 
         // Drop the HashSet in place
         unsafe { drop_fn(hashset_ptr) };

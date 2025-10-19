@@ -66,14 +66,14 @@ impl<'mem, 'facet> PeekSet<'mem, 'facet> {
     /// Get the number of entries in the set
     #[inline]
     pub fn len(&self) -> usize {
-        unsafe { (self.def.vtable.len_fn)(self.value.data().thin().unwrap()) }
+        unsafe { (self.def.vtable.len_fn)(self.value.data()) }
     }
 
     /// Returns an iterator over the values in the set
     #[inline]
     pub fn iter(self) -> PeekSetIter<'mem, 'facet> {
         let iter_init_with_value_fn = self.def.vtable.iter_vtable.init_with_value.unwrap();
-        let iter = unsafe { iter_init_with_value_fn(self.value.data().thin().unwrap()) };
+        let iter = unsafe { iter_init_with_value_fn(self.value.data()) };
         PeekSetIter { set: self, iter }
     }
 

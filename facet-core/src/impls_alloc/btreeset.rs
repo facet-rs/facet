@@ -1,3 +1,5 @@
+use core::ptr::NonNull;
+
 use alloc::boxed::Box;
 use alloc::collections::BTreeSet;
 
@@ -32,7 +34,7 @@ where
                     write!(f, "{}<⋯>", Self::SHAPE.type_identifier)
                 }
             })
-            .default_in_place(|| Some(|target| unsafe { target.put(Self::default()) }))
+            .default_in_place(|| Some(|target| unsafe { target.put(Self::default()).into() }))
             .build()
     };
 
@@ -72,7 +74,11 @@ where
                                             let set = unsafe { ptr.get::<BTreeSet<T>>() };
                                             let iter: BTreeSetIterator<'_, T> = set.iter();
                                             let iter_state = Box::new(iter);
-                                            PtrMut::new(Box::into_raw(iter_state) as *mut u8)
+                                            PtrMut::new(unsafe {
+                                                NonNull::new_unchecked(
+                                                    Box::into_raw(iter_state) as *mut u8
+                                                )
+                                            })
                                         })
                                         .next(|iter_ptr| {
                                             let state = unsafe {
@@ -80,7 +86,7 @@ where
                                             };
                                             state
                                                 .next()
-                                                .map(|value| PtrConst::new(value as *const T))
+                                                .map(|value| PtrConst::new(NonNull::from(value)))
                                         })
                                         .next_back(|iter_ptr| {
                                             let state = unsafe {
@@ -88,7 +94,7 @@ where
                                             };
                                             state
                                                 .next_back()
-                                                .map(|value| PtrConst::new(value as *const T))
+                                                .map(|value| PtrConst::new(NonNull::from(value)))
                                         })
                                         .dealloc(|iter_ptr| unsafe {
                                             drop(Box::from_raw(
@@ -156,7 +162,10 @@ mod tests {
 
             // Insert the value
             let did_insert = unsafe {
-                (btreeset_def.vtable.insert_fn)(btreeset_ptr, PtrMut::new(&raw mut new_value))
+                (btreeset_def.vtable.insert_fn)(
+                    btreeset_ptr,
+                    PtrMut::new(NonNull::from(&mut new_value)),
+                )
             };
 
             // The value now belongs to the BTreeSet, so forget it
@@ -178,7 +187,10 @@ mod tests {
 
             // Try to insert the value
             let did_insert = unsafe {
-                (btreeset_def.vtable.insert_fn)(btreeset_ptr, PtrMut::new(&raw mut new_value))
+                (btreeset_def.vtable.insert_fn)(
+                    btreeset_ptr,
+                    PtrMut::new(NonNull::from(&mut new_value)),
+                )
             };
 
             // The value now belongs to the BTreeSet, so forget it
@@ -226,8 +238,8 @@ mod tests {
         assert_eq!(iter_items, strings_sorted);
 
         // Get the function pointer for dropping the BTreeSet
-        let drop_fn = (btreeset_shape.vtable.sized().unwrap().drop_in_place)()
-            .expect("BTreeSet<T> should have drop_in_place");
+        let drop_fn =
+            (btreeset_shape.vtable.drop_in_place)().expect("BTreeSet<T> should have drop_in_place");
 
         // Drop the BTreeSet in place
         unsafe { drop_fn(btreeset_ptr) };

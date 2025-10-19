@@ -2,6 +2,7 @@ use crate::Peek;
 use crate::ReflectError;
 use crate::trace;
 use alloc::boxed::Box;
+use core::ptr::NonNull;
 use core::{alloc::Layout, marker::PhantomData};
 use facet_core::{Facet, PtrConst, PtrMut, Shape};
 
@@ -15,7 +16,7 @@ pub struct HeapValue<'facet> {
 impl<'facet> Drop for HeapValue<'facet> {
     fn drop(&mut self) {
         if let Some(guard) = self.guard.take() {
-            if let Some(drop_fn) = (self.shape.vtable.sized().unwrap().drop_in_place)() {
+            if let Some(drop_fn) = (self.shape.vtable.drop_in_place)() {
                 unsafe { drop_fn(PtrMut::new(guard.ptr)) };
             }
             drop(guard);
@@ -66,7 +67,7 @@ impl<'facet> HeapValue<'facet> {
 impl<'facet> HeapValue<'facet> {
     /// Formats the value using its Display implementation, if available
     pub fn fmt_display(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if let Some(display_fn) = self.shape.vtable.sized().and_then(|v| (v.display)()) {
+        if let Some(display_fn) = (self.shape.vtable.display)() {
             unsafe { display_fn(PtrConst::new(self.guard.as_ref().unwrap().ptr), f) }
         } else {
             write!(f, "⟨{}⟩", self.shape)
@@ -75,7 +76,7 @@ impl<'facet> HeapValue<'facet> {
 
     /// Formats the value using its Debug implementation, if available
     pub fn fmt_debug(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if let Some(debug_fn) = self.shape.vtable.sized().and_then(|v| (v.debug)()) {
+        if let Some(debug_fn) = (self.shape.vtable.debug)() {
             unsafe { debug_fn(PtrConst::new(self.guard.as_ref().unwrap().ptr), f) }
         } else {
             write!(f, "⟨{}⟩", self.shape)
@@ -100,7 +101,7 @@ impl<'facet> PartialEq for HeapValue<'facet> {
         if self.shape != other.shape {
             return false;
         }
-        if let Some(eq_fn) = self.shape.vtable.sized().and_then(|v| (v.partial_eq)()) {
+        if let Some(eq_fn) = (self.shape.vtable.partial_eq)() {
             unsafe {
                 eq_fn(
                     PtrConst::new(self.guard.as_ref().unwrap().ptr),
@@ -118,7 +119,7 @@ impl<'facet> PartialOrd for HeapValue<'facet> {
         if self.shape != other.shape {
             return None;
         }
-        if let Some(partial_ord_fn) = self.shape.vtable.sized().and_then(|v| (v.partial_ord)()) {
+        if let Some(partial_ord_fn) = (self.shape.vtable.partial_ord)() {
             unsafe {
                 partial_ord_fn(
                     PtrConst::new(self.guard.as_ref().unwrap().ptr),
@@ -138,7 +139,7 @@ impl<'facet> PartialOrd for HeapValue<'facet> {
 /// the memory when dropped.
 pub struct Guard {
     /// Raw pointer to the allocated memory.
-    pub(crate) ptr: *mut u8,
+    pub(crate) ptr: NonNull<u8>,
     /// Layout information of the allocated memory.
     pub(crate) layout: Layout,
 }
@@ -153,7 +154,7 @@ impl Drop for Guard {
                 self.layout.align()
             );
             // SAFETY: `ptr` has been allocated via the global allocator with the given layout
-            unsafe { alloc::alloc::dealloc(self.ptr, self.layout) };
+            unsafe { alloc::alloc::dealloc(self.ptr.as_ptr(), self.layout) };
         }
     }
 }
@@ -166,7 +167,7 @@ impl<'facet> HeapValue<'facet> {
     /// Caller must guarantee that the underlying value is of type T with a compatible layout.
     pub(crate) unsafe fn into_box_unchecked<T: Facet<'facet>>(mut self) -> Box<T> {
         let guard = self.guard.take().unwrap();
-        let ptr = guard.ptr as *mut T;
+        let ptr = guard.ptr.as_ptr() as *mut T;
         // Don't drop, just forget the guard so we don't double free.
         core::mem::forget(guard);
         unsafe { Box::from_raw(ptr) }
@@ -178,6 +179,6 @@ impl<'facet> HeapValue<'facet> {
     ///
     /// Caller must guarantee that the underlying value is of type T.
     pub unsafe fn as_ref<T>(&self) -> &T {
-        unsafe { &*(self.guard.as_ref().unwrap().ptr as *const T) }
+        unsafe { &*(self.guard.as_ref().unwrap().ptr.as_ptr() as *const T) }
     }
 }

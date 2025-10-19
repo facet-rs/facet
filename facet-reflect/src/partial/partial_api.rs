@@ -7,7 +7,7 @@ use alloc::{
     vec::Vec,
 };
 
-use core::marker::PhantomData;
+use core::{marker::PhantomData, ptr::NonNull};
 
 use crate::{
     Guard, HeapValue, Partial, Peek, ReflectError, TypedPartial,
@@ -111,7 +111,9 @@ impl<'facet> Partial<'facet> {
                 let arc_ptr = unsafe { (vtable.convert_fn)(builder_ptr) };
 
                 // Update the frame to store the Arc
-                self.frames[0].data = PtrUninit::new(arc_ptr.as_byte_ptr() as *mut u8);
+                self.frames[0].data = PtrUninit::new(unsafe {
+                    NonNull::new_unchecked(arc_ptr.as_byte_ptr() as *mut u8)
+                });
                 self.frames[0].tracker = Tracker::Init;
                 // The builder memory has been consumed by convert_fn, so we no longer own it
                 self.frames[0].ownership = FrameOwnership::ManagedElsewhere;
@@ -159,12 +161,7 @@ impl<'facet> Partial<'facet> {
         let needs_conversion = matches!(parent_frame.tracker, Tracker::Uninit)
             && parent_frame.shape.inner.is_some()
             && parent_frame.shape.inner.unwrap()() == popped_frame.shape
-            && parent_frame
-                .shape
-                .vtable
-                .sized()
-                .and_then(|v| (v.try_from)())
-                .is_some();
+            && (parent_frame.shape.vtable.try_from)().is_some();
 
         if needs_conversion {
             trace!(
@@ -172,12 +169,7 @@ impl<'facet> Partial<'facet> {
                 popped_frame.shape, parent_frame.shape
             );
             // Perform the conversion
-            if let Some(try_from_fn) = parent_frame
-                .shape
-                .vtable
-                .sized()
-                .and_then(|v| (v.try_from)())
-            {
+            if let Some(try_from_fn) = (parent_frame.shape.vtable.try_from)() {
                 let inner_ptr = unsafe { popped_frame.data.assume_init().as_const() };
                 let inner_shape = popped_frame.shape;
 
@@ -266,7 +258,9 @@ impl<'facet> Partial<'facet> {
                     };
 
                     // The child frame contained the inner value
-                    let inner_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
+                    let inner_ptr = PtrMut::new(unsafe {
+                        NonNull::new_unchecked(popped_frame.data.as_mut_byte_ptr())
+                    });
 
                     // Use new_into_fn to create the Box
                     unsafe {
@@ -307,12 +301,16 @@ impl<'facet> Partial<'facet> {
                         };
 
                         // The child frame contained the element value
-                        let element_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
+                        let element_ptr = PtrMut::new(unsafe {
+                            NonNull::new_unchecked(popped_frame.data.as_mut_byte_ptr())
+                        });
 
                         // Use push to add element to the list
                         unsafe {
                             push_fn(
-                                PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
+                                PtrMut::new(NonNull::new_unchecked(
+                                    parent_frame.data.as_mut_byte_ptr(),
+                                )),
                                 element_ptr,
                             );
                         }
@@ -350,9 +348,13 @@ impl<'facet> Partial<'facet> {
                             // Use insert to add key-value pair to the map
                             unsafe {
                                 insert_fn(
-                                    PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
-                                    PtrMut::new(key_ptr.as_mut_byte_ptr()),
-                                    PtrMut::new(value_ptr.as_mut_byte_ptr()),
+                                    PtrMut::new(NonNull::new_unchecked(
+                                        parent_frame.data.as_mut_byte_ptr(),
+                                    )),
+                                    PtrMut::new(NonNull::new_unchecked(key_ptr.as_mut_byte_ptr())),
+                                    PtrMut::new(NonNull::new_unchecked(
+                                        value_ptr.as_mut_byte_ptr(),
+                                    )),
                                 );
                             }
 
@@ -527,7 +529,9 @@ impl<'facet> Partial<'facet> {
             } => {
                 if *building_item {
                     // We just popped an element frame, now push it to the slice builder
-                    let element_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
+                    let element_ptr = PtrMut::new(unsafe {
+                        NonNull::new_unchecked(popped_frame.data.as_mut_byte_ptr())
+                    });
 
                     // Use the slice builder's push_fn to add the element
                     crate::trace!("Pushing element to slice builder");
@@ -673,7 +677,7 @@ impl<'facet> Partial<'facet> {
         }
 
         // Check invariants if present
-        if let Some(invariants_fn) = frame.shape.vtable.sized().and_then(|v| (v.invariants)()) {
+        if let Some(invariants_fn) = (frame.shape.vtable.invariants)() {
             // Safety: The value is fully initialized at this point (we just checked with require_full_initialization)
             let value_ptr = unsafe { frame.data.assume_init().as_const() };
             let invariants_ok = unsafe { invariants_fn(value_ptr) };
@@ -701,7 +705,7 @@ impl<'facet> Partial<'facet> {
             }) {
             Ok(layout) => Ok(HeapValue {
                 guard: Some(Guard {
-                    ptr: frame.data.as_mut_byte_ptr(),
+                    ptr: unsafe { NonNull::new_unchecked(frame.data.as_mut_byte_ptr()) },
                     layout,
                 }),
                 shape: frame.shape,
@@ -731,15 +735,13 @@ impl<'facet> Partial<'facet> {
         U: Facet<'facet>,
     {
         self.require_active()?;
+        let value = core::mem::ManuallyDrop::new(value);
 
-        let ptr_const = PtrConst::new(&raw const value);
+        let ptr_const = PtrConst::new(NonNull::from(&value));
         unsafe {
             // Safety: We are calling set_shape with a valid shape and a valid pointer
             self.set_shape(ptr_const, U::SHAPE)?
         };
-
-        // Prevent the value from being dropped since we've copied it
-        core::mem::forget(value);
 
         Ok(self)
     }
@@ -832,7 +834,7 @@ impl<'facet> Partial<'facet> {
     pub fn set_default(&mut self) -> Result<&mut Self, ReflectError> {
         let frame = self.frames.last().unwrap();
 
-        let Some(default_fn) = (frame.shape.vtable.sized().unwrap().default_in_place)() else {
+        let Some(default_fn) = (frame.shape.vtable.default_in_place)() else {
             return Err(ReflectError::OperationFailed {
                 shape: frame.shape,
                 operation: "type does not implement Default",
@@ -863,10 +865,7 @@ impl<'facet> Partial<'facet> {
         self.require_active()?;
 
         // Get the source value's pointer and shape
-        let src_ptr = peek
-            .data()
-            .thin()
-            .expect("set_from_peek requires thin pointers");
+        let src_ptr = peek.data();
         let src_shape = peek.shape();
 
         // SAFETY: `Peek` guarantees that src_ptr is initialized and of type src_shape
@@ -882,7 +881,7 @@ impl<'facet> Partial<'facet> {
         let frame = self.frames.last_mut().unwrap();
 
         // Check if the type has a parse function
-        let Some(parse_fn) = (frame.shape.vtable.sized().unwrap().parse)() else {
+        let Some(parse_fn) = (frame.shape.vtable.parse)() else {
             return Err(ReflectError::OperationFailed {
                 shape: frame.shape,
                 operation: "Type does not support parsing from string",
@@ -1406,12 +1405,12 @@ impl Partial<'_> {
                         }
                     };
                     let inner_ptr: *mut u8 = unsafe { alloc::alloc::alloc(inner_layout) };
-                    if inner_ptr.is_null() {
+                    let Some(inner_ptr) = NonNull::new(inner_ptr) else {
                         return Err(ReflectError::OperationFailed {
                             shape: frame.shape,
                             operation: "failed to allocate memory for smart pointer inner value",
                         });
-                    }
+                    };
 
                     // Push a new frame for the inner value
                     self.frames.push(Frame::new(
@@ -1430,9 +1429,12 @@ impl Partial<'_> {
                             .sized_layout()
                             .expect("String must have a sized layout");
                         let string_ptr: *mut u8 = unsafe { alloc::alloc::alloc(string_layout) };
-                        if string_ptr.is_null() {
-                            alloc::alloc::handle_alloc_error(string_layout);
-                        }
+                        let Some(string_ptr) = NonNull::new(string_ptr) else {
+                            return Err(ReflectError::OperationFailed {
+                                shape: frame.shape,
+                                operation: "failed to allocate memory for string",
+                            });
+                        };
                         let mut frame = Frame::new(
                             PtrUninit::new(string_ptr),
                             String::SHAPE,
@@ -1467,7 +1469,7 @@ impl Partial<'_> {
                         }
 
                         // Update the current frame to use the slice builder
-                        frame.data = PtrUninit::new(builder_ptr.as_mut_byte_ptr());
+                        frame.data = builder_ptr.as_uninit();
                         frame.tracker = Tracker::SmartPointerSlice {
                             vtable: slice_builder_vtable,
                             building_item: false,
@@ -1631,9 +1633,12 @@ impl Partial<'_> {
             };
 
             let element_ptr: *mut u8 = unsafe { alloc::alloc::alloc(element_layout) };
-            if element_ptr.is_null() {
-                alloc::alloc::handle_alloc_error(element_layout);
-            }
+            let Some(element_ptr) = NonNull::new(element_ptr) else {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "failed to allocate memory for list element",
+                });
+            };
 
             // Create and push the element frame
             crate::trace!("Pushing element frame, which we just allocated");
@@ -1705,12 +1710,12 @@ impl Partial<'_> {
         };
         let element_ptr: *mut u8 = unsafe { alloc::alloc::alloc(element_layout) };
 
-        if element_ptr.is_null() {
+        let Some(element_ptr) = NonNull::new(element_ptr) else {
             return Err(ReflectError::OperationFailed {
                 shape: frame.shape,
                 operation: "failed to allocate memory for list element",
             });
-        }
+        };
 
         // Push a new frame for the element
         self.frames.push(Frame::new(
@@ -1822,12 +1827,13 @@ impl Partial<'_> {
             }
         };
         let key_ptr_raw: *mut u8 = unsafe { alloc::alloc::alloc(key_layout) };
-        if key_ptr_raw.is_null() {
+
+        let Some(key_ptr_raw) = NonNull::new(key_ptr_raw) else {
             return Err(ReflectError::OperationFailed {
                 shape: frame.shape,
                 operation: "failed to allocate memory for map key",
             });
-        }
+        };
 
         // Store the key pointer in the insert state
         match &mut frame.tracker {
@@ -1896,12 +1902,12 @@ impl Partial<'_> {
         };
         let value_ptr_raw: *mut u8 = unsafe { alloc::alloc::alloc(value_layout) };
 
-        if value_ptr_raw.is_null() {
+        let Some(value_ptr_raw) = NonNull::new(value_ptr_raw) else {
             return Err(ReflectError::OperationFailed {
                 shape: frame.shape,
                 operation: "failed to allocate memory for map value",
             });
-        }
+        };
 
         // Store the value pointer in the insert state
         match &mut frame.tracker {
@@ -1967,13 +1973,13 @@ impl Partial<'_> {
 
         let inner_data = if inner_layout.size() == 0 {
             // For ZST, use a non-null but unallocated pointer
-            PtrUninit::new(core::ptr::NonNull::<u8>::dangling().as_ptr())
+            PtrUninit::new(NonNull::<u8>::dangling())
         } else {
             // Allocate memory for the inner value
             let ptr = unsafe { alloc::alloc::alloc(inner_layout) };
-            if ptr.is_null() {
+            let Some(ptr) = NonNull::new(ptr) else {
                 alloc::alloc::handle_alloc_error(inner_layout);
-            }
+            };
             PtrUninit::new(ptr)
         };
 
@@ -1993,12 +1999,7 @@ impl Partial<'_> {
             let frame = self.frames.last().unwrap();
             if let Some(inner_fn) = frame.shape.inner {
                 let inner_shape = inner_fn();
-                let has_try_from = frame
-                    .shape
-                    .vtable
-                    .sized()
-                    .and_then(|v| (v.try_from)())
-                    .is_some();
+                let has_try_from = (frame.shape.vtable.try_from)().is_some();
                 (Some(inner_shape), has_try_from, frame.shape)
             } else {
                 (None, false, frame.shape)
@@ -2024,13 +2025,13 @@ impl Partial<'_> {
 
                 let inner_data = if inner_layout.size() == 0 {
                     // For ZST, use a non-null but unallocated pointer
-                    PtrUninit::new(core::ptr::NonNull::<u8>::dangling().as_ptr())
+                    PtrUninit::new(NonNull::<u8>::dangling())
                 } else {
                     // Allocate memory for the inner value
                     let ptr = unsafe { alloc::alloc::alloc(inner_layout) };
-                    if ptr.is_null() {
+                    let Some(ptr) = NonNull::new(ptr) else {
                         alloc::alloc::handle_alloc_error(inner_layout);
-                    }
+                    };
                     PtrUninit::new(ptr)
                 };
 
