@@ -1,3 +1,5 @@
+use core::ptr::NonNull;
+
 use alloc::boxed::Box;
 
 use bytes::{BufMut as _, Bytes, BytesMut};
@@ -17,7 +19,6 @@ unsafe impl Facet<'_> for Bytes {
             Self::SHAPE.type_identifier
         ));
         {
-            let vtable = vtable.sized_mut().unwrap();
             vtable.try_from = || {
                 Some(
                     |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
@@ -56,11 +57,11 @@ unsafe impl Facet<'_> for Bytes {
                                 .get(|ptr, index| unsafe {
                                     let bytes = ptr.get::<Self>();
                                     let item = bytes.get(index)?;
-                                    Some(PtrConst::new(item))
+                                    Some(PtrConst::new(item.into()))
                                 })
                                 .as_ptr(|ptr| unsafe {
                                     let bytes = ptr.get::<Self>();
-                                    PtrConst::new(bytes.as_ptr())
+                                    PtrConst::new(bytes.into())
                                 })
                                 .iter_vtable(
                                     IterVTable::builder()
@@ -68,15 +69,20 @@ unsafe impl Facet<'_> for Bytes {
                                             let bytes = ptr.get::<Self>();
                                             let iter: BytesIterator = bytes.iter();
                                             let iter_state = Box::new(iter);
-                                            PtrMut::new(Box::into_raw(iter_state) as *mut u8)
+                                            PtrMut::new(NonNull::new_unchecked(Box::into_raw(
+                                                iter_state,
+                                            )
+                                                as *mut u8))
                                         })
                                         .next(|iter_ptr| unsafe {
                                             let state = iter_ptr.as_mut::<BytesIterator<'_>>();
-                                            state.next().map(|value| PtrConst::new(value))
+                                            state.next().map(|value| PtrConst::new(value.into()))
                                         })
                                         .next_back(|iter_ptr| unsafe {
                                             let state = iter_ptr.as_mut::<BytesIterator<'_>>();
-                                            state.next_back().map(|value| PtrConst::new(value))
+                                            state
+                                                .next_back()
+                                                .map(|value| PtrConst::new(value.into()))
                                         })
                                         .dealloc(|iter_ptr| unsafe {
                                             drop(Box::from_raw(
@@ -129,20 +135,20 @@ unsafe impl Facet<'_> for BytesMut {
                                 .get(|ptr, index| unsafe {
                                     let bytes = ptr.get::<Self>();
                                     let item = bytes.get(index)?;
-                                    Some(PtrConst::new(item))
+                                    Some(PtrConst::new(item.into()))
                                 })
                                 .get_mut(|ptr, index| unsafe {
                                     let bytes = ptr.as_mut::<Self>();
                                     let item = bytes.get_mut(index)?;
-                                    Some(PtrMut::new(item))
+                                    Some(PtrMut::new(item.into()))
                                 })
                                 .as_ptr(|ptr| unsafe {
                                     let bytes = ptr.get::<Self>();
-                                    PtrConst::new(bytes.as_ptr())
+                                    PtrConst::new(bytes.into())
                                 })
                                 .as_mut_ptr(|ptr| unsafe {
                                     let bytes = ptr.as_mut::<Self>();
-                                    PtrMut::new(bytes.as_mut_ptr())
+                                    PtrMut::new(bytes.into())
                                 })
                                 .iter_vtable(
                                     IterVTable::builder()
@@ -150,15 +156,20 @@ unsafe impl Facet<'_> for BytesMut {
                                             let bytes = ptr.get::<Self>();
                                             let iter: BytesIterator = bytes.iter();
                                             let iter_state = Box::new(iter);
-                                            PtrMut::new(Box::into_raw(iter_state) as *mut u8)
+                                            PtrMut::new(NonNull::new_unchecked(Box::into_raw(
+                                                iter_state,
+                                            )
+                                                as *mut u8))
                                         })
                                         .next(|iter_ptr| unsafe {
                                             let state = iter_ptr.as_mut::<BytesIterator<'_>>();
-                                            state.next().map(|value| PtrConst::new(value))
+                                            state.next().map(|value| PtrConst::new(value.into()))
                                         })
                                         .next_back(|iter_ptr| unsafe {
                                             let state = iter_ptr.as_mut::<BytesIterator<'_>>();
-                                            state.next_back().map(|value| PtrConst::new(value))
+                                            state
+                                                .next_back()
+                                                .map(|value| PtrConst::new(value.into()))
                                         })
                                         .dealloc(|iter_ptr| unsafe {
                                             drop(Box::from_raw(

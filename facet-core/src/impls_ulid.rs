@@ -45,7 +45,6 @@ unsafe impl Facet<'_> for Ulid {
             Self::SHAPE.type_identifier
         ));
         {
-            let vtable = vtable.sized_mut().unwrap();
             vtable.parse = || {
                 Some(|s, target| match Ulid::from_string(s) {
                     Ok(ulid) => Ok(unsafe { target.put(ulid) }),

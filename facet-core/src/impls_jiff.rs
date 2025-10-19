@@ -15,7 +15,6 @@ unsafe impl Facet<'_> for Zoned {
             Self::SHAPE.type_identifier
         ));
         {
-            let vtable = vtable.sized_mut().unwrap();
             vtable.try_from = || {
                 Some(
                     |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
@@ -67,7 +66,6 @@ unsafe impl Facet<'_> for Timestamp {
             Self::SHAPE.type_identifier
         ));
         {
-            let vtable = vtable.sized_mut().unwrap();
             vtable.try_from = || {
                 Some(
                     |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
@@ -122,7 +120,6 @@ unsafe impl Facet<'_> for DateTime {
             Self::SHAPE.type_identifier
         ));
         {
-            let vtable = vtable.sized_mut().unwrap();
             vtable.try_from = || {
                 Some(
                     |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
@@ -168,7 +165,7 @@ unsafe impl Facet<'_> for DateTime {
 
 #[cfg(test)]
 mod tests {
-    use core::fmt;
+    use core::{fmt, ptr::NonNull};
 
     use jiff::{Timestamp, civil::DateTime};
 
@@ -183,7 +180,7 @@ mod tests {
 
         let target = Zoned::SHAPE.allocate().unwrap();
         unsafe {
-            ((Zoned::VTABLE.sized().unwrap().parse)().unwrap())(
+            ((Zoned::VTABLE.parse)().unwrap())(
                 "2023-12-31T18:30:00+07:00[Asia/Ho_Chi_Minh]",
                 target,
             )
@@ -201,11 +198,11 @@ mod tests {
 
         impl fmt::Display for DisplayWrapper<'_> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                unsafe { ((Zoned::VTABLE.sized().unwrap().display)().unwrap())(self.0, f) }
+                unsafe { ((Zoned::VTABLE.display)().unwrap())(self.0, f) }
             }
         }
 
-        let s = format!("{}", DisplayWrapper(PtrConst::new(&odt as *const _)));
+        let s = format!("{}", DisplayWrapper(PtrConst::new(NonNull::from(&odt))));
         assert_eq!(s, "2023-12-31T18:30:00+07:00[Asia/Ho_Chi_Minh]");
 
         // Deallocate the heap allocation to avoid memory leaks under Miri
@@ -220,8 +217,7 @@ mod tests {
 
         let target = Timestamp::SHAPE.allocate().unwrap();
         unsafe {
-            ((Timestamp::VTABLE.sized().unwrap().parse)().unwrap())("2024-06-19T15:22:45Z", target)
-                .unwrap();
+            ((Timestamp::VTABLE.parse)().unwrap())("2024-06-19T15:22:45Z", target).unwrap();
         }
         let odt: Timestamp = unsafe { target.assume_init().read() };
         assert_eq!(odt, "2024-06-19T15:22:45Z".parse().unwrap());
@@ -230,11 +226,11 @@ mod tests {
 
         impl fmt::Display for DisplayWrapper<'_> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                unsafe { ((Timestamp::VTABLE.sized().unwrap().display)().unwrap())(self.0, f) }
+                unsafe { ((Timestamp::VTABLE.display)().unwrap())(self.0, f) }
             }
         }
 
-        let s = format!("{}", DisplayWrapper(PtrConst::new(&odt as *const _)));
+        let s = format!("{}", DisplayWrapper(PtrConst::new(NonNull::from(&odt))));
         assert_eq!(s, "2024-06-19T15:22:45Z");
 
         // Deallocate the heap allocation to avoid memory leaks under Miri
@@ -249,8 +245,7 @@ mod tests {
 
         let target = DateTime::SHAPE.allocate().unwrap();
         unsafe {
-            ((DateTime::VTABLE.sized().unwrap().parse)().unwrap())("2024-06-19T15:22:45", target)
-                .unwrap();
+            ((DateTime::VTABLE.parse)().unwrap())("2024-06-19T15:22:45", target).unwrap();
         }
         let odt: DateTime = unsafe { target.assume_init().read() };
         assert_eq!(odt, "2024-06-19T15:22:45".parse().unwrap());
@@ -259,11 +254,11 @@ mod tests {
 
         impl fmt::Display for DisplayWrapper<'_> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                unsafe { ((DateTime::VTABLE.sized().unwrap().display)().unwrap())(self.0, f) }
+                unsafe { ((DateTime::VTABLE.display)().unwrap())(self.0, f) }
             }
         }
 
-        let s = format!("{}", DisplayWrapper(PtrConst::new(&odt as *const _)));
+        let s = format!("{}", DisplayWrapper(PtrConst::new(NonNull::from(&odt))));
         assert_eq!(s, "2024-06-19T15:22:45");
 
         // Deallocate the heap allocation to avoid memory leaks under Miri

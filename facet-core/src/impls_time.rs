@@ -13,7 +13,6 @@ unsafe impl Facet<'_> for UtcDateTime {
             Self::SHAPE.type_identifier
         ));
         {
-            let vtable = vtable.sized_mut().unwrap();
             vtable.try_from = || {
                 Some(
                     |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
@@ -77,7 +76,6 @@ unsafe impl Facet<'_> for OffsetDateTime {
             Self::SHAPE.type_identifier
         ));
         {
-            let vtable = vtable.sized_mut().unwrap();
             vtable.try_from = || {
                 Some(
                     |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
@@ -147,11 +145,7 @@ mod tests {
 
         let target = OffsetDateTime::SHAPE.allocate().unwrap();
         unsafe {
-            ((OffsetDateTime::VTABLE.sized().unwrap().parse)().unwrap())(
-                "2023-03-14T15:09:26Z",
-                target,
-            )
-            .unwrap();
+            ((OffsetDateTime::VTABLE.parse)().unwrap())("2023-03-14T15:09:26Z", target).unwrap();
         }
         let odt: OffsetDateTime = unsafe { target.assume_init().read() };
         assert_eq!(
@@ -167,11 +161,11 @@ mod tests {
 
         impl fmt::Display for DisplayWrapper<'_> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                unsafe { ((OffsetDateTime::VTABLE.sized().unwrap().display)().unwrap())(self.0, f) }
+                unsafe { ((OffsetDateTime::VTABLE.display)().unwrap())(self.0, f) }
             }
         }
 
-        let s = format!("{}", DisplayWrapper(PtrConst::new(&odt as *const _)));
+        let s = format!("{}", DisplayWrapper(PtrConst::new((&odt).into())));
         assert_eq!(s, "2023-03-14T15:09:26Z");
 
         // Deallocate the heap allocation to avoid memory leaks under Miri
