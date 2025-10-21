@@ -1,6 +1,8 @@
 use core::ptr::NonNull;
 
+use alloc::boxed::Box;
 use alloc::rc::{Rc, Weak};
+use alloc::vec::Vec;
 
 use crate::{
     Def, Facet, KnownPointer, PointerDef, PointerFlags, PointerVTable, PtrConst, PtrMut, PtrUninit,
