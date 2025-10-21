@@ -133,7 +133,7 @@ pub trait SpezDefaultInPlaceYes {
     /// has sufficient space allocated for type `T`.
     unsafe fn spez_default_in_place<'mem>(&self, target: PtrUninit<'mem>) -> PtrMut<'mem>;
 }
-impl<T: ?Sized + Default> SpezDefaultInPlaceYes for &SpezEmpty<T> {
+impl<T: Default> SpezDefaultInPlaceYes for &SpezEmpty<T> {
     unsafe fn spez_default_in_place<'mem>(&self, target: PtrUninit<'mem>) -> PtrMut<'mem> {
         unsafe { target.put(<T as Default>::default()) }
     }
@@ -175,7 +175,7 @@ pub trait SpezCloneIntoYes {
     /// has sufficient space allocated for type `T`.
     unsafe fn spez_clone_into<'mem>(&self, target: PtrUninit<'mem>) -> PtrMut<'mem>;
 }
-impl<T: ?Sized + Clone> SpezCloneIntoYes for &Spez<&T> {
+impl<T: Clone> SpezCloneIntoYes for &Spez<&T> {
     unsafe fn spez_clone_into<'mem>(&self, target: PtrUninit<'mem>) -> PtrMut<'mem> {
         unsafe { target.put(self.0.clone()) }
     }
@@ -221,7 +221,7 @@ pub trait SpezParseYes {
         target: PtrUninit<'mem>,
     ) -> Result<PtrMut<'mem>, ParseError>;
 }
-impl<T: ?Sized + core::str::FromStr> SpezParseYes for &SpezEmpty<T> {
+impl<T: core::str::FromStr> SpezParseYes for &SpezEmpty<T> {
     unsafe fn spez_parse<'mem>(
         &self,
         s: &str,

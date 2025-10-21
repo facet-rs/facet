@@ -141,14 +141,14 @@ pub enum ShapeAttribute {
 
 impl Shape {
     /// Returns a builder for a shape for some type `T`.
-    pub const fn builder_for_sized<'a, T>() -> ShapeBuilder {
+    pub const fn builder_for_sized<T>() -> ShapeBuilder {
         ShapeBuilder::new()
             .layout(Layout::new::<T>())
             .id(ConstTypeId::of::<T>())
     }
 
     /// Returns a builder for a shape for some type `T`.
-    pub const fn builder_for_unsized<'a, T: ?Sized>() -> ShapeBuilder {
+    pub const fn builder_for_unsized<T: ?Sized>() -> ShapeBuilder {
         ShapeBuilder::new().set_unsized().id(ConstTypeId::of::<T>())
     }
 
