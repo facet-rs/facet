@@ -11,32 +11,33 @@ unsafe impl<'a, T> Facet<'a> for Vec<T>
 where
     T: Facet<'a>,
 {
-    const VTABLE: &'static ValueVTable = &const {
-        ValueVTable::builder::<Self>()
-            .type_name(|f, opts| {
-                if let Some(opts) = opts.for_children() {
-                    write!(f, "{}<", Self::SHAPE.type_identifier)?;
-                    T::SHAPE.vtable.type_name()(f, opts)?;
-                    write!(f, ">")
-                } else {
-                    write!(f, "{}<⋯>", Self::SHAPE.type_identifier)
-                }
-            })
-            .default_in_place(|| Some(|target| unsafe { target.put(Self::default()).into() }))
-            .marker_traits(|| {
-                MarkerTraits::SEND
-                    .union(MarkerTraits::SYNC)
-                    .union(MarkerTraits::EQ)
-                    .union(MarkerTraits::UNPIN)
-                    .union(MarkerTraits::UNWIND_SAFE)
-                    .union(MarkerTraits::REF_UNWIND_SAFE)
-                    .intersection(T::SHAPE.vtable.marker_traits())
-            })
-            .build()
-    };
-
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
+            .vtable({
+                ValueVTable::builder::<Self>()
+                    .type_name(|f, opts| {
+                        if let Some(opts) = opts.for_children() {
+                            write!(f, "{}<", Self::SHAPE.type_identifier)?;
+                            T::SHAPE.vtable.type_name()(f, opts)?;
+                            write!(f, ">")
+                        } else {
+                            write!(f, "{}<⋯>", Self::SHAPE.type_identifier)
+                        }
+                    })
+                    .default_in_place(|| {
+                        Some(|target| unsafe { target.put(Self::default()).into() })
+                    })
+                    .marker_traits(|| {
+                        MarkerTraits::SEND
+                            .union(MarkerTraits::SYNC)
+                            .union(MarkerTraits::EQ)
+                            .union(MarkerTraits::UNPIN)
+                            .union(MarkerTraits::UNWIND_SAFE)
+                            .union(MarkerTraits::REF_UNWIND_SAFE)
+                            .intersection(T::SHAPE.vtable.marker_traits())
+                    })
+                    .build()
+            })
             .type_identifier("Vec")
             .type_params(&[TypeParam {
                 name: "T",

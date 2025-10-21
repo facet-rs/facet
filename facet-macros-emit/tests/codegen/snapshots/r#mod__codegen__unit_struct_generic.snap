@@ -7,23 +7,23 @@ unsafe impl<'__facet, const C: usize> ::facet::Facet<'__facet> for Blah<C>
 where
     [u8; C]: Debug,
 {
-    const VTABLE: &'static ::facet::ValueVTable = &const {
-        let mut vtable = ::facet::value_vtable!(Self, |f, opts| {
-            write!(f, "Blah")?;
-            if let Some(opts) = opts.for_children() {
-                write!(f, "<")?;
-                write!(f, "{:?}", C)?;
-                write!(f, ">")?;
-            } else {
-                write!(f, "<…>")?;
-            }
-            Ok(())
-        });
-        vtable
-    };
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const { [] };
         ::facet::Shape::builder_for_sized::<Self>()
+            .vtable({
+                let mut vtable = ::facet::value_vtable!(Self, |f, opts| {
+                    write!(f, "Blah")?;
+                    if let Some(opts) = opts.for_children() {
+                        write!(f, "<")?;
+                        write!(f, "{:?}", C)?;
+                        write!(f, ">")?;
+                    } else {
+                        write!(f, "<…>")?;
+                    }
+                    Ok(())
+                });
+                vtable
+            })
             .type_identifier("Blah")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()

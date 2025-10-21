@@ -7,12 +7,6 @@ static ENUM_WITH_EMPTY_STRUCT_VARIANT_SHAPE: &'static ::facet::Shape =
 #[automatically_derived]
 #[allow(non_camel_case_types)]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithEmptyStructVariant {
-    const VTABLE: &'static ::facet::ValueVTable = &const {
-        ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
-            f,
-            "EnumWithEmptyStructVariant"
-        ))
-    };
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
         #[allow(dead_code)]
@@ -56,6 +50,12 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithEmptyStructVariant {
             }]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .vtable({
+                ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
+                    f,
+                    "EnumWithEmptyStructVariant"
+                ))
+            })
             .type_identifier("EnumWithEmptyStructVariant")
             .ty(::facet::Type::User(::facet::UserType::Enum(
                 ::facet::EnumType::builder()

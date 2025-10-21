@@ -5,11 +5,6 @@ expression: "expand(r#\"\n        #[derive(Debug, Facet, PartialEq)]\n        st
 static MACROED_SHAPE: &'static ::facet::Shape = <Macroed as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for Macroed {
-    const VTABLE: &'static ::facet::ValueVTable = &const {
-        let mut vtable =
-            ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "Macroed"));
-        vtable
-    };
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [{
@@ -21,6 +16,13 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Macroed {
             }]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .vtable({
+                let mut vtable =
+                    ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
+                        f, "Macroed"
+                    ));
+                vtable
+            })
             .type_identifier("Macroed")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()

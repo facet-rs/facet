@@ -5,9 +5,10 @@
 //! `specialization` feature.
 
 use crate::types::ParseError;
-pub use ::impls::impls;
+use crate::{Shape, ShapeBuilder};
 use core::fmt::{self, Debug};
 use core::marker::PhantomData;
+pub use impls::impls;
 
 use crate::ptr::{PtrMut, PtrUninit};
 
@@ -19,7 +20,8 @@ use crate::ptr::{PtrMut, PtrUninit};
 ///
 /// It wraps a value and is used in conjunction with trait implementations that leverage
 /// Rust's method resolution rules to select different implementations based on available traits.
-pub struct Spez<T>(pub T);
+#[repr(transparent)]
+pub struct Spez<T: ?Sized>(pub T);
 
 /// A wrapper type used for auto-deref specialization.
 ///
@@ -32,10 +34,23 @@ pub struct Spez<T>(pub T);
 /// implementations based on available traits.
 pub struct SpezEmpty<T: ?Sized>(PhantomData<fn(T) -> T>);
 
-impl<T> SpezEmpty<T> {
+impl<T: ?Sized> SpezEmpty<T> {
     /// An instance of [`SpezEmpty`].
     pub const SPEZ: Self = Self(PhantomData);
 }
+
+impl<T> SpezEmpty<T> {
+    /// Sized shape builder of `T`
+    pub const BUILDER: ShapeBuilder = Shape::builder_for_sized::<T>();
+}
+
+/// Specialization proxy for [`core::marker::Sized`]
+pub trait SpezSizedNo {
+    /// Unsized shape builder of `T`
+    const BUILDER: ShapeBuilder = Shape::builder_for_unsized::<Self>();
+}
+
+impl<T: ?Sized> SpezSizedNo for SpezEmpty<T> {}
 
 //////////////////////////////////////////////////////////////////////////////////////
 // Debug 🐛🔍
@@ -49,7 +64,7 @@ pub trait SpezDebugYes {
     /// It forwards the formatting request to the inner value's `Debug` implementation.
     fn spez_debug(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error>;
 }
-impl<T: Debug> SpezDebugYes for &Spez<T> {
+impl<T: ?Sized + Debug> SpezDebugYes for &Spez<T> {
     fn spez_debug(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         Debug::fmt(&self.0, f)
     }
@@ -63,7 +78,7 @@ pub trait SpezDebugNo {
     /// It's only selected when the wrapped type doesn't implement `Debug`.
     fn spez_debug(&self, _f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error>;
 }
-impl<T> SpezDebugNo for Spez<T> {
+impl<T: ?Sized> SpezDebugNo for Spez<T> {
     fn spez_debug(&self, _f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         unreachable!()
     }
@@ -81,7 +96,7 @@ pub trait SpezDisplayYes {
     /// It forwards the formatting request to the inner value's `Display` implementation.
     fn spez_display(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error>;
 }
-impl<T: fmt::Display> SpezDisplayYes for &Spez<T> {
+impl<T: ?Sized + fmt::Display> SpezDisplayYes for &Spez<T> {
     fn spez_display(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         fmt::Display::fmt(&self.0, f)
     }
@@ -95,7 +110,7 @@ pub trait SpezDisplayNo {
     /// It's only selected when the wrapped type doesn't implement `Display`.
     fn spez_display(&self, _f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error>;
 }
-impl<T> SpezDisplayNo for Spez<T> {
+impl<T: ?Sized> SpezDisplayNo for Spez<T> {
     fn spez_display(&self, _f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         unreachable!()
     }
@@ -118,7 +133,7 @@ pub trait SpezDefaultInPlaceYes {
     /// has sufficient space allocated for type `T`.
     unsafe fn spez_default_in_place<'mem>(&self, target: PtrUninit<'mem>) -> PtrMut<'mem>;
 }
-impl<T: Default> SpezDefaultInPlaceYes for &SpezEmpty<T> {
+impl<T: ?Sized + Default> SpezDefaultInPlaceYes for &SpezEmpty<T> {
     unsafe fn spez_default_in_place<'mem>(&self, target: PtrUninit<'mem>) -> PtrMut<'mem> {
         unsafe { target.put(<T as Default>::default()) }
     }
@@ -137,7 +152,7 @@ pub trait SpezDefaultInPlaceNo {
     /// but it should never be reachable in practice.
     unsafe fn spez_default_in_place<'mem>(&self, _target: PtrUninit<'mem>) -> PtrMut<'mem>;
 }
-impl<T> SpezDefaultInPlaceNo for SpezEmpty<T> {
+impl<T: ?Sized> SpezDefaultInPlaceNo for SpezEmpty<T> {
     unsafe fn spez_default_in_place<'mem>(&self, _target: PtrUninit<'mem>) -> PtrMut<'mem> {
         unreachable!()
     }
@@ -160,7 +175,7 @@ pub trait SpezCloneIntoYes {
     /// has sufficient space allocated for type `T`.
     unsafe fn spez_clone_into<'mem>(&self, target: PtrUninit<'mem>) -> PtrMut<'mem>;
 }
-impl<T: Clone> SpezCloneIntoYes for &Spez<&T> {
+impl<T: ?Sized + Clone> SpezCloneIntoYes for &Spez<&T> {
     unsafe fn spez_clone_into<'mem>(&self, target: PtrUninit<'mem>) -> PtrMut<'mem> {
         unsafe { target.put(self.0.clone()) }
     }
@@ -179,7 +194,7 @@ pub trait SpezCloneIntoNo {
     /// but it should never be reachable in practice.
     unsafe fn spez_clone_into<'mem>(&self, _target: PtrUninit<'mem>) -> PtrMut<'mem>;
 }
-impl<T> SpezCloneIntoNo for Spez<T> {
+impl<T: ?Sized> SpezCloneIntoNo for Spez<T> {
     unsafe fn spez_clone_into<'mem>(&self, _target: PtrUninit<'mem>) -> PtrMut<'mem> {
         unreachable!()
     }
@@ -206,7 +221,7 @@ pub trait SpezParseYes {
         target: PtrUninit<'mem>,
     ) -> Result<PtrMut<'mem>, ParseError>;
 }
-impl<T: core::str::FromStr> SpezParseYes for &SpezEmpty<T> {
+impl<T: ?Sized + core::str::FromStr> SpezParseYes for &SpezEmpty<T> {
     unsafe fn spez_parse<'mem>(
         &self,
         s: &str,
@@ -238,7 +253,7 @@ pub trait SpezParseNo {
         _target: PtrUninit<'mem>,
     ) -> Result<PtrMut<'mem>, ParseError>;
 }
-impl<T> SpezParseNo for SpezEmpty<T> {
+impl<T: ?Sized> SpezParseNo for SpezEmpty<T> {
     unsafe fn spez_parse<'mem>(
         &self,
         _s: &str,
@@ -260,7 +275,7 @@ pub trait SpezPartialEqYes {
     /// It compares the inner values for equality.
     fn spez_partial_eq(&self, other: &Self) -> bool;
 }
-impl<T: PartialEq> SpezPartialEqYes for &Spez<T> {
+impl<T: ?Sized + PartialEq> SpezPartialEqYes for &Spez<T> {
     fn spez_partial_eq(&self, other: &Self) -> bool {
         self.0 == other.0
     }
@@ -274,7 +289,7 @@ pub trait SpezPartialEqNo {
     /// It's only selected when the wrapped type doesn't implement `PartialEq`.
     fn spez_partial_eq(&self, _other: &Self) -> bool;
 }
-impl<T> SpezPartialEqNo for Spez<T> {
+impl<T: ?Sized> SpezPartialEqNo for Spez<T> {
     fn spez_partial_eq(&self, _other: &Self) -> bool {
         unreachable!()
     }
@@ -292,7 +307,7 @@ pub trait SpezPartialOrdYes {
     /// It compares the inner values and returns their ordering.
     fn spez_partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering>;
 }
-impl<T: PartialOrd> SpezPartialOrdYes for &Spez<T> {
+impl<T: ?Sized + PartialOrd> SpezPartialOrdYes for &Spez<T> {
     fn spez_partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         self.0.partial_cmp(&other.0)
     }
@@ -306,7 +321,7 @@ pub trait SpezPartialOrdNo {
     /// It's only selected when the wrapped type doesn't implement `PartialOrd`.
     fn spez_partial_cmp(&self, _other: &Self) -> Option<core::cmp::Ordering>;
 }
-impl<T> SpezPartialOrdNo for Spez<T> {
+impl<T: ?Sized> SpezPartialOrdNo for Spez<T> {
     fn spez_partial_cmp(&self, _other: &Self) -> Option<core::cmp::Ordering> {
         unreachable!()
     }
@@ -324,7 +339,7 @@ pub trait SpezOrdYes {
     /// It compares the inner values and returns their ordering.
     fn spez_cmp(&self, other: &Self) -> core::cmp::Ordering;
 }
-impl<T: Ord> SpezOrdYes for &Spez<T> {
+impl<T: ?Sized + Ord> SpezOrdYes for &Spez<T> {
     fn spez_cmp(&self, other: &Self) -> core::cmp::Ordering {
         self.0.cmp(&other.0)
     }
@@ -338,7 +353,7 @@ pub trait SpezOrdNo {
     /// It's only selected when the wrapped type doesn't implement `Ord`.
     fn spez_cmp(&self, _other: &Self) -> core::cmp::Ordering;
 }
-impl<T> SpezOrdNo for Spez<T> {
+impl<T: ?Sized> SpezOrdNo for Spez<T> {
     fn spez_cmp(&self, _other: &Self) -> core::cmp::Ordering {
         unreachable!()
     }
@@ -356,7 +371,7 @@ pub trait SpezHashYes {
     /// It hashes the inner value using the provided hasher.
     fn spez_hash<H: core::hash::Hasher>(&self, state: &mut H);
 }
-impl<T: core::hash::Hash> SpezHashYes for &Spez<T> {
+impl<T: ?Sized + core::hash::Hash> SpezHashYes for &Spez<T> {
     fn spez_hash<H: core::hash::Hasher>(&self, state: &mut H) {
         self.0.hash(state)
     }
@@ -370,7 +385,7 @@ pub trait SpezHashNo {
     /// It's only selected when the wrapped type doesn't implement `Hash`.
     fn spez_hash<H: core::hash::Hasher>(&self, _state: &mut H);
 }
-impl<T> SpezHashNo for Spez<T> {
+impl<T: ?Sized> SpezHashNo for Spez<T> {
     fn spez_hash<H: core::hash::Hasher>(&self, _state: &mut H) {
         unreachable!()
     }

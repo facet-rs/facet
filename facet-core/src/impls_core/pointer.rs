@@ -6,40 +6,39 @@ use crate::{
 
 // *const pointers
 unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *const T {
-    const VTABLE: &'static ValueVTable = &const {
-        ValueVTable::builder::<Self>()
-            .marker_traits(|| {
-                let mut marker_traits = MarkerTraits::EQ
-                    .union(MarkerTraits::COPY)
-                    .union(MarkerTraits::UNPIN);
-
-                if T::SHAPE
-                    .vtable
-                    .marker_traits()
-                    .contains(MarkerTraits::REF_UNWIND_SAFE)
-                {
-                    marker_traits = marker_traits
-                        .union(MarkerTraits::UNWIND_SAFE)
-                        .union(MarkerTraits::REF_UNWIND_SAFE);
-                }
-
-                marker_traits
-            })
-            .debug(|| Some(|p, f| fmt::Debug::fmt(p.get(), f)))
-            .clone_into(|| Some(|src, dst| unsafe { dst.put(*src.get()).into() }))
-            .type_name(|f, opts| {
-                if let Some(opts) = opts.for_children() {
-                    write!(f, "*const ")?;
-                    (T::VTABLE.type_name())(f, opts)
-                } else {
-                    write!(f, "*const ⋯")
-                }
-            })
-            .build()
-    };
-
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
+            .vtable(
+                ValueVTable::builder::<Self>()
+                    .marker_traits(|| {
+                        let mut marker_traits = MarkerTraits::EQ
+                            .union(MarkerTraits::COPY)
+                            .union(MarkerTraits::UNPIN);
+
+                        if T::SHAPE
+                            .vtable
+                            .marker_traits()
+                            .contains(MarkerTraits::REF_UNWIND_SAFE)
+                        {
+                            marker_traits = marker_traits
+                                .union(MarkerTraits::UNWIND_SAFE)
+                                .union(MarkerTraits::REF_UNWIND_SAFE);
+                        }
+
+                        marker_traits
+                    })
+                    .debug(|| Some(|p, f| fmt::Debug::fmt(p.get(), f)))
+                    .clone_into(|| Some(|src, dst| unsafe { dst.put(*src.get()).into() }))
+                    .type_name(|f, opts| {
+                        if let Some(opts) = opts.for_children() {
+                            write!(f, "*const ")?;
+                            (T::SHAPE.vtable.type_name())(f, opts)
+                        } else {
+                            write!(f, "*const ⋯")
+                        }
+                    })
+                    .build(),
+            )
             .inner(|| T::SHAPE)
             .type_identifier("*const _")
             .type_params(&[TypeParam {
@@ -62,40 +61,39 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *const T {
 
 // *mut pointers
 unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *mut T {
-    const VTABLE: &'static ValueVTable = &const {
-        ValueVTable::builder::<Self>()
-            .marker_traits(|| {
-                let mut marker_traits = MarkerTraits::EQ
-                    .union(MarkerTraits::COPY)
-                    .union(MarkerTraits::UNPIN);
-
-                if T::SHAPE
-                    .vtable
-                    .marker_traits()
-                    .contains(MarkerTraits::REF_UNWIND_SAFE)
-                {
-                    marker_traits = marker_traits
-                        .union(MarkerTraits::UNWIND_SAFE)
-                        .union(MarkerTraits::REF_UNWIND_SAFE);
-                }
-
-                marker_traits
-            })
-            .debug(|| Some(|p, f| fmt::Debug::fmt(p.get(), f)))
-            .clone_into(|| Some(|src, dst| unsafe { dst.put(*src.get()).into() }))
-            .type_name(|f, opts| {
-                if let Some(opts) = opts.for_children() {
-                    write!(f, "*mut ")?;
-                    (T::VTABLE.type_name())(f, opts)
-                } else {
-                    write!(f, "*mut ⋯")
-                }
-            })
-            .build()
-    };
-
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
+            .vtable(
+                ValueVTable::builder::<Self>()
+                    .marker_traits(|| {
+                        let mut marker_traits = MarkerTraits::EQ
+                            .union(MarkerTraits::COPY)
+                            .union(MarkerTraits::UNPIN);
+
+                        if T::SHAPE
+                            .vtable
+                            .marker_traits()
+                            .contains(MarkerTraits::REF_UNWIND_SAFE)
+                        {
+                            marker_traits = marker_traits
+                                .union(MarkerTraits::UNWIND_SAFE)
+                                .union(MarkerTraits::REF_UNWIND_SAFE);
+                        }
+
+                        marker_traits
+                    })
+                    .debug(|| Some(|p, f| fmt::Debug::fmt(p.get(), f)))
+                    .clone_into(|| Some(|src, dst| unsafe { dst.put(*src.get()).into() }))
+                    .type_name(|f, opts| {
+                        if let Some(opts) = opts.for_children() {
+                            write!(f, "*mut ")?;
+                            (T::SHAPE.vtable.type_name())(f, opts)
+                        } else {
+                            write!(f, "*mut ⋯")
+                        }
+                    })
+                    .build(),
+            )
             .inner(|| T::SHAPE)
             .type_identifier("*mut _")
             .type_params(&[TypeParam {

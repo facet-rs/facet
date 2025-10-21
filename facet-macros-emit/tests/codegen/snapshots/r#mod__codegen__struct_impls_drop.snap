@@ -5,11 +5,6 @@ expression: "expand(r#\"\n        #[derive(Facet)]\n        struct BarFoo {\n   
 static BAR_FOO_SHAPE: &'static ::facet::Shape = <BarFoo as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for BarFoo {
-    const VTABLE: &'static ::facet::ValueVTable = &const {
-        let mut vtable =
-            ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "BarFoo"));
-        vtable
-    };
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [
@@ -30,6 +25,13 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for BarFoo {
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .vtable({
+                let mut vtable =
+                    ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
+                        f, "BarFoo"
+                    ));
+                vtable
+            })
             .type_identifier("BarFoo")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()

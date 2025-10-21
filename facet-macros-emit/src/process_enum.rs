@@ -581,10 +581,6 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         #[automatically_derived]
         #[allow(non_camel_case_types)]
         unsafe impl #bgp_def ::facet::Facet<'__facet> for #enum_name #bgp_without_bounds #where_clauses_tokens {
-            const VTABLE: &'static ::facet::ValueVTable = &const {
-                ::facet::value_vtable!(Self, #type_name_fn)
-            };
-
             const SHAPE: &'static ::facet::Shape = &const {
                 #(#shadow_struct_defs)*
 
@@ -593,6 +589,9 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                 ]};
 
                 ::facet::Shape::builder_for_sized::<Self>()
+                    .vtable({
+                        ::facet::value_vtable!(Self, #type_name_fn)
+                    })
                     .type_identifier(#enum_name_str)
                     #type_params
                     .ty(::facet::Type::User(::facet::UserType::Enum(::facet::EnumType::builder()

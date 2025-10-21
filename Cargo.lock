@@ -185,6 +185,7 @@ dependencies = [
  "facet-testhelpers",
  "impls",
  "jiff",
+ "num-complex",
  "ordered-float",
  "time",
  "ulid",
@@ -227,6 +228,7 @@ version = "0.30.0"
 dependencies = [
  "bitflags",
  "camino",
+ "eyre",
  "facet",
  "facet-core",
  "facet-testhelpers",
@@ -537,6 +539,15 @@ name = "mutants"
 version = "0.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bc0287524726960e07b119cebd01678f852f147742ae0d925e6a520dca956126"
+
+[[package]]
+name = "num-complex"
+version = "0.4.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73f88a1307638156682bada9d7604135552957b7818057dcef22705b4d509495"
+dependencies = [
+ "num-traits",
+]
 
 [[package]]
 name = "num-conv"

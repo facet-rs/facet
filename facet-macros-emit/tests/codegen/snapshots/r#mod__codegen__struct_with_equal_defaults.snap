@@ -6,13 +6,6 @@ static STRUCT_WITH_DEFAULTS_SHAPE: &'static ::facet::Shape =
     <StructWithDefaults as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithDefaults {
-    const VTABLE: &'static ::facet::ValueVTable = &const {
-        let mut vtable = ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
-            f,
-            "StructWithDefaults"
-        ));
-        vtable
-    };
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [
@@ -33,6 +26,14 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithDefaults {
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .vtable({
+                let mut vtable =
+                    ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
+                        f,
+                        "StructWithDefaults"
+                    ));
+                vtable
+            })
             .type_identifier("StructWithDefaults")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()

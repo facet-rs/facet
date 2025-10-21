@@ -5,13 +5,6 @@ expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(rename_all =
 static CONFIG_SETTINGS_SHAPE: &'static ::facet::Shape = <ConfigSettings as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigSettings {
-    const VTABLE: &'static ::facet::ValueVTable = &const {
-        let mut vtable = ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
-            f,
-            "ConfigSettings"
-        ));
-        vtable
-    };
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [
@@ -46,6 +39,14 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ConfigSettings {
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .vtable({
+                let mut vtable =
+                    ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
+                        f,
+                        "ConfigSettings"
+                    ));
+                vtable
+            })
             .type_identifier("ConfigSettings")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()

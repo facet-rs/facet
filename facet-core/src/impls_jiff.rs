@@ -1,54 +1,53 @@
 use alloc::string::String;
 use jiff::{Timestamp, Zoned, civil::DateTime};
 
-use crate::{
-    Def, Facet, ParseError, PtrConst, PtrUninit, Shape, Type, UserType, ValueVTable, value_vtable,
-};
+use crate::{Def, Facet, ParseError, PtrConst, PtrUninit, Shape, Type, UserType, value_vtable};
 
 const ZONED_ERROR: &str = "could not parse time-zone aware instant of time";
 
 unsafe impl Facet<'_> for Zoned {
-    const VTABLE: &'static ValueVTable = &const {
-        let mut vtable = value_vtable!(Zoned, |f, _opts| write!(
-            f,
-            "{}",
-            Self::SHAPE.type_identifier
-        ));
-        {
-            vtable.try_from = || {
-                Some(
-                    |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
-                        if source_shape.is_type::<String>() {
-                            let source = unsafe { source.read::<String>() };
-                            let parsed = source
-                                .parse::<Zoned>()
-                                .map_err(|_| ParseError::Generic(ZONED_ERROR));
-                            match parsed {
-                                Ok(val) => Ok(unsafe { target.put(val) }),
-                                Err(_e) => Err(crate::TryFromError::Generic(ZONED_ERROR)),
-                            }
-                        } else {
-                            Err(crate::TryFromError::UnsupportedSourceShape {
-                                src_shape: source_shape,
-                                expected: &[String::SHAPE],
-                            })
-                        }
-                    },
-                )
-            };
-            vtable.parse = || {
-                Some(|s: &str, target: PtrUninit| {
-                    let parsed: Zoned = s.parse().map_err(|_| ParseError::Generic(ZONED_ERROR))?;
-                    Ok(unsafe { target.put(parsed) })
-                })
-            };
-            vtable.display = || Some(|value, f| unsafe { write!(f, "{}", value.get::<Zoned>()) });
-        }
-        vtable
-    };
-
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
+            .vtable({
+                let mut vtable = value_vtable!(Zoned, |f, _opts| write!(
+                    f,
+                    "{}",
+                    Self::SHAPE.type_identifier
+                ));
+                {
+                    vtable.try_from = || {
+                        Some(
+                            |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
+                                if source_shape.is_type::<String>() {
+                                    let source = unsafe { source.read::<String>() };
+                                    let parsed = source
+                                        .parse::<Zoned>()
+                                        .map_err(|_| ParseError::Generic(ZONED_ERROR));
+                                    match parsed {
+                                        Ok(val) => Ok(unsafe { target.put(val) }),
+                                        Err(_e) => Err(crate::TryFromError::Generic(ZONED_ERROR)),
+                                    }
+                                } else {
+                                    Err(crate::TryFromError::UnsupportedSourceShape {
+                                        src_shape: source_shape,
+                                        expected: &[String::SHAPE],
+                                    })
+                                }
+                            },
+                        )
+                    };
+                    vtable.parse = || {
+                        Some(|s: &str, target: PtrUninit| {
+                            let parsed: Zoned =
+                                s.parse().map_err(|_| ParseError::Generic(ZONED_ERROR))?;
+                            Ok(unsafe { target.put(parsed) })
+                        })
+                    };
+                    vtable.display =
+                        || Some(|value, f| unsafe { write!(f, "{}", value.get::<Zoned>()) });
+                }
+                vtable
+            })
             .type_identifier("Zoned")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
@@ -59,50 +58,51 @@ unsafe impl Facet<'_> for Zoned {
 const TIMESTAMP_ERROR: &str = "could not parse timestamp";
 
 unsafe impl Facet<'_> for Timestamp {
-    const VTABLE: &'static ValueVTable = &const {
-        let mut vtable = value_vtable!(Timestamp, |f, _opts| write!(
-            f,
-            "{}",
-            Self::SHAPE.type_identifier
-        ));
-        {
-            vtable.try_from = || {
-                Some(
-                    |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
-                        if source_shape.is_type::<String>() {
-                            let source = unsafe { source.read::<String>() };
-                            let parsed = source
-                                .parse::<Timestamp>()
-                                .map_err(|_| ParseError::Generic(TIMESTAMP_ERROR));
-                            match parsed {
-                                Ok(val) => Ok(unsafe { target.put(val) }),
-                                Err(_e) => Err(crate::TryFromError::Generic(TIMESTAMP_ERROR)),
-                            }
-                        } else {
-                            Err(crate::TryFromError::UnsupportedSourceShape {
-                                src_shape: source_shape,
-                                expected: &[String::SHAPE],
-                            })
-                        }
-                    },
-                )
-            };
-            vtable.parse = || {
-                Some(|s: &str, target: PtrUninit| {
-                    let parsed: Timestamp = s
-                        .parse()
-                        .map_err(|_| ParseError::Generic(TIMESTAMP_ERROR))?;
-                    Ok(unsafe { target.put(parsed) })
-                })
-            };
-            vtable.display =
-                || Some(|value, f| unsafe { write!(f, "{}", value.get::<Timestamp>()) });
-        }
-        vtable
-    };
-
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
+            .vtable({
+                let mut vtable = value_vtable!(Timestamp, |f, _opts| write!(
+                    f,
+                    "{}",
+                    Self::SHAPE.type_identifier
+                ));
+                {
+                    vtable.try_from = || {
+                        Some(
+                            |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
+                                if source_shape.is_type::<String>() {
+                                    let source = unsafe { source.read::<String>() };
+                                    let parsed = source
+                                        .parse::<Timestamp>()
+                                        .map_err(|_| ParseError::Generic(TIMESTAMP_ERROR));
+                                    match parsed {
+                                        Ok(val) => Ok(unsafe { target.put(val) }),
+                                        Err(_e) => {
+                                            Err(crate::TryFromError::Generic(TIMESTAMP_ERROR))
+                                        }
+                                    }
+                                } else {
+                                    Err(crate::TryFromError::UnsupportedSourceShape {
+                                        src_shape: source_shape,
+                                        expected: &[String::SHAPE],
+                                    })
+                                }
+                            },
+                        )
+                    };
+                    vtable.parse = || {
+                        Some(|s: &str, target: PtrUninit| {
+                            let parsed: Timestamp = s
+                                .parse()
+                                .map_err(|_| ParseError::Generic(TIMESTAMP_ERROR))?;
+                            Ok(unsafe { target.put(parsed) })
+                        })
+                    };
+                    vtable.display =
+                        || Some(|value, f| unsafe { write!(f, "{}", value.get::<Timestamp>()) });
+                }
+                vtable
+            })
             .type_identifier("Timestamp")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
@@ -113,49 +113,50 @@ unsafe impl Facet<'_> for Timestamp {
 const DATETIME_ERROR: &str = "could not parse civil datetime";
 
 unsafe impl Facet<'_> for DateTime {
-    const VTABLE: &'static ValueVTable = &const {
-        let mut vtable = value_vtable!(DateTime, |f, _opts| write!(
-            f,
-            "{}",
-            Self::SHAPE.type_identifier
-        ));
-        {
-            vtable.try_from = || {
-                Some(
-                    |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
-                        if source_shape.is_type::<String>() {
-                            let source = unsafe { source.read::<String>() };
-                            let parsed = source
-                                .parse::<DateTime>()
-                                .map_err(|_| ParseError::Generic(DATETIME_ERROR));
-                            match parsed {
-                                Ok(val) => Ok(unsafe { target.put(val) }),
-                                Err(_e) => Err(crate::TryFromError::Generic(DATETIME_ERROR)),
-                            }
-                        } else {
-                            Err(crate::TryFromError::UnsupportedSourceShape {
-                                src_shape: source_shape,
-                                expected: &[String::SHAPE],
-                            })
-                        }
-                    },
-                )
-            };
-            vtable.parse = || {
-                Some(|s: &str, target: PtrUninit| {
-                    let parsed: DateTime =
-                        s.parse().map_err(|_| ParseError::Generic(DATETIME_ERROR))?;
-                    Ok(unsafe { target.put(parsed) })
-                })
-            };
-            vtable.display =
-                || Some(|value, f| unsafe { write!(f, "{}", value.get::<DateTime>()) });
-        }
-        vtable
-    };
-
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
+            .vtable({
+                let mut vtable = value_vtable!(DateTime, |f, _opts| write!(
+                    f,
+                    "{}",
+                    Self::SHAPE.type_identifier
+                ));
+                {
+                    vtable.try_from = || {
+                        Some(
+                            |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
+                                if source_shape.is_type::<String>() {
+                                    let source = unsafe { source.read::<String>() };
+                                    let parsed = source
+                                        .parse::<DateTime>()
+                                        .map_err(|_| ParseError::Generic(DATETIME_ERROR));
+                                    match parsed {
+                                        Ok(val) => Ok(unsafe { target.put(val) }),
+                                        Err(_e) => {
+                                            Err(crate::TryFromError::Generic(DATETIME_ERROR))
+                                        }
+                                    }
+                                } else {
+                                    Err(crate::TryFromError::UnsupportedSourceShape {
+                                        src_shape: source_shape,
+                                        expected: &[String::SHAPE],
+                                    })
+                                }
+                            },
+                        )
+                    };
+                    vtable.parse = || {
+                        Some(|s: &str, target: PtrUninit| {
+                            let parsed: DateTime =
+                                s.parse().map_err(|_| ParseError::Generic(DATETIME_ERROR))?;
+                            Ok(unsafe { target.put(parsed) })
+                        })
+                    };
+                    vtable.display =
+                        || Some(|value, f| unsafe { write!(f, "{}", value.get::<DateTime>()) });
+                }
+                vtable
+            })
             .type_identifier("DateTime")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
@@ -180,7 +181,7 @@ mod tests {
 
         let target = Zoned::SHAPE.allocate().unwrap();
         unsafe {
-            ((Zoned::VTABLE.parse)().unwrap())(
+            ((Zoned::SHAPE.vtable.parse)().unwrap())(
                 "2023-12-31T18:30:00+07:00[Asia/Ho_Chi_Minh]",
                 target,
             )
@@ -198,7 +199,7 @@ mod tests {
 
         impl fmt::Display for DisplayWrapper<'_> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                unsafe { ((Zoned::VTABLE.display)().unwrap())(self.0, f) }
+                unsafe { ((Zoned::SHAPE.vtable.display)().unwrap())(self.0, f) }
             }
         }
 
@@ -217,7 +218,7 @@ mod tests {
 
         let target = Timestamp::SHAPE.allocate().unwrap();
         unsafe {
-            ((Timestamp::VTABLE.parse)().unwrap())("2024-06-19T15:22:45Z", target).unwrap();
+            ((Timestamp::SHAPE.vtable.parse)().unwrap())("2024-06-19T15:22:45Z", target).unwrap();
         }
         let odt: Timestamp = unsafe { target.assume_init().read() };
         assert_eq!(odt, "2024-06-19T15:22:45Z".parse().unwrap());
@@ -226,7 +227,7 @@ mod tests {
 
         impl fmt::Display for DisplayWrapper<'_> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                unsafe { ((Timestamp::VTABLE.display)().unwrap())(self.0, f) }
+                unsafe { ((Timestamp::SHAPE.vtable.display)().unwrap())(self.0, f) }
             }
         }
 
@@ -245,7 +246,7 @@ mod tests {
 
         let target = DateTime::SHAPE.allocate().unwrap();
         unsafe {
-            ((DateTime::VTABLE.parse)().unwrap())("2024-06-19T15:22:45", target).unwrap();
+            ((DateTime::SHAPE.vtable.parse)().unwrap())("2024-06-19T15:22:45", target).unwrap();
         }
         let odt: DateTime = unsafe { target.assume_init().read() };
         assert_eq!(odt, "2024-06-19T15:22:45".parse().unwrap());
@@ -254,7 +255,7 @@ mod tests {
 
         impl fmt::Display for DisplayWrapper<'_> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                unsafe { ((DateTime::VTABLE.display)().unwrap())(self.0, f) }
+                unsafe { ((DateTime::SHAPE.vtable.display)().unwrap())(self.0, f) }
             }
         }
 

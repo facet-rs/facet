@@ -11,22 +11,6 @@ where
     '__facet: 'a,
     T: ::facet::Facet<'__facet>,
 {
-    const VTABLE: &'static ::facet::ValueVTable = &const {
-        let mut vtable = ::facet::value_vtable!(Self, |f, opts| {
-            write!(f, "Blah")?;
-            if let Some(opts) = opts.for_children() {
-                write!(f, "<")?;
-                <T as ::facet::Facet>::SHAPE.vtable.type_name()(f, opts)?;
-                write!(f, ", ")?;
-                write!(f, "{:?}", C)?;
-                write!(f, ">")?;
-            } else {
-                write!(f, "<…>")?;
-            }
-            Ok(())
-        });
-        vtable
-    };
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [
@@ -47,6 +31,22 @@ where
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .vtable({
+                let mut vtable = ::facet::value_vtable!(Self, |f, opts| {
+                    write!(f, "Blah")?;
+                    if let Some(opts) = opts.for_children() {
+                        write!(f, "<")?;
+                        <T as ::facet::Facet>::SHAPE.vtable.type_name()(f, opts)?;
+                        write!(f, ", ")?;
+                        write!(f, "{:?}", C)?;
+                        write!(f, ">")?;
+                    } else {
+                        write!(f, "<…>")?;
+                    }
+                    Ok(())
+                });
+                vtable
+            })
             .type_identifier("Blah")
             .type_params(&[::facet::TypeParam {
                 name: "T",

@@ -42,7 +42,7 @@ where
 /// arrays, etc. — essentially, this macro is only useful for 1) scalars, 2) inside a derive macro
 #[macro_export]
 macro_rules! value_vtable {
-    ($type_name:ty, $type_name_fn:expr) => {
+    ($type_name:ty, $type_name_fn:expr $(,)?) => {
         const {
             $crate::ValueVTable::builder::<$type_name>()
                 .type_name($type_name_fn)
@@ -156,12 +156,11 @@ macro_rules! value_vtable {
                 })
                 .hash(|| {
                     if $crate::spez::impls!($type_name: core::hash::Hash) {
-                        Some(|value: $crate::TypedPtrConst<'_, _>, hasher_this, hasher_write_fn| {
+                        Some(|value: $crate::TypedPtrConst<'_, _>, hasher| {
                             let value = value.get();
                             use $crate::spez::*;
-                            use $crate::HasherProxy;
                             (&&Spez(value))
-                                .spez_hash(&mut unsafe { HasherProxy::new(hasher_this, hasher_write_fn) })
+                                .spez_hash(&mut { hasher })
                         })
                     } else {
                         None
@@ -183,114 +182,13 @@ macro_rules! value_vtable {
     };
 }
 
-/// Similar to `value_vtable!` macro but for `!Sized` types.
+/// Creates a `ShapeBuilder` for a given type.
 #[macro_export]
-macro_rules! value_vtable_unsized {
-    ($type_name:ty, $type_name_fn:expr) => {
+macro_rules! shape_builder {
+    ($type_name:ty $(,)?) => {
         const {
-            $crate::ValueVTable::builder::<$type_name>()
-                .type_name($type_name_fn)
-                .display(|| {
-                    if $crate::spez::impls!($type_name: core::fmt::Display) {
-                        Some(|data: $crate::TypedPtrConst<'_, _>, f| {
-                            let data = data.get();
-                            use $crate::spez::*;
-                            (&&Spez(data)).spez_display(f)
-                        })
-                    } else {
-                        None
-                    }
-                })
-                .debug(|| {
-                    if $crate::spez::impls!($type_name: core::fmt::Debug) {
-                        Some(|data: $crate::TypedPtrConst<'_, _>, f| {
-                            let data = data.get();
-                            use $crate::spez::*;
-                            (&&Spez(data)).spez_debug(f)
-                        })
-                    } else {
-                        None
-                    }
-                })
-                .marker_traits(|| {
-                    let mut traits = $crate::MarkerTraits::empty();
-                    if $crate::spez::impls!($type_name: core::cmp::Eq) {
-                        traits = traits.union($crate::MarkerTraits::EQ);
-                    }
-                    if $crate::spez::impls!($type_name: core::marker::Send) {
-                        traits = traits.union($crate::MarkerTraits::SEND);
-                    }
-                    if $crate::spez::impls!($type_name: core::marker::Sync) {
-                        traits = traits.union($crate::MarkerTraits::SYNC);
-                    }
-                    if $crate::spez::impls!($type_name: core::marker::Copy) {
-                        traits = traits.union($crate::MarkerTraits::COPY);
-                    }
-                    if $crate::spez::impls!($type_name: core::marker::Unpin) {
-                        traits = traits.union($crate::MarkerTraits::UNPIN);
-                    }
-                    if $crate::spez::impls!($type_name: core::panic::UnwindSafe) {
-                        traits = traits.union($crate::MarkerTraits::UNWIND_SAFE);
-                    }
-                    if $crate::spez::impls!($type_name: core::panic::RefUnwindSafe) {
-                        traits = traits.union($crate::MarkerTraits::REF_UNWIND_SAFE);
-                    }
-
-                    traits
-                })
-                .partial_eq(|| {
-                    if $crate::spez::impls!($type_name: core::cmp::PartialEq) {
-                        Some(|left: $crate::TypedPtrConst<'_, _>, right: $crate::TypedPtrConst<'_, _>| {
-                            let left = left.get();
-                            let right = right.get();
-                            use $crate::spez::*;
-                            (&&Spez(left))
-                                .spez_partial_eq(&&Spez(right))
-                        })
-                    } else {
-                        None
-                    }
-                })
-                .partial_ord(|| {
-                    if $crate::spez::impls!($type_name: core::cmp::PartialOrd) {
-                        Some(|left: $crate::TypedPtrConst<'_, _>, right: $crate::TypedPtrConst<'_, _>| {
-                            let left = left.get();
-                            let right = right.get();
-                            use $crate::spez::*;
-                            (&&Spez(left))
-                                .spez_partial_cmp(&&Spez(right))
-                        })
-                    } else {
-                        None
-                    }
-                })
-                .ord(|| {
-                    if $crate::spez::impls!($type_name: core::cmp::Ord) {
-                        Some(|left: $crate::TypedPtrConst<'_, _>, right: $crate::TypedPtrConst<'_, _>| {
-                            let left = left.get();
-                            let right = right.get();
-                            use $crate::spez::*;
-                            (&&Spez(left))
-                                .spez_cmp(&&Spez(right))
-                        })
-                    } else {
-                        None
-                    }
-                })
-                .hash(|| {
-                    if $crate::spez::impls!($type_name: core::hash::Hash) {
-                        Some(|value: $crate::TypedPtrConst<'_, _>, hasher_this, hasher_write_fn| {
-                            let value = value.get();
-                            use $crate::spez::*;
-                            use $crate::HasherProxy;
-                            (&&Spez(value))
-                                .spez_hash(&mut unsafe { HasherProxy::new(hasher_this, hasher_write_fn) })
-                        })
-                    } else {
-                        None
-                    }
-                })
-                .build()
+            use $crate::spez::*;
+            SpezEmpty::<$type_name>::BUILDER
         }
     };
 }

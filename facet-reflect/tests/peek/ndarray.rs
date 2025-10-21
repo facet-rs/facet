@@ -131,38 +131,38 @@ unsafe impl<'facet, T: Facet<'facet>> Facet<'facet> for Mat<T> {
             name: "T",
             shape: || T::SHAPE,
         }])
+        .vtable(ValueVTable {
+            type_name: |f, opts| {
+                f.write_str("Mat<")?;
+                match opts.for_children() {
+                    Some(opts) => (T::SHAPE.vtable.type_name)(f, opts)?,
+                    None => f.write_str("…")?,
+                }
+                f.write_str(">")
+            },
+            marker_traits: || (T::SHAPE.vtable.marker_traits)() & !MarkerTraits::COPY,
+            drop_in_place: || {
+                Some(|p| unsafe {
+                    let ptr = p.as_ptr::<Self>() as *mut Self;
+                    drop(ptr.read());
+                    PtrUninit::new(NonNull::new_unchecked(ptr))
+                })
+            },
+            invariants: || None,
+            display: || None,
+            debug: || None,
+            default_in_place: || None,
+            clone_into: || None,
+            partial_eq: || None,
+            partial_ord: || None,
+            ord: || None,
+            hash: || None,
+            parse: || None,
+            try_from: || None,
+            try_into_inner: || None,
+            try_borrow_inner: || None,
+        })
         .build();
-    const VTABLE: &'static ValueVTable = &ValueVTable {
-        type_name: |f, opts| {
-            f.write_str("Mat<")?;
-            match opts.for_children() {
-                Some(opts) => (T::VTABLE.type_name)(f, opts)?,
-                None => f.write_str("…")?,
-            }
-            f.write_str(">")
-        },
-        marker_traits: || (T::VTABLE.marker_traits)() & !MarkerTraits::COPY,
-        drop_in_place: || {
-            Some(|p| unsafe {
-                let ptr = p.as_ptr::<Self>() as *mut Self;
-                drop(ptr.read());
-                PtrUninit::new(NonNull::new_unchecked(ptr))
-            })
-        },
-        invariants: || None,
-        display: || None,
-        debug: || None,
-        default_in_place: || None,
-        clone_into: || None,
-        partial_eq: || None,
-        partial_ord: || None,
-        ord: || None,
-        hash: || None,
-        parse: || None,
-        try_from: || None,
-        try_into_inner: || None,
-        try_borrow_inner: || None,
-    };
 }
 
 #[test]

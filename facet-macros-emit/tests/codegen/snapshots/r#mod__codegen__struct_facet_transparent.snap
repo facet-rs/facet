@@ -5,55 +5,6 @@ expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(transparent)
 static WRAPPER_SHAPE: &'static ::facet::Shape = <Wrapper as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for Wrapper {
-    const VTABLE: &'static ::facet::ValueVTable = &const {
-        let mut vtable =
-            ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "Wrapper"));
-        unsafe fn try_from<'src, 'dst>(
-            src_ptr: ::facet::PtrConst<'src>,
-            src_shape: &'static ::facet::Shape,
-            dst: ::facet::PtrUninit<'dst>,
-        ) -> Result<::facet::PtrMut<'dst>, ::facet::TryFromError> {
-            let inner_result = match (<u32 as ::facet::Facet>::SHAPE.vtable.try_from)() {
-                Some(inner_try) => unsafe { (inner_try)(src_ptr, src_shape, dst) },
-                None => Err(::facet::TryFromError::UnsupportedSourceShape {
-                    src_shape,
-                    expected: const { &[&<u32 as ::facet::Facet>::SHAPE] },
-                }),
-            };
-            match inner_result {
-                Ok(result) => Ok(result),
-                Err(_) => {
-                    if src_shape != <u32 as ::facet::Facet>::SHAPE {
-                        return Err(::facet::TryFromError::UnsupportedSourceShape {
-                            src_shape,
-                            expected: const { &[&<u32 as ::facet::Facet>::SHAPE] },
-                        });
-                    }
-                    let inner: u32 = unsafe { src_ptr.read() };
-                    Ok(unsafe { dst.put(inner) })
-                }
-            }
-        }
-        unsafe fn try_into_inner<'src, 'dst>(
-            src_ptr: ::facet::PtrMut<'src>,
-            dst: ::facet::PtrUninit<'dst>,
-        ) -> Result<::facet::PtrMut<'dst>, ::facet::TryIntoInnerError> {
-            let wrapper = unsafe { src_ptr.get::<Wrapper>() };
-            Ok(unsafe { dst.put(wrapper.0.clone()) })
-        }
-        unsafe fn try_borrow_inner<'src>(
-            src_ptr: ::facet::PtrConst<'src>,
-        ) -> Result<::facet::PtrConst<'src>, ::facet::TryBorrowInnerError> {
-            let wrapper = unsafe { src_ptr.get::<Wrapper>() };
-            Ok(::facet::PtrConst::new(&wrapper.0 as *const _ as *const u8))
-        }
-        {
-            vtable.try_from = || Some(try_from);
-            vtable.try_into_inner = || Some(try_into_inner);
-            vtable.try_borrow_inner = || Some(try_borrow_inner);
-        }
-        vtable
-    };
     const SHAPE: &'static ::facet::Shape = &const {
         let fields: &'static [::facet::Field] = &const {
             [{
@@ -68,6 +19,57 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Wrapper {
             <u32 as ::facet::Facet>::SHAPE
         }
         ::facet::Shape::builder_for_sized::<Self>()
+            .vtable({
+                let mut vtable =
+                    ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
+                        f, "Wrapper"
+                    ));
+                unsafe fn try_from<'src, 'dst>(
+                    src_ptr: ::facet::PtrConst<'src>,
+                    src_shape: &'static ::facet::Shape,
+                    dst: ::facet::PtrUninit<'dst>,
+                ) -> Result<::facet::PtrMut<'dst>, ::facet::TryFromError> {
+                    let inner_result = match (<u32 as ::facet::Facet>::SHAPE.vtable.try_from)() {
+                        Some(inner_try) => unsafe { (inner_try)(src_ptr, src_shape, dst) },
+                        None => Err(::facet::TryFromError::UnsupportedSourceShape {
+                            src_shape,
+                            expected: const { &[&<u32 as ::facet::Facet>::SHAPE] },
+                        }),
+                    };
+                    match inner_result {
+                        Ok(result) => Ok(result),
+                        Err(_) => {
+                            if src_shape != <u32 as ::facet::Facet>::SHAPE {
+                                return Err(::facet::TryFromError::UnsupportedSourceShape {
+                                    src_shape,
+                                    expected: const { &[&<u32 as ::facet::Facet>::SHAPE] },
+                                });
+                            }
+                            let inner: u32 = unsafe { src_ptr.read() };
+                            Ok(unsafe { dst.put(inner) })
+                        }
+                    }
+                }
+                unsafe fn try_into_inner<'src, 'dst>(
+                    src_ptr: ::facet::PtrMut<'src>,
+                    dst: ::facet::PtrUninit<'dst>,
+                ) -> Result<::facet::PtrMut<'dst>, ::facet::TryIntoInnerError> {
+                    let wrapper = unsafe { src_ptr.get::<Wrapper>() };
+                    Ok(unsafe { dst.put(wrapper.0.clone()) })
+                }
+                unsafe fn try_borrow_inner<'src>(
+                    src_ptr: ::facet::PtrConst<'src>,
+                ) -> Result<::facet::PtrConst<'src>, ::facet::TryBorrowInnerError> {
+                    let wrapper = unsafe { src_ptr.get::<Wrapper>() };
+                    Ok(::facet::PtrConst::new(&wrapper.0 as *const _ as *const u8))
+                }
+                {
+                    vtable.try_from = || Some(try_from);
+                    vtable.try_into_inner = || Some(try_into_inner);
+                    vtable.try_borrow_inner = || Some(try_borrow_inner);
+                }
+                vtable
+            })
             .type_identifier("Wrapper")
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()

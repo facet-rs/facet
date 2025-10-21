@@ -59,6 +59,9 @@ mod impls_url;
 #[cfg(feature = "jiff02")]
 mod impls_jiff;
 
+#[cfg(feature = "num-complex")]
+mod impls_num_complex;
+
 // Const type Id
 mod typeid;
 pub use typeid::*;
@@ -84,13 +87,4 @@ pub unsafe trait Facet<'facet>: 'facet {
     ///
     /// Shape embeds all other constants of this trait.
     const SHAPE: &'static Shape;
-
-    /// Function pointers to perform various operations: print the full type
-    /// name (with generic type parameters), use the Display implementation,
-    /// the Debug implementation, build a default value, clone, etc.
-    ///
-    /// If [`Self::SHAPE`] has `ShapeLayout::Unsized`, then the parent pointer needs to be passed.
-    ///
-    /// There are more specific vtables in variants of [`Def`]
-    const VTABLE: &'static ValueVTable;
 }

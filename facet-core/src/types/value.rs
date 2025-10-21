@@ -377,18 +377,12 @@ pub type CmpFnTyped<T> = fn(left: TypedPtrConst<'_, T>, right: TypedPtrConst<'_,
 ///
 /// The `value` parameter must point to aligned, initialized memory of the correct type.
 /// The hasher pointer must be a valid pointer to a Hasher trait object.
-pub type HashFn = for<'mem> unsafe fn(
-    value: PtrConst<'mem>,
-    hasher_this: PtrMut<'mem>,
-    hasher_write_fn: HasherWriteFn,
-);
+pub type HashFn =
+    for<'mem> unsafe fn(value: PtrConst<'mem>, hasher_this: &mut dyn core::hash::Hasher);
 
 /// Function to hash a value
-pub type HashFnTyped<T> = for<'mem> fn(
-    value: TypedPtrConst<'mem, T>,
-    hasher_this: PtrMut<'mem>,
-    hasher_write_fn: HasherWriteFn,
-);
+pub type HashFnTyped<T> =
+    for<'mem> fn(value: TypedPtrConst<'mem, T>, hasher_this: &mut dyn core::hash::Hasher);
 
 /// Function to write bytes to a hasher
 ///
@@ -512,8 +506,6 @@ pub struct ValueVTable {
     /// cf. [`TypeNameFn`]
     pub type_name: TypeNameFn,
     /// Marker traits implemented by the type
-    // FIXME: move out of vtable, it's not really... functions.
-    // Belongs in Shape directly.
     pub marker_traits: fn() -> MarkerTraits,
 
     /// cf. [`DropInPlaceFn`] — if None, drops without side-effects
@@ -701,14 +693,14 @@ pub struct VTableView<T: ?Sized>(&'static ValueVTable, PhantomData<T>);
 impl<'a, T: crate::Facet<'a> + ?Sized> VTableView<&'a mut T> {
     /// Fetches the vtable for the type.
     pub fn of_deref() -> Self {
-        Self(T::SHAPE.vtable, PhantomData)
+        Self(const { &T::SHAPE.vtable }, PhantomData)
     }
 }
 
 impl<'a, T: crate::Facet<'a> + ?Sized> VTableView<&'a T> {
     /// Fetches the vtable for the type.
     pub fn of_deref() -> Self {
-        Self(T::SHAPE.vtable, PhantomData)
+        Self(const { &T::SHAPE.vtable }, PhantomData)
     }
 }
 
@@ -721,7 +713,7 @@ macro_rules! get_fn {
 impl<'a, T: crate::Facet<'a> + ?Sized> VTableView<T> {
     /// Fetches the vtable for the type.
     pub const fn of() -> Self {
-        let this = Self(T::SHAPE.vtable, PhantomData);
+        let this = Self(const { &T::SHAPE.vtable }, PhantomData);
 
         if const { core::mem::size_of::<*const T>() == core::mem::size_of::<*const ()>() } {
             assert!(T::SHAPE.layout.sized_layout().is_ok());

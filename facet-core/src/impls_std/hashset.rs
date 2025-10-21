@@ -16,30 +16,31 @@ where
     T: Facet<'a> + core::cmp::Eq + core::hash::Hash,
     S: Facet<'a> + Default + BuildHasher,
 {
-    const VTABLE: &'static ValueVTable = &const {
-        ValueVTable::builder::<Self>()
-            .marker_traits(|| {
-                MarkerTraits::SEND
-                    .union(MarkerTraits::SYNC)
-                    .union(MarkerTraits::EQ)
-                    .union(MarkerTraits::UNPIN)
-                    .intersection(T::SHAPE.vtable.marker_traits())
-            })
-            .type_name(|f, opts| {
-                if let Some(opts) = opts.for_children() {
-                    write!(f, "{}<", Self::SHAPE.type_identifier)?;
-                    (T::SHAPE.vtable.type_name())(f, opts)?;
-                    write!(f, ">")
-                } else {
-                    write!(f, "HashSet<⋯>")
-                }
-            })
-            .default_in_place(|| Some(|target| unsafe { target.put(Self::default()).into() }))
-            .build()
-    };
-
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
+            .vtable(
+                ValueVTable::builder::<Self>()
+                    .marker_traits(|| {
+                        MarkerTraits::SEND
+                            .union(MarkerTraits::SYNC)
+                            .union(MarkerTraits::EQ)
+                            .union(MarkerTraits::UNPIN)
+                            .intersection(T::SHAPE.vtable.marker_traits())
+                    })
+                    .type_name(|f, opts| {
+                        if let Some(opts) = opts.for_children() {
+                            write!(f, "{}<", Self::SHAPE.type_identifier)?;
+                            (T::SHAPE.vtable.type_name())(f, opts)?;
+                            write!(f, ">")
+                        } else {
+                            write!(f, "HashSet<⋯>")
+                        }
+                    })
+                    .default_in_place(|| {
+                        Some(|target| unsafe { target.put(Self::default()).into() })
+                    })
+                    .build(),
+            )
             .type_identifier("HashSet")
             .type_params(&[
                 TypeParam {

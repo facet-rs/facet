@@ -4,8 +4,7 @@ use alloc::boxed::Box;
 
 use crate::{
     Def, Facet, KnownPointer, PointerDef, PointerFlags, PointerVTable, PtrConst, PtrMut, PtrUninit,
-    Shape, TryBorrowInnerError, TryFromError, TryIntoInnerError, Type, UserType, ValueVTable,
-    value_vtable,
+    Shape, TryBorrowInnerError, TryFromError, TryIntoInnerError, Type, UserType, value_vtable,
 };
 
 // Define the functions for transparent conversion between Box<T> and T
@@ -49,33 +48,6 @@ unsafe fn try_into_inner<'a, 'src, 'dst, T: ?Sized + Facet<'a>>(
     }
 }
 unsafe impl<'a, T: ?Sized + Facet<'a>> Facet<'a> for Box<T> {
-    const VTABLE: &'static ValueVTable = &const {
-        unsafe fn try_borrow_inner<'a, 'src, T: ?Sized + Facet<'a>>(
-            src_ptr: PtrConst<'src>,
-        ) -> Result<PtrConst<'src>, TryBorrowInnerError> {
-            let boxed = unsafe { src_ptr.get::<Box<T>>() };
-            Ok(PtrConst::new(NonNull::from(&**boxed)))
-        }
-
-        let mut vtable = value_vtable!(alloc::boxed::Box<T>, |f, opts| {
-            write!(f, "{}", Self::SHAPE.type_identifier)?;
-            if let Some(opts) = opts.for_children() {
-                write!(f, "<")?;
-                (T::SHAPE.vtable.type_name())(f, opts)?;
-                write!(f, ">")?;
-            } else {
-                write!(f, "<…>")?;
-            }
-            Ok(())
-        });
-        if size_of::<*const T>() == size_of::<*const ()>() {
-            vtable.try_from = || Some(try_from);
-            vtable.try_into_inner = || Some(try_into_inner::<T>);
-        }
-        vtable.try_borrow_inner = || Some(try_borrow_inner::<T>);
-        vtable
-    };
-
     const SHAPE: &'static crate::Shape = &const {
         // Function to return inner type's shape
         fn inner_shape<'a, T: ?Sized + Facet<'a>>() -> &'static Shape {
@@ -83,6 +55,32 @@ unsafe impl<'a, T: ?Sized + Facet<'a>> Facet<'a> for Box<T> {
         }
 
         crate::Shape::builder_for_sized::<Self>()
+            .vtable({
+                unsafe fn try_borrow_inner<'a, 'src, T: ?Sized + Facet<'a>>(
+                    src_ptr: PtrConst<'src>,
+                ) -> Result<PtrConst<'src>, TryBorrowInnerError> {
+                    let boxed = unsafe { src_ptr.get::<Box<T>>() };
+                    Ok(PtrConst::new(NonNull::from(&**boxed)))
+                }
+
+                let mut vtable = value_vtable!(alloc::boxed::Box<T>, |f, opts| {
+                    write!(f, "{}", Self::SHAPE.type_identifier)?;
+                    if let Some(opts) = opts.for_children() {
+                        write!(f, "<")?;
+                        (T::SHAPE.vtable.type_name())(f, opts)?;
+                        write!(f, ">")?;
+                    } else {
+                        write!(f, "<…>")?;
+                    }
+                    Ok(())
+                });
+                if size_of::<*const T>() == size_of::<*const ()>() {
+                    vtable.try_from = || Some(try_from);
+                    vtable.try_into_inner = || Some(try_into_inner::<T>);
+                }
+                vtable.try_borrow_inner = || Some(try_borrow_inner::<T>);
+                vtable
+            })
             .type_identifier("Box")
             .type_params(&[crate::TypeParam {
                 name: "T",

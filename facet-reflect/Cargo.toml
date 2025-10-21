@@ -54,3 +54,4 @@ facet-testhelpers = { path = "../facet-testhelpers" }
 insta = "1.43.1"
 log = "0.4.27"
 tempfile = "3.20.0"
+eyre = "0.6.12"

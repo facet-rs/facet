@@ -1,7 +1,6 @@
 use core::{cmp::Ordering, marker::PhantomData, ptr::NonNull};
 use facet_core::{
-    Def, Facet, PointerType, PtrConst, PtrMut, Shape, StructKind, Type, TypeNameOpts, UserType,
-    ValueVTable,
+    Def, Facet, PointerType, PtrConst, Shape, StructKind, Type, TypeNameOpts, UserType, ValueVTable,
 };
 
 use crate::{PeekNdArray, PeekSet, ReflectError, ScalarType};
@@ -82,7 +81,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     /// Returns the vtable
     #[inline(always)]
     pub fn vtable(&self) -> &'static ValueVTable {
-        self.shape.vtable
+        &self.shape.vtable
     }
 
     /// Returns a unique identifier for this value, usable for cycle detection
@@ -104,8 +103,10 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     /// `false` if equality comparison is not supported for this scalar type
     #[inline]
     pub fn partial_eq(&self, other: &Peek<'_, '_>) -> Result<bool, ReflectError> {
-        if let Some(f) = (self.vtable().partial_eq)() {
-            return Ok(unsafe { f(self.data, other.data) });
+        if self.shape == other.shape {
+            if let Some(f) = (self.vtable().partial_eq)() {
+                return Ok(unsafe { f(self.data, other.data) });
+            }
         }
 
         Err(ReflectError::OperationFailed {
@@ -121,8 +122,10 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     /// `None` if comparison is not supported for this scalar type
     #[inline]
     pub fn partial_cmp(&self, other: &Peek<'_, '_>) -> Result<Option<Ordering>, ReflectError> {
-        if let Some(f) = (self.vtable().partial_ord)() {
-            return Ok(unsafe { f(self.data, other.data) });
+        if self.shape == other.shape {
+            if let Some(f) = (self.vtable().partial_ord)() {
+                return Ok(unsafe { f(self.data, other.data) });
+            }
         }
 
         Err(ReflectError::OperationFailed {
@@ -136,13 +139,10 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     ///
     /// `Err` if hashing is not supported for this scalar type, `Ok` otherwise
     #[inline(always)]
-    pub fn hash<H: core::hash::Hasher>(&self, hasher: &mut H) -> Result<(), ReflectError> {
+    pub fn hash(&self, hasher: &mut dyn core::hash::Hasher) -> Result<(), ReflectError> {
         if let Some(hash_fn) = (self.vtable().hash)() {
-            let hasher_opaque = PtrMut::new(NonNull::from(hasher));
             unsafe {
-                hash_fn(self.data, hasher_opaque, |opaque, bytes| {
-                    opaque.as_mut::<H>().write(bytes)
-                });
+                hash_fn(self.data, hasher);
                 return Ok(());
             };
         }

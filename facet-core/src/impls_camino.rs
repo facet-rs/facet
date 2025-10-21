@@ -5,50 +5,10 @@ use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::{
     Def, Facet, PtrConst, PtrMut, PtrUninit, Shape, TryFromError, TryIntoInnerError, Type,
-    UserType, ValueVTable, value_vtable, value_vtable_unsized,
+    UserType, value_vtable,
 };
 
 unsafe impl Facet<'_> for Utf8PathBuf {
-    const VTABLE: &'static ValueVTable = &const {
-        // Define the functions for transparent conversion between Utf8PathBuf and String
-        unsafe fn try_from<'dst>(
-            src_ptr: PtrConst<'_>,
-            src_shape: &'static Shape,
-            dst: PtrUninit<'dst>,
-        ) -> Result<PtrMut<'dst>, TryFromError> {
-            if src_shape.id != <String as Facet>::SHAPE.id {
-                return Err(TryFromError::UnsupportedSourceShape {
-                    src_shape,
-                    expected: &[<String as Facet>::SHAPE],
-                });
-            }
-            let s = unsafe { src_ptr.read::<String>() };
-            Ok(unsafe { dst.put(Utf8PathBuf::from(s)) })
-        }
-
-        unsafe fn try_into_inner<'dst>(
-            src_ptr: PtrMut<'_>,
-            dst: PtrUninit<'dst>,
-        ) -> Result<PtrMut<'dst>, TryIntoInnerError> {
-            let path = unsafe { src_ptr.read::<Utf8PathBuf>() };
-            Ok(unsafe { dst.put(path.into_string()) })
-        }
-
-        let mut vtable = value_vtable!(Utf8PathBuf, |f, _opts| write!(
-            f,
-            "{}",
-            Self::SHAPE.type_identifier
-        ));
-
-        {
-            vtable.parse =
-                || Some(|s, target| Ok(unsafe { target.put(Utf8Path::new(s).to_owned()) }));
-            vtable.try_from = || Some(try_from);
-            vtable.try_into_inner = || Some(try_into_inner);
-        }
-        vtable
-    };
-
     const SHAPE: &'static Shape = &const {
         // Function to return inner type's shape
         fn inner_shape() -> &'static Shape {
@@ -56,6 +16,45 @@ unsafe impl Facet<'_> for Utf8PathBuf {
         }
 
         Shape::builder_for_sized::<Self>()
+            .vtable({
+                // Define the functions for transparent conversion between Utf8PathBuf and String
+                unsafe fn try_from<'dst>(
+                    src_ptr: PtrConst<'_>,
+                    src_shape: &'static Shape,
+                    dst: PtrUninit<'dst>,
+                ) -> Result<PtrMut<'dst>, TryFromError> {
+                    if src_shape.id != <String as Facet>::SHAPE.id {
+                        return Err(TryFromError::UnsupportedSourceShape {
+                            src_shape,
+                            expected: &[<String as Facet>::SHAPE],
+                        });
+                    }
+                    let s = unsafe { src_ptr.read::<String>() };
+                    Ok(unsafe { dst.put(Utf8PathBuf::from(s)) })
+                }
+
+                unsafe fn try_into_inner<'dst>(
+                    src_ptr: PtrMut<'_>,
+                    dst: PtrUninit<'dst>,
+                ) -> Result<PtrMut<'dst>, TryIntoInnerError> {
+                    let path = unsafe { src_ptr.read::<Utf8PathBuf>() };
+                    Ok(unsafe { dst.put(path.into_string()) })
+                }
+
+                let mut vtable = value_vtable!(Utf8PathBuf, |f, _opts| write!(
+                    f,
+                    "{}",
+                    Self::SHAPE.type_identifier
+                ));
+
+                {
+                    vtable.parse =
+                        || Some(|s, target| Ok(unsafe { target.put(Utf8Path::new(s).to_owned()) }));
+                    vtable.try_from = || Some(try_from);
+                    vtable.try_into_inner = || Some(try_into_inner);
+                }
+                vtable
+            })
             .type_identifier("Utf8PathBuf")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
@@ -65,16 +64,15 @@ unsafe impl Facet<'_> for Utf8PathBuf {
 }
 
 unsafe impl Facet<'_> for Utf8Path {
-    const VTABLE: &'static ValueVTable = &const {
-        value_vtable_unsized!(Utf8Path, |f, _opts| write!(
-            f,
-            "{}",
-            Self::SHAPE.type_identifier
-        ))
-    };
-
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_unsized::<Self>()
+            .vtable({
+                value_vtable!(Utf8Path, |f, _opts| write!(
+                    f,
+                    "{}",
+                    Self::SHAPE.type_identifier
+                ))
+            })
             .type_identifier("Utf8Path")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
