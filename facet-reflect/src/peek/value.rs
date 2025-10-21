@@ -103,9 +103,14 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     /// `false` if equality comparison is not supported for this scalar type
     #[inline]
     pub fn partial_eq(&self, other: &Peek<'_, '_>) -> Result<bool, ReflectError> {
-        if self.shape == other.shape {
-            if let Some(f) = (self.vtable().partial_eq)() {
+        if let Some(f) = (self.vtable().partial_eq)() {
+            if self.shape == other.shape {
                 return Ok(unsafe { f(self.data, other.data) });
+            } else {
+                return Err(ReflectError::WrongShape {
+                    expected: self.shape,
+                    actual: other.shape,
+                });
             }
         }
 
@@ -122,9 +127,14 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     /// `None` if comparison is not supported for this scalar type
     #[inline]
     pub fn partial_cmp(&self, other: &Peek<'_, '_>) -> Result<Option<Ordering>, ReflectError> {
-        if self.shape == other.shape {
-            if let Some(f) = (self.vtable().partial_ord)() {
+        if let Some(f) = (self.vtable().partial_ord)() {
+            if self.shape == other.shape {
                 return Ok(unsafe { f(self.data, other.data) });
+            } else {
+                return Err(ReflectError::WrongShape {
+                    expected: self.shape,
+                    actual: other.shape,
+                });
             }
         }
 
