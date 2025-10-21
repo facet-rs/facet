@@ -71,9 +71,9 @@ macro_rules! impl_facet_for_fn_ptr {
                             .type_name(|f, opts| {
                                 write_type_name_list(f, opts, $abi, &[$($args::SHAPE),*], R::SHAPE)
                             })
-                            .debug(|| Some(|data, f| fmt::Debug::fmt(data.get(), f)))
-                            .clone_into(|| Some(|src, dst| unsafe { dst.put(src.get().clone()).into() }))
-                            .marker_traits(||
+                            .debug(Some(|data, f| fmt::Debug::fmt(data.get(), f)))
+                            .clone_into(Some(|src, dst| unsafe { dst.put(src.get().clone()).into() }))
+                            .marker_traits(
                                 MarkerTraits::EQ
                                     .union(MarkerTraits::SEND)
                                     .union(MarkerTraits::SYNC)
@@ -82,29 +82,29 @@ macro_rules! impl_facet_for_fn_ptr {
                                     .union(MarkerTraits::UNWIND_SAFE)
                                     .union(MarkerTraits::REF_UNWIND_SAFE)
                             )
-                            .partial_eq(|| Some(|left, right| {
+                            .partial_eq(Some(|left, right| {
                                 fn_addr_eq(*left.get(), *right.get())
                             }))
-                            .partial_ord(|| Some(|left, right| {
+                            .partial_ord(Some(|left, right| {
                                 #[allow(unpredictable_function_pointer_comparisons)]
                                 left.get().partial_cmp(right.get())
                             }))
-                            .ord(|| Some(|left, right| {
+                            .ord(Some(|left, right| {
                                 #[allow(unpredictable_function_pointer_comparisons)]
                                 left.get().cmp(right.get())
                             }))
-                            .hash(|| Some(|value, hasher| {
+                            .hash(Some(|value, hasher| {
                                 value.get().hash(&mut { hasher })
                             }))
                             .build()
                     )
                     .type_params(&[
-                        $(TypeParam { name: stringify!($args), shape: || $args::SHAPE },)*
+                        $(TypeParam { name: stringify!($args), shape: $args::SHAPE },)*
                     ])
                     .ty(Type::Pointer(PointerType::Function(({
                         FunctionPointerDef::builder()
-                            .parameter_types(&const { [$(|| $args::SHAPE),*] })
-                            .return_type(|| R::SHAPE)
+                            .parameter_types(&const { [$($args::SHAPE),*] })
+                            .return_type(R::SHAPE)
                             .abi($abi)
                             .build()
                     }))))

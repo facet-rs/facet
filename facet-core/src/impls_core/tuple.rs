@@ -68,12 +68,11 @@ macro_rules! impl_facet_for_tuple {
                             .type_name(|f, opts| {
                                 write_type_name_list(f, opts, "(", ", ", ")", &[$($elems::SHAPE),+])
                             })
-                            .drop_in_place(|| Some(|data| unsafe { data.drop_in_place::<Self>() }))
-                            .marker_traits(||
-                                MarkerTraits::all()
+                            .drop_in_place(Some(|data| unsafe { data.drop_in_place::<Self>() }))
+                            .marker_traits(                                MarkerTraits::all()
                                     $(.intersection($elems::SHAPE.vtable.marker_traits()))+
                             )
-                            .default_in_place(|| {
+                            .default_in_place({
                                 let elem_shapes = const { &[$($elems::SHAPE),+] };
                                 if Characteristic::all_default(elem_shapes) {
                                     Some(|mut dst| {

@@ -15,7 +15,7 @@ unsafe impl Facet<'_> for Zoned {
                     Self::SHAPE.type_identifier
                 ));
                 {
-                    vtable.try_from = || {
+                    vtable.try_from = {
                         Some(
                             |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
                                 if source_shape.is_type::<String>() {
@@ -36,7 +36,7 @@ unsafe impl Facet<'_> for Zoned {
                             },
                         )
                     };
-                    vtable.parse = || {
+                    vtable.parse = {
                         Some(|s: &str, target: PtrUninit| {
                             let parsed: Zoned =
                                 s.parse().map_err(|_| ParseError::Generic(ZONED_ERROR))?;
@@ -44,7 +44,7 @@ unsafe impl Facet<'_> for Zoned {
                         })
                     };
                     vtable.display =
-                        || Some(|value, f| unsafe { write!(f, "{}", value.get::<Zoned>()) });
+                        Some(|value, f| unsafe { write!(f, "{}", value.get::<Zoned>()) });
                 }
                 vtable
             })
@@ -67,7 +67,7 @@ unsafe impl Facet<'_> for Timestamp {
                     Self::SHAPE.type_identifier
                 ));
                 {
-                    vtable.try_from = || {
+                    vtable.try_from = {
                         Some(
                             |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
                                 if source_shape.is_type::<String>() {
@@ -90,7 +90,7 @@ unsafe impl Facet<'_> for Timestamp {
                             },
                         )
                     };
-                    vtable.parse = || {
+                    vtable.parse = {
                         Some(|s: &str, target: PtrUninit| {
                             let parsed: Timestamp = s
                                 .parse()
@@ -99,7 +99,7 @@ unsafe impl Facet<'_> for Timestamp {
                         })
                     };
                     vtable.display =
-                        || Some(|value, f| unsafe { write!(f, "{}", value.get::<Timestamp>()) });
+                        Some(|value, f| unsafe { write!(f, "{}", value.get::<Timestamp>()) });
                 }
                 vtable
             })
@@ -122,7 +122,7 @@ unsafe impl Facet<'_> for DateTime {
                     Self::SHAPE.type_identifier
                 ));
                 {
-                    vtable.try_from = || {
+                    vtable.try_from = {
                         Some(
                             |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
                                 if source_shape.is_type::<String>() {
@@ -145,7 +145,7 @@ unsafe impl Facet<'_> for DateTime {
                             },
                         )
                     };
-                    vtable.parse = || {
+                    vtable.parse = {
                         Some(|s: &str, target: PtrUninit| {
                             let parsed: DateTime =
                                 s.parse().map_err(|_| ParseError::Generic(DATETIME_ERROR))?;
@@ -153,7 +153,7 @@ unsafe impl Facet<'_> for DateTime {
                         })
                     };
                     vtable.display =
-                        || Some(|value, f| unsafe { write!(f, "{}", value.get::<DateTime>()) });
+                        Some(|value, f| unsafe { write!(f, "{}", value.get::<DateTime>()) });
                 }
                 vtable
             })
@@ -181,7 +181,7 @@ mod tests {
 
         let target = Zoned::SHAPE.allocate().unwrap();
         unsafe {
-            ((Zoned::SHAPE.vtable.parse)().unwrap())(
+            Zoned::SHAPE.vtable.parse.unwrap()(
                 "2023-12-31T18:30:00+07:00[Asia/Ho_Chi_Minh]",
                 target,
             )
@@ -199,7 +199,7 @@ mod tests {
 
         impl fmt::Display for DisplayWrapper<'_> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                unsafe { ((Zoned::SHAPE.vtable.display)().unwrap())(self.0, f) }
+                unsafe { (Zoned::SHAPE.vtable.display.unwrap())(self.0, f) }
             }
         }
 
@@ -218,7 +218,7 @@ mod tests {
 
         let target = Timestamp::SHAPE.allocate().unwrap();
         unsafe {
-            ((Timestamp::SHAPE.vtable.parse)().unwrap())("2024-06-19T15:22:45Z", target).unwrap();
+            (Timestamp::SHAPE.vtable.parse.unwrap())("2024-06-19T15:22:45Z", target).unwrap();
         }
         let odt: Timestamp = unsafe { target.assume_init().read() };
         assert_eq!(odt, "2024-06-19T15:22:45Z".parse().unwrap());
@@ -227,7 +227,7 @@ mod tests {
 
         impl fmt::Display for DisplayWrapper<'_> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                unsafe { ((Timestamp::SHAPE.vtable.display)().unwrap())(self.0, f) }
+                unsafe { (Timestamp::SHAPE.vtable.display.unwrap())(self.0, f) }
             }
         }
 
@@ -246,7 +246,7 @@ mod tests {
 
         let target = DateTime::SHAPE.allocate().unwrap();
         unsafe {
-            ((DateTime::SHAPE.vtable.parse)().unwrap())("2024-06-19T15:22:45", target).unwrap();
+            (DateTime::SHAPE.vtable.parse.unwrap())("2024-06-19T15:22:45", target).unwrap();
         }
         let odt: DateTime = unsafe { target.assume_init().read() };
         assert_eq!(odt, "2024-06-19T15:22:45".parse().unwrap());
@@ -255,7 +255,7 @@ mod tests {
 
         impl fmt::Display for DisplayWrapper<'_> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                unsafe { ((DateTime::SHAPE.vtable.display)().unwrap())(self.0, f) }
+                unsafe { (DateTime::SHAPE.vtable.display.unwrap())(self.0, f) }
             }
         }
 

@@ -160,8 +160,8 @@ impl<'facet> Partial<'facet> {
         // 3. The parent frame is not yet initialized
         let needs_conversion = matches!(parent_frame.tracker, Tracker::Uninit)
             && parent_frame.shape.inner.is_some()
-            && parent_frame.shape.inner.unwrap()() == popped_frame.shape
-            && (parent_frame.shape.vtable.try_from)().is_some();
+            && parent_frame.shape.inner.unwrap() == popped_frame.shape
+            && parent_frame.shape.vtable.try_from.is_some();
 
         if needs_conversion {
             trace!(
@@ -169,7 +169,7 @@ impl<'facet> Partial<'facet> {
                 popped_frame.shape, parent_frame.shape
             );
             // Perform the conversion
-            if let Some(try_from_fn) = (parent_frame.shape.vtable.try_from)() {
+            if let Some(try_from_fn) = parent_frame.shape.vtable.try_from {
                 let inner_ptr = unsafe { popped_frame.data.assume_init().as_const() };
                 let inner_shape = popped_frame.shape;
 
@@ -677,7 +677,7 @@ impl<'facet> Partial<'facet> {
         }
 
         // Check invariants if present
-        if let Some(invariants_fn) = (frame.shape.vtable.invariants)() {
+        if let Some(invariants_fn) = frame.shape.vtable.invariants {
             // Safety: The value is fully initialized at this point (we just checked with require_full_initialization)
             let value_ptr = unsafe { frame.data.assume_init().as_const() };
             let invariants_ok = unsafe { invariants_fn(value_ptr) };
@@ -848,7 +848,7 @@ impl<'facet> Partial<'facet> {
     pub fn set_default(&mut self) -> Result<&mut Self, ReflectError> {
         let frame = self.frames.last().unwrap();
 
-        let Some(default_fn) = (frame.shape.vtable.default_in_place)() else {
+        let Some(default_fn) = frame.shape.vtable.default_in_place else {
             return Err(ReflectError::OperationFailed {
                 shape: frame.shape,
                 operation: "type does not implement Default",
@@ -895,7 +895,7 @@ impl<'facet> Partial<'facet> {
         let frame = self.frames.last_mut().unwrap();
 
         // Check if the type has a parse function
-        let Some(parse_fn) = (frame.shape.vtable.parse)() else {
+        let Some(parse_fn) = frame.shape.vtable.parse else {
             return Err(ReflectError::OperationFailed {
                 shape: frame.shape,
                 operation: "Type does not support parsing from string",
@@ -1092,7 +1092,7 @@ impl Partial<'_> {
 
                 // For enum variant fields that are empty structs, they are always initialized
                 if let Some(field) = variant.data.fields.get(index) {
-                    if let Type::User(UserType::Struct(field_struct)) = field.shape.ty {
+                    if let Type::User(UserType::Struct(field_struct)) = field.shape().ty {
                         if field_struct.fields.is_empty() {
                             return Ok(true);
                         }
@@ -1309,7 +1309,9 @@ impl Partial<'_> {
         unsafe {
             self.set_from_function(|dst_field_ptr| {
                 let src_field_ptr = src_frame.data.field_init_at(field.offset).as_const();
-                dst_field_ptr.copy_from(src_field_ptr, field.shape).unwrap();
+                dst_field_ptr
+                    .copy_from(src_field_ptr, field.shape())
+                    .unwrap();
                 Ok(())
             })?;
         }
@@ -2011,9 +2013,8 @@ impl Partial<'_> {
         // Get the inner shape and check for try_from
         let (inner_shape, has_try_from, parent_shape) = {
             let frame = self.frames.last().unwrap();
-            if let Some(inner_fn) = frame.shape.inner {
-                let inner_shape = inner_fn();
-                let has_try_from = (frame.shape.vtable.try_from)().is_some();
+            if let Some(inner_shape) = frame.shape.inner {
+                let has_try_from = frame.shape.vtable.try_from.is_some();
                 (Some(inner_shape), has_try_from, frame.shape)
             } else {
                 (None, false, frame.shape)
@@ -2304,7 +2305,7 @@ impl<'facet> Partial<'facet> {
 
         // Push a new frame for this field onto the frames stack.
         let field_ptr = unsafe { frame.data.field_uninit_at(field.offset) };
-        let field_shape = field.shape;
+        let field_shape = field.shape();
 
         let mut next_frame = Frame::new(field_ptr, field_shape, FrameOwnership::Field);
         if was_field_init {
@@ -2424,7 +2425,7 @@ impl<'facet> Partial<'facet> {
         // SAFETY: the field offset comes from an unsafe impl of the Facet trait, we trust it.
         // also, we checked that the variant was selected.
         let field_ptr = unsafe { frame.data.field_uninit_at(field.offset) };
-        let field_shape = field.shape;
+        let field_shape = field.shape();
 
         let mut next_frame = Frame::new(field_ptr, field_shape, FrameOwnership::Field);
         if was_field_init {

@@ -24,10 +24,10 @@ where
                             write!(f, "{}<⋯>", Self::SHAPE.type_identifier)
                         }
                     })
-                    .default_in_place(|| {
+                    .default_in_place({
                         Some(|target| unsafe { target.put(Self::default()).into() })
                     })
-                    .marker_traits(|| {
+                    .marker_traits({
                         MarkerTraits::SEND
                             .union(MarkerTraits::SYNC)
                             .union(MarkerTraits::EQ)
@@ -41,7 +41,7 @@ where
             .type_identifier("Vec")
             .type_params(&[TypeParam {
                 name: "T",
-                shape: || T::SHAPE,
+                shape: T::SHAPE,
             }])
             .ty(Type::User(UserType::Opaque))
             .def(Def::List(
@@ -113,7 +113,7 @@ where
                                 .build()
                         },
                     )
-                    .t(|| T::SHAPE)
+                    .t(T::SHAPE)
                     .build(),
             ))
             .build()

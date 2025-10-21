@@ -12,14 +12,14 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for PascalCaseExample {
                 {
                     ::facet::Field::builder()
                         .name("FieldOne")
-                        .shape(::facet::shape_of(&|s: &PascalCaseExample| &s.field_one))
+                        .shape(|| ::facet::shape_of(&|s: &PascalCaseExample| &s.field_one))
                         .offset(::core::mem::offset_of!(PascalCaseExample, field_one))
                         .build()
                 },
                 {
                     ::facet::Field::builder()
                         .name("FieldTwo")
-                        .shape(::facet::shape_of(&|s: &PascalCaseExample| &s.field_two))
+                        .shape(|| ::facet::shape_of(&|s: &PascalCaseExample| &s.field_two))
                         .offset(::core::mem::offset_of!(PascalCaseExample, field_two))
                         .build()
                 },

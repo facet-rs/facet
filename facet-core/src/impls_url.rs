@@ -10,11 +10,6 @@ use crate::{
 
 unsafe impl Facet<'_> for Url {
     const SHAPE: &'static Shape = &const {
-        // Function to return inner type's shape
-        fn inner_shape() -> &'static Shape {
-            <String as Facet>::SHAPE
-        }
-
         Shape::builder_for_sized::<Self>()
             .vtable({
                 // Custom parse impl with detailed errors
@@ -65,16 +60,16 @@ unsafe impl Facet<'_> for Url {
                 let mut vtable =
                     value_vtable!(Url, |f, _opts| write!(f, "{}", Self::SHAPE.type_identifier));
                 {
-                    vtable.parse = || Some(parse);
-                    vtable.try_into_inner = || Some(try_into_inner);
-                    vtable.try_borrow_inner = || Some(try_borrow_inner);
+                    vtable.parse = Some(parse);
+                    vtable.try_into_inner = Some(try_into_inner);
+                    vtable.try_borrow_inner = Some(try_borrow_inner);
                 }
                 vtable
             })
             .type_identifier("Url")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
-            .inner(inner_shape)
+            .inner(<String as Facet>::SHAPE)
             .build()
     };
 }

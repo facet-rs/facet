@@ -46,7 +46,7 @@ macro_rules! value_vtable {
         const {
             $crate::ValueVTable::builder::<$type_name>()
                 .type_name($type_name_fn)
-                .display(|| {
+                .display({
                     if $crate::spez::impls!($type_name: core::fmt::Display) {
                         Some(|data: $crate::TypedPtrConst<'_, _>, f| {
                             let data = data.get();
@@ -57,7 +57,7 @@ macro_rules! value_vtable {
                         None
                     }
                 })
-                .debug(|| {
+                .debug({
                     if $crate::spez::impls!($type_name: core::fmt::Debug) {
                         Some(|data: $crate::TypedPtrConst<'_, _>, f| {
                             let data = data.get();
@@ -68,7 +68,7 @@ macro_rules! value_vtable {
                         None
                     }
                 })
-                .default_in_place(|| {
+                .default_in_place({
                     if $crate::spez::impls!($type_name: core::default::Default) {
                         Some(|target: $crate::TypedPtrUninit<'_, _>| unsafe {
                             use $crate::spez::*;
@@ -78,7 +78,7 @@ macro_rules! value_vtable {
                         None
                     }
                 })
-                .clone_into(|| {
+                .clone_into({
                     if $crate::spez::impls!($type_name: core::clone::Clone) {
                         Some(|src: $crate::TypedPtrConst<'_, _>, dst: $crate::TypedPtrUninit<'_, _>| unsafe {
                             use $crate::spez::*;
@@ -89,7 +89,7 @@ macro_rules! value_vtable {
                         None
                     }
                 })
-                .marker_traits(|| {
+                .marker_traits({
                     let mut traits = $crate::MarkerTraits::empty();
                     if $crate::spez::impls!($type_name: core::cmp::Eq) {
                         traits = traits.union($crate::MarkerTraits::EQ);
@@ -115,7 +115,7 @@ macro_rules! value_vtable {
 
                     traits
                 })
-                .partial_eq(|| {
+                .partial_eq({
                     if $crate::spez::impls!($type_name: core::cmp::PartialEq) {
                         Some(|left: $crate::TypedPtrConst<'_, _>, right: $crate::TypedPtrConst<'_, _>| {
                             let left = left.get();
@@ -128,7 +128,7 @@ macro_rules! value_vtable {
                         None
                     }
                 })
-                .partial_ord(|| {
+                .partial_ord({
                     if $crate::spez::impls!($type_name: core::cmp::PartialOrd) {
                         Some(|left: $crate::TypedPtrConst<'_, _>, right: $crate::TypedPtrConst<'_, _>| {
                             let left = left.get();
@@ -141,7 +141,7 @@ macro_rules! value_vtable {
                         None
                     }
                 })
-                .ord(|| {
+                .ord({
                     if $crate::spez::impls!($type_name: core::cmp::Ord) {
                         Some(|left: $crate::TypedPtrConst<'_, _>, right: $crate::TypedPtrConst<'_, _>| {
                             let left = left.get();
@@ -154,7 +154,7 @@ macro_rules! value_vtable {
                         None
                     }
                 })
-                .hash(|| {
+                .hash({
                     if $crate::spez::impls!($type_name: core::hash::Hash) {
                         Some(|value: $crate::TypedPtrConst<'_, _>, hasher| {
                             let value = value.get();
@@ -166,7 +166,7 @@ macro_rules! value_vtable {
                         None
                     }
                 })
-                .parse(|| {
+                .parse({
                     if $crate::spez::impls!($type_name: core::str::FromStr) {
                         Some(|s, target: $crate::TypedPtrUninit<'_, _>| {
                             use $crate::spez::*;

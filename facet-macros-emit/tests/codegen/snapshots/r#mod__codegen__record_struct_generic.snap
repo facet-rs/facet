@@ -17,21 +17,21 @@ where
                 {
                     ::facet::Field::builder()
                         .name("field")
-                        .shape(::facet::shape_of(&|s: &Blah<'a, T, C>| &s.field))
+                        .shape(|| ::facet::shape_of(&|s: &Blah<'a, T, C>| &s.field))
                         .offset(::core::mem::offset_of!(Blah<'a, T, C>, field))
                         .build()
                 },
                 {
                     ::facet::Field::builder()
                         .name("another")
-                        .shape(::facet::shape_of(&|s: &Blah<'a, T, C>| &s.another))
+                        .shape(|| ::facet::shape_of(&|s: &Blah<'a, T, C>| &s.another))
                         .offset(::core::mem::offset_of!(Blah<'a, T, C>, another))
                         .build()
                 },
                 {
                     ::facet::Field::builder()
                         .name("constant_val")
-                        .shape(::facet::shape_of(&|s: &Blah<'a, T, C>| &s.constant_val))
+                        .shape(|| ::facet::shape_of(&|s: &Blah<'a, T, C>| &s.constant_val))
                         .offset(::core::mem::offset_of!(Blah<'a, T, C>, constant_val))
                         .build()
                 },
@@ -57,7 +57,7 @@ where
             .type_identifier("Blah")
             .type_params(&[::facet::TypeParam {
                 name: "T",
-                shape: || <T as ::facet::Facet>::SHAPE,
+                shape: <T as ::facet::Facet>::SHAPE,
             }])
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()

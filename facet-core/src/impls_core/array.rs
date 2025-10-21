@@ -10,7 +10,7 @@ where
         Shape::builder_for_sized::<Self>()
             .vtable(
                 ValueVTable::builder::<Self>()
-                    .marker_traits(|| T::SHAPE.vtable.marker_traits())
+                    .marker_traits(T::SHAPE.vtable.marker_traits())
                     .type_name(|f, opts| {
                         if let Some(opts) = opts.for_children() {
                             write!(f, "[")?;
@@ -20,7 +20,7 @@ where
                             write!(f, "[⋯; {L}]")
                         }
                     })
-                    .default_in_place(|| {
+                    .default_in_place({
                         if L == 0 {
                             // Zero-length arrays implement `Default` irrespective of the element type
                             Some(|target| unsafe { target.assume_init().into() })
@@ -44,7 +44,7 @@ where
                             None
                         }
                     })
-                    .clone_into(|| {
+                    .clone_into({
                         if T::SHAPE.vtable.has_clone_into() {
                             Some(|src, mut dst| unsafe {
                                 let src = src.get();
@@ -69,7 +69,7 @@ where
             .type_identifier("&[_; _]")
             .type_params(&[TypeParam {
                 name: "T",
-                shape: || T::SHAPE,
+                shape: T::SHAPE,
             }])
             .ty(Type::Sequence(SequenceType::Array(ArrayType {
                 t: T::SHAPE,

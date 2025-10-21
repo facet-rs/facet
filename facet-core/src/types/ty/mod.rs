@@ -217,14 +217,14 @@ impl core::fmt::Display for Type {
                     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                         write!(f, "«")?;
                         write!(f, "fn(")?;
-                        let mut args_iter = self.0.parameters.iter().map(|f| f());
+                        let mut args_iter = self.0.parameters.iter();
                         if let Some(arg) = args_iter.next() {
                             write!(f, "{arg}")?;
                             for arg in args_iter {
                                 write!(f, ", {arg}")?;
                             }
                         }
-                        let ret_ty = (self.0.return_type)();
+                        let ret_ty = self.0.return_type;
                         write!(f, ") -> {ret_ty}")?;
                         write!(f, "»")?;
                         Ok(())

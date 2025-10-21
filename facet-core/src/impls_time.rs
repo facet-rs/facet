@@ -13,7 +13,7 @@ unsafe impl Facet<'_> for UtcDateTime {
                     Self::SHAPE.type_identifier
                 ));
                 {
-                    vtable.try_from = || {
+                    vtable.try_from = {
                         Some(
                             |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
                                 if source_shape.is_type::<String>() {
@@ -38,7 +38,7 @@ unsafe impl Facet<'_> for UtcDateTime {
                             },
                         )
                     };
-                    vtable.parse = || {
+                    vtable.parse = {
                         Some(|s: &str, target: PtrUninit| {
                             let parsed = UtcDateTime::parse(
                                 s,
@@ -48,7 +48,7 @@ unsafe impl Facet<'_> for UtcDateTime {
                             Ok(unsafe { target.put(parsed) })
                         })
                     };
-                    vtable.display = || {
+                    vtable.display = {
                         Some(|value, f| unsafe {
                             let udt = value.get::<UtcDateTime>();
                             match udt.format(&time::format_description::well_known::Rfc3339) {
@@ -77,7 +77,7 @@ unsafe impl Facet<'_> for OffsetDateTime {
                     Self::SHAPE.type_identifier
                 ));
                 {
-                    vtable.try_from = || {
+                    vtable.try_from = {
                         Some(
                             |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
                                 if source_shape.is_type::<String>() {
@@ -102,7 +102,7 @@ unsafe impl Facet<'_> for OffsetDateTime {
                             },
                         )
                     };
-                    vtable.parse = || {
+                    vtable.parse = {
                         Some(|s: &str, target: PtrUninit| {
                             let parsed = OffsetDateTime::parse(
                                 s,
@@ -112,7 +112,7 @@ unsafe impl Facet<'_> for OffsetDateTime {
                             Ok(unsafe { target.put(parsed) })
                         })
                     };
-                    vtable.display = || {
+                    vtable.display = {
                         Some(|value, f| unsafe {
                             let odt = value.get::<OffsetDateTime>();
                             match odt.format(&time::format_description::well_known::Rfc3339) {
@@ -145,8 +145,7 @@ mod tests {
 
         let target = OffsetDateTime::SHAPE.allocate().unwrap();
         unsafe {
-            ((OffsetDateTime::SHAPE.vtable.parse)().unwrap())("2023-03-14T15:09:26Z", target)
-                .unwrap();
+            (OffsetDateTime::SHAPE.vtable.parse.unwrap())("2023-03-14T15:09:26Z", target).unwrap();
         }
         let odt: OffsetDateTime = unsafe { target.assume_init().read() };
         assert_eq!(
@@ -162,7 +161,7 @@ mod tests {
 
         impl fmt::Display for DisplayWrapper<'_> {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                unsafe { ((OffsetDateTime::SHAPE.vtable.display)().unwrap())(self.0, f) }
+                unsafe { (OffsetDateTime::SHAPE.vtable.display.unwrap())(self.0, f) }
             }
         }
 

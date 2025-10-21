@@ -11,14 +11,14 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for User {
                 {
                     ::facet::Field::builder()
                         .name("userName")
-                        .shape(::facet::shape_of(&|s: &User| &s.name))
+                        .shape(|| ::facet::shape_of(&|s: &User| &s.name))
                         .offset(::core::mem::offset_of!(User, name))
                         .build()
                 },
                 {
                     ::facet::Field::builder()
                         .name("userEmail")
-                        .shape(::facet::shape_of(&|s: &User| &s.email))
+                        .shape(|| ::facet::shape_of(&|s: &User| &s.email))
                         .offset(::core::mem::offset_of!(User, email))
                         .flags(::facet::FieldFlags::SENSITIVE)
                         .build()
@@ -26,7 +26,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for User {
                 {
                     ::facet::Field::builder()
                         .name("password")
-                        .shape(::facet::shape_of(&|s: &User| &s.password))
+                        .shape(|| ::facet::shape_of(&|s: &User| &s.password))
                         .offset(::core::mem::offset_of!(User, password))
                         .flags(::facet::FieldFlags::SENSITIVE)
                         .build()

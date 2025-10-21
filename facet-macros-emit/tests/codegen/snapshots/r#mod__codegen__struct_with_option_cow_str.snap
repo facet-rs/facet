@@ -14,7 +14,7 @@ where
                 :: facet :: static_assertions :: assert_impl_all ! (Option < Cow < 'static , str > > : :: core :: default :: Default);
                 ::facet::Field::builder()
                     .name("name")
-                    .shape(::facet::shape_of(&|s: &Foo<'a>| &s.name))
+                    .shape(|| ::facet::shape_of(&|s: &Foo<'a>| &s.name))
                     .offset(::core::mem::offset_of!(Foo<'a>, name))
                     .flags(::facet::FieldFlags::DEFAULT)
                     .build()

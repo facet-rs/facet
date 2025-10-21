@@ -11,7 +11,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for CubConfig {
                 {
                     ::facet::Field::builder()
                         .name("disk_cache_size")
-                        .shape(::facet::shape_of(&|s: &CubConfig| &s.disk_cache_size))
+                        .shape(|| ::facet::shape_of(&|s: &CubConfig| &s.disk_cache_size))
                         .offset(::core::mem::offset_of!(CubConfig, disk_cache_size))
                         .doc(&[" size the disk cache is allowed to use"])
                         .build()
@@ -19,7 +19,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for CubConfig {
                 {
                     ::facet::Field::builder()
                         .name("address")
-                        .shape(::facet::shape_of(&|s: &CubConfig| &s.address))
+                        .shape(|| ::facet::shape_of(&|s: &CubConfig| &s.address))
                         .offset(::core::mem::offset_of!(CubConfig, address))
                         .doc(&[" Listen address without http, something like \"127.0.0.1:1111\""])
                         .build()
@@ -27,7 +27,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for CubConfig {
                 {
                     ::facet::Field::builder()
                         .name("mom_base_url")
-                        .shape(::facet::shape_of(&|s: &CubConfig| &s.mom_base_url))
+                        .shape(|| ::facet::shape_of(&|s: &CubConfig| &s.mom_base_url))
                         .offset(::core::mem::offset_of!(CubConfig, mom_base_url))
                         .doc(&[
                             " Something like `http://localhost:1118`",
@@ -39,7 +39,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for CubConfig {
                 {
                     ::facet::Field::builder()
                         .name("mom_api_key")
-                        .shape(::facet::shape_of(&|s: &CubConfig| &s.mom_api_key))
+                        .shape(|| ::facet::shape_of(&|s: &CubConfig| &s.mom_api_key))
                         .offset(::core::mem::offset_of!(CubConfig, mom_api_key))
                         .doc(&[" API key used to talk to mom"])
                         .build()

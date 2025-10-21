@@ -10,7 +10,7 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *const T {
         Shape::builder_for_sized::<Self>()
             .vtable(
                 ValueVTable::builder::<Self>()
-                    .marker_traits(|| {
+                    .marker_traits({
                         let mut marker_traits = MarkerTraits::EQ
                             .union(MarkerTraits::COPY)
                             .union(MarkerTraits::UNPIN);
@@ -27,8 +27,8 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *const T {
 
                         marker_traits
                     })
-                    .debug(|| Some(|p, f| fmt::Debug::fmt(p.get(), f)))
-                    .clone_into(|| Some(|src, dst| unsafe { dst.put(*src.get()).into() }))
+                    .debug(Some(|p, f| fmt::Debug::fmt(p.get(), f)))
+                    .clone_into(Some(|src, dst| unsafe { dst.put(*src.get()).into() }))
                     .type_name(|f, opts| {
                         if let Some(opts) = opts.for_children() {
                             write!(f, "*const ")?;
@@ -39,18 +39,18 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *const T {
                     })
                     .build(),
             )
-            .inner(|| T::SHAPE)
+            .inner(T::SHAPE)
             .type_identifier("*const _")
             .type_params(&[TypeParam {
                 name: "T",
-                shape: || T::SHAPE,
+                shape: T::SHAPE,
             }])
             .ty({
                 let is_wide = ::core::mem::size_of::<Self>() != ::core::mem::size_of::<*const ()>();
                 let vpt = ValuePointerType {
                     mutable: false,
                     wide: is_wide,
-                    target: || T::SHAPE,
+                    target: T::SHAPE,
                 };
 
                 Type::Pointer(PointerType::Raw(vpt))
@@ -65,7 +65,7 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *mut T {
         Shape::builder_for_sized::<Self>()
             .vtable(
                 ValueVTable::builder::<Self>()
-                    .marker_traits(|| {
+                    .marker_traits({
                         let mut marker_traits = MarkerTraits::EQ
                             .union(MarkerTraits::COPY)
                             .union(MarkerTraits::UNPIN);
@@ -82,8 +82,8 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *mut T {
 
                         marker_traits
                     })
-                    .debug(|| Some(|p, f| fmt::Debug::fmt(p.get(), f)))
-                    .clone_into(|| Some(|src, dst| unsafe { dst.put(*src.get()).into() }))
+                    .debug(Some(|p, f| fmt::Debug::fmt(p.get(), f)))
+                    .clone_into(Some(|src, dst| unsafe { dst.put(*src.get()).into() }))
                     .type_name(|f, opts| {
                         if let Some(opts) = opts.for_children() {
                             write!(f, "*mut ")?;
@@ -94,18 +94,18 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *mut T {
                     })
                     .build(),
             )
-            .inner(|| T::SHAPE)
+            .inner(T::SHAPE)
             .type_identifier("*mut _")
             .type_params(&[TypeParam {
                 name: "T",
-                shape: || T::SHAPE,
+                shape: T::SHAPE,
             }])
             .ty({
                 let is_wide = ::core::mem::size_of::<Self>() != ::core::mem::size_of::<*const ()>();
                 let vpt = ValuePointerType {
                     mutable: true,
                     wide: is_wide,
-                    target: || T::SHAPE,
+                    target: T::SHAPE,
                 };
 
                 Type::Pointer(PointerType::Raw(vpt))

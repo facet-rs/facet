@@ -17,7 +17,7 @@ unsafe impl<'a, Idx: Facet<'a>> Facet<'a> for core::ops::Range<Idx> {
                         }
                         Ok(())
                     })
-                    .debug(|| {
+                    .debug({
                         if Idx::SHAPE.vtable.has_debug() {
                             Some(|this, f| {
                                 let this = this.get();
@@ -38,7 +38,7 @@ unsafe impl<'a, Idx: Facet<'a>> Facet<'a> for core::ops::Range<Idx> {
             .type_identifier("Range")
             .type_params(&[crate::TypeParam {
                 name: "Idx",
-                shape: || Idx::SHAPE,
+                shape: Idx::SHAPE,
             }])
             .id(ConstTypeId::of::<Self>())
             .layout(Layout::new::<Self>())
@@ -51,12 +51,12 @@ unsafe impl<'a, Idx: Facet<'a>> Facet<'a> for core::ops::Range<Idx> {
                             [
                                 Field::builder()
                                     .name("start")
-                                    .shape(Idx::SHAPE)
+                                    .shape(|| Idx::SHAPE)
                                     .offset(mem::offset_of!(core::ops::Range<Idx>, start))
                                     .build(),
                                 Field::builder()
                                     .name("end")
-                                    .shape(Idx::SHAPE)
+                                    .shape(|| Idx::SHAPE)
                                     .offset(mem::offset_of!(core::ops::Range<Idx>, end))
                                     .build(),
                             ]

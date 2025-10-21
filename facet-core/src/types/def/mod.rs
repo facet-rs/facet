@@ -92,16 +92,16 @@ impl core::fmt::Debug for Def {
             Def::Scalar => {
                 write!(f, "Scalar")
             }
-            Def::Map(map_def) => write!(f, "Map<{}>", (map_def.v)()),
-            Def::Set(set_def) => write!(f, "Set<{}>", (set_def.t)()),
-            Def::List(list_def) => write!(f, "List<{}>", (list_def.t)()),
-            Def::NdArray(list_def) => write!(f, "NdArray<{}>", (list_def.t)()),
+            Def::Map(map_def) => write!(f, "Map<{}>", map_def.v),
+            Def::Set(set_def) => write!(f, "Set<{}>", set_def.t),
+            Def::List(list_def) => write!(f, "List<{}>", list_def.t),
+            Def::NdArray(list_def) => write!(f, "NdArray<{}>", list_def.t),
             Def::Array(array_def) => write!(f, "Array<{}; {}>", array_def.t, array_def.n),
             Def::Slice(slice_def) => write!(f, "Slice<{}>", slice_def.t),
             Def::Option(option_def) => write!(f, "Option<{}>", option_def.t),
             Def::Pointer(smart_ptr_def) => {
                 if let Some(pointee) = smart_ptr_def.pointee {
-                    write!(f, "SmartPointer<{}>", pointee())
+                    write!(f, "SmartPointer<{pointee}>")
                 } else {
                     write!(f, "SmartPointer<opaque>")
                 }

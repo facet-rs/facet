@@ -12,10 +12,10 @@ where
         let fields: &'static [::facet::Field] = &const {
             [
                 {
-                    :: facet :: Field :: builder () . name ("field1") . shape (:: facet :: shape_of (& | s : & StructWithGenericsSimple < T , U > | & s . field1)) . offset (:: core :: mem :: offset_of ! (StructWithGenericsSimple < T , U > , field1)) . build ()
+                    :: facet :: Field :: builder () . name ("field1") . shape (|| :: facet :: shape_of (& | s : & StructWithGenericsSimple < T , U > | & s . field1)) . offset (:: core :: mem :: offset_of ! (StructWithGenericsSimple < T , U > , field1)) . build ()
                 },
                 {
-                    :: facet :: Field :: builder () . name ("field2") . shape (:: facet :: shape_of (& | s : & StructWithGenericsSimple < T , U > | & s . field2)) . offset (:: core :: mem :: offset_of ! (StructWithGenericsSimple < T , U > , field2)) . build ()
+                    :: facet :: Field :: builder () . name ("field2") . shape (|| :: facet :: shape_of (& | s : & StructWithGenericsSimple < T , U > | & s . field2)) . offset (:: core :: mem :: offset_of ! (StructWithGenericsSimple < T , U > , field2)) . build ()
                 },
             ]
         };
@@ -40,11 +40,11 @@ where
             .type_params(&[
                 ::facet::TypeParam {
                     name: "T",
-                    shape: || <T as ::facet::Facet>::SHAPE,
+                    shape: <T as ::facet::Facet>::SHAPE,
                 },
                 ::facet::TypeParam {
                     name: "U",
-                    shape: || <U as ::facet::Facet>::SHAPE,
+                    shape: <U as ::facet::Facet>::SHAPE,
                 },
             ])
             .ty(::facet::Type::User(::facet::UserType::Struct(

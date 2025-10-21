@@ -122,14 +122,14 @@ unsafe impl<'facet, T: Facet<'facet>> Facet<'facet> for Mat<T> {
                     })
                 }),
             },
-            t: || T::SHAPE,
+            t: T::SHAPE,
         }))
         .ty(Type::User(facet::UserType::Opaque))
         .type_identifier("Mat")
         .type_tag("Mat")
         .type_params(&[TypeParam {
             name: "T",
-            shape: || T::SHAPE,
+            shape: T::SHAPE,
         }])
         .vtable(ValueVTable {
             type_name: |f, opts| {
@@ -140,27 +140,27 @@ unsafe impl<'facet, T: Facet<'facet>> Facet<'facet> for Mat<T> {
                 }
                 f.write_str(">")
             },
-            marker_traits: || (T::SHAPE.vtable.marker_traits)() & !MarkerTraits::COPY,
-            drop_in_place: || {
+            marker_traits: T::SHAPE.vtable.marker_traits.difference(MarkerTraits::COPY),
+            drop_in_place: {
                 Some(|p| unsafe {
                     let ptr = p.as_ptr::<Self>() as *mut Self;
                     drop(ptr.read());
                     PtrUninit::new(NonNull::new_unchecked(ptr))
                 })
             },
-            invariants: || None,
-            display: || None,
-            debug: || None,
-            default_in_place: || None,
-            clone_into: || None,
-            partial_eq: || None,
-            partial_ord: || None,
-            ord: || None,
-            hash: || None,
-            parse: || None,
-            try_from: || None,
-            try_into_inner: || None,
-            try_borrow_inner: || None,
+            invariants: None,
+            display: None,
+            debug: None,
+            default_in_place: None,
+            clone_into: None,
+            partial_eq: None,
+            partial_ord: None,
+            ord: None,
+            hash: None,
+            parse: None,
+            try_from: None,
+            try_into_inner: None,
+            try_borrow_inner: None,
         })
         .build();
 }

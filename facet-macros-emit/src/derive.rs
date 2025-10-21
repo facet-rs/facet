@@ -98,7 +98,7 @@ pub(crate) fn build_type_params(generics: Option<&GenericParams>) -> TokenStream
                     type_params.push(quote! {
                         ::facet::TypeParam {
                             name: #name_str,
-                            shape: || <#name as ::facet::Facet>::SHAPE
+                            shape: <#name as ::facet::Facet>::SHAPE
                         }
                     });
                 }

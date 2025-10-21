@@ -16,7 +16,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for core::ptr::NonNull<T> {
             )))
             .type_params(&[crate::TypeParam {
                 name: "T",
-                shape: || T::SHAPE,
+                shape: T::SHAPE,
             }])
             .ty(Type::User(UserType::Struct(StructType {
                 repr: Repr::transparent(),
@@ -24,7 +24,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for core::ptr::NonNull<T> {
                 fields: &const {
                     [Field::builder()
                         .name("pointer")
-                        .shape(<*mut T>::SHAPE)
+                        .shape(|| <*mut T>::SHAPE)
                         .offset(0)
                         .flags(FieldFlags::EMPTY)
                         .build()]
@@ -32,7 +32,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for core::ptr::NonNull<T> {
             })))
             .def(Def::Pointer(
                 PointerDef::builder()
-                    .pointee(|| T::SHAPE)
+                    .pointee(T::SHAPE)
                     .flags(PointerFlags::EMPTY)
                     .known(KnownPointer::NonNull)
                     .vtable(

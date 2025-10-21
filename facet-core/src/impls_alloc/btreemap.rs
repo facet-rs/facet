@@ -18,7 +18,7 @@ where
         Shape::builder_for_sized::<Self>()
             .vtable({
                 ValueVTable::builder::<Self>()
-                    .marker_traits(|| {
+                    .marker_traits({
                         let arg_dependent_traits = MarkerTraits::SEND
                             .union(MarkerTraits::SYNC)
                             .union(MarkerTraits::EQ);
@@ -39,7 +39,7 @@ where
                             write!(f, "BTreeMap<⋯>")
                         }
                     })
-                    .default_in_place(|| {
+                    .default_in_place({
                         Some(|target| unsafe { target.put(Self::default()).into() })
                     })
                     .build()
@@ -48,18 +48,18 @@ where
             .type_params(&[
                 crate::TypeParam {
                     name: "K",
-                    shape: || K::SHAPE,
+                    shape: K::SHAPE,
                 },
                 crate::TypeParam {
                     name: "V",
-                    shape: || V::SHAPE,
+                    shape: V::SHAPE,
                 },
             ])
             .ty(Type::User(UserType::Opaque))
             .def(Def::Map(
                 MapDef::builder()
-                    .k(|| K::SHAPE)
-                    .v(|| V::SHAPE)
+                    .k(K::SHAPE)
+                    .v(V::SHAPE)
                     .vtable(
                         &const {
                             MapVTable::builder()

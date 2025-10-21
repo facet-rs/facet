@@ -9,7 +9,7 @@ pub struct NdArrayDef {
     /// vtable for interacting with the array
     pub vtable: &'static NdArrayVTable,
     /// shape of the items in the array
-    pub t: fn() -> &'static Shape,
+    pub t: &'static Shape,
 }
 
 impl NdArrayDef {
@@ -19,15 +19,15 @@ impl NdArrayDef {
     }
 
     /// Returns the shape of the items in the array
-    pub fn t(&self) -> &'static Shape {
-        (self.t)()
+    pub const fn t(&self) -> &'static Shape {
+        self.t
     }
 }
 
 /// Builder for NdArrayDef
 pub struct NdArrayDefBuilder {
     vtable: Option<&'static NdArrayVTable>,
-    t: Option<fn() -> &'static Shape>,
+    t: Option<&'static Shape>,
 }
 
 impl NdArrayDefBuilder {
@@ -47,7 +47,7 @@ impl NdArrayDefBuilder {
     }
 
     /// Sets the item shape for the NdArrayDef
-    pub const fn t(mut self, t: fn() -> &'static Shape) -> Self {
+    pub const fn t(mut self, t: &'static Shape) -> Self {
         self.t = Some(t);
         self
     }

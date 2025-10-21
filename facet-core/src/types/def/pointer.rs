@@ -13,13 +13,16 @@ pub struct PointerDef {
     pub vtable: &'static PointerVTable,
 
     /// shape of the inner type of the pointer, if not opaque
-    pub pointee: Option<fn() -> &'static Shape>,
+    pub pointee: Option<&'static Shape>,
 
     /// shape of the corresponding strong pointer, if this pointer is weak
+    ///
+    /// the layer of indirection is to break the strong <-> weak reference cycle,
+    /// since consts may not have cycles in their definitions.
     pub weak: Option<fn() -> &'static Shape>,
 
     /// shape of the corresponding weak pointer, if this pointer is strong
-    pub strong: Option<fn() -> &'static Shape>,
+    pub strong: Option<&'static Shape>,
 
     /// Flags representing various characteristics of the pointer
     pub flags: PointerFlags,
@@ -44,17 +47,17 @@ impl PointerDef {
 
     /// Returns shape of the inner type of the pointer, if not opaque
     pub fn pointee(&self) -> Option<&'static Shape> {
-        self.pointee.map(|v| v())
+        self.pointee
     }
 
     /// Returns shape of the corresponding strong pointer, if this pointer is weak
     pub fn weak(&self) -> Option<&'static Shape> {
-        self.weak.map(|v| v())
+        self.weak.map(|f| f())
     }
 
     /// Returns shape of the corresponding weak pointer, if this pointer is strong
     pub fn strong(&self) -> Option<&'static Shape> {
-        self.strong.map(|v| v())
+        self.strong
     }
 }
 
@@ -62,11 +65,11 @@ impl PointerDef {
 #[derive(Debug)]
 pub struct PointerDefBuilder {
     vtable: Option<&'static PointerVTable>,
-    pointee: Option<fn() -> &'static Shape>,
+    pointee: Option<&'static Shape>,
     flags: Option<PointerFlags>,
     known: Option<KnownPointer>,
     weak: Option<fn() -> &'static Shape>,
-    strong: Option<fn() -> &'static Shape>,
+    strong: Option<&'static Shape>,
 }
 
 impl PointerDefBuilder {
@@ -93,7 +96,7 @@ impl PointerDefBuilder {
 
     /// Sets the shape of the inner type of the pointer.
     #[must_use]
-    pub const fn pointee(mut self, pointee: fn() -> &'static Shape) -> Self {
+    pub const fn pointee(mut self, pointee: &'static Shape) -> Self {
         self.pointee = Some(pointee);
         self
     }
@@ -121,7 +124,7 @@ impl PointerDefBuilder {
 
     /// Sets the shape of the corresponding strong pointer, if this pointer is weak
     #[must_use]
-    pub const fn strong(mut self, strong: fn() -> &'static Shape) -> Self {
+    pub const fn strong(mut self, strong: &'static Shape) -> Self {
         self.strong = Some(strong);
         self
     }

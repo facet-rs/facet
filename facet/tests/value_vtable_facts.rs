@@ -26,7 +26,7 @@ impl<'mem> BoxPtrUninit<'mem> {
     // This will panic when `T` is not `Sized`.
     fn new_sized<'a, T: Facet<'a> + ?Sized>() -> Self {
         let layout = T::SHAPE.layout.sized_layout().expect("T must be Sized");
-        let drop_in_place = (T::SHAPE.vtable.drop_in_place)();
+        let drop_in_place = T::SHAPE.vtable.drop_in_place;
 
         let ptr = if layout.size() == 0 {
             core::ptr::without_provenance_mut(layout.align())
@@ -114,7 +114,7 @@ unsafe fn debug(vtable: &'static ValueVTable, ptr: PtrConst) -> impl Debug {
 
     impl<'a> Debug for Debugger<'a> {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-            match (self.0.display)() {
+            match self.0.display {
                 Some(fun) => unsafe { fun(self.1, f) },
                 None => write!(f, "???"),
             }
@@ -140,13 +140,13 @@ where
     let mut facts: BTreeSet<Fact> = BTreeSet::new();
     let value_vtable = T::SHAPE.vtable;
     let traits = [
-        ("Debug", (value_vtable.debug)().is_some()),
-        ("Display", (value_vtable.display)().is_some()),
-        ("Default", (value_vtable.default_in_place)().is_some()),
-        ("PartialEq", (value_vtable.partial_eq)().is_some()),
-        ("Ord", (value_vtable.ord)().is_some()),
-        ("PartialOrd", (value_vtable.partial_ord)().is_some()),
-        ("Clone", (value_vtable.clone_into)().is_some()),
+        ("Debug", value_vtable.debug.is_some()),
+        ("Display", value_vtable.display.is_some()),
+        ("Default", value_vtable.default_in_place.is_some()),
+        ("PartialEq", value_vtable.partial_eq.is_some()),
+        ("Ord", value_vtable.ord.is_some()),
+        ("PartialOrd", value_vtable.partial_ord.is_some()),
+        ("Clone", value_vtable.clone_into.is_some()),
     ];
     let trait_str = traits
         .iter()
@@ -226,7 +226,7 @@ where
     }
 
     // Test default_in_place
-    if let Some(default_in_place) = (T::SHAPE.vtable.default_in_place)() {
+    if let Some(default_in_place) = T::SHAPE.vtable.default_in_place {
         facts.insert(Fact::Default);
 
         let ptr = BoxPtrUninit::new_sized::<T>();
@@ -241,7 +241,7 @@ where
     }
 
     // Test clone
-    if let Some(clone_into) = (T::SHAPE.vtable.clone_into)() {
+    if let Some(clone_into) = T::SHAPE.vtable.clone_into {
         facts.insert(Fact::Clone);
 
         let src_ptr = PtrConst::new(NonNull::from(val1).cast::<u8>());
@@ -1611,7 +1611,7 @@ fn test_ipv4_addr_parse_from_str() {
     );
 
     // Check that the vtable has a parse function
-    let parse_fn = (shape.vtable.parse)();
+    let parse_fn = shape.vtable.parse;
     assert!(
         parse_fn.is_some(),
         "Ipv4Addr should have a parse function in vtable"

@@ -12,14 +12,14 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for SnakeCaseExample {
                 {
                     ::facet::Field::builder()
                         .name("field_one")
-                        .shape(::facet::shape_of(&|s: &SnakeCaseExample| &s.fieldOne))
+                        .shape(|| ::facet::shape_of(&|s: &SnakeCaseExample| &s.fieldOne))
                         .offset(::core::mem::offset_of!(SnakeCaseExample, fieldOne))
                         .build()
                 },
                 {
                     ::facet::Field::builder()
                         .name("field_two")
-                        .shape(::facet::shape_of(&|s: &SnakeCaseExample| &s.fieldTwo))
+                        .shape(|| ::facet::shape_of(&|s: &SnakeCaseExample| &s.fieldTwo))
                         .offset(::core::mem::offset_of!(SnakeCaseExample, fieldTwo))
                         .build()
                 },

@@ -7,7 +7,7 @@ fn shape_name_string_slice_const_ptr() {
     match shape.ty {
         Type::Pointer(PointerType::Raw(vpt)) => {
             assert!(!vpt.mutable);
-            assert_eq!((vpt.target)().to_string(), "str");
+            assert_eq!(vpt.target.to_string(), "str");
         }
         _ => panic!("wrong type {:?}", shape.ty),
     }
@@ -19,7 +19,7 @@ fn shape_name_string_slice_mut_ptr() {
     match shape.ty {
         Type::Pointer(PointerType::Raw(vpt)) => {
             assert!(vpt.mutable);
-            assert_eq!((vpt.target)().to_string(), "str");
+            assert_eq!(vpt.target.to_string(), "str");
         }
         _ => panic!("wrong type {:?}", shape.ty),
     }
@@ -31,7 +31,7 @@ fn shape_name_string_slice_ref() {
     match shape.ty {
         Type::Pointer(PointerType::Reference(vpt)) => {
             assert!(!vpt.mutable);
-            assert_eq!((vpt.target)().to_string(), "str");
+            assert_eq!(vpt.target.to_string(), "str");
         }
         _ => panic!("wrong type {:?}", shape.ty),
     }

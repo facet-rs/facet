@@ -163,8 +163,7 @@ fn explore_option_shape() {
     }
 
     // Also check if it has an inner shape (transparent wrapper)
-    if let Some(inner_fn) = wip.shape().inner {
-        let inner_shape = inner_fn();
+    if let Some(inner_shape) = wip.shape().inner {
         println!("Inner shape: {inner_shape:?}");
     }
 }

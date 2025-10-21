@@ -8,10 +8,6 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
     ($float:ty) => {
         unsafe impl<'a> Facet<'a> for OrderedFloat<$float> {
             const SHAPE: &'static Shape = &const {
-                fn inner_shape() -> &'static Shape {
-                    <$float as Facet>::SHAPE
-                }
-
                 Shape::builder_for_sized::<Self>()
                     .vtable({
                         // Define conversion functions for transparency
@@ -26,13 +22,13 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                                 let ord = OrderedFloat(*value);
                                 Ok(unsafe { dst.put(ord) })
                             } else {
-                                let inner_try_from = (<$float as Facet>::SHAPE.vtable.try_from)()
-                                    .ok_or(
-                                    TryFromError::UnsupportedSourceShape {
+                                let inner_try_from = <$float as Facet>::SHAPE
+                                    .vtable
+                                    .try_from
+                                    .ok_or(TryFromError::UnsupportedSourceShape {
                                         src_shape,
                                         expected: &[<$float as Facet>::SHAPE],
-                                    },
-                                )?;
+                                    })?;
                                 // fallback to inner's try_from
                                 // This relies on the fact that `dst` is the same size as `OrderedFloat<$float>`
                                 // which should be true because `OrderedFloat` is `repr(transparent)`
@@ -73,13 +69,13 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                             Self::SHAPE.type_identifier
                         ));
                         {
-                            vtable.parse = || {
+                            vtable.parse = {
                                 // `OrderedFloat` is `repr(transparent)`
-                                (<$float as Facet>::SHAPE.vtable.parse)()
+                                <$float as Facet>::SHAPE.vtable.parse
                             };
-                            vtable.try_from = || Some(try_from);
-                            vtable.try_into_inner = || Some(try_into_inner);
-                            vtable.try_borrow_inner = || Some(try_borrow_inner);
+                            vtable.try_from = Some(try_from);
+                            vtable.try_into_inner = Some(try_into_inner);
+                            vtable.try_borrow_inner = Some(try_borrow_inner);
                         }
                         vtable
                     })
@@ -92,17 +88,13 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                             .build(),
                     )))
                     .def(Def::Scalar)
-                    .inner(inner_shape)
+                    .inner(<$float as Facet>::SHAPE)
                     .build()
             };
         }
 
         unsafe impl<'a> Facet<'a> for NotNan<$float> {
             const SHAPE: &'static Shape = &const {
-                fn inner_shape() -> &'static Shape {
-                    <$float as Facet>::SHAPE
-                }
-
                 Shape::builder_for_sized::<Self>()
                     .vtable({
                         // Conversion from inner float type to NotNan<$float>
@@ -118,13 +110,13 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                                     .map_err(|_| TryFromError::Generic("was NaN"))?;
                                 Ok(unsafe { dst.put(nn) })
                             } else {
-                                let inner_try_from = (<$float as Facet>::SHAPE.vtable.try_from)()
-                                    .ok_or(
-                                    TryFromError::UnsupportedSourceShape {
+                                let inner_try_from = <$float as Facet>::SHAPE
+                                    .vtable
+                                    .try_from
+                                    .ok_or(TryFromError::UnsupportedSourceShape {
                                         src_shape,
                                         expected: &[<$float as Facet>::SHAPE],
-                                    },
-                                )?;
+                                    })?;
 
                                 // fallback to inner's try_from
                                 // This relies on the fact that `dst` is the same size as `NotNan<$float>`
@@ -168,7 +160,7 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                         ));
                         // Accept parsing as inner T, but enforce NotNan invariant
                         {
-                            vtable.parse = || {
+                            vtable.parse = {
                                 Some(|s, target| match s.parse::<$float>() {
                                     Ok(inner) => match NotNan::new(inner) {
                                         Ok(not_nan) => Ok(unsafe { target.put(not_nan) }),
@@ -181,16 +173,16 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                                     )),
                                 })
                             };
-                            vtable.try_from = || Some(try_from);
-                            vtable.try_into_inner = || Some(try_into_inner);
-                            vtable.try_borrow_inner = || Some(try_borrow_inner);
+                            vtable.try_from = Some(try_from);
+                            vtable.try_into_inner = Some(try_into_inner);
+                            vtable.try_borrow_inner = Some(try_borrow_inner);
                         }
                         vtable
                     })
                     .type_identifier("NotNan")
                     .ty(Type::User(UserType::Opaque))
                     .def(Def::Scalar)
-                    .inner(inner_shape)
+                    .inner(<$float as Facet>::SHAPE)
                     .build()
             };
         }

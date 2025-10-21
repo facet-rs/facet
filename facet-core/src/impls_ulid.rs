@@ -9,11 +9,6 @@ use crate::{
 
 unsafe impl Facet<'_> for Ulid {
     const SHAPE: &'static Shape = &const {
-        // Return the Shape of the inner type (String)
-        fn inner_shape() -> &'static Shape {
-            <String as Facet>::SHAPE
-        }
-
         Shape::builder_for_sized::<Self>()
             .vtable({
                 // Functions to transparently convert between Ulid and String
@@ -52,21 +47,21 @@ unsafe impl Facet<'_> for Ulid {
                     Self::SHAPE.type_identifier
                 ));
                 {
-                    vtable.parse = || {
+                    vtable.parse = {
                         Some(|s, target| match Ulid::from_string(s) {
                             Ok(ulid) => Ok(unsafe { target.put(ulid) }),
                             Err(_) => Err(ParseError::Generic("ULID parsing failed")),
                         })
                     };
-                    vtable.try_from = || Some(try_from);
-                    vtable.try_into_inner = || Some(try_into_inner);
+                    vtable.try_from = Some(try_from);
+                    vtable.try_into_inner = Some(try_into_inner);
                 }
                 vtable
             })
             .type_identifier("Ulid")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
-            .inner(inner_shape)
+            .inner(<String as Facet>::SHAPE)
             .build()
     };
 }
